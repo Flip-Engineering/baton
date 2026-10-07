@@ -777,6 +777,117 @@ while True: time.sleep(1)
         self.assertEqual(row['eventChars'], 0)
         self.assertEqual(row['eventCount'], 0)
 
+    def test_storage_reports_encoded_generation_identity(self):
+        self.stream([self.terminal()])
+        self.prepare_attempt_artifacts()
+        coded = "a%2fb%2ec"
+        generation = self.cwd / ("turn.jsonl.attempt-" + coded)
+        generation.write_text("encoded generation view\n")
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("INSERT OR IGNORE INTO log_files(session,log) VALUES(?,?)", ("omp-worker", str(generation)))
+        logs = json.loads(self.call("logs-storage"))["logs"]
+        entry = next(row for row in logs if row["path"] == str(generation))
+        self.assertEqual(entry["attempt"], coded)
+
+    def test_encoded_identity_binds_the_registered_attempt(self):
+        import sqlite3
+        self.stream([self.terminal()], turn="a/b")
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        self.assertEqual(attempt, "a/b")
+        first = self.cwd / "turn.jsonl.attempt-a%2Fb"
+        first.write_text("derived generation view" + chr(10))
+        (self.cwd / (first.name + ".pending")).write_text("")
+        (self.cwd / (first.name + ".stderr")).write_text("native diagnostics stay" + chr(10))
+        for name in ("stdout", "native.stderr", "observer.log", "keeper.log"):
+            (attempt_dir / name).write_text("diagnostic data for " + name)
+        self.stream([self.terminal()], turn="turn-2")
+        second = self.cwd / "turn.jsonl.attempt-turn-2"
+        second.write_text("newest generation view" + chr(10))
+        with sqlite3.connect(self.db) as connection:
+            connection.executescript("CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt));CREATE UNIQUE INDEX IF NOT EXISTS log_generations_log ON log_generations(log);")
+            for path, turn in ((first, "a/b"), (second, "turn-2")):
+                connection.execute("INSERT OR IGNORE INTO log_files(session,log) VALUES(?,?)", ("omp-worker", str(path)))
+                connection.execute("INSERT OR IGNORE INTO log_generations(session,attempt,log,base) VALUES(?,?,?,?)", ("omp-worker", turn, str(path), str(self.log)))
+        answer = json.loads(self.call("logs-clean", "omp-worker"))
+        removed = [item for item in answer["attemptLogs"] if item.get("attempt") == "a/b"]
+        self.assertEqual(len(removed), 1, answer)
+        self.assertTrue(removed[0]["removed"], answer)
+        self.assertFalse(first.exists())
+        self.assertTrue(second.exists())
+
+    def test_dotted_identity_in_a_marker_parent_cleans_by_basename(self):
+        parent = self.cwd / "archive.attempt-old"
+        parent.mkdir()
+        self.stream([self.terminal()], turn="v1.2")
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        self.assertEqual(attempt, "v1.2")
+        first = parent / "turn.jsonl.attempt-v1.2"
+        first.write_text("derived generation view" + chr(10))
+        (parent / (first.name + ".pending")).write_text("")
+        (parent / (first.name + ".stderr")).write_text("native diagnostics stay" + chr(10))
+        for name in ("stdout", "native.stderr", "observer.log", "keeper.log"):
+            (attempt_dir / name).write_text("diagnostic data for " + name)
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("INSERT OR IGNORE INTO log_files(session,log) VALUES(?,?)", ("omp-worker", str(first)))
+        answer = json.loads(self.call("logs-clean", "omp-worker"))
+        removed = [item for item in answer["attemptLogs"] if item.get("attempt") == "v1.2"]
+        self.assertEqual(len(removed), 1, answer)
+        self.assertTrue(removed[0]["removed"], answer)
+        self.assertFalse(first.exists())
+
+    def test_unacknowledged_failed_generation_stays(self):
+        import sqlite3
+        self.stream([self.terminal()], exit_code=1)
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        self.assertEqual(attempt, "turn-1")
+        first = self.cwd / "turn.jsonl.attempt-turn-1"
+        first.write_text("derived generation view" + chr(10))
+        (self.cwd / (first.name + ".pending")).write_text("")
+        (self.cwd / (first.name + ".stderr")).write_text("native diagnostics stay" + chr(10))
+        for name in ("stdout", "native.stderr", "observer.log", "keeper.log"):
+            (attempt_dir / name).write_text("diagnostic data for " + name)
+        (attempt_dir / "acknowledged").unlink()
+        self.stream([self.terminal()], turn="turn-2")
+        second = self.cwd / "turn.jsonl.attempt-turn-2"
+        second.write_text("newest generation view" + chr(10))
+        with sqlite3.connect(self.db) as connection:
+            connection.executescript("CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt));CREATE UNIQUE INDEX IF NOT EXISTS log_generations_log ON log_generations(log);")
+            for path, turn in ((first, "turn-1"), (second, "turn-2")):
+                connection.execute("INSERT OR IGNORE INTO log_files(session,log) VALUES(?,?)", ("omp-worker", str(path)))
+                connection.execute("INSERT OR IGNORE INTO log_generations(session,attempt,log,base) VALUES(?,?,?,?)", ("omp-worker", turn, str(path), str(self.log)))
+        answer = json.loads(self.call("logs-clean", "omp-worker"))
+        self.assertEqual(answer["attemptLogs"], [], answer)
+        self.assertTrue(first.exists())
+        self.assertTrue(second.exists())
+
+    def test_superseded_generation_leaves_after_the_executions_row_moves_on(self):
+        import sqlite3
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        self.assertEqual(attempt, "turn-1")
+        first = self.cwd / "turn.jsonl.attempt-turn-1"
+        first.write_text("derived generation view" + chr(10))
+        (self.cwd / (first.name + ".pending")).write_text("")
+        (self.cwd / (first.name + ".stderr")).write_text("native diagnostics stay" + chr(10))
+        for name in ("stdout", "native.stderr", "observer.log", "keeper.log"):
+            (attempt_dir / name).write_text("diagnostic data for " + name)
+        self.stream([self.terminal()], turn="turn-2")
+        second = self.cwd / "turn.jsonl.attempt-turn-2"
+        second.write_text("newest generation view" + chr(10))
+        with sqlite3.connect(self.db) as connection:
+            connection.executescript("CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt));CREATE UNIQUE INDEX IF NOT EXISTS log_generations_log ON log_generations(log);")
+            for path, turn in ((first, "turn-1"), (second, "turn-2")):
+                connection.execute("INSERT OR IGNORE INTO log_files(session,log) VALUES(?,?)", ("omp-worker", str(path)))
+                connection.execute("INSERT OR IGNORE INTO log_generations(session,attempt,log,base) VALUES(?,?,?,?)", ("omp-worker", turn, str(path), str(self.log)))
+        answer = json.loads(self.call("logs-clean", "omp-worker"))
+        removed = [item for item in answer["attemptLogs"] if item.get("attempt") == "turn-1"]
+        self.assertEqual(len(removed), 1, answer)
+        self.assertTrue(removed[0]["removed"], answer)
+        self.assertFalse(first.exists())
+        self.assertFalse((self.cwd / (first.name + ".pending")).exists())
+        self.assertEqual((self.cwd / (first.name + ".stderr")).read_text(), "native diagnostics stay" + chr(10))
+        self.assertTrue(second.exists())
+
     def test_unwritable_log_reports_the_failure_and_keeps_the_report(self):
         unwritable = self.cwd / 'log-directory'
         unwritable.mkdir()

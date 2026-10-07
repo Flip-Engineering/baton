@@ -580,6 +580,37 @@ def open(+db: String, +session: String, log: String) -> IO(Policy):
     current : Policy <- policy(db,session)
     IO.pure(Policy,current)
 
+# Percent-encoded attempt generations. Letters, digits, dash and underscore
+# pass through; every other codepoint becomes a percent hex escape, so a raw
+# turn id with a slash, a dot, or a marker of its own still names one file
+# beside the base log. Percent itself is escaped, so two identities never
+# share a file. Wide codepoints use six hex digits.
+def code_kept_range(+u: U32, +lo: U32, +hi: U32) -> Bool:
+  Bool.and(Bool.or(U32.is_eq(u,lo),U32.is_lt(lo,u)),Bool.or(U32.is_eq(u,hi),U32.is_lt(u,hi)))
+
+def code_kept(+code: U32) -> Bool:
+  Bool.or(code_kept_range(code,48,57),Bool.or(code_kept_range(code,65,90),Bool.or(code_kept_range(code,97,122),Bool.or(U32.is_eq(code,45),U32.is_eq(code,95)))))
+
+def code_byte_hex(+code: U32) -> String:
+  J.one(J.hex_digit(U32.and(U32.shrn(code,4n),15))) ++ J.one(J.hex_digit(U32.and(code,15)))
+
+def code_wide_hex(+code: U32) -> String:
+  J.one(J.hex_digit(U32.and(U32.shrn(code,20n),15))) ++ J.one(J.hex_digit(U32.and(U32.shrn(code,16n),15))) ++ J.one(J.hex_digit(U32.and(U32.shrn(code,12n),15))) ++ J.one(J.hex_digit(U32.and(U32.shrn(code,8n),15))) ++ J.one(J.hex_digit(U32.and(U32.shrn(code,4n),15))) ++ J.one(J.hex_digit(U32.and(code,15)))
+
+def code_escaped(+code: U32, +tail: String) -> String:
+  "%" ++ Bool.pick(String,U32.is_lt(code,256),code_byte_hex(code),code_wide_hex(code)) ++ tail
+
+def code_prepend(keep: Bool, +c: Char, +tail: String) -> String:
+  Bool.pick(String,keep,SCon{c, tail},code_escaped(J.cp(c),tail))
+
+def attempt_code_go(s: String) -> String:
+  match s:
+    case SNil{}: ""
+    case SCon{+c, +rest}: code_prepend(code_kept(J.cp(c)),c,attempt_code_go(rest))
+
+def attempt_code(+attempt: String) -> String:
+  attempt_code_go(attempt)
+
 # A new attempt writes a fresh generation beside the session's base log instead
 # of appending into the previous attempt's live file: a resumed receiver that
 # reuses one fixed path keeps waking the same compressed bytes. The suffix is
@@ -589,14 +620,56 @@ def open(+db: String, +session: String, log: String) -> IO(Policy):
 # before. The Turn owner adopts this by rebinding its log path once per turn;
 # this module never rewrites the Turn's path on its own.
 def attempt_log(+base: String, +attempt: String) -> String:
-  Bool.pick(String,String.is_empty(attempt),base,base ++ ".attempt-" ++ attempt)
+  Bool.pick(String,String.is_empty(attempt),base,base ++ ".attempt-" ++ attempt_code(attempt))
+
+# The durable per-attempt lineage: one row per generation file the session
+# registered, in registration order. The executions table keeps one live row
+# per session and Stop.admit replaces it, so this registry is what still binds
+# a superseded generation to its attempt after a later turn starts. Written by
+# Logs.open_attempt alongside the log_files registration; read by storage and
+# cleanup. A file belongs to one attempt.
+def generations_schema() -> String:
+  "CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt));CREATE UNIQUE INDEX IF NOT EXISTS log_generations_log ON log_generations(log);"
+
+def generations_register_sql(+session: String, +attempt: String, +log: String, +base: String) -> String:
+  "INSERT OR IGNORE INTO log_generations(session,attempt,log,base) VALUES(" ++ C.q(session) ++ "," ++ C.q(attempt) ++ "," ++ C.q(log) ++ "," ++ C.q(base) ++ ");"
+
+def generations_ensure(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    ensured : String <- IO.try(String,DB.Sql.query(db,generations_schema() ++ "SELECT 1;"))
+    IO.pure(Unit,Unit{})
+
+def open_attempt_registered(empty: Bool, +db: String, +session: String, +base: String, +attempt: String) -> IO(Policy):
+  match empty:
+    case True{}: open(db,session,base)
+    case False{}: do IO<Policy>:
+      ensured : Unit <- generations_ensure(db)
+      listed : Unit <- register(db,session,attempt_log(base,attempt))
+      generated : String <- IO.try(String,DB.Sql.query(db,generations_register_sql(session,attempt,attempt_log(base,attempt),base)))
+      current : Policy <- policy(db,session)
+      IO.pure(Policy,current)
+
+def open_attempt_named(empty: Bool, +db: String, +session: String, +base: String, +attempt: String) -> IO(Policy):
+  match empty:
+    case True{}: open(db,session,base)
+    case False{}: open_attempt_registered(empty,db,session,base,attempt)
 
 def open_attempt(+db: String, +session: String, +base: String, +attempt: String) -> IO(Policy):
-  open(db,session,attempt_log(base,attempt))
+  open_attempt_named(String.is_empty(attempt),db,session,base,attempt)
 
-# The attempt identity a generation path names, or empty for the base log and
-# for any other path. The marker match starts at each position in turn; the
-# Turn passes its configured base once, so a generation path holds one marker.
+# The file name without its directories, so a marker in a parent directory
+# never resolves as the generation identity.
+def has_slash(s: String) -> Bool:
+  match s:
+    case SNil{}: False{}
+    case SCon{c, +rest}: Bool.pick(Bool,U32.is_eq(J.cp(c),47),True{},has_slash(rest))
+
+def base_name(s: String) -> String:
+  match s:
+    case SNil{}: ""
+    case SCon{c, +rest}: Bool.pick(String,has_slash(rest),base_name(rest),SCon{c, rest})
+
+# The marker match starts at each position of the file name in turn.
 def after_here(s: String, m: String) -> String:
   match s m:
     case SNil{} SNil{}: ""
@@ -611,8 +684,11 @@ def attempt_of_go(s: String) -> String:
       +here = after_here(SCon{c, rest},".attempt-")
       Bool.pick(String,String.is_empty(here),attempt_of_go(rest),here)
 
+# The attempt code a generation file name carries, or empty for the base log
+# and for any other name. Scoped to the file name; the registry binds
+# registered files to their attempt authority.
 def attempt_of(+log: String) -> String:
-  attempt_of_go(log)
+  attempt_of_go(base_name(log))
 
 def segment_json(log: String, +index: U32, keep: U32, +size: U32, pending: String) -> String:
   Bool.pick(String,U32.is_eq(size,0),"",
@@ -856,8 +932,8 @@ def attempt_log_matched(matched: Bool, +phase: String, +status: String, +directo
 
 def attempt_log_fields(+db: String, fields: List<String>, +attempt: String, live: U32) -> IO(AttemptDecision):
   match fields:
-    case session <> id <> mode <> phase <> status <> +directory <> pending <> level <> reported <> path <> rest:
-      attempt_log_matched(String.eq(id,attempt),phase,status,directory,pending,level,reported,path,live)
+    case session <> +id <> mode <> phase <> status <> +directory <> pending <> level <> reported <> path <> rest:
+      attempt_log_matched(Bool.or(String.eq(id,attempt),String.eq(attempt_code(id),attempt)),phase,status,directory,pending,level,reported,path,live)
     case other: IO.pure(AttemptDecision,AttemptDecision{"unknown-attempt",False{}})
 
 def attempt_log_row(+db: String, row: String, +attempt: String, live: U32) -> IO(AttemptDecision):
@@ -900,36 +976,123 @@ def clean_attempt_log_eligible(eligible: Bool, +log: String, +attempt: String, s
     case False{}: IO.pure(String,"")
     case True{}: clean_attempt_log_removed(log,attempt,size)
 
-def clean_attempt_log_decided(+log: String, +attempt: String, size: U32, decision: AttemptDecision) -> IO(String):
-  match decision:
-    case AttemptDecision{reason, eligible}: clean_attempt_log_eligible(eligible,log,attempt,size)
+def superseded_reported(+session: String, +attempt: String) -> String:
+  "CASE WHEN EXISTS(SELECT 1 FROM turns t JOIN messages m ON m.id=t.id AND m.sender=t.worker AND m.kind=" ++ C.q("report") ++ " WHERE t.id=" ++ C.q(attempt) ++ " AND t.worker=" ++ C.q(session) ++ ") OR EXISTS(SELECT 1 FROM session_stops ss JOIN messages m ON m.id=ss.report_id AND m.kind=" ++ C.q("report") ++ " AND m.sender=" ++ C.q(session) ++ " WHERE ss.session=" ++ C.q(session) ++ " AND ss.attempt=" ++ C.q(attempt) ++ " AND ss.outcome=" ++ C.q("stopped") ++ ") THEN 1 ELSE 0 END"
 
-def clean_attempt_log_empty(empty: Bool, +db: String, +session: String, +log: String, +attempt: String) -> IO(String):
+def superseded_info_sql(+db: String, +session: String, +attempt: String) -> String:
+  "SELECT (SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL),coalesce((SELECT level FROM log_policies WHERE session=" ++ C.q(session) ++ ")," ++ C.q("default") ++ ")," ++ superseded_reported(session,attempt) ++ "," ++ C.q(db) ++ " || " ++ C.q(".attempt-") ++ " || lower(hex(" ++ C.q(attempt) ++ "));"
+
+# A superseded generation leaves under exit, report, and acknowledgement. The
+# executions row is gone with its process status, so this decision does not
+# restate it: supersession itself proves the session moved on, the report rows
+# prove the outcome was delivered, and the markers prove custody released and
+# acknowledged. The newest generation never reaches this decision.
+def superseded_decision(pending: String, level: String, reported: String, released: String, acknowledged: String, bytes: U32) -> AttemptDecision:
+  Bool.pick(AttemptDecision,Bool.not(String.eq(pending,"0")),AttemptDecision{"pending-input",False{}},
+    Bool.pick(AttemptDecision,String.eq(level,"diagnostic"),AttemptDecision{"diagnostic-policy",False{}},
+      Bool.pick(AttemptDecision,Bool.not(String.eq(reported,"1")),AttemptDecision{"observation-unreported",False{}},
+        Bool.pick(AttemptDecision,String.eq(released,"0"),AttemptDecision{"native-not-released",False{}},
+          Bool.pick(AttemptDecision,String.eq(acknowledged,"0"),AttemptDecision{"native-not-acknowledged",False{}},
+            Bool.pick(AttemptDecision,U32.is_lt(0,bytes),AttemptDecision{"eligible",True{}},AttemptDecision{"no-diagnostic-files",False{}}))))))
+
+def superseded_eligible(decision: AttemptDecision) -> Bool:
+  match decision:
+    case AttemptDecision{reason, eligible}: eligible
+
+def clean_attempt_log_first(rows: List<String>) -> String:
+  match rows:
+    case head <> tail: head
+    case other: ""
+
+def clean_attempt_settled_fields(fields: List<String>, +log: String, +attempt: String, +size: U32) -> IO(String):
+  match fields:
+    case pending <> level <> reported <> +directory <> rest: do IO<String>:
+      released_file : String <- IO.try(String,F.Files.regular(directory ++ "/released"))
+      acknowledged_file : String <- IO.try(String,F.Files.regular(directory ++ "/acknowledged"))
+      released : String = Bool.pick(String,String.eq(released_file,"1"),"1","0")
+      acknowledged : String = Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")
+      answer : String <- clean_attempt_log_eligible(superseded_eligible(superseded_decision(pending,level,reported,released,acknowledged,size)),log,attempt,size)
+      IO.pure(String,answer)
+    case other: IO.pure(String,"")
+
+def clean_attempt_settled(info: String, +log: String, +attempt: String, size: U32) -> IO(String):
+  clean_attempt_settled_fields(Tx.split_tabs(clean_attempt_log_first(Tx.split_lines(info))),log,attempt,size)
+
+def clean_attempt_older(older: Bool, +db: String, +session: String, +log: String, +attempt: String, +size: U32) -> IO(String):
+  match older:
+    case False{}: IO.pure(String,"")
+    case True{}: do IO<String>:
+      info : String <- IO.try(String,DB.Sql.query(db,superseded_info_sql(db,session,attempt)))
+      answer : String <- clean_attempt_settled(info,log,attempt,size)
+      IO.pure(String,answer)
+
+def clean_attempt_superseded(known: Bool, +older: Bool, +db: String, +session: String, +log: String, +attempt: String, +size: U32) -> IO(String):
+  match known:
+    case False{}: IO.pure(String,"")
+    case True{}: clean_attempt_older(older,db,session,log,attempt,size)
+
+def clean_attempt_reason(unknown: Bool, eligible: Bool, +log: String, +attempt: String, +size: U32, +db: String, +session: String, +newest: String, registered: Bool) -> IO(String):
+  match unknown:
+    case True{}: clean_attempt_superseded(registered,Bool.not(String.eq(newest,"1")),db,session,log,attempt,size)
+    case False{}: clean_attempt_log_eligible(eligible,log,attempt,size)
+
+def clean_attempt_log_decided(+log: String, +attempt: String, +size: U32, decision: AttemptDecision, +db: String, +session: String, +newest: String, registered: Bool) -> IO(String):
+  match decision:
+    case AttemptDecision{+why, eligible}: clean_attempt_reason(String.eq(why,"unknown-attempt"),eligible,log,attempt,size,db,session,newest,registered)
+
+def clean_attempt_named(empty: Bool, +db: String, +session: String, +log: String, +attempt: String, +newest: String, registered: Bool) -> IO(String):
   match empty:
     case True{}: IO.pure(String,"")
     case False{}: do IO<String>:
       +live : U32 <- IO.try(U32,F.Files.size(log))
       rows : String <- IO.try(String,DB.Sql.query(db,attempt_rows_sql(db,session)))
       decision : AttemptDecision <- attempt_log_rows(db,Tx.split_lines(rows),attempt,live)
-      answer : String <- clean_attempt_log_decided(log,attempt,live,decision)
+      answer : String <- clean_attempt_log_decided(log,attempt,live,decision,db,session,newest,registered)
       IO.pure(String,answer)
 
-def clean_attempt_log(+db: String, +session: String, +log: String, +attempt: String) -> IO(String):
-  clean_attempt_log_empty(String.is_empty(attempt),db,session,log,attempt)
+def clean_attempt_legacy(+db: String, +session: String, +log: String) -> IO(String):
+  clean_attempt_named(String.is_empty(attempt_of(log)),db,session,log,attempt_of(log),"0",False{})
+
+def clean_attempt_known(known: Bool, +db: String, +session: String, +log: String, +reg: String, +newest: String) -> IO(String):
+  match known:
+    case True{}: clean_attempt_named(False{},db,session,log,reg,newest,True{})
+    case False{}: clean_attempt_legacy(db,session,log)
+
+def clean_attempt_log(+db: String, +session: String, +log: String, +reg_attempt: String, +reg_newest: String) -> IO(String):
+  clean_attempt_known(Bool.not(String.is_empty(reg_attempt)),db,session,log,reg_attempt,reg_newest)
+
+# The registry names the attempt each generation file was opened for, and how
+# many later generations the session registered. A file with no registry row
+# keeps the legacy suffix fallback; the newest generation is never a removal
+# candidate even when its live attempt row is already gone.
+def clean_attempt_reg_sql(+db: String, +session: String, +log: String) -> String:
+  "SELECT coalesce((SELECT g.attempt FROM log_generations g WHERE g.session=" ++ C.q(session) ++ " AND g.log=" ++ C.q(log) ++ ")," ++ C.q("") ++ "),(SELECT count(*) FROM log_generations g WHERE g.session=" ++ C.q(session) ++ " AND g.rowid>coalesce((SELECT g2.rowid FROM log_generations g2 WHERE g2.session=" ++ C.q(session) ++ " AND g2.log=" ++ C.q(log) ++ "),0));"
+
+def clean_attempt_log_reg_fields(fields: List<String>, +db: String, +session: String, +log: String) -> IO(String):
+  match fields:
+    case attempt <> newer <> rest: clean_attempt_log(db,session,log,attempt,Bool.pick(String,String.eq(newer,"0"),"1","0"))
+    case newer <> rest: clean_attempt_legacy(db,session,log)
+    case other: IO.pure(String,"")
+
+def clean_attempt_log_reg(info: String, +db: String, +session: String, +log: String) -> IO(String):
+  clean_attempt_log_reg_fields(Tx.split_tabs(clean_attempt_log_first(Tx.split_lines(info))),db,session,log)
+
+def clean_attempt_log_row(+db: String, +session: String, +log: String) -> IO(String):
+  do IO<String>:
+    reg : String <- IO.try(String,DB.Sql.query(db,clean_attempt_reg_sql(db,session,log)))
+    answer : String <- clean_attempt_log_reg(reg,db,session,log)
+    IO.pure(String,answer)
 
 def clean_attempt_log_fields(+db: String, +session: String, fields: List<String>) -> IO(String):
   match fields:
-    case +log <> keep <> rest: clean_attempt_log(db,session,log,attempt_of(log))
+    case +log <> keep <> rest: clean_attempt_log_row(db,session,log)
     case other: IO.pure(String,"")
-
-def clean_attempt_log_row(+db: String, +session: String, row: String) -> IO(String):
-  clean_attempt_log_fields(db,session,Tx.split_tabs(row))
 
 def clean_attempt_log_rows(+db: String, +session: String, rows: List<String>, acc: String) -> IO(String):
   match rows:
     case Nil{}: IO.pure(String,acc)
     case head <> tail: do IO<String>:
-      item : String <- clean_attempt_log_row(db,session,head)
+      item : String <- clean_attempt_log_fields(db,session,Tx.split_tabs(head))
       deeper : String <- clean_attempt_log_rows(db,session,tail,items_join(acc,item))
       IO.pure(String,deeper)
 
@@ -1005,6 +1168,7 @@ def refused(+saved: String) -> Bool:
 
 def cleaned(+db: String, +session: String) -> IO(String):
   do IO<String>:
+    ensured : Unit <- generations_ensure(db)
     rows : String <- IO.try(String,DB.Sql.query(db,clean_sql(session)))
     removed : String <- clean_rows(Tx.split_lines(rows),"")
     attempt_removed : String <- clean_attempts(db,session)
