@@ -685,18 +685,13 @@ def ff_stage5_captured(target: String, candidate: String, artifact: String, repo
         case (framing, diagnostics): ff_stage5_framing(target, candidate, artifact, repo, framing, diagnostics)
 
 def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo: String, outcome: Lg.Landing) -> IO(FFLD):
-  +tg = target
-  +cand = candidate
-  +art = artifact
-  +rp = repo
-  +out = outcome
-  match out:
+  match outcome:
     case Lg.LandingHeld{request, candidate, basis, published, mutation, released}:
       match released:
         case Fail{error}:
           match error:
-            case (code, detail): ff_stage5_blocked(Tx.str_cat("release failed: ", Tx.str_cat(detail, Tx.str_cat("; artifact ", art))))
-        case Done{unit}: ff_stage5_captured(tg, cand, art, rp, mutation)
+            case (code, detail): ff_stage5_blocked(Tx.str_cat("release failed: ", Tx.str_cat(detail, Tx.str_cat("; artifact ", artifact))))
+        case Done{unit}: ff_stage5_captured(target, candidate, artifact, repo, mutation)
     case Lg.LandingClaimFailed{error}:
       match error:
         case (code, detail): ff_stage5_blocked(Tx.str_cat("claim failed: ", detail))
@@ -964,34 +959,26 @@ def ld_adv_cas_compared(cand: String, capture: Result<&1,&1,U32 & String,String 
     IO.pure(LdAdvObs, LdAdvQualified{AdvLanded{}, cp, obs}),
     IO.pure(LdAdvObs, LdAdvQualified{AdvMoved{}, cp, obs}))
 def ld_adv_cas_readback(target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut) -> IO(LdAdvObs):
-  +c2 = cand
-  +cp = capture
-  +obs = after
-  match obs:
+  match after:
     case T.GRun{code, out}:
       +c0 = code
       Bool.pick(IO(LdAdvObs), U32.is_eq(c0, 0),
-        ld_adv_cas_compared(c2, cp, obs, Tx.trim_nl(out)),
-        IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{"the target could not be read back after the advance"}, cp, obs}))
-    case T.GBroken{detail}: IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{detail}, cp, obs})
+        ld_adv_cas_compared(cand, capture, after, Tx.trim_nl(out)),
+        IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{"the target could not be read back after the advance"}, capture, after}))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{detail}, capture, after})
 
 # The unheld advance is not landed on exit zero alone: while the target claim is still held the
 # target ref is read back and required to be the candidate. A moved target answers AdvMoved with
 # the capture retained; an unreadable readback answers AdvBroken with it.
 def ld_adv_cas_qualified(target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>, status: T.GitOut, repo: String) -> IO(LdAdvObs):
-  +t2 = target
-  +c2 = cand
-  +cp = capture
-  +st = status
-  +r2 = repo
-  match st:
+  match status:
     case T.GRun{code, out}:
       Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
         do IO<LdAdvObs>:
-            after : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
-            ld_adv_cas_readback(t2, c2, cp, after),
-        IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(st), cp)))
-    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(st), cp))
+            after : T.GitOut <- Git.runGit(repo, ld_target_ref_argv(target))
+            ld_adv_cas_readback(target, cand, capture, after),
+        IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(status), capture)))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(status), capture))
 
 # The compare-and-swap where no worktree holds the target.
 def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
@@ -1311,21 +1298,16 @@ def shared_claimed(repo: String, target: String, cand: String, basis: String, co
     shared_claim_decided(rp, tg, c, b, cm, claimed)
 
 def shared_common_read(repo: String, target: String, cand: String, basis: String, observed: T.GitOut) -> IO(SharedLanding):
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +obs = observed
-  match obs:
+  match observed:
     case T.GRun{code, out}:
       +c0 = code
       Bool.pick(IO(SharedLanding), U32.is_eq(c0, 0),
-        shared_claimed(rp, tg, c, b, Tx.trim_nl(out)),
-        IO.pure(SharedLanding, SharedCommonUnreadable{obs}))
-    case T.GBroken{detail}: IO.pure(SharedLanding, SharedCommonUnreadable{obs})
+        shared_claimed(repo, target, cand, basis, Tx.trim_nl(out)),
+        IO.pure(SharedLanding, SharedCommonUnreadable{observed}))
+    case T.GBroken{detail}: IO.pure(SharedLanding, SharedCommonUnreadable{observed})
 
 def shared_landing_run(repo: String, target: String, cand: String, basis: String) -> IO(SharedLanding):
-  +rp = repo
+  +repo = repo
   +tg = target
   +c = cand
   +b = basis
@@ -1336,17 +1318,13 @@ def shared_landing_run(repo: String, target: String, cand: String, basis: String
 # Read the exact target ref after the held fast-forward and require its tip to
 # remain the source candidate before checking which branch the holder has now.
 def ld_adv_of(obs: LdAdvObs) -> LAdv:
-  +o = obs
-  match o:
+  match obs:
     case LdAdvNoCapture{advance}: advance
     case LdAdvCaptured{advance, capture}: advance
     case LdAdvQualified{advance, capture, readback}: advance
 
 def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String) -> FFLD:
-  +s = shared
-  +tg = target
-  +c = cand
-  match s:
+  match shared:
     case SharedCommonUnreadable{observation}: FFDone{T.LBlocked{"the common directory could not be read for the landing claim"}}
     case SharedClaimFailed{error}:
       match error:
@@ -1516,8 +1494,7 @@ def block_ok_go(lines: List<String>, ok: Bool) -> Bool:
       block_ok_go(rest, o2)
 
 def block_ok(block: String) -> Bool:
-  +b2 = block
-  block_ok_go(Tx.split_lines(b2), Tx.non_empty(b2))
+  block_ok_go(Tx.split_lines(block), Tx.non_empty(block))
 
 def block_has_go(lines: List<String>, want: String) -> Bool:
   match lines:
@@ -1536,8 +1513,7 @@ def exit_fail_ok(ok: Bool, +block: String, file: String) -> FV:
     case False{}: FV{file, VNone{unjudged_why(block)}}
 
 def exit_fail(block: String, file: String) -> FV:
-  +b2 = block
-  exit_fail_ok(block_ok(b2), b2, file)
+  exit_fail_ok(block_ok(block), block, file)
 
 def exit_verdict(ok: Bool, out: String, file: String) -> FV:
   match ok:
@@ -1700,10 +1676,7 @@ def ld_adv_answer(a: LAdv, target: String, cand: String) -> Ld:
 # returns an explicit retry result; the next invocation prepares both trees.
 
 def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String) -> Ld:
-  +s = shared
-  +tg = target
-  +c = cand
-  match s:
+  match shared:
     case SharedCommonUnreadable{observation}: LdFail{T.FCmd{"land", "the common directory could not be read for the landing claim"}}
     case SharedClaimFailed{error}:
       match error:

@@ -111,13 +111,11 @@ def Landing.released(request: LandingRequest, handle: U32, outcome: Landing, rel
   IO.pure(Landing, replace_release(prior, observed))
 
 def replace_release(outcome: Landing, release: Result<&1, &1, U32 & String, Unit>) -> Landing:
-  +o = outcome
-  +r = release
-  match o:
-    case LandingAssociationRefused{step, observation, released}: LandingAssociationRefused{step, observation, r}
-    case LandingOldValueMismatch{expected, found, released}: LandingOldValueMismatch{expected, found, r}
-    case LandingPublishRefused{outcome, released}: LandingPublishRefused{outcome, r}
-    case LandingHeld{request, candidate, basis, published, mutation, released}: LandingHeld{request, candidate, basis, published, mutation, r}
+  match outcome:
+    case LandingAssociationRefused{step, observation, released}: LandingAssociationRefused{step, observation, release}
+    case LandingOldValueMismatch{expected, found, released}: LandingOldValueMismatch{expected, found, release}
+    case LandingPublishRefused{outcome, released}: LandingPublishRefused{outcome, release}
+    case LandingHeld{request, candidate, basis, published, mutation, released}: LandingHeld{request, candidate, basis, published, mutation, release}
     case LandingClaimFailed{error}: LandingClaimFailed{error}
     case LandingGuardBusy{target}: LandingGuardBusy{target}
 
@@ -130,15 +128,11 @@ def Landing.stopped(request: LandingRequest, handle: U32, outcome: Landing) -> I
     Landing.released(req, h, prior, released)
 
 def Landing.associations(request: LandingRequest, handle: U32, published: String, observation: A.Association) -> IO(Landing):
-  +req = request
-  +h = handle
-  +pub = published
-  +obs = observation
-  match obs:
+  match observation:
     case A.AssociationRefused{step, observation}:
-      Landing.stopped(req, h, LandingAssociationRefused{step, observation, Done{Unit{}}})
+      Landing.stopped(request, handle, LandingAssociationRefused{step, observation, Done{Unit{}}})
     case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
-      Landing.old_value_checked(h, req, pub, candidate_oid, basis_oid, target_head)
+      Landing.old_value_checked(handle, request, published, candidate_oid, basis_oid, target_head)
 
 def Landing.old_value_checked(handle: U32, request: LandingRequest, published: String, candidate: String, basis: String, head: String) -> IO(Landing):
   +h = handle
@@ -178,17 +172,14 @@ def Landing.release(handle: U32, request: LandingRequest, candidate: String, bas
 # The publication goes into the attempt directory after the association, and the content is
 # derived from the associated operands rather than taken from the caller.
 def Landing.published(handle: U32, request: LandingRequest, outcome: P.IntentPublish) -> IO(Landing):
-  +h = handle
-  +req = request
-  +out = outcome
-  match out:
+  match outcome:
     case P.IntentBytesPublished{request, raw, path, content}:
-      Landing.associate_now(h, req, raw)
-    case P.PublishRefused{request, step, name, raw}: Landing.stopped(req, h, LandingPublishRefused{out, Done{Unit{}}})
-    case P.PublishExistingPending{request, raw, path}: Landing.stopped(req, h, LandingPublishRefused{out, Done{Unit{}}})
-    case P.PublishContentMismatch{request, raw, expected, found}: Landing.stopped(req, h, LandingPublishRefused{out, Done{Unit{}}})
-    case P.PublishReadbackFailed{request, publication, path, error}: Landing.stopped(req, h, LandingPublishRefused{out, Done{Unit{}}})
-    case P.PublishHostFailed{step, request, error}: Landing.stopped(req, h, LandingPublishRefused{out, Done{Unit{}}})
+      Landing.associate_now(handle, request, raw)
+    case P.PublishRefused{request, step, name, raw}: Landing.stopped(request, handle, LandingPublishRefused{outcome, Done{Unit{}}})
+    case P.PublishExistingPending{request, raw, path}: Landing.stopped(request, handle, LandingPublishRefused{outcome, Done{Unit{}}})
+    case P.PublishContentMismatch{request, raw, expected, found}: Landing.stopped(request, handle, LandingPublishRefused{outcome, Done{Unit{}}})
+    case P.PublishReadbackFailed{request, publication, path, error}: Landing.stopped(request, handle, LandingPublishRefused{outcome, Done{Unit{}}})
+    case P.PublishHostFailed{step, request, error}: Landing.stopped(request, handle, LandingPublishRefused{outcome, Done{Unit{}}})
 
 def Landing.associate_now(handle: U32, request: LandingRequest, published: String) -> IO(Landing):
   +h = handle
@@ -210,14 +201,11 @@ def Landing.claimed_associated(handle: U32, request: LandingRequest) -> IO(Landi
     Landing.association_before_publish(h, req, decision)
 
 def Landing.association_before_publish(handle: U32, request: LandingRequest, observation: A.Association) -> IO(Landing):
-  +h = handle
-  +req = request
-  +obs = observation
-  match obs:
+  match observation:
     case A.AssociationRefused{step, observation}:
-      Landing.stopped(req, h, LandingAssociationRefused{step, observation, Done{Unit{}}})
+      Landing.stopped(request, handle, LandingAssociationRefused{step, observation, Done{Unit{}}})
     case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
-      Landing.publish_now(h, req, candidate_oid, basis_oid)
+      Landing.publish_now(handle, request, candidate_oid, basis_oid)
 
 def Landing.publish_now(handle: U32, request: LandingRequest, candidate: String, basis: String) -> IO(Landing):
   +h = handle
@@ -230,14 +218,12 @@ def Landing.publish_now(handle: U32, request: LandingRequest, candidate: String,
     Landing.published(h, req, written)
 
 def Landing.decided(request: LandingRequest, claimed: Result<&1, &1, U32 & String, Maybe<U32>>) -> IO(Landing):
-  +req = request
-  +res = claimed
-  match res:
+  match claimed:
     case Fail{error}: IO.pure(Landing, LandingClaimFailed{error})
     case Done{held}:
       match held:
         case None{}: IO.pure(Landing, LandingGuardBusy{intent_target(req.intent)})
-        case Some{handle}: Landing.claimed_associated(handle, req)
+        case Some{handle}: Landing.claimed_associated(handle, request)
 
 # The guarded operands come from the caller and are checked here rather than assumed: an
 # empty guard, artifact, attempt directory or repository never reaches an effect.
