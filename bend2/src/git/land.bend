@@ -645,49 +645,57 @@ def ff_stage5_framing(target: String, candidate: String, artifact: String, repo:
   +rp = repo
   +framed = framing
   +diag = diagnostics
+  +held = Tx.str_cat("stderr bytes ", Tx.str_cat(diag, Tx.str_cat("; artifact ", art)))
   match Tx.run_res(Done{framed}):
-    case T.RRun{T.RSpawn{detail}, out}:
-      ff_stage5_blocked(Tx.str_cat("mutation could not be spawned: ", detail))
-    case T.RRun{T.SSignal{signal}, out}:
-      ff_stage5_blocked(Tx.str_cat("mutation signalled; stderr bytes ", Tx.str_cat(diag, Tx.str_cat("; stdout bytes ", Tx.str_cat(out, Tx.str_cat("; artifact ", art)))))
-    case T.RRun{T.SExit{code}, out}:
-      match U32.is_eq(code, 0):
-        case True{}: ff_stage5_postread(tg, cand, rp, art, out, diag)
-        case False{}: ff_stage5_blocked(Tx.str_cat("mutation exited nonzero; stderr bytes ", Tx.str_cat(diag, Tx.str_cat("; stdout bytes ", Tx.str_cat(out, Tx.str_cat("; artifact ", art)))))
+    case T.RSpawn{detail}: ff_stage5_blocked(Tx.str_cat("mutation could not be spawned: ", detail))
+    case T.RRun{status, out}:
+      +observed = Tx.str_cat("stdout bytes ", Tx.str_cat(out, Tx.str_cat("; ", held)))
+      ff_stage5_status(tg, cand, rp, art, observed, status)
 
-def ff_stage5_postread(target: String, candidate: String, repo: String, artifact: String, stdout: String, diagnostics: String) -> IO(FFLD):
+def ff_stage5_status(target: String, candidate: String, repo: String, artifact: String, evidence: String, status: T.Status) -> IO(FFLD):
   +tg = target
   +cand = candidate
   +rp = repo
   +art = artifact
-  +out = stdout
-  +diag = diagnostics
+  +ev = evidence
+  match status:
+    case T.SSignal{num}: ff_stage5_blocked(Tx.str_cat("mutation signalled; ", ev))
+    case T.SExit{code}:
+      match U32.is_eq(code, 0):
+        case True{}: ff_stage5_postread(tg, cand, rp, art, ev)
+        case False{}: ff_stage5_blocked(Tx.str_cat("mutation exited nonzero; ", ev))
+def ff_stage5_postread(target: String, candidate: String, repo: String, artifact: String, evidence: String) -> IO(FFLD):
+  +tg = target
+  +cand = candidate
+  +rp = repo
+  +art = artifact
+  +ev = evidence
   do IO<FFLD>:
     observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--verify", Con{"--end-of-options", Con{Tx.str_cat("refs/heads/", tg), Nil{}}}}})
-    ff_stage5_postread_seen(tg, cand, rp, art, out, diag, observed)
+    ff_stage5_postread_seen(tg, cand, art, ev, observed)
 
-def ff_stage5_postread_seen(target: String, candidate: String, repo: String, artifact: String, stdout: String, diagnostics: String, observed: T.GitOut) -> IO(FFLD):
+def ff_stage5_postread_seen(target: String, candidate: String, artifact: String, evidence: String, observed: T.GitOut) -> IO(FFLD):
   +tg = target
   +cand = candidate
-  +rp = repo
   +art = artifact
-  +out = stdout
-  +diag = diagnostics
+  +ev = evidence
   match observed:
     case T.GBroken{detail}: ff_stage5_blocked(Tx.str_cat("post-state unreadable: ", detail))
     case T.GRun{code, head}:
       match U32.is_eq(code, 0):
-        case False{}: ff_stage5_blocked(Tx.str_cat("post-state read failed; artifact ", art))
-        case True{}: ff_stage5_postread_compared(tg, cand, art, Tx.trim_nl(head))
+        case False{}: ff_stage5_blocked(Tx.str_cat("post-state read failed; ", ev))
+        case True{}: ff_stage5_postread_compared(tg, cand, art, ev, Tx.trim_nl(head))
 
-def ff_stage5_postread_compared(target: String, candidate: String, artifact: String, head: String) -> IO(FFLD):
+def ff_stage5_postread_compared(target: String, candidate: String, artifact: String, evidence: String, head: String) -> IO(FFLD):
   +tg = target
   +cand = candidate
   +art = artifact
+  +ev = evidence
   +seen = head
   match Tx.str_eq(seen, cand):
     case True{}: ff_stage5_landed(tg, cand)
-    case False{}: ff_stage5_blocked(Tx.str_cat("post-state is not the candidate; artifact ", art))
+    case False{}: ff_stage5_blocked(Tx.str_cat("post-state is not the candidate; ", ev))
+
 def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo: String, outcome: Lg.Landing) -> IO(FFLD):
   +tg = target
   +cand = candidate
