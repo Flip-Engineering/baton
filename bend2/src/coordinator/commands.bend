@@ -56,6 +56,7 @@ type Command is Data:
   KnowledgeRecord{id: String, author: String, claim: String, evidence: String, limits: String}
   KnowledgeRead{reader: String}
   KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
+  UiSubscribe{after_cursor: String, generation: String}
   Help{}
   Invalid{}
 
@@ -348,6 +349,7 @@ def sql(command: Command) -> String:
     case KnowledgeRecord{id,author,claim,evidence,limits}: ""
     case KnowledgeRead{reader}: ""
     case KnowledgePromote{id,promoter,source,destination,finding}: ""
+    case UiSubscribe{after_cursor,generation}: ""
     case Help{}: ""
     case Invalid{}: ""
 
@@ -374,8 +376,8 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"turns"),Turns{id},
       Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Bool.pick(Command, String.eq(verb,"observed-usage"),ObservedUsage{id},Invalid{}))))))))))))))
     case +verb <> +session <> +id <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"logs"),Logs{session,id,"",""},
-      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"player"),Bool.or(String.eq(verb,"session"),Bool.or(String.eq(verb,"inbox"),Bool.or(String.eq(verb,"delivery"),Bool.or(String.eq(verb,"turns"),Bool.or(String.eq(verb,"knowledge"),String.eq(verb,"worktree"))))))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"player"),PlayerRead{session},Bool.pick(Command,String.eq(verb,"session"),Session{session},Bool.pick(Command,String.eq(verb,"inbox"),Inbox{session},Bool.pick(Command,String.eq(verb,"delivery"),Delivery{session},Bool.pick(Command,String.eq(verb,"turns"),Turns{session},Bool.pick(Command,String.eq(verb,"knowledge"),KnowledgeRead{session},Worktree{session}))))))},Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Invalid{}))))))
+      Bool.pick(Command,String.eq(verb,"ui-subscribe"),UiSubscribe{session,id},Bool.pick(Command,String.eq(verb,"logs"),Logs{session,id,"",""},
+      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"player"),Bool.or(String.eq(verb,"session"),Bool.or(String.eq(verb,"inbox"),Bool.or(String.eq(verb,"delivery"),Bool.or(String.eq(verb,"turns"),Bool.or(String.eq(verb,"knowledge"),String.eq(verb,"worktree"))))))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"player"),PlayerRead{session},Bool.pick(Command,String.eq(verb,"session"),Session{session},Bool.pick(Command,String.eq(verb,"inbox"),Inbox{session},Bool.pick(Command,String.eq(verb,"delivery"),Delivery{session},Bool.pick(Command,String.eq(verb,"turns"),Turns{session},Bool.pick(Command,String.eq(verb,"knowledge"),KnowledgeRead{session},Worktree{session}))))))},Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Invalid{})))))))
     case +verb <> +id <> +one <> +two <> Nil{}:
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,one,two,""},
       Bool.pick(Command,String.eq(verb,"receiver"),Receiver{id,one,two},Bool.pick(Command, String.eq(verb,"ensemble"),Ensemble{id,one,two},Bool.pick(Command, String.eq(verb,"native-reply"),NativeReply{id,one,two},
@@ -436,4 +438,28 @@ law remote_tip_parser_keeps_the_declared_names:
   {parse(["remote-tip",repo,branch,remote]) == RemoteTip{repo,branch,remote} : Command}
 
 def remote_tip_parser_keeps_the_declared_names(repo,branch,remote):
+  {==}
+
+law ui_subscription_parser_keeps_the_cursor_and_generation:
+  for +after_cursor: String
+  for +generation: String
+  {parse(["ui-subscribe",after_cursor,generation]) == UiSubscribe{after_cursor,generation} : Command}
+
+def ui_subscription_parser_keeps_the_cursor_and_generation(after_cursor,generation):
+  {==}
+
+law ui_subscription_parser_rejects_missing_generation:
+  for +after_cursor: String
+  {parse(["ui-subscribe",after_cursor]) == Invalid{} : Command}
+
+def ui_subscription_parser_rejects_missing_generation(after_cursor):
+  {==}
+
+law ui_subscription_parser_rejects_extra_arguments:
+  for +after_cursor: String
+  for +generation: String
+  for +extra: String
+  {parse(["ui-subscribe",after_cursor,generation,extra]) == Invalid{} : Command}
+
+def ui_subscription_parser_rejects_extra_arguments(after_cursor,generation,extra):
   {==}

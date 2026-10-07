@@ -8,9 +8,9 @@ def notice_lines(handle: U32) -> IO(Unit):
   do IO<Unit>:
     result : Result<&1,&1,U32 & String,String> <- Instance.notice(handle)
     match result:
-      case Fail{error}:
+      case Fail{(code,text)}:
         closed : Result<&1,&1,U32 & String,Unit> <- Instance.unsubscribe(handle)
-        IO.die(Unit,2,"The native change subscription ended: " ++ error)
+        IO.die(Unit,code,"The native change subscription ended: " ++ text)
       case Done{+notice}:
         written : Unit <- IO.write(notice ++ "\n")
         notice_lines(handle)
@@ -21,7 +21,7 @@ def run(db: String, after_cursor: String, generation: String) -> IO(Unit):
   do IO<Unit>:
     result : Result<&1,&1,U32 & String,U32 & String> <- Instance.subscribe(db,after_cursor,generation)
     match result:
-      case Fail{error}: IO.die(Unit,2,"The native owner subscription failed: " ++ error)
+      case Fail{(code,text)}: IO.die(Unit,code,"The native owner subscription failed: " ++ text)
       case Done{(handle,readiness)}:
         ready : Unit <- IO.write(readiness ++ "\n")
         notice_lines(handle)
