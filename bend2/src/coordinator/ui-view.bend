@@ -96,7 +96,7 @@ def open_browser(+db: String, +url: String) -> IO(Unit):
 def finish(status: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match status:
     case Done{+text}: IO.write("Orchestra live view server exited: " ++ text)
-    case Fail{+error}: IO.die(Unit,2,"The view server wait failed: " ++ error_text(error))
+    case Fail{error}: IO.die(Unit,2,"The view server wait failed: " ++ error_text(error))
 
 def serving(db: String, reader: String, +url: String, handle: U32, line: String) -> IO(Unit):
   do IO<Unit>:
@@ -109,7 +109,7 @@ def serving(db: String, reader: String, +url: String, handle: U32, line: String)
 
 def serve(db: String, reader: String, url: String, handle: U32, first: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
   match first:
-    case Fail{+error}:
+    case Fail{error}:
       IO.die(Unit,2,"The view server address could not be read: " ++ error_text(error) ++ " See " ++ db ++ ".view.stderr.")
     case Done{None{}}:
       IO.die(Unit,2,"The view server exited before reporting its address; the port may be in use. Pass another PORT. See " ++ db ++ ".view.stderr.")
@@ -118,7 +118,7 @@ def serve(db: String, reader: String, url: String, handle: U32, first: Result<&1
 
 def run_started(db: String, reader: String, url: String, spawned: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
   match spawned:
-    case Fail{+error}:
+    case Fail{error}:
       IO.die(Unit,2,"The view server could not start: " ++ error_text(error))
     case Done{+handle}:
       do IO<Unit>:
