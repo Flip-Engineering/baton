@@ -566,10 +566,10 @@ type PlanFail is Data:
   PfNone{}
   PfAt{reason: PlanReason}
 
-def plan_fail_first(+fail: PlanFail, +reason: PlanReason) -> PlanFail:
+def plan_fail_first(+fail: PlanFail, +candidate: PlanFail) -> PlanFail:
   match fail:
     case PfAt{r}: fail
-    case PfNone{}: PfAt{reason}
+    case PfNone{}: candidate
 
 def steps_append(+xs: Steps, +add: Steps) -> Steps:
   match xs:
