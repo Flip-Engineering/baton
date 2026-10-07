@@ -154,6 +154,11 @@ class SharedInstance(unittest.TestCase):
         self.assertNotIn(os.getpid(), parents)
         owners = self.owner_processes()
         self.assertEqual(len(owners), 1, owners)
+        owner_pid = int(owners[0].split()[0])
+        self.assertEqual(parents, {owner_pid}, (owners, summaries))
+        print('evidence owner', owners[0].strip())
+        print('evidence natives', [summary['pid'] for summary in summaries])
+        print('evidence outputs', [output.replace('\n', '|') for output in outputs])
 
     def test_second_owner_for_one_database_is_refused(self):
         directory, child = self.begin('a0')
@@ -163,6 +168,7 @@ class SharedInstance(unittest.TestCase):
         self.assertIn('owner-refused:', result.stdout)
         self.assertIn('busy', result.stdout.lower())
         self.assertEqual(len(self.owner_processes()), 1)
+        print('evidence second-owner', result.stdout.strip())
 
     def test_multiply_linked_database_is_refused(self):
         link = self.home / 'alias.db'
@@ -171,6 +177,7 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('owner-refused:', result.stdout)
         self.assertIn('link', result.stdout.lower())
+        print('evidence multiply-linked', result.stdout.strip())
 
     def test_observer_loss_keeps_native_work_and_retained_output(self):
         directory, child = self.begin('held', mode='hold', payload='one\n')
@@ -188,6 +195,8 @@ class SharedInstance(unittest.TestCase):
         self.hold(log, 'echo:two')
         self.write(directory, 'exit\n')
         self.hold(log, 'native-exit 0')
+        print('evidence native-pid', summary['pid'], 'alive-after-observer-kill', True)
+        print('evidence recovery-log', text.replace('\n', '|'))
 
     def test_retired_capability_refuses_the_old_generation(self):
         directory, child = self.begin('cycle')
@@ -195,6 +204,7 @@ class SharedInstance(unittest.TestCase):
         self.assertIn('retire-ok', output)
         self.assertIn('stale-write-failed:', output)
         self.assertNotIn('stale-write-ok', output)
+        print('evidence retirement', output.replace('\n', '|'))
 
     def test_shutdown_releases_the_database_for_a_new_owner(self):
         directory, child = self.begin('a0')
@@ -211,6 +221,8 @@ class SharedInstance(unittest.TestCase):
         output = self.wait_run(second)
         self.assertIn('echo:again', output)
         self.assertEqual(len(self.owner_processes()), 1)
+        print('evidence after-shutdown', self.owner_processes()[0].strip())
+        print('evidence new-attempt', output.replace('\n', '|'))
 
 
 if __name__ == '__main__':
