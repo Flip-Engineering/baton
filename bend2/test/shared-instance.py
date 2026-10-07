@@ -337,7 +337,7 @@ class SharedInstance(unittest.TestCase):
         _, _, _, record, _ = self.election_paths()
         token = struct.unpack_from('=Q', record.read_bytes(), 0)[0]
         self.write_checkpoint(directory, token ^ 0xFFFFFFFFFFFFFFFF,
-                              (directory / 'stdout').stat().st_size)
+                              (directory / 'stdout').stat().st_size, '{"reducer":"foreign"}')
         log = directory / 'observer.log'
         text = self.hold(log, 'echo:one')
         self.assertIn('"role": "native"', text,
