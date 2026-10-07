@@ -5,6 +5,7 @@ import ./engines-select.bend as Sel
 import ./engines.bend as Eng
 import ./engines-decl.bend as Decl
 import ./native-request.bend as NativeRequest
+import ./native-declaration.bend as NativeDeclaration
 import ./engines.bend as Eng
 import ../json/canonical.bend as J
 
@@ -41,6 +42,52 @@ law native_request_adapter_refuses_unknown_request_members:
   {NativeRequest.request_validation(J.Jobj{J.Jpair{"unexpected", J.Jnull{}, J.Jnil{}}}) == NativeRequest.RequestDecodeRefused{"unknownRequestField"} : NativeRequest.RequestDecode}
 
 def native_request_adapter_refuses_unknown_request_members():
+  {==}
+
+def declaration_object() -> J.Json:
+  J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-native-module-declaration-v1"},
+  J.Jpair{"moduleId", J.Jstr{"m1"},
+  J.Jpair{"revision", J.Jstr{"r1"},
+  J.Jpair{"protocolVersion", J.Jstr{"2"},
+  J.Jpair{"packageIdentity", J.Jstr{"pkg-m1"},
+  J.Jpair{"entry", J.Jobj{J.Jpair{"artifact", J.Jstr{"native-provider.mjs"},
+    J.Jpair{"argv", J.Jarr{J.Jstr{"--experimental-strip-types"}, J.Jnil{}}, J.Jnil{}}}},
+  J.Jpair{"artifactIdentities", J.Jarr{J.Jobj{J.Jpair{"packagePath", J.Jstr{"native-provider.mjs"},
+    J.Jpair{"sha256", J.Jstr{"aa"}, J.Jpair{"role", J.Jstr{"provider"}, J.Jnil{}}}}, J.Jnil{}},
+  J.Jpair{"dependencies", J.Jarr{J.Jnil{}, J.Jnil{}},
+  J.Jpair{"schemaIdentities", J.Jarr{J.Jstr{"sub"}, J.Jarr{J.Jstr{"opt"}, J.Jarr{J.Jstr{"res"}, J.Jarr{J.Jstr{"ref"}, J.Jarr{J.Jstr{"evt"}, J.Jnil{}}}}}},
+  J.Jpair{"applicability", J.Jarr{J.Jnil{}, J.Jnil{}},
+  J.Jpair{"operations", J.Jarr{J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-native-operation-v1"},
+    J.Jpair{"operation", J.Jstr{"sourceAnalysis"},
+    J.Jpair{"implements", J.Jstr{"sourceAnalysis"},
+    J.Jpair{"subjectSchema", J.Jstr{"sub"}, J.Jpair{"optionsSchema", J.Jstr{"opt"},
+    J.Jpair{"projections", J.Jarr{J.Jstr{"definition"}, J.Jnil{}},
+    J.Jpair{"effects", J.Jarr{J.Jnil{}, J.Jnil{}},
+    J.Jpair{"execution", J.Jstr{"managed"}, J.Jpair{"resultSchema", J.Jstr{"res"},
+    J.Jpair{"referenceSchema", J.Jstr{"ref"}, J.Jpair{"eventSchema", J.Jstr{"evt"},
+    J.Jpair{"lifetimeProfile", J.Jstr{""}, J.Jpair{"dependencies", J.Jarr{J.Jnil{}, J.Jnil{}}, J.Jnil{}}}}}}}}}}}}}, J.Jnil{}}, J.Jnil{}}}}}}}}}}
+
+def expected_declaration() -> Decl.Decl:
+  Decl.Decl{"1", "m1", "r1", "2", "pkg-m1",
+    Decl.EProcess{Decl.Art{"native-provider.mjs", "aa", "entry"}, Eng.ss_one("--experimental-strip-types")},
+    Decl.ArtsNil{},
+    Decl.OpsCons{Decl.Op{"sourceAnalysis", "sourceAnalysis", "sub", "opt",
+      Eng.ss_one("definition"), Eng.ss_empty(), Decl.ExManaged{}, "res", "ref", "evt", "", Decl.ModRefsNil{}},
+      Decl.OpsNil{}}, Decl.RulesNil{}}
+
+law installed_declaration_adapter_preserves_typed_module_contract_fields:
+  {NativeDeclaration.decode(declaration_object(), "d1") == NativeDeclaration.DeclarationDecoded{
+    expected_declaration(), Decl.Inv{Decl.ArtsCons{Decl.Art{"native-provider.mjs", "aa", "provider"}, Decl.ArtsNil{}},
+      Eng.ss_of_list(["sub", "opt", "res", "ref", "evt"]),
+      Decl.DigsCons{Decl.Dg{"m1", "d1"}, Decl.DigsNil{}}}} : NativeDeclaration.DeclarationDecode}
+
+def installed_declaration_adapter_preserves_typed_module_contract_fields():
+  {==}
+
+law installed_declaration_adapter_refuses_missing_generic_schema_contract:
+  {NativeDeclaration.decode(J.Jobj{J.Jnil{}}, "d1") == NativeDeclaration.DeclarationRefused{"nativeModuleDeclaration"} : NativeDeclaration.DeclarationDecode}
+
+def installed_declaration_adapter_refuses_missing_generic_schema_contract():
   {==}
 
 law native_invocation_frame_preserves_typed_v2_values:
