@@ -548,14 +548,19 @@ law a_cancelled_registration_refuses_registration:
 def a_cancelled_registration_refuses_registration(identity,owner,capability,revision,other_revision,database,request,session,adoptions,lease_references,armed,event,outstanding,pending):
   {==}
 
-# An armed registration refuses repeated arming: on the same revision the
-# busy refusal preserves every stored field and records a pending readiness
-# duty when an occurrence is outstanding; a cancelled registration returns
-# unchanged with its pending duty preserved.
-def armed_refusal_expected(+registration: Registration) -> Registration:
-  match reg_cancelled_of(registration):
-    case True{}: registration
-    case other: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),reg_armed_of(registration),reg_event_retained_of(registration),reg_cancelled_of(registration),reg_outstanding_of(registration),Bool.or(reg_pending_of(registration),Bool.not(outstanding_is_none(registration)))}
+# Presence of a stored occurrence, matched directly on the explicit value.
+def outstanding_present_of(outstanding: Maybe<U32>) -> Bool:
+  match outstanding:
+    case None{}: False{}
+    case Some{value}: True{}
+
+# Expected armed-refusal pending: a cancelled registration keeps its
+# pending duty; otherwise the busy refusal records a pending duty when an
+# occurrence is outstanding.
+def armed_refusal_pending(cancelled: Bool, outstanding_present: Bool, pending: Bool) -> Bool:
+  match cancelled:
+    case True{}: pending
+    case other: Bool.or(pending,outstanding_present)
 
 # The armed registration observes the same revision in this law; the
 # changed-revision notification path is separate production behavior.
@@ -573,7 +578,7 @@ law an_armed_registration_refuses_rearming_and_records_outstanding_readiness:
   for +cancelled: Bool
   for +outstanding: Maybe<U32>
   for +pending: Bool
-  {register_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,True{},event,cancelled,outstanding,pending},Generation{owner,capability,revision}) == armed_refusal_expected(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,True{},event,cancelled,outstanding,pending}) : Registration}
+  {register_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,True{},event,cancelled,outstanding,pending},Generation{owner,capability,revision}) == Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,True{},event,cancelled,outstanding,armed_refusal_pending(cancelled,outstanding_present_of(outstanding),pending)} : Registration}
 
 def an_armed_registration_refuses_rearming_and_records_outstanding_readiness(identity,owner,capability,revision,database,request,session,adoptions,lease_references,event,cancelled,outstanding,pending):
   {==}
