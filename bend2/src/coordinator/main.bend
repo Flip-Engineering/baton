@@ -78,7 +78,7 @@ def stored_command_entry_uses_the_actual_store(db,command):
   {==}
 
 def usage() -> String:
-  "usage: baton2 DATABASE COMMAND ARGS\nstart SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE\nreceiver SESSION HARNESS_CMD OUTPUT_LOG\ndispatch-file ID SENDER RECIPIENT KIND PATH\ndispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\nstatus --pretty\nplayers --pretty\norchestra --pretty\npending --pretty\nplayer ID --pretty\nsession ID --pretty\ninbox ID --pretty\ndelivery ID --pretty\nturns PLAYER_ID --pretty\nknowledge READER --pretty\nworktree ID --pretty\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nland PLAYER_ID REPO TARGET_BRANCH\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nremote-tip REPO BRANCH REMOTE\nobserved-usage SESSION\nlogs SESSION [LEVEL [BUDGET_BYTES [KEEP_SEGMENTS]]]\nlogs-storage\nlogs-clean SESSION\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session\nComplete stored input: delivery MESSAGE_ID returns the full body and receipt of any message; turns PLAYER_ID lists turn history with report bodies; players reports latestReport and latestReportId. Acknowledged messages leave inbox and pending and remain readable by ID."
+  "usage: baton2 DATABASE COMMAND ARGS\nstart SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE\nreceiver SESSION HARNESS_CMD OUTPUT_LOG\ndispatch-file ID SENDER RECIPIENT KIND PATH\ndispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\nstatus --pretty\nplayers --pretty\norchestra --pretty\npending --pretty\nplayer ID --pretty\nsession ID --pretty\ninbox ID --pretty\ndelivery ID --pretty\nturns PLAYER_ID --pretty\nknowledge READER --pretty\nworktree ID --pretty\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nland PLAYER_ID REPO TARGET_BRANCH [--commit COMMIT]\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES [--commit COMMIT]\npush REPO BRANCH REMOTE\nremote-tip REPO BRANCH REMOTE\nobserved-usage SESSION\nlogs SESSION [LEVEL [BUDGET_BYTES [KEEP_SEGMENTS]]]\nlogs-storage\nlogs-clean SESSION\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session\nland and land-checked default to the recorded branch tip. Add --commit COMMIT to select a reviewed commit from that branch while later work remains on the branch. Native selection verifies the registered workspace repository and selected commit ancestry before landing effects. Use a full reviewed object ID to name the intended source. The checked form runs the existing target/candidate checks on the selected source. Inspect the result status; selection does not grant review or landing authority.\nComplete stored input: delivery MESSAGE_ID returns the full body and receipt of any message; turns PLAYER_ID lists turn history with report bodies; players reports latestReport and latestReportId. Acknowledged messages leave inbox and pending and remain readable by ID."
 
 # A refused log command names its rule on stderr with status 2, as the stored
 # commands do.
@@ -124,6 +124,10 @@ def execute(db: String, command: C.Command) -> IO(Unit):
       Recruit.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
     case C.Land{player,repo,target}:
       Land.land_player(db,player,repo,target)
+    case C.LandAt{player,repo,target,commit}:
+      Land.land_player_at(db,player,repo,target,commit)
+    case C.LandCheckedAt{player,repo,target,check,files,commit}:
+      Land.land_checked_player_at(db,player,repo,target,check,files,commit)
     case C.LandChecked{player,repo,target,check,files}:
       Land.land_checked_player(db,player,repo,target,check,files)
     case C.Push{repo,branch,remote}:
@@ -416,4 +420,30 @@ law native_main_passes_the_complete_runtime_arguments:
     cli(args)) : IO(Unit)}
 
 def native_main_passes_the_complete_runtime_arguments():
+  {==}
+
+# The reviewed-source entries dispatch to the reviewed landing callers with the
+# caller's own commit, so the entry cannot fall back to the recorded branch tip.
+law reviewed_land_entry_uses_selected_source:
+  for db: String
+  for player: String
+  for repo: String
+  for target: String
+  for commit: String
+  {execute(db,C.LandAt{player,repo,target,commit}) == Land.land_player_at(db,player,repo,target,commit) : IO(Unit)}
+
+def reviewed_land_entry_uses_selected_source(db,player,repo,target,commit):
+  {==}
+
+law reviewed_checked_land_entry_preserves_selected_source_and_checks:
+  for db: String
+  for player: String
+  for repo: String
+  for target: String
+  for check: String
+  for files: String
+  for commit: String
+  {execute(db,C.LandCheckedAt{player,repo,target,check,files,commit}) == Land.land_checked_player_at(db,player,repo,target,check,files,commit) : IO(Unit)}
+
+def reviewed_checked_land_entry_preserves_selected_source_and_checks(db,player,repo,target,check,files,commit):
   {==}

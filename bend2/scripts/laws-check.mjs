@@ -1090,6 +1090,49 @@ MUTATIONS.push(
   },
 );
 
+MUTATIONS.push(
+  {"name": "reviewed-selection-skips-branch-and-ancestry", "file": "bend2/src/coordinator/land.bend", "find": "    case SelPicked{commitOid}:\n      do IO<Selected>:\n        b : Selected <- sel_branch(repo, branch)\n        sel_ancestor_after_branch(b, repo, commitOid)", "replace": "    case SelPicked{commitOid}: IO.pure(Selected, SelPicked{commitOid})", "law": "sel_branch_after_commit_picked_resolves_the_recorded_branch_then_the_ancestry"},
+  {"name": "reviewed-selection-stops-after-the-commit-read", "file": "bend2/src/coordinator/land.bend", "find": "    c : Selected <- sel_commit(repo, commit)\n    sel_branch_after_commit(c, repo, branch, commit)", "replace": "    c : Selected <- sel_commit(repo, commit)\n    IO.pure(Selected, c)", "law": "select_reviewed_resolves_then_checks_against_the_recorded_branch"},
+  {"name": "reviewed-selection-skips-the-ancestry-read", "file": "bend2/src/coordinator/land.bend", "find": "    case SelPicked{branchOid}: sel_ancestor(repo, oid, branchOid)", "replace": "    case SelPicked{branchOid}: IO.pure(Selected, SelPicked{oid})", "law": "sel_ancestor_after_branch_picked_continues_into_the_ancestry_read"},
+  {"name": "reviewed-selection-drops-end-of-options", "file": "bend2/src/coordinator/land.bend", "find": "Git.runGit(r2, [\"rev-parse\", \"--verify\", \"--quiet\", \"--end-of-options\", Tx.str_cat(c2, \"^{commit}\")])", "replace": "Git.runGit(r2, [\"rev-parse\", \"--verify\", \"--quiet\", Tx.str_cat(c2, \"^{commit}\")])", "law": "sel_commit_reads_the_requested_commit_with_the_literal_argv"},
+  {"name": "reviewed-selection-reads-a-tag-for-the-recorded-branch", "file": "bend2/src/coordinator/land.bend", "find": "Git.runGit(r2, [\"rev-parse\", \"--verify\", \"--quiet\", Tx.str_cat(\"refs/heads/\", b2)])", "replace": "Git.runGit(r2, [\"rev-parse\", \"--verify\", \"--quiet\", Tx.str_cat(\"refs/tags/\", b2)])", "law": "sel_branch_reads_the_recorded_branch_with_the_literal_argv"},
+  {"name": "reviewed-selection-swaps-ancestry-arguments", "file": "bend2/src/coordinator/land.bend", "find": "Git.runGit(r2, [\"merge-base\", \"--is-ancestor\", o2, b2])", "replace": "Git.runGit(r2, [\"merge-base\", \"--is-ancestor\", b2, o2])", "law": "sel_ancestor_runs_the_literal_ancestry_argv"},
+  {"name": "reviewed-selection-swaps-recorded-branch-decisions", "file": "bend2/src/coordinator/land.bend", "find": "      Bool.pick(Selected, U32.is_eq(code, 0),\n        SelPicked{Tx.trim_nl(out)},\n        Bool.pick(Selected, U32.is_eq(code, 1),\n          SelRefused{\"The recorded branch is missing from the recorded repository: \" ++ branch},\n          SelFailed{code, Tx.cmd_failed(\"git rev-parse --verify\") ++ \" (exit \" ++ U32.show(code) ++ \"): \" ++ Tx.trim_nl(out)}))", "replace": "      Bool.pick(Selected, U32.is_eq(code, 0),\n        SelPicked{Tx.trim_nl(out)},\n        Bool.pick(Selected, U32.is_eq(code, 1),\n          SelFailed{1, Tx.cmd_failed(\"git rev-parse --verify\") ++ \" (exit 1): \" ++ Tx.trim_nl(out)},\n          SelRefused{\"The recorded branch is missing from the recorded repository: \" ++ branch}))", "law": "reviewed_source_recorded_branch_keeps_three_decisions"},
+  {
+    name: 'reviewed-source-entry-reads-a-branch-first',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '    r2 : FFLD <- ff_go2(FFNext{wc, ""}, rp, tg)',
+    replace: '    r1 : FFLD <- ff_stage1(rp, wc)\n    r2 : FFLD <- ff_go2(r1, rp, tg)',
+    law: 'm3a_the_reviewed_source_entry_starts_at_the_containment_stage',
+  },
+);
+
+for (const [caller, landing] of [
+  ['land_player_at', '    outcome : G.LandOutcome <- GitLand.land_fast_forward_at(repo, oid, target)'],
+  ['land_checked_player_at', '    run_checked(db, player, repo, target, check, files, oid)'],
+]) {
+  const body = [
+    '    branch : String <- require_branch(line(branch_raw))',
+    '    associated : Unit <- require_association(db, player, repo)',
+    '    picked : Selected <- select_reviewed(repo, branch, commit)',
+    '    oid : String <- selected_or_die(picked, player)',
+    landing,
+  ].join('\n');
+  MUTATIONS.push(
+    {name: `${caller}-omits-the-repository-association`, file: 'bend2/src/coordinator/land.bend',
+      find: body, replace: body.replace('    associated : Unit <- require_association(db, player, repo)\n', ''),
+      law: `${caller}_runs_the_reviewed_source_in_order`},
+    {name: `${caller}-lands-the-recorded-branch`, file: 'bend2/src/coordinator/land.bend',
+      find: body, replace: body.replace('    branch :', '    +branch :').replace(landing, landing.replace(/\boid\b/, 'branch')),
+      law: `${caller}_runs_the_reviewed_source_in_order`},
+  );
+}
+
+MUTATIONS.push(
+  {"name": "reviewed-land-parser-substitutes-the-selector", "file": "bend2/src/coordinator/commands.bend", "find": "LandAt{id,one,two,four}", "replace": "LandAt{id,one,two,id}", "law": "reviewed_land_parser_preserves_literal_selector"},
+  {"name": "reviewed-land-entry-lands-the-recorded-branch", "file": "bend2/src/coordinator/main.bend", "find": "Land.land_player_at(db,player,repo,target,commit)", "replace": "Land.land_player(db,player,repo,target)", "law": "reviewed_land_entry_uses_selected_source"},
+);
+
 for (const mutation of MUTATIONS) {
   const copied = join(SCRATCH, mutation.file);
   cpSync(join(ROOT, mutation.file), copied);

@@ -1,4 +1,6 @@
-# land: one squashed landing of a committed worker tip onto a target branch.
+# land: two entries that advance a target branch onto a commit.
+#
+# The checked entry squashes a committed worker tip onto the target.
 # The candidate is prepared in a scratch worktree detached at the target tip,
 # so the worker's own commits and worktree stay untouched. Each selected
 # check file runs on the candidate and on a detached tree at the target tip;
@@ -15,6 +17,13 @@
 # worker commit the target already contains answers LAlready without
 # preparing anything. LAlready names the worker commit on the fast-forward and
 # the checked path alike.
+#
+# The fast-forward entry advances the target branch onto a commit the target
+# already contains the basis for, through the same containment, basis and CAS
+# stages, and runs no check. It takes the commit to advance to in its
+# worker-commit slot: either a branch name it resolves in stage 1, or, for the
+# reviewed-source entry land_fast_forward_at, an object the caller resolved,
+# which enters at the containment stage.
 #
 # One branch commit retains its full message. Several branch commits use the
 # tip subject and list every subject since the merge-base with the target.
@@ -506,6 +515,21 @@ def land_fast_forward(repo: String, workerBranch: String, target: String) -> IO(
   do IO<T.LandOutcome>:
     r1 : FFLD <- ff_stage1(rp, workerBranch)
     r2 : FFLD <- ff_go2(r1, rp, tg)
+    r3 : FFLD <- ff_go3(r2, rp, tg)
+    r4 : FFLD <- ff_go4(r3, rp, tg)
+    r5 : FFLD <- ff_go5(r4, rp, tg)
+    ff_answer(r5)
+
+# The reviewed-source entry: the caller has already resolved an immutable commit
+# and the pipeline starts after branch resolution, so no branch name is read
+# here. Stages 2 to 5, their outcome type and the CAS target update are the same
+# ones the branch entry uses.
+def land_fast_forward_at(repo: String, +workerCommit: String, target: String) -> IO(T.LandOutcome):
+  +rp = repo
+  +tg = target
+  +wc = workerCommit
+  do IO<T.LandOutcome>:
+    r2 : FFLD <- ff_go2(FFNext{wc, ""}, rp, tg)
     r3 : FFLD <- ff_go3(r2, rp, tg)
     r4 : FFLD <- ff_go4(r3, rp, tg)
     r5 : FFLD <- ff_go5(r4, rp, tg)

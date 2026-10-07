@@ -287,6 +287,8 @@ class CodexRootAdapter(unittest.TestCase):
         self.assertIn('status', stdin_content)
         self.assertIn('players', stdin_content)
         self.assertIn('land', stdin_content)
+        self.assertIn('[--commit COMMIT]', stdin_content)
+        self.assertIn('recorded branch tip', stdin_content)
 
     def test_adapter_passes_json_and_exec_flags(self):
         """Codex is started with exec --json flags."""

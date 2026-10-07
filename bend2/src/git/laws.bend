@@ -823,6 +823,32 @@ law m3a_the_fast_forward_landing_runs_every_stage_in_order:
 def m3a_the_fast_forward_landing_runs_every_stage_in_order(repo, workerBranch, target):
   {==}
 
+# M-3a: the reviewed-source entry runs the containment, basis, fast-forward and
+# advance stages in order over the caller's resolved object held in the
+# worker-commit slot, and answers the outcome it reached. The composition is
+# written here independently of L.land_fast_forward_at, so an entry that read a
+# branch name, entered a squashed-landing stage, dropped a stage or reordered
+# two breaks this proof.
+def reviewed_source_stages(repo: String, workerCommit: String, target: String) -> IO(T.LandOutcome):
+  +rp = repo
+  +tg = target
+  +wc = workerCommit
+  do IO(T.LandOutcome):
+    r2 : L.FFLD <- L.ff_go2(L.FFNext{wc, ""}, rp, tg)
+    r3 : L.FFLD <- L.ff_go3(r2, rp, tg)
+    r4 : L.FFLD <- L.ff_go4(r3, rp, tg)
+    r5 : L.FFLD <- L.ff_go5(r4, rp, tg)
+    L.ff_answer(r5)
+
+law m3a_the_reviewed_source_entry_starts_at_the_containment_stage:
+  for repo: String
+  for workerCommit: String
+  for target: String
+  {L.land_fast_forward_at(repo, workerCommit, target) == reviewed_source_stages(repo, workerCommit, target) : IO(T.LandOutcome)}
+
+def m3a_the_reviewed_source_entry_starts_at_the_containment_stage(repo, workerCommit, target):
+  {==}
+
 # M-3a: every blocking line the judging named blocks the landing with its
 # content.
 law m3a_judged_block_names_news:

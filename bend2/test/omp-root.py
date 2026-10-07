@@ -320,6 +320,8 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertIn('status', args_text)
         self.assertIn('players', args_text)
         self.assertIn('land', args_text)
+        self.assertIn('[--commit COMMIT]', args_text)
+        self.assertIn('recorded branch tip', args_text)
 
     def test_adapter_passes_print_and_json_mode(self):
         """OMP is started with --print --mode json flags."""

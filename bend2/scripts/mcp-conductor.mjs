@@ -278,6 +278,7 @@ const TOOLS = [
         player: { type: 'string', description: 'Player session ID' },
         repo: { type: 'string', description: 'Repository path' },
         target: { type: 'string', description: 'Target branch name' },
+        commit: { type: 'string', description: 'Optional reviewed source commit; native verifies ancestry of the recorded branch. Omission selects its tip.' },
       },
       required: ['player', 'repo', 'target'],
       additionalProperties: false,
@@ -292,6 +293,7 @@ const TOOLS = [
         player: { type: 'string', description: 'Player session ID' },
         repo: { type: 'string', description: 'Repository path' },
         target: { type: 'string', description: 'Target branch name' },
+        commit: { type: 'string', description: 'Optional reviewed source commit; native verifies ancestry of the recorded branch. Omission selects its tip.' },
         check: { type: 'string', description: 'Check script path' },
         files: { type: 'string', description: 'Space-separated list of files to check' },
       },
@@ -481,6 +483,12 @@ function handleMessage(msg) {
   sendError(msg.id, -32601, `Method not found: ${msg.method}`);
 }
 
+function landCommit(args) {
+  if (args.commit === undefined) return [];
+  if (typeof args.commit !== 'string') throw new Error('commit must be a string');
+  return ['--commit', args.commit];
+}
+
 function handleToolCall(msg) {
   const { name, arguments: args } = msg.params;
   const player = args?.player ?? args?.worker;
@@ -542,10 +550,11 @@ function handleToolCall(msg) {
         result = coord('worktree', player);
         break;
       case 'baton2_land':
-        result = coord('land', player, args.repo, args.target);
+        result = coord('land', player, args.repo, args.target, ...landCommit(args));
         break;
       case 'baton2_land_checked':
-        result = coord('land-checked', player, args.repo, args.target, args.check, args.files);
+        result = coord('land-checked', player, args.repo, args.target, args.check, args.files,
+          ...landCommit(args));
         break;
       case 'baton2_players':
         result = coord('players');
