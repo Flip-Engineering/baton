@@ -260,6 +260,64 @@ integer type; the host refuses a malformed or oversized value with `EINVAL` or
 `EOVERFLOW` instead of truncating it. A caller with no recorded incarnation
 passes `"0"`, which reports `gap` and still delivers every later commit.
 
+## Attempt authority for adoption and custody
+
+An adoption or a custody start is authorized by the attempt's durable admission
+record, not by the presence of files in its directory. `br_attempt_prepare` writes
+`<attempt>/admission` for every attempt it creates, and both `br_attach_orphan` and
+`br_keeper_start` verify it before anything runs:
+
+- the record's schema and integrity check, which covers the record and the
+  recorded canonical path;
+- the attempt directory's own device and inode, so a record copied into another
+  directory is refused even when its path field is rewritten;
+- the canonical path string;
+- the device and inode of the canonical database, when the caller names one;
+- the device and inode of the lock file behind the session guard descriptor the
+  admitting call held, when the record states one.
+
+Adoption additionally requires the `launch` marker, a parseable manifest, and for
+a prepared attempt the artifact bytes matching the SHA-256 the manifest binds. The
+native birth and spool bindings are then applied as before. Every refusal writes
+its reason to `<attempt>/admission-error`; a directory with no record is refused
+without writing into it, because it is not this owner's directory.
+
+A refusal never starts a child, and the corrected path is verified by
+`test_adoption_requires_durable_attempt_authority`, which asserts a decoy holding
+only copies of another attempt's birth and spool, a prepared artifact changed after
+launch, a manifest whose first byte was flipped, a removed launch marker and a
+different session guard are each refused while the valid original still adopts its
+own native process.
+
+## Managed lifecycle
+
+`Instance.prepare`, `Instance.start`, `Instance.cancel` and `Instance.state` are
+the dormant-task lifecycle the native context driver composes against. The
+signatures and the state facts are stated in the coordination message that carries
+this contract; the effects are not implemented yet.
+
+- `prepare` creates dormant custody in the attempt directory and records
+  `sha256(expected)` as the identity fixed at preparation, so the owner, query,
+  database binding, role, incarnation and request identity cannot be invented by
+  whichever caller first sends a grant.
+- `start` spawns only when the presented grant hashes to the identity fixed at
+  preparation, and only once: the spawn latch is durable before the spawn, a
+  repeated grant returns the same state, and a different grant is refused.
+- `cancel` records a replay-safe rejection before any start, and is refused after
+  a successful start because the child exists.
+- `state` reports observed facts only, derived from durable files and the live
+  custody record.
+
+The prepared-fields contract root stated for the driver — dormant task, protocol
+and spool, with the requesting observer attached through the ready handshake and
+no configured starter spawned — needs one change in the keeper that is not yet
+made: `br_keeper_start` currently creates custody and spawns the program in one
+step, so a dormant task has no protocol to observe before its start. The change is
+to create the pipes, spool and listener, report readiness with no pid, and spawn
+the program only when the owner forwards the start command to the keeper, with the
+latch written before that spawn. Until that lands, `prepare` cannot report
+`observer_ready`, and the driver must not compose against it.
+
 ## Caller changes this interface requires
 
 1. `receive.bend:selected` — `ProcessChild.retain(attempt,argv,cwd,stderr,initial,keep_stdin,lock,recovery_argv)`
