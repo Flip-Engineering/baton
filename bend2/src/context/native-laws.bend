@@ -68,7 +68,7 @@ def declaration_object() -> J.Json:
     J.Jpair{"effects", J.Jarr{J.Jnil{}, J.Jnil{}},
     J.Jpair{"execution", J.Jstr{"managed"}, J.Jpair{"resultSchema", J.Jstr{"res"},
     J.Jpair{"referenceSchema", J.Jstr{"ref"}, J.Jpair{"eventSchema", J.Jstr{"evt"},
-    J.Jpair{"lifetimeProfile", J.Jstr{""}, J.Jpair{"dependencies", J.Jarr{J.Jnil{}, J.Jnil{}}, J.Jnil{}}}}}}}}}}}}}, J.Jnil{}}, J.Jnil{}}}}}}}}}}}}}}
+    J.Jpair{"lifetimeProfile", J.Jstr{""}, J.Jpair{"dependencies", J.Jarr{J.Jnil{}, J.Jnil{}}, J.Jnil{}}}}}}}}}}}}}, J.Jnil{}}, J.Jnil{}}}}}}}}}}}}}}}}
 
 def expected_declaration() -> Decl.Decl:
   Decl.Decl{"1", "m1", "r1", "2", "pkg-m1",
