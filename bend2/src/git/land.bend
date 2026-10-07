@@ -794,14 +794,67 @@ type LdAdvObs is Data:
 
 # Receipt admission: the published record was freshly created, durable, and reads back byte for byte.
 type Admission is Data:
-  AdmissionMissing{reason: String}
-  AdmissionAdmitted{record: String, path: String}
+  AdmissionRefused{attestation: Attestation, reason: String}
+  AdmissionAdmitted{attestation: Attestation}
 
 # The complete attempt evidence. Every operand the attempt fixed at admission is carried here, so a
 # later step cannot re-resolve or substitute one for receipt convenience.
+type IdentityEvidence is Data:
+  IdentityMissing{}
+  IdentityObserved{common: String, target: String}
+
+type AssociationEvidence is Data:
+  AssociationMissing{}
+  AssociationObserved{step: String, candidate_oid: String, basis_oid: String, target_head: String, holder_common: String, destination_common: String}
+
+type IntentEvidence is Data:
+  IntentMissing{}
+  IntentObserved{path: String, raw: String}
+
 type AttemptEvidence is Data:
   AttemptEvidence{reserved: String, repo: String, target: String, candidate: String, basis: String,
-                  guard: String, artifact: String, capture: T.CapturedRaw, qualification: LdQualified, release: T.ReleaseRaw}
+                  guard: String, artifact: String, decision: LAdv, capture: T.CapturedRaw,
+                  qualification: LdQualified, release: T.ReleaseRaw, identity: IdentityEvidence,
+                  association: AssociationEvidence, intent: IntentEvidence}
+
+# One stage of an attestation: never performed, a host failure with its own code and detail, or the
+# raw bytes the host answered.
+type StageResult is Data:
+  StageUnperformed{}
+  StageFailed{code: U32, detail: String}
+  StageSucceeded{raw: String}
+
+# The retained attestation: every fixed operand, the decision, the immutable facts and each stage's
+# actual result, so a refusal carries everything observed before it.
+type Attestation is Data:
+  Attestation{reserved: String, evidence: AttemptEvidence, publication: StageResult, qualification: StageResult, readback: StageResult}
+
+def stage_of_failure(error: U32 & String) -> StageResult:
+  match error:
+    case (code, detail): StageFailed{code, detail}
+
+def attest_stage(host: Result<&1, &1, U32 & String, String>) -> StageResult:
+  match host:
+    case Fail{error}: stage_of_failure(error)
+    case Done{raw}: StageSucceeded{raw}
+
+def stage_succeeded(stage: StageResult) -> Bool:
+  match stage:
+    case StageSucceeded{raw}: True{}
+    case StageFailed{code, detail}: False{}
+    case StageUnperformed{}: False{}
+
+def stage_raw(stage: StageResult) -> String:
+  match stage:
+    case StageSucceeded{raw}: raw
+    case StageFailed{code, detail}: ""
+    case StageUnperformed{}: ""
+
+def stage_detail(stage: StageResult) -> String:
+  match stage:
+    case StageFailed{code, detail}: detail
+    case StageSucceeded{raw}: ""
+    case StageUnperformed{}: "unperformed"
 
 # The record bytes, encoded as an argv list so arbitrary tabs, newlines and content stay unambiguous,
 # with the numeric codes rendered by U32.show.
@@ -833,9 +886,36 @@ def capture_fields(capture: T.CapturedRaw, rest: List<String>) -> List<String>:
 
 def attempt_fields(evidence: AttemptEvidence) -> List<String>:
   match evidence:
-    case AttemptEvidence{reserved, repo, target, candidate, basis, guard, artifact, capture, qualification, release}:
+    case AttemptEvidence{reserved, repo, target, candidate, basis, guard, artifact, decision, capture, qualification, release, identity, association, intent}:
       Con{"attempt", Con{reserved, Con{repo, Con{target, Con{candidate, Con{basis, Con{guard, Con{artifact,
-        capture_fields(capture, qualification_fields(qualification, release_fields(release, Nil{})))}}}}}}}}
+        capture_fields(capture, qualification_fields(qualification, release_fields(release,
+          identity_fields(identity, association_fields(association, intent_fields(intent, decision_fields(decision, Nil{})))))))}}}}}}}}
+
+def identity_fields(identity: IdentityEvidence, rest: List<String>) -> List<String>:
+  match identity:
+    case IdentityMissing{}: Con{"identity-missing", rest}
+    case IdentityObserved{common, target}: Con{"identity-observed", Con{common, Con{target, rest}}}
+
+def association_fields(association: AssociationEvidence, rest: List<String>) -> List<String>:
+  match association:
+    case AssociationMissing{}: Con{"association-missing", rest}
+    case AssociationObserved{step, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
+      Con{"association-observed", Con{step, Con{candidate_oid, Con{basis_oid, Con{target_head, Con{holder_common, Con{destination_common, rest}}}}}}}
+
+def intent_fields(intent: IntentEvidence, rest: List<String>) -> List<String>:
+  match intent:
+    case IntentMissing{}: Con{"intent-missing", rest}
+    case IntentObserved{path, raw}: Con{"intent-observed", Con{path, Con{raw, rest}}}
+
+def decision_fields(decision: LAdv, rest: List<String>) -> List<String>:
+  match decision:
+    case AdvLanded{}: Con{"decision-landed", rest}
+    case AdvMoved{}: Con{"decision-moved", rest}
+    case AdvHeld{path}: Con{"decision-held", Con{path, rest}}
+    case AdvHolderChanged{path}: Con{"decision-holder-changed", Con{path, rest}}
+    case AdvRefused{}: Con{"decision-refused", rest}
+    case AdvBroken{detail}: Con{"decision-broken", Con{detail, rest}}
+
 
 def attempt_record(evidence: AttemptEvidence) -> String:
   Tx.enc_argv(attempt_fields(evidence))
@@ -1029,13 +1109,13 @@ def ld_adv_qualification(obs: LdAdvObs) -> LdQualified:
 
 def ld_admitted(admission: Admission) -> Bool:
   match admission:
-    case AdmissionAdmitted{record, path}: True{}
-    case AdmissionMissing{reason}: False{}
+    case AdmissionAdmitted{attestation}: True{}
+    case AdmissionRefused{attestation, reason}: False{}
 
 def ld_admission(admission: Admission) -> String:
   match admission:
-    case AdmissionAdmitted{record, path}: path
-    case AdmissionMissing{reason}: reason
+    case AdmissionAdmitted{attestation}: "admitted"
+    case AdmissionRefused{attestation, reason}: reason
 
 def ld_adv_qualified_with(advance: LAdv, +capture: T.CapturedRaw, qualification: LdQualified) -> LdAdvObs:
   LdAdvQualified{advance, capture, qualification}
@@ -1267,70 +1347,120 @@ def ld_adv_run(repo: String, target: String, cand: String, basis: String, ctx: L
 
 # The complete attempt evidence is published once, after the release, and admitted only when the
 # record was freshly created, is durable, and reads back byte for byte.
-# The producer contract: a successful publication record is exactly the tag, the expected path, a
-# zero errno, an empty phase, a zero pending and an empty detail. Whole-record comparison against the
-# same builder the producer uses avoids splitting the record and any nested decision.
+# The producer contract, mirrored from receipt.c's receipt_record: a successful record is the tag, the
+# expected path, a zero errno, an empty phase, a zero pending and an empty detail.
 def receipt_published(raw: String, expected: String) -> Bool:
   Tx.str_eq(raw, Pb.production_record("published", expected, "0"))
 
 def receipt_qualified(raw: String, expected: String) -> Bool:
   Tx.str_eq(raw, Pb.production_record("qualified", expected, "0"))
 
-def ld_attest_bytes(+evidence: AttemptEvidence, path: String, seen: Result<&1, &1, U32 & String, String>) -> IO(Admission):
-  match seen:
-    case Fail{error}: IO.pure(Admission, AdmissionMissing{"the attempt record could not be read back"})
-    case Done{raw}:
-      Bool.pick(IO(Admission), Tx.str_eq(raw, attempt_record(evidence)),
-        IO.pure(Admission, AdmissionAdmitted{attempt_record(evidence), path}),
-        IO.pure(Admission, AdmissionMissing{"the attempt record does not read back as published"}))
+def landing_record_path(reserved: String) -> String:
+  Tx.str_cat(reserved, "/landing-record")
 
-def ld_attest_read(evidence: AttemptEvidence, +path: String) -> IO(Admission):
-  do IO<Admission>:
-    seen : Result<&1, &1, U32 & String, String> <- Text.Text.read(path)
-    ld_attest_bytes(evidence, path, seen)
+def stage_publishes(stage: StageResult, expected: String) -> Bool:
+  match stage:
+    case StageSucceeded{raw}: receipt_published(raw, expected)
+    case StageFailed{code, detail}: False{}
+    case StageUnperformed{}: False{}
 
-def ld_attest_qualified(reserved: String, evidence: AttemptEvidence, path: String, qualified: Result<&1, &1, U32 & String, String>) -> IO(Admission):
-  match qualified:
-    case Fail{error}: IO.pure(Admission, AdmissionMissing{"the attempt record is not durable"})
-    case Done{raw}:
-      Bool.pick(IO(Admission), receipt_qualified(raw, Tx.str_cat(reserved, "/landing-record")),
-        ld_attest_read(evidence, path),
-        IO.pure(Admission, AdmissionMissing{"the attempt record is not durable"}))
+def stage_qualifies(stage: StageResult, expected: String) -> Bool:
+  match stage:
+    case StageSucceeded{raw}: receipt_qualified(raw, expected)
+    case StageFailed{code, detail}: False{}
+    case StageUnperformed{}: False{}
 
-def ld_attest_durable(reserved: String, evidence: AttemptEvidence, +path: String) -> IO(Admission):
-  do IO<Admission>:
-    qualified : Result<&1, &1, U32 & String, String> <- Rec.Receipt.qualify(path)
-    ld_attest_qualified(reserved, evidence, path, qualified)
+def ld_attest_readback(reserved: String, evidence: AttemptEvidence, publication: StageResult, qualification: StageResult) -> IO(Attestation):
+  +p = landing_record_path(reserved)
+  do IO<Attestation>:
+    seen : Result<&1, &1, U32 & String, String> <- Text.Text.read(p)
+    IO.pure(Attestation, Attestation{reserved, evidence, publication, qualification, attest_stage(seen)})
 
-def ld_attest_path(reserved: String, evidence: AttemptEvidence, parts: List<String>) -> IO(Admission):
-  match parts:
-    case Nil{}: IO.pure(Admission, AdmissionMissing{"the publication record carried no path"})
-    case Con{tag, rest}:
-      match rest:
-        case Nil{}: IO.pure(Admission, AdmissionMissing{"the publication record carried no path"})
-        case Con{path, more}: ld_attest_durable(reserved, evidence, path)
+def ld_attest_qualification(reserved: String, evidence: AttemptEvidence, publication: StageResult) -> IO(Attestation):
+  +p = landing_record_path(reserved)
+  do IO<Attestation>:
+    qualified : Result<&1, &1, U32 & String, String> <- Rec.Receipt.qualify(p)
+    ld_attest_qualification_seen(reserved, evidence, publication, attest_stage(qualified))
 
-def ld_attest_seen(+reserved: String, evidence: AttemptEvidence, published: Result<&1, &1, U32 & String, String>) -> IO(Admission):
-  match published:
-    case Fail{error}: IO.pure(Admission, AdmissionMissing{"the attempt record could not be published"})
-    case Done{raw}:
-      Bool.pick(IO(Admission), receipt_published(raw, Tx.str_cat(reserved, "/landing-record")),
-        ld_attest_path(reserved, evidence, Tx.split_tabs(raw)),
-        IO.pure(Admission, AdmissionMissing{"the attempt record was not published"}))
+def ld_attest_qualification_seen(reserved: String, evidence: AttemptEvidence, publication: StageResult, qualification: StageResult) -> IO(Attestation):
+  Bool.pick(IO(Attestation), stage_qualifies(qualification, landing_record_path(reserved)),
+    ld_attest_readback(reserved, evidence, publication, qualification),
+    IO.pure(Attestation, Attestation{reserved, evidence, publication, qualification, StageUnperformed{}}))
 
-def ld_attest(+reserved: String, +evidence: AttemptEvidence) -> IO(Admission):
-  do IO<Admission>:
+def ld_attest_publication_seen(reserved: String, evidence: AttemptEvidence, publication: StageResult) -> IO(Attestation):
+  Bool.pick(IO(Attestation), stage_publishes(publication, landing_record_path(reserved)),
+    ld_attest_qualification(reserved, evidence, publication),
+    IO.pure(Attestation, Attestation{reserved, evidence, publication, StageUnperformed{}, StageUnperformed{}}))
+
+def ld_attest(reserved: String, evidence: AttemptEvidence) -> IO(Attestation):
+  do IO<Attestation>:
     published : Result<&1, &1, U32 & String, String> <- Rec.Receipt.publish(reserved, "landing-record", attempt_record(evidence))
-    ld_attest_seen(reserved, evidence, published)
+    ld_attest_publication_seen(reserved, evidence, attest_stage(published))
 
-def ld_attest_admit(reserved: String, evidence: AttemptEvidence, obs: LdAdvObs, +release: T.ReleaseRaw, +guard: String) -> IO(SharedLanding):
+# Admission is a decision over the whole attestation, not a bare token: the immutable identity,
+# association and intent evidence must be present and observed, the capture must be real, the release
+# must have succeeded, and all three stages must carry the exact expected bytes.
+def admission_of(attestation: Attestation) -> Admission:
+  match attestation:
+    case Attestation{reserved, evidence, publication, qualification, readback}:
+      Bool.pick(Admission, stage_publishes(publication, landing_record_path(reserved)),
+        Bool.pick(Admission, stage_qualifies(qualification, landing_record_path(reserved)),
+          Bool.pick(Admission, readback_matches(readback, evidence),
+            Bool.pick(Admission, evidence_complete(evidence),
+              AdmissionAdmitted{attestation},
+              AdmissionRefused{attestation, "the attempt evidence is incomplete"}),
+            AdmissionRefused{attestation, "the attempt record does not read back as published"}),
+          AdmissionRefused{attestation, "the attempt record is not durable"}),
+        AdmissionRefused{attestation, "the attempt record was not published"})
+
+def readback_matches(readback: StageResult, evidence: AttemptEvidence) -> Bool:
+  match readback:
+    case StageSucceeded{raw}: Tx.str_eq(raw, attempt_record(evidence))
+    case StageFailed{code, detail}: False{}
+    case StageUnperformed{}: False{}
+
+def evidence_complete(evidence: AttemptEvidence) -> Bool:
+  match evidence:
+    case AttemptEvidence{reserved, repo, target, candidate, basis, guard, artifact, decision, capture, qualification, release, identity, association, intent}:
+      Bool.pick(Bool, capture_observed(capture),
+        Bool.pick(Bool, T.release_done(release),
+          Bool.pick(Bool, identity_observed(identity),
+            Bool.pick(Bool, association_observed(association),
+              Bool.pick(Bool, intent_observed(intent), True{}, False{}),
+              False{}),
+            False{}),
+          False{}),
+        False{})
+
+def capture_observed(capture: T.CapturedRaw) -> Bool:
+  match capture:
+    case T.CapturedAbsent{}: False{}
+    case T.CapturedFailed{code, detail}: True{}
+    case T.CapturedDone{framing, diagnostics}: True{}
+
+def identity_observed(identity: IdentityEvidence) -> Bool:
+  match identity:
+    case IdentityMissing{}: False{}
+    case IdentityObserved{common, target}: True{}
+
+def association_observed(association: AssociationEvidence) -> Bool:
+  match association:
+    case AssociationMissing{}: False{}
+    case AssociationObserved{step, candidate_oid, basis_oid, target_head, holder_common, destination_common}: True{}
+
+def intent_observed(intent: IntentEvidence) -> Bool:
+  match intent:
+    case IntentMissing{}: False{}
+    case IntentObserved{path, raw}: True{}
+
+def ld_attest_admit(+reserved: String, evidence: AttemptEvidence, obs: LdAdvObs, +release: T.ReleaseRaw, +guard: String) -> IO(SharedLanding):
   do IO<SharedLanding>:
-    admitted : Admission <- ld_attest(reserved, evidence)
-    IO.pure(SharedLanding, SharedAdvanced{obs, release, guard, reserved, admitted})
+    attestation : Attestation <- ld_attest(reserved, evidence)
+    IO.pure(SharedLanding, SharedAdvanced{obs, release, guard, reserved, admission_of(attestation)})
 
-def shared_reserved_attested(repo: String, target: String, cand: String, basis: String, guard: String, +reserved: String, +obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>) -> IO(SharedLanding):
+def shared_reserved_attested(repo: String, target: String, cand: String, basis: String, +guard: String, +reserved: String, +obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>) -> IO(SharedLanding):
   +rel = T.release_raw_of(released)
-  ld_attest_admit(reserved, AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_capture(obs), ld_adv_qualification(obs), rel}, obs, rel, guard)
+  ld_attest_admit(reserved, AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), rel, IdentityMissing{}, AssociationMissing{}, IntentMissing{}}, obs, rel, guard)
 
 def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, reserved: String) -> IO(SharedLanding):
   +h = handle
@@ -2491,25 +2621,25 @@ def an_empty_prefix_leaves_the_whole_line():
   {==}
 
 law an_unperformed_release_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseUnperformed{}, "g", "r", AdmissionAdmitted{"record bytes", "/attempt/landing-record"}}, "t", "c") == FFDone{T.LBlocked{"the advance ran but its release was not performed"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseUnperformed{}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == FFDone{T.LBlocked{"the advance ran but its release was not performed"}} : FFLD}
 
 def an_unperformed_release_refuses_the_fast_forward():
   {==}
 
 law a_failed_release_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseFailed{13, "release failed"}, "g", "r", AdmissionAdmitted{"record bytes", "/attempt/landing-record"}}, "t", "c") == FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseFailed{13, "release failed"}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : FFLD}
 
 def a_failed_release_refuses_the_fast_forward():
   {==}
 
 law an_unperformed_release_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseUnperformed{}, "g", "r", AdmissionAdmitted{"record bytes", "/attempt/landing-record"}}, "t", "c") == LdFail{T.FCmd{"land", "the advance ran but its release was not performed"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseUnperformed{}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == LdFail{T.FCmd{"land", "the advance ran but its release was not performed"}} : Ld}
 
 def an_unperformed_release_refuses_the_advance():
   {==}
 
 law a_failed_release_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseFailed{13, "release failed"}, "g", "r", AdmissionAdmitted{"record bytes", "/attempt/landing-record"}}, "t", "c") == LdFail{T.FCmd{"land", Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseFailed{13, "release failed"}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == LdFail{T.FCmd{"land", Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : Ld}
 
 def a_failed_release_refuses_the_advance():
   {==}
@@ -2593,13 +2723,13 @@ def a_missing_admission_refuses_the_advance():
   {==}
 
 law an_admitted_landed_advance_answers_landed:
-  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionAdmitted{"record bytes", "/attempt/landing-record"}}, "t", "c") == FFDone{T.LLanded{"t", "c"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == FFDone{T.LLanded{"t", "c"}} : FFLD}
 
 def an_admitted_landed_advance_answers_landed():
   {==}
 
 law an_admitted_landed_advance_answers_the_landed_commit:
-  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionAdmitted{"record bytes", "/attempt/landing-record"}}, "t", "c") == LdDone{T.LLanded{"t", "c"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == LdDone{T.LLanded{"t", "c"}} : Ld}
 
 def an_admitted_landed_advance_answers_the_landed_commit():
   {==}
@@ -2607,13 +2737,13 @@ def an_admitted_landed_advance_answers_the_landed_commit():
 # The receipt contract, derived from receipt.c: a success record is tag, path, zero errno, empty
 # phase, zero pending and empty detail. Each law consumes the validator with a supplied record.
 law a_published_success_record_is_admitted:
-  {receipt_published(Pb.production_record("published", "/r/landing-record", "0"), "/r/landing-record") == True{} : Bool}
+  {receipt_published("published\t/r/landing-record\t0\t\t0\t", "/r/landing-record") == True{} : Bool}
 
 def a_published_success_record_is_admitted():
   {==}
 
 law a_qualified_success_record_is_admitted:
-  {receipt_qualified(Pb.production_record("qualified", "/r/landing-record", "0"), "/r/landing-record") == True{} : Bool}
+  {receipt_qualified("qualified\t/r/landing-record\t0\t\t0\t", "/r/landing-record") == True{} : Bool}
 
 def a_qualified_success_record_is_admitted():
   {==}
@@ -2667,7 +2797,70 @@ def a_nonempty_detail_record_is_refused():
   {==}
 
 law a_trailing_byte_record_is_refused:
-  {receipt_published(Pb.production_record("published", "/r/landing-record", "0") ++ "x", "/r/landing-record") == False{} : Bool}
+  {receipt_published("published\t/r/landing-record\t0\t\t0\t" ++ "x", "/r/landing-record") == False{} : Bool}
 
 def a_trailing_byte_record_is_refused():
   {==}
+
+# An admission is a decision over the whole attestation. A complete attempt is admitted; an incomplete
+# one is refused for the reason its own evidence gives.
+law a_complete_attempt_is_admitted:
+  {ld_admitted(admission_of(Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published\t/r/landing-record\t0\t\t0\t"}, StageSucceeded{"qualified\t/r/landing-record\t0\t\t0\t"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}})) == True{} : Bool}
+
+def a_complete_attempt_is_admitted():
+  {==}
+
+law an_absent_capture_is_refused:
+  {ld_admitted(admission_of(Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedAbsent{}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published\t/r/landing-record\t0\t\t0\t"}, StageSucceeded{"qualified\t/r/landing-record\t0\t\t0\t"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedAbsent{}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}})) == False{} : Bool}
+
+def an_absent_capture_is_refused():
+  {==}
+
+law a_missing_identity_is_refused:
+  {ld_admitted(admission_of(Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityMissing{}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published\t/r/landing-record\t0\t\t0\t"}, StageSucceeded{"qualified\t/r/landing-record\t0\t\t0\t"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityMissing{}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}})) == False{} : Bool}
+
+def a_missing_identity_is_refused():
+  {==}
+
+law a_missing_association_is_refused:
+  {ld_admitted(admission_of(Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationMissing{}, IntentObserved{"i", "raw"}}, StageSucceeded{"published\t/r/landing-record\t0\t\t0\t"}, StageSucceeded{"qualified\t/r/landing-record\t0\t\t0\t"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationMissing{}, IntentObserved{"i", "raw"}})}})) == False{} : Bool}
+
+def a_missing_association_is_refused():
+  {==}
+
+law a_missing_intent_is_refused:
+  {ld_admitted(admission_of(Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentMissing{}}, StageSucceeded{"published\t/r/landing-record\t0\t\t0\t"}, StageSucceeded{"qualified\t/r/landing-record\t0\t\t0\t"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentMissing{}})}})) == False{} : Bool}
+
+def a_missing_intent_is_refused():
+  {==}
+
+law a_failed_publication_is_refused:
+  {ld_admitted(admission_of(Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageFailed{13, "i/o error"}, StageUnperformed{}, StageUnperformed{}})) == False{} : Bool}
+
+def a_failed_publication_is_refused():
+  {==}
+
+law an_unperformed_qualification_is_refused:
+  {ld_admitted(admission_of(Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published\t/r/landing-record\t0\t\t0\t"}, StageUnperformed{}, StageUnperformed{}})) == False{} : Bool}
+
+def an_unperformed_qualification_is_refused():
+  {==}
+
+law a_mismatched_readback_is_refused:
+  {ld_admitted(admission_of(Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published\t/r/landing-record\t0\t\t0\t"}, StageSucceeded{"qualified\t/r/landing-record\t0\t\t0\t"}, StageSucceeded{"other bytes"}})) == False{} : Bool}
+
+def a_mismatched_readback_is_refused():
+  {==}
+
+law a_rejected_attempt_refuses_the_fast_forward:
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionRefused{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageFailed{13, "i/o error"}, StageUnperformed{}, StageUnperformed{}}, "the attempt record was not published"}}, "t", "c") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt record was not published"}} : FFLD : FFLD}
+
+def a_rejected_attempt_refuses_the_fast_forward():
+  {==}
+
+law a_rejected_attempt_refuses_the_advance:
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionRefused{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageFailed{13, "i/o error"}, StageUnperformed{}, StageUnperformed{}}, "the attempt record was not published"}}, "t", "c") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record was not published"}} : Ld : Ld}
+
+def a_rejected_attempt_refuses_the_advance():
+  {==}
+
