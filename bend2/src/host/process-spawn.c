@@ -2478,7 +2478,7 @@ static int br_instance_socket_for(const char *database,char *buffer,size_t size)
   int error=stat(canonical,&info)?errno:0;
   char ipc[512];
   char *key=NULL,*record_path=NULL;
-  BrOwnerRecord record;
+  BrOwnerRecord record={0};
   if(!error)error=br_ipc_directory(ipc,sizeof(ipc));
   if(!error) {
     key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
@@ -2575,7 +2575,7 @@ static int br_instance_exchange(int socket_fd,BrInstanceFrame frame,const char *
    incarnation and epoch; a stale socket from an earlier owner is retried once
    against the record that owner left. */
 static int br_instance_request(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply) {
-  BrOwnerRecord record;
+  BrOwnerRecord record={0};
   int socket_fd=-1;
   int error=br_instance_connect(database,1,&record,&socket_fd);
   if(error)return error;
@@ -2710,7 +2710,7 @@ static int br_instance_attach_owned(BatonProcessCall *call) {
 static int br_instance_job(BatonProcessCall *call) {
   char *directory=realpath(call->directory,NULL);
   if(!directory)return errno;
-  BrOwnerRecord record;
+  BrOwnerRecord record={0};
   BrInstanceFrame reply={0};
   BrOwnerState state={0};
   int owner_known=0,socket_fd=-1,absent=0;
@@ -2771,7 +2771,7 @@ static int br_instance_job(BatonProcessCall *call) {
 }
 static int br_instance_shutdown(BatonProcessCall *call) {
   BrInstanceFrame reply;
-  BrOwnerRecord record;
+  BrOwnerRecord record={0};
   int socket_fd=-1;
   int error=br_instance_connect(call->database,0,&record,&socket_fd);
   if(error==ENOENT || error==ECONNREFUSED || error==EINVAL)return 0;
@@ -2844,7 +2844,7 @@ static int br_parse_u64(const char *text,size_t length,uint64_t *value) {
    the owner publishes. */
 static int br_instance_subscription(const char *database,uint64_t generation,uint64_t after_cursor,
                                     BrInstanceReady *ready,int *socket_out) {
-  BrOwnerRecord record;
+  BrOwnerRecord record={0};
   int socket_fd=-1;
   BrInstanceSubscribe request={.generation=generation,.after_cursor=after_cursor};
   BrInstanceFrame reply={0};
