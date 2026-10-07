@@ -11,6 +11,7 @@ import json
 import os
 import pathlib
 import queue
+import select
 import signal
 import shlex
 import shutil
@@ -181,9 +182,44 @@ class SharedInstance(unittest.TestCase):
     def line(self, child, expected):
         while True:
             value = child.lines.get(timeout=30)
-            self.assertIsNotNone(value, ''.join(child.output))
+            if value is None:
+                self.fail(self.child_start_failure(child, expected))
             if value == expected:
                 return
+
+    def child_start_failure(self, child, expected):
+        try:
+            child.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
+        stderr = bytearray()
+        descriptor = child.stderr.fileno()
+        while select.select([descriptor], [], [], 0)[0]:
+            try:
+                chunk = os.read(descriptor, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            stderr.extend(chunk)
+        attempts = sorted(self.home.glob(self.db.name + '.attempt-*'))
+        attempt_state = []
+        for directory in attempts:
+            files = []
+            if directory.is_dir():
+                for path in sorted(directory.rglob('*')):
+                    if path.is_file():
+                        stat = path.stat()
+                        files.append(f'{path.relative_to(directory)}:{stat.st_mode & 0o777:o}:{stat.st_size}')
+            attempt_state.append(f'{directory} files={files}')
+        saved = ROOT / '.scratch' / 'shared-instance-failures' / f'startup-{os.getpid()}-{child.pid}'
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(self.home, saved, dirs_exist_ok=True)
+        return (f'expected first line {expected!r}, got EOF; child_pid={child.pid}; '
+                f'child_returncode={child.returncode}; child_args={child.args!r}; '
+                f'child_stderr={stderr.decode(errors="replace")!r}; '
+                f'attempts={attempt_state}; owner={self.owner_state()}; preserved={saved}; '
+                f'output={"".join(child.output)!r}')
 
     def owner_state(self):
         lines = ['owner processes: ' + ' | '.join(self.owner_processes())]
