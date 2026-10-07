@@ -115,7 +115,7 @@ def decode_nonempty(+db: String, handle: U32, +value: String) -> IO(State):
 def decode(db: String, handle: U32, +value: String) -> IO(State):
   Bool.pick(IO(State),String.is_empty(value),IO.pure(State,empty()),decode_nonempty(db,handle,value))
 
-def restore(db: String, handle: U32) -> IO(State):
+def restore(db: String, +handle: U32) -> IO(State):
   do IO<State>:
     saved : String <- IO.try(String,Custody.Instance.restore(handle,schema_version()))
     decode(db,handle,without_query_newline(saved))
