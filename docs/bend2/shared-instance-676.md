@@ -170,7 +170,7 @@ This change adds `bend2/src/coordinator/instance.bend`,
 `bend2/src/coordinator/instance-laws.bend`, one import line in
 `bend2/src/coordinator/laws.bend`, and this document. Remote gates cover
 the full entry build with every operative law. Scoped controls on the
-claim commit show 22 of 22 proof removals refused and 5 of 5 targeted
+routing commit show 28 of 28 proof removals refused and 5 of 5 targeted
 implementation mutations refused (lapse deletion, duplicate admission,
 refusal prefix, serve verb, stop guard). These five mutations are
 proposed for `bend2/scripts/laws-check.mjs` composition under the same
