@@ -2572,30 +2572,28 @@ static int br_instance_exchange(int socket_fd,BrInstanceFrame frame,const char *
   return error;
 }
 /* Sends one database-level request. The reply must carry the published owner
-   incarnation and epoch; a stale socket from an earlier owner is retried once
-   against the record that owner left. */
+   incarnation and epoch; a stale socket from an earlier owner is retried
+   against the record that owner left. An owner binds its listener before it
+   publishes its record, so a client can connect to a new owner while it still
+   reads the previous incarnation's record: that window is retried, with the
+   record read again each time, until the answer and the record agree. */
 static int br_instance_request(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply) {
-  BrOwnerRecord record={0};
-  int socket_fd=-1;
-  int error=br_instance_connect(database,1,&record,&socket_fd);
-  if(error)return error;
-  frame.owner=record.token;frame.epoch=record.epoch;
-  error=br_instance_exchange(socket_fd,frame,payload,rights,reply);
-  close(socket_fd);
-  if(error)return error;
-  if(reply->error==ESTALE) {
-    /* Another incarnation replaced the owner between the record read and the
-       request; read the record again and retry exactly once. */
-    socket_fd=-1;
-    if((error=br_instance_connect(database,0,&record,&socket_fd)))return error;
+  for(int attempt=0;;attempt++) {
+    BrOwnerRecord record={0};
+    int socket_fd=-1;
+    int error=br_instance_connect(database,attempt?0:1,&record,&socket_fd);
+    if(error)return error;
     frame.owner=record.token;frame.epoch=record.epoch;
     error=br_instance_exchange(socket_fd,frame,payload,rights,reply);
     close(socket_fd);
     if(error)return error;
+    if(reply->owner && (reply->owner!=record.token || reply->epoch!=record.epoch))error=ESTALE;
+    if(!error && !reply->error)return 0;
+    if(error!=ESTALE && reply->error!=ESTALE)return error?error:reply->error;
+    if(attempt>=100)return ESTALE;
+    struct timespec pause={0,20000000};
+    nanosleep(&pause,NULL);
   }
-  if(reply->owner && (reply->owner!=record.token || reply->epoch!=record.epoch))return ESTALE;
-  if(reply->error)return reply->error;
-  return 0;
 }
 /* Connects to the attempt's own socket and writes its directory-addressed
    request. The caller reads the reply on the same socket. */
@@ -2844,30 +2842,32 @@ static int br_parse_u64(const char *text,size_t length,uint64_t *value) {
    the owner publishes. */
 static int br_instance_subscription(const char *database,uint64_t generation,uint64_t after_cursor,
                                     BrInstanceReady *ready,int *socket_out) {
-  BrOwnerRecord record={0};
-  int socket_fd=-1;
   BrInstanceSubscribe request={.generation=generation,.after_cursor=after_cursor};
-  BrInstanceFrame reply={0};
-  int error=br_instance_connect(database,1,&record,&socket_fd);
-  if(error)return error;
-  BrInstanceFrame frame={.op=BI_SUBSCRIBE,.owner=record.token,.epoch=record.epoch,
-    .length=sizeof(request)};
-  error=br_instance_exchange(socket_fd,frame,(const char *)&request,-1,&reply);
-  if(!error && reply.error==ESTALE) {
-    /* The record named an owner that was replaced between the read and the
-       request; retry once against the record the replacement published. */
-    close(socket_fd);socket_fd=-1;
-    if((error=br_instance_connect(database,0,&record,&socket_fd)))return error;
-    frame.owner=record.token;frame.epoch=record.epoch;
+  for(int attempt=0;;attempt++) {
+    BrOwnerRecord record={0};
+    int socket_fd=-1;
+    BrInstanceFrame reply={0};
+    int error=br_instance_connect(database,attempt?0:1,&record,&socket_fd);
+    if(error)return error;
+    BrInstanceFrame frame={.op=BI_SUBSCRIBE,.owner=record.token,.epoch=record.epoch,
+      .length=sizeof(request)};
     error=br_instance_exchange(socket_fd,frame,(const char *)&request,-1,&reply);
+    if(!error && (reply.owner!=record.token || reply.epoch!=record.epoch))error=ESTALE;
+    if(!error && reply.error)error=reply.error;
+    if(!error && (reply.op!=BI_READY || reply.length!=sizeof(*ready)))error=EPROTO;
+    if(error==ESTALE && attempt<100) {
+      /* The owner publishes its record after it binds its listener; read the
+         record again while that window is open. */
+      close(socket_fd);
+      struct timespec pause={0,20000000};
+      nanosleep(&pause,NULL);
+      continue;
+    }
+    if(!error)error=br_read_all(socket_fd,ready,sizeof(*ready));
+    if(error) {if(socket_fd>=0)close(socket_fd);socket_fd=-1;}
+    *socket_out=socket_fd;
+    return error;
   }
-  if(!error && (reply.owner!=record.token || reply.epoch!=record.epoch))error=ESTALE;
-  if(!error && reply.error)error=reply.error;
-  if(!error && (reply.op!=BI_READY || reply.length!=sizeof(*ready)))error=EPROTO;
-  if(!error)error=br_read_all(socket_fd,ready,sizeof(*ready));
-  if(error) {if(socket_fd>=0)close(socket_fd);socket_fd=-1;}
-  *socket_out=socket_fd;
-  return error;
 }
 /* Waits for the next notice on a subscription. The notice carries the committed
    cursor high-water; the subscriber rereads rows from the database up to it. */

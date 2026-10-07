@@ -652,6 +652,33 @@ class SharedInstance(unittest.TestCase):
         self.assertIn('instance_attach_owned', result.stderr + result.stdout)
         print('evidence adoption-refusal', (result.stderr + result.stdout).strip().replace('\n', '|'))
 
+    def test_recovery_after_owner_death_restores_the_committed_state(self):
+        """Owner death with a surviving native child: a replacement owner is
+        elected, the observer adopts the same child through its own custody, and
+        the reducer state the previous observer committed is restored at its
+        offset, so the frames that checkpoint covered are not reported again."""
+        directory, child = self.begin('death', mode='partial', payload='one\n')
+        self.line(child, 'admitted')
+        self.line(child, 'echo:one')
+        self.line(child, 'commit-ok')
+        summary = self.native(''.join(child.output))
+        owners = self.owner_processes()
+        self.assertEqual(len(owners), 1, owners)
+        os.kill(int(owners[0].split()[0]), signal.SIGKILL)
+        child.kill()
+        child.wait(timeout=10)
+        adopter = self.spawn('attach', self.db, directory)
+        self.line(adopter, 'attached')
+        restored = self.subscription_line(adopter, 'restored:')
+        self.assertEqual(restored, {'reducer': 'seen two frames'}, restored)
+        output = ''.join(adopter.output)
+        self.assertNotIn('echo:one', output,
+                         'the adopted reader replayed output the checkpoint already covered')
+        self.assertEqual(os.kill(summary['pid'], 0), None, 'the original native child is gone')
+        spool = (directory / 'stdout').read_text(errors='replace')
+        self.assertEqual(spool.count('"role": "native"'), 1, 'adoption duplicated the native child')
+        print('evidence owner-death restore', restored, 'native', summary['pid'])
+
     def test_shutdown_releases_the_database_for_a_new_owner(self):
         directory, child = self.begin('a0')
         self.wait_run(child)
