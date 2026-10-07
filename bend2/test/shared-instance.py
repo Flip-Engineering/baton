@@ -13,6 +13,7 @@ import pathlib
 import queue
 import signal
 import shlex
+import shutil
 import struct
 import subprocess
 import sys
