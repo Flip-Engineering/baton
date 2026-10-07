@@ -1193,8 +1193,27 @@ def shared_attempt_name(base: String, attempt: U32) -> String:
   Bool.pick(String, U32.is_eq(n, 1),
     b,
     Tx.str_cat(b, Tx.str_cat("-", U32.show(n))))
-# One self-recursive reservation body. The returned Result, the exact created/existing records
-# and the retry branching all happen here; only nonrecursive helpers produce final outcomes.
+# One self-recursive reservation body: the returned Result, the exact created/existing records and
+# the retry branching. The retry's next read is inlined below, so this def is whole and no def is
+# used before it is defined; only nonrecursive helpers produce final outcomes.
+def shared_reserve_observed(+handle: U32, +repo: String, +target: String, +cand: String, +basis: String, +guard: String, +parent: String, +base: String, +attempt: U32, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
+  match observed:
+    case Fail{error}: shared_step_failed("reserve", error, handle)
+    case Done{record}:
+      +created_ok = Tx.str_eq(record, Pb.production_record("created", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0"))
+      +existing_ok = Tx.str_eq(record, Pb.production_record("existing", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0"))
+      Bool.pick(IO(SharedLanding), created_ok,
+        shared_reserved_continue(handle, repo, target, cand, basis, guard, shared_parent_path(parent, shared_attempt_name(base, attempt))),
+        Bool.pick(IO(SharedLanding), existing_ok,
+          Bool.pick(IO(SharedLanding), U32.is_lt(attempt, 4294967295),
+            do IO<SharedLanding>:
+                retry : Result<&1, &1, U32 & String, String> <- Rec.Receipt.reserve_attempt(parent, shared_attempt_name(base, U32.add(attempt, 1)))
+                shared_reserve_observed(handle, repo, target, cand, basis, guard, parent, base, U32.add(attempt, 1), retry),
+            shared_record_failed("reserve-counter-maximum", record, handle)),
+          shared_record_failed("reserve", record, handle)))
+
+# The reservation's first read: the attempt name is bound here and the answer is classified by
+# shared_reserve_observed, which owns the created/existing records and the retry.
 def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, attempt: U32) -> IO(SharedLanding):
   +h = handle
   +rp = repo
@@ -1208,18 +1227,7 @@ def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String,
   +name = shared_attempt_name(bs, n)
   do IO<SharedLanding>:
     observed : Result<&1, &1, U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, name)
-    match observed:
-      case Fail{error}: shared_step_failed("reserve", error, h)
-      case Done{record}:
-        +created_ok = Tx.str_eq(record, Pb.production_record("created", shared_parent_path(pa, shared_attempt_name(bs, n)), "0"))
-        +existing_ok = Tx.str_eq(record, Pb.production_record("existing", shared_parent_path(pa, shared_attempt_name(bs, n)), "0"))
-        Bool.pick(IO(SharedLanding), created_ok,
-          shared_reserved_continue(h, rp, tg, c, b, gd, shared_parent_path(pa, shared_attempt_name(bs, n))),
-          Bool.pick(IO(SharedLanding), existing_ok,
-            Bool.pick(IO(SharedLanding), U32.is_lt(n, 4294967295),
-              shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, U32.add(n, 1)),
-              shared_record_failed("reserve-counter-maximum", record, h)),
-            shared_record_failed("reserve", record, h)))
+    shared_reserve_observed(h, rp, tg, c, b, gd, pa, bs, n, observed)
 
 def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle
