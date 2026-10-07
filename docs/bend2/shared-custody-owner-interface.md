@@ -308,15 +308,30 @@ this contract; the effects are not implemented yet.
 - `state` reports observed facts only, derived from durable files and the live
   custody record.
 
-The prepared-fields contract root stated for the driver — dormant task, protocol
-and spool, with the requesting observer attached through the ready handshake and
-no configured starter spawned — needs one change in the keeper that is not yet
-made: `br_keeper_start` currently creates custody and spawns the program in one
-step, so a dormant task has no protocol to observe before its start. The change is
-to create the pipes, spool and listener, report readiness with no pid, and spawn
-the program only when the owner forwards the start command to the keeper, with the
-latch written before that spawn. Until that lands, `prepare` cannot report
-`observer_ready`, and the driver must not compose against it.
+Implemented now:
+
+- The durable lifecycle record `<attempt>/lifecycle` carries the identity fixed at
+  preparation, the grant that authorized the start and the rejection that
+  cancelled it, with the two latches as the task's state authority. It is written
+  for every attempt at preparation, and the one start is latched durably before
+  the program exists, so a repeated start decision never spawns a second child.
+- `Instance.state(handle)` returns the observed facts: the durable state
+  (`prepared`, `starting`, `running`, `exited`, `failed`, `cancelled`), the
+  directory, the guard identity of the descriptor this observer holds, whether the
+  observer is attached, the recorded native process and status, whether the start
+  latched, whether a rejection exists, whether an identity was fixed, and the
+  grant and rejection digests.
+
+Not implemented yet: `prepare` with dormant custody, `start` and `cancel`. The
+prepared-fields contract root stated for the driver — dormant task, protocol and
+spool, with the requesting observer attached through the ready handshake and no
+configured starter spawned — needs one change in the keeper: `br_keeper_start`
+currently creates custody and spawns the program in one step, so a dormant task
+has no protocol to observe before its start. The change is to create the pipes,
+spool and listener, report readiness with no pid, and spawn the program only when
+the owner forwards the start command to the keeper, with the latch written before
+that spawn. Until that lands, `prepare` cannot report `observer_ready`, and the
+driver must not compose against it.
 
 ## Caller changes this interface requires
 
@@ -376,6 +391,10 @@ latch written before that spawn. Until that lands, `prepare` cannot report
   silent for a repeated cursor, and after the owner is killed the replacement
   incarnation keeps the cursor and reports `gap` for the earlier incarnation.
 - A write through a retired capability is refused.
+- `Instance.state` reports the durable task state, the start latch, the fixed
+  identity, the observer's guard identity and the recorded native process and
+  status, and it reports the same task as exited with its status once the child
+  has been reaped.
 - `Instance.shutdown` ends the owner, and a later attempt starts a new one.
 
 `test/process.py`, `test/retained-control.py`, `test/receive.py` and
