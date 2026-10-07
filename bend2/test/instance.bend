@@ -135,6 +135,25 @@ def cycle_started(start: P.RetainedStart, payload: String) -> IO(Unit):
       line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       cycle_lines(handle,line)
 
+# The partially observed attempt: the observer prints the first line, which
+# advances its durable checkpoint, and then stops. The recovery observer
+# resumes at that checkpoint instead of replaying the stream.
+def printed_line(line: Maybe<String>) -> IO(Unit):
+  match line:
+    case None{}: IO.print("observed-eof")
+    case Some{text}: IO.print(text)
+
+def partial_started(start: P.RetainedStart, payload: String) -> IO(Unit):
+  match start:
+    case P.Unstarted{error}: IO.die(Unit,1,error)
+    case P.Retained{+handle}: do IO<Unit>:
+      printed : Unit <- IO.print("admitted")
+      written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,payload))
+      line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      observed : Unit <- printed_line(line)
+      gate : String <- IO.try(String,Text.Text.read("-"))
+      IO.print("partial-released")
+
 # The held attempt: the observer writes the payload and then stops reading, so
 # its owner keeps the native work and the spool. The driver kills this process
 # and reads the attempt's retained output through the owner's recovery observer.
@@ -147,22 +166,23 @@ def hold_started(start: P.RetainedStart, payload: String) -> IO(Unit):
       gate : String <- IO.try(String,Text.Text.read("-"))
       IO.print("hold-released")
 
-def attempted_started(start: P.RetainedStart, payload: String, cycle: Bool) -> IO(Unit):
-  match cycle:
-    case True{}: cycle_started(start,payload)
-    case False{}: hold_started(start,payload)
+def attempted_started(start: P.RetainedStart, payload: String, kind: U32) -> IO(Unit):
+  match kind:
+    case 2: hold_started(start,payload)
+    case 3: partial_started(start,payload)
+    case _: cycle_started(start,payload)
 
-def attempted_locked(+directory: String, +database: String, cwd: String, payload: String, program: List<String>, lock: Maybe<U32>, cycle: Bool) -> IO(Unit):
+def attempted_locked(+directory: String, +database: String, cwd: String, payload: String, program: List<String>, lock: Maybe<U32>, kind: U32) -> IO(Unit):
   do IO<Unit>:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr","",1,lock,P.argv([executable,"recover-retained",database,directory])))
-    run : Unit <- attempted_started(start,payload,cycle)
+    run : Unit <- attempted_started(start,payload,kind)
     IO.pure(Unit,Unit{})
 
-def admit_cli(args: List<String>, cycle: Bool) -> IO(Unit):
+def admit_cli(args: List<String>, kind: U32) -> IO(Unit):
   match args:
     case database <> session <> directory <> cwd <> payload <> program:
-      Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => attempted_locked(directory,canonical,cwd,payload,program,lock,cycle))
+      Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => attempted_locked(directory,canonical,cwd,payload,program,lock,kind))
     case _: IO.die(Unit,2,"admit DATABASE SESSION ATTEMPT CWD PAYLOAD PROGRAM ARGS...")
 
 def write_cli(args: List<String>) -> IO(Unit):
@@ -209,13 +229,14 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"shutdown"),8,
   Bool.pick(U32,String.eq(mode,"lock-try"),9,
   Bool.pick(U32,String.eq(mode,"owner-try"),10,
-  Bool.pick(U32,String.eq(mode,"recover-retained"),11,0)))))))))))
+  Bool.pick(U32,String.eq(mode,"recover-retained"),11,
+  Bool.pick(U32,String.eq(mode,"partial"),12,0))))))))))))
 
 def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
   match mode:
     case 1: owner_cli(rest)
-    case 2: admit_cli(rest,True{})
-    case 3: admit_cli(rest,False{})
+    case 2: admit_cli(rest,1)
+    case 3: admit_cli(rest,2)
     case 4: attach_cli(rest)
     case 5: attach_owned_cli(rest)
     case 6: write_cli(rest)
@@ -224,6 +245,7 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 9: lock_cli(rest)
     case 10: owner_try_cli(rest)
     case 11: recover_cli(rest)
+    case 12: admit_cli(rest,3)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):

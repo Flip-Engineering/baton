@@ -114,7 +114,7 @@ class SharedInstance(unittest.TestCase):
         result = subprocess.run(['ps', '-axo', 'pid=,ppid=,command='], capture_output=True,
                                 text=True, timeout=10)
         return [line for line in result.stdout.splitlines()
-                if '--instance-owner' in line and str(self.db) in line]
+                if '--instance-owner' in line and str(self.home) in line]
 
     def write(self, directory, text):
         path = self.home / 'control.payload'
@@ -170,14 +170,26 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(len(self.owner_processes()), 1)
         print('evidence second-owner', result.stdout.strip())
 
-    def test_multiply_linked_database_is_refused(self):
+    def test_hard_link_alias_converges_on_one_owner(self):
+        directory, child = self.begin('base', payload='base\n')
+        self.assertIn('echo:base', self.wait_run(child))
+        owners = self.owner_processes()
+        self.assertEqual(len(owners), 1, owners)
         link = self.home / 'alias.db'
         os.link(self.db, link)
         result = self.command('owner-try', link)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('owner-refused:', result.stdout)
-        self.assertIn('link', result.stdout.lower())
-        print('evidence multiply-linked', result.stdout.strip())
+        self.assertIn('busy', result.stdout.lower())
+        aliased = pathlib.Path(f'{link}.attempt-alias')
+        second = self.spawn('admit', link, 'alias-session', aliased, self.home,
+                            'alias\n', sys.executable, self.fixture)
+        alias_output = self.wait_run(second)
+        self.assertIn('echo:alias', alias_output)
+        summary = self.native(alias_output)
+        self.assertEqual(summary['ppid'], int(owners[0].split()[0]), (summary, owners))
+        print('evidence alias-election', result.stdout.strip())
+        print('evidence alias-native', summary['pid'], 'owner', summary['ppid'])
 
     def test_observer_loss_keeps_native_work_and_retained_output(self):
         directory, child = self.begin('held', mode='hold', payload='one\n')
@@ -206,6 +218,38 @@ class SharedInstance(unittest.TestCase):
         self.assertIn('stale-write-failed:', output)
         self.assertNotIn('stale-write-ok', output)
         print('evidence retirement', output.replace('\n', '|'))
+
+    def test_recovery_resumes_at_the_recorded_checkpoint(self):
+        directory, child = self.begin('partial', mode='partial', payload='one\n')
+        self.line(child, 'admitted')
+        self.line(child, 'echo:one')
+        cursor = directory / 'cursor'
+        self.hold(cursor, '')
+        self.assertGreater(cursor.stat().st_size, 0)
+        self.write(directory, 'two\n')
+        spool = directory / 'stdout'
+        self.hold(spool, 'echo:two')
+        child.kill()
+        child.wait(timeout=10)
+        log = directory / 'observer.log'
+        text = self.hold(log, 'echo:two')
+        self.assertNotIn('echo:one', text,
+                         'the recovery observer replayed output the checkpoint already covered')
+        self.write(directory, 'exit\n')
+        self.hold(log, 'native-exit 0')
+        print('evidence checkpoint-bytes', cursor.stat().st_size)
+        print('evidence recovery-log', text.replace('\n', '|'))
+
+    def test_corrupt_checkpoint_is_refused(self):
+        directory, child = self.begin('corrupt', mode='hold', payload='one\n')
+        self.line(child, 'admitted')
+        spool = directory / 'stdout'
+        self.hold(spool, 'echo:one')
+        (directory / 'cursor').write_bytes(b'not a checkpoint')
+        child.kill()
+        child.wait(timeout=10)
+        marker = self.hold(directory / 'cursor-error', 'unreadable observation checkpoint')
+        print('evidence corrupt-checkpoint', marker.strip())
 
     def test_shutdown_releases_the_database_for_a_new_owner(self):
         directory, child = self.begin('a0')
