@@ -1062,6 +1062,22 @@ MUTATIONS.push(
   {"name": "failed-replay-halts-before-release", "file": "bend2/src/coordinator/turn.bend", "find": "    case Fail{error}: replay_finished(db,player,lock,Fail{error})", "replace": "    case Fail{error}: IO.pass(Unit,Fail{error})", "law": "failed_replay_output_reaches_the_completion_boundary"}
 );
 
+MUTATIONS.push(
+  {"name": "discovery-usable-ignores-the-observation", "file": "bend2/src/coordinator/continuation.bend", "find": "THEN 1 ELSE 0 END\"", "replace": "THEN 1 ELSE 1 END\"", "law": "m12b_served_follows_observation"},
+  {"name": "discovery-missing-read-becomes-an-empty-catalog", "file": "bend2/src/coordinator/probes.bend", "find": "json_object('models',NULL,'absent',json('[]'))", "replace": "json_object('models',json('[]'),'absent',json('[]'))", "law": "m12b_failed_discovery_is_not_an_empty_catalog"},
+  {"name": "discovery-observed-row-hides-provider-provenance", "file": "bend2/src/coordinator/models.bend", "find": "'modelProvenance','observed-provider'", "replace": "'modelProvenance','recorded-configuration'", "law": "m14_a_models_answer_records_provenance_per_field"},
+  {"name": "discovery-seat-ignores-the-called-session", "file": "bend2/src/coordinator/continuation.bend", "find": "\"seat AS (SELECT harness,model,effort FROM sessions WHERE id=\"", "replace": "\"seat AS (SELECT harness,model,effort FROM sessions WHERE parent=\"", "law": "m1_a_models_answer_reads_the_stored_rows"},
+  {"name": "discovery-models-read-invokes-the-endpoint", "file": "bend2/src/coordinator/main.bend", "find": "case C.Models{+session}:\n      Models.read(db,session,Bool.not(String.is_empty(session)))", "replace": "case C.Models{+session}:\n      Probes.probe(db,\"omp\",session,\"\")", "law": "m8_a_models_read_starts_no_process"},
+  {"name": "discovery-probe-accepts-unparseable-output", "file": "bend2/src/coordinator/probes.bend", "find": "THEN 1 ELSE 0 END;\"", "replace": "THEN 1 ELSE 1 END;\"", "law": "m8_a_probe_records_only_provider_reported_facts"},
+  {"name": "discovery-candidates-admit-another-route-source", "file": "bend2/src/coordinator/continuation.bend", "find": "\"routes AS (SELECT DISTINCT harness,model,effort FROM sessions WHERE model<>'' AND \"", "replace": "\"routes AS (SELECT DISTINCT harness,model,effort FROM sessions WHERE 1 AND \"", "law": "m8_a_continuation_proposes_only_admitted_routes"},
+  {"name": "discovery-candidate-proposes-unobserved-capacity", "file": "bend2/src/coordinator/continuation.bend", "find": "'proposed',CASE WHEN usable=1", "replace": "'proposed',CASE WHEN 1", "law": "m12_a_continuation_asserts_no_unobserved_capacity"},
+  {"name": "discovery-probe-writes-an-inbox-row", "file": "bend2/src/coordinator/probes.bend", "find": "++ \"COMMIT;\"", "replace": "++ \"COMMIT;INSERT INTO messages(id,sender,recipient,kind,body) VALUES('probe','probe','probe','probe','probe');\"", "law": "m5_a_probe_leaves_the_inbox_in_sequence"},
+  {"name": "discovery-codex-query-uses-another-read", "file": "bend2/src/harness/codex-player.bend", "find": "[cmd,\"debug\",\"models\"]", "replace": "[cmd,\"models\",\"--json\"]", "law": "m8_codex_query_reads_its_own_catalog"},
+  {"name": "discovery-codex-access-read-uses-the-catalog", "file": "bend2/src/harness/codex-player.bend", "find": "[cmd,\"doctor\",\"--json\"]", "replace": "[cmd,\"debug\",\"models\"]", "law": "m8_codex_access_read_is_the_redacted_report"},
+  {"name": "discovery-omp-query-uses-another-read", "file": "bend2/src/harness/omp-player.bend", "find": "[cmd,\"models\",\"--json\"]", "replace": "[cmd,\"models\"]", "law": "m8_omp_query_reads_its_own_catalog"},
+  {"name": "discovery-muse-query-drops-the-model", "file": "bend2/src/harness/muse-player.bend", "find": "[cmd,\"model-profile\",\"show\",model]", "replace": "[cmd,\"model-profile\",\"show\",\"\"]", "law": "m8_muse_query_reads_one_named_model"},
+);
+
 for (const mutation of MUTATIONS) {
   const copied = join(SCRATCH, mutation.file);
   cpSync(join(ROOT, mutation.file), copied);

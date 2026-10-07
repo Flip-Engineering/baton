@@ -265,3 +265,39 @@ law m13_muse_input_writes_no_bytes:
 
 def m13_muse_input_writes_no_bytes(handle, text):
   {==}
+
+# ---------------------------------------------------------------------------
+# The adapter's own metadata read (#683). Each adapter states its non-interactive
+# query as its own argv, so the probe invokes the harness the adapter dispatches
+# rather than a shape chosen elsewhere. Codex states a catalog and a redacted
+# access report; OMP states a provider-qualified catalog; Muse states one model's
+# resolved profile, because it publishes no catalog listing.
+
+law m8_codex_query_reads_its_own_catalog:
+  for +cmd: String
+  {Codex.query_args(cmd) == [cmd,"debug","models"] : List<String>}
+
+def m8_codex_query_reads_its_own_catalog(cmd):
+  {==}
+
+law m8_codex_access_read_is_the_redacted_report:
+  for +cmd: String
+  {Codex.access_args(cmd) == [cmd,"doctor","--json"] : List<String>}
+
+def m8_codex_access_read_is_the_redacted_report(cmd):
+  {==}
+
+law m8_omp_query_reads_its_own_catalog:
+  for +cmd: String
+  {Omp.query_args(cmd) == [cmd,"models","--json"] : List<String>}
+
+def m8_omp_query_reads_its_own_catalog(cmd):
+  {==}
+
+law m8_muse_query_reads_one_named_model:
+  for +cmd: String
+  for +model: String
+  {Muse.query_args(cmd, model) == [cmd,"model-profile","show",model] : List<String>}
+
+def m8_muse_query_reads_one_named_model(cmd, model):
+  {==}

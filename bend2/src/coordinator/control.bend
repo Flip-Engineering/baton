@@ -3,6 +3,7 @@ import ./commands.bend as C
 import ./store.bend as Store
 import ./recruit.bend as Recruit
 import ./knowledge.bend as Knowledge
+import ./models.bend as Models
 import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 import ../host/text.bend as Text
@@ -256,6 +257,7 @@ def read_snapshot(db: String, command: C.Command) -> IO(String):
   match command:
     case C.Worktree{id}: Recruit.inspect_result(db,id)
     case C.KnowledgeRead{reader}: IO.try(String,DB.Sql.query(db,Knowledge.commit_sql(Knowledge.read_sql(reader))))
+    case C.Models{+session}: Models.document(db,session,Bool.not(String.is_empty(session)))
     case other: IO.try(String,Store.apply(db,other))
 
 def pretty(+db: String, command: C.Command) -> IO(String):

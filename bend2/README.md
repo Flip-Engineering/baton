@@ -292,6 +292,75 @@ file records a different or absent native identity.
 .scratch/bend2/baton2 state.db observed-usage worker1
 ```
 
+## Provider and model discovery
+
+`models [SESSION] [--pretty]` answers one JSON document from stored rows and the
+series registry:
+
+```sh
+.scratch/bend2/baton2 state.db models --pretty
+.scratch/bend2/baton2 state.db models worker1 --pretty
+```
+
+- `aliases` is the registry's recorded configuration: each mapped model key with
+  its series, the series display name from the identity file the registry names,
+  and the registry path. A registry that was not read reports `registry.state`
+  `absent` and `aliases` null.
+- `observed` is provider-derived: the model each seat's recorded events reported,
+  with the harness and effort marked as declared at bind.
+- `providers` carries one row per harness with its recorded executable, seat
+  count, the latest probe's parsed catalog and capacity, the probe's identity and
+  observation time, and the access report where the adapter states one.
+- `continuation` is present for a named `SESSION`.
+
+Capacity is a provider-stated value. A probe that stated no limit, usage,
+remaining or reset time leaves capacity `unknown` and names those components in
+`absent`; a harness with no probe answers `unknown` rather than an empty catalog.
+A provider failure is a recorded error with its observation time and text.
+
+`provider-probe HARNESS HARNESS_CMD [MODEL]` runs one explicit provider metadata
+read and commits one append-only row to `provider_probes`:
+
+```sh
+.scratch/bend2/baton2 state.db provider-probe codex /path/to/codex
+.scratch/bend2/baton2 state.db provider-probe omp /path/to/omp
+.scratch/bend2/baton2 state.db provider-probe muse /path/to/muse muse-spark-1.3
+```
+
+Each adapter states its own read, and the row records the resolved executable:
+
+| Harness | Read |
+| --- | --- |
+| `codex` | `<cmd> debug models`, with `<cmd> doctor --json` for the stored credential mode |
+| `omp` | `<cmd> models --json` |
+| `muse` | `<cmd> model-profile show MODEL` |
+| `claude-code` | no metadata read; the probe records a refusal |
+
+`provider-probe gemini ...` refuses with `probe-harness-unsupported`,
+`provider-probe muse <cmd>` without a model refuses with `probe-model-required`,
+and a command that does not resolve refuses with `probe-command-unresolved`.
+
+A continuation candidate is one of the four turn adapters whose route is recorded
+in `sessions` or observed from provider events. It is proposed only when the
+latest probe of its harness succeeded and the model is either a registry-mapped
+alias or a model that read listed. A listed candidate matched the identifier its
+own harness reported, exactly, so a bare id is not matched against another
+provider's selector; `proposal.basis` names which of the two admissions applied.
+A registry that maps no key for a model does not refuse that model.
+`continuation.proposal` is the first usable candidate in tier order. The seat's
+own route stays in the list and carries no unavailability claim, because a harness
+read that answers and lists the model is a current observation; a caller failing
+over from a named route takes the first proposed candidate that differs from it.
+Where no candidate is established as usable, `continuation.refusal` answers with
+`continuation-capacity-unknown` and lists the would-be candidates;
+`continuation.seat` reports the seat's recorded route, stop state and owed input
+count.
+
+A registry key proves a configured identity exists, and a harness catalog proves
+the harness can serve a model. Neither proves that the account can use it now, so
+`capacity` stays `unknown` unless a provider states a window, and the recorded
+provider text is what a probe observed rather than a rate.
+
 ## Native turns
 
 After registering the Player, run:
