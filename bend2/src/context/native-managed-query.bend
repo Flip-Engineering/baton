@@ -380,7 +380,7 @@ def bootstrap_from_json(+value: J.Json, +expected_owner: String,
       runtime_path = Req.text_of(readiness_member(value, "runtimePath"))
       provider_path = Req.text_of(readiness_member(value, "providerPath"))
       invocation_path = Req.text_of(readiness_member(value, "invocationPath"))
-      invocation_sha256 = Req.text_of(readiness_member(value, "invocationSha256"))
+      +invocation_sha256 = Req.text_of(readiness_member(value, "invocationSha256"))
       Bool.pick(BootstrapDecode,
         Bool.and(String.eq(readiness_text(value, "schema"), "baton2-managed-context-bootstrap-v1"),
         Bool.and(String.eq(query, expected_query),
