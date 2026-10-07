@@ -31,7 +31,7 @@ import ../src/host/session-lock.bend as Lock
 import ../src/host/files.bend as Files
 import ../src/git/text.bend as Tx
 
-def obs(key: String, value: String) -> IO(Unit):
+def obs(+key: String, +value: String) -> IO(Unit):
   IO.print(key ++ "=" ++ value)
 
 def show(+key: String, result: Result<&1, &1, U32 & String, String>) -> IO(Unit):
@@ -45,10 +45,10 @@ def show(+key: String, result: Result<&1, &1, U32 & String, String>) -> IO(Unit)
 
 def identity_surfaces() -> IO(Unit):
   do IO<Unit>:
-    subject : ContextRole.Subject <- IO.pure(ContextRole.Subject, ContextRole.SubjectQuery{"q7"})
-    identity : String <- IO.pure(String, ContextRole.guard_identity("/work/coord.sqlite", subject, ContextRole.RoleStarter{}, "0"))
+    +subject : ContextRole.Subject <- IO.pure(ContextRole.Subject, ContextRole.SubjectQuery{"q7"})
+    +identity : String <- IO.pure(String, ContextRole.guard_identity("/work/coord.sqlite", subject, ContextRole.RoleStarter{}, "0"))
     obs("identity.starter", identity)
-    other : String <- IO.pure(String, ContextRole.guard_identity("/work/coord.sqlite", subject, ContextRole.RoleTarget{}, "0"))
+    +other : String <- IO.pure(String, ContextRole.guard_identity("/work/coord.sqlite", subject, ContextRole.RoleTarget{}, "0"))
     obs("identity.distinct", Bool.show(Bool.not(String.eq(identity, other))))
     obs("identity.admitted", Bool.show(ContextRole.identity_admitted(identity, identity)))
     obs("identity.rejected", Bool.show(ContextRole.identity_admitted(identity, other)))
@@ -104,24 +104,24 @@ def release_lock(lock: Maybe<U32>) -> IO(Unit):
 
 def host_surfaces(+log: String) -> IO(Unit):
   do IO<Unit>:
-    anchor : String <- IO.try(String, ContextRole.prepare_guard_anchor(log))
+    +anchor : String <- IO.try(String, ContextRole.prepare_guard_anchor(log))
     obs("anchor.canonical", anchor)
-    key : String <- IO.try(String, ContextRole.role_guard_key("abc"))
+    +key : String <- IO.try(String, ContextRole.role_guard_key("abc"))
     obs("key.abc", key)
     lock : Maybe<U32> <- IO.try(Maybe<U32>, Lock.try_acquire(anchor, key))
     obs("lock.acquired", Bool.show(Maybe.is_some(&1, U32, lock)))
-    found : String <- IO.try(String, Files.find_suffix(log, ContextRole.guard_lock_name(key)))
+    +found : String <- IO.try(String, Files.find_suffix(log, ContextRole.guard_lock_name(key)))
     obs("lock.found", found)
     released : Unit <- release_lock(lock)
     IO.pure(Unit, Unit{})
 
 def binding_surfaces(+db: String, +copy: String) -> IO(String):
   do IO<String>:
-    bound : String <- IO.try(String, DB.Sql.binding(db))
+    +bound : String <- IO.try(String, DB.Sql.binding(db))
     obs("binding.original", bound)
     bound_result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, bound, "SELECT 1;")
     show("bound.rows", bound_result)
-    copied : String <- IO.try(String, DB.Sql.binding(copy))
+    +copied : String <- IO.try(String, DB.Sql.binding(copy))
     obs("binding.copy", copied)
     crossed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, copied, "SELECT 1;")
     show("cross.result", crossed)
@@ -164,7 +164,7 @@ def rejection_surfaces(+db: String, +binding: String) -> IO(Unit):
     +progress : String <- IO.pure(String, ContextProgress.progress_json(True{}, ContextProgress.PhaseCleaning{}, Nil{}, ContextProgress.ControlUnobserved{}, ContextProgress.CleanupPending{}))
     +error : String <- IO.pure(String, ContextAdmission.rejection_error("preparedKeeperCancelled"))
     +notice : String <- IO.pure(String, ContextAdmission.rejection_message_id("q2"))
-    body : String <- IO.pure(String, "{\"kind\":\"context-admission-rejected\",\"query\":\"q2\"}")
+    +body : String <- IO.pure(String, "{\"kind\":\"context-admission-rejected\",\"query\":\"q2\"}")
     rejected : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.reject_sql("q2", "root", "{\"version\":1}", "/work", "", "/log/q2", "/art/q2", error, progress, notice, body))
     show("reject.q2", rejected)
     notice_read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT body FROM messages WHERE id=" ++ C.q(notice) ++ ";")
@@ -175,8 +175,8 @@ def rejection_surfaces(+db: String, +binding: String) -> IO(Unit):
 
 def role_surfaces(+db: String, +binding: String, +log: String) -> IO(Unit):
   do IO<Unit>:
-    identity : String <- IO.pure(String, ContextRole.guard_identity(binding, ContextRole.SubjectQuery{"q1"}, ContextRole.RoleStarter{}, "0"))
-    key : String <- IO.try(String, ContextRole.role_guard_key(identity))
+    +identity : String <- IO.pure(String, ContextRole.guard_identity(binding, ContextRole.SubjectQuery{"q1"}, ContextRole.RoleStarter{}, "0"))
+    +key : String <- IO.try(String, ContextRole.role_guard_key(identity))
     row : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.role_row_sql("q1", "starter", "0", "/log/q1", ContextRole.guard_anchor(log), key, identity, "[\"bat\",\"--recover-context-role\"]", binding, "prepared", "notRequested"))
     show("role.row", row)
     first : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.event_commit_sql("q1", "starter", "0", "root", "", "1", "{\"phase\":\"running\"}", "notice-1", "{\"kind\":\"context-progress\",\"query\":\"q1\"}", "{\"path\":\"/c/1\",\"sha256\":\"aa\",\"pointer\":\"/0\"}", ""))
@@ -241,7 +241,7 @@ def admit_surfaces(+db: String, +binding: String) -> IO(Unit):
 
 # The exported duty enumeration: a settled context answers none, and an owed notice
 # for the query keeps the view from being settled.
-def show_duty(key: String, result: Result<&1,&1,U32 & String,ContextDuties.DutyView>) -> IO(Unit):
+def show_duty(+key: String, result: Result<&1,&1,U32 & String,ContextDuties.DutyView>) -> IO(Unit):
   match result:
     case Done{+view}: obs(key, ContextDuties.duty_text(view))
     case Fail{error}:
@@ -255,7 +255,7 @@ def show_duty_has(+key: String, +view: Result<&1,&1,U32 & String,ContextDuties.D
       match error:
         case (code, message): obs(key ++ ".error", message)
 
-def duty_surfaces(db: String, binding: String) -> IO(Unit):
+def duty_surfaces(+db: String, +binding: String) -> IO(Unit):
   do IO<Unit>:
     created : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.accept_sql("q4", "root", "{\"version\":1,\"engine\":\"typescript\"}", "/work", "", "/log/q4", "/art/q4"))
     show("duties.q4.accept", created)
@@ -271,7 +271,7 @@ def duty_surfaces(db: String, binding: String) -> IO(Unit):
     show_duty("duties.missing", missing)
     IO.pure(Unit, Unit{})
 
-def runtime_row_surfaces(db: String, binding: String) -> IO(Unit):
+def runtime_row_surfaces(+db: String, +binding: String) -> IO(Unit):
   do IO<Unit>:
     +owner : String <- IO.pure(String, "root")
     +big : String <- IO.pure(String, "12345678901234567890123456789012345")
@@ -313,7 +313,7 @@ def ref_parts(+lookup: ContextStore.RefLookup) -> String & String:
 
 # The pair is matched as a declared parameter, and the raw evidence is bracketed by two
 # key lines so the driver compares the whole text rather than a line fragment.
-def ref_observe(+label: String, pair: String & String) -> IO(Unit):
+def ref_observe(+label: String, +pair: String & String) -> IO(Unit):
   match pair:
     case (label_text, evidence):
       do IO<Unit>:
@@ -423,7 +423,7 @@ def intent_surfaces() -> IO(Unit):
     obs("intent.duty.acknowledged", Bool.show(ContextLifecycle.owns_live_duty("acknowledged")))
     obs("intent.duty.settled", Bool.show(ContextLifecycle.owns_live_duty("settled")))
 
-def show_step(key: String, step: ContextLifecycle.CompanionStep) -> IO(Unit):
+def show_step(+key: String, step: ContextLifecycle.CompanionStep) -> IO(Unit):
   obs(key, ContextLifecycle.companion_text(step))
 
 # The settled reading's duty probe, marked under a key of its own so the driver can tell a
@@ -455,12 +455,12 @@ def companion_surfaces(+db: String, +binding: String, +log: String) -> IO(Unit):
     +anchor : String <- IO.pure(String, ContextRole.guard_anchor(log))
     admitted : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.accept_sql("qc1", "root", "{\"version\":1,\"engine\":\"typescript\"}", "/work", "", "/log/qc1", "/art/qc1"))
     show("companion.query", admitted)
-    owed_identity : String <- IO.pure(String, ContextRole.guard_identity(binding, ContextRole.SubjectQuery{"qc1"}, ContextRole.RoleStarter{}, "0"))
-    owed_key : String <- IO.try(String, ContextRole.role_guard_key(owed_identity))
+    +owed_identity : String <- IO.pure(String, ContextRole.guard_identity(binding, ContextRole.SubjectQuery{"qc1"}, ContextRole.RoleStarter{}, "0"))
+    +owed_key : String <- IO.try(String, ContextRole.role_guard_key(owed_identity))
     owed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.role_row_sql("qc1", "starter", "0", "/log/qc1-owned", anchor, owed_key, owed_identity, "[\"bat\",\"--recover-context-role\"]", binding, "prepared", "pending"))
     show("companion.owed.row", owed)
-    settled_identity : String <- IO.pure(String, ContextRole.guard_identity(binding, ContextRole.SubjectQuery{"qc1"}, ContextRole.RoleTarget{}, "1"))
-    settled_key : String <- IO.try(String, ContextRole.role_guard_key(settled_identity))
+    +settled_identity : String <- IO.pure(String, ContextRole.guard_identity(binding, ContextRole.SubjectQuery{"qc1"}, ContextRole.RoleTarget{}, "1"))
+    +settled_key : String <- IO.try(String, ContextRole.role_guard_key(settled_identity))
     settled : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.role_row_sql("qc1", "target", "1", "/log/qc1-settled", anchor, settled_key, settled_identity, "[\"bat\",\"--recover-context-role\"]", binding, "settled", "complete"))
     show("companion.settled.row", settled)
     owed_read : ContextLifecycle.CompanionStep <- ContextLifecycle.companion_step(db, binding, "qc1", "starter", "0", u => probe_settled("companion.owed.probe"))
