@@ -1,7 +1,9 @@
 # The land test entry. Builds a throwaway repository under
-# .scratch/bend2-land-test whose root checkout is detached, so the target
-# branch is never held while a landing advances it, and exercises land
-# through the real native effect. Run from the repository root:
+# .scratch/bend2-land-test whose root checkout is detached. The held-target
+# cases add a worktree that holds the target branch, so the landing there
+# advances that worktree with the branch and preserves its uncommitted work;
+# every case exercises land through the real native effect. Run from the
+# repository root:
 #   sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test
 #   ./.scratch/bend2/land-test
 
@@ -120,12 +122,12 @@ def is_conflict_file(r: Result<&1, &1, T.GitFail, T.LandOutcome>, want: String) 
     case Done{T.LBlocked{reason}}: Tx.str_cat("land: blocked where conflict expected: ", reason)
     case Fail{fail}: Tx.str_cat("land refused: ", Tx.trim_nl(T.fail_text(fail)))
 
-def is_busy_fail(r: Result<&1, &1, T.GitFail, T.LandOutcome>) -> String:
+def is_held_block(r: Result<&1, &1, T.GitFail, T.LandOutcome>) -> String:
   match r:
-    case Fail{T.FTargetBusy{branch}}: ""
-    case Done{T.LLanded{target, commit}}: "land: landed where busy expected"
-    case Done{made}: "land: outcome where busy expected"
-    case Fail{fail}: Tx.str_cat("land: other refusal where busy expected: ", Tx.trim_nl(T.fail_text(fail)))
+    case Done{T.LBlocked{+reason}}: eq_or(Tx.starts_with(reason, "the target branch main is checked out at "), Tx.str_cat("land H: the block does not name the holding worktree: ", Tx.trim_nl(reason)))
+    case Done{T.LLanded{target, commit}}: "land: landed where a held block expected"
+    case Done{made}: "land: outcome where a held block expected"
+    case Fail{fail}: Tx.str_cat("land: refusal where a held block expected: ", Tx.trim_nl(T.fail_text(fail)))
 
 def is_unknown_base(r: Result<&1, &1, T.GitFail, T.LandOutcome>) -> String:
   match r:
@@ -354,17 +356,49 @@ def land_i(r: String, acc: String) -> IO(Unit):
     f1 : String <- IO.pure(String, is_unknown_base(res))
     land_j(r2, Tx.str_cat(a2, f1))
 
+# H: a worktree holds the target. The landing advances the branch and that
+# worktree's index and files with it, so the holder stays consistent with the
+# branch it holds. A holder whose uncommitted change overlaps the advance
+# refuses it; the target stays where it was and the answer names the worktree
+# and the next operation.
+def status_of(dir: String) -> IO(String):
+  +d2 = dir
+  do IO<String>:
+    g : T.GitOut <- Git.runGit(d2, ["status", "--porcelain", "--untracked-files=no"])
+    IO.pure(String, Tx.trim_nl(out_of(g)))
+
+def held_file(dir: String, name: String) -> IO(String):
+  +p2 = T.str_cat3(dir, "/", name)
+  do IO<String>:
+    p : T.RunRes <- Git.runFull(["/bin/cat", p2], ".")
+    IO.pure(String, Tx.trim_nl(res_out(p)))
+
 def land_h(r: String, acc: String) -> IO(Unit):
   +r2 = r
   +a2 = acc
+  +hold = Tx.str_cat(r2, "/.scratch/lt-busy")
   do IO<Unit>:
-    _add : T.RunRes <- Git.runFull(["git", "-C", r2, "worktree", "add", Tx.str_cat(r2, "/.scratch/lt-busy"), "main"], ".")
+    _add : T.RunRes <- Git.runFull(["git", "-C", r2, "worktree", "add", hold, "main"], ".")
     head : String <- head_of(r2)
     tip : String <- author(r2, Tx.str_cat(r2, "/.scratch/lt-wh"), "baton/wh", head, "printf 'feat4\\n' > feat4.txt")
     res : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", tip, Con{"feat4.txt", Nil{}}, "check-pass.sh", Tx.str_cat(r2, "/.scratch/lt-lh"))
-    f1 : String <- IO.pure(String, is_busy_fail(res))
-    _rm : T.RunRes <- Git.runFull(["git", "-C", r2, "worktree", "remove", Tx.str_cat(r2, "/.scratch/lt-busy")], ".")
-    land_i(r2, Tx.str_cat(a2, f1))
+    landed : String <- head_of(r2)
+    +st : String <- status_of(hold)
+    feat : String <- held_file(hold, "feat4.txt")
+    _edit : T.RunRes <- Git.runFull(["/bin/sh", "-c", Tx.str_cat("printf 'local\\n' > ", Tx.str_cat(hold, "/app.txt"))], ".")
+    +head2 : String <- head_of(r2)
+    tip2 : String <- author(r2, Tx.str_cat(r2, "/.scratch/lt-wh2"), "baton/wh2", head2, "printf 'two\\n' > app.txt")
+    blocked : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", tip2, Con{"app.txt", Nil{}}, "check-pass.sh", Tx.str_cat(r2, "/.scratch/lt-lh2"))
+    after : String <- head_of(r2)
+    kept : String <- held_file(hold, "app.txt")
+    f1 : String <- IO.pure(String, is_landed(res, landed))
+    f2 : String <- IO.pure(String, eq_or(Tx.str_eq(st, ""), Tx.str_cat("land H: the holding worktree is not consistent with the landed branch: ", st)))
+    f3 : String <- IO.pure(String, eq_or(Tx.str_eq(feat, "feat4"), "land H: the landed path is not in the holding worktree"))
+    f4 : String <- IO.pure(String, is_held_block(blocked))
+    f5 : String <- IO.pure(String, eq_or(Tx.str_eq(after, head2), "land H: a blocked held landing moved the target"))
+    f6 : String <- IO.pure(String, eq_or(Tx.str_eq(kept, "local"), "land H: a blocked held landing dropped uncommitted work"))
+    _rm : T.RunRes <- Git.runFull(["git", "-C", r2, "worktree", "remove", "--force", hold], ".")
+    land_i(r2, a2 ++ f1 ++ f2 ++ f3 ++ f4 ++ f5 ++ f6)
 
 # G: a moved target requires a fresh attempt, whose merge exposes the conflict.
 def land_g(r: String, acc: String) -> IO(Unit):

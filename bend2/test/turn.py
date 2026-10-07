@@ -135,7 +135,7 @@ assert sys.stdin.read()==''
         frames=[json.loads(line) for line in self.log.read_text().splitlines()]
         self.assertEqual([f for f in frames if f.get('type')=='message_update'], [])
         self.assertEqual([f['partialResult']['content'][0]['text'] for f in frames if f.get('type')=='tool_execution_update'], [self.task.read_text()])
-        self.assertEqual([f['type'] for f in frames], ['response','tool_execution_update','message_start','message_end','agent_end','agent_end','baton_event_filter'])
+        self.assertEqual([f['type'] for f in frames], ['response','message_end','agent_end','agent_end','tool_execution_update','baton_event_filter'])
         args=json.loads((self.cwd/'argv.json').read_text())
         self.assertEqual(args[args.index('--mode')+1],'rpc')
         self.assertEqual(args[args.index('--session-dir')+1],str(self.db)+'.sessions')
@@ -171,7 +171,7 @@ assert sys.stdin.read()==''
 ''')
         self.call('turn','omp-worker','retained-turn',str(self.player),'model','low',str(self.cwd),str(self.task),str(self.log),'')
         note='{"type":"baton_event_filter","requested":"delta","active":false,"outcome":"unacknowledged"}'
-        self.assertEqual(self.log.read_text().splitlines(),retained+[terminal,note])
+        self.assertEqual(self.log.read_text().splitlines(),retained+[terminal,omitted[1],note])
         self.assertEqual(json.loads(self.call('delivery','retained-turn'))['body'],final_text)
 
     def test_omp_empty_terminal_envelope_delivers_streamed_trial_report(self):
@@ -252,7 +252,7 @@ assert state['type']=='get_state'
 prompt=json.loads(sys.stdin.readline())['message']
 emit({'type':'response','command':'get_state','success':True,'id':state['id'],'data':{'sessionId':'omp-delta','model':{'provider':'provider','id':'actual-model'}}})
 emit({'type':'message_update','messageId':'m1','assistantMessageEvent':{'type':'text_delta','delta':'partial λ'}})
-emit({'type':'message_end','message':{'role':'assistant','provider':'provider','model':'actual-model','content':[{'type':'text','text':'delta answer λ'}]}})
+emit({'type':'message_end','message':{'id':'m1','role':'assistant','provider':'provider','model':'actual-model','content':[{'type':'text','text':'delta answer λ'}]}})
 emit({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','content':[{'type':'text','text':'delta answer λ'}]}]})
 pathlib.Path('emitted.jsonl').write_text(chr(10).join(emitted)+chr(10))
 ''')

@@ -16,13 +16,20 @@ def result(saved: String, log: String, run: T.RunRes) -> Result<&1,&1,U32 & Stri
     case T.RRun{T.SExit{0},out}: Done{saved}
     case other: Fail{(1,"Message committed; session delivery failed. Read " ++ log ++ " and retry delivery from the pending inbox.")}
 
+# A delivery whose log record cannot be written is reported as one that needs
+# inspection: the endpoint ran, and the delivery record does not exist.
+def logged(saved: String, log: String, output: String, written: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,String>:
+  match written:
+    case Fail{(code,text)}: Fail{(1,"Message delivered; the delivery log " ++ log ++ " could not be written: " ++ U32.show(code) ++ ": " ++ text ++ ". Read the recipient's inbox and the retained native log.")}
+    case Done{unit}: result(saved,log,Tx.run_res(Done{output}))
+
 def completed(db: String, saved: String, run: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match run:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
     case Done{+output}: do IO<Result<&1,&1,U32 & String,String>>:
       +log : String <- IO.pure(String,db ++ ".root.log")
-      written : Unit <- IO.try(Unit,Text.Text.append(log,output ++ "\n"))
-      IO.pure(Result<&1,&1,U32 & String,String>,result(saved,log,Tx.run_res(Done{output})))
+      written : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(log,output ++ "\n")
+      IO.pure(Result<&1,&1,U32 & String,String>,logged(saved,log,output,written))
 
 def launch(db: String, id: String, saved: String, argv: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match empty:

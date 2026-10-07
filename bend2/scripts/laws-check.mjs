@@ -683,6 +683,48 @@ const MUTATIONS = [
     law: 'm3a_the_checked_landing_runs_every_stage_in_order',
   },
   {
+    name: 'm3a-fast-forward-composition-skips-the-advance-stage',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '    r5 : FFLD <- ff_go5(r4, rp, tg)',
+    replace: '    r5 : FFLD <- IO.pure(FFLD, r4)',
+    law: 'm3a_the_fast_forward_landing_runs_every_stage_in_order',
+  },
+  {
+    name: 'm3a-held-advance-drops-the-fast-forward-requirement',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '    g : T.GitOut <- Git.runGit(p2, ["merge", "--ff-only", c2])',
+    replace: '    g : T.GitOut <- Git.runGit(p2, ["merge", c2])',
+    law: 'm3a_held_advance_is_the_worktree_fast_forward',
+  },
+  {
+    name: 'm3a-a-held-target-advances-without-its-worktree',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '    case HoldPath{path}: ld_adv_wt(path, repo, target, cand, basis)',
+    replace: '    case HoldPath{path}: ld_adv_cas_run(repo, target, cand, basis)',
+    law: 'm3a_holder_advances_through_its_own_worktree',
+  },
+  {
+    name: 'm11-holder-path-drops-the-label-space',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '  wt_path_go(line, "worktree ")',
+    replace: '  wt_path_go(line, "worktree")',
+    law: 'm11_the_holder_comes_from_the_worktree_listing',
+  },
+  {
+    name: 'm3a-refused-fastforward-of-the-basis-reads-as-the-movement',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'def ld_adv_refused_same(same: Bool, path: String) -> LAdv:\n  match same:\n    case True{}: AdvHeld{path}',
+    replace: 'def ld_adv_refused_same(same: Bool, path: String) -> LAdv:\n  match same:\n    case True{}: AdvMoved{}',
+    law: 'm3a_refused_fastforward_of_the_basis_names_the_worktree',
+  },
+  {
+    name: 'm3a-moved-block-drops-the-next-operation',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '    case AdvMoved{}: LdDone{T.LBlocked{"target moved during checked landing; rerun land-checked to prepare and check against the current target"}}',
+    replace: '    case AdvMoved{}: LdDone{T.LBlocked{"target moved"}}',
+    law: 'm3a_moved_block_names_the_next_check',
+  },
+  {
     name: 'm3a-composition-skips-the-settle',
     file: join('bend2', 'src', 'git', 'land.bend'),
     find: '    settled : Ld <- ld_settle(f, r2, s2)',
@@ -1018,6 +1060,34 @@ MUTATIONS.push(
 MUTATIONS.push(
   {"name": "failed-replay-skips-the-wake", "file": "bend2/src/coordinator/turn.bend", "find": "    wake : Result<&1,&1,U32 & String,Unit> <- Delivery.wake_pending(db,player,\"0\")\n    IO.pass(Unit,combine(output,wake))", "replace": "    wake : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})\n    IO.pass(Unit,combine(output,wake))", "law": "failed_replay_releases_and_wakes_before_reporting_output_error"},
   {"name": "failed-replay-halts-before-release", "file": "bend2/src/coordinator/turn.bend", "find": "    case Fail{error}: replay_finished(db,player,lock,Fail{error})", "replace": "    case Fail{error}: IO.pass(Unit,Fail{error})", "law": "failed_replay_output_reaches_the_completion_boundary"}
+);
+
+MUTATIONS.push(
+  {"name": "member-presence-matches-parentage-not-registration", "file": "bend2/src/coordinator/commands.bend", "find": "\"EXISTS(SELECT 1 FROM sessions WHERE sessions.id=\" ++ session ++ \")\"", "replace": "\"EXISTS(SELECT 1 FROM sessions WHERE sessions.parent=\" ++ session ++ \")\"", "law": "member_presence_requires_a_stored_player_record"}
+);
+
+MUTATIONS.push(
+  {
+    name: 'held-success-arm-skips-publication-observation',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'ld_adv_wt_observe(p2, r2, t2, c2),\n        ld_adv_wt_refused(p2, r2, t2, b2)',
+    replace: 'IO.pure(LAdv, AdvLanded{}),\n        ld_adv_wt_refused(p2, r2, t2, b2)',
+    law: 'm3a_held_success_arm_uses_publication_observation',
+  },
+  {
+    name: 'held-success-arm-ignores-holder-branch',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '+same = Bool.pick(Bool, status_ok,\n        Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)), False{})\n      IO.pure(LAdv, ld_adv_wt_observed(True{}, same, path))',
+    replace: 'IO.pure(LAdv, ld_adv_wt_observed(True{}, True{}, path))',
+    law: 'm3a_held_holder_different_branch_refuses',
+  },
+  {
+    name: 'held-success-arm-accepts-a-different-target-tip',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '+same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})\n      ld_adv_wt_observed_target_same(same, path, target)',
+    replace: '+same = Bool.pick(Bool, True{}, True{}, True{})\n      ld_adv_wt_observed_target_same(same, path, target)',
+    law: 'm3a_held_target_tip_mismatch_refuses',
+  },
 );
 
 for (const mutation of MUTATIONS) {

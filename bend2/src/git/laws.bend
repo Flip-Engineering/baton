@@ -245,13 +245,6 @@ law m14_base_refusal_names_base:
 def m14_base_refusal_names_base(base):
   {==}
 
-law m14_busy_refusal_names_target:
-  for +branch: String
-  {T.fail_text(T.FTargetBusy{branch}) == "target busy: " ++ branch : String}
-
-def m14_busy_refusal_names_target(branch):
-  {==}
-
 # ---------------------------------------------------------------------------
 # M-10: the decision keeps every failure it decided to keep. A kept identity
 # line stays in the answer; the lines the target also showed are the only ones
@@ -804,6 +797,32 @@ law m3a_ff_fastforward_carries_pair:
 def m3a_ff_fastforward_carries_pair(wc, tb):
   {==}
 
+# M-3a: the fast-forward landing runs its stages in order and answers the
+# outcome it reached. The composition is written here independently of
+# L.land_fast_forward, so an entry that dropped a stage, reordered two, or
+# answered without running the last one breaks this proof. The reviewed-commit
+# entry shares ff_stage2 to ff_stage5 with this pipeline, so the advance and its
+# answer are the same functions there.
+def fast_forward_stages(repo: String, workerBranch: String, target: String) -> IO(T.LandOutcome):
+  +rp = repo
+  +tg = target
+  do IO<T.LandOutcome>:
+    r1 : L.FFLD <- L.ff_stage1(rp, workerBranch)
+    r2 : L.FFLD <- L.ff_go2(r1, rp, tg)
+    r3 : L.FFLD <- L.ff_go3(r2, rp, tg)
+    r4 : L.FFLD <- L.ff_go4(r3, rp, tg)
+    r5 : L.FFLD <- L.ff_go5(r4, rp, tg)
+    L.ff_answer(r5)
+
+law m3a_the_fast_forward_landing_runs_every_stage_in_order:
+  for repo: String
+  for workerBranch: String
+  for target: String
+  {L.land_fast_forward(repo, workerBranch, target) == fast_forward_stages(repo, workerBranch, target) : IO(T.LandOutcome)}
+
+def m3a_the_fast_forward_landing_runs_every_stage_in_order(repo, workerBranch, target):
+  {==}
+
 # M-3a: every blocking line the judging named blocks the landing with its
 # content.
 law m3a_judged_block_names_news:
@@ -841,17 +860,17 @@ def m3a_cas_argv_binds_checked_pair(target, cand, basis):
 
 # The production effect invokes Git with that exact pair. Git's atomic old-value
 # comparison and the host's report of its exit status remain boundary assumptions.
-def checked_pair_update(repo: String, +target: String, +cand: String, basis: String) -> IO(L.Ld):
-  do IO<L.Ld>:
+def checked_pair_update(repo: String, +target: String, +cand: String, basis: String) -> IO(L.LAdv):
+  do IO<L.LAdv>:
     g : T.GitOut <- P.runGit(repo, ["update-ref", "refs/heads/" ++ target, cand, basis])
-    IO.pure(L.Ld, L.ld_update_pick(g, target, cand))
+    IO.pure(L.LAdv, L.ld_adv_cas(g))
 
 law m3a_publication_invokes_checked_pair:
   for repo: String
   for target: String
   for cand: String
   for basis: String
-  {L.ld_adv_update(repo, target, cand, basis) == checked_pair_update(repo, target, cand, basis) : IO(L.Ld)}
+  {L.ld_adv_cas_run(repo, target, cand, basis) == checked_pair_update(repo, target, cand, basis) : IO(L.LAdv)}
 
 def m3a_publication_invokes_checked_pair(repo, target, cand, basis):
   {==}
@@ -941,25 +960,78 @@ def m3c_a_prepared_candidate_alone_is_not_an_outcome(tip, cand):
   {==}
 
 # ---------------------------------------------------------------------------
-# M-3b: publication compares the target against the basis that was checked.
+# M-3a and M-3b: the target's advance. The advance reads the target tip and
+# moves the branch only while it still reads as the basis that was checked, and
+# a target a worktree holds moves through that worktree so the branch, the
+# index and the files move together. Git's own work inside each effect, its
+# object identities, its refusal of an overlapping uncommitted change and the
+# host's report of each exit status remain boundary assumptions.
 
-# M-3a: a changed target returns a retry result with no publication effect.
+# M-3a: a changed target answers the movement and touches nothing.
 law m3a_changed_basis_requires_new_check:
   for repo: String
   for target: String
   for cand: String
   for basis: String
-  {L.ld_adv_same(False{}, repo, target, cand, basis) == IO.pure(L.Ld, L.LdDone{T.LBlocked{"target moved during checked landing; rerun land-checked to prepare and check against the current target"}}) : IO(L.Ld)}
+  {L.ld_adv_same(False{}, repo, target, cand, basis) == IO.pure(L.LAdv, L.AdvMoved{}) : IO(L.LAdv)}
 
 def m3a_changed_basis_requires_new_check(repo, target, cand, basis):
   {==}
 
-# M-3b: a compare-and-swap that still matches the basis lands the candidate.
+# M-3a: a target tip that no longer matches the basis answers the movement
+# without reading a worktree or running any effect.
+law m3a_moved_tip_has_no_effect:
+  for repo: String
+  for target: String
+  for cand: String
+  {L.ld_adv_pick(T.GRun{0, "moved"}, repo, target, cand, "basis") == IO.pure(L.LAdv, L.AdvMoved{}) : IO(L.LAdv)}
+
+def m3a_moved_tip_has_no_effect(repo, target, cand):
+  {==}
+
+# M-3a: the moved-target block names the next checked attempt, so the operator
+# reads the operation that resolves it.
+law m3a_moved_block_names_the_next_check:
+  for target: String
+  for cand: String
+  {L.ld_adv_answer(L.AdvMoved{}, target, cand) == L.LdDone{T.LBlocked{"target moved during checked landing; rerun land-checked to prepare and check against the current target"}} : L.Ld}
+
+def m3a_moved_block_names_the_next_check(target, cand):
+  {==}
+
+# M-3a: the advance reads the target commit itself, not a working tree, a
+# branch name or any other resolution of the target.
+law m3a_the_advance_reads_the_target_commit:
+  for target: String
+  {L.ld_tip_argv(target) == ["rev-parse", "--verify", target ++ "^{commit}"] : List<String>}
+
+def m3a_the_advance_reads_the_target_commit(target):
+  {==}
+
+# The production advance reads that tip first and hands the read to the pick,
+# so no update can start against a target the attempt never compared.
+def advance_read(+repo: String, +target: String, +cand: String, +basis: String) -> IO(L.LAdv):
+  do IO<L.LAdv>:
+    g : T.GitOut <- P.runGit(repo, ["rev-parse", "--verify", target ++ "^{commit}"])
+    L.ld_adv_pick(g, repo, target, cand, basis)
+
+law m3a_the_advance_reads_the_tip_before_any_update:
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  {L.ld_adv_run(repo, target, cand, basis) == advance_read(repo, target, cand, basis) : IO(L.LAdv)}
+
+def m3a_the_advance_reads_the_tip_before_any_update(repo, target, cand, basis):
+  {==}
+
+# M-3b: a compare-and-swap that still matches the basis lands the candidate,
+# and the checked landing answers that landing with the candidate it moved to.
 law m3b_cas_success_lands:
   for out: String
   for target: String
   for cand: String
-  {L.ld_update_ok(True{}, out, target, cand) == L.LdDone{T.LLanded{target, cand}} : L.Ld}
+  {L.ld_adv_answer(L.ld_adv_cas(T.GRun{0, out}), target, cand) == L.LdDone{T.LLanded{target, cand}} : L.Ld}
 
 def m3b_cas_success_lands(out, target, cand):
   {==}
@@ -969,7 +1041,7 @@ law m3b_failed_cas_requires_new_check:
   for out: String
   for target: String
   for cand: String
-  {L.ld_update_ok(False{}, out, target, cand) == L.LdFail{T.FCmd{"land", "git update-ref failed; inspect the target and rerun land-checked to prepare and check a new candidate"}} : L.Ld}
+  {L.ld_adv_answer(L.ld_adv_cas(T.GRun{1, out}), target, cand) == L.LdFail{T.FCmd{"land", "git update-ref failed; inspect the target and rerun land-checked to prepare and check a new candidate"}} : L.Ld}
 
 def m3b_failed_cas_requires_new_check(out, target, cand):
   {==}
@@ -979,28 +1051,262 @@ law m3b_update_broken_is_not_a_landing:
   for detail: String
   for target: String
   for cand: String
-  {L.ld_update_pick(T.GBroken{detail}, target, cand) == L.LdFail{T.FCmd{"land", detail}} : L.Ld}
+  {L.ld_adv_answer(L.ld_adv_cas(T.GBroken{detail}), target, cand) == L.LdFail{T.FCmd{"land", detail}} : L.Ld}
 
 def m3b_update_broken_is_not_a_landing(detail, target, cand):
   {==}
 
-# M-3b: the fast-forward compare-and-swap lands while the target is still at
-# the recorded tip.
-law m3b_ff_cas_success_lands:
-  for wc: String
+# M-3a: the advance moves a target a worktree holds through that worktree, and
+# a target no worktree holds through the checked compare-and-swap. An unusable
+# listing moves nothing at all.
+law m3a_no_holder_uses_the_checked_pair:
+  for repo: String
   for target: String
-  {L.ff_stage5_ok(True{}, wc, target) == L.FFDone{T.LLanded{target, wc}} : L.FFLD}
+  for cand: String
+  for basis: String
+  {L.ld_adv_holder(L.HoldNone{}, repo, target, cand, basis) == L.ld_adv_cas_run(repo, target, cand, basis) : IO(L.LAdv)}
 
-def m3b_ff_cas_success_lands(wc, target):
+def m3a_no_holder_uses_the_checked_pair(repo, target, cand, basis):
   {==}
 
-# M-3b: the fast-forward compare-and-swap refuses when the target moved.
-law m3b_ff_cas_miss_refuses_retry:
+law m3a_holder_advances_through_its_own_worktree:
+  for path: String
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  {L.ld_adv_holder(L.HoldPath{path}, repo, target, cand, basis) == L.ld_adv_wt(path, repo, target, cand, basis) : IO(L.LAdv)}
+
+def m3a_holder_advances_through_its_own_worktree(path, repo, target, cand, basis):
+  {==}
+
+law m3a_unusable_listing_advances_nothing:
+  for detail: String
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  {L.ld_adv_holder(L.HoldBlocked{detail}, repo, target, cand, basis) == IO.pure(L.LAdv, L.AdvBroken{detail}) : IO(L.LAdv)}
+
+def m3a_unusable_listing_advances_nothing(detail, repo, target, cand, basis):
+  {==}
+
+# The held advance checks the exact local target and holder before running Git's
+# fast-forward in the worktree. A successful exit reaches the publication
+# observer, which preserves the holder's branch, index and worktree boundary.
+def held_pair_update(+path: String, +repo: String, +target: String, +cand: String, +basis: String) -> IO(L.LAdv):
+  +p2 = path
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  +b2 = basis
+  do IO<L.LAdv>:
+    tip : T.GitOut <- P.runGit(r2, L.ld_target_ref_argv(t2))
+    L.ld_adv_wt_target_pick(tip, p2, r2, t2, c2, b2)
+
+law m3a_held_advance_is_the_worktree_fast_forward:
+  for path: String
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  {L.ld_adv_wt(path, repo, target, cand, basis) == held_pair_update(path, repo, target, cand, basis) : IO(L.LAdv)}
+
+def m3a_held_advance_is_the_worktree_fast_forward(path, repo, target, cand, basis):
+  {==}
+
+
+# The held success arm dispatches through the source-bound publication
+# observer; a zero exit from merge alone is not a landed answer.
+
+# The observer proves the states the coordinator read. Git CLI cannot pin
+# symbolic HEAD atomically across its final check and merge: a branch switch in
+# that interval can make merge update another branch. The post-read refuses a
+# landed answer on observed drift, but it cannot undo a concurrent ref update.
+law m3a_held_success_arm_uses_publication_observation:
+  for path: String
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  {L.ld_adv_wt_pick(T.GRun{0, ""}, path, repo, target, cand, basis) == L.ld_adv_wt_observe(path, repo, target, cand) : IO(L.LAdv)}
+
+def m3a_held_success_arm_uses_publication_observation(path, repo, target, cand, basis):
+  {==}
+
+def held_success_observation(path: String, repo: String, target: String, cand: String) -> IO(L.LAdv):
+  +p2 = path
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  do IO<L.LAdv>:
+    tip : T.GitOut <- P.runGit(r2, L.ld_target_ref_argv(t2))
+    L.ld_adv_wt_observed_target_pick(tip, p2, t2, c2)
+
+law m3a_held_success_observation_reads_the_target_ref:
+  for path: String
+  for repo: String
+  for target: String
+  for cand: String
+  {L.ld_adv_wt_observe(path, repo, target, cand) == held_success_observation(path, repo, target, cand) : IO(L.LAdv)}
+
+def m3a_held_success_observation_reads_the_target_ref(path, repo, target, cand):
+  {==}
+
+def held_candidate_tip_reads_holder(path: String, target: String) -> IO(L.LAdv):
+  +p2 = path
+  +t2 = target
+  do IO<L.LAdv>:
+    holder : T.GitOut <- P.runGit(p2, L.ld_head_argv())
+    L.ld_adv_wt_observed_holder_pick(holder, p2, t2)
+
+law m3a_held_candidate_tip_reads_the_holder:
+  for path: String
+  for target: String
+  {L.ld_adv_wt_observed_target_pick(T.GRun{0, "candidate\n"}, path, target, "candidate") == held_candidate_tip_reads_holder(path, target) : IO(L.LAdv)}
+
+def m3a_held_candidate_tip_reads_the_holder(path, target):
+  {==}
+
+law m3a_held_target_tip_mismatch_refuses:
+  for path: String
+  {L.ld_adv_wt_observed_target_pick(T.GRun{0, "other"}, path, "main", "candidate") == IO.pure(L.LAdv, L.AdvMoved{}) : IO(L.LAdv)}
+
+def m3a_held_target_tip_mismatch_refuses(path):
+  {==}
+
+law m3a_held_holder_exact_target_allows_success:
+  for path: String
+  {L.ld_adv_wt_observed_holder_pick(T.GRun{0, "refs/heads/main"}, path, "main") == IO.pure(L.LAdv, L.AdvLanded{}) : IO(L.LAdv)}
+
+def m3a_held_holder_exact_target_allows_success(path):
+  {==}
+
+law m3a_held_holder_different_branch_refuses:
+  for path: String
+  {L.ld_adv_wt_observed_holder_pick(T.GRun{0, "refs/heads/other"}, path, "main") == IO.pure(L.LAdv, L.AdvHolderChanged{path}) : IO(L.LAdv)}
+
+def m3a_held_holder_different_branch_refuses(path):
+  {==}
+
+law m3a_held_tip_read_names_the_local_branch:
+  {L.ld_target_ref_argv("main") == ["rev-parse", "--verify", "refs/heads/main^{commit}"] : List<String>}
+
+def m3a_held_tip_read_names_the_local_branch():
+  {==}
+
+law m3a_held_identity_read_uses_symbolic_head:
+  {L.ld_head_argv() == ["symbolic-ref", "--quiet", "HEAD"] : List<String>}
+
+def m3a_held_identity_read_uses_symbolic_head():
+  {==}
+
+# M-3a: a refused fast-forward of a target that still reads as the basis is that
+# worktree's own state. The answer names the worktree and the operation that
+# resolves it, and it is a block, so the target stays where it was.
+law m3a_refused_fastforward_of_the_basis_names_the_worktree:
+  for path: String
+  {L.ld_adv_refused_same(True{}, path) == L.AdvHeld{path} : L.LAdv}
+
+def m3a_refused_fastforward_of_the_basis_names_the_worktree(path):
+  {==}
+
+law m3a_refused_fastforward_of_a_moved_target_is_the_movement:
+  for path: String
+  {L.ld_adv_refused_same(False{}, path) == L.AdvMoved{} : L.LAdv}
+
+def m3a_refused_fastforward_of_a_moved_target_is_the_movement(path):
+  {==}
+
+law m3a_held_block_names_the_worktree_and_the_next_operation:
+  for target: String
+  for cand: String
+  for path: String
+  {L.ld_adv_answer(L.AdvHeld{path}, target, cand) == L.LdDone{T.LBlocked{L.ld_adv_held_text(target, path) ++ "rerun land-checked to prepare and check against the current target"}} : L.Ld}
+
+def m3a_held_block_names_the_worktree_and_the_next_operation(target, cand, path):
+  {==}
+
+# M-3a: the blocked answer a held target produces names the worktree, the
+# refusal and the operation that resolves it.
+law m3a_held_text_names_the_worktree_and_the_operation:
+  {L.ld_adv_held_text("main", "/w") == "the target branch main is checked out at /w; the fast-forward into that worktree was refused (git's own message is in the coordinator log); commit or stash that worktree's changes, or repair the worktree, and " : String}
+
+def m3a_held_text_names_the_worktree_and_the_operation():
+  {==}
+
+# M-3b: the fast-forward advance lands while the target is still at the
+# recorded tip.
+law m3b_ff_advance_success_lands:
   for wc: String
   for target: String
-  {L.ff_stage5_ok(False{}, wc, target) == L.FFDone{T.LBlocked{"target moved during landing; retry"}} : L.FFLD}
+  {L.ff_adv_answer(L.AdvLanded{}, wc, target) == L.FFDone{T.LLanded{target, wc}} : L.FFLD}
 
-def m3b_ff_cas_miss_refuses_retry(wc, target):
+def m3b_ff_advance_success_lands(wc, target):
+  {==}
+
+# M-3b: the fast-forward advance refuses when the target moved, and when the
+# compare-and-swap missed the basis it was prepared against.
+law m3b_ff_advance_miss_refuses_retry:
+  for wc: String
+  for target: String
+  {L.ff_adv_answer(L.AdvMoved{}, wc, target) == L.FFDone{T.LBlocked{"target moved during landing; retry"}} : L.FFLD}
+
+def m3b_ff_advance_miss_refuses_retry(wc, target):
+  {==}
+
+law m3b_ff_advance_refusal_refuses_retry:
+  for wc: String
+  for target: String
+  {L.ff_adv_answer(L.AdvRefused{}, wc, target) == L.FFDone{T.LBlocked{"target moved during landing; retry"}} : L.FFLD}
+
+def m3b_ff_advance_refusal_refuses_retry(wc, target):
+  {==}
+
+law m3b_ff_advance_broken_is_not_a_landing:
+  for detail: String
+  for wc: String
+  for target: String
+  {L.ff_adv_answer(L.AdvBroken{detail}, wc, target) == L.FFDone{T.LBlocked{detail}} : L.FFLD}
+
+def m3b_ff_advance_broken_is_not_a_landing(detail, wc, target):
+  {==}
+
+# M-11: the worktree that holds the target is read from Git's own worktree
+# listing, and the listing is read only once the target tip still matches the
+# basis the candidate was checked against.
+law m11_the_holder_comes_from_the_worktree_listing:
+  {L.ld_hold_of("worktree /one\nHEAD abc\ndetached\n\nworktree /two\nHEAD def\nbranch refs/heads/main\n\n", "main") == L.HoldPath{"/two"} : L.LdHold}
+
+def m11_the_holder_comes_from_the_worktree_listing():
+  {==}
+
+law m11_a_listing_without_the_target_names_no_holder:
+  {L.ld_hold_of("worktree /one\nHEAD abc\nbranch refs/heads/other\n\nworktree /two\nHEAD def\ndetached\n\n", "main") == L.HoldNone{} : L.LdHold}
+
+def m11_a_listing_without_the_target_names_no_holder():
+  {==}
+
+# M-11: a listing that names the target twice, or before any worktree block,
+# names no holder the advance may enter.
+law m11_a_listing_that_names_the_target_twice_names_no_holder:
+  {L.ld_hold_of("worktree /one\nHEAD abc\nbranch refs/heads/main\n\nworktree /two\nHEAD def\nbranch refs/heads/main\n\n", "main") == L.HoldBlocked{"the worktree listing names the target branch in more than one block, or outside a block"} : L.LdHold}
+
+def m11_a_listing_that_names_the_target_twice_names_no_holder():
+  {==}
+
+law m11_a_target_named_outside_a_block_names_no_holder:
+  {L.ld_hold_of("branch refs/heads/main\n\nworktree /one\nHEAD abc\ndetached\n\n", "main") == L.HoldBlocked{"the worktree listing names the target branch in more than one block, or outside a block"} : L.LdHold}
+
+def m11_a_target_named_outside_a_block_names_no_holder():
+  {==}
+
+law m11_an_unreadable_listing_names_no_holder:
+  for target: String
+  for detail: String
+  {L.ld_hold_read(T.GBroken{detail}, target) == L.HoldBlocked{detail} : L.LdHold}
+
+def m11_an_unreadable_listing_names_no_holder(target, detail):
   {==}
 
 # ---------------------------------------------------------------------------

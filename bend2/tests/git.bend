@@ -17,7 +17,6 @@ def fail_text(f: T.GitFail) -> String:
     case T.FBranchExists{branch}: Tx.str_cat("branch exists: ", branch)
     case T.FPathExists{path}: Tx.str_cat("path exists: ", path)
     case T.FUnknownBase{base}: Tx.str_cat("unknown base: ", base)
-    case T.FTargetBusy{branch}: Tx.str_cat("target busy: ", branch)
     case T.FCmd{op, detail}: Tx.join(" ", Con{op, Con{":", Con{detail, Nil{}}}})
 
 def created_commit(m: T.WorktreeCreated) -> String:

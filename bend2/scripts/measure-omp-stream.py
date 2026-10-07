@@ -50,6 +50,15 @@ while True:
         marker(action['marker'])
         stream.write((json.dumps({'bytes':total,'frames':len(action['lines'])})+'\n').encode())
         continue
+    if action['kind']=='tool':
+        total=0
+        for i in range(count):
+            size=action['step']*(i+1)
+            text=(fragment*(size//len(fragment)+1))[:size]
+            total+=output({'type':'tool_execution_update','toolCallId':'tool-1','toolName':'bash','partialResult':{'content':[{'type':'text','text':text}]}})
+        marker(action['marker'])
+        stream.write((json.dumps({'bytes':total,'frames':count})+'\n').encode())
+        continue
     count=action['count']
     total=0
     for i in range(count):
@@ -88,6 +97,10 @@ def main():
         parser.error(f'executable does not exist: {exe}')
     directory=args.output.resolve()
     directory.mkdir(parents=True)
+    try:
+        driver_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True,stderr=subprocess.DEVNULL).strip()
+    except (subprocess.CalledProcessError,OSError):
+        driver_head=None
     db=directory/'state.db'
     log=directory/'native.jsonl'
     fixture=directory/'fixture'
@@ -126,7 +139,7 @@ def main():
     start=time.monotonic()
     time.sleep(3)
     measures.append({'kind':'silent','wall_seconds':time.monotonic()-start,'native_cpu_seconds':cpu(child.pid)-start_cpu,'bytes':0,'frames':0})
-    for kind,step in [('small',128),('cumulative',args.step)]:
+    for kind,step in [('small',128),('cumulative',args.step),('tool',args.step)]:
         before=log.stat().st_size
         marker='native-'+kind
         action={'kind':kind,'count':args.count,'step':step,'marker':marker}
@@ -168,7 +181,8 @@ def main():
     stderr.close()
     evidence={'exe':str(exe),'exe_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),
               'exe_source_revision_supplied':args.source_revision,'pid':child.pid,
-              'driver_source_head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
+              'driver_source_head':driver_head,
+              'driver_source_sha256':hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
               'parameters':vars(args)|{'exe':str(exe),'output':str(directory)},
               'measurements':measures,'semantics':semantics,'returncode':child.returncode,
               'retained_log_bytes':log.stat().st_size}
