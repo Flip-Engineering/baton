@@ -109,7 +109,10 @@ def inventory_value(+value: J.Json) -> CatalogDecode:
         catalog_tail(member(value, "modules")), CatalogRefused{"providerInventoryUnavailable"})
     case other: CatalogRefused{"providerInventoryMalformed"}
 
-def inventory_raw(+raw: Codec.RawValue) -> CatalogDecode:
-  match Codec.raw_to_json(raw):
+def inventory_convert(converted: Codec.JsonConv) -> CatalogDecode:
+  match converted:
     case Codec.JcRefused{condition}: CatalogRefused{"providerInventoryJson:" ++ condition}
     case Codec.JcJson{+value}: inventory_value(value)
+
+def inventory_raw(+raw: Codec.RawValue) -> CatalogDecode:
+  inventory_convert(Codec.raw_to_json(raw))

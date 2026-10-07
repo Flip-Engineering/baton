@@ -127,23 +127,33 @@ def declaration_value(+value: J.Json) -> Decl.Decl:
     artifacts_tail(member(value, "dependencies")), operations_tail(member(value, "operations")),
     rules_tail(member(value, "applicability"))}
 
+def operation_fields_rest(+items: J.Json) -> Bool:
+  match items:
+    case J.Jnil{}: True{}
+    case J.Jarr{J.Jnil{}, J.Jnil{}}: True{}
+    case J.Jarr{+head, +tail}:
+      Bool.and(operation_field_valid(head), operation_fields_rest(tail))
+    case other: False{}
+
+def operation_field_valid(+head: J.Json) -> Bool:
+  Bool.and(Req.is_jobj(head),
+  Bool.and(String.eq(Req.text_of(member(head, "schema")), "baton2-native-operation-v1"),
+  Bool.and(is_array(member(head, "projections")),
+  Bool.and(string_array_valid(member(head, "projections")),
+  Bool.and(is_array(member(head, "effects")),
+  Bool.and(string_array_valid(member(head, "effects")),
+  Bool.and(execution_valid(text_field(head, "execution")),
+  Bool.and(Bool.not(String.is_empty(text_field(head, "subjectSchema"))),
+  Bool.and(Bool.not(String.is_empty(text_field(head, "optionsSchema"))),
+  Bool.and(Bool.not(String.is_empty(text_field(head, "referenceSchema"))),
+  Bool.and(Bool.not(String.is_empty(text_field(head, "resultSchema"))),
+  Bool.and(Bool.not(String.is_empty(text_field(head, "eventSchema"))),
+    is_array(member(head, "dependencies")))))))))))))
+
 def operation_fields_valid(+items: J.Json) -> Bool:
   match items:
-    case J.Jarr{+head, +tail}:
-      Bool.and(String.eq(Req.text_of(member(head, "schema")), "baton2-native-operation-v1"),
-      Bool.and(is_array(member(head, "projections")),
-      Bool.and(string_array_valid(member(head, "projections")),
-      Bool.and(is_array(member(head, "effects")),
-      Bool.and(string_array_valid(member(head, "effects")),
-      Bool.and(is_array(member(head, "dependencies")),
-      Bool.and(execution_valid(text_field(head, "execution")),
-      Bool.and(Bool.not(String.is_empty(text_field(head, "subjectSchema"))),
-      Bool.and(Bool.not(String.is_empty(text_field(head, "optionsSchema"))),
-      Bool.and(Bool.not(String.is_empty(text_field(head, "referenceSchema"))),
-      Bool.and(Bool.not(String.is_empty(text_field(head, "resultSchema"))),
-      Bool.and(Bool.not(String.is_empty(text_field(head, "eventSchema"))),
-        operation_fields_valid(tail)))))))))))))
-    case J.Jnil{}: False{}
+    case J.Jarr{J.Jnil{}, J.Jnil{}}: False{}
+    case J.Jarr{+head, +tail}: Bool.and(operation_field_valid(head), operation_fields_rest(tail))
     case other: False{}
 
 def declaration_fields_valid(+value: J.Json) -> Bool:
