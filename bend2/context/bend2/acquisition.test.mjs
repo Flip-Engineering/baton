@@ -6,6 +6,11 @@
 // what the glue is responsible for: existence, canonical identity and bytes decided only by the
 // recorded set; absence stated and never inferred; no host access for an unrecorded name; the base
 // located by the pinned digest; and a captured record refused as an acquisition source.
+//
+// The last two cases drive the reviewed frontend adapter with this operand, which is the consumer
+// contract the glue satisfies without a change to that adapter. A shared record is filed under the
+// requested key and the canonical key, so the adapter's snapshot lists two entries for it while the
+// retained set was read once; the settled shape is asserted here rather than a count of one.
 
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -15,6 +20,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { createRetainedAcquisition, isClaimedCaptureRecord } from './acquisition.mjs';
+import { createFrontendAdapter } from './frontend-adapter.mjs';
 
 function sha256Hex(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -339,4 +345,73 @@ test('answers are frozen and repeated questions return the identical object', (t
   assert.equal(Object.isFrozen(acquisition.read(paths.root)), true);
   assert.equal(Object.isFrozen(acquisition.resolve(join(dir, 'missing.bend'))), true);
   assert.deepEqual(set.readBacks, [paths.root], 'immutability costs no extra reads');
+});
+
+function startQuery(adapter, identity) {
+  const started = adapter.beginQuery({ identity });
+  assert.equal(started.status, 'started');
+  return started.token;
+}
+
+test('the operand drives the adapter: a shared record yields the settled two snapshot entries', (t) => {
+  const { paths } = withWorkspace(t, { root: 'law main()\n' });
+  const set = createRetainedSet();
+  set.recordFile(paths.root, paths.root);
+  const alias = `${paths.root}-alias`;
+  set.recordFile(alias, paths.root);
+  const acquisition = createRetainedAcquisition({ capture: set });
+  const adapter = createFrontendAdapter({ acquisition, captureOnly: true });
+
+  const owner = startQuery(adapter, alias);
+  assert.equal(adapter.sink.readSource(alias, owner), 'law main()\n', 'the loader reads the retained bytes');
+  const canonical = adapter.sink.resolveSource(realpathSync(paths.root), owner);
+  assert.equal(canonical.status, 'captured');
+  assert.equal(canonical.identity, realpathSync(paths.root));
+  adapter.endQuery();
+
+  const session = adapter.report().sessions[0];
+  assert.equal(session.completeness, 'complete');
+  assert.equal(
+    session.acquisitions.length,
+    2,
+    'the requested key and the canonical key each carry the one shared record',
+  );
+  assert.deepEqual(
+    session.acquisitions.map((entry) => entry.status),
+    ['captured', 'captured'],
+  );
+  assert.deepEqual(
+    [...new Set(session.acquisitions.map((entry) => entry.canonical))],
+    [realpathSync(paths.root)],
+    'the two snapshot entries name one canonical identity',
+  );
+  assert.deepEqual(set.readBacks, [paths.root], 'the retained set was read once for the shared record');
+});
+
+test('the operand drives the adapter: the base pin and the two non-capture answers', (t) => {
+  const { dir, paths } = withWorkspace(t, { base: 'type Empty is Data:\n', root: 'law main()\n' });
+  const baseBytes = Buffer.from('type Empty is Data:\n');
+  const basePin = { path: 'bend2/base.bend', sha256: sha256Hex(baseBytes) };
+  const set = createRetainedSet();
+  set.recordFile(paths.root, paths.root);
+  set.recordFile(join(dir, 'installed-base.bend'), paths.base);
+  set.recordAbsent(join(dir, 'LAWS.bend'));
+  const acquisition = createRetainedAcquisition({ capture: set, basePin });
+  const adapter = createFrontendAdapter({ acquisition, captureOnly: true });
+
+  const owner = startQuery(adapter, paths.root);
+  const base = adapter.sink.baseBendPath(owner);
+  assert.equal(base.status, 'captured');
+  assert.equal(base.path, realpathSync(paths.base), 'the adapter reports the recorded canonical path');
+  assert.equal(base.digest, basePin.sha256, 'the reported digest is the pinned digest of the accepted bytes');
+
+  const sibling = adapter.sink.lookupSource(join(dir, 'LAWS.bend'), owner);
+  assert.equal(sibling.status, 'absent', 'a recorded absence reaches the gate as an absence');
+  assert.equal(adapter.counters.uncapturedDependencies, 0, 'a non-acquiring lookup counts no dependency');
+
+  const unrecorded = adapter.sink.resolveSource(join(dir, 'not-in-the-set.bend'), owner);
+  assert.equal(unrecorded.status, 'unavailable', 'a name with no row is not an absence claim');
+  assert.equal(adapter.counters.uncapturedDependencies, 1, 'the unrecorded dependency is counted once');
+  assert.equal(set.readBacks.includes(join(dir, 'not-in-the-set.bend')), false, 'the unrecorded name was never read');
+  adapter.endQuery();
 });
