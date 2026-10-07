@@ -117,7 +117,7 @@ def observation_authority_valid(+value: J.Json, +owner: String, +worktree: Strin
       Bool.and(String.eq(text_field(value, "worktree"), worktree),
         Bool.and(Bool.not(String.is_empty(owner)),
           Bool.and(Bool.not(String.is_empty(worktree)),
-            String.eq(text_field(value, "path"), worktree ++ "/.baton/context.json")))))))
+            String.eq(text_field(value, "path"), worktree ++ "/.baton/context.json"))))))
 
 def observation_present(+value: J.Json, +owner: String, +worktree: String) -> PolicyObservationDecode:
   Bool.pick(PolicyObservationDecode,
