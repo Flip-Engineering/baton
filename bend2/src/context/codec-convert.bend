@@ -303,11 +303,22 @@ def wo_law_a_non_text_projection_refuses():
 
 def wc_binding_value() -> Codec.RawValue:
   Codec.Robj{
-    Codec.Rpair{"id", Codec.Rstr{"m"}, Codec.Rpair{"revision", Codec.Rstr{"r1"},
-      Codec.Rpair{"declarationDigest", Codec.Rstr{"d"}, Codec.Rpair{"protocolVersion", Codec.Rstr{"1"},
-        Codec.Rpair{"operation", Codec.Rstr{"op"}, Codec.Rpair{"artifactIdentities",
-          Codec.Rarr{Codec.Robj{Codec.Rpair{"packagePath", Codec.Rstr{"/p"}, Codec.Rpair{"sha256", Codec.Rstr{"aa"}, Codec.Rpair{"role", Codec.Rstr{"native"}, Codec.Rnil{}}}}, Codec.Rnil{}},
-            Codec.Rpair{"schemaIdentities", Codec.Rarr{Codec.Rstr{"s1"}, Codec.Rnil{}}, Codec.Rnil{}}}}}}}}}}
+    Codec.Rpair{"id", Codec.Rstr{"m"},
+    Codec.Rpair{"revision", Codec.Rstr{"r1"},
+    Codec.Rpair{"declarationDigest", Codec.Rstr{"d"},
+    Codec.Rpair{"protocolVersion", Codec.Rstr{"1"},
+    Codec.Rpair{"operation", Codec.Rstr{"op"},
+    Codec.Rpair{"artifactIdentities",
+      Codec.Rarr{
+        Codec.Robj{
+          Codec.Rpair{"packagePath", Codec.Rstr{"/p"},
+          Codec.Rpair{"sha256", Codec.Rstr{"aa"},
+          Codec.Rpair{"role", Codec.Rstr{"native"},
+          Codec.Rnil{}}}}},
+        Codec.Rnil{}},
+      Codec.Rpair{"schemaIdentities",
+        Codec.Rarr{Codec.Rstr{"s1"}, Codec.Rnil{}},
+        Codec.Rnil{}}}}}}}}}
 
 law wc_law_a_binding_reads_into_the_typed_binding:
   {wire_binding_read(wc_binding_value()) == WbOk{Sel.MBind{"m", "r1", "d", "1", "op", Decl.ArtsCons{Decl.Art{"/p", "aa", "native"}, Decl.ArtsNil{}}, Eng.SSCons{"s1", Eng.SSNil{}}}} : WireBinding}
