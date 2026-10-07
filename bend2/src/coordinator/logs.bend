@@ -257,10 +257,13 @@ def codex_frame_id(db: String, line: String) -> IO(String):
     found : String <- IO.try(String,DB.Sql.query(db,codex_frame_id_sql(line)))
     IO.pure(String,Tx.trim_nl(found))
 
-def frame_id_for(db: String, line: String, omp: Bool, kind: String) -> IO(String):
-  match codex_kind(kind):
+def codex_or_omp(+codex: Bool, db: String, line: String, omp: Bool) -> IO(String):
+  match codex:
     case True{}: codex_frame_id(db,line)
     case False{}: frame_id(db,line,omp)
+
+def frame_id_for(db: String, line: String, omp: Bool, kind: String) -> IO(String):
+  codex_or_omp(codex_kind(kind),db,line,omp)
 
 # The identity is read for a frame the policy holds or closes, and for a
 # classified native command frame carrying its own command id.
