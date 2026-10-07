@@ -260,6 +260,20 @@ sys.exit(%d)
                                                self.cwd / 'turn.jsonl.2'] if p.exists())
         self.assertLessEqual(total, (keep + 1) * (budget + 4096))
 
+    def test_held_update_and_end_share_one_rotation_decision(self):
+        self.call('logs', 'omp-worker', 'default', '65536', '2')
+        pad = json.dumps({'type': 'response', 'id': 'p0', 'command': 'probe', 'pad': 'y' * 64000})
+        update = json.dumps({'type': 'tool_execution_update', 'toolCallId': 'tool-0',
+                             'toolName': 'bash',
+                             'partialResult': {'content': [{'type': 'text', 'text': 'x' * 2000}]}})
+        end = json.dumps({'type': 'tool_execution_end', 'toolCallId': 'tool-0', 'toolName': 'bash',
+                          'result': {'content': [{'type': 'text', 'text': 'done'}]}})
+        self.stream([pad, update, end, self.terminal()])
+        self.assertFalse((self.cwd / 'turn.jsonl.1').exists())
+        live = self.lines()
+        self.assertIn(update, live)
+        self.assertIn(end, live)
+
     def test_storage_previews_rotated_segments_without_writing(self):
         self.call('logs', 'omp-worker', 'default', '65536', '4')
         frames = [json.dumps({'type': 'response', 'id': 'r%d' % i, 'command': 'probe', 'pad': 'y' * 20000}) for i in range(16)]

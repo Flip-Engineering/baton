@@ -504,22 +504,15 @@ def rotation_failed(failed: Result<&1,&1,U32 & String,Unit>, +log: String) -> IO
     case Fail{error}: T.Text.append(log,rotation_failed_note(error) ++ "\n")
     case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
-# One retained frame. The size check runs before append and triggers rotation
-# at the configured threshold.
-def append(+policy: Policy, +log: String, line: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match policy:
-    case Policy{+level,+budget,+segments,pending0,db0,session0}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      +size : U32 <- IO.try(U32,F.Files.size(log))
-      rotated : Result<&1,&1,U32 & String,Unit> <- rotate_over(policy,log,budget,segments,level,size)
-      noted : Result<&1,&1,U32 & String,Unit> <- rotation_failed(rotated,log)
-      written : Result<&1,&1,U32 & String,Unit> <- append_text(log,line,size)
-      IO.pure(Result<&1,&1,U32 & String,Unit>,written)
-
-# One line, unless the turn already failed to write this log.
+# One line, unless the turn already failed to write this log. The size is
+# reread for the error message alone; rotation is decided once per batch.
 def write_one(+policy: Policy, +log: String, line: String, first: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match first:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
-    case Done{unit}: append(policy,log,line)
+    case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      +size : U32 <- IO.try(U32,F.Files.size(log))
+      written : Result<&1,&1,U32 & String,Unit> <- append_text(log,line,size)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,written)
 
 # Writes the lines a frame contributes, in order, and keeps the first failure.
 def write_each(+policy: Policy, +log: String, lines: List<String>, first: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -530,12 +523,27 @@ def write_each(+policy: Policy, +log: String, lines: List<String>, first: Result
       rest : Result<&1,&1,U32 & String,Unit> <- write_each(policy,log,tail,written)
       IO.pure(Result<&1,&1,U32 & String,Unit>,rest)
 
+# One batch, one rotation decision. The lines one frame contributes stay in a
+# single file: a held update and the end that releases it never split across a
+# rotation boundary, so a retained end keeps its snapshot. A batch can carry
+# the live log past the budget the way a single large frame can.
+def write_batch(policy: Policy, +log: String, lines: List<String>, first: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match first:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+    case Done{unit}: match policy:
+      case Policy{+level,+budget,+segments,pending0,db0,session0}: do IO<Result<&1,&1,U32 & String,Unit>>:
+        +size : U32 <- IO.try(U32,F.Files.size(log))
+        rotated : Result<&1,&1,U32 & String,Unit> <- rotate_over(policy,log,budget,segments,level,size)
+        noted : Result<&1,&1,U32 & String,Unit> <- rotation_failed(rotated,log)
+        rest : Result<&1,&1,U32 & String,Unit> <- write_each(policy,log,lines,Done{Unit{}})
+        IO.pure(Result<&1,&1,U32 & String,Unit>,rest)
+
 # A log that already failed this turn writes nothing further, so one unwritable
 # or full file is reported once and no frame is retried into it.
 def write_lines(policy: Policy, log: String, lines: List<String>, stopped: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match stopped:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case False{}: write_each(policy,log,lines,Done{Unit{}})
+    case False{}: write_batch(policy,log,lines,Done{Unit{}})
 
 # The public log a turn writes is named once, so storage inspection and cleanup
 # find every file this policy covers.
