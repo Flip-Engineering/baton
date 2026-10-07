@@ -71,6 +71,21 @@ assert sys.stdin.read()==''
         return self.call('turn', player, turn, str(self.player), 'model', 'low',
                          str(self.cwd), str(self.task), str(self.log), '')
 
+    def prepare_attempt_artifacts(self):
+        """Give the completed fixture turn a deterministic retained-attempt directory."""
+        with sqlite3.connect(self.db) as connection:
+            session, attempt, phase = connection.execute(
+                'SELECT session,id,phase FROM executions WHERE session=?', ('omp-worker',)).fetchone()
+            self.assertEqual(phase, 'exited')
+            directory = str(self.db) + '.attempt-' + attempt.encode().hex()
+            connection.execute('UPDATE executions SET directory=? WHERE session=?', (directory, session))
+        attempt_dir = pathlib.Path(directory)
+        attempt_dir.mkdir()
+        for name, body in (('manifest', b'retained manifest'), ('status', b'0\n'),
+                           ('released', b'released\n'), ('acknowledged', b'acknowledged\n')):
+            (attempt_dir / name).write_bytes(body)
+        return attempt, attempt_dir
+
     def lines(self, path=None):
         return (path or self.log).read_text().splitlines()
 
@@ -272,13 +287,7 @@ assert sys.stdin.read()==''
 
     def test_cleanup_removes_only_reported_settled_attempt_diagnostics(self):
         self.stream([self.terminal()])
-        with sqlite3.connect(self.db) as connection:
-            session, attempt, phase, directory = connection.execute(
-                'SELECT session,id,phase,directory FROM executions WHERE session=?',
-                ('omp-worker',)).fetchone()
-        self.assertEqual(phase, 'exited')
-        attempt_dir = pathlib.Path(directory)
-        self.assertTrue(attempt_dir.is_dir())
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
         for name in ('stdout', 'native.stderr', 'observer.log', 'keeper.log'):
             (attempt_dir / name).write_text('diagnostic data for ' + name)
         protected = ('manifest', 'status', 'released', 'acknowledged')
@@ -299,13 +308,11 @@ assert sys.stdin.read()==''
 
     def test_attempt_without_durable_turn_record_is_retained(self):
         self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
         with sqlite3.connect(self.db) as connection:
-            attempt, directory = connection.execute(
-                'SELECT id,directory FROM executions WHERE session=?', ('omp-worker',)).fetchone()
             connection.execute('DELETE FROM turns WHERE id=?', (attempt,))
             for report_id in (attempt, attempt + ':exit', attempt + ':observation'):
                 connection.execute('DELETE FROM messages WHERE id=? AND kind=?', (report_id, 'report'))
-        attempt_dir = pathlib.Path(directory)
         evidence = attempt_dir / 'observer.log'
         evidence.write_text('observer evidence')
         row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
@@ -318,10 +325,8 @@ assert sys.stdin.read()==''
 
     def test_attempt_with_pending_input_is_retained(self):
         self.stream([self.terminal()])
-        with sqlite3.connect(self.db) as connection:
-            attempt, directory = connection.execute(
-                'SELECT id,directory FROM executions WHERE session=?', ('omp-worker',)).fetchone()
-        evidence = pathlib.Path(directory) / 'observer.log'
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        evidence = attempt_dir / 'observer.log'
         evidence.write_text('observer evidence')
         self.call('message', 'pending-attempt-cleanup', 'root', 'omp-worker', 'guidance', 'Review this first.')
         row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
@@ -334,10 +339,8 @@ assert sys.stdin.read()==''
     def test_diagnostic_policy_retains_attempt_files(self):
         self.call('logs', 'omp-worker', 'diagnostic')
         self.stream([self.terminal()])
-        with sqlite3.connect(self.db) as connection:
-            attempt, directory = connection.execute(
-                'SELECT id,directory FROM executions WHERE session=?', ('omp-worker',)).fetchone()
-        evidence = pathlib.Path(directory) / 'observer.log'
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        evidence = attempt_dir / 'observer.log'
         evidence.write_text('observer evidence')
         row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
                    if item['attempt'] == attempt)
@@ -347,12 +350,10 @@ assert sys.stdin.read()==''
 
     def test_attempt_cleanup_rejects_symlink_diagnostic_file(self):
         self.stream([self.terminal()])
-        with sqlite3.connect(self.db) as connection:
-            attempt, directory = connection.execute(
-                'SELECT id,directory FROM executions WHERE session=?', ('omp-worker',)).fetchone()
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
         outside = self.cwd / 'outside.log'
         outside.write_text('must remain')
-        evidence = pathlib.Path(directory) / 'observer.log'
+        evidence = attempt_dir / 'observer.log'
         evidence.symlink_to(outside)
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
         row = next(item for item in answer['attemptFiles'] if item['file'] == 'observer.log')
