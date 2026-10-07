@@ -1,0 +1,28 @@
+test_abrupt_observer_exit_preserves_latest_incomplete_frame (__main__.Logs.test_abrupt_observer_exit_preserves_latest_incomplete_frame) ... ok
+test_cleanup_during_a_live_turn_keeps_the_live_log (__main__.Logs.test_cleanup_during_a_live_turn_keeps_the_live_log) ... ok
+test_cleanup_keeps_segments_while_input_is_unanswered (__main__.Logs.test_cleanup_keeps_segments_while_input_is_unanswered) ... ok
+test_cleanup_removes_only_eligible_segments_of_the_named_session (__main__.Logs.test_cleanup_removes_only_eligible_segments_of_the_named_session) ... ok
+test_default_policy_drops_snapshot_frames_and_keeps_evidence (__main__.Logs.test_default_policy_drops_snapshot_frames_and_keeps_evidence) ... ok
+test_diagnostic_level_keeps_snapshot_frames (__main__.Logs.test_diagnostic_level_keeps_snapshot_frames) ... ok
+test_existing_policy_constraint_migrates_with_rows_and_registry (__main__.Logs.test_existing_policy_constraint_migrates_with_rows_and_registry) ... ok
+test_failed_migration_preserves_original_rows_and_refuses_success (__main__.Logs.test_failed_migration_preserves_original_rows_and_refuses_success) ... ok
+test_input_arriving_during_turn_protects_existing_segments (__main__.Logs.test_input_arriving_during_turn_protects_existing_segments) ... ok
+test_interrupted_tool_call_keeps_only_its_last_update (__main__.Logs.test_interrupted_tool_call_keeps_only_its_last_update) ... ok
+test_later_direct_turn_preserves_an_earlier_checkpoint (__main__.Logs.test_later_direct_turn_preserves_an_earlier_checkpoint) ... ok
+test_message_start_is_kept_only_without_its_message_end (__main__.Logs.test_message_start_is_kept_only_without_its_message_end) ... ok
+test_policy_read_names_defaults_and_every_form_stores_one (__main__.Logs.test_policy_read_names_defaults_and_every_form_stores_one) ... ok
+test_quiet_level_keeps_terminal_and_unclassified_frames_alone (__main__.Logs.test_quiet_level_keeps_terminal_and_unclassified_frames_alone) ... ok
+test_retention_count_above_four_preserves_requested_history (__main__.Logs.test_retention_count_above_four_preserves_requested_history) ... ok
+test_rotation_is_skipped_while_input_is_unanswered (__main__.Logs.test_rotation_is_skipped_while_input_is_unanswered) ... ok
+test_rotation_removes_the_segment_above_the_count (__main__.Logs.test_rotation_removes_the_segment_above_the_count) ... ok
+test_rotation_retains_numbered_segments_and_notes_the_policy (__main__.Logs.test_rotation_retains_numbered_segments_and_notes_the_policy) ... ok
+test_rotation_stops_when_a_shift_step_fails (__main__.Logs.test_rotation_stops_when_a_shift_step_fails) ... ok
+test_sparse_segments_and_checkpoint_are_reported_and_preserved (__main__.Logs.test_sparse_segments_and_checkpoint_are_reported_and_preserved) ... ok
+test_storage_previews_rotated_segments_without_writing (__main__.Logs.test_storage_previews_rotated_segments_without_writing) ... ok
+test_unfinished_assistant_message_keeps_latest_update (__main__.Logs.test_unfinished_assistant_message_keeps_latest_update) ... ok
+test_unwritable_log_reports_the_failure_and_keeps_the_report (__main__.Logs.test_unwritable_log_reports_the_failure_and_keeps_the_report) ... ok
+
+----------------------------------------------------------------------
+Ran 23 tests in 28.983s
+
+OK

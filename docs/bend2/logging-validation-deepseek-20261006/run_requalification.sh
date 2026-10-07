@@ -1,0 +1,62 @@
+#!/bin/sh
+# Remote re-qualification driver for issue #686 against bend2-rewrite ecfbdd0b.
+# Records exact source, toolchain, full output and completed-process evidence.
+R=/home/atari2036/issue686-ecfbdd0b
+SRC=$R/src
+cd "$SRC" || exit 1
+set -u
+echo "=== run start $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+echo "=== platform ==="
+uname -srm
+nproc
+python3 --version
+clang-19 --version | head -1
+echo "=== candidate source identity ==="
+sha256sum bend2/src/coordinator/logs.bend bend2/src/coordinator/log-schema.bend \
+  bend2/src/coordinator/turn.bend bend2/src/host/files.c bend2/src/host/files.bend \
+  bend2/src/host/log-checkpoint.bend bend2/src/host/log-checkpoint.c \
+  bend2/test/logs.py bend2/test/turn.py docs/bend2/logging.md \
+  bend2/scripts/measure-omp-stream.py
+echo "=== executable identity ==="
+sha256sum .scratch/bend2/baton2
+
+for t in logs turn; do
+  echo "=== bend2/test/$t.py start $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+  start=$(date +%s)
+  python3 "bend2/test/$t.py" -v > "$R/test-$t.log" 2>&1
+  rc=$?
+  echo "$t exit=$rc elapsed=$(( $(date +%s) - start ))s"
+  tail -6 "$R/test-$t.log"
+done
+
+echo "=== independent acceptance start $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+rm -rf "$R/acceptance-root"
+/usr/bin/time -v python3 "$R/issue686_acceptance.py" --exe .scratch/bend2/baton2 \
+  --keep --root "$R/acceptance-root" > "$R/acceptance.log" 2> "$R/acceptance.time"
+rc=$?
+echo "acceptance exit=$rc"
+cat "$R/acceptance.log"
+echo "=== resource use ==="
+grep -E 'Elapsed \(wall|Maximum resident' "$R/acceptance.time"
+
+echo "=== measurement driver start $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+rm -rf "$R/measure"
+python3 bend2/scripts/measure-omp-stream.py --exe .scratch/bend2/baton2 \
+  --output "$R/measure" --label validator-ecfbdd0b --source-revision ecfbdd0b \
+  > "$R/measure-run.log" 2>&1
+echo "measure driver exit=$?"
+tail -4 "$R/measure-run.log"
+echo "--- retained bytes ---"
+ls -l "$R/measure/native.jsonl" 2>/dev/null
+echo "--- result json ---"
+ls "$R/measure"/*.json 2>/dev/null
+for f in "$R/measure"/*.json; do
+  [ -f "$f" ] && { echo "--- $f"; cat "$f"; }
+done
+echo "--- attempt directory contents ---"
+for d in "$R/measure"/state.db.attempt-*; do
+  [ -d "$d" ] && { echo "DIR $d"; ls -la "$d"; }
+done
+echo "--- storage report of the measurement database ---"
+[ -f "$R/measure/state.db" ] && ./.scratch/bend2/baton2 "$R/measure/state.db" logs-storage
+echo "=== run end $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="

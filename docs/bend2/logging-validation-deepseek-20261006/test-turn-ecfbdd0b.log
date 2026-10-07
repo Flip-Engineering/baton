@@ -1,0 +1,22 @@
+test_codex_failed_turn_retains_native_failure_for_parent (__main__.Turn.test_codex_failed_turn_retains_native_failure_for_parent) ... ok
+test_codex_terminal_report_uses_final_message_and_resumes_native_thread (__main__.Turn.test_codex_terminal_report_uses_final_message_and_resumes_native_thread) ... ok
+test_completed_turn_retry_does_not_start_another_process (__main__.Turn.test_completed_turn_retry_does_not_start_another_process) ... ok
+test_exit_without_result_reports_failure_and_keeps_logs (__main__.Turn.test_exit_without_result_reports_failure_and_keeps_logs) ... ok
+test_muse_resumed_turn_reads_new_task_in_recorded_session (__main__.Turn.test_muse_resumed_turn_reads_new_task_in_recorded_session) ... ok
+test_native_process_output_becomes_parent_report (__main__.Turn.test_native_process_output_becomes_parent_report) ... ok
+test_omp_delta_filter_echo_activates_the_projection (__main__.Turn.test_omp_delta_filter_echo_activates_the_projection) ... ok
+test_omp_empty_terminal_envelope_delivers_streamed_trial_report (__main__.Turn.test_omp_empty_terminal_envelope_delivers_streamed_trial_report) ... ok
+test_omp_filter_refusal_keeps_full_snapshots_and_completes (__main__.Turn.test_omp_filter_refusal_keeps_full_snapshots_and_completes) ... ok
+test_omp_frame_retention_uses_exact_json_type (__main__.Turn.test_omp_frame_retention_uses_exact_json_type) ... ok
+test_omp_guidance_receipt_follows_native_steer_acceptance (__main__.Turn.test_omp_guidance_receipt_follows_native_steer_acceptance) ... ok
+test_omp_nonmatching_filter_answers_stay_inactive (__main__.Turn.test_omp_nonmatching_filter_answers_stay_inactive) ... ok
+test_omp_prompt_session_route_and_terminal_report (__main__.Turn.test_omp_prompt_session_route_and_terminal_report) ... ok
+test_start_failure_reports_to_parent (__main__.Turn.test_start_failure_reports_to_parent) ... ok
+test_startup_output_and_large_input_are_drained_concurrently (__main__.Turn.test_startup_output_and_large_input_are_drained_concurrently) ... ok
+test_turn_id_owned_by_another_player_does_not_replay_its_report (__main__.Turn.test_turn_id_owned_by_another_player_does_not_replay_its_report) ... ok
+test_unresumable_conversation_restarts_fresh_and_finishes_the_task (__main__.Turn.test_unresumable_conversation_restarts_fresh_and_finishes_the_task) ... ok
+
+----------------------------------------------------------------------
+Ran 17 tests in 9.920s
+
+OK
