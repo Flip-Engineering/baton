@@ -207,13 +207,17 @@ def invoke_frame(+executable: String, +runtime_path: String, +cwd: String,
             installed_provider_path(executable)]), cwd, "/dev/null")
         provider_spawn(installed_provider_path(executable), cwd, value, spawned)
 
+def invoke_runtime(+executable: String, +cwd: String, +invocation: Sel.Invocation,
+                   runtime: NodeRuntime) -> IO(ProviderAnswer):
+  match runtime:
+    case NodeRuntimeRefused{reason}: IO.pure(ProviderAnswer, ProviderRefused{reason})
+    case NodeRuntimeReady{path, version}: invoke_frame(executable, path, cwd, invocation_frame(invocation))
+
 def invoke(+invocation: Sel.Invocation, +cwd: String) -> IO(ProviderAnswer):
   do IO<ProviderAnswer>:
     executable : String <- IO.try(String, Host.SessionLock.executable())
     runtime : NodeRuntime <- resolve_node_runtime(cwd)
-    match runtime:
-      case NodeRuntimeRefused{reason}: IO.pure(ProviderAnswer, ProviderRefused{reason})
-      case NodeRuntimeReady{path, version}: invoke_frame(executable, path, cwd, invocation_frame(invocation))
+    invoke_runtime(executable, cwd, invocation, runtime)
 
 def unavailable(command: String) -> IO(Unit):
   IO.die(Unit, 3, "Native Bend2 context provider is unavailable for " ++ command ++ "; no query was admitted.")
