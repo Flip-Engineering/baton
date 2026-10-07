@@ -49,7 +49,7 @@ def landingreq_guard(request: LandingRequest) -> String:
   match request:
     case LandingRequested{intent, name, old_target, content, guard, artifact, attempt_directory, repository}: guard
 
-def landingreq_intent(request: LandingRequest) -> String:
+def landingreq_intent(request: LandingRequest) -> I.IntentInput:
   match request:
     case LandingRequested{intent, name, old_target, content, guard, artifact, attempt_directory, repository}: intent
 
@@ -211,7 +211,7 @@ def Landing.associate_now(handle: U32, request: LandingRequest, published: Strin
   +pub = published
   +intent = landingreq_intent(req)
   do IO<Landing>:
-    decision : A.Association <- A.Association.decide(A.AssociationRequested{intent.attempt, intent.common, intent.target, intent.destination, intent.candidate, intent.basis, intent.holder, intent.retry})
+    decision : A.Association <- A.Association.decide(A.AssociationRequested{I.requested_attempt(intent), I.requested_common(intent), I.requested_target(intent), I.requested_destination(intent), I.requested_candidate(intent), I.requested_basis(intent), I.requested_holder(intent), I.requested_retry(intent)})
     Landing.associations(req, h, pub, decision)
 
 # The association runs before the publication, so no bytes are written for an unassociated
@@ -221,7 +221,7 @@ def Landing.claimed_associated(handle: U32, request: LandingRequest) -> IO(Landi
   +req = request
   +intent = landingreq_intent(req)
   do IO<Landing>:
-    decision : A.Association <- A.Association.decide(A.AssociationRequested{intent.attempt, intent.common, intent.target, intent.destination, intent.candidate, intent.basis, intent.holder, intent.retry})
+    decision : A.Association <- A.Association.decide(A.AssociationRequested{I.requested_attempt(intent), I.requested_common(intent), I.requested_target(intent), I.requested_destination(intent), I.requested_candidate(intent), I.requested_basis(intent), I.requested_holder(intent), I.requested_retry(intent)})
     Landing.association_before_publish(h, req, decision)
 
 def Landing.association_before_publish(handle: U32, request: LandingRequest, observation: A.Association) -> IO(Landing):
@@ -274,7 +274,7 @@ def Landing.run(request: LandingRequest) -> IO(Landing):
   +req = request
   +intent = landingreq_intent(req)
   do IO<Landing>:
-    claimed : Result<&1, &1, U32 & String, Maybe<U32>> <- R.Receipt.claim(intent.common, intent.target)
+    claimed : Result<&1, &1, U32 & String, Maybe<U32>> <- R.Receipt.claim(I.requested_common(intent), I.requested_target(intent))
     Landing.decided(req, claimed)
 
 law the_zero_object_name_is_only_the_mutation_argument:
@@ -350,7 +350,7 @@ def a_present_old_target_differing_from_the_head_is_refused(intent,name,content,
 
 law a_busy_guard_refuses_before_any_effect:
   for request: LandingRequest
-  {Landing.decided(request, Done{None{}}) == IO.pure(Landing, LandingGuardBusy{intent_target(request.intent)}) : IO(Landing)}
+  {Landing.decided(request, Done{None{}}) == IO.pure(Landing, LandingGuardBusy{intent_target(landingreq_intent(request))}) : IO(Landing)}
 
 def a_busy_guard_refuses_before_any_effect(request):
   {==}

@@ -48,6 +48,38 @@ def requested_holder(request: IntentInput) -> String:
   match request:
     case IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}: holder
 
+def requested_attempt(request: IntentInput) -> String:
+  match request:
+    case IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}: attempt
+
+def requested_common(request: IntentInput) -> String:
+  match request:
+    case IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}: common
+
+def requested_target(request: IntentInput) -> String:
+  match request:
+    case IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}: target
+
+def requested_destination(request: IntentInput) -> String:
+  match request:
+    case IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}: destination
+
+def requested_candidate(request: IntentInput) -> String:
+  match request:
+    case IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}: candidate
+
+def requested_basis(request: IntentInput) -> String:
+  match request:
+    case IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}: basis
+
+def requested_intent_path(request: IntentInput) -> String:
+  match request:
+    case IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}: intent_path
+
+def requested_retry(request: IntentInput) -> String:
+  match request:
+    case IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}: retry
+
 # A separator in the requested path would make the comparison ambiguous, because the
 # producer does not escape it.
 def carries_tab_go(text: String, found: Bool) -> Bool:

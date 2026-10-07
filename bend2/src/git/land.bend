@@ -2323,3 +2323,26 @@ law prepared_holder_discovery_rejects_a_quoted_or_relative_path:
 def prepared_holder_discovery_rejects_a_quoted_or_relative_path():
   {==}
 
+law a_prefix_is_dropped_to_its_suffix:
+  {prefix_drop("worktree /tmp/w", "worktree ") == Some{"/tmp/w"} : Maybe<String>}
+
+def a_prefix_is_dropped_to_its_suffix():
+  {==}
+
+law a_prefix_that_ends_the_line_leaves_it_empty:
+  {prefix_drop("worktree ", "worktree ") == Some{""} : Maybe<String>}
+
+def a_prefix_that_ends_the_line_leaves_it_empty():
+  {==}
+
+law a_mismatched_prefix_is_not_dropped:
+  {prefix_drop("branch refs/heads/x", "worktree ") == None{} : Maybe<String>}
+
+def a_mismatched_prefix_is_not_dropped():
+  {==}
+
+law an_empty_prefix_leaves_the_whole_line:
+  {prefix_drop("worktree /tmp/w", "") == Some{"worktree /tmp/w"} : Maybe<String>}
+
+def an_empty_prefix_leaves_the_whole_line():
+  {==}
