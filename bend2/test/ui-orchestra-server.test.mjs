@@ -94,6 +94,9 @@ function commitNotifications(generation = 'owner-1') {
         subscriber.onNotice({ kind: 'generation', generation: next });
       }
     },
+    lost: () => {
+      for (const subscriber of subscribers) subscriber.onNotice({ kind: 'lost' });
+    },
   };
 }
 
@@ -170,6 +173,19 @@ test('SSE pumps committed rows from owner hints and replays by durable cursor af
   assert.equal(hello?.[1], 'owner-1');
 
   const writer = new DatabaseSync(f.databasePath);
+  writer.exec("INSERT INTO messages(id,sender,recipient,kind,body) VALUES ('outside-scope','sibling','external','guidance','private sibling input');");
+  notifications.committed();
+  let cursorOnly = '';
+  const cursorDeadline = Date.now() + 3000;
+  while (!cursorOnly.includes('event: cursor') && Date.now() < cursorDeadline) {
+    const chunk = await Promise.race([
+      reader.read(),
+      new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1000)),
+    ]);
+    if (!chunk.timeout) cursorOnly += decoder.decode(chunk.value);
+  }
+  assert.match(cursorOnly, /event: cursor/);
+  assert.doesNotMatch(cursorOnly, /outside-scope|private sibling input|external/);
   writer.exec("INSERT INTO messages(id,sender,recipient,kind,body) VALUES ('pending-2','root','child','guidance','new input');");
   notifications.committed();
   let messageEvents = '';
@@ -246,6 +262,14 @@ test('SSE pumps committed rows from owner hints and replays by durable cursor af
   const generationFrame = decoder.decode((await generationReader.read()).value);
   assert.match(generationFrame, /event: gap[\s\S]*owner-generation-changed/);
   await generationReader.cancel();
+
+  const lostResponse = await fetch(`${base}/orchestra/events?subject=root&since=${beforeRollbackCursor}&generation=owner-1`);
+  const lostReader = lostResponse.body.getReader();
+  await lostReader.read();
+  notifications.lost();
+  const lostFrame = decoder.decode((await lostReader.read()).value);
+  assert.match(lostFrame, /event: gap[\s\S]*owner-notification-lost/);
+  await lostReader.cancel();
 
   const prunedWriter = new DatabaseSync(f.databasePath);
   prunedWriter.exec('DELETE FROM native_changes WHERE change_id < (SELECT max(change_id) FROM native_changes);');
