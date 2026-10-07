@@ -188,7 +188,7 @@ typedef struct BatonRetained {
   uint64_t version,serial,reply_serial;
   int reply_error;
   off_t offset;
-  uint64_t offset_stored,incarnation,attempt;
+  uint64_t offset_stored,incarnation;
   pthread_t receiver;
   pthread_mutex_t state,command,reader;
   pthread_cond_t changed;
@@ -218,7 +218,7 @@ typedef struct {
   uint64_t owner,epoch,attempt,generation,length;
   uint32_t state,reserved;
 } BrInstanceFrame;
-enum { BI_ENSURE=1, BI_ADMIT, BI_SHUTDOWN, BI_STATE, BI_HELLO, BI_REPLY };
+enum { BI_ENSURE=1, BI_ADMIT, BI_ATTACH, BI_SHUTDOWN, BI_STATE, BI_HELLO, BI_REPLY };
 typedef struct BrOwnerControl {
   struct BrOwnerControl *next;
   int socket,answered,rights;
@@ -247,9 +247,9 @@ typedef struct {
   BrBirth birth;
 } BrCheckpoint;
 #define BR_CHECKPOINT_STATE_MAX (1u<<20)
-static int br_checkpoint_load(const char *directory,int spool_fd,uint32_t schema,uint64_t attempt,
+static int br_checkpoint_load(const char *directory,int spool_fd,uint32_t schema,
                               uint64_t *offset,char **state,size_t *length);
-static int br_checkpoint_store(const char *directory,int spool_fd,uint32_t schema,uint64_t attempt,
+static int br_checkpoint_store(const char *directory,int spool_fd,uint32_t schema,
                                uint64_t incarnation,uint64_t offset,const char *state,size_t length);
 static uint64_t br_manifest_digest(const BrManifestHeader *header,char *const *fields);
 static int br_manifest_digest_file(const char *directory,uint64_t *digest);
@@ -557,7 +557,7 @@ static int br_hello(int socket,BrFrame *hello,int *guard) {
   if(message.msg_flags&MSG_CTRUNC)return EPROTO;
   return (size_t)length<sizeof(*hello)?br_read_all(socket,(char *)hello+length,sizeof(*hello)-(size_t)length):0;
 }
-static int br_attach_socket(BatonChild *child,const char *directory,int socket,int *unstarted,uint64_t incarnation,uint64_t attempt) {
+static int br_attach_socket(BatonChild *child,const char *directory,int socket,int *unstarted,uint64_t incarnation) {
   BrFrame hello;BrState state={0};int guard=-1;
   int error=br_hello(socket,&hello,&guard);
   if(!error && hello.error) {
@@ -582,7 +582,7 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
   pthread_mutex_init(&retained->state,NULL);pthread_mutex_init(&retained->command,NULL);
   pthread_mutex_init(&retained->reader,NULL);pthread_cond_init(&retained->changed,NULL);
   if(!retained->directory)error=ENOMEM;
-  retained->incarnation=incarnation;retained->attempt=attempt;
+  retained->incarnation=incarnation;
   /* The reader starts at the beginning. Resuming at a recorded offset is the
      caller's decision, taken through restore after it has restored the reducer
      state the checkpoint carries. */
@@ -694,7 +694,7 @@ static void baton_retained_call(BatonProcessCall *call) {
     if(retained->spool<0) {call->error=EBADF;return;}
     pthread_mutex_lock(&retained->reader);
     call->error=br_checkpoint_store(retained->directory,retained->spool,(uint32_t)call->signal,
-      retained->attempt,retained->incarnation,(uint64_t)retained->offset,call->text,call->length);
+      retained->incarnation,(uint64_t)retained->offset,call->text,call->length);
     if(!call->error)retained->offset_stored=(uint64_t)retained->offset;
     pthread_mutex_unlock(&retained->reader);
     return;
@@ -706,7 +706,7 @@ static void baton_retained_call(BatonProcessCall *call) {
        beginning with its own deduplication. */
     uint64_t offset=0;char *state=NULL;size_t length=0;
     int error=retained->spool<0?0:br_checkpoint_load(retained->directory,retained->spool,
-      (uint32_t)call->signal,retained->attempt,&offset,&state,&length);
+      (uint32_t)call->signal,&offset,&state,&length);
     if(error==EINVAL) {
       br_file(retained->directory,"checkpoint-error",
         "unusable observation checkpoint; replaying from the beginning\n",62,1);
@@ -1298,6 +1298,17 @@ static uint64_t br_checkpoint_check(const BrCheckpoint *checkpoint,const char *s
 static char *br_checkpoint_path(const char *directory) {
   return br_path(directory,"checkpoint");
 }
+/* The durable attempt identity: a digest of the attempt's canonical directory.
+   An owner-local attempt number is not durable across an owner restart, so the
+   checkpoint binds this value instead. */
+static uint64_t br_attempt_identity(const char *directory) {
+  char *canonical=realpath(directory,NULL);
+  const char *text=canonical?canonical:directory;
+  uint64_t digest=0xcbf29ce484222325ULL;
+  for(const unsigned char *at=(const unsigned char *)text;*at;at++) {digest^=*at;digest*=0x100000001b3ULL;}
+  free(canonical);
+  return digest;
+}
 /* The custody identity a checkpoint is bound to: the native process, the admitted
    manifest, and the stdout spool file. All three survive an owner restart. */
 static int br_checkpoint_custody(const char *directory,int spool_fd,BrBirth *birth,
@@ -1309,7 +1320,7 @@ static int br_checkpoint_custody(const char *directory,int spool_fd,BrBirth *bir
   if(!error) {*spool_device=(uint64_t)info.st_dev;*spool_inode=(uint64_t)info.st_ino;}
   return error;
 }
-static int br_checkpoint_store(const char *directory,int spool_fd,uint32_t schema,uint64_t attempt,
+static int br_checkpoint_store(const char *directory,int spool_fd,uint32_t schema,
                                uint64_t incarnation,uint64_t offset,const char *state,size_t length) {
   if(length>BR_CHECKPOINT_STATE_MAX)return EOVERFLOW;
   if(length>SIZE_MAX-sizeof(BrCheckpoint))return EOVERFLOW;
@@ -1322,8 +1333,9 @@ static int br_checkpoint_store(const char *directory,int spool_fd,uint32_t schem
   char *record=malloc(total);
   error=record?0:ENOMEM;
   if(!error) {
-    BrCheckpoint checkpoint={.schema=schema,.incarnation=incarnation,.attempt=attempt,
-      .manifest=manifest,.spool_device=spool_device,.spool_inode=spool_inode,
+    BrCheckpoint checkpoint={.schema=schema,.incarnation=incarnation,
+      .attempt=br_attempt_identity(directory),.manifest=manifest,
+      .spool_device=spool_device,.spool_inode=spool_inode,
       .offset=offset,.length=length,.birth=birth};
     memcpy(checkpoint.magic,BR_CHECKPOINT_MAGIC,8);
     checkpoint.check=br_checkpoint_check(&checkpoint,state,length);
@@ -1340,7 +1352,7 @@ static int br_checkpoint_store(const char *directory,int spool_fd,uint32_t schem
    the state length before any allocation. A stale, mismatched or corrupt record
    is EINVAL so the caller replays from the beginning; the caller writes the
    durable diagnostic. */
-static int br_checkpoint_load(const char *directory,int spool_fd,uint32_t schema,uint64_t attempt,
+static int br_checkpoint_load(const char *directory,int spool_fd,uint32_t schema,
                               uint64_t *offset,char **state,size_t *length) {
   *offset=0;*state=NULL;*length=0;
   char *path=br_checkpoint_path(directory);
@@ -1353,7 +1365,7 @@ static int br_checkpoint_load(const char *directory,int spool_fd,uint32_t schema
   if(!error && fstat(fd,&info))error=errno;
   if(!error && memcmp(checkpoint.magic,BR_CHECKPOINT_MAGIC,8))error=EINVAL;
   if(!error && checkpoint.schema!=schema)error=EINVAL;
-  if(!error && checkpoint.attempt!=attempt)error=EINVAL;
+  if(!error && checkpoint.attempt!=br_attempt_identity(directory))error=EINVAL;
   if(!error && checkpoint.length>BR_CHECKPOINT_STATE_MAX)error=EOVERFLOW;
   if(!error && (size_t)info.st_size!=sizeof(checkpoint)+checkpoint.length)error=EINVAL;
   BrBirth birth;uint64_t manifest,spool_device,spool_inode;
@@ -1535,6 +1547,26 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
     return br_owner_reply(control,(BrInstanceFrame){.op=BI_HELLO,.owner=owner->token,
       .epoch=owner->epoch,.attempt=keeper?keeper->id:0,
       .generation=keeper?keeper->generation:0,.state=(uint32_t)(existing?1:0),
+      .length=sizeof(state)},&state);
+  }
+  if(frame.op==BI_ATTACH) {
+    /* Resolves the attempt that already owns this directory, so an attaching
+       observer binds the same attempt identity the admitting client recorded. */
+    if(frame.length<2 || payload[frame.length-1])
+      return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.error=EINVAL},NULL);
+    char *resolved=realpath(payload,NULL);
+    int error=resolved?0:errno;
+    BrKeeper *held=NULL;
+    if(!error) {
+      held=br_owner_find(owner,resolved);
+      if(!held)error=ENOENT;
+      free(resolved);
+    }
+    if(error)return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
+      .epoch=owner->epoch,.error=error},NULL);
+    BrOwnerState state={owner->token,owner->epoch,br_owner_attempts(owner)};
+    return br_owner_reply(control,(BrInstanceFrame){.op=BI_HELLO,.owner=owner->token,
+      .epoch=owner->epoch,.attempt=held->id,.generation=held->generation,.state=1,
       .length=sizeof(state)},&state);
   }
   return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.error=EINVAL},NULL);
@@ -1883,7 +1915,7 @@ static int br_retain(BatonProcessCall *call) {
     }
   }
   if(sockets[1]>=0)close(sockets[1]);
-  if(!error) {error=br_attach_socket(call->child,directory,sockets[0],&call->unstarted,0,0);sockets[0]=-1;}
+  if(!error) {error=br_attach_socket(call->child,directory,sockets[0],&call->unstarted,0);sockets[0]=-1;}
   if(sockets[0]>=0)close(sockets[0]);if(null>=0)close(null);if(log>=0)close(log);
   free(self);free(log_path);free(address);free(directory);
   return error;
@@ -2107,11 +2139,11 @@ static int br_attempt_socket(const char *directory,uint32_t op,uint64_t serial,i
   return error;
 }
 /* Joins an existing attempt as its observer, bound to the owner incarnation
-   that reported it and to the attempt that incarnation named. */
-static int br_instance_join(BatonProcessCall *call,const char *directory,uint64_t incarnation,uint64_t attempt) {
+   that resolved it. */
+static int br_instance_join(BatonProcessCall *call,const char *directory,uint64_t incarnation) {
   int socket_fd=-1;
   int error=br_attempt_socket(directory,BR_ATTACH,0,0,NULL,0,&socket_fd);
-  if(!error) {error=br_attach_socket(call->child,directory,socket_fd,NULL,incarnation,attempt);socket_fd=-1;}
+  if(!error) {error=br_attach_socket(call->child,directory,socket_fd,NULL,incarnation);socket_fd=-1;}
   if(socket_fd>=0)close(socket_fd);
   return error;
 }
@@ -2143,7 +2175,7 @@ static int br_instance_admit(BatonProcessCall *call) {
       return error;
     }
   }
-  if(!error)error=br_instance_join(call,directory,reply.owner,reply.attempt);
+  if(!error)error=br_instance_join(call,directory,reply.owner);
   free(address);free(directory);
   return error;
 }
@@ -2151,8 +2183,9 @@ static int br_instance_attach(BatonProcessCall *call) {
   char *directory=realpath(call->directory,NULL);
   if(!directory)return errno;
   BrInstanceFrame reply={0};
-  int error=br_instance_request(call->database,(BrInstanceFrame){.op=BI_ENSURE},NULL,-1,&reply);
-  if(!error)error=br_instance_join(call,directory,reply.owner,reply.attempt);
+  int error=br_instance_request(call->database,
+    (BrInstanceFrame){.op=BI_ATTACH,.length=strlen(directory)+1},directory,-1,&reply);
+  if(!error)error=br_instance_join(call,directory,reply.owner);
   free(directory);
   return error;
 }
@@ -2160,9 +2193,10 @@ static int br_instance_attach_owned(BatonProcessCall *call) {
   char *directory=realpath(call->directory,NULL);
   if(!directory)return errno;
   BrInstanceFrame reply={0};
-  int error=br_instance_request(call->database,(BrInstanceFrame){.op=BI_ENSURE},NULL,-1,&reply);
+  int error=br_instance_request(call->database,
+    (BrInstanceFrame){.op=BI_ATTACH,.length=strlen(directory)+1},directory,-1,&reply);
   if(!error) {
-    error=br_instance_join(call,directory,reply.owner,reply.attempt);
+    error=br_instance_join(call,directory,reply.owner);
     if(error==ECONNREFUSED || error==ENOENT || error==EPIPE)
       error=br_attach_orphan(call->child,directory,(int)call->lock);
   }
@@ -2246,7 +2280,7 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
       int socket_fd=-1;
       call->error=br_attempt_socket(directory,op,serial,call->signal,payload,length,&socket_fd);
       if(!call->error) {
-        if(attach) {call->error=br_attach_socket(call->child,directory,socket_fd,NULL,0,0);socket_fd=-1;}
+        if(attach) {call->error=br_attach_socket(call->child,directory,socket_fd,NULL,0);socket_fd=-1;}
         else {
           BrFrame reply;
           call->error=br_read_all(socket_fd,&reply,sizeof(reply));
