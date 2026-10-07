@@ -455,7 +455,7 @@ class Receive(unittest.TestCase):
                  'method': 'input', 'title': 'No registered parent'}
         self.action(stream, native_request=event)
         self.assertEqual(json.loads(stream.readline()), {'request_written': event})
-        self.eventually(lambda: event['id'] in (self.directory / 'root.jsonl').read_text(),
+        self.eventually(lambda: (self.directory / 'root.jsonl').is_file() and event['id'] in (self.directory / 'root.jsonl').read_text(),
                         'unsupported root request was not retained')
         self.action(stream, body='The fixture ends its request without an answer.',
                     hold_exit=True, report_input=True)
