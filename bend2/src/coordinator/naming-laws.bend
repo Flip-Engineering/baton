@@ -142,7 +142,7 @@ def player_snapshot_retains_route_turn_work_and_input_state(condition):
   {==}
 
 law orchestra_reads_players_operators_and_all_ensembles:
-  {C.orchestra_sql() == "SELECT json_object('players'," ++ C.players_json(C.assigned_role("s.id") ++ "<>'operator'") ++ ",'operators'," ++ C.players_json(C.assigned_role("s.id") ++ "='operator'") ++ ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT " ++ C.ensemble_row("e") ++ " AS item FROM ensembles e ORDER BY e.id)));" : String}
+  {C.orchestra_sql() == "WITH surface AS " ++ C.orchestra_surface() ++ " SELECT json_object('players'," ++ C.orchestra_role_array("<>'operator'") ++ ",'operators'," ++ C.orchestra_role_array("='operator'") ++ ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT " ++ C.ensemble_row("e") ++ " AS item FROM ensembles e ORDER BY e.id)));" : String}
 
 def orchestra_reads_players_operators_and_all_ensembles():
   {==}

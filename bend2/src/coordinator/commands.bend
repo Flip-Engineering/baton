@@ -329,8 +329,23 @@ def section_member_sql(+ensemble: String, +id: String, +owner: String, +player: 
 def players_json(condition: String) -> String:
   "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',s.id,'kind'," ++ session_kind("s.id") ++ ",'role'," ++ public_role("s.id") ++ ",'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'native',s.native,'observedHarness',s.observed_harness,'observedModel',s.observed_model,'observedEffort',s.observed_effort,'execution',(SELECT json_object('attempt',id,'mode',mode,'phase',phase,'status',status) FROM executions WHERE session=s.id),'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')) FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")))," ++ session_state_sql("s.id") ++ ") AS item FROM sessions s WHERE " ++ condition ++ " ORDER BY s.id))"
 
+# The per-session orchestra surface, computed once per row. The item JSON is
+# the players surface item over sessions s; role carries the raw assigned
+# role for the players/operators split, and id carries the session identity
+# for ordering. Both role arrays read this one surface through the WITH
+# clause in orchestra_sql, so the enlarged session state is assembled once
+# instead of once per role array.
+def surface_item() -> String:
+  "json_patch(json_object('id',s.id,'kind'," ++ session_kind("s.id") ++ ",'role'," ++ public_role("s.id") ++ ",'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'native',s.native,'observedHarness',s.observed_harness,'observedModel',s.observed_model,'observedEffort',s.observed_effort,'execution',(SELECT json_object('attempt',id,'mode',mode,'phase',phase,'status',status) FROM executions WHERE session=s.id),'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')) FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")))," ++ session_state_sql("s.id") ++ ")"
+
+def orchestra_surface() -> String:
+  String.concat(["(SELECT ", surface_item(), " AS item,", assigned_role("s.id"), " AS role,s.id AS id FROM sessions s)"])
+
+def orchestra_role_array(condition: String) -> String:
+  String.concat(["(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT item FROM surface WHERE role", condition, " ORDER BY id))"])
+
 def orchestra_sql() -> String:
-  "SELECT json_object('players'," ++ players_json(assigned_role("s.id") ++ "<>'operator'") ++ ",'operators'," ++ players_json(assigned_role("s.id") ++ "='operator'") ++ ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT " ++ ensemble_row("e") ++ " AS item FROM ensembles e ORDER BY e.id)));"
+  String.concat(["WITH surface AS ", orchestra_surface(), " SELECT json_object('players',", orchestra_role_array("<>'operator'"), ",'operators',", orchestra_role_array("='operator'"), ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT ", ensemble_row("e"), " AS item FROM ensembles e ORDER BY e.id)));"])
 
 
 def sql(command: Command) -> String:

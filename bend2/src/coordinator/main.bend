@@ -196,10 +196,19 @@ def player_executes_the_stored_command(db,id):
   {==}
 
 # The orchestra answer combines the players, operators, and ensembles
-# surfaces. This law pins the assembly; unfolding the full orchestra SQL
-# in one equality exceeds the law checker's term capacity.
+# surfaces. The production equation is factored: one surface CTE computes the
+# per-session item, role, and identity once, and both role arrays read that
+# surface. The execute/run law below covers the production path; the assembly
+# pin after it covers the factored structure.
+law orchestra_executes_the_stored_command:
+  for db: String
+  {execute(db,C.Orchestra{}) == run(db,C.Orchestra{}) : IO(Unit)}
+
+def orchestra_executes_the_stored_command(db):
+  {==}
+
 law orchestra_answer_combines_the_role_surfaces:
-  {C.orchestra_sql() == ("SELECT json_object('players'," ++ C.players_json(C.assigned_role("s.id") ++ "<>'operator'") ++ ",'operators'," ++ C.players_json(C.assigned_role("s.id") ++ "='operator'") ++ ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT " ++ C.ensemble_row("e") ++ " AS item FROM ensembles e ORDER BY e.id)));") : String}
+  {C.orchestra_sql() == ("WITH surface AS " ++ C.orchestra_surface() ++ " SELECT json_object('players'," ++ C.orchestra_role_array("<>'operator'") ++ ",'operators'," ++ C.orchestra_role_array("='operator'") ++ ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT " ++ C.ensemble_row("e") ++ " AS item FROM ensembles e ORDER BY e.id)));") : String}
 
 def orchestra_answer_combines_the_role_surfaces():
   {==}
