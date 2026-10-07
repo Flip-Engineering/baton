@@ -31,5 +31,5 @@ and section cross-membership, search and status/ensemble
 filters, a selected-actor detail panel (task, worktree, branch,
 report pending counts, observed and configured provider), and
 recent committed transitions with recorded times.
-All text renders through `textContent`. The page never issues
-task dispatch or any other mutation.
+All text renders through `textContent`. The page issues only
+GET snapshot and event-stream requests.

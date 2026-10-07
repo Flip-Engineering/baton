@@ -4,8 +4,9 @@ These files exercise hierarchy, filter, detail, and transition
 rendering in `bend2/ui/orchestra/`. Every id starts with `fixture-`
 and each file carries `"fixture": true`.
 
-They are not live coordinator state and never stand in for backend
-fields. The page loads a fixture only with `?fixture=<name>`
+They carry synthetic ids and a fixture marker. Backend field
+definitions live in `../interface.md`. The page loads a fixture
+only with `?fixture=<name>`
 (for example `?fixture=fixture-small`) and labels the screen
 `DOM behavior fixture, not live state` while live updates stay off.
 

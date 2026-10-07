@@ -44,13 +44,13 @@ The browser implements exactly this boundary and nothing else.
   `{"<player>": {"name": "...",
   "status": "known|unknown|unavailable"}}`.
   A player with no entry shows provider `unknown`.
-  Unknown stays explicit and is never rendered as healthy.
+  Unknown renders as the word `unknown`.
 
 ## Player object
 
 Recorded configuration, observed provider data, and execution
-status stay separate fields. A recorded assignment is not proof
-that a process is live.
+status stay separate fields. Execution status alone describes
+whether a process is live.
 
 - `id`, `kind`, `role` (`player`, `principal-conductor`,
   `associate-conductor`, `operator`), `parent`
