@@ -763,6 +763,22 @@ law a_held_session_lock_never_launches_the_wake:
 def a_held_session_lock_never_launches_the_wake(db,session,cursor,launch):
   {==}
 
+def owned_wake_fences_under_the_lock(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), +lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    owed : Bool <- Receive.wake_owed(db,session,cursor)
+    Receive.wake_fenced(db,session,cursor,launch,lock,owed)
+
+law an_owned_wake_admits_through_the_fence:
+  for +db: String
+  for +session: String
+  for +cursor: String
+  for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for +lock: U32
+  {Receive.wake_owned(db,session,cursor,launch,Some{lock}) == owned_wake_fences_under_the_lock(db,session,cursor,launch,lock) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def an_owned_wake_admits_through_the_fence(db,session,cursor,launch,lock):
+  {==}
+
 def fenced_admission_reads_owner_and_liveness(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), +lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     state : String <- Store.claim_state(db,session)
