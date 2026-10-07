@@ -364,16 +364,23 @@ def engines(db: String) -> IO(Unit):
     runtime : ProviderAnswer <- resolve_node_runtime("/")
     inventory_with_runtime(executable, "/", runtime)
 
-def project_policy_json_rows(+rows: String) -> ProjectPolicyJson:
-  match NativeRequest.raw_rows(rows):
+def project_policy_core_json(converted: CoreCodec.JsonConv) -> ProjectPolicyJson:
+  match converted:
+    case CoreCodec.JcRefused{condition}: ProjectPolicyJsonRefused{"projectPolicyJson:" ++ condition}
+    case CoreCodec.JcJson{+value}: ProjectPolicyJsonReady{value}
+
+def project_policy_json_decoded(raw: NativeRequest.RawDecode) -> ProjectPolicyJson:
+  match raw:
     case NativeRequest.RawDecodeRefused{condition}: ProjectPolicyJsonRefused{"projectPolicyJson:" ++ condition}
     case NativeRequest.RawDecoded{value}:
-      match CoreCodec.raw_to_json(value):
-        case CoreCodec.JcRefused{condition}: ProjectPolicyJsonRefused{"projectPolicyJson:" ++ condition}
-        case CoreCodec.JcJson{+value}: ProjectPolicyJsonReady{value}
+      project_policy_core_json(CoreCodec.raw_to_json(value))
 
-def project_policy_identity(+observation: NativePolicy.PolicyObservation) -> ProjectPolicyAnswer:
-  match NativePolicy.selection_identity(observation):
+def project_policy_json_rows(+rows: String) -> ProjectPolicyJson:
+  project_policy_json_decoded(NativeRequest.raw_rows(rows))
+
+def project_policy_identity_result(+observation: NativePolicy.PolicyObservation,
+                                   identity: NativePolicy.PolicySelectionIdentity) -> ProjectPolicyAnswer:
+  match identity:
     case NativePolicy.PolicySelectionRefused{condition}: ProjectPolicyRefused{condition}
     case NativePolicy.PolicySelectionRead{value}:
       match observation:
@@ -386,14 +393,35 @@ def project_policy_identity(+observation: NativePolicy.PolicyObservation) -> Pro
           ProjectPolicyReady{NativePolicy.ProjectPolicy{Eng.ss_empty(), Eng.ss_empty()}, value}
         case other: ProjectPolicyRefused{"projectPolicyObservationMismatch"}
 
-def project_policy_document(+observation: NativePolicy.PolicyObservation,
-                            value: J.Json) -> ProjectPolicyAnswer:
-  match NativePolicy.decode(value):
+def project_policy_identity(+observation: NativePolicy.PolicyObservation) -> ProjectPolicyAnswer:
+  project_policy_identity_result(observation, NativePolicy.selection_identity(observation))
+
+def project_policy_document_identity(+observation: NativePolicy.PolicyObservation,
+                                    +policy: NativePolicy.ProjectPolicy,
+                                    identity: NativePolicy.PolicySelectionIdentity) -> ProjectPolicyAnswer:
+  match identity:
+    case NativePolicy.PolicySelectionRead{identity}: ProjectPolicyReady{policy, identity}
+    case other: ProjectPolicyRefused{"projectPolicyIdentityUnavailable"}
+
+def project_policy_document_decoded(+observation: NativePolicy.PolicyObservation,
+                                    decoded: NativePolicy.PolicyDecode) -> ProjectPolicyAnswer:
+  match decoded:
     case NativePolicy.PolicyRefused{condition}: ProjectPolicyRefused{condition}
     case NativePolicy.PolicyDecoded{+policy}:
-      match NativePolicy.selection_identity(observation):
-        case NativePolicy.PolicySelectionRead{identity}: ProjectPolicyReady{policy, identity}
-        case other: ProjectPolicyRefused{"projectPolicyIdentityUnavailable"}
+      project_policy_document_identity(observation, policy,
+        NativePolicy.selection_identity(observation))
+
+def project_policy_document(+observation: NativePolicy.PolicyObservation,
+                            value: J.Json) -> ProjectPolicyAnswer:
+  project_policy_document_decoded(observation, NativePolicy.decode(value))
+
+def project_policy_bytes_json(+observation: NativePolicy.PolicyObservation,
+                              decoded: ProjectPolicyJson) -> IO(ProjectPolicyAnswer):
+  match decoded:
+    case ProjectPolicyJsonRefused{reason}:
+      IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{reason})
+    case ProjectPolicyJsonReady{value}:
+      IO.pure(ProjectPolicyAnswer, project_policy_document(observation, value))
 
 def project_policy_bytes_result(+db: String, +binding: String,
                                 +observation: NativePolicy.PolicyObservation,
@@ -403,10 +431,7 @@ def project_policy_bytes_result(+db: String, +binding: String,
       match error:
         case (code, detail): IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{"projectPolicyDocumentRead"})
     case Done{+rows}:
-      match project_policy_json_rows(rows):
-        case ProjectPolicyJsonRefused{reason}: IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{reason})
-        case ProjectPolicyJsonReady{value}:
-          IO.pure(ProjectPolicyAnswer, project_policy_document(observation, value))
+      project_policy_bytes_json(observation, project_policy_json_rows(rows))
 
 def project_policy_observation_decoded(+db: String, +binding: String,
                                        observation: NativePolicy.PolicyObservation) -> IO(ProjectPolicyAnswer):
@@ -419,14 +444,28 @@ def project_policy_observation_decoded(+db: String, +binding: String,
           Req.json_tree_sql(bytes))
         project_policy_bytes_result(db, binding, observation, result)
 
-def project_policy_observation_value(+db: String, +binding: String,
-                                     +owner: String, +worktree: String,
-                                     value: J.Json) -> IO(ProjectPolicyAnswer):
-  match NativePolicy.decode_observation(value, owner, worktree):
+def project_policy_observation_result(+db: String, +binding: String,
+                                      +owner: String, +worktree: String,
+                                      decoded: NativePolicy.PolicyObservationDecode) -> IO(ProjectPolicyAnswer):
+  match decoded:
     case NativePolicy.PolicyObservationRefused{condition}:
       IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{condition})
     case NativePolicy.PolicyObservationDecoded{+observation}:
       project_policy_observation_decoded(db, binding, observation)
+
+def project_policy_observation_value(+db: String, +binding: String,
+                                     +owner: String, +worktree: String,
+                                     value: J.Json) -> IO(ProjectPolicyAnswer):
+  project_policy_observation_result(db, binding, owner, worktree,
+    NativePolicy.decode_observation(value, owner, worktree))
+
+def project_policy_output_json(+db: String, +binding: String, +owner: String,
+                               +worktree: String, decoded: ProjectPolicyJson) -> IO(ProjectPolicyAnswer):
+  match decoded:
+    case ProjectPolicyJsonRefused{reason}:
+      IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{reason})
+    case ProjectPolicyJsonReady{+value}:
+      project_policy_observation_value(db, binding, owner, worktree, value)
 
 def project_policy_output_rows(+db: String, +binding: String, +owner: String,
                                +worktree: String, +value: String,
@@ -436,10 +475,8 @@ def project_policy_output_rows(+db: String, +binding: String, +owner: String,
       match error:
         case (code, detail): IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{"projectPolicyObservationRead"})
     case Done{+rows}:
-      match project_policy_json_rows(rows):
-        case ProjectPolicyJsonRefused{reason}: IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{reason})
-        case ProjectPolicyJsonReady{+value}:
-          project_policy_observation_value(db, binding, owner, worktree, value)
+      project_policy_output_json(db, binding, owner, worktree,
+        project_policy_json_rows(rows))
 
 def project_policy_output(+db: String, +binding: String, +owner: String,
                           +worktree: String, answer: ProviderAnswer) -> IO(ProjectPolicyAnswer):
@@ -462,52 +499,62 @@ def observe_project_policy(+db: String, +binding: String, +executable: String,
       owner, worktree, runtime)
     project_policy_output(db, binding, owner, worktree, answer)
 
-def query_catalog_admitted(catalog: NativeCatalog.CatalogDecode) -> IO(Unit):
+def query_catalog_admitted(catalog: NativeCatalog.CatalogDecode,
+                           policy: ProjectPolicyAnswer) -> IO(Unit):
   match catalog:
     case NativeCatalog.CatalogRefused{condition}:
       IO.die(Unit, 3, "catalog:" ++ condition)
     case NativeCatalog.CatalogDecoded{catalog, inventory, installed}:
-      IO.die(Unit, 3, "ownerBoundProjectCaptureRequired")
+      match policy:
+        case ProjectPolicyRefused{reason}: IO.die(Unit, 3, reason)
+        case ProjectPolicyReady{policy, identity}:
+          IO.die(Unit, 3, "ownerBoundProjectCaptureRequired")
 
 def query_catalog_decoded(catalog: NativeCatalog.CatalogDecode,
-                          request: NativeRequest.RequestDecode) -> IO(Unit):
+                          request: NativeRequest.RequestDecode,
+                          policy: ProjectPolicyAnswer) -> IO(Unit):
   match request:
     case NativeRequest.RequestDecodeRefused{condition}:
       IO.die(Unit, 3, "request:" ++ condition)
     case NativeRequest.RequestDecoded{canonical, operands, operation_chain, cwd, source_path}:
-      query_catalog_admitted(catalog)
+      query_catalog_admitted(catalog, policy)
 
 def query_catalog_rows_result(request: NativeRequest.RequestDecode,
+                              policy: ProjectPolicyAnswer,
                               result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Fail{error}:
       match error:
         case (code, detail): IO.die(Unit, 3, "providerInventoryDecodeRead")
     case Done{+rows}:
-      query_catalog_decoded(NativeCatalog.inventory_rows(rows), request)
+      query_catalog_decoded(NativeCatalog.inventory_rows(rows), request, policy)
 
 def query_catalog_rows(db: String, binding: String, value: String,
-                       request: NativeRequest.RequestDecode) -> IO(Unit):
+                       request: NativeRequest.RequestDecode,
+                       policy: ProjectPolicyAnswer) -> IO(Unit):
   do IO<Unit>:
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
       Req.json_tree_sql(value))
-    query_catalog_rows_result(request, result)
+    query_catalog_rows_result(request, policy, result)
 
 def query_catalog_output(db: String, binding: String, request: NativeRequest.RequestDecode,
-                        status: String, value: String) -> IO(Unit):
+                         policy: ProjectPolicyAnswer, status: String,
+                         value: String) -> IO(Unit):
   match status:
-    case "exit 0": query_catalog_rows(db, binding, value, request)
+    case "exit 0": query_catalog_rows(db, binding, value, request, policy)
     case other: IO.die(Unit, 3, "providerInventory:" ++ value)
 
-def query_catalog_result(db: String, binding: String, answer: ProviderAnswer,
+def query_catalog_result(db: String, binding: String, policy: ProjectPolicyAnswer,
+                         answer: ProviderAnswer,
                          request: NativeRequest.RequestDecode) -> IO(Unit):
   match answer:
     case ProviderRefused{reason}: IO.die(Unit, 3, "providerInventory:" ++ reason)
     case ProviderRuntime{path, version}: IO.die(Unit, 3, "providerInventoryMalformed")
-    case ProviderOutput{value, status}: query_catalog_output(db, binding, request, status, value)
+    case ProviderOutput{value, status}: query_catalog_output(db, binding, request, policy, status, value)
 
 def query_request_environment(db: String, binding: String, owner: String, query: String,
-                              cwd: String, request: NativeRequest.RequestDecode) -> IO(Unit):
+                              cwd: String, worktree: String,
+                              request: NativeRequest.RequestDecode) -> IO(Unit):
   match request:
     case NativeRequest.RequestDecodeRefused{condition}:
       IO.die(Unit, 3, "request:" ++ condition)
@@ -516,7 +563,9 @@ def query_request_environment(db: String, binding: String, owner: String, query:
         executable : String <- IO.try(String, Host.SessionLock.executable())
         runtime : ProviderAnswer <- resolve_node_runtime(cwd)
         answer : ProviderAnswer <- inventory_runtime_answer(executable, cwd, runtime)
-        query_catalog_result(db, binding, answer, request)
+        policy : ProjectPolicyAnswer <- observe_project_policy(db, binding,
+          executable, cwd, owner, worktree, runtime)
+        query_catalog_result(db, binding, policy, answer, request)
 
 def owner_root_matches(+workspace: String, root: G.GitOut) -> Bool:
   match root:
@@ -534,7 +583,7 @@ def request_cwd_root_result(+db: String, +binding: String, +owner: String, +quer
     case G.GBroken{detail}: IO.die(Unit, 3, "requestCwdWorktreeUnavailable")
     case G.GRun{code, +out}:
       Bool.pick(IO(Unit), request_worktree_matches(workspace, G.GRun{code, out}),
-        query_request_environment(db, binding, owner, query, cwd, request),
+        query_request_environment(db, binding, owner, query, cwd, workspace, request),
         IO.die(Unit, 3, "requestCwdOutsideOwnerWorktree"))
 
 def request_cwd_root(+db: String, +binding: String, +owner: String, +query: String,

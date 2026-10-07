@@ -241,6 +241,21 @@ law native_inventory_invocation_uses_the_installed_wrapper:
 def native_inventory_invocation_uses_the_installed_wrapper():
   {==}
 
+law native_project_policy_invocation_uses_the_core_provider_entry:
+  {Native.project_policy_argv("/opt/node/bin/node", "/opt/baton2/bin/baton2") ==
+    Process.argv(["/opt/node/bin/node", "--experimental-strip-types",
+      "/opt/baton2/bin/../libexec/baton2/context-provider.mjs", "--project-policy"]) : String}
+
+def native_project_policy_invocation_uses_the_core_provider_entry():
+  {==}
+
+law native_project_policy_request_binds_only_owner_and_worktree:
+  {Native.project_policy_request("owner-1", "/work/project") ==
+    "{\"owner\":\"owner-1\",\"worktree\":\"/work/project\"}" : String}
+
+def native_project_policy_request_binds_only_owner_and_worktree():
+  {==}
+
 law native_result_refuses_without_admission:
   for +db: String
   for +query: String
