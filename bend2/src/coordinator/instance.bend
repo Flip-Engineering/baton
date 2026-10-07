@@ -21,18 +21,10 @@ import ../git/text.bend as Tx
 # harness filter keeps the serve on sessions Receive admits. The full pending
 # set is read every pass, so older actionable IDs replay after any restart.
 def dirty_session_sql() -> String:
-  "SELECT DISTINCT m.recipient FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND NOT (" ++ C.stopped_session_sql("m.recipient") ++ " AND " ++ C.execution_input_sql("m.kind") ++ ") AND s.harness IN ('codex','omp') ORDER BY m.recipient;"
-
-def drop_empty(sessions: List<String>) -> List<String>:
-  match sessions:
-    case Nil{}: Nil{}
-    case session <> rest:
-      +s = session
-      +r = rest
-      Bool.pick(List<String>, String.is_empty(s), drop_empty(r), Con{s, drop_empty(r)})
+  "SELECT DISTINCT m.recipient FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT (" ++ C.stopped_session_sql("m.recipient") ++ " AND " ++ C.execution_input_sql("m.kind") ++ ") AND s.harness IN ('codex','omp') ORDER BY m.recipient;"
 
 def dirty_sessions(saved: String) -> List<String>:
-  drop_empty(Tx.split_lines(saved))
+  Tx.split_lines(saved)
 
 def snapshot(+db: String) -> IO(List<String>):
   do IO<List<String>>:
