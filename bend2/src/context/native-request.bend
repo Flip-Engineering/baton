@@ -45,15 +45,16 @@ def optional_member_value(found: Maybe<&2, J.Json>) -> String:
 def optional_member_text(+members: J.Json, +name: String) -> String:
   optional_member_value(Req.member_lookup(name, members))
 
-def request_select(+members: J.Json) -> J.Json:
-  match Req.member_lookup("select", members):
+def optional_member_json(found: Maybe<&2, J.Json>) -> J.Json:
+  match found:
     case None{}: J.Jnil{}
     case Some{+value}: value
 
+def request_select(+members: J.Json) -> J.Json:
+  optional_member_json(Req.member_lookup("select", members))
+
 def request_subject(+members: J.Json) -> J.Json:
-  match Req.member_lookup("subject", members):
-    case None{}: J.Jnil{}
-    case Some{+value}: value
+  optional_member_json(Req.member_lookup("subject", members))
 
 def source_path(req: J.Json) -> String:
   Ops.source_path(req)
@@ -68,10 +69,13 @@ def decoded_request(+req: J.Json, +canonical: String) -> RequestDecode:
     optional_member_text(request_members(req), "cwd"),
     source_path(req)}
 
-def request_validation(+req: J.Json) -> RequestDecode:
-  match Req.request_validate(req):
+def request_validation_result(+req: J.Json, verdict: Req.Verdict) -> RequestDecode:
+  match verdict:
     case Req.VRefused{condition}: RequestDecodeRefused{condition}
     case Req.VAccepted{}: decoded_request(req, Req.request_identity(req))
+
+def request_validation(+req: J.Json) -> RequestDecode:
+  request_validation_result(req, Req.request_validate(req))
 
 def request_json_schema(raw: CoreCodec.RawValue, verdict: Schema.SchemaVerdict) -> RequestDecode:
   match verdict:
@@ -86,23 +90,32 @@ def request_json_value(raw: CoreCodec.RawValue, converted: CoreCodec.JsonConv) -
 def request_json(+raw: CoreCodec.RawValue) -> RequestDecode:
   request_json_schema(raw, Schema.schema_admit_value(Schema.DefsNil{}, Schema.SfJson{}, raw))
 
-def request_rows(+rows: String) -> RequestDecode:
-  match raw_rows(rows):
+def request_rows_decoded(raw: RawDecode) -> RequestDecode:
+  match raw:
     case RawDecodeRefused{condition}: RequestDecodeRefused{condition}
     case RawDecoded{+value}: request_json(value)
 
-def raw_rows(+rows: String) -> RawDecode:
-  match CoreCodec.frame_read(Req.parse_rows(rows)):
+def request_rows(+rows: String) -> RequestDecode:
+  request_rows_decoded(raw_rows(rows))
+
+def raw_frame(frame: CoreCodec.FrameRead) -> RawDecode:
+  match frame:
     case CoreCodec.FrRefused{condition}: RawDecodeRefused{condition}
     case CoreCodec.FrValue{+value}: RawDecoded{value}
 
-def report_field(+name: String, +raw: CoreCodec.RawValue) -> String:
-  match CoreCodec.raw_field(raw, name):
+def raw_rows(+rows: String) -> RawDecode:
+  raw_frame(CoreCodec.frame_read(Req.parse_rows(rows)))
+
+def report_field_result(found: Maybe<&2, CoreCodec.RawValue>) -> String:
+  match found:
     case None{}: SNil{}
     case Some{+value}:
       match value:
         case CoreCodec.Rnum{token}: token
         case other: SNil{}
+
+def report_field(+name: String, +raw: CoreCodec.RawValue) -> String:
+  report_field_result(CoreCodec.raw_field(raw, name))
 
 def validation_report_condition(+raw: CoreCodec.RawValue) -> String:
   Bool.pick(String, String.eq(report_field("valid", raw), "1"),
@@ -116,35 +129,44 @@ def report_decided(+db: String, +binding: String, +text: String, +condition: Str
     case "": request_rows_after_validation(db, binding, text)
     case other: IO.pure(RequestDecode, RequestDecodeRefused{condition})
 
+def validation_report_decoded(+db: String, +binding: String, +text: String,
+                              raw: RawDecode) -> IO(RequestDecode):
+  match raw:
+    case RawDecodeRefused{condition}:
+      IO.pure(RequestDecode, RequestDecodeRefused{"malformedValidationReport"})
+    case RawDecoded{+value}:
+      report_decided(db, binding, text, validation_report_condition(value))
+
+def validation_report_row(+db: String, +binding: String, +text: String,
+                          +row: String) -> IO(RequestDecode):
+  match row:
+    case "1":
+      do IO<RequestDecode>:
+        report : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, Req.validate_json_text_sql(text))
+        match report:
+          case Fail{error}:
+            match error:
+              case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"requestValidationRead"})
+          case Done{+reportRows}:
+            do IO<RequestDecode>:
+              reportTree : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+                Req.json_tree_sql(Tx.trim_nl(reportRows)))
+              match reportTree:
+                case Fail{error}:
+                  match error:
+                    case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"validationReportRead"})
+                case Done{+rows}:
+                  validation_report_decoded(db, binding, text, raw_rows(rows))
+    case "0": IO.pure(RequestDecode, RequestDecodeRefused{"invalidJson"})
+    case other: IO.pure(RequestDecode, RequestDecodeRefused{"malformedValidationObservation"})
+
 def report_after_validation(+db: String, +binding: String, +text: String,
                             validity: Result<&1,&1,U32 & String,String>) -> IO(RequestDecode):
   match validity:
     case Fail{error}:
       match error:
         case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"requestValidationRead"})
-    case Done{+row}:
-      match Tx.trim_nl(row):
-        case "1":
-          do IO<RequestDecode>:
-            report : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, Req.validate_json_text_sql(text))
-            match report:
-              case Fail{error}:
-                match error:
-                  case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"requestValidationRead"})
-              case Done{+reportRows}:
-                do IO<RequestDecode>:
-                  reportTree : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
-                    Req.json_tree_sql(Tx.trim_nl(reportRows)))
-                  match reportTree:
-                    case Fail{error}:
-                      match error:
-                        case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"validationReportRead"})
-                    case Done{+rows}:
-                      match raw_rows(rows):
-                        case RawDecodeRefused{condition}: IO.pure(RequestDecode, RequestDecodeRefused{"malformedValidationReport"})
-                        case RawDecoded{+value}: report_decided(db, binding, text, validation_report_condition(value))
-        case "0": IO.pure(RequestDecode, RequestDecodeRefused{"invalidJson"})
-        case other: IO.pure(RequestDecode, RequestDecodeRefused{"malformedValidationObservation"})
+    case Done{+row}: validation_report_row(db, binding, text, Tx.trim_nl(row))
 
 def request_rows_after_validation(+db: String, +binding: String, +text: String) -> IO(RequestDecode):
   do IO<RequestDecode>:
