@@ -39,7 +39,7 @@ def integration_value() -> Codec.RawValue:
         Codec.Robj{Codec.Rpair{"context",
           Codec.Rarr{Codec.Robj{Codec.Rpair{"enabled", Codec.Rtrue{}, Codec.Rnil{}}}, Codec.Rnil{}},
           Codec.Rnil{}}},
-        Codec.Rnil{}}}}
+        Codec.Rnil{}}}}}
 
 def integration_value_with_bad_second_entry() -> Codec.RawValue:
   Codec.Robj{Codec.Rpair{"name", Codec.Rstr{"sample"},
@@ -52,7 +52,7 @@ def integration_value_with_bad_second_entry() -> Codec.RawValue:
         Codec.Robj{Codec.Rpair{"context",
           Codec.Rarr{Codec.Robj{Codec.Rpair{"enabled", Codec.Rtrue{}, Codec.Rnil{}}}, Codec.Rnil{}},
           Codec.Rnil{}}},
-        Codec.Rnil{}}}}
+        Codec.Rnil{}}}}}
 
 law codec_schema_integration_reordered_nested_value_admits:
   {Schema.schema_admit_value(Schema.DefsNil{}, integration_profile(), integration_value()) == Schema.SvOk{} : Schema.SchemaVerdict}
