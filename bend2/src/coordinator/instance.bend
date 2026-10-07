@@ -267,7 +267,7 @@ def refuse_emit(held: Maybe<U32>, +session: String, +harness: String, tail: List
       logged : Unit <- IO.write(refusal_text(session, harness))
       IO.pure(List<String>, tail)
 
-def refuse_loop(canonical: String, pairs: List<(String & String)>, refused: List<String>) -> IO(List<String>):
+def refuse_loop(+canonical: String, pairs: List<(String & String)>, refused: List<String>) -> IO(List<String>):
   match pairs:
     case Nil{}: IO.pure(List<String>, refused)
     case (+session, +harness) <> rest: do IO<List<String>>:
