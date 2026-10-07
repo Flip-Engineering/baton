@@ -74,8 +74,10 @@ class NativeObservation(RECEIVE.Receive):
 
     def test_muse_uses_admitted_turn_terminal_and_keeps_later_lifecycle_separate(self):
         self.player(harness='muse')
-        self.coord('message', 'muse-task', 'root', 'parent', 'task', 'Review this report.')
         fake = self.directory / 'muse native fixture'
+        task = self.directory / 'muse task.txt'
+        task.write_text('Review this report.')
+        log = self.directory / 'muse direct turn.jsonl'
         frames = [
             {'id': 'input-frame', 'payload_type': 'turn.input.user',
              'payload': {'kind': 'turn_input_user', 'command_id': 'primary-run'}},
@@ -100,8 +102,8 @@ class NativeObservation(RECEIVE.Receive):
         fake.write_text('#!' + sys.executable + '\nimport json\nframes=' + repr(frames) +
                         '\nfor frame in frames: print(json.dumps(frame), flush=True)\n')
         fake.chmod(0o755)
-        observer = self.spawn(*self.receive_args('parent', fake))
-        self.finish(observer)
+        self.coord('turn', 'parent', 'muse-observation-turn', str(fake), 'parent', 'low',
+                   str(self.checkouts / 'parent'), str(task), str(log), '')
 
         turns = self.coord('turns', 'parent')
         self.assertEqual([row['reportBody'] for row in turns], ['Primary completion.'])
@@ -112,7 +114,8 @@ class NativeObservation(RECEIVE.Receive):
                             'original report is preserved' in row['body'] for row in reports))
         self.assertFalse(any('Nested task completion' in row['body'] for row in reports))
         self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
-        self.eventually(lambda: not self.owned_processes(), 'Muse observer processes did not exit')
+        self.assertIn('primary-frame', log.read_text())
+        self.assertIn('nested-frame', log.read_text())
 
 
 if __name__ == '__main__':
