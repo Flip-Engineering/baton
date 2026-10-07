@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <limits.h>
 #include <fcntl.h>
 #include <spawn.h>
 #include <sys/wait.h>
@@ -2565,7 +2566,7 @@ static int br_admission_verify(const char *directory,const char *database,int gu
 #define BR_LIFECYCLE_MAGIC "BATONLC1"
 typedef struct {
   char magic[8];
-  uint32_t schema,reserved;
+  uint32_t schema,expected_set;
   uint32_t latched,cancelled,observer_ready,reserved3;
   unsigned char expected[32],grant[32],rejection[32];
   uint64_t check;
@@ -3648,6 +3649,7 @@ static void baton_process_call(IoWork *w) {
   if(call->kind==BP_INSTANCE_STATE) { br_instance_state_call(call);return; }
   if(call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED || call->kind==BP_RECOVERY || call->kind==BP_KEEPER || call->kind==BP_CONTROL_WRITE || call->kind==BP_CONTROL_SIGNAL ||
      call->kind==BP_INSTANCE_OWNER || call->kind==BP_INSTANCE_ADMIT || call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED ||
+     call->kind==BP_INSTANCE_PREPARE || call->kind==BP_INSTANCE_PREPARE_WITH_FILE ||
      call->kind==BP_INSTANCE_SHUTDOWN || call->kind==BP_INSTANCE_RETIRE ||
      call->kind==BP_RETAIN_WITH_FILE || call->kind==BP_INSTANCE_ADMIT_WITH_FILE) {
     baton_retained_begin_call(call);return;

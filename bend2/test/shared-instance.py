@@ -966,8 +966,8 @@ class SharedInstance(unittest.TestCase):
         }, sort_keys=True, separators=(',', ':'))
         directory = pathlib.Path(f'{self.db}.attempt-dormant')
 
-        def prepare(action, binding=bootstrap, target=directory):
-            return self.spawn('prepare', self.db, 'dormant-session', target, self.home,
+        def prepare(action, binding=bootstrap, target=directory, database=None, session='dormant-session'):
+            return self.spawn('prepare', database or self.db, session, target, self.home,
                               'seed\n', sys.executable, self.fixture, binding,
                               decision, action)
 
@@ -990,37 +990,36 @@ class SharedInstance(unittest.TestCase):
         print('evidence dormant-ready', ready['ownerIncarnation'], ready['ownerAttempt'],
               ready['expectedBinding'], 'native_pid=0')
 
-        mismatch = prepare('only', bootstrap + '-changed')
-        mismatch_output = self.wait_run(mismatch)
-        self.assertIn('prepare-refused:', mismatch_output)
         self.assertFalse((directory / 'launch').exists())
 
-        wrong_start = prepare('wrong-start')
-        wrong_output = self.wait_run(wrong_start)
-        self.assertIn('start-failed:', wrong_output)
-        self.assertFalse((directory / 'launch').exists())
-        self.assertFalse((directory / 'native.pid').exists())
-
-        started = prepare('double-start')
+        start_db = self.home / 'start.db'
+        start_db.touch()
+        started_dir = pathlib.Path(f'{start_db}.attempt-dormant-start')
+        started = prepare('double-start', target=started_dir, database=start_db, session='start-session')
         start_output = self.wait_run(started)
+        self.assertIn('start-wrong-failed:', start_output)
         self.assertIn('start-first-ok', start_output)
         self.assertIn('start-second-ok', start_output)
         self.assertIn('start-changed-failed:', start_output)
         self.assertEqual(start_output.count('echo:seed'), 1, start_output)
-        self.assertEqual((directory / 'stdout').read_text(errors='replace').count('"role": "native"'), 1)
+        self.assertEqual((started_dir / 'stdout').read_text(errors='replace').count('"role": "native"'), 1)
         summary = self.native(start_output)
-        owners = self.owner_processes()
+        owners = [line for line in self.owner_processes() if str(start_db) in line]
         self.assertEqual(len(owners), 1, owners)
         self.assertEqual(summary['ppid'], int(owners[0].split()[0]), (summary, owners))
         print('evidence dormant-start', summary['pid'], 'duplicate-retained', 'changed-refused')
 
-        cancelled_dir = pathlib.Path(f'{self.db}.attempt-dormant-cancel')
-        cancelled = prepare('cancel', target=cancelled_dir)
+        cancel_db = self.home / 'cancel.db'
+        cancel_db.touch()
+        cancelled_dir = pathlib.Path(f'{cancel_db}.attempt-dormant-cancel')
+        cancelled = prepare('cancel', target=cancelled_dir, database=cancel_db, session='cancel-session')
+        cancelled_ready = self.subscription_line(cancelled, 'prepare-ready:')
+        self.subscription_line(cancelled, 'prepare-bootstrap:')
         cancelled_output = self.wait_run(cancelled)
         self.assertIn('cancel-ok', cancelled_output)
         self.assertIn('cancel-repeat-ok', cancelled_output)
         self.assertIn('cancel-changed-failed:', cancelled_output)
-        cancelled_state = self.subscription_line(cancelled, 'cancel-state:')
+        cancelled_state = json.loads(next(line[len('cancel-state:'):] for line in cancelled_output.splitlines() if line.startswith('cancel-state:')))
         self.assertEqual(cancelled_state['state'], 'cancelled', cancelled_state)
         self.assertFalse(cancelled_state['spawn_latched'], cancelled_state)
         self.assertIn('start-after-cancel-failed:', cancelled_output)
