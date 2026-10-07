@@ -727,6 +727,9 @@ class SharedInstance(unittest.TestCase):
         detail = (result.stdout + result.stderr).strip().replace('\n', '|')
         self.assertNotIn('attached', detail, detail)
         self.assertNotIn('busy', detail.lower(), detail)
+        refusal = directory / 'admission-error'
+        if refusal.exists():
+            detail += ' reason=' + refusal.read_text(errors='replace').strip()
         return detail
 
     def attach_owned_adopt(self, directory, child):
