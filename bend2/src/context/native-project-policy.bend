@@ -59,6 +59,7 @@ def required_member(value: J.Json, +key: String) -> Bool:
 
 def text_array_tail(+items: J.Json) -> List<String>:
   match items:
+    case J.Jarr{J.Jnil{}, J.Jnil{}}: Nil{}
     case J.Jarr{+head, +tail}: Req.text_of(head) <> text_array_tail(tail)
     case other: Nil{}
 
