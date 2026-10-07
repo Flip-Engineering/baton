@@ -49,6 +49,11 @@ callback. The Node server continues to read change rows itself under the startup
 scope. EventSource requests supply only a cursor and generation. Owner frames are cursor-only
 hints, and the adapter passes no row data across the owner channel.
 
+When the browser has no generation yet, the adapter supplies decimal `0`. The owner returns a
+generation gap with the current generation. The server sends its hello and gap frames, then
+the browser snapshots and reconnects with that generation and its durable cursor. Later
+reconnects use the saved generation directly.
+
 Root-owned CLI composition adds `C.UiSubscribe{after,generation}`, dispatches that case to
 `UISubscription.run(db,after,generation)`, and exposes `ui-subscribe AFTER GENERATION` in usage.
 The UI view command passes its resolved Baton2 executable path to the Node server. The server
