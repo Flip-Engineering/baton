@@ -28,6 +28,10 @@ function parseCursor(value) {
   return Number.isSafeInteger(cursor) ? cursor : null;
 }
 
+function addressHost(address) {
+  return address.family === 'IPv6' ? `[${address.address}]` : address.address;
+}
+
 function rows(db, sql, ...args) {
   return db.prepare(sql).all(...args);
 }
@@ -428,7 +432,7 @@ export function createOrchestraServer({ databasePath, reader, subject = reader,
     if (url.pathname.startsWith('/orchestra/')) return json(response, 404, { error: 'not-found' });
     if (url.pathname === '/' && !url.searchParams.has('api') && !url.searchParams.has('fixture')) {
       const address = server.address();
-      const apiBase = `http://127.0.0.1:${address.port}`;
+      const apiBase = `http://${addressHost(address)}:${address.port}`;
       response.writeHead(302, { location: `/?api=${encodeURIComponent(apiBase)}&subject=${encodeURIComponent(subject)}`, 'cache-control': 'no-store' });
       response.end();
       return;
@@ -460,9 +464,8 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.
     const server = createOrchestraServer(cli(process.argv.slice(2)));
     server.on('listening', () => {
       const address = server.address();
-      const host = address.family === 'IPv6' ? `[${address.address}]` : address.address;
       process.stdout.write(JSON.stringify({ host: address.address, port: address.port, readOnly: true }) + '\n');
-      process.stdout.write(`http://${host}:${address.port}/\n`);
+      process.stdout.write(`http://${addressHost(address)}:${address.port}/\n`);
     });
     let closing = false;
     const close = () => {
