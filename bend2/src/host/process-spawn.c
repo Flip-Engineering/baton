@@ -1028,6 +1028,7 @@ static int br_native_exited(BrKeeper *keeper) {
     struct stat info;int error=source<0?(full?errno:ENOMEM):0;
     uint64_t observed=0,retained=0;
     if(!error && fstat(source,&info))error=errno;
+    if(!error && fsync(source))error=errno;
     if(!error && (!S_ISREG(info.st_mode) || info.st_size<0))error=EINVAL;
     if(!error) {
       observed=(uint64_t)info.st_size;
