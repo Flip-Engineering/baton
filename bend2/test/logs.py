@@ -98,10 +98,12 @@ sys.exit(%d)
         for name, body in (('manifest', b'retained manifest'), ('status', b'0\n'),
                            ('released', b'released\n'), ('acknowledged', b'acknowledged\n')):
             (attempt_dir / name).write_bytes(body)
-        (attempt_dir / 'stderr.full').write_bytes(b'complete native diagnostics\n')
+        stderr_full = b'complete native diagnostics\n'
+        (attempt_dir / 'stderr.full').write_bytes(stderr_full)
         (attempt_dir / 'stderr.meta').write_text(json.dumps({
-            'schema': 'baton2-stderr-v1', 'status': 'complete', 'truncated': True,
-            'observedBytes': 81, 'retainedBytes': 24, 'limitBytes': 24, 'spool': 'stderr.full'}))
+            'schema': 'baton2-stderr-v1', 'status': 'complete', 'truncated': False,
+            'observedBytes': len(stderr_full), 'retainedBytes': len(stderr_full),
+            'limitBytes': len(stderr_full), 'spool': 'stderr.full'}))
         return attempt, attempt_dir
 
     def lines(self, path=None):
@@ -420,8 +422,10 @@ sys.exit(%d)
         self.assertEqual(row['stderrSpoolBytes'], len(b'complete native diagnostics\n'))
         self.assertGreater(row['stderrMetadataBytes'], 0)
         self.assertEqual(row['stderrRetention'], {
-            'schema': 'baton2-stderr-v1', 'status': 'complete', 'truncated': True,
-            'observedBytes': 81, 'retainedBytes': 24, 'limitBytes': 24, 'spool': 'stderr.full'})
+            'schema': 'baton2-stderr-v1', 'status': 'complete', 'truncated': False,
+            'observedBytes': len(b'complete native diagnostics\n'),
+            'retainedBytes': len(b'complete native diagnostics\n'),
+            'limitBytes': len(b'complete native diagnostics\n'), 'spool': 'stderr.full'})
         self.assertGreaterEqual(row['bytes'], row['stderrSpoolBytes'] + row['stderrMetadataBytes'])
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
         self.assertEqual({item['file'] for item in answer['attemptFiles'] if item['removed']},
@@ -519,6 +523,19 @@ sys.exit(%d)
         self.assertFalse(row['cleanupEligible'])
         self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['attemptFiles'], [])
         self.assertTrue((attempt_dir / 'stderr.full').is_file())
+
+    def test_malformed_stderr_metadata_with_spool_is_retained(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        (attempt_dir / 'stderr.meta').write_text('{')
+        row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
+                   if item['attempt'] == attempt)
+        self.assertEqual(row['stderrHealth'], 'metadata-invalid')
+        self.assertFalse(row['cleanupEligible'])
+        self.assertEqual(row['cleanupReason'], 'metadata-invalid')
+        self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['attemptFiles'], [])
+        self.assertTrue((attempt_dir / 'stderr.full').is_file())
+        self.assertEqual((attempt_dir / 'stderr.meta').read_text(), '{')
 
 
     def test_attempt_cleanup_rejects_symlink_diagnostic_file(self):
@@ -853,11 +870,16 @@ assert sys.stdin.read()==''
                 'SELECT stderr FROM log_stderr_runs WHERE session=? AND attempt=? ORDER BY run DESC LIMIT 1',
                 ('omp-worker', attempt)).fetchone()
         stderr = pathlib.Path(stderr_name)
-        stderr.write_text('bounded native diagnostics\n')
-        pathlib.Path(str(stderr) + '.full').write_bytes(b'complete native diagnostics\n')
+        stderr_full = b'complete native diagnostics\n'
+        stderr_limit = 24
+        stderr_retained = stderr_full[:stderr_limit]
+        stderr.write_bytes(stderr_retained)
+        pathlib.Path(str(stderr) + '.full').write_bytes(stderr_full)
         pathlib.Path(str(stderr) + '.meta').write_text(json.dumps({
-            'schema': 'baton2-stderr-v1', 'status': 'complete', 'truncated': True,
-            'observedBytes': 81, 'retainedBytes': 24, 'limitBytes': 24,
+            'schema': 'baton2-stderr-v1', 'status': 'complete',
+            'truncated': len(stderr_full) > stderr_limit,
+            'observedBytes': len(stderr_full), 'retainedBytes': len(stderr_retained),
+            'limitBytes': stderr_limit,
             'spool': str(stderr) + '.full'}))
         for name in ('stdout', 'native.stderr', 'observer.log', 'keeper.log'):
             (attempt_dir / name).write_text('diagnostic data for ' + name)
