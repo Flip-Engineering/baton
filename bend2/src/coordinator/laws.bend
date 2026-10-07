@@ -107,6 +107,7 @@ import ../harness/muse-player.bend as Muse
 import ../host/laws.bend as HostLaws
 import ../json/laws.bend as JsonLaws
 import ../json/canonical.bend as J
+import ../context/codec-schema-integration-laws.bend as CodecSchemaLaws
 import ../git/laws.bend as GitLaws
 import ../git/types.bend as T
 import ../git/text.bend as Tx
