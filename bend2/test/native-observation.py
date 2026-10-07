@@ -278,14 +278,14 @@ class NativeObservation(RECEIVE.Receive):
                                           'is_error': False, 'messages': []})
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
         self.action(stream, exit_fixture=True)
-        self.finish(observer)
+        _, stderr = self.finish(observer, ok=False)
 
         reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
-        failures = [row for row in reports if 'Native output observation failed' in row['body']]
-        self.assertEqual(len(failures), 1)
-        self.assertNotIn('checkpoint', failures[0]['id'])
+        self.assertIn('Not a directory', stderr)
+        self.assertEqual(self.coord('turns', 'parent'), [])
         self.assertFalse(any(row['id'] == turn_id + ':checkpoint' for row in reports))
         self.assertFalse(pathlib.Path(args[-2]).exists())
+        self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
 
 if __name__ == '__main__':
     unittest.main(defaultTest=[
