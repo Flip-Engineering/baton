@@ -14,13 +14,20 @@ import ../git/text.bend as Tx
 # notice while it is idle. The owner publishes the high-water; this loop only
 # reads rows and never publishes.
 
-# Sessions holding actionable pending input: unacknowledged messages that are
-# not execution input to a terminally stopped session, on live Codex or OMP
-# sessions. The pending predicate matches the players/status projection; the
-# harness filter keeps the serve on sessions Receive admits. The full pending
-# set is read every pass, so older actionable IDs replay after any restart.
+# Sessions holding actionable pending input: unacknowledged messages on live
+# Codex or OMP sessions with a registered receiver endpoint, excluding
+# terminally stopped sessions like the wake path. The full pending set is
+# read every pass, so older actionable IDs replay after any restart.
+def endpoint_field_sql(+session: String, index: String) -> String:
+  "SELECT COALESCE(CASE WHEN json_valid(endpoint) THEN json_extract(endpoint,'$[" ++ index ++ "]') ELSE '' END,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+
+def recorded_endpoint(+db: String, +session: String, index: String) -> IO(String):
+  do IO<String>:
+    saved : String <- IO.try(String, DB.Sql.query(db, endpoint_field_sql(session, index)))
+    IO.pure(String, Tx.trim_nl(saved))
+
 def dirty_session_sql() -> String:
-  "SELECT DISTINCT m.recipient FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT (" ++ C.stopped_session_sql("m.recipient") ++ " AND " ++ C.execution_input_sql("m.kind") ++ ") AND s.harness IN ('codex','omp') ORDER BY m.recipient;"
+  "SELECT DISTINCT m.recipient FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " AND s.harness IN ('codex','omp') AND s.endpoint <> '' ORDER BY m.recipient;"
 
 def dirty_sessions(saved: String) -> List<String>:
   Tx.split_lines(saved)
@@ -30,14 +37,18 @@ def snapshot(+db: String) -> IO(List<String>):
     saved : String <- IO.try(String, DB.Sql.query(db, dirty_session_sql()))
     IO.pure(List<String>, dirty_sessions(saved))
 
-# One session task runs the recorded receive entry with empty overrides, which
-# selects the recorded harness, route and inbox. The session lock inside
-# Receive refuses a second task for the same session with queued, so a fresh
-# snapshot can fork without tracking live tasks. Stop admission, native
-# conversation identity, pending-input recovery and parent notification run in
-# that path unchanged.
+# One session task runs the recorded receive entry with the recorded harness
+# executable and log resolved from the receiver endpoint array. Model, effort
+# and workspace stay empty so the entry selects the recorded route. The
+# session lock inside Receive refuses a second task for the same session with
+# queued, so a fresh snapshot can fork without tracking live tasks. Stop
+# admission, native conversation identity, pending-input recovery and parent
+# notification run in that path unchanged.
 def serve_task(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  Receive.run(db, session, "", "", "", "", "", "")
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    cmd : String <- recorded_endpoint(db, session, "4")
+    log : String <- recorded_endpoint(db, session, "8")
+    Receive.run(db, session, cmd, "", "", "", log, "")
 
 @unsafe
 def fork_tasks(+db: String, sessions: List<String>) -> IO(List<Chan(Result<&1,&1,U32 & String,Unit>)>):

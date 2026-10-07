@@ -420,7 +420,7 @@ class FixedCoordinator(unittest.TestCase):
                  (json.loads(line) for line in replies.stdout.splitlines())}
         names = [tool['name'] for tool in by_id[2]['result']['tools']]
         self.assertIn('baton2_owner', names)
-        owner_json = json.loads(by_id[3]['result'][0]['text'])
+        owner_json = json.loads(by_id[3]['result']['content'][0]['text'])
         self.assertEqual(owner_json['generation'], status['generation'])
         self.assertEqual(owner_json['cursor'], status['cursor'])
         self.shutdown()
