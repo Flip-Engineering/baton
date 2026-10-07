@@ -373,7 +373,7 @@ type HolderRequest is Data:
 # The accumulator keeps the block being read and the selected match separately, so a
 # later worktree cannot replace the target path that was already matched.
 type HolderScan is Data:
-  ScanState{block: HolderBlock, match: Maybe<String>, seen: U32, bad: U32, blocks: U32}
+  ScanState{block: HolderBlock, matched: Maybe<String>, seen: U32, bad: U32, blocks: U32}
 
 type HolderDiscovery is Data:
   DiscoverRead{request: HolderRequest, code: U32, out: String}
@@ -432,47 +432,47 @@ def holder_valid_branch(+line: String) -> Bool:
   holder_branch_value(prefix_drop(line, "branch refs/heads/"))
 def holder_close(acc: HolderScan, +request: String) -> HolderScan:
   match acc:
-    case ScanState{block, match, seen, bad, blocks}:
+    case ScanState{block, matched, seen, bad, blocks}:
       match block:
         case InBlock{path, has_state, branches}:
           Bool.pick(HolderScan, has_state,
-            ScanState{NoBlock{}, match, seen, bad, U32.add(blocks, 1)},
-            ScanState{NoBlock{}, match, seen, U32.add(bad, 1), blocks})
-        case NoBlock{}: ScanState{NoBlock{}, match, seen, bad, blocks}
+            ScanState{NoBlock{}, matched, seen, bad, U32.add(blocks, 1)},
+            ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks})
+        case NoBlock{}: ScanState{NoBlock{}, matched, seen, bad, blocks}
 
 def holder_open_fresh(+path: Maybe<String>, +acc: HolderScan, +request: String) -> HolderScan:
   match acc:
-    case ScanState{block, match, seen, bad, blocks}:
+    case ScanState{block, matched, seen, bad, blocks}:
       match path:
         case Some{value}:
           Bool.pick(HolderScan, holder_path_ok(value),
-            ScanState{InBlock{value, False{}, 0}, match, seen, bad, blocks},
-            ScanState{NoBlock{}, match, seen, U32.add(bad, 1), blocks})
-        case None{}: ScanState{NoBlock{}, match, seen, U32.add(bad, 1), blocks}
+            ScanState{InBlock{value, False{}, 0}, matched, seen, bad, blocks},
+            ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks})
+        case None{}: ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks}
 
 def holder_open(+path: Maybe<String>, +acc: HolderScan, +request: String) -> HolderScan:
   match acc:
-    case ScanState{block, match, seen, bad, blocks}:
+    case ScanState{block, matched, seen, bad, blocks}:
       match block:
         case InBlock{openpath, has_state, branches}:
-          ScanState{block, match, seen, U32.add(bad, 1), blocks}
+          ScanState{block, matched, seen, U32.add(bad, 1), blocks}
         case NoBlock{}: holder_open_fresh(path, acc, request)
 
 def holder_in_block(+acc: HolderScan, +request: String) -> Bool:
   match acc:
-    case ScanState{block, match, seen, bad, blocks}:
+    case ScanState{block, matched, seen, bad, blocks}:
       match block:
         case InBlock{path, has_state, branches}: True{}
         case NoBlock{}: False{}
 
 def holder_state_seen(+acc: HolderScan, +request: String) -> HolderScan:
   match acc:
-    case ScanState{block, match, seen, bad, blocks}:
+    case ScanState{block, matched, seen, bad, blocks}:
       match block:
-        case InBlock{path, has_state, branches}: ScanState{InBlock{path, True{}, branches}, match, seen, bad, blocks}
-        case NoBlock{}: ScanState{NoBlock{}, match, seen, U32.add(bad, 1), blocks}
+        case InBlock{path, has_state, branches}: ScanState{InBlock{path, True{}, branches}, matched, seen, bad, blocks}
+        case NoBlock{}: ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks}
 
-def holder_match_first(+path: String, has_state: Bool, branches: U32, +acc: HolderScan, match: Maybe<String>) -> HolderScan:
+def holder_match_first(+path: String, has_state: Bool, branches: U32, +acc: HolderScan, matched: Maybe<String>) -> HolderScan:
   match acc:
     case ScanState{block, prior, seen, bad, blocks}:
       match prior:
@@ -481,40 +481,40 @@ def holder_match_first(+path: String, has_state: Bool, branches: U32, +acc: Hold
 
 def holder_match_seen(+line: String, +target: String, +acc: HolderScan, +request: String) -> HolderScan:
   match acc:
-    case ScanState{block, match, seen, bad, blocks}:
+    case ScanState{block, matched, seen, bad, blocks}:
       match block:
         case InBlock{path, has_state, branches}:
           Bool.pick(HolderScan, U32.is_lt(0, branches),
-            ScanState{InBlock{path, has_state, branches}, match, seen, U32.add(bad, 1), blocks},
-            holder_match_first(path, has_state, branches, acc, match))
-        case NoBlock{}: ScanState{NoBlock{}, match, U32.add(seen, 1), U32.add(bad, 1), blocks}
+            ScanState{InBlock{path, has_state, branches}, matched, seen, U32.add(bad, 1), blocks},
+            holder_match_first(path, has_state, branches, acc, matched))
+        case NoBlock{}: ScanState{NoBlock{}, matched, U32.add(seen, 1), U32.add(bad, 1), blocks}
 
 def holder_branch_ok(+acc: HolderScan, +request: String) -> HolderScan:
   match acc:
-    case ScanState{block, match, seen, bad, blocks}:
+    case ScanState{block, matched, seen, bad, blocks}:
       match block:
         case InBlock{path, has_state, branches}:
           Bool.pick(HolderScan, U32.is_lt(0, branches),
-            ScanState{InBlock{path, has_state, branches}, match, seen, U32.add(bad, 1), blocks},
-            ScanState{InBlock{path, has_state, U32.add(branches, 1)}, match, seen, bad, blocks})
-        case NoBlock{}: ScanState{NoBlock{}, match, seen, U32.add(bad, 1), blocks}
+            ScanState{InBlock{path, has_state, branches}, matched, seen, U32.add(bad, 1), blocks},
+            ScanState{InBlock{path, has_state, U32.add(branches, 1)}, matched, seen, bad, blocks})
+        case NoBlock{}: ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks}
 
-def holder_verdict_of(match: Maybe<String>, seen: U32, +request: HolderRequest) -> HolderVerdict:
-  match match:
+def holder_verdict_of(matched: Maybe<String>, seen: U32, +request: HolderRequest) -> HolderVerdict:
+  match matched:
     case Some{value}: VerdictFound{request, value}
     case None{}: Bool.pick(HolderVerdict, U32.is_eq(seen, 0), VerdictNone{request}, VerdictAmbiguous{request, "the target branch has no valid block"})
 
 def holder_verdict(+acc: HolderScan, +request: HolderRequest) -> HolderVerdict:
   match acc:
-    case ScanState{block, match, seen, bad, blocks}:
+    case ScanState{block, matched, seen, bad, blocks}:
       Bool.pick(HolderVerdict, U32.is_lt(0, bad), VerdictAmbiguous{request, "the worktree listing is unsupported, incomplete or malformed"},
         Bool.pick(HolderVerdict, U32.is_lt(1, seen), VerdictAmbiguous{request, "the target branch is named more than once"},
           Bool.pick(HolderVerdict, U32.is_eq(blocks, 0), VerdictAmbiguous{request, "the worktree listing carries no complete block"},
-            holder_verdict_of(match, seen, request))))
+            holder_verdict_of(matched, seen, request))))
 
 def holder_bad(+acc: HolderScan, +request: String) -> HolderScan:
   match acc:
-    case ScanState{block, match, seen, bad, blocks}: ScanState{block, match, seen, U32.add(bad, 1), blocks}
+    case ScanState{block, matched, seen, bad, blocks}: ScanState{block, matched, seen, U32.add(bad, 1), blocks}
 
 def holder_ok_state(+acc: HolderScan, +request: String) -> HolderScan:
   Bool.pick(HolderScan, holder_in_block(acc, request), holder_state_seen(acc, request), holder_bad(acc, request))
@@ -2148,15 +2148,15 @@ def tip_ref(branch: String) -> String:
 def ls_remote_argv(branch: String, remote: String) -> List<String>:
   Con{"ls-remote", Con{"--", Con{remote, Con{tip_ref(branch), Nil{}}}}}
 
-def tip_match(named: Bool, +object: String) -> String:
+def tip_match(named: Bool, +subject: String) -> String:
   match named:
-    case True{}: object
+    case True{}: subject
     case False{}: ""
 
-def tip_named(more: List<String>, object: String, ref: String) -> String:
+def tip_named(more: List<String>, subject: String, ref: String) -> String:
   match more:
     case Nil{}: ""
-    case name <> tail: tip_match(Tx.str_eq(name, ref), object)
+    case name <> tail: tip_match(Tx.str_eq(name, ref), subject)
 
 # The advertised object ID for the requested ref, or "" when the answer did not
 # advertise it. Git writes one "<object>\t<ref>" line per advertised ref, and

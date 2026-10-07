@@ -140,8 +140,8 @@ def input(+handle: U32, +prompt: String, +harness: String) -> IO(Result<&1,&1,U3
     Codex.input(handle,prompt),
     Claude.input(handle,prompt))))
 
-def close_input(handle: U32, open: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match open:
+def close_input(handle: U32, is_open: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match is_open:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case False{}: P.ProcessChild.close_stdin(handle)
 

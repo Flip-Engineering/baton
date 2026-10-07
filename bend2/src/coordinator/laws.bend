@@ -815,7 +815,7 @@ law m18_the_advertised_remote_tip_names_its_object:
   for +remote: String
   {Land.tip_present(True{}, object, repo, branch, remote) == Land.tip_json("advertised", Land.tip_object_tail(object), repo, branch, remote) : IO(Unit)}
 
-def m18_the_advertised_remote_tip_names_its_object(object, repo, branch, remote):
+def m18_the_advertised_remote_tip_names_its_object(subject, repo, branch, remote):
   {==}
 
 # M-18: an absent branch is answered absent, with no object.
@@ -826,7 +826,7 @@ law m18_an_absent_remote_branch_is_answered_absent:
   for +remote: String
   {Land.tip_present(False{}, object, repo, branch, remote) == Land.tip_json("absent", "}", repo, branch, remote) : IO(Unit)}
 
-def m18_an_absent_remote_branch_is_answered_absent(object, repo, branch, remote):
+def m18_an_absent_remote_branch_is_answered_absent(subject, repo, branch, remote):
   {==}
 
 # M-2: a zero exit answers the advertisement the read returned.
@@ -838,7 +838,7 @@ law m2_a_zero_exit_remote_read_answers_its_advertisement:
   for +remote: String
   {Land.tip_zero(True{}, code, object, repo, branch, remote) == Land.tip_present(Bool.not(String.is_empty(object)), object, repo, branch, remote) : IO(Unit)}
 
-def m2_a_zero_exit_remote_read_answers_its_advertisement(code, object, repo, branch, remote):
+def m2_a_zero_exit_remote_read_answers_its_advertisement(code, subject, repo, branch, remote):
   {==}
 
 # M-2: a failed read answers its own exit status instead of an advertisement.
@@ -850,7 +850,7 @@ law m2_a_failed_remote_read_answers_its_own_exit:
   for +remote: String
   {Land.tip_zero(False{}, code, object, repo, branch, remote) == Land.tip_json("failed", Land.tip_exit_tail(code, remote), repo, branch, remote) : IO(Unit)}
 
-def m2_a_failed_remote_read_answers_its_own_exit(code, object, repo, branch, remote):
+def m2_a_failed_remote_read_answers_its_own_exit(code, subject, repo, branch, remote):
   {==}
 
 # M-2: the failed-read tail carries the observed exit status and names the

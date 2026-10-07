@@ -97,26 +97,26 @@ def push_branch(+repo: String, +branch: String, +remote: String) -> IO(Unit):
 def tip_json(status: String, tail: String, repo: String, branch: String, remote: String) -> IO(Unit):
   IO.print("{\"status\":" ++ J.string_literal(status) ++ ",\"repo\":" ++ J.string_literal(repo) ++ ",\"branch\":" ++ J.string_literal(branch) ++ ",\"remote\":" ++ J.string_literal(remote) ++ tail)
 
-def tip_object_tail(object: String) -> String:
-  ",\"objectId\":" ++ J.string_literal(object) ++ "}"
+def tip_object_tail(subject: String) -> String:
+  ",\"objectId\":" ++ J.string_literal(subject) ++ "}"
 
 # A failed read names the command whose message is in the coordinator log and
 # the status git exited with. Nothing here reads a local ref.
 def tip_exit_tail(code: U32, remote: String) -> String:
   ",\"exit\":" ++ U32.show(code) ++ ",\"reason\":" ++ J.string_literal(Tx.cmd_failed(Tx.str_cat("git ls-remote ", remote))) ++ "}"
 
-def tip_present(present: Bool, object: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
+def tip_present(present: Bool, subject: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
   match present:
-    case True{}: tip_json("advertised", tip_object_tail(object), repo, branch, remote)
+    case True{}: tip_json("advertised", tip_object_tail(subject), repo, branch, remote)
     case False{}: tip_json("absent", "}", repo, branch, remote)
 
-def tip_zero(zero: Bool, code: U32, +object: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
+def tip_zero(zero: Bool, code: U32, +subject: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
   match zero:
-    case True{}: tip_present(Bool.not(String.is_empty(object)), object, repo, branch, remote)
+    case True{}: tip_present(Bool.not(String.is_empty(subject)), subject, repo, branch, remote)
     case False{}: tip_json("failed", tip_exit_tail(code, remote), repo, branch, remote)
 
-def tip_run(+code: U32, object: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
-  tip_zero(U32.is_eq(code, 0), code, object, repo, branch, remote)
+def tip_run(+code: U32, subject: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
+  tip_zero(U32.is_eq(code, 0), code, subject, repo, branch, remote)
 
 def tip_pick(r: G.GitOut, +repo: String, +branch: String, +remote: String) -> IO(Unit):
   match r:

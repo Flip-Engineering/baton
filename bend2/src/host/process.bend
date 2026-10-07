@@ -41,7 +41,7 @@ def ProcessChild.recovery_argv(directory: String) -> IO(Result<&1,&1,U32 & Strin
 
 # These commands address the retained attempt without replacing its observer.
 # A write succeeds after all bytes enter stdin; native acceptance is separate.
-def ProcessChild.control_write(directory: String, data: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def ProcessChild.control_write(directory: String, payload: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
 # Success records the signal syscall. Actual exit remains a separate observation.
@@ -58,7 +58,7 @@ def ProcessChild.acknowledge(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>)
 def ProcessChild.keeper(directory: String, lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
-def ProcessChild.write(handle: U32, data: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def ProcessChild.write(handle: U32, payload: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
 def ProcessChild.close_stdin(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
