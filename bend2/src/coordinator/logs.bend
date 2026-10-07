@@ -811,7 +811,7 @@ def attempt_cleanup_fields(db: String, fields: List<String>) -> IO(String):
 def attempt_cleanup_row(db: String, row: String) -> IO(String):
   attempt_cleanup_fields(db,Tx.split_tabs(row))
 
-def attempt_cleanup_rows(db: String, rows: List<String>, acc: String) -> IO(String):
+def attempt_cleanup_rows(+db: String, rows: List<String>, acc: String) -> IO(String):
   match rows:
     case Nil{}: IO.pure(String,acc)
     case head <> tail: do IO<String>:
