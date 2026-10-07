@@ -93,6 +93,11 @@ def intent_target(intent: I.IntentInput) -> String:
     case I.IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}:
       target
 
+def intent_name(intent: I.IntentInput) -> String:
+  match intent:
+    case I.IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}:
+      attempt
+
 def intent_common(intent: I.IntentInput) -> String:
   match intent:
     case I.IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}:
@@ -223,7 +228,7 @@ def Landing.publish_now(handle: U32, request: LandingRequest, candidate: String,
   +base = basis
   +intent = req.intent
   do IO<Landing>:
-    written : P.IntentPublish <- P.Intent.publish_intent(intent, req.attempt_directory, req.name, intent_content(cand, base, intent_target(intent)))
+    written : P.IntentPublish <- P.Intent.publish_intent(intent, attempt_directory_for(intent_common(intent), intent_name(intent)), req.name, intent_content(cand, base, intent_target(intent)))
     Landing.published(h, req, written)
 
 def Landing.decided(request: LandingRequest, claimed: Result<U32 & String, Maybe<U32>>) -> IO(Landing):

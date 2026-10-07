@@ -34,3 +34,10 @@ def Receipt.claim(common: String, target: String) -> IO(Result<&1, &1, U32 & Str
 
 def Receipt.release(handle: U32) -> IO(Result<&1, &1, U32 & String, Unit>):
   import "./receipt.c"
+
+# The canonical guard path for a common directory and target, built by the same code the
+# claim uses, so a caller can name the guard file the claim took without duplicating the
+# encoding. It reports naming data only: the live claim and the capture check establish
+# effect admission.
+def Receipt.guard_path(common: String, target: String) -> IO(Result<&1, &1, U32 & String, String>):
+  import "./receipt.c"
