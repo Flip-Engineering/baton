@@ -147,12 +147,12 @@ def Intent.recorded(request: IntentInput, raw: String) -> IO(IntentPrepared):
   +path = requested_path(req)
   Intent.decided(req, record, receipt_verdict(record, path))
 
-def Intent.record_observed(request: IntentInput, observed: Result<U32 & String, String>) -> IO(IntentPrepared):
+def Intent.record_observed(request: IntentInput, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPrepared):
   match observed:
     case Fail{error}: IO.pure(IntentPrepared, IntentHostFailed{"record", request, error})
     case Done{raw}: Intent.recorded(request, raw)
 
-def Intent.read_observed(request: IntentInput, observed: Result<U32 & String, String>) -> IO(IntentPrepared):
+def Intent.read_observed(request: IntentInput, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPrepared):
   +req = request
   match observed:
     case Fail{error}: IO.pure(IntentPrepared, IntentHostFailed{"qualify", req, error})
@@ -163,7 +163,7 @@ def Intent.prepare(request: IntentInput) -> IO(IntentPrepared):
   +path = requested_path(req)
   +again = req
   do IO<IntentPrepared>:
-    observed : Result<U32 & String, String> <- R.Receipt.qualify(path)
+    observed : Result<&1, &1, U32 & String, String> <- R.Receipt.qualify(path)
     Intent.read_observed(again, observed)
 
 law a_complete_qualified_record_is_admitted:

@@ -24,7 +24,7 @@ type AttemptCapture is Data:
 def Attempt.under_claim(handle: U32, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
   do IO<AttemptCapture>:
     observed : Result<&1,&1,U32 & String,String & String> <- P.Process.capture_holding(argv, cwd, handle, guard, artifact)
-    released : Result<U32 & String, Unit> <- R.Receipt.release(handle)
+    released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(handle)
     IO.pure(AttemptCapture, AttemptCaptured{observed, released})
 
 def Attempt.held(held: Maybe<U32>, target: String, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
@@ -32,14 +32,14 @@ def Attempt.held(held: Maybe<U32>, target: String, guard: String, artifact: Stri
     case None{}: IO.pure(AttemptCapture, AttemptClaimBusy{target})
     case Some{handle}: Attempt.under_claim(handle, guard, artifact, argv, cwd)
 
-def Attempt.claimed(claimed: Result<U32 & String, Maybe<U32>>, target: String, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
+def Attempt.claimed(claimed: Result<&1, &1, U32 & String, Maybe<U32>>, target: String, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
   match claimed:
     case Fail{error}: IO.pure(AttemptCapture, AttemptClaimFailed{error})
     case Done{held}: Attempt.held(held, target, guard, artifact, argv, cwd)
 
 def Attempt.capture_guarded(common: String, target: String, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
   do IO<AttemptCapture>:
-    claimed : Result<U32 & String, Maybe<U32>> <- R.Receipt.claim(common, target)
+    claimed : Result<&1, &1, U32 & String, Maybe<U32>> <- R.Receipt.claim(common, target)
     Attempt.claimed(claimed, target, guard, artifact, argv, cwd)
 
 # Laws over the actual chain. A law here is an expression over effects, so these equate the
@@ -76,7 +76,7 @@ law the_capture_attempts_the_release_after_the_effect_and_keeps_both:
   for cwd: String
   {Attempt.under_claim(handle, guard, artifact, argv, cwd) == (do IO<AttemptCapture>:
     observed : Result<&1,&1,U32 & String,String & String> <- P.Process.capture_holding(argv, cwd, handle, guard, artifact)
-    released : Result<U32 & String, Unit> <- R.Receipt.release(handle)
+    released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(handle)
     IO.pure(AttemptCapture, AttemptCaptured{observed, released})) : IO(AttemptCapture)}
 
 def the_capture_attempts_the_release_after_the_effect_and_keeps_both(handle,guard,artifact,argv,cwd):
@@ -90,7 +90,7 @@ law the_entry_claims_the_guard_then_decides_the_branch:
   for argv: String
   for cwd: String
   {Attempt.capture_guarded(common, target, guard, artifact, argv, cwd) == (do IO<AttemptCapture>:
-    claimed : Result<U32 & String, Maybe<U32>> <- R.Receipt.claim(common, target)
+    claimed : Result<&1, &1, U32 & String, Maybe<U32>> <- R.Receipt.claim(common, target)
     Attempt.claimed(claimed, target, guard, artifact, argv, cwd)) : IO(AttemptCapture)}
 
 def the_entry_claims_the_guard_then_decides_the_branch(common,target,guard,artifact,argv,cwd):

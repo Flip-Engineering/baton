@@ -238,7 +238,7 @@ def Intent.publish_classify(request: I.IntentInput, path: String, content: Strin
   +kind = classify_publish(r, p)
   Intent.publish_admit(req, p, want, r, kind)
 
-def Intent.published(request: I.IntentInput, path: String, content: String, observed: Result<U32 & String, String>) -> IO(IntentPublish):
+def Intent.published(request: I.IntentInput, path: String, content: String, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPublish):
   +req = request
   +p = path
   +want = content
@@ -253,7 +253,7 @@ def Intent.publish_now(request: I.IntentInput, path: String, content: String, di
   +dir = directory
   +n = name
   do IO<IntentPublish>:
-    observed : Result<U32 & String, String> <- R.Receipt.publish(dir, n, want)
+    observed : Result<&1, &1, U32 & String, String> <- R.Receipt.publish(dir, n, want)
     Intent.published(req, p, want, observed)
 
 def Intent.ensure_next(request: I.IntentInput, path: String, content: String, directory: String, name: String, raw: String, kind: String) -> IO(IntentPublish):
@@ -276,7 +276,7 @@ def Intent.ensure_admit(request: I.IntentInput, path: String, content: String, d
   +kind = classify_ensure(r, dir)
   Intent.ensure_next(req, p, want, dir, n, r, kind)
 
-def Intent.ensured(request: I.IntentInput, path: String, content: String, directory: String, name: String, observed: Result<U32 & String, String>) -> IO(IntentPublish):
+def Intent.ensured(request: I.IntentInput, path: String, content: String, directory: String, name: String, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPublish):
   +req = request
   +p = path
   +want = content
@@ -293,7 +293,7 @@ def publish_directory(request: I.IntentInput, path: String, content: String, dir
   +dir = directory
   +n = name
   do IO<IntentPublish>:
-    observed : Result<U32 & String, String> <- R.Receipt.ensure(dir)
+    observed : Result<&1, &1, U32 & String, String> <- R.Receipt.ensure(dir)
     Intent.ensured(req, p, want, dir, n, observed)
 
 # The entry. The requested receipt path and the derived path are the same one, and the name
@@ -503,7 +503,7 @@ def a_mismatched_requested_path_is_refused_before_any_effect():
 law a_successful_entry_ensures_then_publishes:
   for request: I.IntentInput
   {Intent.publish_intent(request, "/d", "n", "wanted") == (do IO<IntentPublish>:
-    ensured : Result<U32 & String, String> <- R.Receipt.ensure("/d")
+    ensured : Result<&1, &1, U32 & String, String> <- R.Receipt.ensure("/d")
     Intent.ensured(request, "/d/n", "wanted", "/d", "n", ensured)) : IO(IntentPublish)}
 
 def a_successful_entry_ensures_then_publishes(request):
@@ -512,7 +512,7 @@ def a_successful_entry_ensures_then_publishes(request):
 law a_successful_ensure_reaches_the_publication:
   for request: I.IntentInput
   {Intent.ensured(request, "/d/n", "wanted", "/d", "n", Done{"created\t/d\t0\t\t0\t"}) == (do IO<IntentPublish>:
-    published : Result<U32 & String, String> <- R.Receipt.publish("/d", "n", "wanted")
+    published : Result<&1, &1, U32 & String, String> <- R.Receipt.publish("/d", "n", "wanted")
     Intent.published(request, "/d/n", "wanted", published)) : IO(IntentPublish)}
 
 def a_successful_ensure_reaches_the_publication(request):

@@ -714,7 +714,7 @@ def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo:
     case Lg.LandingOldValueMismatch{expected, found, released}: ff_stage5_blocked("old target moved during landing; retry")
     case Lg.LandingPublishRefused{outcome, released}: ff_stage5_blocked("intent publication refused")
 
-def ff_stage5_named(candidate: String, old: String, repo: String, target: String, common: String, guard: String, observed: Result<U32 & String, String>) -> IO(FFLD):
+def ff_stage5_named(candidate: String, old: String, repo: String, target: String, common: String, guard: String, observed: Result<&1, &1, U32 & String, String>) -> IO(FFLD):
   +cand = candidate
   +tb = old
   +rp = repo
@@ -741,10 +741,10 @@ def ff_stage5_guarded_now(candidate: String, old: String, repo: String, target: 
   +cm = common
   +gd = guard
   do IO<FFLD>:
-    token : Result<U32 & String, String> <- Rec.Receipt.attempt_token(tg)
+    token : Result<&1, &1, U32 & String, String> <- Rec.Receipt.attempt_token(tg)
     ff_stage5_named(cand, tb, rp, tg, cm, gd, token)
 
-def ff_stage5_guard_observed(cand: String, old: String, repo: String, target: String, common: String, observed: Result<U32 & String, String>) -> IO(FFLD):
+def ff_stage5_guard_observed(cand: String, old: String, repo: String, target: String, common: String, observed: Result<&1, &1, U32 & String, String>) -> IO(FFLD):
   +candidate = cand
   +tb = old
   +rp = repo
@@ -762,7 +762,7 @@ def ff_stage5_guardpath(cand: String, old: String, repo: String, target: String,
   +tg = target
   +cm = common
   do IO<FFLD>:
-    guard_g : Result<U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
+    guard_g : Result<&1, &1, U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
     ff_stage5_guard_observed(candidate, tb, rp, tg, cm, guard_g)
 
 def ff_stage5_common(cand: String, old: String, repo: String, target: String, observed: T.GitOut) -> IO(FFLD):
@@ -818,9 +818,9 @@ type SharedLanding is Data:
   SharedCommonUnreadable{observation: T.GitOut}
   SharedClaimFailed{error: U32 & String}
   SharedGuardBusy{target: String}
-  SharedStepFailed{step: String, error: U32 & String, released: Result<U32 & String, Unit>}
-  SharedStepRecordFailed{step: String, record: String, released: Result<U32 & String, Unit>}
-  SharedAdvanced{obs: LdAdvObs, released: Result<U32 & String, Unit>, guard: String, reserved: String}
+  SharedStepFailed{step: String, error: U32 & String, released: Result<&1, &1, U32 & String, Unit>}
+  SharedStepRecordFailed{step: String, record: String, released: Result<&1, &1, U32 & String, Unit>}
+  SharedAdvanced{obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>, guard: String, reserved: String}
 
 # Every step failure releases the acquired descriptor and keeps its own stage, its complete
 # error or raw record, and the actual release Result.
@@ -829,7 +829,7 @@ def shared_step_failed(step: String, error: U32 & String, handle: U32) -> IO(Sha
   +e = error
   +h = handle
   do IO<SharedLanding>:
-    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
+    released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(h)
     IO.pure(SharedLanding, SharedStepFailed{s, e, released})
 
 def shared_attempts_parent(common: String) -> String:
@@ -846,7 +846,7 @@ def shared_record_failed(step: String, record: String, handle: U32) -> IO(Shared
   +r = record
   +h = handle
   do IO<SharedLanding>:
-    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
+    released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(h)
     IO.pure(SharedLanding, SharedStepRecordFailed{s, r, released})
 
 type LdAdvCtx is Data:
@@ -1217,7 +1217,7 @@ def shared_reserved_continue(handle: U32, repo: String, target: String, cand: St
   +cx = LdAdvContext{h, gd, shared_parent_path(rv, "stderr")}
   do IO<SharedLanding>:
     o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
-    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
+    released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(h)
     IO.pure(SharedLanding, SharedAdvanced{o, released, gd, rv})
 
 # The attempt name: the bare base for the first attempt, then the base extended with the
@@ -1243,7 +1243,7 @@ def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String,
   +n = attempt
   +name = shared_attempt_name(bs, n)
   do IO<SharedLanding>:
-    observed : Result<U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, name)
+    observed : Result<&1, &1, U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, name)
     match observed:
       case Fail{error}: shared_step_failed("reserve", error, h)
       case Done{record}:
@@ -1288,7 +1288,7 @@ def shared_parent_classified(handle: U32, repo: String, target: String, cand: St
   Bool.pick(IO(SharedLanding), Tx.str_eq(r, Pb.production_record("created", pa, "0")),
     shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1),
     shared_parent_present(h, rp, tg, c, b, gd, pa, bs, r))
-def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
+def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -1301,7 +1301,7 @@ def shared_parent_ensured(handle: U32, repo: String, target: String, cand: Strin
     case Fail{error}: shared_step_failed("ensure", error, h)
     case Done{record}: shared_parent_classified(h, rp, tg, c, b, gd, pa, bs, record)
 
-def shared_token_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, guard: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
+def shared_token_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, guard: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -1315,10 +1315,10 @@ def shared_token_named(handle: U32, repo: String, target: String, cand: String, 
       +parent = shared_attempts_parent(cm)
       +base = Tx.str_cat(token, Tx.str_cat("-", Tx.str_cat(c, Tx.str_cat("-", b))))
       do IO<SharedLanding>:
-        ensured : Result<U32 & String, String> <- Rec.Receipt.ensure(parent)
+        ensured : Result<&1, &1, U32 & String, String> <- Rec.Receipt.ensure(parent)
         shared_parent_ensured(h, rp, tg, c, b, gd, parent, base, ensured)
 
-def shared_guard_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
+def shared_guard_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -1329,7 +1329,7 @@ def shared_guard_named(handle: U32, repo: String, target: String, cand: String, 
     case Fail{error}: shared_step_failed("guard", error, h)
     case Done{guard}:
       do IO<SharedLanding>:
-        token : Result<U32 & String, String> <- Rec.Receipt.attempt_token(tg)
+        token : Result<&1, &1, U32 & String, String> <- Rec.Receipt.attempt_token(tg)
         shared_token_named(h, rp, tg, c, b, cm, guard, token)
 
 def shared_guarded(handle: U32, repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
@@ -1340,10 +1340,10 @@ def shared_guarded(handle: U32, repo: String, target: String, cand: String, basi
   +b = basis
   +cm = common
   do IO<SharedLanding>:
-    observed : Result<U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
+    observed : Result<&1, &1, U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
     shared_guard_named(h, rp, tg, c, b, cm, observed)
 
-def shared_claim_decided(repo: String, target: String, cand: String, basis: String, common: String, claimed: Result<U32 & String, Maybe<U32>>) -> IO(SharedLanding):
+def shared_claim_decided(repo: String, target: String, cand: String, basis: String, common: String, claimed: Result<&1, &1, U32 & String, Maybe<U32>>) -> IO(SharedLanding):
   +rp = repo
   +tg = target
   +c = cand
@@ -1363,7 +1363,7 @@ def shared_claimed(repo: String, target: String, cand: String, basis: String, co
   +b = basis
   +cm = common
   do IO<SharedLanding>:
-    claimed : Result<U32 & String, Maybe<U32>> <- Rec.Receipt.claim(cm, tg)
+    claimed : Result<&1, &1, U32 & String, Maybe<U32>> <- Rec.Receipt.claim(cm, tg)
     shared_claim_decided(rp, tg, c, b, cm, claimed)
 
 def shared_common_read(repo: String, target: String, cand: String, basis: String, observed: T.GitOut) -> IO(SharedLanding):
