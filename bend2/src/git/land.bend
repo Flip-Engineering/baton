@@ -1231,7 +1231,8 @@ def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ct
   +b2 = basis
   +cx = ctx
   do IO<LdAdvObs>:
-    capture : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", ld_update_argv(t2, c2, b2)}), r2, cx.claim, cx.guard, cx.artifact)
+    captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", ld_update_argv(t2, c2, b2)}), r2, cx.claim, cx.guard, cx.artifact)
+    +capture = captured
     IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(ld_adv_status(capture)), capture))
 def ld_adv_refused_same(same: Bool, path: String) -> LAdv:
   match same:
@@ -1297,6 +1298,9 @@ def ld_adv_of(obs: LdAdvObs) -> LAdv:
     case LdAdvNoCapture{advance}: advance
     case LdAdvCaptured{advance, capture}: advance
 
+# Git provides no atomic CLI operation that pins symbolic HEAD across the final identity check
+# and the merge, so a switch in that interval can still direct the merge to another branch. The
+# target claim coordinates participating landings; it does not lock an independent Git process.
 def ld_adv_wt_observe_wrapped(path: String, repo: String, target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
   +cp = capture
   do IO<LdAdvObs>:
@@ -1337,7 +1341,8 @@ def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, 
       +c2 = cand
       +b2 = basis
       do IO<LdAdvObs>:
-        capture : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"merge", Con{"--ff-only", Con{c2, Nil{}}}}}), p2, cx.claim, cx.guard, cx.artifact)
+        captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"merge", Con{"--ff-only", Con{c2, Nil{}}}}}), p2, cx.claim, cx.guard, cx.artifact)
+        +capture = captured
         ld_adv_wt_pick(ld_adv_status(capture), p2, r2, t2, c2, b2, cx, capture)
 def ld_adv_wt_head_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +cx = ctx
@@ -1415,15 +1420,6 @@ type LdAdvCtx is Data:
 type LdAdvObs is Data:
   LdAdvNoCapture{advance: LAdv}
   LdAdvCaptured{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>}
-
-def ld_adv_wrap(advance: LAdv) -> LdAdvObs:
-  +a = advance
-  LdAdvNoCapture{a}
-
-def ld_adv_with(advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>) -> LdAdvObs:
-  +a = advance
-  +c = capture
-  LdAdvCaptured{a, c}
 
 def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
   +c = capture
@@ -2149,11 +2145,9 @@ def shared_reserved_continue(handle: U32, repo: String, target: String, cand: St
     released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
     IO.pure(SharedLanding, SharedAdvanced{o, released, gd, rv})
 
-# One self-recursive reservation helper. A collision grows the suffix by one character and tries
-# again under the same held claim, so there is no fixed retry cap: the only refusals are a real
-# error, a malformed record, and a representational suffix length.
-# The attempt name: the base alone for the first attempt, then the base extended with the U32
-# counter rendered by U32.show. The only refusal past a collision is the type's own maximum.
+# The attempt name: the bare base for the first attempt, then the base extended with the
+# counter rendered by U32.show. The only refusal past a collision is the U32 maximum, checked
+# before the increment; there is no chosen suffix-length limit.
 def shared_attempt_name(base: String, attempt: U32) -> String:
   +b = base
   +n = attempt
