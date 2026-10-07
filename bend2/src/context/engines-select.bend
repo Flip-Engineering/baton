@@ -645,7 +645,39 @@ def ops_lookup(+ops: Decl.Ops, +want: String) -> OpState:
 # branch that reached it, so a repeated step is a cycle while a diamond is
 # ordinary reuse.
 type Pending is Data:
-  Pending{decl: Decl.Decl, op: Decl.Op, digest: String, path: Eng.SS}
+  Pending{decl: Decl.Decl, op: Decl.Op, digest: String, path: StepPath}
+
+# A dependency path records module and operation as separate fields. Both
+# identifiers may contain any admitted string, so joining them cannot define
+# their identity without an escaping or length protocol.
+type StepIdentity is Data:
+  StepIdentity{module_id: String, operation: String}
+
+type StepPath is Data:
+  StepPathNil{}
+  StepPathCons{head: StepIdentity, rest: StepPath}
+
+def pending_identity(+p: Pending) -> StepIdentity:
+  match p:
+    case Pending{decl, op, digest, path}:
+      StepIdentity{Decl.decl_module_id(decl), Decl.op_operation(op)}
+
+def step_identity_eq(+left: StepIdentity, +right: StepIdentity) -> Bool:
+  match left:
+    case StepIdentity{module_id, operation}:
+      match right:
+        case StepIdentity{other_module, other_operation}:
+          Bool.and(String.eq(module_id, other_module),
+                   String.eq(operation, other_operation))
+
+def step_path_member(+path: StepPath, +want: StepIdentity) -> Bool:
+  match path:
+    case StepPathNil{}: False{}
+    case StepPathCons{head, rest}:
+      Bool.or(step_identity_eq(head, want), step_path_member(rest, want))
+
+def step_path_add(+path: StepPath, +identity: StepIdentity) -> StepPath:
+  StepPathCons{identity, path}
 
 type Pendings is Data:
   PendsNil{}
@@ -663,21 +695,13 @@ def pending_digest(+p: Pending) -> String:
   match p:
     case Pending{decl, op, digest, path}: digest
 
-def pending_path(+p: Pending) -> Eng.SS:
+def pending_path(+p: Pending) -> StepPath:
   match p:
     case Pending{decl, op, digest, path}: path
 
 def pending_module(+p: Pending) -> String:
   match p:
     case Pending{decl, op, digest, path}: Decl.decl_module_id(decl)
-
-# The composite key an ancestor path records: the module and the operation
-# joined by a separator, so one module serving two operations is not a cycle.
-def pending_step_key(+p: Pending) -> String:
-  match p:
-    case Pending{decl, op, digest, path}:
-      String.append(String.append(Decl.decl_module_id(decl), "/"),
-                    Decl.op_operation(op))
 
 def pendings_append(+xs: Pendings, +add: Pendings) -> Pendings:
   match xs:
@@ -700,7 +724,7 @@ def resolved_failure_of(+r: Resolved) -> PlanFail:
 # match scrutinee, so the two scans below answer the value and the reason
 # separately; both read the same admitted inputs and cannot disagree.
 def ops_pending(+decl: Decl.Decl, +ops: Decl.Ops, +want: String,
-                +digest: String, +path: Eng.SS) -> Pendings:
+                +digest: String, +path: StepPath) -> Pendings:
   match ops:
     case Decl.OpsNil{}: PendsNil{}
     case Decl.OpsCons{+head, rest}:
@@ -709,7 +733,7 @@ def ops_pending(+decl: Decl.Decl, +ops: Decl.Ops, +want: String,
                 ops_pending(decl, rest, want, digest, path))
 
 def decl_pending(+cat: Decl.Cat, +inv: Decl.Inv, +module_id: String,
-                 +want_digest: String, +want: String, +path: Eng.SS) -> Pendings:
+                 +want_digest: String, +want: String, +path: StepPath) -> Pendings:
   match cat:
     case Decl.CatNil{}: PendsNil{}
     case Decl.CatCons{+head, rest}:
@@ -749,7 +773,7 @@ def edge_failure(+cat: Decl.Cat, +inv: Decl.Inv, +module_id: String,
       PfAt{PlanDependencyDigestMismatch{module_id, want_digest,
                                         digest_at(inv, module_id)}}))
 
-def resolve_edges(+edges: Decl.ModRefs, +path: Eng.SS, +cat: Decl.Cat,
+def resolve_edges(+edges: Decl.ModRefs, +path: StepPath, +cat: Decl.Cat,
                   +inv: Decl.Inv, +acc: Pendings, +fail: PlanFail) -> Resolved:
   match edges:
     case Decl.ModRefsNil{}: Resolved{acc, fail}
@@ -803,8 +827,7 @@ def plan_pending_next(+in_path: Bool, +head: Pending, +rest: Pendings,
     pendings_append(
       resolved_pending_of(
         resolve_edges(Decl.op_dependencies(pending_op(head)),
-                      Eng.union_add(Eng.ss_one(pending_step_key(head)),
-                                    pending_path(head)),
+                      step_path_add(pending_path(head), pending_identity(head)),
                       cat, inv, PendsNil{}, PfNone{})),
       rest))
 
@@ -814,9 +837,9 @@ def plan_walk_next(+in_path: Bool, +head: Pending, +cat: Decl.Cat,
     walk_fail(w, PfAt{PlanCycle{pending_module(head)}}),
     walk_fail(walk_add(w, head),
               resolved_failure_of(
-                resolve_edges(Decl.op_dependencies(pending_op(head)),
-                              Eng.union_add(Eng.ss_one(pending_step_key(head)),
-                                            pending_path(head)),
+              resolve_edges(Decl.op_dependencies(pending_op(head)),
+                              step_path_add(pending_path(head),
+                                            pending_identity(head)),
                               cat, inv, PendsNil{}, PfNone{}))))
 
 # One self-recursive walk: a step already on its own ancestor path is a cycle,
@@ -835,12 +858,12 @@ def plan_drain(+pending: Pendings, +cat: Decl.Cat, +inv: Decl.Inv,
   match pending:
     case PendsNil{}: w
     case PendsCons{+head, rest}:
-      plan_drain(plan_pending_next(Eng.ss_member(pending_path(head),
-                                                 pending_step_key(head)),
+      plan_drain(plan_pending_next(step_path_member(pending_path(head),
+                                                    pending_identity(head)),
                                    head, rest, cat, inv),
                  cat, inv,
-                 plan_walk_next(Eng.ss_member(pending_path(head),
-                                              pending_step_key(head)),
+                 plan_walk_next(step_path_member(pending_path(head),
+                                                 pending_identity(head)),
                                 head, cat, inv, w))
 
 # --- freezing one selected binding ------------------------------------------
@@ -859,7 +882,7 @@ def plan_finish(+w: Walk, +primary: MBind, +common: String, +available: Bool,
 def freeze_primary(+decl: Decl.Decl, +op: Decl.Op, +cand: Cand, +cat: Decl.Cat,
                    +inv: Decl.Inv, +captures: Captures) -> PlanOutcome:
   plan_finish(
-    plan_drain(PendsCons{Pending{decl, op, cand_digest(cand), Eng.ss_empty()},
+    plan_drain(PendsCons{Pending{decl, op, cand_digest(cand), StepPathNil{}},
                          PendsNil{}},
                cat, inv, walk_none()),
     binding_of(decl, op, cand_digest(cand)), Decl.op_common(op),

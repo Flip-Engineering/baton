@@ -377,6 +377,13 @@
       "law": "selection_plan_refuses_a_cycle"
     },
     {
+      "name": "selection-step-identity-joins-slash-pairs",
+      "file": "bend2/src/context/engines-select.bend",
+      "find": "          Bool.and(String.eq(module_id, other_module),\n                   String.eq(operation, other_operation))",
+      "replace": "          String.eq(module_id ++ \"/\" ++ operation,\n                    other_module ++ \"/\" ++ other_operation)",
+      "law": "selection_plan_keeps_distinct_slash_pairs"
+    },
+    {
       "name": "selection-plan-erases-the-effect-floor",
       "file": "bend2/src/context/engines-select.bend",
       "find": "                                              Eng.effects_union(commons)),",
