@@ -12,6 +12,7 @@ import Base
 import ./engines.bend as Eng
 import ./engines-decl.bend as Decl
 import ./engines-select.bend as Sel
+import ./snapshot.bend as Snap
 
 # --- fixtures ----------------------------------------------------------------
 def fx_schemas() -> Eng.SS:

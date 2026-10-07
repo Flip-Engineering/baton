@@ -104,7 +104,6 @@ def wire_value_text(+v: Codec.RawValue, +mode: String) -> String:
     case Codec.Robj{Codec.Rpair{+key, +value, +rest}}:
       match mode:
         case "value": "{" ++ J.json_text(J.Jstr{key}) ++ ":" ++ wire_value_text(value, "value") ++ wire_value_text(rest, "members")
-        case "members": "," ++ J.json_text(J.Jstr{key}) ++ ":" ++ wire_value_text(value, "value") ++ wire_value_text(rest, "members")
         case other: wire_mode_close(mode)
     case Codec.Robj{+members}: wire_atom_text(mode, "{}")
     case Codec.Rnil{}: wire_nil_text(mode)
@@ -336,7 +335,6 @@ def wire_value_ok(+v: Codec.RawValue, +mode: String) -> Bool:
     case Codec.Robj{Codec.Rpair{+key, +value, +rest}}:
       match mode:
         case "value": Bool.pick(Bool, Codec.raw_member_present(key, rest), False{}, Bool.pick(Bool, wire_value_ok(value, "value"), wire_value_ok(rest, "members"), False{}))
-        case "members": Bool.pick(Bool, Codec.raw_member_present(key, rest), False{}, Bool.pick(Bool, wire_value_ok(value, "value"), wire_value_ok(rest, "members"), False{}))
         case other: False{}
     case Codec.Robj{+members}: False{}
     case Codec.Rnil{}: wire_ok_nil(mode)
