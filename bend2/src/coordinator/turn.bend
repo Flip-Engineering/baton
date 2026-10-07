@@ -184,13 +184,6 @@ def omp_message(db: String, +event: String, previous: String, enabled: Bool) -> 
       message : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='message_end' AND json_extract(" ++ C.q(event) ++ ",'$.message.role')='assistant' THEN json_extract(" ++ C.q(event) ++ ",'$.message') ELSE " ++ C.q(previous) ++ " END;"))
       IO.pure(String,Tx.trim_nl(message))
 
-def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) -> IO(String):
-  match enabled:
-    case False{}: IO.pure(String,event)
-    case True{}: do IO<String>:
-      normalized : String <- IO.try(String,DB.Sql.query(db,omp_terminal_sql(event,message)))
-      IO.pure(String,Tx.trim_nl(normalized))
-
 # The completion reader calls json_extract for content block fields. Keep
 # object blocks on assistant messages in order and give non-array content an
 # empty extraction list. The raw native frame remains in the log.
@@ -205,6 +198,13 @@ def omp_terminal_sql(+event: String, +message: String) -> String:
   +kept = "coalesce((SELECT json_group_array(json(message.value)) FROM (SELECT " ++ omp_content_sql("m.value") ++ " AS value,m.key AS key FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object' ORDER BY m.key) message),'[]')"
   +messages = "CASE WHEN " ++ objects ++ "=0 AND json_valid(" ++ C.q(message) ++ ") THEN json_array(json(" ++ C.q(message) ++ ")) ELSE " ++ kept ++ " END"
   "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 THEN CASE WHEN json_type(" ++ C.q(event) ++ ",'$.messages')='array' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json(" ++ messages ++ ")) WHEN json_valid(" ++ C.q(message) ++ ") THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END;"
+
+def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) -> IO(String):
+  match enabled:
+    case False{}: IO.pure(String,event)
+    case True{}: do IO<String>:
+      normalized : String <- IO.try(String,DB.Sql.query(db,omp_terminal_sql(event,message)))
+      IO.pure(String,Tx.trim_nl(normalized))
 
 # The root turn input identifies the admitted Muse invocation. Nested task
 # streams can complete while that invocation is still running.
