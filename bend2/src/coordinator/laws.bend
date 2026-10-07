@@ -678,7 +678,7 @@ def m5_owed_input_is_counted_after_the_cursor(session, cursor):
 # session. The store's own schema declares that reference, so the database
 # refuses a message from an unknown sender.
 law m7_the_store_validates_the_sender_it_records:
-  {C.schema() == "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
+  {C.schema() == C.wake_claim_schema() ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');" ++ C.messaging_schema() : String}
 
 def m7_the_store_validates_the_sender_it_records():
@@ -686,12 +686,13 @@ def m7_the_store_validates_the_sender_it_records():
 
 # M-8: an acknowledgement is bound to the message and to the recipient it
 # names, and it keeps the first receipt. A caller cannot acknowledge a message
-# addressed to another session.
+# addressed to another session. Acknowledgement discharges the recipient's
+# wake claim in the same statement, which is how the obligation clears.
 law m8_acknowledgement_is_bound_to_its_recipient:
   for +id: String
   for +recipient: String
   for +receipt: String
-  {C.sql(C.Ack{id, recipient, receipt}) == "UPDATE messages SET receipt=coalesce(receipt," ++ C.q(receipt) ++ ") WHERE id=" ++ C.q(id) ++ " AND recipient=" ++ C.q(recipient) ++ ";SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ C.q(id) ++ " AND recipient=" ++ C.q(recipient) ++ ";" : String}
+  {C.sql(C.Ack{id, recipient, receipt}) == "UPDATE messages SET receipt=coalesce(receipt," ++ C.q(receipt) ++ ") WHERE id=" ++ C.q(id) ++ " AND recipient=" ++ C.q(recipient) ++ ";DELETE FROM wake_claims WHERE session=" ++ C.q(recipient) ++ ";SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ C.q(id) ++ " AND recipient=" ++ C.q(recipient) ++ ";" : String}
 
 def m8_acknowledgement_is_bound_to_its_recipient(id, recipient, receipt):
   {==}
@@ -1161,9 +1162,9 @@ law terminal_observation_records_the_report_and_turn:
   for +player: String
   for +event: String
   {C.completion_sql(id,player,event) == (
-  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.terminal_body(event) ++ " FROM sessions WHERE id=" ++ C.q(player) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ C.message_upsert()
-  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ C.q(id) ++ "," ++ C.q(player) ++ "," ++ C.q(event) ++ " WHERE " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
-  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ C.q(event) ++ ",'$.type'),json_extract(" ++ C.q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " THEN " ++ C.q(id) ++ " ELSE NULL END) FROM sessions WHERE id=" ++ C.q(player) ++ ";") : String}
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.terminal_body(event) ++ " FROM sessions WHERE id=" ++ C.q(player) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " AND " ++ C.completion_pending_sql(player) ++ "=0" ++ C.message_upsert()
+  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ C.q(id) ++ "," ++ C.q(player) ++ "," ++ C.q(event) ++ " WHERE " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " AND " ++ C.completion_pending_sql(player) ++ "=0 ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
+  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ C.q(event) ++ ",'$.type'),json_extract(" ++ C.q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " AND " ++ C.completion_pending_sql(player) ++ "=0 THEN " ++ C.q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ C.completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ C.completion_pending_sql(player) ++ ",'oldestPendingId'," ++ C.completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ C.q(player) ++ ";") : String}
 
 def terminal_observation_records_the_report_and_turn(id,player,event):
   {==}

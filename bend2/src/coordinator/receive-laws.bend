@@ -225,7 +225,7 @@ law m17_refused_conversation_restarts_the_attempt:
   for +id: String
   for log: String
   for stderr: String
-  for cursor: String
+  for +cursor: String
   for native: String
   for cwd: String
   for +handle: U32
@@ -233,7 +233,7 @@ law m17_refused_conversation_restarts_the_attempt:
   for outcome: Turn.Outcome
   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
   for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.complete_or_restart(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again,True{}) == Receive.restart_pending(db,session,id,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.complete_or_restart(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again,True{}) == Receive.restart_pending(db,session,id,cursor,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def m17_refused_conversation_restarts_the_attempt(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again):
   {==}
@@ -275,7 +275,7 @@ def m17_the_observed_dispatch_is_the_refusal_it_read(db,session,id,log,cursor,na
 # only then releases the observer and the native process, delivers the wake
 # and settles question deliveries before acknowledging it. The written-out order is the whole obligation: a
 # reordering of any two steps breaks this proof.
-def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, +cursor: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":recovery-input") ++ ");"))
     saved : Unit <- Receive.record_recovery(db,session,id,native,cwd,String.eq(recorded,"1\n"))
@@ -283,25 +283,28 @@ def restart_records_before_releasing_and_waking(+db: String, +session: String, +
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
     delivery_task : Chan(Result<&1,&1,U32 & String,String>) <- IO.fork(Result<&1,&1,U32 & String,String>,Delivery.deliver(db,id ++ ":recovery","1",""))
     next : Result<&1,&1,U32 & String,Unit> <- again(Unit{})
+    woken : Result<&1,&1,U32 & String,Unit> <- Receive.wake_due(db,session,cursor,launch => Receive.wake_launch(db,launch))
     delivered : Result<&1,&1,U32 & String,String> <- IO.join(Result<&1,&1,U32 & String,String>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     acknowledged : Unit <- IO.try(Unit,P.ProcessChild.acknowledge(handle))
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Delivery.wake_result(delivered),Turn.combine(questions,next)))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Delivery.wake_result(delivered),Turn.combine(questions,Turn.combine(next,woken))))
 
 law m17_restart_records_before_releasing_and_waking:
   for +db: String
   for +session: String
   for +id: String
+  for +cursor: String
   for +native: String
   for +cwd: String
   for +handle: U32
   for -lock: Maybe<U32>
   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
   for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.restart_pending(db,session,id,native,cwd,handle,lock,deliveries,again) == restart_records_before_releasing_and_waking(db,session,id,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.restart_pending(db,session,id,cursor,native,cwd,handle,lock,deliveries,again) == restart_records_before_releasing_and_waking(db,session,id,cursor,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m17_restart_records_before_releasing_and_waking(db,session,id,native,cwd,handle,lock,deliveries,again):
+def m17_restart_records_before_releasing_and_waking(db,session,id,cursor,native,cwd,handle,lock,deliveries,again):
   {==}
+
 
 # M-17: a recovery-input row already recorded writes nothing, so a replayed
 # attempt leaves the session's recorded identity as it stands.
@@ -415,12 +418,14 @@ law surviving_attempt_recovery_preserves_its_guard:
 def surviving_attempt_recovery_preserves_its_guard(db,session,cmd,model,effort,cwd,log,lock,directory,args,again):
   {==}
 
-def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- Receive.release_observer(lock)
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
-    Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => P.ProcessChild.acknowledge(handle))
+    finished : Result<&1,&1,U32 & String,Unit> <- Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => P.ProcessChild.acknowledge(handle))
+    woken : Result<&1,&1,U32 & String,Unit> <- Receive.wake_due(db,session,cursor,target => Receive.wake_launch(db,target))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,woken))
 
 law native_completion_is_committed_before_owner_release:
   for +db: String
@@ -674,4 +679,88 @@ law keeper_recovery_preserves_the_original_input_cursor:
   {Receive.observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,again) == Receive.observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,None{},again,False{}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def keeper_recovery_preserves_the_original_input_cursor(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,again):
+  {==}
+
+# M-5 and M-8 for the post-exit wake (#685). The driver reads the pending count
+# for the session, takes the session lock, re-reads the count under the lock,
+# reads the one message the obligation names, claims it while it holds the lock,
+# releases the lock and only then launches that message. Each claim below is a
+# written-out body of the function it constrains.
+def wake_due_reads_the_count_then_locks(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    owed : Bool <- Receive.wake_owed(db,session,cursor)
+    Receive.wake_locked(db,session,cursor,launch,owed)
+
+law the_wake_driver_reads_the_count_before_it_locks:
+  for +db: String
+  for +session: String
+  for +cursor: String
+  for -launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.wake_due(db,session,cursor,launch) == wake_due_reads_the_count_then_locks(db,session,cursor,launch) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def the_wake_driver_reads_the_count_before_it_locks(db,session,cursor,launch):
+  {==}
+
+def continuation_reads_the_count_then_locks(+db: String, +session: String, +cursor: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    pending : String <- IO.try(String,DB.Sql.query(db,Receive.pending_count_sql(session,cursor)))
+    Receive.continue_locked(db,session,cursor,again,Bool.not(String.eq(pending,"0\n")))
+
+law the_continuation_reads_the_count_before_it_locks:
+  for +db: String
+  for +session: String
+  for +cursor: String
+  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.continue_pending(db,session,cursor,again) == continuation_reads_the_count_then_locks(db,session,cursor,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def the_continuation_reads_the_count_before_it_locks(db,session,cursor,again):
+  {==}
+
+def handed_invocation_marks_the_claim_unclaimed(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    pending : String <- IO.try(String,DB.Sql.query(db,Receive.pending_count_sql(session,"0")))
+    left : Unit <- Receive.release_if_owed(db,session,Bool.not(String.eq(pending,"0\n")))
+    IO.pure(Unit,Unit{})
+
+law a_handed_invocation_marks_the_claim_unclaimed_when_input_is_owed:
+  for +db: String
+  for +session: String
+  {Receive.claim_left(db,session) == handed_invocation_marks_the_claim_unclaimed(db,session) : IO(Unit)}
+
+def a_handed_invocation_marks_the_claim_unclaimed_when_input_is_owed(db,session):
+  {==}
+
+# Negative controls. Each names the step a mutant would take and shows the code
+# does not take it. A held session lock launches nothing; an absent wake target
+# claims nothing; a zero count continues nothing.
+law a_held_session_lock_never_launches_the_wake:
+  for +db: String
+  for +session: String
+  for +cursor: String
+  for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.wake_owned(db,session,cursor,launch,None{}) == IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def a_held_session_lock_never_launches_the_wake(db,session,cursor,launch):
+  {==}
+
+law an_absent_wake_target_never_claims_the_obligation:
+  for +db: String
+  for +session: String
+  for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for lock: U32
+  {Receive.wake_target(db,session,"",launch,lock,True{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+    released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def an_absent_wake_target_never_claims_the_obligation(db,session,launch,lock):
+  {==}
+
+law no_owed_input_never_takes_the_lock:
+  for +db: String
+  for +session: String
+  for +cursor: String
+  for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.wake_locked(db,session,cursor,launch,False{}) == IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def no_owed_input_never_takes_the_lock(db,session,cursor,launch):
   {==}

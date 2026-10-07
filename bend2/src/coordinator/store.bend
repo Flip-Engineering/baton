@@ -32,3 +32,104 @@ def apply(+db: String, +command: C.Command) -> IO(Result<&1, &1, U32 & String, S
   do IO<Result<&1,&1,U32 & String,String>>:
     result : Result<&1,&1,U32 & String,String> <- commit(db,command)
     committed(db,command,result)
+
+# Wake-claim transitions for issue #685. The table is created by
+# C.wake_claim_schema(), which C.schema() runs on every commit. Claimed when a
+# driver takes the session lock and re-reads a nonzero pending count. Released
+# to unclaimed when the driver exits without acknowledging. Deleted when
+# acknowledgement clears the obligation.
+def claim_sql(+session: String) -> String:
+  "INSERT OR REPLACE INTO wake_claims(session,state) VALUES(" ++ C.q(session) ++ ",'claimed');"
+
+def release_sql(+session: String) -> String:
+  "UPDATE wake_claims SET state='unclaimed' WHERE session=" ++ C.q(session) ++ ";"
+
+def clear_claim_sql(+session: String) -> String:
+  "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ ";"
+
+# Absent-tolerant claim read. SQLite resolves every named table when it
+# prepares a statement, so one statement cannot guard on sqlite_master and
+# read the guarded table at once. The read is two steps: presence check, then
+# the value read only when the table exists. Empty string when the table is
+# missing or no row exists, otherwise the recorded state.
+def claim_state_present_sql() -> String:
+  "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='wake_claims';"
+
+def claim_state_value_sql(+session: String) -> String:
+  "SELECT coalesce((SELECT state FROM wake_claims WHERE session=" ++ C.q(session) ++ "),'');"
+
+def read_claim_when_present(+db: String, +session: String, present: Bool) -> IO(String):
+  match present:
+    case False{}: IO.pure(String,"")
+    case True{}: IO.try(String,DB.Sql.query(db,claim_state_value_sql(session)))
+
+def claim_state(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    present : String <- IO.try(String,DB.Sql.query(db,claim_state_present_sql()))
+    state : String <- read_claim_when_present(db,session,String.eq(present,"1\n"))
+    IO.pure(String,state)
+
+def claim(db: String, session: String) -> IO(Unit):
+  do IO<Unit>:
+    claimed : String <- IO.try(String,DB.Sql.query(db,claim_sql(session)))
+    IO.pure(Unit,Unit{})
+
+def release(db: String, session: String) -> IO(Unit):
+  do IO<Unit>:
+    released : String <- IO.try(String,DB.Sql.query(db,release_sql(session)))
+    IO.pure(Unit,Unit{})
+
+def clear_claim(db: String, session: String) -> IO(Unit):
+  do IO<Unit>:
+    cleared : String <- IO.try(String,DB.Sql.query(db,clear_claim_sql(session)))
+    IO.pure(Unit,Unit{})
+
+law claim_sql_writes_a_claimed_row:
+  for session: String
+  {claim_sql(session) == "INSERT OR REPLACE INTO wake_claims(session,state) VALUES(" ++ C.q(session) ++ ",'claimed');" : String}
+
+def claim_sql_writes_a_claimed_row(session):
+  {==}
+
+law release_sql_marks_the_session_unclaimed:
+  for session: String
+  {release_sql(session) == "UPDATE wake_claims SET state='unclaimed' WHERE session=" ++ C.q(session) ++ ";" : String}
+
+def release_sql_marks_the_session_unclaimed(session):
+  {==}
+
+law release_sql_inserts_no_row:
+  for session: String
+  {Tx.starts_with(release_sql(session),"INSERT") == False{} : Bool}
+
+def release_sql_inserts_no_row(session):
+  {==}
+
+law clear_claim_sql_deletes_the_session_row:
+  for session: String
+  {clear_claim_sql(session) == "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ ";" : String}
+
+def clear_claim_sql_deletes_the_session_row(session):
+  {==}
+
+law clear_claim_sql_updates_no_state:
+  for session: String
+  {Tx.starts_with(clear_claim_sql(session),"UPDATE") == False{} : Bool}
+
+def clear_claim_sql_updates_no_state(session):
+  {==}
+
+law claim_and_release_are_distinct_transitions:
+  for session: String
+  {String.eq(claim_sql(session),release_sql(session)) == False{} : Bool}
+
+def claim_and_release_are_distinct_transitions(session):
+  {==}
+
+law missing_claim_table_reads_empty:
+  for db: String
+  for session: String
+  {read_claim_when_present(db,session,False{}) == IO.pure(String,"") : IO(String)}
+
+def missing_claim_table_reads_empty(db,session):
+  {==}
