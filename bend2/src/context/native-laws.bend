@@ -12,6 +12,9 @@ import ./native-project-policy-laws.bend as NativeProjectPolicyLaws
 import ./native-managed-query-laws.bend as NativeManagedQueryLaws
 import ./service.bend as ContextService
 import ./engines.bend as Eng
+import ../json/canonical.bend as J
+import ../host/process.bend as Process
+import ../git/types.bend as G
 
 law origin_attempt_selects_only_the_recorded_active_owner_attempt:
   {Native.origin_attempt_sql("owner-1") == "SELECT coalesce((SELECT id FROM executions WHERE session='owner-1' AND phase<>'exited' ORDER BY rowid DESC LIMIT 1),'');" : String}
@@ -24,9 +27,6 @@ law a_missing_active_attempt_stays_empty_for_nullable_bootstrap_encoding:
 
 def a_missing_active_attempt_stays_empty_for_nullable_bootstrap_encoding():
   {==}
-import ../json/canonical.bend as J
-import ../host/process.bend as Process
-import ../git/types.bend as G
 
 def fixture_invocation() -> Sel.Invocation:
   Sel.Invocation{"2", "query-1", "owner-1",
