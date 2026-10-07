@@ -32,6 +32,7 @@ const complete = dispatched.map((control, index) => {
   };
   return {
     id: control.id,
+    kind: control.kind,
     descriptorSha256: control.descriptorSha256,
     workToken: control.workToken,
     completed: true,
