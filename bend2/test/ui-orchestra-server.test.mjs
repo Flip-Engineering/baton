@@ -111,7 +111,10 @@ function listen(server) {
 }
 
 function close(server) {
-  return new Promise((resolve) => server.close(resolve));
+  return new Promise((resolve) => {
+    server.close(resolve);
+    server.closeAllConnections();
+  });
 }
 
 test('snapshot binds a selected subtree to the reader and preserves recorded unknowns', async (t) => {
@@ -173,7 +176,7 @@ test('SSE pumps committed rows from owner hints and replays by durable cursor af
   assert.equal(hello?.[1], 'owner-1');
 
   const writer = new DatabaseSync(f.databasePath);
-  writer.exec("INSERT INTO messages(id,sender,recipient,kind,body) VALUES ('outside-scope','sibling','external','guidance','private sibling input');");
+  writer.exec("INSERT INTO messages(id,sender,recipient,kind,body) VALUES ('outside-scope','root','orphan','guidance','private sibling input');");
   notifications.committed();
   let cursorOnly = '';
   const cursorDeadline = Date.now() + 3000;
