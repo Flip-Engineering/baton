@@ -527,15 +527,18 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
 
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
+def retained_consume(+db: String, +player: String, +id: String, +log: String, policy: Logs.Policy, +harness: String, attempt: String, handle: U32, sender: Chan(Result<&1,&1,U32 & String,Unit>), +checkpoint_state: Observer.State, first: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  match checkpoint_state:
+    case Observer.State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}:
+      consume(db,player,id,log,policy,held,False{},handle,harness,guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,"",sender,attempt,checkpoint_state,False{},Nil{},first)
+
 def retained_output(+db: String, +player: String, id: String, +log: String, +harness: String, attempt: String, +handle: U32) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
     +policy : Logs.Policy <- Logs.open(db,player,log)
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     +checkpoint_state : Observer.State <- Observer.restore(db,handle)
     +first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-    match checkpoint_state:
-      case Observer.State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}:
-        consume(db,player,id,log,policy,held,False{},handle,harness,guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,"",sender,attempt,checkpoint_state,False{},Nil{},first)
+    retained_consume(db,player,id,log,policy,harness,attempt,handle,sender,checkpoint_state,first)
 
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
