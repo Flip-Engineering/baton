@@ -452,10 +452,17 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.
     server.on('listening', () => {
       const address = server.address();
       process.stdout.write(JSON.stringify({ host: address.address, port: address.port, readOnly: true }) + '\n');
+      // Second line: the bare URL, read verbatim by `baton2 view`.
+      process.stdout.write(`http://${address.address === '::1' ? '[::1]' : address.address}:${address.port}/\n`);
     });
-    const close = () => server.close(() => process.exit(0));
+    const close = () => { server.close(() => process.exit(0)); server.closeAllConnections?.(); };
     process.on('SIGINT', close);
     process.on('SIGTERM', close);
+    // The launching `view` command holds this process's stdin; when that command
+    // exits the pipe closes and the server stops with it.
+    process.stdin.on('end', close);
+    process.stdin.on('close', close);
+    process.stdin.resume();
   } catch (error) {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 2;
