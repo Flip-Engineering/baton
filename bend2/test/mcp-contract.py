@@ -117,6 +117,18 @@ class McpContract(unittest.TestCase):
         delivered = next(row for row in rows if row['id'] == 'turn-1')
         self.assertEqual(delivered['body'], self.body)
 
+    def test_owner_returns_the_native_holder(self):
+        native = json.loads(self.coord('owner-status').stdout)
+        result = self.tool('baton2_owner')
+        self.assertFalse(result.get('isError', False))
+        self.assertEqual(json.loads(result['content'][0]['text']), native)
+
+    def test_subscribe_returns_the_native_cursor(self):
+        native = json.loads(self.coord('subscribe').stdout)
+        result = self.tool('baton2_subscribe')
+        self.assertFalse(result.get('isError', False))
+        self.assertEqual(json.loads(result['content'][0]['text']), native)
+
     def test_ack_refusal_returns_the_native_cli_output(self):
         cli = self.coord('ack', 'missing-ack', 'root', 'receipt', ok=False)
         self.assertNotEqual(cli.returncode, 0)

@@ -6,6 +6,9 @@ type Command is Data:
   Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String}
   Start{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String, id: String, task: String}
   Receiver{session: String, cmd: String, log: String}
+  Serve{owner: String}
+  OwnerStatus{}
+  Subscribe{}
   DispatchFile{id: String, sender: String, recipient: String, kind: String, path: String}
   DispatchTurn{player: String, id: String, cmd: String, log: String, task: String}
   StatusPretty{}
@@ -329,6 +332,9 @@ def sql(command: Command) -> String:
     case ForceStop{session,id}: ""
     case RunTurn{player,id,cmd,model,effort,cwd,task,log,session}: ""
     case Receive{session,cmd,model,effort,cwd,log,message}: ""
+    case Serve{owner}: ""
+    case OwnerStatus{}: ""
+    case Subscribe{}: ""
     case Start{session,harness,cmd,model,effort,cwd,log,id,task}: ""
     case Receiver{session,cmd,log}: ""
     case DispatchFile{id,sender,recipient,kind,path}: ""
@@ -363,7 +369,7 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"workers"),LegacySubordinates{},
       Bool.pick(Command, String.eq(verb,"players"),Players{},
       Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},
-      Bool.pick(Command, String.eq(verb,"pending"),Pending{},Invalid{})))))))
+      Bool.pick(Command, String.eq(verb,"pending"),Pending{},Bool.pick(Command,String.eq(verb,"owner-status"),OwnerStatus{},Bool.pick(Command,String.eq(verb,"subscribe"),Subscribe{},Invalid{})))))))))
     case +verb <> +id <> Nil{}:
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,"","",""},
       Bool.pick(Command,String.eq(verb,"logs-clean"),LogsClean{id},
@@ -372,7 +378,7 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"delivery"),Delivery{id},
       Bool.pick(Command, String.eq(verb,"worktree"),Worktree{id},
       Bool.pick(Command, String.eq(verb,"turns"),Turns{id},
-      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Bool.pick(Command, String.eq(verb,"observed-usage"),ObservedUsage{id},Invalid{}))))))))))))))
+      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Bool.pick(Command, String.eq(verb,"observed-usage"),ObservedUsage{id},Bool.pick(Command,String.eq(verb,"serve"),Serve{id},Invalid{})))))))))))))))
     case +verb <> +session <> +id <> Nil{}:
       Bool.pick(Command,String.eq(verb,"logs"),Logs{session,id,"",""},
       Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"player"),Bool.or(String.eq(verb,"session"),Bool.or(String.eq(verb,"inbox"),Bool.or(String.eq(verb,"delivery"),Bool.or(String.eq(verb,"turns"),Bool.or(String.eq(verb,"knowledge"),String.eq(verb,"worktree"))))))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"player"),PlayerRead{session},Bool.pick(Command,String.eq(verb,"session"),Session{session},Bool.pick(Command,String.eq(verb,"inbox"),Inbox{session},Bool.pick(Command,String.eq(verb,"delivery"),Delivery{session},Bool.pick(Command,String.eq(verb,"turns"),Turns{session},Bool.pick(Command,String.eq(verb,"knowledge"),KnowledgeRead{session},Worktree{session}))))))},Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Invalid{}))))))
@@ -414,6 +420,25 @@ law help_flag_selects_the_help_command:
   {parse(["--help"]) == Help{} : Command}
 
 def help_flag_selects_the_help_command():
+  {==}
+
+law serve_parser_keeps_the_owner_name:
+  for owner: String
+  {parse(["serve",owner]) == Serve{owner} : Command}
+
+def serve_parser_keeps_the_owner_name(owner):
+  {==}
+
+law owner_status_parser_selects_the_status_command:
+  {parse(["owner-status"]) == OwnerStatus{} : Command}
+
+def owner_status_parser_selects_the_status_command():
+  {==}
+
+law subscribe_parser_selects_the_subscribe_command:
+  {parse(["subscribe"]) == Subscribe{} : Command}
+
+def subscribe_parser_selects_the_subscribe_command():
   {==}
 
 law message_parser_preserves_the_complete_body:

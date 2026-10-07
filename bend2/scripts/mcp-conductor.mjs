@@ -320,6 +320,16 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
+    name: 'baton2_owner',
+    description: 'Show the recorded shared owner and generation for this database.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'baton2_subscribe',
+    description: 'Show the subscription cursor for this database: holder, highest committed change and readiness. Carries no row bodies.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'baton2_push',
     description: 'Push a branch to a remote after landing.',
     inputSchema: {
@@ -558,6 +568,12 @@ function handleToolCall(msg) {
         break;
       case 'baton2_pending':
         result = coord('pending');
+        break;
+      case 'baton2_owner':
+        result = coord('owner-status');
+        break;
+      case 'baton2_subscribe':
+        result = coord('subscribe');
         break;
       case 'baton2_push':
         result = coord('push', args.repo, args.branch, args.remote);

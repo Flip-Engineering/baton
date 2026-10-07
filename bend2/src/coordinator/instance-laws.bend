@@ -80,6 +80,36 @@ law owner_status_reads_the_single_held_claim:
 def owner_status_reads_the_single_held_claim():
   {==}
 
+law held_claim_is_not_deposed:
+  {Instance.deposed("{\"owner\":\"x\"}") == False{} : Bool}
+
+def held_claim_is_not_deposed():
+  {==}
+
+law missing_claim_is_deposed:
+  {Instance.deposed("") == True{} : Bool}
+
+def missing_claim_is_deposed():
+  {==}
+
+law change_presence_checks_the_projection_table:
+  {Instance.changes_present_sql() == "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='native_changes';" : String}
+
+def change_presence_checks_the_projection_table():
+  {==}
+
+law change_cursor_reads_the_highest_committed_change:
+  {Instance.changes_cursor_sql() == "SELECT coalesce(max(change_id),0) FROM native_changes;" : String}
+
+def change_cursor_reads_the_highest_committed_change():
+  {==}
+
+law empty_holder_subscribes_unready_without_a_cursor:
+  {Instance.subscribe_answer("null","0") == "{\"holder\":null,\"change_id\":0,\"ready\":0}" : String}
+
+def empty_holder_subscribes_unready_without_a_cursor():
+  {==}
+
 # The serve loop heartbeat write is covered by the executed serve gate:
 # a scratched database asserts the heartbeat refreshes on every iteration
 # and a lapsed claim is recoverable. The pure heartbeat statement keeps its
@@ -150,6 +180,12 @@ law owner_status_verb_selects_the_owner_entry:
   {Instance.serve_verb("owner-status") == True{} : Bool}
 
 def owner_status_verb_selects_the_owner_entry():
+  {==}
+
+law subscribe_verb_selects_the_owner_entry:
+  {Instance.serve_verb("subscribe") == True{} : Bool}
+
+def subscribe_verb_selects_the_owner_entry():
   {==}
 
 law receive_verb_leaves_the_owner_entry:

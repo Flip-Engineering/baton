@@ -105,17 +105,32 @@ def serve_step(+db: String, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, 
       task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,serve_session(db,id))
       recurse(id,Con{task,tasks})
 
+# An empty heartbeat answer means the claim row is gone or belongs to
+# another holder: this invocation is deposed. Custody follows the claim
+# row and the per-session locks; a holder that lost its row joins its
+# forked tasks and reports the loss.
+def deposed(+beat: String) -> Bool:
+  String.is_empty(beat)
+
+def serve_fenced(+db: String, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, +id: String, gone: Bool, recurse: String -> List<Chan(Result<&1,&1,U32 & String,Unit>)> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match gone:
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      joined : Result<&1,&1,U32 & String,Unit> <- join_all(tasks)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(joined,Fail{(2,"The owner claim lapsed; this invocation stopped instead of running on. Read owner status and serve again.")}))
+    case False{}: serve_step(db,tasks,id,String.is_empty(id),recurse)
+
 # The cursor advances through store input read back from the database, as in
 # the receive entry, so the loop carries the same marker. The heartbeat
 # write precedes discovery on every iteration, bounding row staleness to one
-# session task.
+# session task, and the fence stops a deposed holder before further work.
 @unsafe
 def serve_loop(+db: String, +owner: String, cursor: String, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     beat : String <- IO.try(String,DB.Sql.query(db,heartbeat_sql(owner)))
     next : String <- IO.try(String,DB.Sql.query(db,next_session_sql(cursor)))
     +id : String <- IO.pure(String,Tx.trim_nl(next))
-    serve_step(db,tasks,id,String.is_empty(id),next_id => next_tasks => serve_loop(db,owner,next_id,next_tasks))
+    +held : String <- IO.pure(String,Tx.trim_nl(beat))
+    serve_fenced(db,tasks,id,deposed(held),next_id => next_tasks => serve_loop(db,owner,next_id,next_tasks))
 
 def serve_owned(+db: String, +owner: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -139,10 +154,45 @@ def status_unit(+db: String) -> IO(Unit):
     saved : String <- owner_status(db)
     IO.write(saved)
 
+# The subscription cursor for readers of this database: the holder record,
+# the highest committed change and holder readiness. No row bodies cross
+# this boundary; readers fetch rows through their own scope. The change
+# table belongs to the projection owner, so its presence is checked before
+# the cursor reads it.
+def changes_present_sql() -> String:
+  "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='native_changes';"
+
+def changes_cursor_sql() -> String:
+  "SELECT coalesce(max(change_id),0) FROM native_changes;"
+
+def read_cursor_when_present(+db: String, present: Bool) -> IO(String):
+  match present:
+    case False{}: IO.pure(String,"0")
+    case True{}: do IO<String>:
+      cursor : String <- IO.try(String,DB.Sql.query(db,changes_cursor_sql()))
+      IO.pure(String,Tx.trim_nl(cursor))
+
+def subscribe_answer(+holder: String, +cursor: String) -> String:
+  "{\"holder\":" ++ Tx.trim_nl(holder) ++ ",\"change_id\":" ++ cursor ++ ",\"ready\":" ++ Bool.pick(String,String.eq(Tx.trim_nl(holder),"null"),"0","1") ++ "}"
+
+def subscribe(+db: String) -> IO(String):
+  do IO<String>:
+    +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    holder : String <- IO.try(String,DB.Sql.query(canonical,guarded(owner_status_sql())))
+    present : String <- IO.try(String,DB.Sql.query(canonical,changes_present_sql()))
+    cursor : String <- read_cursor_when_present(canonical,String.eq(present,"1\n"))
+    IO.pure(String,subscribe_answer(holder,cursor))
+
+def subscribe_unit(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- subscribe(db)
+    IO.write(saved)
+
 def serve_verb(+verb: String) -> Bool:
-  Bool.or(String.eq(verb,"serve"),String.eq(verb,"owner-status"))
+  Bool.or(String.eq(verb,"serve"),Bool.or(String.eq(verb,"owner-status"),String.eq(verb,"subscribe")))
 
 def route(+db: String, +verb: String, +owner: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(verb,"serve"),serve_unit(db,owner),
   Bool.pick(IO(Unit),String.eq(verb,"owner-status"),status_unit(db),
-  IO.die(Unit,2,"Unknown instance command; use serve SESSION-OWNER or owner-status.")))
+  Bool.pick(IO(Unit),String.eq(verb,"subscribe"),subscribe_unit(db),
+  IO.die(Unit,2,"Unknown instance command; use serve SESSION-OWNER, owner-status or subscribe."))))

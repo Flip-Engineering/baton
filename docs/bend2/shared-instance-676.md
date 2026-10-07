@@ -16,6 +16,15 @@ original completion missing from coordinator storage after keeper loss
 
 ## Design
 
+One persistent owner process holds each canonical Orchestra database.
+That process is the host custody effect (`Instance.owner`), which owns
+provider children, lock evidence and the wake transport across
+invocations. The coordinator `serve` invocation is the per-wake driver:
+it claims the SQL row, runs owned session tasks, then releases the row
+and exits. Serve never spins waiting for work and never parks; later
+input re-invokes it through the owner-hosted commit notification once
+that transport lands.
+
 One `serve` invocation holds each canonical Orchestra database:
 
 - `Instance.claim_sql` (`bend2/src/coordinator/instance.bend`) records the
@@ -31,7 +40,11 @@ One `serve` invocation holds each canonical Orchestra database:
   refuse together; the custody election owns liveness past that point.
 - Liveness is held by the host custody election in the stable per-user IPC
   directory keyed by the database physical identity. The SQL row records
-  the live holder for status and crash recovery.
+  the live holder for status and crash recovery. The lapse bound
+  garbage-collects stale rows; fencing carries safety. Every serve
+  iteration verifies its own row; a holder that lost its row joins its
+  forked tasks and reports the loss, and the per-session locks refuse a
+  second claimant's tasks with `queued`.
 - `Instance.serve_loop` writes its heartbeat, then reads
   `Instance.next_session_sql` cursors and forks one
   `Instance.serve_session` task per session that holds unacknowledged
@@ -104,11 +117,21 @@ reported on their own lines, apart from resident and private figures.
 ## Contracts and shared hunks
 
 - `native685-muse-conductor-20261006` (owns `receive.bend`, `wake.bend`,
-  `control.bend`, `store.bend`, pending-input tests): confirm the serve
-  seam. `Instance.serve_session` calls public `Receive.run`. If the shared
-  design needs a variant that assumes the owner claim is held, or a `store`
-  routing change for owner-committed input, send the exact function
-  signature and SQL. This lane makes no edits in those files.
+  `control.bend`, `store.bend`, pending-input tests): owner and
+  attempt-fenced admission contract. This lane guarantees the serve
+  driver holds the `instance_owner` row (owner, generation, heartbeat)
+  for every task it forks, verifies the row each iteration, and stops
+  when deposed. The wake claim path needs the same fencing from its
+  writer: record the holder identity (owner, generation, attempt
+  directory) beside each session claim; release, clear and `claim_left`
+  act only when the caller presents the recorded identity; the launch
+  handoff carries that identity so a second driver cannot launch between
+  claim and handoff. This lane makes no edits in those files.
+- Ordinary routing is implemented in this lane: `serve`, `owner-status`
+  and `subscribe` commands in `commands.bend`, entry arms in `main.bend`,
+  and `baton2_owner` plus `baton2_subscribe` tools in
+  `mcp-conductor.mjs`. The `subscribe` answer carries holder, highest
+  committed change and readiness only; no row bodies cross it.
 - Root Luna `native_observation_repair_luna` (owns `turn.bend`): the serve
   path uses `Turn` only through `Receive.run`. A serve-mode custody variant
   of the retained attempt needs its signature from that owner.
@@ -132,20 +155,14 @@ reported on their own lines, apart from resident and private figures.
   generation, spool bytes, checkpoint offset, status and observation
   ownership for any number of readers; a duplicate admission takes that
   reference, not a second child.
-- CLI wiring for composition (unapplied in this lane; `commands.bend`
-  keeps its current `Command` type unchanged). Add the import and the
-  `route_or_store` arm in `bend2/src/coordinator/main.bend`:
-  `import ./instance.bend as Instance`, replace the `case db <> rest`
-  arm of `normal_cli` with `route_or_store(db,rest)`, and add
-  `def route_or_store(+db: String, args: List<String>) -> IO(Unit):`
-  matching `case +verb <> Nil{}` to `owner-status` via
-  `Instance.status_unit(db)`, matching `case +verb <> +owner <> Nil{}`
-  to `serve` via `Instance.serve_unit(db,owner)`, and passing every
-  other shape to `execute(db,C.parse(args))`.
-- MCP wiring for composition: one `baton2_owner` tool in
-  `bend2/scripts/mcp-conductor.mjs` calling `coord('owner-status')`
-  through the existing helper, listed by `tools/list` beside the current
-  tools.
+- CLI wiring is implemented: `Serve`, `OwnerStatus` and `Subscribe`
+  commands with `sql` arms returning no statement, `parse` arms for
+  `serve OWNER`, `owner-status` and `subscribe`, entry arms in `main.bend`
+  and usage lines. `commands.schema()` is unchanged; the owner table is
+  created inside the guarded claim transactions.
+- MCP wiring is implemented: `baton2_owner` and `baton2_subscribe` tools
+  in `mcp-conductor.mjs` calling `coord('owner-status')` and
+  `coord('subscribe')` through the existing helper.
 
 ## Scope of this change
 
@@ -157,8 +174,9 @@ claim commit show 22 of 22 proof removals refused and 5 of 5 targeted
 implementation mutations refused (lapse deletion, duplicate admission,
 refusal prefix, serve verb, stop guard). These five mutations are
 proposed for `bend2/scripts/laws-check.mjs` composition under the same
-names with the `instance.bend` file and the laws named here. The serve
-loop heartbeat write is covered by an executed serve gate on a
-scratched database once CLI routing lands. CLI verb wiring, MCP tool
-wiring, custody implementation, and workload measurements follow
-through the contracts above.
+names with the `instance.bend` file and the laws named here. The
+`instance-serve` CLI tests cover the serve heartbeat, the deposed stop
+and the subscribe cursor on scratched databases. Custody
+implementation, the owner-hosted wake transport and workload
+measurements follow through the contracts above. This branch stays on
+its base; root composes the merge onto the current primary.
