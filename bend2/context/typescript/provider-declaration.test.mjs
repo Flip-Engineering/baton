@@ -365,6 +365,29 @@ test('every named document cites the validator it mirrors', () => {
       [...row.sourceLines].sort(),
       `${row.sourcePath} and the manifest cite the same lines`,
     );
+    const source = document.sourceContract.source;
+    assert.equal(typeof source?.validator, 'string', `${row.sourcePath} carries the source member`);
+    assert.ok(source.validator.length > 0, `${row.sourcePath} names the mirrored function`);
+    assert.deepEqual(
+      [...source.lines].sort(),
+      [...row.sourceLines].sort(),
+      `${row.sourcePath} repeats its citations in the source member`,
+    );
+    assert.equal(typeof source.detail, 'string', `${row.sourcePath} carries the secondary-source prose`);
+    assert.ok(source.detail.length > 0, `${row.sourcePath} keeps the secondary-source prose in the source member`);
+    for (const file of row.secondaryFiles) {
+      assert.ok(
+        source.detail.includes(file),
+        `${row.sourcePath} names the secondary file ${file} in source.detail`,
+      );
+    }
+    if (row.secondaryFiles.length === 0) {
+      assert.match(
+        source.detail,
+        /no secondary source/,
+        `${row.sourcePath} states that it has no secondary source`,
+      );
+    }
     assert.match(document.sourceContract.drift, /authority|mirror/, `${row.sourcePath} carries the drift note`);
     assert.equal(document.$id, undefined, 'an unadmitted document names no admitted identity');
   }

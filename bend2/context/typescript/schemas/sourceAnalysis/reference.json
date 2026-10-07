@@ -3,8 +3,13 @@
   "title": "TypeScript provider source reference",
   "description": "One ref of the result, mirrored from the ref the provider builds and from the validation that admits it.",
   "sourceContract": {
-    "authority": "bend2/context/typescript/lib/protocol.mjs (validateResult :265-277); the ref is built by lib/refs.mjs:16-23 and deduplicated by lib/query.mjs:99-105",
+    "authority": "bend2/context/typescript/lib/protocol.mjs",
     "lines": ["265-277", "16-23", "99-105"],
+    "source": {
+      "validator": "validateResult",
+      "lines": ["265-277", "16-23", "99-105"],
+      "detail": "the ref builder is lib/refs.mjs:16-23 and the deduplication is lib/query.mjs:99-105"
+    },
     "drift": "validateResult is the authority for admission and refs.mjs is the authority for the members a ref carries; this document is their admitted mirror, so a change to either requires a change here. A ref names a supported subject selector and the projections admitted for it (:2-4), its id is the canonical JSON array of that selector's fields and is opaque to a consumer, and its snapshot identity is the one in use (:271-277).",
     "identityNote": "no $id is set: the admitted identity is a hole for package admission to fill, named by the inventory it admits.",
     "crossFieldRules": [

@@ -5,6 +5,11 @@
   "sourceContract": {
     "authority": "bend2/context/typescript/lib/protocol.mjs",
     "lines": ["54-56", "74", "89-97", "158-200", "200-210"],
+    "source": {
+      "validator": "validateRequest",
+      "lines": ["54-56", "74", "89-97", "158-200", "200-210"],
+      "detail": "no secondary source: the options member is admitted and normalized by validateRequest alone, through the option key sets (:54-56), the engine table (:74) and the options normalization (:158-200), with the operation binding at (:200-210)"
+    },
     "drift": "validateRequest is the authority and this document is its admitted mirror: a change to those lines requires a change here. Allowed keys are exactly OPTION_KEYS (:54, rejectUnknownKeys :158-162); the keys the C engine owns are refused by name for this engine (:55, :161-163); project defaults to the empty string when absent (:161); every read root is a nonempty string (:164-170); database admits the two DATABASE_ENGINES only (:74, :171-189) and carries path for sqlite-schema and connectionFile for postgres-schema; client carries a nonempty path with line and column defaulting to zero (:190-198); effects are a request member, not an option (:202-207).",
     "operationBinding": {
       "operation": "sourceAnalysis",

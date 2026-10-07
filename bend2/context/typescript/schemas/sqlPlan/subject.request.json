@@ -5,6 +5,11 @@
   "sourceContract": {
     "authority": "bend2/context/typescript/lib/protocol.mjs",
     "lines": ["49", "57-61", "70-73", "89-97", "106-131"],
+    "source": {
+      "validator": "validateRequest",
+      "lines": ["49", "57-61", "70-73", "89-97", "106-131"],
+      "detail": "no secondary source: the subject member is admitted and normalized by validateRequest alone, through the kind table (:57-61), the suffix rule (:70-73) and the subject normalization (:106-131)"
+    },
     "drift": "protocol.mjs validateRequest is the authority and this document is its admitted mirror: a change to those lines requires a change here. Allowed keys are exactly the SUBJECT_KEYS entry of the kind (:57-61). Every kind carries a nonempty path whose suffix is in SOURCE_SUFFIXES (:49, sourceSuffixMatches :70-73); position and diagnostic carry line and column as u32 (:117-120); symbol carries a nonempty name and a container string that defaults to the empty string (:121-124); diagnostic carries a nonempty code (:125-127).",
     "identityNote": "no $id is set: the admitted identity is a hole for package admission to fill, named by the inventory it admits.",
     "crossFieldRules": [
