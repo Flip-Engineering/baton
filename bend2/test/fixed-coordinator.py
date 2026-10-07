@@ -153,7 +153,7 @@ class FixedCoordinator(unittest.TestCase):
         outcome = getattr(self, '_outcome', None)
         failed = False
         if outcome is not None:
-            for _, error in getattr(outcome, 'errors', []):
+            for _, error in list(getattr(outcome, 'errors', [])) + list(getattr(outcome, 'failures', [])):
                 if error is not None:
                     failed = True
         if failed and hasattr(self, 'directory'):
