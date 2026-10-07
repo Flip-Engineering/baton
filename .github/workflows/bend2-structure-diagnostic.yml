@@ -75,7 +75,7 @@ jobs:
           bend="$run/toolchain-home/bin/bend"
           for module in src/git/land.bend src/git/landing.bend src/git/association.bend src/git/intent.bend src/git/intent-publish.bend src/git/attempt.bend src/git/types.bend; do
             name=$(printf '%s' "$module" | tr '/' '_')
-            ( cd "$GITHUB_WORKSPACE/bend2" && timeout 900 "$bend" "$module" --check-only ) \
+            ( cd "$GITHUB_WORKSPACE/bend2" && "$bend" "$module" --check-only ) \
               > "$run/evidence/$name.stdout" 2> "$run/evidence/$name.stderr"
             echo "$?" > "$run/evidence/$name.exit"
             echo "== $module exit $(cat "$run/evidence/$name.exit")"
