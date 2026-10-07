@@ -721,8 +721,8 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(len(owners), 1, owners)
         os.kill(int(owners[0].split()[0]), signal.SIGKILL)
 
-    def adoption_refusal(self, directory):
-        result = self.command('attach-owned', self.db, directory)
+    def adoption_refusal(self, directory, database=None):
+        result = self.command('attach-owned', database or self.db, directory)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         detail = (result.stdout + result.stderr).strip().replace('\n', '|')
         self.assertNotIn('attached', detail, detail)
@@ -925,9 +925,8 @@ class SharedInstance(unittest.TestCase):
         self.kill_owner()
         observer.kill()
         observer.wait(timeout=10)
-        result = self.command('attach-owned', other, bound)
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('belongs to another database', result.stdout + result.stderr)
+        detail = self.adoption_refusal(bound, database=other)
+        self.assertIn('belongs to another database', detail, detail)
         adopter = self.spawn('attach-owned', self.db, bound)
         self.attach_owned_adopt(bound, adopter)
         self.assertEqual([row['pid'] for row in self.native_rows(adopter)], [summary['pid']],
