@@ -57,14 +57,19 @@ directory is not.
 
 The owner holds the database descriptor for its lifetime and removes its socket
 and record when it exits. Liveness is the election lock and the socket, never a
-heartbeat or an elapsed time.
+heartbeat or an elapsed time. A process that loses the election removes nothing:
+only the process that created a socket or record may remove it, so a second
+client's failed election cannot make the elected owner unreachable.
 
 ## Handshake
 
 A client reads `<key>.record` after connecting and refuses a reply whose token or
 epoch differs, so a socket left behind by an earlier owner incarnation is
 rejected. A request carries the expected token and epoch; a mismatch is `ESTALE`,
-and the client re-reads the record and retries exactly once.
+and the client re-reads the record and retries exactly once. When a database's
+election lock is held but no socket answers it after a short grace period, the
+client refuses with `EBUSY` and names the socket pathname it tried, instead of
+waiting for a connect timeout.
 
 ## Bend surface
 
@@ -171,7 +176,10 @@ is not reused.
 - Three concurrent attempts produce three distinct native processes whose parent
   is the single owner process for the database, and each attempt sees only its
   own input.
-- A second owner for the same database is refused while the first holds it.
+- A second owner for the same database is refused while the first holds it, and
+  the election directory the owner created is mode 0700, owned by the effective
+  uid, and keyed by the database's `(st_dev, st_ino)`; the record's device,
+  inode, epoch and socket pathname match the elected incarnation.
 - A hard link to the database elects the owner already running: a second owner
   through the alias is refused, and an attempt admitted through the alias path
   runs under the same owner process.
