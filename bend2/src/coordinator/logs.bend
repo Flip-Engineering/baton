@@ -258,7 +258,9 @@ def codex_frame_id(db: String, line: String) -> IO(String):
     IO.pure(String,Tx.trim_nl(found))
 
 def frame_id_for(db: String, line: String, omp: Bool, kind: String) -> IO(String):
-  Bool.pick(IO(String),codex_kind(kind),codex_frame_id(db,line),frame_id(db,line,omp))
+  match codex_kind(kind):
+    case True{}: codex_frame_id(db,line)
+    case False{}: frame_id(db,line,omp)
 
 # The identity is read for a frame the policy holds or closes, and for a
 # classified native command frame carrying its own command id.
