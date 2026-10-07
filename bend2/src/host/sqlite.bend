@@ -14,7 +14,7 @@ def Sql.binding(path: String) -> IO(Result<&1, &1, U32 & String, String>):
 # tuple and a caller supplied role digest. The returned descriptor holds the
 # physical role until the caller closes it or exits; owner incarnation must be
 # checked separately at each owner work admission.
-def Sql.role_guard(path: String, binding: String, role_key: String) -> IO(U32):
+def Sql.role_guard(path: String, binding: String, role_key: String) -> IO(Result<&1, &1, U32 & String, U32>):
   import "./sqlite.c"
 
 # Observes the binding of `path` on a fresh connection and compares it with

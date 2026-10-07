@@ -433,14 +433,20 @@ def role_identity_cli(args: List<String>) -> IO(Unit):
     case Nil{}: IO.print(Identity.physical_role_identity(Identity.SubjectCoordinator{},Identity.RoleCoordinator{}))
     case _: IO.die(Unit,2,"role-identity")
 
-def role_guard_cli(args: List<String>) -> IO(Unit):
-  match args:
-    case path <> binding <> key <> Nil{}: do IO<Unit>:
-      handle : U32 <- IO.try(U32,DB.Sql.role_guard(path,binding,key))
+def role_guard_result(result: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+  match result:
+    case Fail{(code,text)}: IO.die(Unit,code,text)
+    case Done{+handle}: do IO<Unit>:
       printed : Unit <- IO.print("role-held")
       gate : String <- IO.try(String,Text.Text.read("-"))
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
       IO.print("role-released")
+
+def role_guard_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case path <> binding <> key <> Nil{}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,U32> <- DB.Sql.role_guard(path,binding,key)
+      role_guard_result(result)
     case _: IO.die(Unit,2,"role-guard DATABASE BINDING SHA256")
 
 def file_started(start: P.RetainedStart) -> IO(Unit):
