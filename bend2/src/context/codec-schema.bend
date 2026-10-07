@@ -628,214 +628,6 @@ def leaf_admit(+form: SchemaForm, +value: Codec.RawValue) -> SchemaVerdict:
         case other: SvRefused{"wrongKind"}
     case other: SvRefused{"wrongKind"}
 
-# A record spine admits an object member spine in order. The head field meets
-# the head member: equal names admit the value and advance both spines, and a
-# name mismatch refuses. An empty member spine admits exactly when no required
-# field remains, which the covered check decides.
-# Nested value admission: the general walk for values inside fields, array
-# elements and dict members. Substitution inlines bound references before any
-# walk, so a reference here is unbound and refused. Records sort members into
-# field order before the fused fields loop; arrays, dicts and unions loop
-# through fused value matches. A union miss rebuilds the member spine from
-# its binders and continues with the remaining cases.
-def nest_admit(+form: SchemaForm, +value: Codec.RawValue) -> SchemaVerdict:
-  match form:
-    case SfScalar{kind}:
-      scalar_admit(kind, value)
-    case SfEnum{literals}:
-      enum_admit(literals, value)
-    case SfJson{}:
-      json_walk(value, "value")
-    case SfRequired{name, fform}:
-      nest_admit(fform, value)
-    case SfOptionalField{name, fform}:
-      nest_admit(fform, value)
-    case SchemaCase{tag, fform}:
-      nest_admit(fform, value)
-    case SfOptional{inner}:
-      Bool.pick(SchemaVerdict, input_is_null(value), SvOk{}, nest_admit(inner, value))
-    case SfRef{+name}:
-      SvRefused{"unknownReference"}
-    case SfRecord{+fields}:
-      match value:
-        case Codec.Robj{+members}:
-          Bool.pick(SchemaVerdict, keys_unique(members),
-            Bool.pick(SchemaVerdict, members_declared(field_names(fields), members),
-              Bool.pick(SchemaVerdict, fields_covered(fields, members),
-                nest_admit(fields, build_sorted(fields, members)),
-                SvRefused{"missingField"}),
-              SvRefused{"undeclaredField"}),
-            SvRefused{"duplicateKey"})
-        case Codec.Rnil{}:
-          Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
-        case other: SvRefused{"wrongKind"}
-    case SfFieldsCons{head, tail}:
-      match head:
-        case SfRequired{name, fform}:
-          match value:
-            case Codec.Rnil{}:
-              Bool.pick(SchemaVerdict, fields_covered(tail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
-            case Codec.Rpair{k, v, t}:
-              Bool.pick(SchemaVerdict, String.eq(name, k),
-                verdict_first(nest_admit(fform, v), nest_admit(tail, t)),
-                SvRefused{"missingField"})
-            case other: SvRefused{"wrongKind"}
-        case SfOptionalField{name, fform}:
-          match value:
-            case Codec.Rnil{}:
-              Bool.pick(SchemaVerdict, fields_covered(tail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
-            case Codec.Rpair{k, v, t}:
-              Bool.pick(SchemaVerdict, String.eq(name, k),
-                verdict_first(nest_admit(fform, v), nest_admit(tail, t)),
-                nest_admit(tail, value))
-            case other: SvRefused{"wrongKind"}
-        case other:
-          match value:
-            case Codec.Rpair{k, v, t}: SvRefused{"declarationRefused"}
-            case Codec.Rnil{}:
-              Bool.pick(SchemaVerdict, fields_covered(tail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
-            case other: SvRefused{"wrongKind"}
-    case SfFieldsNil{}:
-      match value:
-        case Codec.Rnil{}: SvOk{}
-        case Codec.Rpair{k, v, t}: SvRefused{"undeclaredField"}
-        case other: SvRefused{"wrongKind"}
-    case SfUnion{cases}:
-      match value:
-        case Codec.Robj{+members}:
-          Bool.pick(SchemaVerdict, members_singleton(members),
-            nest_admit(cases, members),
-            SvRefused{"wrongKind"})
-        case other: SvRefused{"wrongKind"}
-    case SfCasesCons{SchemaCase{bound, f}, ctail}:
-      match value:
-        case Codec.Rpair{tag, payload, tail}:
-          Bool.pick(SchemaVerdict, String.eq(tag, bound),
-            nest_admit(f, payload),
-            nest_admit(ctail, Codec.Rpair{tag, payload, tail}))
-        case other: SvRefused{"wrongKind"}
-    case SfCasesCons{other, ctail}:
-      SvRefused{"declarationRefused"}
-    case SfCasesNil{}:
-      match value:
-        case Codec.Rpair{tag, payload, tail}: SvRefused{"unknownTag"}
-        case other: SvRefused{"wrongKind"}
-    case SfArray{item}:
-      match value:
-        case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: SvOk{}
-        case Codec.Rarr{+h, +t}:
-          verdict_first(nest_admit(item, h), nest_admit(form, t))
-        case Codec.Rnil{}: SvOk{}
-        case other: SvRefused{"wrongKind"}
-    case SfDict{keys, vform}:
-      match value:
-        case Codec.Rnil{}: SvOk{}
-        case Codec.Robj{+members}:
-          Bool.pick(SchemaVerdict, keys_unique(members),
-            Bool.pick(SchemaVerdict, dict_keys_ok(keys, members),
-              nest_admit(form, members),
-              SvRefused{"dictKeyRefused"}),
-            SvRefused{"duplicateKey"})
-        case Codec.Rpair{+key, +found, +tail}:
-          verdict_first(nest_admit(vform, found),
-            nest_admit(form, tail))
-        case other: SvRefused{"wrongKind"}
-
-# A sorted member spine admits against the field spine in order. A present
-# member admits its value and both spines advance; an absent optional field
-# skips its field. A required field with no member refuses.
-def sorted_loop(+defs: SchemaDefs, +fields: SchemaForm, +sorted: Codec.RawValue) -> SchemaVerdict:
-  match fields:
-    case SfFieldsCons{SfRequired{name, fform}, ftail}:
-      match sorted:
-        case Codec.Rnil{}:
-          Bool.pick(SchemaVerdict, fields_covered(ftail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
-        case Codec.Rpair{k, v, t}:
-          Bool.pick(SchemaVerdict, String.eq(name, k),
-            verdict_first(nest_admit(fform, v), sorted_loop(defs, ftail, t)),
-            SvRefused{"missingField"})
-        case other: SvRefused{"wrongKind"}
-    case SfFieldsCons{SfOptionalField{name, fform}, ftail}:
-      match sorted:
-        case Codec.Rnil{}:
-          Bool.pick(SchemaVerdict, fields_covered(ftail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
-        case Codec.Rpair{k, v, t}:
-          Bool.pick(SchemaVerdict, String.eq(name, k),
-            verdict_first(nest_admit(fform, v), sorted_loop(defs, ftail, t)),
-            sorted_loop(defs, ftail, sorted))
-        case other: SvRefused{"wrongKind"}
-    case SfFieldsNil{}:
-      match sorted:
-        case Codec.Rnil{}: SvOk{}
-        case Codec.Rpair{k, v, t}: SvRefused{"undeclaredField"}
-        case other: SvRefused{"wrongKind"}
-    case other:
-      match sorted:
-        case Codec.Rnil{}:
-          Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
-        case Codec.Rpair{k, v, t}: SvRefused{"declarationRefused"}
-        case other: SvRefused{"wrongKind"}
-
-# A record spine admits an object member spine in field-declaration order. The
-# members sort first, so declaration order never refuses a closed object.
-def fields_admit(defs: SchemaDefs, +fields: SchemaForm, +members: Codec.RawValue) -> SchemaVerdict:
-  match members:
-    case Codec.Rnil{}:
-      Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
-    case Codec.Rpair{k, v, t}:
-      Bool.pick(SchemaVerdict, fields_covered(fields, members),
-        sorted_loop(defs, fields, build_sorted(fields, members)),
-        SvRefused{"missingField"})
-    case other: SvRefused{"wrongKind"}
-
-# A record value admits through the member checks and the field spine. The
-# declared check stays outside the field walk, so dropping it admits more.
-def record_enter_helper(+defs: SchemaDefs, +fields: SchemaForm, +input: Codec.RawValue) -> SchemaVerdict:
-  match input:
-    case Codec.Robj{+members}:
-      Bool.pick(SchemaVerdict, keys_unique(members),
-        Bool.pick(SchemaVerdict, members_declared(field_names(fields), members), fields_admit(defs, fields, members), SvRefused{"undeclaredField"}),
-        SvRefused{"duplicateKey"})
-    case Codec.Rnil{}:
-      Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
-    case other: SvRefused{"wrongKind"}
-
-# An array tail admits element by element: the previous head admits, then the
-# rest continues with its own head. The rest shrinks on every self-call, so the
-# previous head rides past the shrink.
-def array_tail_admit(+defs: SchemaDefs, +item: SchemaForm, +rest: Codec.RawValue, +prev: Codec.RawValue) -> SchemaVerdict:
-  match rest:
-    case Codec.Rnil{}: nest_admit(item, prev)
-    case Codec.Rarr{+h, +t}: verdict_first(nest_admit(item, prev), array_tail_admit(defs, item, t, h))
-    case other: SvRefused{"wrongKind"}
-
-# An array head admits and the tail continues through the tail loop on the
-# same item form.
-def array_head_admit(+defs: SchemaDefs, +item: SchemaForm, +head: Codec.RawValue, +tail: Codec.RawValue) -> SchemaVerdict:
-  match tail:
-    case Codec.Rnil{}: nest_admit(item, head)
-    case Codec.Rarr{+h, +t}: verdict_first(nest_admit(item, head), array_tail_admit(defs, item, t, h))
-    case other: SvRefused{"wrongKind"}
-
-# An array value admits on the empty sentinel or through the head loop.
-def array_enter_helper(+defs: SchemaDefs, +item: SchemaForm, +input: Codec.RawValue) -> SchemaVerdict:
-  match input:
-    case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: SvOk{}
-    case Codec.Rarr{+head, +tail}: array_head_admit(defs, item, head, tail)
-    case other: SvRefused{"wrongKind"}
-
-# A dictionary member spine admits when every member value admits the value
-# form. Declared keys are checked by the caller.
-def dict_member_admit(+value: SchemaForm, +members: Codec.RawValue) -> SchemaVerdict:
-  match members:
-    case Codec.Rnil{}: SvOk{}
-    case Codec.Rpair{+key, +found, +tail}:
-      verdict_first(nest_admit(value, found), dict_member_admit(value, tail))
-    case other: SvRefused{"wrongKind"}
-
-def json_admit(value: Codec.RawValue) -> SchemaVerdict:
-  json_walk(value, "value")
-
 # Append two definition spines. The left spine rebuilds cell by cell, so each
 # input node below contributes fresh fuel cells.
 def fuel_append(+left: SchemaDefs, +right: SchemaDefs) -> SchemaDefs:
@@ -859,6 +651,331 @@ def input_fuel(+input: Codec.RawValue, +defs: SchemaDefs) -> SchemaDefs:
     case Codec.Rfalse{}: defs
     case Codec.Rnull{}: defs
     case other: DefsNil{}
+
+# A record spine admits an object member spine in order. The head field meets
+# the head member: equal names admit the value and advance both spines, and a
+# name mismatch refuses. An empty member spine admits exactly when no required
+# field remains, which the covered check decides.
+# Nested value admission: the general walk for values inside fields, array
+# elements and dict members. Substitution inlines bound references before any
+# walk, so a reference here is unbound and refused. Records sort members into
+# field order before the fused fields loop; arrays, dicts and unions loop
+# through fused value matches. A union miss rebuilds the member spine from
+# its binders and continues with the remaining cases.
+# Exhausted-fuel nested admission: the same value walk with no unfolding.
+# A reference here is unbound and refused; every other arm descends
+# structurally through subterms. The fuel-first walk delegates here when its
+# fuel spine is empty.
+def nest_nofuel(+form: SchemaForm, +value: Codec.RawValue) -> SchemaVerdict:
+  match form:
+    case SfScalar{kind}:
+      scalar_admit(kind, value)
+    case SfEnum{literals}:
+      enum_admit(literals, value)
+    case SfJson{}:
+      json_walk(value, "value")
+    case SfRequired{name, fform}:
+      nest_nofuel(fform, value)
+    case SfOptionalField{name, fform}:
+      nest_nofuel(fform, value)
+    case SchemaCase{tag, fform}:
+      nest_nofuel(fform, value)
+    case SfOptional{inner}:
+      Bool.pick(SchemaVerdict, input_is_null(value), SvOk{}, nest_nofuel(inner, value))
+    case SfRef{+name}:
+      SvRefused{"unknownReference"}
+    case SfRecord{+fields}:
+      match value:
+        case Codec.Robj{+members}:
+          Bool.pick(SchemaVerdict, keys_unique(members),
+            Bool.pick(SchemaVerdict, members_declared(field_names(fields), members),
+              Bool.pick(SchemaVerdict, fields_covered(fields, members),
+                nest_nofuel(fields, build_sorted(fields, members)),
+                SvRefused{"missingField"}),
+              SvRefused{"undeclaredField"}),
+            SvRefused{"duplicateKey"})
+        case Codec.Rnil{}:
+          Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+        case other: SvRefused{"wrongKind"}
+    case SfFieldsCons{head, tail}:
+      match head:
+        case SfRequired{name, fform}:
+          match value:
+            case Codec.Rnil{}:
+              Bool.pick(SchemaVerdict, fields_covered(tail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+            case Codec.Rpair{k, v, t}:
+              Bool.pick(SchemaVerdict, String.eq(name, k),
+                verdict_first(nest_nofuel(fform, v), nest_nofuel(tail, t)),
+                SvRefused{"missingField"})
+            case other: SvRefused{"wrongKind"}
+        case SfOptionalField{name, fform}:
+          match value:
+            case Codec.Rnil{}:
+              Bool.pick(SchemaVerdict, fields_covered(tail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+            case Codec.Rpair{k, v, t}:
+              Bool.pick(SchemaVerdict, String.eq(name, k),
+                verdict_first(nest_nofuel(fform, v), nest_nofuel(tail, t)),
+                nest_nofuel(tail, value))
+            case other: SvRefused{"wrongKind"}
+        case other:
+          match value:
+            case Codec.Rpair{k, v, t}: SvRefused{"declarationRefused"}
+            case Codec.Rnil{}:
+              Bool.pick(SchemaVerdict, fields_covered(tail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+            case other: SvRefused{"wrongKind"}
+    case SfFieldsNil{}:
+      match value:
+        case Codec.Rnil{}: SvOk{}
+        case Codec.Rpair{k, v, t}: SvRefused{"undeclaredField"}
+        case other: SvRefused{"wrongKind"}
+    case SfUnion{cases}:
+      match value:
+        case Codec.Robj{+members}:
+          Bool.pick(SchemaVerdict, members_singleton(members),
+            nest_nofuel(cases, members),
+            SvRefused{"wrongKind"})
+        case other: SvRefused{"wrongKind"}
+    case SfCasesCons{SchemaCase{bound, f}, ctail}:
+      match value:
+        case Codec.Rpair{tag, payload, tail}:
+          Bool.pick(SchemaVerdict, String.eq(tag, bound),
+            nest_nofuel(f, payload),
+            nest_nofuel(ctail, Codec.Rpair{tag, payload, tail}))
+        case other: SvRefused{"wrongKind"}
+    case SfCasesCons{other, ctail}:
+      SvRefused{"declarationRefused"}
+    case SfCasesNil{}:
+      match value:
+        case Codec.Rpair{tag, payload, tail}: SvRefused{"unknownTag"}
+        case other: SvRefused{"wrongKind"}
+    case SfArray{item}:
+      match value:
+        case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: SvOk{}
+        case Codec.Rarr{+h, +t}:
+          verdict_first(nest_nofuel(item, h), nest_nofuel(form, t))
+        case Codec.Rnil{}: SvOk{}
+        case other: SvRefused{"wrongKind"}
+    case SfDict{keys, vform}:
+      match value:
+        case Codec.Rnil{}: SvOk{}
+        case Codec.Robj{+members}:
+          Bool.pick(SchemaVerdict, keys_unique(members),
+            Bool.pick(SchemaVerdict, dict_keys_ok(keys, members),
+              nest_nofuel(form, members),
+              SvRefused{"dictKeyRefused"}),
+            SvRefused{"duplicateKey"})
+        case Codec.Rpair{+key, +found, +tail}:
+          verdict_first(nest_nofuel(vform, found),
+            nest_nofuel(form, tail))
+        case other: SvRefused{"wrongKind"}
+
+# Fuel-first nested admission. An empty fuel spine delegates to the no-fuel
+# walk where a reference refuses; a cell sheds its tail into the walk so a
+# reference unfolds its bound body along the walked path. Later arguments may
+# grow only after the fuel argument shrinks.
+def nest_admit(+fuel: SchemaDefs, +defs: SchemaDefs, +form: SchemaForm, +value: Codec.RawValue) -> SchemaVerdict:
+  match fuel:
+    case DefsNil{}: nest_nofuel(form, value)
+    case DefsCons{sh, st}:
+      match form:
+        case SfScalar{kind}:
+          scalar_admit(kind, value)
+        case SfEnum{literals}:
+          enum_admit(literals, value)
+        case SfJson{}:
+          json_walk(value, "value")
+        case SfRequired{name, fform}:
+          nest_admit(fuel, defs,fform, value)
+        case SfOptionalField{name, fform}:
+          nest_admit(fuel, defs,fform, value)
+        case SchemaCase{tag, fform}:
+          nest_admit(fuel, defs,fform, value)
+        case SfOptional{inner}:
+          Bool.pick(SchemaVerdict, input_is_null(value), SvOk{}, nest_admit(fuel, defs,inner, value))
+        case SfRef{+name}:
+          Bool.pick(SchemaVerdict, scan_found(defs, name),
+            nest_admit(st, defs, def_body_or(defs, name), value),
+            SvRefused{"unknownReference"})
+        case SfRecord{+fields}:
+          match value:
+            case Codec.Robj{+members}:
+              Bool.pick(SchemaVerdict, keys_unique(members),
+                Bool.pick(SchemaVerdict, members_declared(field_names(fields), members),
+                  Bool.pick(SchemaVerdict, fields_covered(fields, members),
+                    nest_admit(fuel, defs,fields, build_sorted(fields, members)),
+                    SvRefused{"missingField"}),
+                  SvRefused{"undeclaredField"}),
+                SvRefused{"duplicateKey"})
+            case Codec.Rnil{}:
+              Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+            case other: SvRefused{"wrongKind"}
+        case SfFieldsCons{head, tail}:
+          match head:
+            case SfRequired{name, fform}:
+              match value:
+                case Codec.Rnil{}:
+                  Bool.pick(SchemaVerdict, fields_covered(tail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+                case Codec.Rpair{k, v, t}:
+                  Bool.pick(SchemaVerdict, String.eq(name, k),
+                    verdict_first(nest_admit(fuel, defs,fform, v), nest_admit(fuel, defs,tail, t)),
+                    SvRefused{"missingField"})
+                case other: SvRefused{"wrongKind"}
+            case SfOptionalField{name, fform}:
+              match value:
+                case Codec.Rnil{}:
+                  Bool.pick(SchemaVerdict, fields_covered(tail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+                case Codec.Rpair{k, v, t}:
+                  Bool.pick(SchemaVerdict, String.eq(name, k),
+                    verdict_first(nest_admit(fuel, defs,fform, v), nest_admit(fuel, defs,tail, t)),
+                    nest_admit(fuel, defs,tail, value))
+                case other: SvRefused{"wrongKind"}
+            case other:
+              match value:
+                case Codec.Rpair{k, v, t}: SvRefused{"declarationRefused"}
+                case Codec.Rnil{}:
+                  Bool.pick(SchemaVerdict, fields_covered(tail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+                case other: SvRefused{"wrongKind"}
+        case SfFieldsNil{}:
+          match value:
+            case Codec.Rnil{}: SvOk{}
+            case Codec.Rpair{k, v, t}: SvRefused{"undeclaredField"}
+            case other: SvRefused{"wrongKind"}
+        case SfUnion{cases}:
+          match value:
+            case Codec.Robj{+members}:
+              Bool.pick(SchemaVerdict, members_singleton(members),
+                nest_admit(fuel, defs,cases, members),
+                SvRefused{"wrongKind"})
+            case other: SvRefused{"wrongKind"}
+        case SfCasesCons{SchemaCase{bound, f}, ctail}:
+          match value:
+            case Codec.Rpair{tag, payload, tail}:
+              Bool.pick(SchemaVerdict, String.eq(tag, bound),
+                nest_admit(fuel, defs,f, payload),
+                nest_admit(fuel, defs,ctail, Codec.Rpair{tag, payload, tail}))
+            case other: SvRefused{"wrongKind"}
+        case SfCasesCons{other, ctail}:
+          SvRefused{"declarationRefused"}
+        case SfCasesNil{}:
+          match value:
+            case Codec.Rpair{tag, payload, tail}: SvRefused{"unknownTag"}
+            case other: SvRefused{"wrongKind"}
+        case SfArray{item}:
+          match value:
+            case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: SvOk{}
+            case Codec.Rarr{+h, +t}:
+              verdict_first(nest_admit(fuel, defs,item, h), nest_admit(fuel, defs,form, t))
+            case Codec.Rnil{}: SvOk{}
+            case other: SvRefused{"wrongKind"}
+        case SfDict{keys, vform}:
+          match value:
+            case Codec.Rnil{}: SvOk{}
+            case Codec.Robj{+members}:
+              Bool.pick(SchemaVerdict, keys_unique(members),
+                Bool.pick(SchemaVerdict, dict_keys_ok(keys, members),
+                  nest_admit(fuel, defs,form, members),
+                  SvRefused{"dictKeyRefused"}),
+                SvRefused{"duplicateKey"})
+            case Codec.Rpair{+key, +found, +tail}:
+              verdict_first(nest_admit(fuel, defs,vform, found),
+                nest_admit(fuel, defs,form, tail))
+            case other: SvRefused{"wrongKind"}
+
+# A sorted member spine admits against the field spine in order. A present
+# member admits its value and both spines advance; an absent optional field
+# skips its field. A required field with no member refuses.
+def sorted_loop(+fuel: SchemaDefs, +defs: SchemaDefs, +fields: SchemaForm, +sorted: Codec.RawValue) -> SchemaVerdict:
+  match fields:
+    case SfFieldsCons{SfRequired{name, fform}, ftail}:
+      match sorted:
+        case Codec.Rnil{}:
+          Bool.pick(SchemaVerdict, fields_covered(ftail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+        case Codec.Rpair{k, v, t}:
+          Bool.pick(SchemaVerdict, String.eq(name, k),
+            verdict_first(nest_admit(fuel, defs, fform, v), sorted_loop(fuel, defs, ftail, t)),
+            SvRefused{"missingField"})
+        case other: SvRefused{"wrongKind"}
+    case SfFieldsCons{SfOptionalField{name, fform}, ftail}:
+      match sorted:
+        case Codec.Rnil{}:
+          Bool.pick(SchemaVerdict, fields_covered(ftail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+        case Codec.Rpair{k, v, t}:
+          Bool.pick(SchemaVerdict, String.eq(name, k),
+            verdict_first(nest_admit(fuel, defs, fform, v), sorted_loop(fuel, defs, ftail, t)),
+            sorted_loop(fuel, defs, ftail, sorted))
+        case other: SvRefused{"wrongKind"}
+    case SfFieldsNil{}:
+      match sorted:
+        case Codec.Rnil{}: SvOk{}
+        case Codec.Rpair{k, v, t}: SvRefused{"undeclaredField"}
+        case other: SvRefused{"wrongKind"}
+    case other:
+      match sorted:
+        case Codec.Rnil{}:
+          Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+        case Codec.Rpair{k, v, t}: SvRefused{"declarationRefused"}
+        case other: SvRefused{"wrongKind"}
+
+# A record spine admits an object member spine in field-declaration order. The
+# members sort first, so declaration order never refuses a closed object.
+def fields_admit(+defs: SchemaDefs, +fields: SchemaForm, +members: Codec.RawValue) -> SchemaVerdict:
+  match members:
+    case Codec.Rnil{}:
+      Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+    case Codec.Rpair{k, v, t}:
+      Bool.pick(SchemaVerdict, fields_covered(fields, members),
+        sorted_loop(fuel_append(defs, input_fuel(members, defs)), defs, fields, build_sorted(fields, members)),
+        SvRefused{"missingField"})
+    case other: SvRefused{"wrongKind"}
+
+# A record value admits through the member checks and the field spine. The
+# declared check stays outside the field walk, so dropping it admits more.
+def record_enter_helper(+defs: SchemaDefs, +fields: SchemaForm, +input: Codec.RawValue) -> SchemaVerdict:
+  match input:
+    case Codec.Robj{+members}:
+      Bool.pick(SchemaVerdict, keys_unique(members),
+        Bool.pick(SchemaVerdict, members_declared(field_names(fields), members), fields_admit(defs, fields, members), SvRefused{"undeclaredField"}),
+        SvRefused{"duplicateKey"})
+    case Codec.Rnil{}:
+      Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+    case other: SvRefused{"wrongKind"}
+
+# An array tail admits element by element: the previous head admits, then the
+# rest continues with its own head. The rest shrinks on every self-call, so the
+# previous head rides past the shrink.
+def array_tail_admit(+fuel: SchemaDefs, +defs: SchemaDefs, +item: SchemaForm, +rest: Codec.RawValue, +prev: Codec.RawValue) -> SchemaVerdict:
+  match rest:
+    case Codec.Rnil{}: nest_admit(fuel, defs, item, prev)
+    case Codec.Rarr{+h, +t}: verdict_first(nest_admit(fuel, defs, item, prev), array_tail_admit(fuel, defs, item, t, h))
+    case other: SvRefused{"wrongKind"}
+
+# An array head admits and the tail continues through the tail loop on the
+# same item form.
+def array_head_admit(+defs: SchemaDefs, +item: SchemaForm, +head: Codec.RawValue, +tail: Codec.RawValue) -> SchemaVerdict:
+  match tail:
+    case Codec.Rnil{}: nest_admit(fuel_append(defs, input_fuel(head, defs)), defs, item, head)
+    case Codec.Rarr{+h, +t}: verdict_first(nest_admit(fuel_append(defs, fuel_append(input_fuel(head, defs), input_fuel(t, defs))), defs, item, head), array_tail_admit(fuel_append(defs, fuel_append(input_fuel(head, defs), input_fuel(t, defs))), defs, item, t, h))
+    case other: SvRefused{"wrongKind"}
+
+# An array value admits on the empty sentinel or through the head loop.
+def array_enter_helper(+defs: SchemaDefs, +item: SchemaForm, +input: Codec.RawValue) -> SchemaVerdict:
+  match input:
+    case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: SvOk{}
+    case Codec.Rarr{+head, +tail}: array_head_admit(defs, item, head, tail)
+    case other: SvRefused{"wrongKind"}
+
+# A dictionary member spine admits when every member value admits the value
+# form. Declared keys are checked by the caller.
+def dict_member_admit(+defs: SchemaDefs, +value: SchemaForm, +members: Codec.RawValue) -> SchemaVerdict:
+  match members:
+    case Codec.Rnil{}: SvOk{}
+    case Codec.Rpair{+key, +found, +tail}:
+      verdict_first(nest_admit(fuel_append(defs, input_fuel(members, defs)), defs, value, found), dict_member_admit(defs, value, tail))
+    case other: SvRefused{"wrongKind"}
+
+def json_admit(value: Codec.RawValue) -> SchemaVerdict:
+  json_walk(value, "value")
+
 
 # Reference substitution. A bound reference inlines the bound body, so the value
 # walk never descends into a looked-up definition; the definition scan finds
@@ -902,7 +1019,11 @@ def subst_form(+fuel: SchemaDefs, +form: SchemaForm, +defs: SchemaDefs) -> Schem
 # form and value subterms, the saved context, and the twin spine the union
 # entry saved. A bare field or case form admits what its inner form admits. A
 # reference that reaches the walk is unbound and refused.
-def schema_walk(+form: SchemaForm, +defs: SchemaDefs, +input: Codec.RawValue, +ctxd: SchemaDefs, +twin: Codec.RawValue) -> SchemaVerdict:
+# Exhausted-fuel walk: the same form and value walk with no unfolding.
+# A reference here is unbound and refused; every other arm descends
+# structurally through subterms. The fuel-first walk delegates here when its
+# fuel spine is empty.
+def walk_nofuel(+form: SchemaForm, +defs: SchemaDefs, +input: Codec.RawValue, +ctxd: SchemaDefs, +twin: Codec.RawValue) -> SchemaVerdict:
   match form:
     case SfArray{item}:
       Bool.pick(SchemaVerdict, input_is_nil(input), SvOk{}, array_enter_helper(defs, item, input))
@@ -917,15 +1038,15 @@ def schema_walk(+form: SchemaForm, +defs: SchemaDefs, +input: Codec.RawValue, +c
       match input:
         case Codec.Robj{+members}:
           Bool.pick(SchemaVerdict, members_singleton(members),
-            schema_walk(cases, defs, members, ctxd, members),
+            walk_nofuel(cases, defs, members, ctxd, members),
             SvRefused{"wrongKind"})
         case other: SvRefused{"wrongKind"}
     case SfCasesCons{SchemaCase{bound, f}, ctail}:
       match input:
         case Codec.Rpair{tag, payload, tail}:
           Bool.pick(SchemaVerdict, String.eq(tag, bound),
-            schema_walk(f, defs, payload, ctxd, twin),
-            schema_walk(ctail, defs, twin, ctxd, twin))
+            walk_nofuel(f, defs, payload, ctxd, twin),
+            walk_nofuel(ctail, defs, twin, ctxd, twin))
         case other: SvRefused{"wrongKind"}
     case SfCasesCons{other, ctail}:
       SvRefused{"declarationRefused"}
@@ -938,7 +1059,7 @@ def schema_walk(+form: SchemaForm, +defs: SchemaDefs, +input: Codec.RawValue, +c
         case Codec.Robj{+members}:
           Bool.pick(SchemaVerdict, keys_unique(members),
             Bool.pick(SchemaVerdict, dict_keys_ok(keys, members),
-              dict_member_admit(value, members),
+              dict_member_admit(defs, value, members),
               SvRefused{"dictKeyRefused"}),
             SvRefused{"duplicateKey"})
         case Codec.Rnil{}: SvOk{}
@@ -946,7 +1067,7 @@ def schema_walk(+form: SchemaForm, +defs: SchemaDefs, +input: Codec.RawValue, +c
     case SfRef{+name}:
       SvRefused{"unknownReference"}
     case SfOptional{inner}:
-      Bool.pick(SchemaVerdict, input_is_null(input), SvOk{}, schema_walk(inner, defs, input, ctxd, twin))
+      Bool.pick(SchemaVerdict, input_is_null(input), SvOk{}, walk_nofuel(inner, defs, input, ctxd, twin))
     case SfEnum{literals}:
       enum_admit(literals, input)
     case SfScalar{kind}:
@@ -954,20 +1075,89 @@ def schema_walk(+form: SchemaForm, +defs: SchemaDefs, +input: Codec.RawValue, +c
     case SfJson{}:
       json_walk(input, "value")
     case SfRequired{name, fform}:
-      schema_walk(fform, defs, input, ctxd, twin)
+      walk_nofuel(fform, defs, input, ctxd, twin)
     case SfOptionalField{name, fform}:
-      schema_walk(fform, defs, input, ctxd, twin)
+      walk_nofuel(fform, defs, input, ctxd, twin)
     case SchemaCase{tag, fform}:
-      schema_walk(fform, defs, input, ctxd, twin)
+      walk_nofuel(fform, defs, input, ctxd, twin)
     case other: SvRefused{"wrongKind"}
 
+# Fuel-first internal walker. An empty fuel spine delegates to the no-fuel walk;
+# a cell sheds its tail into the walk so a reference unfolds its bound body
+# along the walked path. Later arguments may grow only after the fuel argument
+# shrinks. The saved context and the twin spine the union entry saved ride along.
+def schema_walk(+fuel: SchemaDefs, +form: SchemaForm, +defs: SchemaDefs, +input: Codec.RawValue, +ctxd: SchemaDefs, +twin: Codec.RawValue) -> SchemaVerdict:
+  match fuel:
+    case DefsNil{}: walk_nofuel(form, defs, input, ctxd, twin)
+    case DefsCons{sh, st}:
+      match form:
+        case SfArray{item}:
+          Bool.pick(SchemaVerdict, input_is_nil(input), SvOk{}, array_enter_helper(defs, item, input))
+        case SfFieldsNil{}:
+          match input:
+            case Codec.Rpair{k, v, t}: SvRefused{"undeclaredField"}
+            case Codec.Rnil{}: SvOk{}
+            case other: SvRefused{"wrongKind"}
+        case SfRecord{+fields}:
+          record_enter_helper(defs, fields, input)
+        case SfUnion{cases}:
+          match input:
+            case Codec.Robj{+members}:
+              Bool.pick(SchemaVerdict, members_singleton(members),
+                schema_walk(fuel,cases, defs, members, ctxd, members),
+                SvRefused{"wrongKind"})
+            case other: SvRefused{"wrongKind"}
+        case SfCasesCons{SchemaCase{bound, f}, ctail}:
+          match input:
+            case Codec.Rpair{tag, payload, tail}:
+              Bool.pick(SchemaVerdict, String.eq(tag, bound),
+                schema_walk(fuel,f, defs, payload, ctxd, twin),
+                schema_walk(fuel,ctail, defs, twin, ctxd, twin))
+            case other: SvRefused{"wrongKind"}
+        case SfCasesCons{other, ctail}:
+          SvRefused{"declarationRefused"}
+        case SfCasesNil{}:
+          match input:
+            case Codec.Rpair{tag, payload, tail}: SvRefused{"unknownTag"}
+            case other: SvRefused{"wrongKind"}
+        case SfDict{keys, value}:
+          match input:
+            case Codec.Robj{+members}:
+              Bool.pick(SchemaVerdict, keys_unique(members),
+                Bool.pick(SchemaVerdict, dict_keys_ok(keys, members),
+                  dict_member_admit(defs, value, members),
+                  SvRefused{"dictKeyRefused"}),
+                SvRefused{"duplicateKey"})
+            case Codec.Rnil{}: SvOk{}
+            case other: SvRefused{"wrongKind"}
+        case SfRef{+name}:
+          Bool.pick(SchemaVerdict, scan_found(defs, name),
+            schema_walk(st, def_body_or(defs, name), defs, input, ctxd, twin),
+            SvRefused{"unknownReference"})
+        case SfOptional{inner}:
+          Bool.pick(SchemaVerdict, input_is_null(input), SvOk{}, schema_walk(fuel,inner, defs, input, ctxd, twin))
+        case SfEnum{literals}:
+          enum_admit(literals, input)
+        case SfScalar{kind}:
+          scalar_admit(kind, input)
+        case SfJson{}:
+          json_walk(input, "value")
+        case SfRequired{name, fform}:
+          schema_walk(fuel,fform, defs, input, ctxd, twin)
+        case SfOptionalField{name, fform}:
+          schema_walk(fuel,fform, defs, input, ctxd, twin)
+        case SchemaCase{tag, fform}:
+          schema_walk(fuel,fform, defs, input, ctxd, twin)
+        case other: SvRefused{"wrongKind"}
+
 # The checked public entry: the declaration preflight runs first, over the definitions
-# and over the root form, then bound references substitute with fuel from the input
-# value, and only then is the value walked.
+# and over the root form, then the value walks with unfolding fuel derived from
+# the input value. References unfold only along the walked path, so untaken
+# union branches never materialize.
 def admit_step(+defs: SchemaDefs, +form: SchemaForm, +input: Codec.RawValue, verdict: SchemaVerdict) -> SchemaVerdict:
   match verdict:
     case SvRefused{condition}: SvRefused{condition}
-    case SvOk{}: schema_walk(subst_form(input_fuel(input, defs), form, defs), defs, input, defs, Codec.Rnil{})
+    case SvOk{}: schema_walk(fuel_append(defs, input_fuel(input, defs)), form, defs, input, defs, Codec.Rnil{})
 
 def schema_admit_value(+defs: SchemaDefs, +form: SchemaForm, +input: Codec.RawValue) -> SchemaVerdict:
   admit_step(defs, form, input, schema_preflight(defs, form))
