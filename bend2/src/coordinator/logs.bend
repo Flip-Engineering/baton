@@ -230,6 +230,12 @@ def held_all(held: String) -> List<String>:
 def prefix_kind(+kind: String) -> Bool:
   Bool.or(String.eq(kind,"tool_execution_update"),Bool.or(String.eq(kind,"message_start"),String.eq(kind,"message_update")))
 
+# Native command frames the turn owner classifies with a verified command id.
+# A start is retained until completion; each completed frame supersedes the
+# previous aggregate for its id, so the newest final outcome survives.
+def codex_kind(+kind: String) -> Bool:
+  Bool.or(String.eq(kind,"codex_command_start"),String.eq(kind,"codex_command_update"))
+
 def close_kind(+kind: String) -> Bool:
   Bool.or(String.eq(kind,"tool_execution_end"),String.eq(kind,"message_end"))
 
@@ -243,9 +249,21 @@ def frame_id(db: String, line: String, omp: Bool) -> IO(String):
       found : String <- IO.try(String,DB.Sql.query(db,frame_id_sql(line)))
       IO.pure(String,Tx.trim_nl(found))
 
-# The identity is read only for a frame the policy holds or closes.
+def codex_frame_id_sql(+line: String) -> String:
+  "WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT coalesce(json_extract(value,'$.item.id'),'') FROM frame;"
+
+def codex_frame_id(db: String, line: String) -> IO(String):
+  do IO<String>:
+    found : String <- IO.try(String,DB.Sql.query(db,codex_frame_id_sql(line)))
+    IO.pure(String,Tx.trim_nl(found))
+
+def frame_id_for(db: String, line: String, omp: Bool, kind: String) -> IO(String):
+  Bool.pick(IO(String),codex_kind(kind),codex_frame_id(db,line),frame_id(db,line,omp))
+
+# The identity is read for a frame the policy holds or closes, and for a
+# classified native command frame carrying its own command id.
 def frame_identity(db: String, line: String, +kind: String, +omp: Bool) -> IO(String):
-  Bool.pick(IO(String),Bool.and(omp,Bool.or(prefix_kind(kind),close_kind(kind))),frame_id(db,line,omp),IO.pure(String,""))
+  Bool.pick(IO(String),Bool.or(Bool.and(omp,Bool.or(prefix_kind(kind),close_kind(kind))),codex_kind(kind)),frame_id_for(db,line,omp,kind),IO.pure(String,""))
 
 def quiet_keep(keep: Bool, +line: String, held: String) -> List<String> & String:
   match keep:
@@ -283,9 +301,18 @@ def step_update(update: Bool, +kind: String, +id: String, +line: String, held: S
     case True{}: (Nil{}, held_put(held,"tool_execution_update",id,line))
     case False{}: step_start(String.eq(kind,"message_start"),kind,id,line,held)
 
+# A classified native command frame is held under its own kind and command
+# id: the start stays retained while the call runs, and each completed frame
+# supersedes the previous aggregate. An empty id falls through to the
+# verbatim branch, so unidentified frames are never collapsed into one slot.
+def step_codex(held_codex: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
+  match held_codex:
+    case True{}: (Nil{}, held_put(held,kind,id,line))
+    case False{}: step_update(String.eq(kind,"tool_execution_update"),kind,id,line,held)
+
 # The lines a frame contributes at the default level.
 def step_default(+kind: String, +id: String, +line: String, held: String) -> List<String> & String:
-  step_update(String.eq(kind,"tool_execution_update"),kind,id,line,held)
+  step_codex(Bool.and(codex_kind(kind),Bool.not(String.is_empty(id))),kind,id,line,held)
 
 def step_quiet_or_default(quiet: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
   match quiet:

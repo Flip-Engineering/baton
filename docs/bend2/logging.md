@@ -181,6 +181,28 @@ and a `raw` batch that fixes the retention semantics of frames that name
 26,164,652 retained bytes before the policy and 112 after it on the same
 `tool_execution_update` workload.
 
+Native Muse traces carry incremental deltas. One 2,044-line session holds 644
+`run.output.delta` frames with 10,631 bytes of text across all of them; a
+9,818-line conductor session holds 878 deltas with 15,898 text bytes. The
+frames repeat no cumulative payload, so the default keeps them verbatim and
+no snapshot holding applies to them. The same sessions spend their bytes on
+task lifecycle envelopes at about 800 bytes per event and on terminal tool
+results, which stay inline with the completed calls. The shape-faithful
+reference batch is
+[bend2/test/fixtures/muse-trace-audit-20261007.jsonl](../test/fixtures/muse-trace-audit-20261007.jsonl)
+with text payloads replaced by equal-length runs.
+
+Native Codex traces repeat full command output per frame. One 1,311-line
+session holds 1,072 `command_execution` frames at 12.29 MB; one command
+re-emits 68 frames totaling 3.36 MB while its final frame carries 3 bytes,
+and another re-emits 54 frames totaling 2.59 MB with 739 final bytes. Each
+`item.completed` frame carries the whole aggregate output so far, and empty
+`item.started` frames mark progress only. The proposed policy keeps the
+newest completed frame per command id once the turn owner classifies these
+frames; until then the default keeps them verbatim. The shape-faithful
+reference batch is
+[bend2/test/fixtures/codex-trace-audit-20261007.jsonl](../test/fixtures/codex-trace-audit-20261007.jsonl)
+with outputs replaced by equal-length runs and user paths redacted.
 ## Open work
 
 A receive that attaches to a retained attempt reads the attempt from its first
