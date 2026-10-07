@@ -334,7 +334,7 @@ def ref_parts(+lookup: ContextStore.RefLookup) -> String & String:
 
 # The pair is matched as a declared parameter, and the raw evidence is bracketed by two
 # key lines so the driver compares the whole text rather than a line fragment.
-def ref_observe(+label: String, +pair: String & String) -> IO(Unit):
+def ref_observe(+label: String, pair: String & String) -> IO(Unit):
   match pair:
     case (label_text, evidence):
       do IO<Unit>:
