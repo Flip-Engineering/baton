@@ -122,7 +122,7 @@ async function main() {
   check("hello-generation", ((await text("generation-state")) || "").trim() === hello.data.generation, await text("generation-state"));
   check("hello-notice-cleared", notice1 === "", JSON.stringify(notice1));
   const transitionsText = (await page.locator("#transitions").textContent()) || "";
-  check("transition-frame", transitionsText.includes(transition.data.id) && transitionsText.includes(transition.data.kind), transitionsText.slice(0, 160));
+  check("transition-frame", transitionsText.includes(transition.data.session) && transitionsText.includes(transition.data.kind), transitionsText.slice(0, 160));
 
   const a1 = phase1.eventsAttempts[0] || {};
   check("transient-first-503", a1.status === 503 && a1.error === "owner-election-in-progress", JSON.stringify({ status: a1.status, error: a1.error }));
