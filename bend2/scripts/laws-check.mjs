@@ -1349,8 +1349,8 @@ MUTATIONS.push(
   {
     name: 'knowledge-empty-record-result-delivers-the-old-notice',
     file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
-    find: '    case SNil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}})',
-    replace: '    case SNil{}: Delivery.deliver(db,notice_id(id),"1",SNil{})',
+    find: 'def deliver_record(db: String, id: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):\n  match saved:\n    case SNil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}})',
+    replace: 'def deliver_record(db: String, id: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):\n  match saved:\n    case SNil{}: Delivery.deliver(db,notice_id(id),"1",SNil{})',
     law: 'm1_an_empty_record_result_is_a_pure_answer',
   },
   {
