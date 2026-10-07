@@ -37,7 +37,7 @@
     },
     {
       "packagePath": "frontend-invocation.mjs",
-      "sha256": "e408a54ca81b3c3500e531de7abfc5d360fd76852ef68bd0fcb822c3fb5c5012",
+      "sha256": "35151b95977d39df1b25191981e4a0ba906a4e6aefc82dc143178d6b5b32f93b",
       "role": "frontend-invocation"
     },
     {

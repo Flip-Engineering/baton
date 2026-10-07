@@ -256,11 +256,11 @@ async function runOwned({ frontend, adapter, owner, root, phases, comp, seen, st
   });
 }
 
-export async function runFrontendInvocation({ frontend, adapter, root, phases = ['parse'], comp = null, seen, owner } = {}) {
-  const invalid = validateRequest({ frontend, adapter, root, phases, comp, owner });
+export async function runFrontendInvocation({ frontend, adapter, root, phases = ['parse'], comp = null, seen, owner: invocationOwner } = {}) {
+  const invalid = validateRequest({ frontend, adapter, root, phases, comp, owner: invocationOwner });
   if (invalid !== null) return invalid;
 
-  const started = adapter.beginQuery({ identity: root, ...(owner === undefined ? {} : { owner }) });
+  const started = adapter.beginQuery({ identity: root, ...(invocationOwner === undefined ? {} : { owner: invocationOwner }) });
   if (started.status !== 'started') return rejected(started.reason, started.token);
   const owner = started.token;
   const state = { installed: false, hookBaseline: frontend.bendHookState === undefined || frontend.bendHookState === null ? undefined : { failures: frontend.bendHookState.failures ?? 0, refusals: frontend.bendHookState.refusals ?? 0, unrendered: frontend.bendHookState.unrendered ?? 0 } };

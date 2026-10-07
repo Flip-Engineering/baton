@@ -249,7 +249,8 @@ def stage_selected_context_payload(payload):
     require(declaration_path.is_file() and not declaration_path.is_symlink(),
             'The selected Bend2 module manifest is unavailable')
     declaration = json.loads(declaration_path.read_text())
-    require(set(declaration) == {'schema', 'moduleId', 'protocolVersion', 'files'},
+    require(set(declaration) == {'schema', 'moduleId', 'protocolVersion', 'upstreamPin',
+                                'providerArtifacts', 'files'},
             'The selected Bend2 module manifest has an unsupported shape')
     require(declaration['schema'] == 'baton2-selected-context-payload-v1'
             and declaration['moduleId'] == 'bend2'

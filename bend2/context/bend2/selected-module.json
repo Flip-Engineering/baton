@@ -31,7 +31,7 @@
     },
     {
       "packagePath": "frontend-invocation.mjs",
-      "sha256": "e408a54ca81b3c3500e531de7abfc5d360fd76852ef68bd0fcb822c3fb5c5012",
+      "sha256": "35151b95977d39df1b25191981e4a0ba906a4e6aefc82dc143178d6b5b32f93b",
       "role": "frontend-invocation"
     },
     {
@@ -83,13 +83,13 @@
     },
     {
       "path": "frontend-invocation.mjs",
-      "bytes": 15705,
-      "sha256": "e408a54ca81b3c3500e531de7abfc5d360fd76852ef68bd0fcb822c3fb5c5012"
+      "bytes": 15766,
+      "sha256": "35151b95977d39df1b25191981e4a0ba906a4e6aefc82dc143178d6b5b32f93b"
     },
     {
       "path": "native-provider.declaration.json",
       "bytes": 2948,
-      "sha256": "88e1e8883bd1516f78b884f73694d712b0eda73c1a4a3b90dacb9146c0693c27"
+      "sha256": "3579eaef4c8c9a95f7ca63da1e33362a993ba70673de53110d912eb4c0034357"
     },
     {
       "path": "native-provider.mjs",
