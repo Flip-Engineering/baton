@@ -608,6 +608,15 @@ def launch(sessions: String, +cmd: String, +model: String, +effort: String, +cwd
     Codex.start_player(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)),
     claude_launch(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)))))
 
+def launch_bounded(sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String, task: String, limit: U32) -> IO(Result<&1,&1,U32 & String,U32>):
+  Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"omp\n"),
+    Omp.start_player_bounded(cmd,model,effort,cwd,log,sessions,session,String.is_empty(session),limit),
+  Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"muse\n"),
+    Bool.pick(IO(Result<&1,&1,U32 & String,U32>),String.is_empty(session),Muse.start_player_bounded(cmd,model,effort,cwd,log ++ ".stderr",task,limit),Muse.resume_player_bounded(cmd,model,effort,cwd,log ++ ".stderr",session,task,limit)),
+  Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"codex\n"),
+    Codex.start_player_bounded(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session),limit),
+  Bool.pick(IO(Result<&1,&1,U32 & String,U32>),String.is_empty(session),Claude.start_player_bounded(cmd,model,effort,cwd,log ++ ".stderr",limit),Claude.resume_player_bounded(cmd,model,effort,cwd,log ++ ".stderr",session,limit)))))
+
 # The state the workspace holds when a turn restarts: the work an interrupted
 # turn had already written.
 def state_note_go(g: G.GitOut, +cwd: String) -> String:
@@ -657,27 +666,29 @@ def restart(+db: String, +player: String, +id: String, +log: String, +note: Stri
     noted : Unit <- report(db,player,id ++ ":recovery","The recorded conversation could not be resumed; the turn restarted in a fresh conversation that names the workspace's current state.")
     started(db,player,id,log,note,harness,child)
 
-def supervise_gone(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +prompt: String, +first: Outcome, gone: Bool) -> IO(Outcome):
+def supervise_gone(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +prompt: String, limit: U32, +first: Outcome, gone: Bool) -> IO(Outcome):
   match gone:
     case False{}: IO.pure(Outcome,first)
     case True{}: do IO<Outcome>:
       note : String <- refused_note(cwd,prompt)
-      child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,generation_log(log,id),"",harness,task)
+      child : Result<&1,&1,U32 & String,U32> <- launch_bounded(sessions,cmd,model,effort,cwd,generation_log(log,id),"",harness,task,limit)
       restart(db,player,id,log,note,harness,child)
 
-def supervise_retry(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +native: String, +prompt: String, +first: Outcome) -> IO(Outcome):
+def supervise_retry(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +native: String, +prompt: String, limit: U32, +first: Outcome) -> IO(Outcome):
   do IO<Outcome>:
     resumable : Bool <- IO.pure(Bool, Bool.not(String.is_empty(native)))
     gone : Bool <- refusal(generation_log(log,id),resumable,first)
-    supervise_gone(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,prompt,first,gone)
+    supervise_gone(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,prompt,limit,first,gone)
 
 def supervise(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String, +harness: String, +sessions: String, +prompt: String) -> IO(Outcome):
   do IO<Outcome>:
     alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
-    child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,generation_log(log,id),native,harness,task)
+    +policy : Logs.Policy <- Logs.policy(db,player)
+    limit : U32 <- IO.pure(U32,Logs.stderr_limit(policy))
+    child : Result<&1,&1,U32 & String,U32> <- launch_bounded(sessions,cmd,model,effort,cwd,generation_log(log,id),native,harness,task,limit)
     first : Outcome <- started(db,player,id,log,prompt,harness,child)
-    supervise_retry(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,native,prompt,first)
+    supervise_retry(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,native,prompt,limit,first)
 
 def task_read(db: String, player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, harness: String, sessions: String, result: Result<&1,&1,U32 & String,String>) -> IO(Outcome):
   match result:

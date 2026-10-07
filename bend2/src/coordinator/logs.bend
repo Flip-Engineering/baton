@@ -54,6 +54,11 @@ def event_sha256(event: String) -> IO(Result<&1,&1,U32 & String,String>):
 type Policy is Data:
   Policy{level: String, budget: U32, segments: U32, pending: Bool, db: String, session: String}
 
+# Native stderr retention uses the configured log budget as its byte ceiling.
+def stderr_limit(policy: Policy) -> U32:
+  match policy:
+    case Policy{level,budget,segments,pending,db,session}: budget
+
 def fallback_level(+value: String) -> String:
   Bool.pick(String,String.is_empty(value),default_level(),value)
 
@@ -735,7 +740,7 @@ def listed_segments(+log: String, +keep: U32, pending: String) -> IO(String):
 def log_rows_sql() -> String:
   "SELECT lf.session,lf.log,coalesce((SELECT level FROM log_policies WHERE session=lf.session)," ++ C.q(default_level()) ++ "),coalesce((SELECT budget_bytes FROM log_policies WHERE session=lf.session)," ++ default_budget() ++ "),coalesce((SELECT keep_segments FROM log_policies WHERE session=lf.session)," ++ default_segments() ++ "),(SELECT count(*) FROM messages WHERE recipient=lf.session AND receipt IS NULL) FROM log_files lf ORDER BY lf.session,lf.log;"
 
-def log_json(session: String, +log: String, level: String, budget: String, keep: String, pending: String, size: U32, stderr: U32, checkpoint: U32, rotated: String) -> String:
+def log_json(session: String, +log: String, level: String, budget: String, keep: String, pending: String, size: U32, stderr: U32, stderr_full: U32, stderr_meta: U32, stderr_error: U32, checkpoint: U32, rotated: String) -> String:
   "{\"session\":" ++ J.string_literal(session)
   ++ ",\"path\":" ++ J.string_literal(log)
   ++ ",\"attempt\":" ++ J.string_literal(attempt_of(log))
@@ -745,6 +750,10 @@ def log_json(session: String, +log: String, level: String, budget: String, keep:
   ++ ",\"pendingInput\":" ++ pending
   ++ ",\"bytes\":" ++ U32.show(size)
   ++ ",\"stderrBytes\":" ++ U32.show(stderr)
+  ++ ",\"stderrSpoolBytes\":" ++ U32.show(stderr_full)
+  ++ ",\"stderrMetadataBytes\":" ++ U32.show(stderr_meta)
+  ++ ",\"stderrProcessingErrorBytes\":" ++ U32.show(stderr_error)
+  ++ ",\"accountedBytes\":" ++ U32.show(U32.add(size,U32.add(stderr,U32.add(stderr_full,U32.add(stderr_meta,U32.add(stderr_error,checkpoint))))))
   ++ ",\"pendingBytes\":" ++ U32.show(checkpoint)
   ++ ",\"pendingPath\":" ++ J.string_literal(log ++ ".pending")
   ++ ",\"rotated\":[" ++ rotated ++ "]}"
@@ -754,9 +763,12 @@ def log_fields(fields: List<String>) -> IO(String):
     case session <> +log <> level <> budget <> +keep <> +pending <> rest: do IO<String>:
       size : U32 <- IO.try(U32,F.Files.size(log))
       stderr : U32 <- IO.try(U32,F.Files.size(log ++ ".stderr"))
+      stderr_full : U32 <- IO.try(U32,F.Files.size(log ++ ".stderr.full"))
+      stderr_meta : U32 <- IO.try(U32,F.Files.size(log ++ ".stderr.meta"))
+      stderr_error : U32 <- IO.try(U32,F.Files.size(log ++ ".stderr.meta.processing-error"))
       checkpoint : U32 <- IO.try(U32,F.Files.size(log ++ ".pending"))
       rotated : String <- listed_segments(log,number_of(U32.read(keep),2),pending)
-      IO.pure(String,log_json(session,log,level,budget,keep,pending,size,stderr,checkpoint,rotated))
+      IO.pure(String,log_json(session,log,level,budget,keep,pending,size,stderr,stderr_full,stderr_meta,stderr_error,checkpoint,rotated))
     case other: IO.pure(String,"")
 
 def log_item(row: String) -> IO(String):
@@ -783,7 +795,8 @@ def attempt_decision_eligible(decision: AttemptDecision) -> Bool:
   match decision:
     case AttemptDecision{reason,eligible}: eligible
 
-def attempt_decision(phase: String, status: String, released: String, acknowledged: String, reported: String, pending: String, level: String, path: String, bytes: U32) -> AttemptDecision:
+def attempt_decision(stderr_health: String, phase: String, status: String, released: String, acknowledged: String, reported: String, pending: String, level: String, path: String, bytes: U32) -> AttemptDecision:
+  Bool.pick(AttemptDecision,Bool.not(Bool.or(String.eq(stderr_health,"ok"),String.eq(stderr_health,"legacy"))),AttemptDecision{stderr_health,False{}},
   Bool.pick(AttemptDecision,Bool.not(String.eq(pending,"0")),AttemptDecision{"pending-input",False{}},
     Bool.pick(AttemptDecision,String.eq(level,"diagnostic"),AttemptDecision{"diagnostic-policy",False{}},
       Bool.pick(AttemptDecision,String.eq(path,"0"),AttemptDecision{"attempt-path-unverified",False{}},
@@ -792,9 +805,9 @@ def attempt_decision(phase: String, status: String, released: String, acknowledg
             Bool.pick(AttemptDecision,String.eq(acknowledged,"0"),AttemptDecision{"native-not-acknowledged",False{}},
               Bool.pick(AttemptDecision,Bool.not(String.eq(status,"exit 0")),AttemptDecision{"native-turn-failed",False{}},
                 Bool.pick(AttemptDecision,String.eq(reported,"0"),AttemptDecision{"observation-unreported",False{}},
-                  Bool.pick(AttemptDecision,U32.is_lt(0,bytes),AttemptDecision{"eligible",True{}},AttemptDecision{"no-diagnostic-files",False{}})))))))))
+                  Bool.pick(AttemptDecision,U32.is_lt(0,bytes),AttemptDecision{"eligible",True{}},AttemptDecision{"no-diagnostic-files",False{}}))))))))))
 
-def attempt_json_fields(session: String, attempt: String, mode: String, phase: String, status: String, +directory: String, +stdout: U32, +stderr: U32, +observer: U32, +keeper: U32, released: U32, acknowledged: U32, reported: String, pending: String, terminal: String, event_chars: String, event_messages: String, decision: AttemptDecision) -> String:
+def attempt_json_fields(session: String, attempt: String, mode: String, phase: String, status: String, +directory: String, +stdout: U32, +stderr: U32, +stderr_full: U32, +stderr_meta_bytes: U32, +stderr_error_bytes: U32, +stderr_meta: String, stderr_health: String, +observer: U32, +keeper: U32, released: U32, acknowledged: U32, reported: String, pending: String, terminal: String, event_chars: String, event_messages: String, decision: AttemptDecision) -> String:
   match decision:
     case AttemptDecision{reason,eligible}:
       "{\"session\":" ++ J.string_literal(session)
@@ -806,9 +819,14 @@ def attempt_json_fields(session: String, attempt: String, mode: String, phase: S
       ++ ",\"eventChars\":" ++ event_chars
       ++ ",\"eventCount\":" ++ event_messages
       ++ ",\"directory\":" ++ J.string_literal(directory)
-      ++ ",\"bytes\":" ++ U32.show(U32.add(stdout,U32.add(stderr,U32.add(observer,keeper))))
+      ++ ",\"bytes\":" ++ U32.show(U32.add(stdout,U32.add(stderr,U32.add(stderr_full,U32.add(stderr_meta_bytes,U32.add(stderr_error_bytes,U32.add(observer,keeper)))))))
       ++ ",\"stdoutBytes\":" ++ U32.show(stdout)
       ++ ",\"stderrBytes\":" ++ U32.show(stderr)
+      ++ ",\"stderrSpoolBytes\":" ++ U32.show(stderr_full)
+      ++ ",\"stderrMetadataBytes\":" ++ U32.show(stderr_meta_bytes)
+      ++ ",\"stderrProcessingErrorBytes\":" ++ U32.show(stderr_error_bytes)
+      ++ ",\"stderrRetention\":" ++ stderr_meta
+      ++ ",\"stderrHealth\":" ++ J.string_literal(stderr_health)
       ++ ",\"observerBytes\":" ++ U32.show(observer)
       ++ ",\"keeperBytes\":" ++ U32.show(keeper)
       ++ ",\"released\":" ++ Bool.pick(String,U32.is_lt(0,released),"true","false")
@@ -818,32 +836,81 @@ def attempt_json_fields(session: String, attempt: String, mode: String, phase: S
       ++ ",\"cleanupEligible\":" ++ Bool.pick(String,eligible,"true","false")
       ++ ",\"cleanupReason\":" ++ J.string_literal(reason) ++ "}"
 
-def attempt_json(session: String, attempt: String, mode: String, +phase: String, +status: String, +directory: String, +stdout: U32, +stderr: U32, +observer: U32, +keeper: U32, +released: U32, +acknowledged: U32, +reported: String, +pending: String, +terminal: String, +event_chars: String, +event_messages: String, level: String, path: String) -> String:
-  attempt_json_fields(session,attempt,mode,phase,status,directory,stdout,stderr,observer,keeper,released,acknowledged,reported,pending,terminal,event_chars,event_messages,attempt_decision(phase,status,Bool.pick(String,U32.is_lt(0,released),"1","0"),Bool.pick(String,U32.is_lt(0,acknowledged),"1","0"),reported,pending,level,path,U32.add(stdout,U32.add(stderr,U32.add(observer,keeper)))) )
+def stderr_meta_json_read(db: String, text: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match text:
+    case Fail{error}: IO.pure(String,"{}")
+    case Done{value}: do IO<String>:
+      parsed : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(value) ++ ") THEN CASE WHEN json_type(" ++ C.q(value) ++ ")='object' THEN json(" ++ C.q(value) ++ ") ELSE '{}' END ELSE '{}' END;"))
+      IO.pure(String,Tx.trim_nl(parsed))
 
-def attempt_fields(fields: List<String>) -> IO(String):
+def stderr_meta_json(+db: String, +directory: String) -> IO(String):
+  do IO<String>:
+    text : Result<&1,&1,U32 & String,String> <- T.Text.read(directory ++ "/stderr.meta")
+    result : String <- stderr_meta_json_read(db,text)
+    IO.pure(String,result)
+
+def stderr_health(+db: String, +directory: String, metadata: String) -> IO(String):
+  do IO<String>:
+    full : String <- IO.try(String,F.Files.regular(directory ++ "/stderr.full"))
+    meta : String <- IO.try(String,F.Files.regular(directory ++ "/stderr.meta"))
+    retained_error : String <- IO.try(String,F.Files.regular(directory ++ "/stderr-processing-error"))
+    direct_error : String <- IO.try(String,F.Files.regular(directory ++ "/stderr.meta.processing-error"))
+    Bool.pick(IO(String),Bool.or(String.eq(retained_error,"1"),String.eq(direct_error,"1")),IO.pure(String,"processing-error"),
+    Bool.pick(IO(String),Bool.and(String.eq(full,"0"),String.eq(meta,"0")),IO.pure(String,"legacy"),
+    Bool.pick(IO(String),String.eq(full,"0"),IO.pure(String,"spool-missing"),
+    Bool.pick(IO(String),String.eq(meta,"0"),IO.pure(String,"metadata-missing"),do IO<String>:
+      valid : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(metadata) ++ ") AND json_type(" ++ C.q(metadata) ++ ")='object' AND json_extract(" ++ C.q(metadata) ++ ",'$.schema')='baton2-stderr-v1' AND json_extract(" ++ C.q(metadata) ++ ",'$.status')='complete' AND json_type(" ++ C.q(metadata) ++ ",'$.limitBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.truncated') IN ('true','false') AND json_type(" ++ C.q(metadata) ++ ",'$.observedBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.retainedBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.spool')='text' THEN 'ok' ELSE 'metadata-invalid' END;"))
+      IO.pure(String,Tx.trim_nl(valid)))))
+
+def stderr_generation_health(+db: String, +stderr_path: String, metadata: String) -> IO(String):
+  do IO<String>:
+    full : String <- IO.try(String,F.Files.regular(stderr_path ++ ".full"))
+    meta : String <- IO.try(String,F.Files.regular(stderr_path ++ ".meta"))
+    error : String <- IO.try(String,F.Files.regular(stderr_path ++ ".meta.processing-error"))
+    Bool.pick(IO(String),String.eq(error,"1"),IO.pure(String,"processing-error"),
+    Bool.pick(IO(String),Bool.and(String.eq(full,"0"),String.eq(meta,"0")),IO.pure(String,"legacy"),
+    Bool.pick(IO(String),String.eq(full,"0"),IO.pure(String,"spool-missing"),
+    Bool.pick(IO(String),String.eq(meta,"0"),IO.pure(String,"metadata-missing"),do IO<String>:
+      valid : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(metadata) ++ ") AND json_type(" ++ C.q(metadata) ++ ")='object' AND json_extract(" ++ C.q(metadata) ++ ",'$.schema')='baton2-stderr-v1' AND json_extract(" ++ C.q(metadata) ++ ",'$.status')='complete' AND json_type(" ++ C.q(metadata) ++ ",'$.limitBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.truncated') IN ('true','false') AND json_type(" ++ C.q(metadata) ++ ",'$.observedBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.retainedBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.spool')='text' THEN 'ok' ELSE 'metadata-invalid' END;"))
+      IO.pure(String,Tx.trim_nl(valid)))))
+
+def stderr_generation(+db: String, +stderr_path: String) -> IO(String):
+  do IO<String>:
+    text : Result<&1,&1,U32 & String,String> <- T.Text.read(stderr_path ++ ".meta")
+    metadata : String <- stderr_meta_json_read(db,text)
+    stderr_generation_health(db,stderr_path,metadata)
+
+def attempt_json(session: String, attempt: String, mode: String, +phase: String, +status: String, +directory: String, +stdout: U32, +stderr: U32, +stderr_full: U32, +stderr_meta_bytes: U32, +stderr_error_bytes: U32, +stderr_meta: String, stderr_health: String, +observer: U32, +keeper: U32, +released: U32, +acknowledged: U32, +reported: String, +pending: String, +terminal: String, +event_chars: String, +event_messages: String, level: String, path: String) -> String:
+  attempt_json_fields(session,attempt,mode,phase,status,directory,stdout,stderr,stderr_full,stderr_meta_bytes,stderr_error_bytes,stderr_meta,stderr_health,observer,keeper,released,acknowledged,reported,pending,terminal,event_chars,event_messages,attempt_decision(stderr_health,phase,status,Bool.pick(String,U32.is_lt(0,released),"1","0"),Bool.pick(String,U32.is_lt(0,acknowledged),"1","0"),reported,pending,level,path,U32.add(stdout,U32.add(stderr,U32.add(stderr_full,U32.add(stderr_meta_bytes,U32.add(stderr_error_bytes,U32.add(observer,keeper)))))) ))
+
+def attempt_fields(+db: String, fields: List<String>) -> IO(String):
   match fields:
     case session <> attempt <> mode <> phase <> status <> +directory <> pending <> level <> reported <> path <> terminal <> event_chars <> event_messages <> rest: do IO<String>:
       stdout : U32 <- IO.try(U32,F.Files.size(directory ++ "/stdout"))
       stderr : U32 <- IO.try(U32,F.Files.size(directory ++ "/native.stderr"))
+      stderr_full : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr.full"))
+      stderr_meta_bytes : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr.meta"))
+      stderr_error_bytes : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr-processing-error"))
+      stderr_meta : String <- stderr_meta_json(db,directory)
+      health : String <- stderr_health(db,directory,stderr_meta)
       observer : U32 <- IO.try(U32,F.Files.size(directory ++ "/observer.log"))
       keeper : U32 <- IO.try(U32,F.Files.size(directory ++ "/keeper.log"))
       released_file : String <- IO.try(String,F.Files.regular(directory ++ "/released"))
       acknowledged_file : String <- IO.try(String,F.Files.regular(directory ++ "/acknowledged"))
       released : U32 = number_of(U32.read(Bool.pick(String,String.eq(released_file,"1"),"1","0")),0)
       acknowledged : U32 = number_of(U32.read(Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")),0)
-      IO.pure(String,attempt_json(session,attempt,mode,phase,status,directory,stdout,stderr,observer,keeper,released,acknowledged,reported,pending,terminal,event_chars,event_messages,level,path))
+      IO.pure(String,attempt_json(session,attempt,mode,phase,status,directory,stdout,stderr,stderr_full,stderr_meta_bytes,stderr_error_bytes,stderr_meta,health,observer,keeper,released,acknowledged,reported,pending,terminal,event_chars,event_messages,level,path))
     case other: IO.pure(String,"")
 
-def attempt_item(row: String) -> IO(String):
-  attempt_fields(Tx.split_tabs(row))
+def attempt_item(+db: String, row: String) -> IO(String):
+  attempt_fields(db,Tx.split_tabs(row))
 
-def attempt_items(rows: List<String>, acc: String) -> IO(String):
+def attempt_items(+db: String, rows: List<String>, acc: String) -> IO(String):
   match rows:
     case Nil{}: IO.pure(String,acc)
     case head <> tail: do IO<String>:
-      item : String <- attempt_item(head)
-      deeper : String <- attempt_items(tail,items_join(acc,item))
+      item : String <- attempt_item(db,head)
+      deeper : String <- attempt_items(db,tail,items_join(acc,item))
       IO.pure(String,deeper)
 
 def storage_json(db: String, database: U32, root: U32, logs: String, attempts: String) -> String:
@@ -862,7 +929,7 @@ def storage(+db: String) -> IO(String):
     log_text : String <- IO.try(String,DB.Sql.query(db,schema() ++ log_rows_sql()))
     logs : String <- log_items(Tx.split_lines(log_text),"")
     attempt_text : String <- IO.try(String,DB.Sql.query(db,attempt_rows_sql(db,"")))
-    attempts : String <- attempt_items(Tx.split_lines(attempt_text),"")
+    attempts : String <- attempt_items(db,Tx.split_lines(attempt_text),"")
     database : U32 <- IO.try(U32,F.Files.size(db))
     root : U32 <- IO.try(U32,F.Files.size(db ++ ".root.log"))
     IO.pure(String,storage_json(db,database,root,logs,attempts))
@@ -946,7 +1013,9 @@ def attempt_log_matched(matched: Bool, +phase: String, +status: String, +directo
       acknowledged_file : String <- IO.try(String,F.Files.regular(directory ++ "/acknowledged"))
       released : String = Bool.pick(String,String.eq(released_file,"1"),"1","0")
       acknowledged : String = Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")
-      IO.pure(AttemptDecision,attempt_decision(phase,status,released,acknowledged,reported,pending,level,path,live))
+      metadata : String <- stderr_meta_json(db,directory)
+      health : String <- stderr_health(db,directory,metadata)
+      IO.pure(AttemptDecision,attempt_decision(health,phase,status,released,acknowledged,reported,pending,level,path,live))
     case False{}: IO.pure(AttemptDecision,AttemptDecision{"unknown-attempt",False{}})
 
 def attempt_log_fields(+db: String, fields: List<String>, +attempt: String, live: U32) -> IO(AttemptDecision):
@@ -990,6 +1059,13 @@ def clean_attempt_log_removed(+log: String, +attempt: String, size: U32) -> IO(S
     sidecar : String <- clean_attempt_sidecar(log)
     IO.pure(String,items_join(clean_attempt_log_json(log,attempt,size,gone),sidecar))
 
+def clean_attempt_stderr(+log: String, +attempt: String) -> IO(String):
+  do IO<String>:
+    stderr : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(log ++ ".stderr")
+    full : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(log ++ ".stderr.full")
+    meta : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(log ++ ".stderr.meta")
+    IO.pure(String,items_join(clean_attempt_log_json(log ++ ".stderr",attempt,0,stderr),items_join(clean_attempt_log_json(log ++ ".stderr.full",attempt,0,full),clean_attempt_log_json(log ++ ".stderr.meta",attempt,0,meta))))
+
 def clean_attempt_log_eligible(eligible: Bool, +log: String, +attempt: String, size: U32) -> IO(String):
   match eligible:
     case False{}: IO.pure(String,"")
@@ -1023,26 +1099,29 @@ def clean_attempt_log_first(rows: List<String>) -> String:
     case head <> tail: head
     case other: ""
 
-def clean_attempt_settled_fields(fields: List<String>, +log: String, +attempt: String, +size: U32) -> IO(String):
+def clean_attempt_settled_fields(+db: String, fields: List<String>, +log: String, +attempt: String, +size: U32) -> IO(String):
   match fields:
     case pending <> level <> reported <> +directory <> rest: do IO<String>:
       released_file : String <- IO.try(String,F.Files.regular(directory ++ "/released"))
       acknowledged_file : String <- IO.try(String,F.Files.regular(directory ++ "/acknowledged"))
       released : String = Bool.pick(String,String.eq(released_file,"1"),"1","0")
       acknowledged : String = Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")
-      answer : String <- clean_attempt_log_eligible(superseded_eligible(superseded_decision(pending,level,reported,released,acknowledged,size)),log,attempt,size)
-      IO.pure(String,answer)
+      health : String <- stderr_generation(db,log ++ ".stderr")
+      decision : Bool <- IO.pure(Bool,superseded_eligible(superseded_decision(pending,level,reported,released,acknowledged,size)))
+      answer : String <- clean_attempt_log_eligible(decision,log,attempt,size)
+      bounded_files : String <- Bool.pick(IO(String),Bool.and(decision,String.eq(health,"ok")),clean_attempt_stderr(log,attempt),IO.pure(String,""))
+      IO.pure(String,items_join(answer,bounded_files))
     case other: IO.pure(String,"")
 
-def clean_attempt_settled(info: String, +log: String, +attempt: String, size: U32) -> IO(String):
-  clean_attempt_settled_fields(Tx.split_tabs(clean_attempt_log_first(Tx.split_lines(info))),log,attempt,size)
+def clean_attempt_settled(+db: String, info: String, +log: String, +attempt: String, size: U32) -> IO(String):
+  clean_attempt_settled_fields(db,Tx.split_tabs(clean_attempt_log_first(Tx.split_lines(info))),log,attempt,size)
 
 def clean_attempt_older(older: Bool, +db: String, +session: String, +log: String, +attempt: String, +size: U32) -> IO(String):
   match older:
     case False{}: IO.pure(String,"")
     case True{}: do IO<String>:
       info : String <- IO.try(String,DB.Sql.query(db,superseded_info_sql(db,session,attempt)))
-      answer : String <- clean_attempt_settled(info,log,attempt,size)
+      answer : String <- clean_attempt_settled(db,info,log,attempt,size)
       IO.pure(String,answer)
 
 def clean_attempt_superseded(known: Bool, +older: Bool, +db: String, +session: String, +log: String, +attempt: String, +size: U32) -> IO(String):
@@ -1136,9 +1215,12 @@ def attempt_cleanup_files(+db: String, +directory: String) -> IO(String):
   do IO<String>:
     stdout : String <- attempt_cleanup_file(db,directory,"stdout")
     stderr : String <- attempt_cleanup_file(db,directory,"native.stderr")
+    stderr_full : String <- attempt_cleanup_file(db,directory,"stderr.full")
+    stderr_meta : String <- attempt_cleanup_file(db,directory,"stderr.meta")
+    stderr_error : String <- attempt_cleanup_file(db,directory,"stderr-processing-error")
     observer : String <- attempt_cleanup_file(db,directory,"observer.log")
     keeper : String <- attempt_cleanup_file(db,directory,"keeper.log")
-    IO.pure(String,items_join(stdout,items_join(stderr,items_join(observer,keeper))))
+    IO.pure(String,items_join(stdout,items_join(stderr,items_join(stderr_full,items_join(stderr_meta,items_join(stderr_error,items_join(observer,keeper)))))) )
 
 def attempt_cleanup_fields(db: String, fields: List<String>) -> IO(String):
   match fields:
@@ -1147,12 +1229,17 @@ def attempt_cleanup_fields(db: String, fields: List<String>) -> IO(String):
       acknowledged_file : String <- IO.try(String,F.Files.regular(directory ++ "/acknowledged"))
       stdout : U32 <- IO.try(U32,F.Files.size(directory ++ "/stdout"))
       stderr : U32 <- IO.try(U32,F.Files.size(directory ++ "/native.stderr"))
+      stderr_full : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr.full"))
+      stderr_meta : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr.meta"))
+      metadata : String <- stderr_meta_json(db,directory)
+      health : String <- stderr_health(db,directory,metadata)
       observer : U32 <- IO.try(U32,F.Files.size(directory ++ "/observer.log"))
       keeper : U32 <- IO.try(U32,F.Files.size(directory ++ "/keeper.log"))
       released : String = Bool.pick(String,String.eq(released_file,"1"),"1","0")
       acknowledged : String = Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")
-      bytes : U32 = U32.add(stdout,U32.add(stderr,U32.add(observer,keeper)))
-      eligible : Bool = attempt_decision_eligible(attempt_decision(phase,status,released,acknowledged,reported,pending,level,path,bytes))
+      error_bytes : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr-processing-error"))
+      bytes : U32 = U32.add(stdout,U32.add(stderr,U32.add(stderr_full,U32.add(stderr_meta,U32.add(error_bytes,U32.add(observer,keeper)))) ))
+      eligible : Bool = attempt_decision_eligible(attempt_decision(health,phase,status,released,acknowledged,reported,pending,level,path,bytes))
       files : String <- Bool.pick(IO(String),eligible,attempt_cleanup_files(db,directory),IO.pure(String,""))
       IO.pure(String,files)
     case other: IO.pure(String,"")

@@ -149,6 +149,7 @@ typedef struct { char *database,*directory,*name,*answer; int error; } BatonAtte
 
 static int baton_attempt_name_allowed(const char *name) {
   return !strcmp(name,"stdout") || !strcmp(name,"native.stderr") ||
+    !strcmp(name,"stderr.full") || !strcmp(name,"stderr.meta") || !strcmp(name,"stderr-processing-error") ||
     !strcmp(name,"observer.log") || !strcmp(name,"keeper.log");
 }
 

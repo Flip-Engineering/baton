@@ -60,5 +60,8 @@ def filter_note(+state: String) -> String:
         "{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"unconfirmed\"}",
         "{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"unacknowledged\"}")))
 
+def start_player_bounded(cmd: String, model: String, effort: String, cwd: String, +log: String, sessions: String, session: String, fresh: Bool, limit: U32) -> IO(Result<&1,&1,U32 & String,U32>):
+  P.ProcessChild.spawn_with_file_bounded(argv(cmd,model,effort,sessions,session,fresh),cwd,log ++ ".stderr",limit,log ++ ".stderr.full",log ++ ".stderr.meta")
+
 def input(handle: U32, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.ProcessChild.write(handle,prompt(text))

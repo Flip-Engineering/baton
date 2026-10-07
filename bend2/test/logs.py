@@ -98,6 +98,10 @@ sys.exit(%d)
         for name, body in (('manifest', b'retained manifest'), ('status', b'0\n'),
                            ('released', b'released\n'), ('acknowledged', b'acknowledged\n')):
             (attempt_dir / name).write_bytes(body)
+        (attempt_dir / 'stderr.full').write_bytes(b'complete native diagnostics\n')
+        (attempt_dir / 'stderr.meta').write_text(json.dumps({
+            'schema': 'baton2-stderr-v1', 'status': 'complete', 'truncated': True,
+            'observedBytes': 81, 'retainedBytes': 24, 'limitBytes': 24, 'spool': 'stderr.full'}))
         return attempt, attempt_dir
 
     def lines(self, path=None):
@@ -135,6 +139,23 @@ sys.exit(%d)
             '{"probe":"unclassified frame"}',
         ]
         self.stream(frames)
+        stderr = pathlib.Path(str(self.log) + '.stderr')
+        stderr_full = pathlib.Path(str(stderr) + '.full')
+        stderr_meta = pathlib.Path(str(stderr) + '.meta')
+        self.assertTrue(stderr.is_file())
+        self.assertTrue(stderr_full.is_file())
+        retention = json.loads(stderr_meta.read_text())
+        self.assertEqual(retention['schema'], 'baton2-stderr-v1')
+        self.assertEqual(retention['status'], 'complete')
+        self.assertEqual(retention['spool'], str(stderr_full))
+        self.assertEqual(retention['limitBytes'], 33554432)
+        self.assertLessEqual(retention['retainedBytes'], retention['limitBytes'])
+        log_row = next(row for row in json.loads(self.call('logs-storage'))['logs']
+                       if row['path'] == str(self.log))
+        self.assertEqual(log_row['stderrSpoolBytes'], stderr_full.stat().st_size)
+        self.assertEqual(log_row['stderrMetadataBytes'], stderr_meta.stat().st_size)
+        self.assertGreaterEqual(log_row['accountedBytes'],
+                                stderr.stat().st_size + stderr_full.stat().st_size + stderr_meta.stat().st_size)
         saved = self.lines()
         self.assertEqual([json.loads(line).get('type') for line in saved],
                          ['response', 'tool_execution_start', 'tool_execution_update', 'tool_execution_end',
@@ -393,9 +414,15 @@ sys.exit(%d)
         self.assertTrue(row['acknowledged'])
         self.assertTrue(row['reported'])
         self.assertTrue(row['cleanupEligible'], row)
+        self.assertEqual(row['stderrSpoolBytes'], len(b'complete native diagnostics\n'))
+        self.assertGreater(row['stderrMetadataBytes'], 0)
+        self.assertEqual(row['stderrRetention'], {
+            'schema': 'baton2-stderr-v1', 'status': 'complete', 'truncated': True,
+            'observedBytes': 81, 'retainedBytes': 24, 'limitBytes': 24, 'spool': 'stderr.full'})
+        self.assertGreaterEqual(row['bytes'], row['stderrSpoolBytes'] + row['stderrMetadataBytes'])
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
         self.assertEqual({item['file'] for item in answer['attemptFiles'] if item['removed']},
-                         {'stdout', 'native.stderr', 'observer.log', 'keeper.log'})
+                         {'stdout', 'native.stderr', 'stderr.full', 'stderr.meta', 'observer.log', 'keeper.log'})
         for name in protected:
             self.assertTrue((attempt_dir / name).is_file(), name)
         self.assertEqual(json.loads(self.call('delivery', 'turn-1'))['body'], 'Complete answer λ')
@@ -416,6 +443,7 @@ sys.exit(%d)
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
         self.assertEqual(answer['attemptFiles'], [])
         self.assertEqual(evidence.read_text(), 'observer evidence')
+        self.assertTrue((attempt_dir / 'stderr.full').is_file())
 
     def test_failed_native_turn_retains_attempt_diagnostics(self):
         self.stream([self.terminal()], exit_code=1)
@@ -434,6 +462,7 @@ sys.exit(%d)
         self.assertEqual(row['cleanupReason'], 'native-turn-failed')
         self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['attemptFiles'], [])
         self.assertEqual(evidence.read_text(), 'failure diagnostics')
+        self.assertTrue((attempt_dir / 'stderr.full').is_file())
 
     def test_attempt_with_pending_input_is_retained(self):
         self.stream([self.terminal()])
@@ -447,6 +476,7 @@ sys.exit(%d)
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
         self.assertEqual(answer['skipped'], 'pending-input')
         self.assertEqual(evidence.read_text(), 'observer evidence')
+        self.assertTrue((attempt_dir / 'stderr.full').is_file())
 
     def test_diagnostic_policy_retains_attempt_files(self):
         self.call('logs', 'omp-worker', 'diagnostic')
@@ -459,6 +489,34 @@ sys.exit(%d)
         self.assertEqual(row['cleanupReason'], 'diagnostic-policy')
         self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['attemptFiles'], [])
         self.assertEqual(evidence.read_text(), 'observer evidence')
+        self.assertTrue((attempt_dir / 'stderr.full').is_file())
+
+    def test_unfinalized_stderr_spool_is_accounted_and_retained(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        (attempt_dir / 'stderr.meta').unlink()
+        (attempt_dir / 'stderr-processing-error').write_text('metadata finalization failed\n')
+        row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
+                   if item['attempt'] == attempt)
+        self.assertEqual(row['stderrHealth'], 'processing-error')
+        self.assertFalse(row['cleanupEligible'])
+        self.assertEqual(row['cleanupReason'], 'processing-error')
+        answer = json.loads(self.call('logs-clean', 'omp-worker'))
+        self.assertEqual(answer['attemptFiles'], [])
+        self.assertTrue((attempt_dir / 'stderr.full').is_file())
+        self.assertTrue((attempt_dir / 'stderr-processing-error').is_file())
+
+    def test_missing_stderr_metadata_with_spool_is_retained(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        (attempt_dir / 'stderr.meta').unlink()
+        row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
+                   if item['attempt'] == attempt)
+        self.assertEqual(row['stderrHealth'], 'metadata-missing')
+        self.assertFalse(row['cleanupEligible'])
+        self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['attemptFiles'], [])
+        self.assertTrue((attempt_dir / 'stderr.full').is_file())
+
 
     def test_attempt_cleanup_rejects_symlink_diagnostic_file(self):
         self.stream([self.terminal()])
@@ -755,17 +813,25 @@ assert sys.stdin.read()==''
         generation = self.log
         generation.write_text('derived generation view\n')
         (self.cwd / (generation.name + '.pending')).write_text('')
-        (self.cwd / (generation.name + '.stderr')).write_text('native diagnostics stay\n')
+        stderr = self.cwd / (generation.name + '.stderr')
+        stderr.write_text('bounded native diagnostics\n')
+        pathlib.Path(str(stderr) + '.full').write_bytes(b'complete native diagnostics\n')
+        pathlib.Path(str(stderr) + '.meta').write_text(json.dumps({
+            'schema': 'baton2-stderr-v1', 'status': 'complete', 'truncated': True,
+            'observedBytes': 81, 'retainedBytes': 24, 'limitBytes': 24,
+            'spool': str(stderr) + '.full'}))
         for name in ('stdout', 'native.stderr', 'observer.log', 'keeper.log'):
             (attempt_dir / name).write_text('diagnostic data for ' + name)
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
-        removed = [item for item in answer['attemptLogs'] if item.get('attempt') == attempt]
+        removed = [item for item in answer['attemptLogs'] if item.get('attempt') == attempt and item.get('path') == str(generation)]
         self.assertEqual(len(removed), 1, answer)
         self.assertTrue(removed[0]['removed'], answer)
         self.assertEqual(removed[0]['path'], str(generation))
         self.assertFalse(generation.exists())
         self.assertFalse((self.cwd / (generation.name + '.pending')).exists())
-        self.assertEqual((self.cwd / (generation.name + '.stderr')).read_text(), 'native diagnostics stay\n')
+        self.assertFalse(stderr.exists())
+        self.assertFalse(pathlib.Path(str(stderr) + '.full').exists())
+        self.assertFalse(pathlib.Path(str(stderr) + '.meta').exists())
         self.assertFalse(self.base_log.exists())
 
     def test_cleanup_retains_the_generation_of_an_unreported_attempt(self):
