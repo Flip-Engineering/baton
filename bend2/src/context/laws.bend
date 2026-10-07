@@ -324,7 +324,7 @@ def an_absent_optional_text_is_sql_null_and_a_present_one_is_quoted():
 
 law a_json_document_is_stored_verbatim_and_an_absent_one_is_null:
   for +value: String
-  {ContextStore.json_or_null(value) == Bool.pick(String,String.is_empty(value),"NULL","json(" ++ C.q(value) ++ ")") : String}
+  {ContextStore.json_or_null(value) == Bool.pick(String,String.is_empty(value),"NULL",C.q(value)) : String}
 
 def a_json_document_is_stored_verbatim_and_an_absent_one_is_null(value):
   {==}

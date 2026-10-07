@@ -164,8 +164,61 @@ static const char *baton_sql_value_end(const char *s) {
     }
     return s;
   }
-  while (*s && *s != ',' && *s != '}') s++;
+  while (*s && *s != ',' && *s != '}' && *s != ']') s++;
   return s;
+}
+
+/* Returns the original bytes of a refs array element after SQLite validates the
+   document. The element index comes from json_each's integer array key. */
+static void baton_sql_ref_entry(sqlite3_context *context, int argc, sqlite3_value **argv) {
+  (void)argc;
+  const char *doc = (const char *)sqlite3_value_text(argv[0]);
+  sqlite3_int64 wanted = sqlite3_value_int64(argv[1]);
+  if (!doc || wanted < 0) { sqlite3_result_null(context); return; }
+  sqlite3 *db = sqlite3_context_db_handle(context);
+  sqlite3_stmt *probe = NULL;
+  int rc = sqlite3_prepare_v2(db, "SELECT json_valid(?1)", -1, &probe, NULL);
+  if (rc != SQLITE_OK) { sqlite3_result_error_code(context, rc); return; }
+  sqlite3_bind_value(probe, 1, argv[0]);
+  int valid = sqlite3_step(probe) == SQLITE_ROW && sqlite3_column_int(probe, 0);
+  sqlite3_finalize(probe);
+  if (!valid || strlen(doc) != (size_t)sqlite3_value_bytes(argv[0])) {
+    sqlite3_result_error(context, "invalid retained JSON document", -1); return;
+  }
+  rc = sqlite3_prepare_v2(db, "SELECT json_extract(?1,'$')='refs'", -1, &probe, NULL);
+  if (rc != SQLITE_OK) { sqlite3_result_error_code(context, rc); return; }
+  const char *at = baton_sql_skip_space(doc);
+  if (*at == '{') for (at++; ; ) {
+    at = baton_sql_skip_space(at);
+    if (*at != '"') break;
+    const char *key_end = baton_sql_value_end(at);
+    sqlite3_bind_text64(probe, 1, at, (sqlite3_uint64)(key_end-at), SQLITE_TRANSIENT, SQLITE_UTF8);
+    int refs = sqlite3_step(probe) == SQLITE_ROW && sqlite3_column_int(probe, 0);
+    sqlite3_reset(probe); sqlite3_clear_bindings(probe);
+    at = baton_sql_skip_space(key_end);
+    if (*at++ != ':') break;
+    at = baton_sql_skip_space(at);
+    const char *end = baton_sql_value_end(at);
+    if (refs && *at == '[') {
+      at = baton_sql_skip_space(at + 1);
+      for (sqlite3_int64 index = 0; *at && *at != ']'; index++) {
+        const char *entry_end = baton_sql_value_end(at);
+        if (index == wanted) {
+          sqlite3_result_text64(context, at, (sqlite3_uint64)(entry_end-at), SQLITE_TRANSIENT, SQLITE_UTF8);
+          sqlite3_finalize(probe); return;
+        }
+        at = baton_sql_skip_space(entry_end);
+        if (*at != ',') break;
+        at = baton_sql_skip_space(at + 1);
+      }
+      break;
+    }
+    at = baton_sql_skip_space(end);
+    if (*at != ',') break;
+    at++;
+  }
+  sqlite3_finalize(probe);
+  sqlite3_result_null(context);
 }
 
 /* Copies the raw value text of one top-level member of a flat JSON object into
@@ -541,7 +594,9 @@ static void baton_sql_bound_call(IoWork *w) {
   }
   sqlite3_busy_handler(db, baton_sql_busy, NULL);
   char *error = NULL;
-  call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
+  call->code = sqlite3_create_function_v2(db, "baton_ref_entry", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_ref_entry, NULL, NULL, NULL);
+  if (call->code == SQLITE_OK)
+    call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
   if (call->code == SQLITE_OK)
     call->code = sqlite3_exec(db, call->sql, baton_sql_bound_row, call, &error);
   if (call->code != SQLITE_OK) {

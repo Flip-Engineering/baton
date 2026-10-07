@@ -167,7 +167,7 @@ def ref_match_count(query: String, refId: String) -> String:
   "(SELECT count(*) FROM json_each(" ++ ref_result(query) ++ ",'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
 
 def ref_first_entry(query: String, refId: String) -> String:
-  "(SELECT entry.value FROM json_each(" ++ ref_result(query) ++ ",'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
+  "(SELECT baton_ref_entry(" ++ ref_result(query) ++ ",entry.key) FROM json_each(" ++ ref_result(query) ++ ",'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
 
 def ref_shape_ok(+query: String, refId: String) -> String:
   "(SELECT " ++ ref_entry_gate("entry.type", "entry.value") ++ " FROM json_each(" ++ ref_result(query) ++ ",'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
@@ -285,7 +285,7 @@ def ref_lookup(+db: String, +binding: String, +query: String, +refId: String) ->
     ref_after(query, refId, result)
 
 def json_or_null(+value: String) -> String:
-  Bool.pick(String, String.is_empty(value), "NULL", "json(" ++ C.q(value) ++ ")")
+  Bool.pick(String, String.is_empty(value), "NULL", C.q(value))
 
 def text_or_null(+value: String) -> String:
   Bool.pick(String, String.is_empty(value), "NULL", C.q(value))

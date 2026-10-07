@@ -589,7 +589,7 @@ def check_control(values):
     recover = json.loads(values.get("control.recover", "{}"))
     check(recover.get("state") == "complete", "control.recover", recover)
     check(recover.get("result", {}).get("controlledQuery") == "q2", "control.recover.query", recover.get("result"))
-    check(values.get("control.count") == "6", "control.count", values.get("control.count"))
+    check(values.get("control.count") == "7", "control.count", values.get("control.count"))
 
 
 MUTATIONS = [
