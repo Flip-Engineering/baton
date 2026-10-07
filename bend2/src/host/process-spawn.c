@@ -2360,6 +2360,13 @@ static int br_admission_store(const char *directory,const char *database,int gua
   free(bytes);free(path);free(canonical);
   return error;
 }
+/* Records why an attempt's admission record was refused. The refusal path is the
+   only place a caller learns that a directory is not the attempt it claims to be,
+   so the reason is durable next to the record. */
+static int br_admission_refuse(const char *directory,const char *reason) {
+  br_file(directory,"admission-error",reason,strlen(reason),1);
+  return EPERM;
+}
 /* Verifies the admission record of a directory against the database that requests
    it and the guard the caller holds. Every mismatch refuses: a directory whose
    recorded identity, database or guard differs is not the attempt that was
@@ -2368,41 +2375,54 @@ static int br_admission_verify(const char *directory,const char *database,int gu
   char *path=br_path(directory,"admission");
   if(!path)return ENOMEM;
   int fd=open(path,O_RDONLY|O_CLOEXEC);
-  if(fd<0) {int error=errno;free(path);return error==ENOENT?EPERM:error;}
+  if(fd<0) {
+    int error=errno;free(path);
+    return error==ENOENT?br_admission_refuse(directory,"no admission record\n"):error;
+  }
   BrAdmission record;
+  const char *reason=NULL;
   int error=br_read_all(fd,&record,sizeof(record));
   struct stat info;
-  if(error||fstat(fd,&info))error=EPERM;
-  if(!error && (memcmp(record.magic,BR_ADMISSION_MAGIC,8) || record.schema!=1))error=EPERM;
+  if(error||fstat(fd,&info)) {error=EPERM;reason="truncated admission record\n";}
+  if(!error && (memcmp(record.magic,BR_ADMISSION_MAGIC,8) || record.schema!=1))
+    {error=EPERM;reason="the admission record is not this schema\n";}
   size_t length=error?0:(size_t)record.directory_length;
-  if(!error && (length==0 || length>4096))error=EPERM;
-  if(!error && (size_t)info.st_size!=sizeof(record)+length)error=EPERM;
+  if(!error && (length==0 || length>4096)) {error=EPERM;reason="the recorded path is not a path\n";}
+  if(!error && (size_t)info.st_size!=sizeof(record)+length)
+    {error=EPERM;reason="the admission record and its path are not one record\n";}
   char *recorded=NULL;
   if(!error) {
     recorded=malloc(length+1);
     if(!recorded)error=ENOMEM;
-    else if(br_read_all(fd,recorded,length))error=EPERM;
+    else if(br_read_all(fd,recorded,length)) {error=EPERM;reason="truncated recorded path\n";}
     else recorded[length]=0;
   }
   close(fd);free(path);
-  char *canonical=realpath(directory,NULL);
-  if(!canonical) {free(recorded);return errno;}
+  char *canonical=error||!recorded?NULL:realpath(directory,NULL);
+  if(!error && !canonical) {error=errno;reason=NULL;}
   struct stat attempt,database_info,guard_info;
-  if(lstat(canonical,&attempt) || !S_ISDIR(attempt.st_mode))error=EPERM;
+  if(!error && (lstat(canonical,&attempt) || !S_ISDIR(attempt.st_mode)))
+    {error=EPERM;reason="the requested directory is not a directory\n";}
   if(!error && ((uint64_t)attempt.st_dev!=record.attempt_device ||
-                (uint64_t)attempt.st_ino!=record.attempt_inode))error=EPERM;
-  if(!error && strcmp(recorded,canonical))error=EPERM;
-  if(!error && br_admission_check(&record,canonical,length)!=record.check)error=EPERM;
+                (uint64_t)attempt.st_ino!=record.attempt_inode))
+    {error=EPERM;reason="the admission record belongs to another directory\n";}
+  if(!error && strcmp(recorded,canonical))
+    {error=EPERM;reason="the admission record names another path\n";}
+  if(!error && br_admission_check(&record,canonical,length)!=record.check)
+    {error=EPERM;reason="the admission record is not intact\n";}
   if(!error && database && record.database_inode) {
-    if(stat(database,&database_info))error=EPERM;
+    if(stat(database,&database_info)) {error=EPERM;reason="the requesting database is not readable\n";}
     else if((uint64_t)database_info.st_dev!=record.database_device ||
-            (uint64_t)database_info.st_ino!=record.database_inode)error=EPERM;
+            (uint64_t)database_info.st_ino!=record.database_inode)
+      {error=EPERM;reason="the admission record belongs to another database\n";}
   }
   if(!error && guard>=0 && record.guard_inode) {
-    if(fstat(guard,&guard_info))error=EPERM;
+    if(fstat(guard,&guard_info)) {error=EPERM;reason="the presented guard is not a file\n";}
     else if((uint64_t)guard_info.st_dev!=record.guard_device ||
-            (uint64_t)guard_info.st_ino!=record.guard_inode)error=EPERM;
+            (uint64_t)guard_info.st_ino!=record.guard_inode)
+      {error=EPERM;reason="the admission record belongs to another session guard\n";}
   }
+  if(error && reason)br_file(canonical?canonical:directory,"admission-error",reason,strlen(reason),1);
   free(recorded);
   free(canonical);
   return error;
