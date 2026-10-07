@@ -109,9 +109,12 @@ size-bounding with artifact references, not deduplication.
   command_execution items, and the turn.completed frame.
 - `bend2/test/logging-utility.py`: executable turn-level checks (ends kept
   byte-identical, updates dropped at default, newest updates surviving ends,
-  retention ratio, open-stream and open-tool flush) plus executable-free shape
-  pins (cumulative args repetition, Muse envelope and tool result presence,
-  Codex item uniqueness with terminal).
+  retention ratio, open-stream and open-tool flush, checkpoint restore of
+  planted unread output with clearing) plus executable-free shape pins
+  (cumulative args repetition, Muse envelope and tool result presence, Codex
+  item uniqueness with terminal). Every streamed fixture is terminated with a
+  terminal agent_end frame: without provider termination the turn holds
+  native input open and cannot complete, which the streams model honestly.
 
 ## Interrupted-work sufficiency
 
