@@ -389,7 +389,8 @@ class SharedInstance(unittest.TestCase):
         recovery.write_text(
             '#!/bin/sh\n'
             f'echo started >> {shlex.quote(str(started))}\n'
-            'sleep 3\n'
+            f'count=$(wc -l < {shlex.quote(str(started))})\n'
+            'if [ "$count" -eq 1 ]; then sleep 3; else sleep 5; fi\n'
             f'{shlex.quote(str(EXE))} recover-retained {shlex.quote(str(self.db))} {shlex.quote(str(directory))}\n'
             'status=$?\n'
             f'echo "$status" >> {shlex.quote(str(finished))}\n'
