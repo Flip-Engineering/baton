@@ -75,7 +75,7 @@ def combine(first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U32 & S
 # One owned session task. The empty command, model, effort, workspace and
 # message arguments select the session's recorded values and its full
 # pending inbox through the receive entry.
-def serve_session(+db: String, session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def serve_session(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   Receive.run(db,session,"","","","","","")
 
 def join_all(tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>) -> IO(Result<&1,&1,U32 & String,Unit>):

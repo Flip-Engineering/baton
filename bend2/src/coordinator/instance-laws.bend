@@ -104,7 +104,7 @@ def admitted_owner_claim_returns_its_answer(saved):
 
 law owned_session_task_runs_the_receive_entry:
   for +db: String
-  for session: String
+  for +session: String
   {Instance.serve_session(db,session) == Receive.run(db,session,"","","","","","") : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def owned_session_task_runs_the_receive_entry(db,session):
