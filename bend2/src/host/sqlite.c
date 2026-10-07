@@ -3,10 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Install a compact durable projection after the coordinator creates its tables.
-   This keeps the schema DDL out of the large admitted Bend query literal. */
+/* This projection contains only cursor and summary fields. Message bodies and
+   reader-visible state remain in the coordinator tables. The triggers run in
+   the same transaction as the row mutation. */
 static const char *const baton_change_schema[] = {
-  "CREATE TABLE IF NOT EXISTS native_changes (change_id INTEGER PRIMARY KEY AUTOINCREMENT,recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),entity TEXT NOT NULL,entity_id TEXT NOT NULL,session_id TEXT NOT NULL DEFAULT '',operation TEXT NOT NULL,kind TEXT NOT NULL,summary TEXT NOT NULL);",
+  "CREATE TABLE IF NOT EXISTS native_changes (change_id INTEGER PRIMARY KEY AUTOINCREMENT,recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),entity TEXT NOT NULL,entity_id TEXT NOT NULL,session_id TEXT NOT NULL DEFAULT '',operation TEXT NOT NULL CHECK(operation IN ('insert','update','delete')),kind TEXT NOT NULL DEFAULT '',summary TEXT NOT NULL DEFAULT '');",
   "CREATE TRIGGER IF NOT EXISTS native_changes_retention AFTER INSERT ON native_changes BEGIN DELETE FROM native_changes WHERE change_id<=NEW.change_id-10000; END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_sessions_insert AFTER INSERT ON sessions BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('player',NEW.id,NEW.id,'insert','session','session inserted'); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_sessions_update AFTER UPDATE ON sessions WHEN OLD.parent IS NOT NEW.parent OR OLD.harness IS NOT NEW.harness OR OLD.model IS NOT NEW.model OR OLD.effort IS NOT NEW.effort OR OLD.native IS NOT NEW.native OR OLD.observed_harness IS NOT NEW.observed_harness OR OLD.observed_model IS NOT NEW.observed_model OR OLD.observed_effort IS NOT NEW.observed_effort OR OLD.endpoint IS NOT NEW.endpoint OR OLD.workspace IS NOT NEW.workspace OR OLD.branch IS NOT NEW.branch OR OLD.base IS NOT NEW.base BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('player',NEW.id,NEW.id,'update','session','session updated'); END;",
@@ -39,7 +40,7 @@ static const char *const baton_change_schema[] = {
   NULL
 };
 
-static int baton_install_projection(sqlite3 *db, const char *schema, char **error) {
+static int baton_sql_install_projection(sqlite3 *db, const char *schema, char **error) {
   int code = sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, error);
   if (code == SQLITE_OK)
     code = sqlite3_exec(db, schema, NULL, NULL, error);
@@ -94,11 +95,10 @@ static void baton_sql_call(IoWork *w) {
     char *error = NULL;
     call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
     if (call->code == SQLITE_OK) {
-      if (call->projection_only) {
-        call->code = baton_install_projection(db, call->sql, &error);
-      } else {
+      if (call->projection_only)
+        call->code = baton_sql_install_projection(db, call->sql, &error);
+      else
         call->code = sqlite3_exec(db, call->sql, baton_sql_row, call, &error);
-      }
     }
     if (call->code != SQLITE_OK) {
       call->error = strdup(error ? error : sqlite3_errmsg(db));
