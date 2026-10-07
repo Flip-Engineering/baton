@@ -4,6 +4,7 @@ import importlib.util
 import hashlib
 import json
 import pathlib
+import sqlite3
 import subprocess
 import sys
 import unittest
