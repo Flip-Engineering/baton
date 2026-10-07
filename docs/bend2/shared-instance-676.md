@@ -152,8 +152,13 @@ reported on their own lines, apart from resident and private figures.
 This change adds `bend2/src/coordinator/instance.bend`,
 `bend2/src/coordinator/instance-laws.bend`, one import line in
 `bend2/src/coordinator/laws.bend`, and this document. Remote gates cover
-the full entry build with every operative law and proof-removal controls.
-The serve loop heartbeat write is covered by an executed serve gate on a
+the full entry build with every operative law. Scoped controls on the
+claim commit show 22 of 22 proof removals refused and 5 of 5 targeted
+implementation mutations refused (lapse deletion, duplicate admission,
+refusal prefix, serve verb, stop guard). These five mutations are
+proposed for `bend2/scripts/laws-check.mjs` composition under the same
+names with the `instance.bend` file and the laws named here. The serve
+loop heartbeat write is covered by an executed serve gate on a
 scratched database once CLI routing lands. CLI verb wiring, MCP tool
 wiring, custody implementation, and workload measurements follow
 through the contracts above.
