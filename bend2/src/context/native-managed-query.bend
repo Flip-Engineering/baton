@@ -182,12 +182,14 @@ def readiness_json_text(+value: J.Json, +key: String) -> String:
   J.json_text(readiness_member(value, key))
 
 def readiness_true(+value: J.Json, +key: String) -> Bool:
-  match readiness_member(value, key):
+  member : J.Json = readiness_member(value, key)
+  match member:
     case J.Jtrue{}: True{}
     case other: False{}
 
 def readiness_false(+value: J.Json, +key: String) -> Bool:
-  match readiness_member(value, key):
+  member : J.Json = readiness_member(value, key)
+  match member:
     case J.Jfalse{}: True{}
     case other: False{}
 
