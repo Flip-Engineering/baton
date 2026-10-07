@@ -57,7 +57,7 @@ def identity_surfaces() -> IO(Unit):
     obs("anchor", ContextRole.guard_anchor("/work/log"))
     obs("directory", ContextRole.role_directory("/work/log", "abc"))
 
-def progress_surfaces() -> IO<Unit>:
+def progress_surfaces() -> IO(Unit):
   do IO<Unit>:
     waiting : List<ContextProgress.Waiting> <- IO.pure(List<ContextProgress.Waiting>, Con{ContextProgress.WaitingProviderResponse{}, Nil{}})
     obs("progress.empty", ContextProgress.progress_json(True{}, ContextProgress.PhaseRunning{}, Nil{}, ContextProgress.ControlUnobserved{}, ContextProgress.CleanupNotRequested{}))
@@ -74,7 +74,7 @@ def progress_surfaces() -> IO<Unit>:
     obs("state.late", Context.query_state_name(ContextProgress.state_after(Context.QsComplete{}, Context.QsFailed{})))
     obs("state.forward", Context.query_state_name(ContextProgress.state_after(Context.QsAccepted{}, Context.QsRunning{})))
 
-def admission_surfaces() -> IO<Unit>:
+def admission_surfaces() -> IO(Unit):
   do IO<Unit>:
     obs("owner.active", Bool.show(ContextAdmission.owner_admission(True{}, True{}, ContextAdmission.OwnerOrdinary{})))
     obs("owner.stopped.ordinary", Bool.show(ContextAdmission.owner_admission(False{}, True{}, ContextAdmission.OwnerOrdinary{})))
@@ -477,7 +477,7 @@ def companion_surfaces(+db: String, +binding: String, +log: String) -> IO(Unit):
     show_step("companion.loop", looped)
     IO.pure(Unit, Unit{})
 
-def run(+db: String, +copy: String, +log: String) -> IO<Unit>:
+def run(+db: String, +copy: String, +log: String) -> IO(Unit):
   do IO<Unit>:
     pure : Unit <- identity_surfaces()
     more : Unit <- progress_surfaces()
