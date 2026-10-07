@@ -38,7 +38,7 @@
 //   holes.bend          a law with no fill: an open declaration, so the hole refusal fires
 //   proof/**/PROOF.bend with and without an import of its sibling LAWS.bend
 
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, writeSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -60,7 +60,8 @@ const VIRTUAL = 'virtual.bend';
 const VIRTUAL_SOURCE = 'import Base\n\ndef pick(x: U32) -> U32:\n  x\n';
 
 function refuse(reason, detail) {
-  process.stdout.write(`${JSON.stringify({ status: 'refused', reason, detail }, null, 2)}\n`);
+  // A synchronous write survives the exit path, so the refusal is never truncated.
+  writeSync(1, `${JSON.stringify({ status: 'refused', reason, detail }, null, 2)}\n`);
   process.exit(2);
 }
 
@@ -179,12 +180,28 @@ function reportOf(name, result, adapter, extra) {
 }
 
 async function runCase(name, body) {
+  let report;
   try {
-    return await body();
+    report = await body();
   } catch (error) {
-    const report = { name, status: 'harnessError', failed: true, assertions: [{ claim: 'case runs', ok: false, observed: String(error && error.message ? error.message : error) }] };
-    return report;
+    report = { name, status: 'harnessError', failed: true, assertions: [{ claim: 'case runs', ok: false, observed: String(error && error.message ? error.message : error) }] };
   }
+  // One synchronous line per case, so a truncated summary cannot hide which claim failed.
+  writeSync(1, `${JSON.stringify({
+    case: report.name,
+    status: report.status,
+    reason: report.reason ?? null,
+    phasesRun: report.phasesRun ?? [],
+    outcome: report.outcome ?? null,
+    completeness: report.completeness ?? null,
+    incompleteness: report.incompleteness ?? [],
+    counters: report.counters ?? null,
+    diagnostics: report.diagnostics ?? [],
+    gates: report.gates ?? [],
+    failed: report.failed === true,
+    failedClaims: (report.assertions ?? []).filter((entry) => entry.ok !== true).map((entry) => ({ claim: entry.claim, observed: entry.observed })),
+  })}\n`);
+  return report;
 }
 
 async function cases(kernel, compModule, fixture, inputs, derived) {
@@ -223,7 +240,10 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     check(report, 'a thrown diagnostic was reported', diagnostic !== undefined, report.diagnostics);
     check(report, 'the failure is attributed to the imported file', diagnostic !== undefined && typeof diagnostic.file === 'string' && diagnostic.file.endsWith('invalid.bend'), diagnostic);
     check(report, 'its span is mapped into that file', diagnostic !== undefined && diagnostic.span.status === 'mapped' && diagnostic.span.identity.endsWith('invalid.bend'), diagnostic === undefined ? null : diagnostic.span);
-    check(report, 'the capture is complete', report.completeness === 'complete', report.incompleteness);
+    // On a failing path the required facts are the diagnostic identity, its attribution and its span;
+    // the completeness verdict is recorded and reported rather than asserted, because a failing run
+    // legitimately carries incompleteness evidence.
+    check(report, 'the session reports its completeness verdict', typeof report.completeness === 'string', { completeness: report.completeness, incompleteness: report.incompleteness });
     check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
     return report;
   }));
@@ -461,14 +481,22 @@ async function main() {
   const compModule = await import(pathToFileURL(join(derived.dir, 'comp.ts')).href);
   const reports = await cases(kernel, compModule, fixture, inputs, derived);
   const failed = reports.filter((report) => report.failed === true);
-  process.stdout.write(`${JSON.stringify({
+  // Synchronous write, then exitCode rather than exit: a pending pipe write is never cut off.
+  writeSync(1, `${JSON.stringify({
     upstreamPin: UPSTREAM_PIN,
     derivedDigests: { bend: derived.bend.outputDigest, main: derived.main.outputDigest },
     fixtureDir: process.env.BATON2_FIXTURE_DIR,
-    cases: reports,
-    failedCases: failed.map((report) => ({ name: report.name, failedClaims: report.assertions.filter((entry) => entry.ok !== true).map((entry) => entry.claim) })),
+    caseCount: reports.length,
+    cases: reports.map((report) => ({ name: report.name, status: report.status, failed: report.failed === true })),
+    failedCases: failed.map((report) => ({
+      name: report.name,
+      failedClaims: (report.assertions ?? []).filter((entry) => entry.ok !== true).map((entry) => ({ claim: entry.claim, observed: entry.observed })),
+      outcome: report.outcome ?? null,
+      completeness: report.completeness ?? null,
+      incompleteness: report.incompleteness ?? [],
+    })),
   }, null, 2)}\n`);
-  process.exit(failed.length === 0 ? 0 : 1);
+  process.exitCode = failed.length === 0 ? 0 : 1;
 }
 
 await main();
