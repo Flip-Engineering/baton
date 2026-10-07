@@ -1193,7 +1193,7 @@ def ld_adv_refused_pick(g: T.GitOut, path: String, basis: String) -> LAdv:
         AdvBroken{"the target commit could not be read after a refused fast-forward"})
     case T.GBroken{detail}: AdvBroken{detail}
 
-def ld_adv_wt_refused_decided(advance: LAdv, +read: T.GitOut, +capture: T.CapturedRaw) -> IO(LdAdvObs):
+def ld_adv_wt_refused_decided(advance: LAdv, +path: String, +read: T.GitOut, +capture: T.CapturedRaw) -> IO(LdAdvObs):
   IO.pure(LdAdvObs, ld_adv_qualified_with(advance, capture, QualDecided{MutationHeld{path}, ld_adv_read(read), ReadSkipped{}}))
 
 def ld_adv_wt_refused(path: String, repo: String, target: String, basis: String, +capture: T.CapturedRaw) -> IO(LdAdvObs):
@@ -1203,7 +1203,7 @@ def ld_adv_wt_refused(path: String, repo: String, target: String, basis: String,
   +b2 = basis
   do IO<LdAdvObs>:
     +g : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
-    ld_adv_wt_refused_decided(ld_adv_refused_pick(g, p2, b2), g, capture)
+    ld_adv_wt_refused_decided(ld_adv_refused_pick(g, p2, b2), p2, g, capture)
 
 # The target read decides movement and failure; only a successful matching tip goes on to HEAD.
 def ld_adv_wt_head_decided(path: String, target: String, +capture: T.CapturedRaw, +tip: T.GitOut, +head: T.GitOut) -> IO(LdAdvObs):
@@ -2743,49 +2743,49 @@ def a_failed_release_refuses_the_advance():
 # The qualification decisions, stated over supplied observations. The capture and the earlier
 # reads are carried through every one of them.
 law an_unreadable_target_read_is_failure_evidence:
-  {ld_adv_wt_target_decided("/p", "/r", "tgt", "cand", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GBroken{"target unreadable"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"target unreadable"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GBroken{"target unreadable"}), ReadSkipped{}})) : IO(LdAdvObs)}
+  {ld_adv_wt_target_decided("/p", "/r", "tgt", "cand", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GBroken{"target unreadable"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"target unreadable"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{MutationHeld{"/p"}, ld_adv_read(T.GBroken{"target unreadable"}), ReadSkipped{}})) : IO(LdAdvObs)}
 
 def an_unreadable_target_read_is_failure_evidence():
   {==}
 
 law a_successful_unequal_target_read_is_movement:
-  {ld_adv_wt_target_decided("/p", "/r", "tgt", "cand", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "other\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvMoved{}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "other\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
+  {ld_adv_wt_target_decided("/p", "/r", "tgt", "cand", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "other\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvMoved{}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{MutationHeld{"/p"}, ld_adv_read(T.GRun{0, "other\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
 
 def a_successful_unequal_target_read_is_movement():
   {==}
 
 law a_successful_matching_holder_read_lands:
-  {ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "tip\n"}, T.GRun{0, Tx.str_cat(ld_hold_ref("tgt"), "\n")}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvLanded{}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GRun{0, Tx.str_cat(ld_hold_ref("tgt"), "\n")})})) : IO(LdAdvObs)}
+  {ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "tip\n"}, T.GRun{0, Tx.str_cat(ld_hold_ref("tgt"), "\n")}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvLanded{}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{MutationHeld{"/p"}, ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GRun{0, Tx.str_cat(ld_hold_ref("tgt"), "\n")})})) : IO(LdAdvObs)}
 
 def a_successful_matching_holder_read_lands():
   {==}
 
 law a_successful_holder_mismatch_is_holder_change:
-  {ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "tip\n"}, T.GRun{0, "refs/heads/other\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvHolderChanged{"/p"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GRun{0, "refs/heads/other\n"})})) : IO(LdAdvObs)}
+  {ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "tip\n"}, T.GRun{0, "refs/heads/other\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvHolderChanged{"/p"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{MutationHeld{"/p"}, ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GRun{0, "refs/heads/other\n"})})) : IO(LdAdvObs)}
 
 def a_successful_holder_mismatch_is_holder_change():
   {==}
 
 law an_unreadable_holder_read_is_failure_evidence:
-  {ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "tip\n"}, T.GBroken{"head unreadable"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"head unreadable"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GBroken{"head unreadable"})})) : IO(LdAdvObs)}
+  {ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "tip\n"}, T.GBroken{"head unreadable"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"head unreadable"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{MutationHeld{"/p"}, ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GBroken{"head unreadable"})})) : IO(LdAdvObs)}
 
 def an_unreadable_holder_read_is_failure_evidence():
   {==}
 
 law a_refused_mutation_retains_its_target_read:
-  {ld_adv_wt_refused_decided(AdvRefused{}, T.GRun{0, "tip\n"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvRefused{}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
+  {ld_adv_wt_refused_decided(AdvRefused{}, "/p", T.GRun{0, "tip\n"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvRefused{}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{MutationHeld{"/p"}, ld_adv_read(T.GRun{0, "tip\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
 
 def a_refused_mutation_retains_its_target_read():
   {==}
 
 law a_nonzero_target_read_is_failure_evidence:
-  {ld_adv_wt_target_decided("/p", "/r", "tgt", "cand", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{128, "fatal: not a valid ref\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"fatal: not a valid ref\n"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{128, "fatal: not a valid ref\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
+  {ld_adv_wt_target_decided("/p", "/r", "tgt", "cand", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{128, "fatal: not a valid ref\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"fatal: not a valid ref\n"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{MutationHeld{"/p"}, ld_adv_read(T.GRun{128, "fatal: not a valid ref\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
 
 def a_nonzero_target_read_is_failure_evidence():
   {==}
 
 law a_nonzero_holder_read_is_failure_evidence:
-  {ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "tip\n"}, T.GRun{128, "fatal: cannot resolve HEAD\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"fatal: cannot resolve HEAD\n"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GRun{128, "fatal: cannot resolve HEAD\n"})})) : IO(LdAdvObs)}
+  {ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "tip\n"}, T.GRun{128, "fatal: cannot resolve HEAD\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"fatal: cannot resolve HEAD\n"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{MutationHeld{"/p"}, ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GRun{128, "fatal: cannot resolve HEAD\n"})})) : IO(LdAdvObs)}
 
 def a_nonzero_holder_read_is_failure_evidence():
   {==}
@@ -2799,7 +2799,7 @@ def a_matching_target_read_continues_to_the_holder_read():
   {==}
 
 law a_refused_pick_and_decision_retain_the_read:
-  {ld_adv_wt_refused_decided(ld_adv_refused_pick(T.GRun{0, "tip\n"}, "/p", "tip"), T.GRun{0, "tip\n"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvHeld{"/p"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
+  {ld_adv_wt_refused_decided(ld_adv_refused_pick(T.GRun{0, "tip\n"}, "/p", "tip"), "/p", T.GRun{0, "tip\n"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvHeld{"/p"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{MutationHeld{"/p"}, ld_adv_read(T.GRun{0, "tip\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
 
 def a_refused_pick_and_decision_retain_the_read():
   {==}
@@ -2807,13 +2807,15 @@ def a_refused_pick_and_decision_retain_the_read():
 # Receipt admission gates the landed answer. A missing admission refuses even a landed advance with a
 # successful release, and a complete admitted record reaches the existing landed answer.
 law a_missing_admission_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionMissing{"the attempt record was not freshly created"}}, "t", "c") == FFDone{T.LBlocked{Tx.str_cat("the attempt record was not admitted: ", "the attempt record was not freshly created")}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionRefused{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"exit 0
+", "diag"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityMissing{}, AssociationMissing{}, IntentMissing{}}, StageUnperformed{}, StageUnperformed{}, StageUnperformed{}}, "the attempt record was not admitted"}}, "t", "c") == FFDone{T.LBlocked{Tx.str_cat("the attempt record was not admitted: ", "the attempt record was not freshly created")}} : FFLD}
 
 def a_missing_admission_refuses_the_fast_forward():
   {==}
 
 law a_missing_admission_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionMissing{"the attempt record does not read back as published"}}, "t", "c") == LdFail{T.FCmd{"land", Tx.str_cat("the attempt record was not admitted: ", "the attempt record does not read back as published")}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionRefused{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"exit 0
+", "diag"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityMissing{}, AssociationMissing{}, IntentMissing{}}, StageUnperformed{}, StageUnperformed{}, StageUnperformed{}}, "the attempt record was not admitted"}}, "t", "c") == LdFail{T.FCmd{"land", Tx.str_cat("the attempt record was not admitted: ", "the attempt record does not read back as published")}} : Ld}
 
 def a_missing_admission_refuses_the_advance():
   {==}
