@@ -853,6 +853,61 @@ class SharedInstance(unittest.TestCase):
         print('evidence task state', running['state'], running['spawn_latched'],
               running['native_pid'], exited['state'], exited['status'])
 
+    def kill_matching(self, *fragments):
+        out = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            if all(fragment in line for fragment in fragments):
+                try:
+                    os.kill(int(line.split(None, 1)[0]), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_adoption_refuses_unbound_or_foreign_credentials(self):
+        """A shared adoption needs a record bound to this database and to the
+        session guard the caller holds. An attempt admitted without a guard, an
+        attempt admitted through the legacy attempt-level API that binds no
+        database, and a request naming another database are each refused, and the
+        same record still adopts its own native process under its own database and
+        guard."""
+        # An attempt admitted with no session guard states none.
+        nolock = pathlib.Path(f'{self.db}.attempt-nolock')
+        child = self.spawn('admit-nolock', self.db, nolock, self.home, 'one\n',
+                           sys.executable, self.survivor)
+        self.line(child, 'admitted')
+        self.hold(nolock / 'stdout', '"role": "native"')
+        child.kill()
+        child.wait(timeout=10)
+        self.addCleanup(self.kill_matching, str(nolock))
+        detail = self.adoption_refusal(nolock)
+        self.assertIn('states no session guard binding', detail, detail)
+
+        # A legacy attempt-level admission binds no database.
+        legacy = pathlib.Path(f'{self.db}.attempt-legacy')
+        child = self.spawn('legacy-retain', legacy, self.home, 'one\n',
+                           sys.executable, self.survivor)
+        self.line(child, 'admitted')
+        self.hold(legacy / 'stdout', '"role": "native"')
+        child.kill()
+        child.wait(timeout=10)
+        detail = self.adoption_refusal(legacy)
+        self.assertIn('states no database binding', detail, detail)
+
+        # A record that belongs to this database is refused for another one.
+        other = self.home / 'other.db'
+        other.touch()
+        bound, observer, summary = self.prepared_survivor('bound', 'fixture')
+        self.kill_owner()
+        observer.kill()
+        observer.wait(timeout=10)
+        result = self.command('attach-owned', other, bound)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('belongs to another database', result.stdout + result.stderr)
+        adopter = self.spawn('attach-owned', self.db, bound)
+        self.attach_owned_adopt(bound, adopter)
+        self.assertEqual([row['pid'] for row in self.native_rows(adopter)], [summary['pid']],
+                         'the bound record no longer adopts its own native process')
+        print('evidence unbound refusals', 'no-guard', 'no-database', 'foreign-database')
+
     def test_shutdown_releases_the_database_for_a_new_owner(self):
         directory, child = self.begin('a0')
         self.wait_run(child)

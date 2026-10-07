@@ -363,8 +363,51 @@ def mode_legacy(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"partial-uncommitted"),13,Bool.pick(U32,String.eq(mode,"admit-file"),14,
   Bool.pick(U32,String.eq(mode,"subscribe"),15,Bool.pick(U32,String.eq(mode,"publish"),16,0))))))))))))))))
 
+# Admits under the shared owner while holding no session guard, so the record
+# states no guard binding.
+def nolock_started(start: P.RetainedStart, payload: String) -> IO(Unit):
+  match start:
+    case P.Unstarted{error}: IO.die(Unit,1,error)
+    case P.Retained{+handle}: do IO<Unit>:
+      printed : Unit <- IO.print("admitted")
+      written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,payload))
+      line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      drained : Unit <- read_all_lines(handle,line)
+      IO.pure(Unit,Unit{})
+
+def nolock_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case database <> directory <> cwd <> payload <> program: do IO<Unit>:
+      executable : String <- IO.try(String,Lock.SessionLock.executable())
+      start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr","",1,None{},P.argv([executable,"recover-retained",database,directory])))
+      run : Unit <- nolock_started(start,payload)
+      IO.pure(Unit,Unit{})
+    case _: IO.die(Unit,2,"admit-nolock DATABASE ATTEMPT CWD PAYLOAD PROGRAM ARGS...")
+
+# Admits through the legacy attempt-level API, which binds no database and no guard.
+def legacy_started(start: P.RetainedStart, payload: String) -> IO(Unit):
+  match start:
+    case P.Unstarted{error}: IO.die(Unit,1,error)
+    case P.Retained{+handle}: do IO<Unit>:
+      printed : Unit <- IO.print("admitted")
+      written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,payload))
+      line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      drained : Unit <- read_all_lines(handle,line)
+      IO.pure(Unit,Unit{})
+
+def legacy_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case directory <> cwd <> payload <> program: do IO<Unit>:
+      executable : String <- IO.try(String,Lock.SessionLock.executable())
+      start : P.RetainedStart <- IO.try(P.RetainedStart,P.ProcessChild.retain(directory,P.argv(program),cwd,directory ++ "/native.stderr",payload,1,0,P.argv([executable,"recover-retained",directory])))
+      run : Unit <- legacy_started(start,payload)
+      IO.pure(Unit,Unit{})
+    case _: IO.die(Unit,2,"legacy-retain ATTEMPT CWD PAYLOAD PROGRAM ARGS...")
+
 def mode_number(+mode: String) -> U32:
-  Bool.pick(U32,String.eq(mode,"state"),17,mode_legacy(mode))
+  Bool.pick(U32,String.eq(mode,"state"),17,
+  Bool.pick(U32,String.eq(mode,"admit-nolock"),18,
+  Bool.pick(U32,String.eq(mode,"legacy-retain"),19,mode_legacy(mode))))
 
 def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
   match mode:
@@ -385,6 +428,8 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 15: subscribe_cli(rest)
     case 16: publish_cli(rest)
     case 17: state_cli(rest)
+    case 18: nolock_cli(rest)
+    case 19: legacy_cli(rest)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):

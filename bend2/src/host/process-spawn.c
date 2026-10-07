@@ -2346,7 +2346,9 @@ static int br_admission_store(const char *directory,const char *database,int gua
   /* An admission through the legacy attempt-level API carries no database, so the
      record states no database binding and verification skips that comparison. */
   if(database && stat(database,&database_info)){free(canonical);return EPERM;}
-  if(guard>=0) {if(fstat(guard,&guard_info)){free(canonical);return EPERM;}}
+  /* A descriptor number of zero means the admitting call holds no session guard,
+     because the effect boundary passes zero for an absent lock. */
+  if(guard>0) {if(fstat(guard,&guard_info)){free(canonical);return EPERM;}}
   else memset(&guard_info,0,sizeof(guard_info));
   size_t length=strlen(canonical);
   BrAdmission record={.schema=1,
@@ -2412,14 +2414,24 @@ static int br_admission_verify(const char *directory,const char *database,int gu
     {error=EPERM;reason="the admission record names another path\n";}
   if(!error && br_admission_check(&record,canonical,length)!=record.check)
     {error=EPERM;reason="the admission record is not intact\n";}
+  if(!error && database && !record.database_inode)
+    {error=EPERM;reason="the admission record states no database binding\n";}
   if(!error && database && record.database_inode) {
     if(stat(database,&database_info)) {error=EPERM;reason="the requesting database is not readable\n";}
     else if((uint64_t)database_info.st_dev!=record.database_device ||
             (uint64_t)database_info.st_ino!=record.database_inode)
       {error=EPERM;reason="the admission record belongs to another database\n";}
   }
-  if(!error && guard>=0 && record.guard_inode) {
-    if(fstat(guard,&guard_info)) {error=EPERM;reason="the presented guard is not a file\n";}
+  /* A guard identity states which session guard admitted the attempt. An attempt
+     that states none has no session authority, and a request that presents none
+     cannot exercise the identity the record carries: both are refused rather than
+     treated as a match, and the descriptor number zero means no guard because the
+     effect boundary passes zero for an absent lock. */
+  if(!error && guard>0 && !record.guard_inode)
+    {error=EPERM;reason="the admission record states no session guard binding\n";}
+  if(!error && record.guard_inode) {
+    if(guard<=0) {error=EPERM;reason="the admission record requires a session guard\n";}
+    else if(fstat(guard,&guard_info)) {error=EPERM;reason="the presented guard is not a file\n";}
     else if((uint64_t)guard_info.st_dev!=record.guard_device ||
             (uint64_t)guard_info.st_ino!=record.guard_inode)
       {error=EPERM;reason="the admission record belongs to another session guard\n";}
