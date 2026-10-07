@@ -31,8 +31,8 @@ implementation change and the law that must refuse it. This driver requires each
 record to be applicable in the source it mutates, to name a law the fixture
 compiles, and to name a module the mutated module is reached by. It then applies
 each record in an isolated copy and reads what the compiler answered. A refusal
-counts as detection only when the diagnostic names the recorded law as a whole
-identifier. A refusal the compiler places at another law of this lane is recorded
+counts as detection when the compiler Location names the recorded law.
+Qualified imported law names are resolved to their declared identifier. A refusal the compiler places at another law of this lane is recorded
 as `refused-other-law` and counts as unqualified, because the classifier decides
 whether that refusal refutes the recorded law. A refusal placed at no law is a
 parser, arity or unrelated type error, which no record can claim, so it is
@@ -234,6 +234,21 @@ def check_entries(record, bend, out):
                                           "reason": "no independently reviewed oracle is checked in"})
 
 
+def mutation_outcome(status, diagnostic, recorded_law, known_laws):
+    location = re.search(r"^Location:\s*(\S+)\s*$", diagnostic, re.M)
+    placed = location.group(1) if location else None
+    placed_law = placed.rsplit(".", 1)[-1] if placed else None
+    if status == 0:
+        outcome = "survived"
+    elif placed_law == recorded_law:
+        outcome = "refused"
+    elif placed_law in known_laws:
+        outcome = "refused-other-law"
+    else:
+        outcome = "unattributed"
+    return outcome, placed, placed_law
+
+
 def review_mutations(record, bend, out):
     """Validate the lane's mutation payload and run it as a negative control."""
     records = json.loads(MUTATIONS.read_text())
@@ -309,18 +324,8 @@ def review_mutations(record, bend, out):
         # classifier, not a detection here. Any other refusal is a parser, arity
         # or unrelated type error, which no record can claim.
         diagnostic = (stdout + stderr).decode("utf-8", "replace")
-        location = re.search(r"^Location:\s*(\S+)\s*$", diagnostic, re.M)
-        placed = location.group(1) if location else None
-        names_recorded = re.search(rf"(?<![A-Za-z0-9_]){re.escape(item['law'])}(?![A-Za-z0-9_])",
-                                   diagnostic) is not None
-        if entry["status"] == 0:
-            outcome = "survived"
-        elif names_recorded:
-            outcome = "refused"
-        elif placed in laws:
-            outcome = "refused-other-law"
-        else:
-            outcome = "unattributed"
+        outcome, placed, placed_law = mutation_outcome(entry["status"], diagnostic, item["law"], laws)
+        names_recorded = placed_law == item["law"]
         record["mutations"]["outcomes"][outcome] = record["mutations"]["outcomes"].get(outcome, 0) + 1
         item_record = record["mutations"]["records"][index]
         item_record["outcome"] = outcome
@@ -328,6 +333,7 @@ def review_mutations(record, bend, out):
         item_record["baseline_status"] = baseline.get(module)
         item_record["diagnostic_names_the_law"] = names_recorded
         item_record["diagnostic_location"] = placed
+        item_record["diagnostic_law"] = placed_law
         if outcome == "refused":
             continue
         # A record that did not reach its recorded law keeps the mutated module
