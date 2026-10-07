@@ -232,10 +232,14 @@ def invoke(+invocation: Sel.Invocation, +cwd: String) -> IO(ProviderAnswer):
     runtime : ProviderAnswer <- resolve_node_runtime(cwd)
     invoke_runtime(executable, cwd, invocation, runtime)
 
+def inventory_output(+status: String, +value: String) -> IO(Unit):
+  match status:
+    case "exit 0": IO.write(value)
+    case other: IO.die(Unit, 2, value)
+
 def inventory_answer(answer: ProviderAnswer) -> IO(Unit):
   match answer:
-    case ProviderOutput{value, status}:
-      Bool.pick(IO(Unit), String.eq(status, "exit 0"), IO.write(value), IO.die(Unit, 2, value))
+    case ProviderOutput{+value, +status}: inventory_output(status, value)
     case ProviderRefused{reason}: IO.die(Unit, 3, reason)
     case ProviderRuntime{path, version}: IO.die(Unit, 3, "nodeRuntimeProbeMalformed")
 
