@@ -51,31 +51,31 @@ def without_id_drops_the_completed_session():
   {==}
 
 law partition_forks_receivable_sessions:
-  {Instance.member(Instance.fork_of(Instance.partition(Con{("n1", "codex"), Con{("n2", "muse"), Con{("n3", "omp"), Nil{}}})), "n1") == True{} : Bool}
+  {Instance.member(Instance.fork_of(Instance.partition(Con{("n1", "codex"), Con{("n2", "muse"), Con{("n3", "omp"), Nil{}}}})), "n1") == True{} : Bool}
 
 def partition_forks_receivable_sessions():
   {==}
 
 law partition_refuses_turn_route_sessions:
-  {Instance.member(Instance.refuse_of(Instance.partition(Con{("n1", "codex"), Con{("n2", "muse"), Con{("n3", "omp"), Nil{}}})), "n2") == True{} : Bool}
+  {Instance.member(Instance.refuse_of(Instance.partition(Con{("n1", "codex"), Con{("n2", "muse"), Con{("n3", "omp"), Nil{}}}})), "n2") == True{} : Bool}
 
 def partition_refuses_turn_route_sessions():
   {==}
 
 law strip_known_removes_in_flight_sessions:
-  {Instance.member(Instance.sessions_of(Instance.stripped_fresh(Instance.strip_known(Con{("n1", "codex"), Con{("n3", "omp"), Nil{}}}, Con{"n1", Nil{}}))), "n1") == False{} : Bool}
+  {Instance.member(Instance.sessions_of(Instance.stripped_fresh(Instance.strip_known(Con{("n1", "codex"), Con{("n3", "omp"), Nil{}}}, Con{"n1", Nil{}})), "n1") == False{} : Bool}
 
 def strip_known_removes_in_flight_sessions():
   {==}
 
 law strip_known_returns_the_known_set:
-  {Instance.member(Instance.stripped_kept(Instance.strip_known(Con{("n1", "codex"), Con{("n3", "omp"), Nil{}}}, Con{"n1", Nil{}})), "n1") == True{} : Bool}
+  {Instance.member(Instance.stripped_kept(Instance.strip_known(Con{("n1", "codex"), Con{("n3", "omp"), Nil{}}}, Con{"n1", Nil{}}), "n1") == True{} : Bool}
 
 def strip_known_returns_the_known_set():
   {==}
 
 law without_session_drops_the_named_pair:
-  {Instance.member(Instance.sessions_of(Instance.without_session(Con{("n1", "codex"), Con{("n2", "muse"), Nil{}}}, "n1")), "n1") == False{} : Bool}
+  {Instance.member(Instance.sessions_of(Instance.without_session(Con{("n1", "codex"), Con{("n2", "muse"), Nil{}}}, "n1"), "n1") == False{} : Bool}
 
 def without_session_drops_the_named_pair():
   {==}
