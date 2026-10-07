@@ -893,7 +893,7 @@ def stderr_generation(+db: String, +stderr_path: String) -> IO(String):
     metadata : String <- stderr_meta_json_read(db,text)
     stderr_generation_health(db,stderr_path,metadata)
 
-def attempt_json(session: String, attempt: String, mode: String, +phase: String, +status: String, +directory: String, +stdout: U32, +stderr: U32, +stderr_full: U32, +stderr_meta_bytes: U32, +stderr_error_bytes: U32, +stderr_meta: String, stderr_health: String, +observer: U32, +keeper: U32, +released: U32, +acknowledged: U32, +reported: String, +pending: String, +terminal: String, +event_chars: String, +event_messages: String, level: String, path: String) -> String:
+def attempt_json(session: String, attempt: String, mode: String, +phase: String, +status: String, +directory: String, +stdout: U32, +stderr: U32, +stderr_full: U32, +stderr_meta_bytes: U32, +stderr_error_bytes: U32, +stderr_meta: String, +stderr_health: String, +observer: U32, +keeper: U32, +released: U32, +acknowledged: U32, +reported: String, +pending: String, +terminal: String, +event_chars: String, +event_messages: String, level: String, path: String) -> String:
   attempt_json_fields(session,attempt,mode,phase,status,directory,stdout,stderr,stderr_full,stderr_meta_bytes,stderr_error_bytes,stderr_meta,stderr_health,observer,keeper,released,acknowledged,reported,pending,terminal,event_chars,event_messages,attempt_decision(stderr_health,phase,status,Bool.pick(String,U32.is_lt(0,released),"1","0"),Bool.pick(String,U32.is_lt(0,acknowledged),"1","0"),reported,pending,level,path,U32.add(stdout,U32.add(stderr,U32.add(stderr_full,U32.add(stderr_meta_bytes,U32.add(stderr_error_bytes,U32.add(observer,keeper)))))) ))
 
 def attempt_fields(+db: String, fields: List<String>) -> IO(String):
