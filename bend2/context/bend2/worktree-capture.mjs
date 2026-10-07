@@ -35,15 +35,28 @@ function identifyRoots(worktree, packages) {
     roots.push(Object.freeze({ id: 'worktree', path: root }));
     for (const item of packages) {
       if (item === null || typeof item !== 'object' || typeof item.id !== 'string' || item.id.length === 0
-          || typeof item.path !== 'string' || item.path.length === 0) {
-        return refusal('packageRootMalformed', 'each selected package root needs an identity and a path');
+          || typeof item.path !== 'string' || item.path.length === 0 || !Array.isArray(item.artifacts)) {
+        return refusal('packageRootMalformed', 'each selected package root needs an identity, path and admitted artifact inventory');
       }
       const path = realpathSync(item.path);
       if (!statSync(path).isDirectory()) return refusal('packageRootInvalid', item.path);
       if (roots.some((entry) => entry.id === item.id || entry.path === path)) {
         return refusal('packageRootDuplicate', item.id);
       }
-      roots.push(Object.freeze({ id: item.id, path }));
+      const artifacts = new Map();
+      for (const artifact of item.artifacts) {
+        if (artifact === null || typeof artifact !== 'object' || typeof artifact.path !== 'string'
+            || artifact.path.length === 0 || isAbsolute(artifact.path)
+            || artifact.path.split('/').some((part) => part === '..' || part === '')) {
+          return refusal('packageArtifactMalformed', item.id);
+        }
+        if (typeof artifact.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(artifact.sha256)) {
+          return refusal('packageArtifactDigestMalformed', artifact.path);
+        }
+        if (artifacts.has(artifact.path)) return refusal('packageArtifactDuplicate', artifact.path);
+        artifacts.set(artifact.path, artifact.sha256);
+      }
+      roots.push(Object.freeze({ id: item.id, path, artifacts }));
     }
   } catch (error) {
     return refusal('admittedRootUnavailable', error.message);
@@ -97,9 +110,17 @@ function resolveRequested(roots, requested, base) {
     const real = realpathSync(lexical);
     const realRoot = chooseRoot(roots, real);
     if (realRoot === undefined) return refusal('sourceOutsideAdmittedRoots', real);
+    if (realRoot.artifacts !== undefined) {
+      const relativePath = relative(realRoot.path, real).split(sep).join('/');
+      if (!realRoot.artifacts.has(relativePath)) return refusal('sourceNotInSelectedPayload', relativePath);
+    }
     return Object.freeze({ status: 'resolved', requested, lexical, identity: real, root: realRoot });
   } catch (error) {
     if (error.code !== 'ENOENT') return refusal('sourceIdentityFailed', `${lexical}: ${error.message}`);
+    if (lexicalRoot.artifacts !== undefined) {
+      const relativePath = relative(lexicalRoot.path, lexical).split(sep).join('/');
+      if (!lexicalRoot.artifacts.has(relativePath)) return refusal('sourceNotInSelectedPayload', relativePath);
+    }
     let parent = lexical;
     while (true) {
       try {
@@ -164,6 +185,13 @@ export function createRetainedWorktreeCapture({ owner, worktree, packages = [] }
     if (captured.status !== 'captured') return captured;
     if (captured.path !== answer.identity || chooseRoot(roots, captured.path) === undefined) {
       return refusal('sourceIdentityChanged', answer.identity);
+    }
+    const packageRoot = answer.root.artifacts === undefined ? undefined : answer.root;
+    if (packageRoot !== undefined) {
+      const packagePath = relative(packageRoot.path, captured.path).split(sep).join('/');
+      const expectedDigest = packageRoot.artifacts.get(packagePath);
+      if (expectedDigest === undefined) return refusal('sourceNotInSelectedPayload', packagePath);
+      if (captured.sha256 !== expectedDigest) return refusal('selectedPackageDigestMismatch', packagePath);
     }
     files.set(answer.identity, captured);
     return Object.freeze({ status: 'captured', identity: captured.path, bytes: captured.bytes, sha256: captured.sha256 });

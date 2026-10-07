@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,6 +12,10 @@ function repository(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   execFileSync('git', ['init', '--quiet', root]);
   return root;
+}
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
 }
 
 test('the frontend read captures once and later reads use the retained bytes', (t) => {
@@ -44,20 +49,56 @@ test('resolution admits only actual frontend paths under the checkout and select
   t.after(() => rmSync(outside, { recursive: true, force: true }));
   mkdirSync(join(root, 'src'));
   writeFileSync(join(root, 'src', 'root.bend'), 'root bytes');
-  writeFileSync(join(selected, 'base.bend'), 'selected runtime bytes');
+  const selectedBytes = Buffer.from('selected runtime bytes');
+  writeFileSync(join(selected, 'base.bend'), selectedBytes);
   writeFileSync(join(outside, 'foreign.bend'), 'foreign bytes');
   symlinkSync(join(outside, 'foreign.bend'), join(root, 'src', 'escape.bend'));
   const state = createRetainedWorktreeCapture({
-    owner: 'query-1', worktree: root, packages: [{ id: 'selected-provider', path: selected }],
+    owner: 'query-1', worktree: root,
+    packages: [{ id: 'selected-provider', path: selected,
+      artifacts: [{ path: 'base.bend', sha256: sha256(selectedBytes) }] }],
   });
   assert.equal(state.status, 'ready');
 
   assert.equal(state.acquisition.resolve(join(root, 'src', 'root.bend')).exists, true);
   assert.equal(state.acquisition.resolve(join(selected, 'base.bend')).exists, true);
+  assert.equal(state.acquisition.resolve(join(selected, 'unselected.bend')).reason, 'sourceNotInSelectedPayload');
   const escaped = state.acquisition.resolve(join(root, 'src', 'escape.bend'));
   assert.equal(escaped.status, 'refused');
   assert.equal(escaped.reason, 'sourceOutsideAdmittedRoots');
   assert.equal(state.acquisition.resolve(join(outside, 'foreign.bend')).reason, 'sourceOutsideAdmittedRoots');
+});
+
+test('frontend aliases retain their canonical source bytes and identity', (t) => {
+  const root = repository(t);
+  const target = join(root, 'target.bend');
+  const alias = join(root, 'alias.bend');
+  writeFileSync(target, 'def target(): 7\n');
+  symlinkSync(target, alias);
+  const state = createRetainedWorktreeCapture({ owner: 'query-alias', worktree: root });
+  const resolved = state.acquisition.resolve(alias);
+  assert.equal(resolved.identity, target);
+  const captured = state.acquisition.read(resolved.identity);
+  assert.equal(captured.bytes.toString('utf8'), 'def target(): 7\n');
+  assert.deepEqual(state.capture.descriptors().map((row) => [row.kind, row.path, row.real]), [
+    ['file', target, target], ['symlink', alias, target],
+  ]);
+  assert.equal(state.capture.readBytes(alias), captured.bytes);
+});
+
+test('a selected package artifact must match the digest admitted by its module', (t) => {
+  const root = repository(t);
+  const selected = mkdtempSync(join(tmpdir(), 'baton-context-package-digest-'));
+  t.after(() => rmSync(selected, { recursive: true, force: true }));
+  const source = join(selected, 'frontend.ts');
+  writeFileSync(source, 'export const version = 2;');
+  const state = createRetainedWorktreeCapture({ owner: 'query-digest', worktree: root,
+    packages: [{ id: 'bend2-provider', path: selected,
+      artifacts: [{ path: 'frontend.ts', sha256: '0'.repeat(64) }] }] });
+  assert.equal(state.status, 'ready');
+  const resolved = state.acquisition.resolve(source);
+  assert.equal(resolved.exists, true);
+  assert.equal(state.acquisition.read(resolved.identity).reason, 'selectedPackageDigestMismatch');
 });
 
 test('a relative frontend read requires its importing source identity', (t) => {
