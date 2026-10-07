@@ -114,7 +114,10 @@ export async function runSelectedInvocation(invocation, { wrapperPath = fileURLT
   const providerPath = join(selected.root, 'native-provider.mjs');
   try {
     const provider = await import(pathToFileURL(realpathSync(providerPath)).href);
-    return await provider.executeInvocation(invocation, { packageRoot: selected.root });
+    return await provider.executeInvocation(invocation, {
+      packageRoot: selected.root,
+      cwd: invocation.request.cwd,
+    });
   } catch (error) {
     return refused('selectedProviderUnavailable', error.message);
   }
