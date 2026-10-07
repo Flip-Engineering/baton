@@ -77,18 +77,13 @@ def request_validation_result(+req: J.Json, verdict: Req.Verdict) -> RequestDeco
 def request_validation(+req: J.Json) -> RequestDecode:
   request_validation_result(req, Req.request_validate(req))
 
-def request_json_value(raw: CoreCodec.RawValue, converted: CoreCodec.JsonConv) -> RequestDecode:
+def request_json_value(converted: CoreCodec.JsonConv) -> RequestDecode:
   match converted:
     case CoreCodec.JcRefused{condition}: RequestDecodeRefused{condition}
     case CoreCodec.JcJson{+value}: request_validation(value)
 
-def request_json_schema(raw: CoreCodec.RawValue, verdict: Schema.SchemaVerdict) -> RequestDecode:
-  match verdict:
-    case Schema.SvRefused{condition}: RequestDecodeRefused{condition}
-    case Schema.SvOk{}: request_json_value(raw, CoreCodec.raw_to_json(raw))
-
 def request_json(+raw: CoreCodec.RawValue) -> RequestDecode:
-  request_json_schema(raw, Schema.schema_admit_value(Schema.DefsNil{}, Schema.SfJson{}, raw))
+  request_json_value(CoreCodec.raw_to_json(raw))
 
 def request_rows_decoded(raw: RawDecode) -> RequestDecode:
   match raw:
@@ -97,6 +92,41 @@ def request_rows_decoded(raw: RawDecode) -> RequestDecode:
 
 def request_rows(+rows: String) -> RequestDecode:
   request_rows_decoded(raw_rows(rows))
+
+def request_schema_raw(raw: RawDecode) -> Schema.SchemaVerdict:
+  match raw:
+    case RawDecodeRefused{condition}: Schema.SvRefused{condition}
+    case RawDecoded{+value}:
+      Schema.schema_admit_value(Schema.DefsNil{}, Schema.SfJson{}, value)
+
+def request_schema_rows(+rows: String) -> Schema.SchemaVerdict:
+  request_schema_raw(raw_rows(rows))
+
+def request_tree_decoded(result: Result<&1,&1,U32 & String,String>) -> IO(RequestDecode):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"requestTreeRead"})
+    case Done{+rows}: IO.pure(RequestDecode, request_rows(rows))
+
+def request_schema_after(+db: String, +binding: String, +text: String,
+                         verdict: Schema.SchemaVerdict) -> IO(RequestDecode):
+  match verdict:
+    case Schema.SvRefused{condition}:
+      IO.pure(RequestDecode, RequestDecodeRefused{condition})
+    case Schema.SvOk{}:
+      do IO<RequestDecode>:
+        result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, Req.json_tree_sql(text))
+        request_tree_decoded(result)
+
+def request_schema_query_result(+db: String, +binding: String, +text: String,
+                                result: Result<&1,&1,U32 & String,String>) -> IO(RequestDecode):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"requestTreeRead"})
+    case Done{+rows}:
+      request_schema_after(db, binding, text, request_schema_rows(rows))
 
 def raw_frame(frame: CoreCodec.FrameRead) -> RawDecode:
   match frame:
@@ -174,17 +204,10 @@ def report_after_validation(+db: String, +binding: String, +text: String,
         case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"requestValidationRead"})
     case Done{+row}: validation_report_row(db, binding, text, Tx.trim_nl(row))
 
-def request_tree_result(result: Result<&1,&1,U32 & String,String>) -> RequestDecode:
-  match result:
-    case Fail{error}:
-      match error:
-        case (code, detail): RequestDecodeRefused{"requestTreeRead"}
-    case Done{+rows}: request_rows(rows)
-
 def request_rows_after_validation(+db: String, +binding: String, +text: String) -> IO(RequestDecode):
   do IO<RequestDecode>:
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, Req.json_tree_sql(text))
-    IO.pure(RequestDecode, request_tree_result(result))
+    request_schema_query_result(db, binding, text, result)
 
 def read_raw_after(+db: String, +binding: String, result: Result<&1,&1,U32 & String,Raw.RawRead>) -> IO(RequestDecode):
   match result:
