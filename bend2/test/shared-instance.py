@@ -146,8 +146,19 @@ class SharedInstance(unittest.TestCase):
     def wait_run(self, child):
         child.stdin.close()
         child.wait(timeout=60)
-        self.assertEqual(child.returncode, 0, child.stderr.read())
+        if child.returncode != 0:
+            self.fail(child.stderr.read() + '\n' + self.owner_state())
         return ''.join(child.output)
+
+    def owner_state(self):
+        lines = ['owner processes: ' + ' | '.join(self.owner_processes())]
+        directory, key, lock, record, socket_path = self.election_paths()
+        lines.append(f'election {key} lock={lock.exists()} record={record.exists()} '
+                     f'socket={socket_path.exists()} held={self.election_held()}')
+        log = directory / f'{key}.log'
+        if log.exists():
+            lines.append('owner log: ' + log.read_text(errors='replace')[-800:])
+        return '\n'.join(lines)
 
     def command(self, *args):
         return subprocess.run([str(EXE), *map(str, args)], capture_output=True,
