@@ -808,7 +808,7 @@ def attempt_decision_eligible(decision: AttemptDecision) -> Bool:
   match decision:
     case AttemptDecision{reason,eligible}: eligible
 
-def attempt_decision(stderr_health: String, phase: String, status: String, released: String, acknowledged: String, reported: String, pending: String, level: String, path: String, bytes: U32) -> AttemptDecision:
+def attempt_decision(+stderr_health: String, phase: String, status: String, released: String, acknowledged: String, reported: String, pending: String, level: String, path: String, bytes: U32) -> AttemptDecision:
   Bool.pick(AttemptDecision,Bool.not(Bool.or(String.eq(stderr_health,"ok"),String.eq(stderr_health,"legacy"))),AttemptDecision{stderr_health,False{}},
   Bool.pick(AttemptDecision,Bool.not(String.eq(pending,"0")),AttemptDecision{"pending-input",False{}},
     Bool.pick(AttemptDecision,String.eq(level,"diagnostic"),AttemptDecision{"diagnostic-policy",False{}},
@@ -852,7 +852,7 @@ def attempt_json_fields(session: String, attempt: String, mode: String, phase: S
 def stderr_meta_json_read(db: String, text: Result<&1,&1,U32 & String,String>) -> IO(String):
   match text:
     case Fail{error}: IO.pure(String,"{}")
-    case Done{value}: do IO<String>:
+    case Done{+value}: do IO<String>:
       parsed : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(value) ++ ") THEN CASE WHEN json_type(" ++ C.q(value) ++ ")='object' THEN json(" ++ C.q(value) ++ ") ELSE '{}' END ELSE '{}' END;"))
       IO.pure(String,Tx.trim_nl(parsed))
 
@@ -864,8 +864,8 @@ def stderr_meta_json(+db: String, +directory: String) -> IO(String):
 
 def stderr_health(+db: String, +directory: String, metadata: String) -> IO(String):
   do IO<String>:
-    full : String <- IO.try(String,F.Files.regular(directory ++ "/stderr.full"))
-    meta : String <- IO.try(String,F.Files.regular(directory ++ "/stderr.meta"))
+    +full : String <- IO.try(String,F.Files.regular(directory ++ "/stderr.full"))
+    +meta : String <- IO.try(String,F.Files.regular(directory ++ "/stderr.meta"))
     retained_error : String <- IO.try(String,F.Files.regular(directory ++ "/stderr-processing-error"))
     direct_error : String <- IO.try(String,F.Files.regular(directory ++ "/stderr.meta.processing-error"))
     Bool.pick(IO(String),Bool.or(String.eq(retained_error,"1"),String.eq(direct_error,"1")),IO.pure(String,"processing-error"),
@@ -877,8 +877,8 @@ def stderr_health(+db: String, +directory: String, metadata: String) -> IO(Strin
 
 def stderr_generation_health(+db: String, +stderr_path: String, metadata: String) -> IO(String):
   do IO<String>:
-    full : String <- IO.try(String,F.Files.regular(stderr_path ++ ".full"))
-    meta : String <- IO.try(String,F.Files.regular(stderr_path ++ ".meta"))
+    +full : String <- IO.try(String,F.Files.regular(stderr_path ++ ".full"))
+    +meta : String <- IO.try(String,F.Files.regular(stderr_path ++ ".meta"))
     error : String <- IO.try(String,F.Files.regular(stderr_path ++ ".meta.processing-error"))
     Bool.pick(IO(String),String.eq(error,"1"),IO.pure(String,"processing-error"),
     Bool.pick(IO(String),Bool.and(String.eq(full,"0"),String.eq(meta,"0")),IO.pure(String,"legacy"),
@@ -904,7 +904,7 @@ def attempt_fields(+db: String, fields: List<String>) -> IO(String):
       stderr_full : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr.full"))
       stderr_meta_bytes : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr.meta"))
       stderr_error_bytes : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr-processing-error"))
-      stderr_meta : String <- stderr_meta_json(db,directory)
+      +stderr_meta : String <- stderr_meta_json(db,directory)
       health : String <- stderr_health(db,directory,stderr_meta)
       observer : U32 <- IO.try(U32,F.Files.size(directory ++ "/observer.log"))
       keeper : U32 <- IO.try(U32,F.Files.size(directory ++ "/keeper.log"))
