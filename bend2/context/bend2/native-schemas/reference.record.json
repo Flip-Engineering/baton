@@ -1,1 +1,144 @@
-{"SchemaDef": {"form": {"SfRecord": {"fields": [{"SfRequired": {"form": {"SfScalar": {"kind": "SsText"}}, "name": "id"}}, {"SfRequired": {"form": {"SfScalar": {"kind": "SsText"}}, "name": "engine"}}, {"SfRequired": {"form": {"SfRecord": {"fields": [{"SfRequired": {"form": {"SfEnum": {"literals": ["position"]}}, "name": "kind"}}, {"SfRequired": {"form": {"SfScalar": {"kind": "SsText"}}, "name": "path"}}, {"SfRequired": {"form": {"SfScalar": {"kind": "SsU32Token"}}, "name": "line"}}, {"SfRequired": {"form": {"SfScalar": {"kind": "SsU32Token"}}, "name": "column"}}]}}, "name": "subject"}}, {"SfRequired": {"form": {"SfScalar": {"kind": "SsText"}}, "name": "snapshotId"}}, {"SfRequired": {"form": {"SfArray": {"item": {"SfScalar": {"kind": "SsText"}}}}, "name": "projections"}}]}}, "name": "baton2.context.typescript.reference.v1"}}
+{
+  "SchemaDef": {
+    "name": "baton2.context.bend2.source-analysis.reference.v1",
+    "form": {
+      "SfUnion": {
+        "cases": [
+          {
+            "tag": "file",
+            "form": {
+              "SfRecord": {
+                "fields": [
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfEnum": {
+                          "literals": [
+                            "file"
+                          ]
+                        }
+                      },
+                      "name": "kind"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "path"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "real"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "sha256"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "tag": "symlink",
+            "form": {
+              "SfRecord": {
+                "fields": [
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfEnum": {
+                          "literals": [
+                            "symlink"
+                          ]
+                        }
+                      },
+                      "name": "kind"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "path"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "real"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "tag": "absent",
+            "form": {
+              "SfRecord": {
+                "fields": [
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfEnum": {
+                          "literals": [
+                            "absent"
+                          ]
+                        }
+                      },
+                      "name": "kind"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "path"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "real"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

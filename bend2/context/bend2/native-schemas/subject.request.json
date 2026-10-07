@@ -1,9 +1,11 @@
 {
   "SchemaDef": {
+    "name": "baton2.context.bend2.source-analysis.subject.v1",
     "form": {
       "SfUnion": {
         "cases": [
           {
+            "tag": "position",
             "form": {
               "SfRecord": {
                 "fields": [
@@ -51,10 +53,10 @@
                   }
                 ]
               }
-            },
-            "tag": "position"
+            }
           },
           {
+            "tag": "symbol",
             "form": {
               "SfRecord": {
                 "fields": [
@@ -102,10 +104,10 @@
                   }
                 ]
               }
-            },
-            "tag": "symbol"
+            }
           },
           {
+            "tag": "diagnostic",
             "form": {
               "SfRecord": {
                 "fields": [
@@ -163,12 +165,10 @@
                   }
                 ]
               }
-            },
-            "tag": "diagnostic"
+            }
           }
         ]
       }
-    },
-    "name": "baton2.context.typescript.subject.v1"
+    }
   }
 }

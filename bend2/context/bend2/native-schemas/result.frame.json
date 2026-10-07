@@ -1,652 +1,2474 @@
 {
   "SchemaDef": {
-    "name": "baton2.context.typescript.result.v1",
+    "name": "baton2.context.bend2.source-analysis.result.v1",
     "form": {
-      "SfRecord": {
-        "fields": [
+      "SfUnion": {
+        "cases": [
           {
-            "SfRequired": {
-              "form": {
-                "SfScalar": {
-                  "kind": "SsNumberToken"
-                }
-              },
-              "name": "version"
-            }
-          },
-          {
-            "SfRequired": {
-              "form": {
-                "SfScalar": {
-                  "kind": "SsText"
-                }
-              },
-              "name": "engine"
-            }
-          },
-          {
-            "SfRequired": {
-              "form": {
-                "SfOptional": {
-                  "inner": {
-                    "SfScalar": {
-                      "kind": "SsText"
+            "tag": "delivered",
+            "form": {
+              "SfRecord": {
+                "fields": [
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfEnum": {
+                          "literals": [
+                            "baton2.context.bend2.source-analysis.result.v1"
+                          ]
+                        }
+                      },
+                      "name": "schema"
                     }
-                  }
-                }
-              },
-              "name": "query"
-            }
-          },
-          {
-            "SfRequired": {
-              "form": {
-                "SfRecord": {
-                  "fields": [
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfScalar": {
-                            "kind": "SsText"
-                          }
-                        },
-                        "name": "name"
-                      }
-                    },
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfScalar": {
-                            "kind": "SsText"
-                          }
-                        },
-                        "name": "version"
-                      }
-                    },
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfScalar": {
-                            "kind": "SsText"
-                          }
-                        },
-                        "name": "libraryPath"
-                      }
-                    },
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfScalar": {
-                            "kind": "SsText"
-                          }
-                        },
-                        "name": "librarySha"
-                      }
-                    },
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfScalar": {
-                            "kind": "SsText"
-                          }
-                        },
-                        "name": "node"
-                      }
-                    },
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfScalar": {
-                            "kind": "SsText"
-                          }
-                        },
-                        "name": "runtime"
-                      }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "status"
                     }
-                  ]
-                }
-              },
-              "name": "provider"
-            }
-          },
-          {
-            "SfRequired": {
-              "form": {
-                "SfRef": {
-                  "name": "baton2.context.typescript.subject.v1"
-                }
-              },
-              "name": "subject"
-            }
-          },
-          {
-            "SfRequired": {
-              "form": {
-                "SfRecord": {
-                  "fields": [
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfScalar": {
-                            "kind": "SsText"
-                          }
-                        },
-                        "name": "snapshotId"
-                      }
-                    },
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfOptional": {
-                            "inner": {
-                              "SfJson": {}
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfArray": {
+                          "item": {
+                            "SfScalar": {
+                              "kind": "SsText"
                             }
                           }
-                        },
-                        "name": "worktree"
-                      }
-                    },
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfJson": {}
-                        },
-                        "name": "effectiveOptions"
-                      }
-                    },
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfRecord": {
-                            "fields": [
-                              {
-                                "SfRequired": {
-                                  "form": {
-                                    "SfScalar": {
-                                      "kind": "SsText"
-                                    }
-                                  },
-                                  "name": "name"
-                                }
-                              },
-                              {
-                                "SfRequired": {
-                                  "form": {
-                                    "SfScalar": {
-                                      "kind": "SsText"
-                                    }
-                                  },
-                                  "name": "version"
-                                }
-                              },
-                              {
-                                "SfRequired": {
-                                  "form": {
-                                    "SfScalar": {
-                                      "kind": "SsText"
-                                    }
-                                  },
-                                  "name": "libraryPath"
-                                }
-                              },
-                              {
-                                "SfRequired": {
-                                  "form": {
-                                    "SfScalar": {
-                                      "kind": "SsText"
-                                    }
-                                  },
-                                  "name": "librarySha"
-                                }
-                              },
-                              {
-                                "SfRequired": {
-                                  "form": {
-                                    "SfScalar": {
-                                      "kind": "SsText"
-                                    }
-                                  },
-                                  "name": "node"
-                                }
-                              },
-                              {
-                                "SfRequired": {
-                                  "form": {
-                                    "SfScalar": {
-                                      "kind": "SsText"
-                                    }
-                                  },
-                                  "name": "runtime"
-                                }
-                              }
-                            ]
-                          }
-                        },
-                        "name": "provider"
-                      }
-                    },
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfArray": {
-                            "item": {
-                              "SfJson": {}
-                            }
-                          }
-                        },
-                        "name": "inputs"
-                      }
+                        }
+                      },
+                      "name": "phasesRun"
                     }
-                  ]
-                }
-              },
-              "name": "snapshot"
-            }
-          },
-          {
-            "SfRequired": {
-              "form": {
-                "SfArray": {
-                  "item": {
-                    "SfRecord": {
-                      "fields": [
-                        {
-                          "SfRequired": {
-                            "form": {
-                              "SfScalar": {
-                                "kind": "SsText"
-                              }
-                            },
-                            "name": "id"
-                          }
-                        },
-                        {
-                          "SfRequired": {
-                            "form": {
-                              "SfScalar": {
-                                "kind": "SsText"
-                              }
-                            },
-                            "name": "kind"
-                          }
-                        },
-                        {
-                          "SfRequired": {
-                            "form": {
-                              "SfEnum": {
-                                "literals": [
-                                  "observed",
-                                  "static-possible",
-                                  "checked",
-                                  "declared"
-                                ]
-                              }
-                            },
-                            "name": "classification"
-                          }
-                        },
-                        {
-                          "SfOptionalField": {
-                            "form": {
-                              "SfJson": {}
-                            },
-                            "name": "value"
-                          }
-                        },
-                        {
-                          "SfRequired": {
-                            "form": {
-                              "SfArray": {
-                                "item": {
-                                  "SfJson": {}
-                                }
-                              }
-                            },
-                            "name": "evidence"
-                          }
-                        },
-                        {
-                          "SfRequired": {
-                            "form": {
-                              "SfArray": {
-                                "item": {
-                                  "SfRecord": {
-                                    "fields": [
-                                      {
-                                        "SfRequired": {
-                                          "form": {
-                                            "SfScalar": {
-                                              "kind": "SsText"
-                                            }
-                                          },
-                                          "name": "projection"
-                                        }
-                                      },
-                                      {
-                                        "SfRequired": {
-                                          "form": {
-                                            "SfScalar": {
-                                              "kind": "SsText"
-                                            }
-                                          },
-                                          "name": "code"
-                                        }
-                                      },
-                                      {
-                                        "SfRequired": {
-                                          "form": {
-                                            "SfJson": {}
-                                          },
-                                          "name": "detail"
-                                        }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfJson": {}
+                      },
+                      "name": "outcome"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfUnion": {
+                          "cases": [
+                            {
+                              "tag": "snapshot",
+                              "form": {
+                                "SfRecord": {
+                                  "fields": [
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfScalar": {
+                                            "kind": "SsText"
+                                          }
+                                        },
+                                        "name": "token"
                                       }
-                                    ]
-                                  }
-                                }
-                              }
-                            },
-                            "name": "limits"
-                          }
-                        },
-                        {
-                          "SfOptionalField": {
-                            "form": {
-                              "SfScalar": {
-                                "kind": "SsText"
-                              }
-                            },
-                            "name": "from"
-                          }
-                        },
-                        {
-                          "SfOptionalField": {
-                            "form": {
-                              "SfScalar": {
-                                "kind": "SsText"
-                              }
-                            },
-                            "name": "to"
-                          }
-                        }
-                      ]
-                    }
-                  }
-                }
-              },
-              "name": "facts"
-            }
-          },
-          {
-            "SfRequired": {
-              "form": {
-                "SfArray": {
-                  "item": {
-                    "SfRecord": {
-                      "fields": [
-                        {
-                          "SfRequired": {
-                            "form": {
-                              "SfScalar": {
-                                "kind": "SsText"
-                              }
-                            },
-                            "name": "id"
-                          }
-                        },
-                        {
-                          "SfRequired": {
-                            "form": {
-                              "SfScalar": {
-                                "kind": "SsText"
-                              }
-                            },
-                            "name": "kind"
-                          }
-                        },
-                        {
-                          "SfRequired": {
-                            "form": {
-                              "SfEnum": {
-                                "literals": [
-                                  "observed",
-                                  "static-possible",
-                                  "checked",
-                                  "declared"
-                                ]
-                              }
-                            },
-                            "name": "classification"
-                          }
-                        },
-                        {
-                          "SfOptionalField": {
-                            "form": {
-                              "SfJson": {}
-                            },
-                            "name": "value"
-                          }
-                        },
-                        {
-                          "SfRequired": {
-                            "form": {
-                              "SfArray": {
-                                "item": {
-                                  "SfJson": {}
-                                }
-                              }
-                            },
-                            "name": "evidence"
-                          }
-                        },
-                        {
-                          "SfRequired": {
-                            "form": {
-                              "SfArray": {
-                                "item": {
-                                  "SfRecord": {
-                                    "fields": [
-                                      {
-                                        "SfRequired": {
-                                          "form": {
-                                            "SfScalar": {
-                                              "kind": "SsText"
-                                            }
-                                          },
-                                          "name": "projection"
-                                        }
-                                      },
-                                      {
-                                        "SfRequired": {
-                                          "form": {
-                                            "SfScalar": {
-                                              "kind": "SsText"
-                                            }
-                                          },
-                                          "name": "code"
-                                        }
-                                      },
-                                      {
-                                        "SfRequired": {
-                                          "form": {
-                                            "SfJson": {}
-                                          },
-                                          "name": "detail"
-                                        }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfScalar": {
+                                            "kind": "SsText"
+                                          }
+                                        },
+                                        "name": "owner"
                                       }
-                                    ]
-                                  }
+                                    },
+                                    {
+                                      "SfOptionalField": {
+                                        "form": {
+                                          "SfScalar": {
+                                            "kind": "SsText"
+                                          }
+                                        },
+                                        "name": "identity"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfEnum": {
+                                            "literals": [
+                                              "complete",
+                                              "incomplete"
+                                            ]
+                                          }
+                                        },
+                                        "name": "completeness"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfArray": {
+                                            "item": {
+                                              "SfEnum": {
+                                                "literals": [
+                                                  "adapterFailure",
+                                                  "acquisitionFailure",
+                                                  "ambiguousDeclaration",
+                                                  "evidenceFailure",
+                                                  "foreignOwnerEvent",
+                                                  "frontendRefusal",
+                                                  "hookInstallFailure",
+                                                  "invalidEvent",
+                                                  "ownerlessEvent",
+                                                  "preParseMismatch",
+                                                  "uncapturedDependency",
+                                                  "outsideQueryEvent",
+                                                  "outsideQueryRead",
+                                                  "overlappingQuery",
+                                                  "unresolvedSpans"
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "name": "incompleteness"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfDict": {
+                                            "keys": {
+                                              "SkAnyScalarText": {}
+                                            },
+                                            "value": {
+                                              "SfScalar": {
+                                                "kind": "SsNumberToken"
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "name": "counterDelta"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfArray": {
+                                            "item": {
+                                              "SfRecord": {
+                                                "fields": [
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "identity"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "namespace"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsBool"
+                                                        }
+                                                      },
+                                                      "name": "captured"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "closureIdentity"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "digest"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsNumberToken"
+                                                        }
+                                                      },
+                                                      "name": "byteLength"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "name": "files"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfArray": {
+                                            "item": {
+                                              "SfRecord": {
+                                                "fields": [
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "file"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "identity"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsBool"
+                                                        }
+                                                      },
+                                                      "name": "exists"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsBool"
+                                                        }
+                                                      },
+                                                      "name": "captured"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfEnum": {
+                                                          "literals": [
+                                                            "load",
+                                                            "parse",
+                                                            "check",
+                                                            "validate",
+                                                            "completion"
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "phase"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "name": "attempts"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfArray": {
+                                            "item": {
+                                              "SfRecord": {
+                                                "fields": [
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "file"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "namespace"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "alias"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "specifier"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfRecord": {
+                                                          "fields": [
+                                                            {
+                                                              "SfRequired": {
+                                                                "form": {
+                                                                  "SfScalar": {
+                                                                    "kind": "SsNumberToken"
+                                                                  }
+                                                                },
+                                                                "name": "from"
+                                                              }
+                                                            },
+                                                            {
+                                                              "SfRequired": {
+                                                                "form": {
+                                                                  "SfScalar": {
+                                                                    "kind": "SsNumberToken"
+                                                                  }
+                                                                },
+                                                                "name": "to"
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "removed"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "removedText"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfUnion": {
+                                                          "cases": [
+                                                            {
+                                                              "tag": "mapped",
+                                                              "form": {
+                                                                "SfRecord": {
+                                                                  "fields": [
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfEnum": {
+                                                                            "literals": [
+                                                                              "mapped"
+                                                                            ]
+                                                                          }
+                                                                        },
+                                                                        "name": "status"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "identity"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "digest"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "original"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "byteRange"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "text"
+                                                                      }
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              }
+                                                            },
+                                                            {
+                                                              "tag": "unavailable",
+                                                              "form": {
+                                                                "SfRecord": {
+                                                                  "fields": [
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfEnum": {
+                                                                            "literals": [
+                                                                              "unavailable"
+                                                                            ]
+                                                                          }
+                                                                        },
+                                                                        "name": "status"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "reason"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfOptionalField": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "detail"
+                                                                      }
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "specifierSpan"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "name": "imports"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfArray": {
+                                            "item": {
+                                              "SfRecord": {
+                                                "fields": [
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "file"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "namespace"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfDict": {
+                                                          "keys": {
+                                                            "SkAnyScalarText": {}
+                                                          },
+                                                          "value": {
+                                                            "SfJson": {}
+                                                          }
+                                                        }
+                                                      },
+                                                      "name": "aliases"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsBool"
+                                                        }
+                                                      },
+                                                      "name": "preParse"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfEnum": {
+                                                          "literals": [
+                                                            "unavailable",
+                                                            "finalized"
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "view"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsBool"
+                                                        }
+                                                      },
+                                                      "name": "parsedTextMatchesView"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "name": "aliases"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfArray": {
+                                            "item": {
+                                              "SfRecord": {
+                                                "fields": [
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfEnum": {
+                                                          "literals": [
+                                                            "load",
+                                                            "parse",
+                                                            "check",
+                                                            "validate",
+                                                            "completion"
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "phase"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "form"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "name"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "qualified"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "namespace"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "file"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsBool"
+                                                        }
+                                                      },
+                                                      "name": "unsafe"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsNumberToken"
+                                                        }
+                                                      },
+                                                      "name": "orderIndex"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfUnion": {
+                                                          "cases": [
+                                                            {
+                                                              "tag": "mapped",
+                                                              "form": {
+                                                                "SfRecord": {
+                                                                  "fields": [
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfEnum": {
+                                                                            "literals": [
+                                                                              "mapped"
+                                                                            ]
+                                                                          }
+                                                                        },
+                                                                        "name": "status"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "identity"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "digest"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "original"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "byteRange"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "text"
+                                                                      }
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              }
+                                                            },
+                                                            {
+                                                              "tag": "unavailable",
+                                                              "form": {
+                                                                "SfRecord": {
+                                                                  "fields": [
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfEnum": {
+                                                                            "literals": [
+                                                                              "unavailable"
+                                                                            ]
+                                                                          }
+                                                                        },
+                                                                        "name": "status"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "reason"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfOptionalField": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "detail"
+                                                                      }
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "span"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "name": "declarations"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfArray": {
+                                            "item": {
+                                              "SfRecord": {
+                                                "fields": [
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfEnum": {
+                                                          "literals": [
+                                                            "load",
+                                                            "parse",
+                                                            "check",
+                                                            "validate",
+                                                            "completion"
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "phase"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "name"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfEnum": {
+                                                          "literals": [
+                                                            "bound",
+                                                            "dotted",
+                                                            "unboundFallback"
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "branch"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfEnum": {
+                                                          "literals": [
+                                                            "binderLookup",
+                                                            "declaredName",
+                                                            "undeclaredName",
+                                                            "fallbackFrame"
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "resolution"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsNumberToken"
+                                                        }
+                                                      },
+                                                      "name": "binderIndex"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsNumberToken"
+                                                        }
+                                                      },
+                                                      "name": "frameIndex"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "qualified"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "namespace"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "file"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfRecord": {
+                                                          "fields": [
+                                                            {
+                                                              "SfRequired": {
+                                                                "form": {
+                                                                  "SfScalar": {
+                                                                    "kind": "SsText"
+                                                                  }
+                                                                },
+                                                                "name": "qualified"
+                                                              }
+                                                            },
+                                                            {
+                                                              "SfRequired": {
+                                                                "form": {
+                                                                  "SfScalar": {
+                                                                    "kind": "SsText"
+                                                                  }
+                                                                },
+                                                                "name": "form"
+                                                              }
+                                                            },
+                                                            {
+                                                              "SfRequired": {
+                                                                "form": {
+                                                                  "SfScalar": {
+                                                                    "kind": "SsNumberToken"
+                                                                  }
+                                                                },
+                                                                "name": "orderIndex"
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "owner"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfRecord": {
+                                                          "fields": [
+                                                            {
+                                                              "SfOptionalField": {
+                                                                "form": {
+                                                                  "SfScalar": {
+                                                                    "kind": "SsText"
+                                                                  }
+                                                                },
+                                                                "name": "namespace"
+                                                              }
+                                                            },
+                                                            {
+                                                              "SfOptionalField": {
+                                                                "form": {
+                                                                  "SfScalar": {
+                                                                    "kind": "SsNumberToken"
+                                                                  }
+                                                                },
+                                                                "name": "binderIndex"
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "scope"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfUnion": {
+                                                          "cases": [
+                                                            {
+                                                              "tag": "mapped",
+                                                              "form": {
+                                                                "SfRecord": {
+                                                                  "fields": [
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfEnum": {
+                                                                            "literals": [
+                                                                              "mapped"
+                                                                            ]
+                                                                          }
+                                                                        },
+                                                                        "name": "status"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "identity"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "digest"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "original"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "byteRange"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "text"
+                                                                      }
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              }
+                                                            },
+                                                            {
+                                                              "tag": "unavailable",
+                                                              "form": {
+                                                                "SfRecord": {
+                                                                  "fields": [
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfEnum": {
+                                                                            "literals": [
+                                                                              "unavailable"
+                                                                            ]
+                                                                          }
+                                                                        },
+                                                                        "name": "status"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "reason"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfOptionalField": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "detail"
+                                                                      }
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "span"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "name": "references"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfArray": {
+                                            "item": {
+                                              "SfRecord": {
+                                                "fields": [
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfEnum": {
+                                                          "literals": [
+                                                            "load",
+                                                            "parse",
+                                                            "check",
+                                                            "validate",
+                                                            "completion"
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "phase"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "form"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfEnum": {
+                                                          "literals": [
+                                                            "thrownOrConstructed",
+                                                            "frontendText",
+                                                            "thrown"
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "origin"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfJson": {}
+                                                      },
+                                                      "name": "condition"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfJson": {}
+                                                      },
+                                                      "name": "observed"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfJson": {}
+                                                      },
+                                                      "name": "note"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfJson": {}
+                                                      },
+                                                      "name": "text"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfRecord": {
+                                                          "fields": [
+                                                            {
+                                                              "SfRequired": {
+                                                                "form": {
+                                                                  "SfScalar": {
+                                                                    "kind": "SsText"
+                                                                  }
+                                                                },
+                                                                "name": "kind"
+                                                              }
+                                                            },
+                                                            {
+                                                              "SfOptionalField": {
+                                                                "form": {
+                                                                  "SfScalar": {
+                                                                    "kind": "SsText"
+                                                                  }
+                                                                },
+                                                                "name": "value"
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "thrown"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfJson": {}
+                                                      },
+                                                      "name": "rendered"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "definition"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "file"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfUnion": {
+                                                          "cases": [
+                                                            {
+                                                              "tag": "mapped",
+                                                              "form": {
+                                                                "SfRecord": {
+                                                                  "fields": [
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfEnum": {
+                                                                            "literals": [
+                                                                              "mapped"
+                                                                            ]
+                                                                          }
+                                                                        },
+                                                                        "name": "status"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "identity"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "digest"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "original"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "byteRange"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "text"
+                                                                      }
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              }
+                                                            },
+                                                            {
+                                                              "tag": "unavailable",
+                                                              "form": {
+                                                                "SfRecord": {
+                                                                  "fields": [
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfEnum": {
+                                                                            "literals": [
+                                                                              "unavailable"
+                                                                            ]
+                                                                          }
+                                                                        },
+                                                                        "name": "status"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "reason"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfOptionalField": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "detail"
+                                                                      }
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "span"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "name": "diagnostics"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfArray": {
+                                            "item": {
+                                              "SfRecord": {
+                                                "fields": [
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfEnum": {
+                                                          "literals": [
+                                                            "load",
+                                                            "parse",
+                                                            "check",
+                                                            "validate",
+                                                            "completion"
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "phase"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "status"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "qualified"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "definition"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "file"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfJson": {}
+                                                      },
+                                                      "name": "text"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfArray": {
+                                                          "item": {
+                                                            "SfRecord": {
+                                                              "fields": [
+                                                                {
+                                                                  "SfRequired": {
+                                                                    "form": {
+                                                                      "SfScalar": {
+                                                                        "kind": "SsText"
+                                                                      }
+                                                                    },
+                                                                    "name": "quant"
+                                                                  }
+                                                                },
+                                                                {
+                                                                  "SfOptionalField": {
+                                                                    "form": {
+                                                                      "SfScalar": {
+                                                                        "kind": "SsText"
+                                                                      }
+                                                                    },
+                                                                    "name": "name"
+                                                                  }
+                                                                }
+                                                              ]
+                                                            }
+                                                          }
+                                                        }
+                                                      },
+                                                      "name": "quantities"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfUnion": {
+                                                          "cases": [
+                                                            {
+                                                              "tag": "mapped",
+                                                              "form": {
+                                                                "SfRecord": {
+                                                                  "fields": [
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfEnum": {
+                                                                            "literals": [
+                                                                              "mapped"
+                                                                            ]
+                                                                          }
+                                                                        },
+                                                                        "name": "status"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "identity"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "digest"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "original"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "byteRange"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "text"
+                                                                      }
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              }
+                                                            },
+                                                            {
+                                                              "tag": "unavailable",
+                                                              "form": {
+                                                                "SfRecord": {
+                                                                  "fields": [
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfEnum": {
+                                                                            "literals": [
+                                                                              "unavailable"
+                                                                            ]
+                                                                          }
+                                                                        },
+                                                                        "name": "status"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfRequired": {
+                                                                        "form": {
+                                                                          "SfScalar": {
+                                                                            "kind": "SsText"
+                                                                          }
+                                                                        },
+                                                                        "name": "reason"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "SfOptionalField": {
+                                                                        "form": {
+                                                                          "SfJson": {}
+                                                                        },
+                                                                        "name": "detail"
+                                                                      }
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      },
+                                                      "name": "span"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "name": "types"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfArray": {
+                                            "item": {
+                                              "SfUnion": {
+                                                "cases": [
+                                                  {
+                                                    "tag": "checkEntry",
+                                                    "form": {
+                                                      "SfRecord": {
+                                                        "fields": [
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "load",
+                                                                    "parse",
+                                                                    "check",
+                                                                    "validate",
+                                                                    "completion"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "phase"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "checkEntry"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "kind"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsText"
+                                                                }
+                                                              },
+                                                              "name": "definition"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfOptionalField": {
+                                                              "form": {
+                                                                "SfJson": {}
+                                                              },
+                                                              "name": "thrownDiagnostic"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  },
+                                                  {
+                                                    "tag": "checkSuccess",
+                                                    "form": {
+                                                      "SfRecord": {
+                                                        "fields": [
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "load",
+                                                                    "parse",
+                                                                    "check",
+                                                                    "validate",
+                                                                    "completion"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "phase"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "checkSuccess"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "kind"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsText"
+                                                                }
+                                                              },
+                                                              "name": "definition"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfOptionalField": {
+                                                              "form": {
+                                                                "SfJson": {}
+                                                              },
+                                                              "name": "thrownDiagnostic"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  },
+                                                  {
+                                                    "tag": "checkFailure",
+                                                    "form": {
+                                                      "SfRecord": {
+                                                        "fields": [
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "load",
+                                                                    "parse",
+                                                                    "check",
+                                                                    "validate",
+                                                                    "completion"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "phase"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "checkFailure"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "kind"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsText"
+                                                                }
+                                                              },
+                                                              "name": "definition"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfOptionalField": {
+                                                              "form": {
+                                                                "SfJson": {}
+                                                              },
+                                                              "name": "thrownDiagnostic"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  },
+                                                  {
+                                                    "tag": "loadComplete",
+                                                    "form": {
+                                                      "SfRecord": {
+                                                        "fields": [
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "load",
+                                                                    "parse",
+                                                                    "check",
+                                                                    "validate",
+                                                                    "completion"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "phase"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "loadComplete"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "kind"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsText"
+                                                                }
+                                                              },
+                                                              "name": "file"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsNumberToken"
+                                                                }
+                                                              },
+                                                              "name": "orderLength"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "unavailable",
+                                                                    "finalized"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "view"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  },
+                                                  {
+                                                    "tag": "validationStart",
+                                                    "form": {
+                                                      "SfRecord": {
+                                                        "fields": [
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "load",
+                                                                    "parse",
+                                                                    "check",
+                                                                    "validate",
+                                                                    "completion"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "phase"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "validationStart"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "kind"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfOptionalField": {
+                                                              "form": {
+                                                                "SfOptional": {
+                                                                  "inner": {
+                                                                    "SfScalar": {
+                                                                      "kind": "SsBool"
+                                                                    }
+                                                                  }
+                                                                }
+                                                              },
+                                                              "name": "done"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  },
+                                                  {
+                                                    "tag": "validationResult",
+                                                    "form": {
+                                                      "SfRecord": {
+                                                        "fields": [
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "load",
+                                                                    "parse",
+                                                                    "check",
+                                                                    "validate",
+                                                                    "completion"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "phase"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "validationResult"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "kind"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsBool"
+                                                                }
+                                                              },
+                                                              "name": "success"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  },
+                                                  {
+                                                    "tag": "completionGate",
+                                                    "form": {
+                                                      "SfRecord": {
+                                                        "fields": [
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "load",
+                                                                    "parse",
+                                                                    "check",
+                                                                    "validate",
+                                                                    "completion"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "phase"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "completionGate"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "kind"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "bookValid",
+                                                                    "ownership",
+                                                                    "holes",
+                                                                    "proofLawsRule"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "gate"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfOptionalField": {
+                                                              "form": {
+                                                                "SfJson": {}
+                                                              },
+                                                              "name": "checkSet"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsBool"
+                                                                }
+                                                              },
+                                                              "name": "started"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsBool"
+                                                                }
+                                                              },
+                                                              "name": "completed"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "name": "phases"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfArray": {
+                                            "item": {
+                                              "SfRecord": {
+                                                "fields": [
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "code"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfJson": {}
+                                                      },
+                                                      "name": "detail"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "name": "limitations"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfArray": {
+                                            "item": {
+                                              "SfRecord": {
+                                                "fields": [
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "requested"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfRequired": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "status"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfScalar": {
+                                                          "kind": "SsText"
+                                                        }
+                                                      },
+                                                      "name": "canonical"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfJson": {}
+                                                      },
+                                                      "name": "detail"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfJson": {}
+                                                      },
+                                                      "name": "role"
+                                                    }
+                                                  },
+                                                  {
+                                                    "SfOptionalField": {
+                                                      "form": {
+                                                        "SfJson": {}
+                                                      },
+                                                      "name": "producer"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "name": "acquisitions"
+                                      }
+                                    }
+                                  ]
                                 }
                               }
                             },
-                            "name": "limits"
-                          }
-                        },
-                        {
-                          "SfOptionalField": {
-                            "form": {
-                              "SfScalar": {
-                                "kind": "SsText"
+                            {
+                              "tag": "rejected",
+                              "form": {
+                                "SfRecord": {
+                                  "fields": [
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfEnum": {
+                                            "literals": [
+                                              "rejected"
+                                            ]
+                                          }
+                                        },
+                                        "name": "status"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfScalar": {
+                                            "kind": "SsText"
+                                          }
+                                        },
+                                        "name": "reason"
+                                      }
+                                    }
+                                  ]
+                                }
                               }
-                            },
-                            "name": "from"
-                          }
-                        },
-                        {
-                          "SfOptionalField": {
-                            "form": {
-                              "SfScalar": {
-                                "kind": "SsText"
-                              }
-                            },
-                            "name": "to"
-                          }
+                            }
+                          ]
                         }
-                      ]
+                      },
+                      "name": "session"
                     }
-                  }
-                }
-              },
-              "name": "relations"
-            }
-          },
-          {
-            "SfRequired": {
-              "form": {
-                "SfArray": {
-                  "item": {
-                    "SfRef": {
-                      "name": "baton2.context.typescript.reference.v1"
-                    }
-                  }
-                }
-              },
-              "name": "refs"
-            }
-          },
-          {
-            "SfRequired": {
-              "form": {
-                "SfArray": {
-                  "item": {
-                    "SfRecord": {
-                      "fields": [
-                        {
-                          "SfRequired": {
-                            "form": {
-                              "SfScalar": {
-                                "kind": "SsText"
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfUnion": {
+                          "cases": [
+                            {
+                              "tag": "sealed",
+                              "form": {
+                                "SfRecord": {
+                                  "fields": [
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfEnum": {
+                                            "literals": [
+                                              "sealed"
+                                            ]
+                                          }
+                                        },
+                                        "name": "status"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfArray": {
+                                            "item": {
+                                              "SfUnion": {
+                                                "cases": [
+                                                  {
+                                                    "tag": "file",
+                                                    "form": {
+                                                      "SfRecord": {
+                                                        "fields": [
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "file"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "kind"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsText"
+                                                                }
+                                                              },
+                                                              "name": "path"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsText"
+                                                                }
+                                                              },
+                                                              "name": "real"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsText"
+                                                                }
+                                                              },
+                                                              "name": "sha256"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  },
+                                                  {
+                                                    "tag": "symlink",
+                                                    "form": {
+                                                      "SfRecord": {
+                                                        "fields": [
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "symlink"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "kind"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsText"
+                                                                }
+                                                              },
+                                                              "name": "path"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsText"
+                                                                }
+                                                              },
+                                                              "name": "real"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  },
+                                                  {
+                                                    "tag": "absent",
+                                                    "form": {
+                                                      "SfRecord": {
+                                                        "fields": [
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfEnum": {
+                                                                  "literals": [
+                                                                    "absent"
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "name": "kind"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsText"
+                                                                }
+                                                              },
+                                                              "name": "path"
+                                                            }
+                                                          },
+                                                          {
+                                                            "SfRequired": {
+                                                              "form": {
+                                                                "SfScalar": {
+                                                                  "kind": "SsText"
+                                                                }
+                                                              },
+                                                              "name": "real"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "name": "descriptors"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfScalar": {
+                                            "kind": "SsNumberToken"
+                                          }
+                                        },
+                                        "name": "fileCount"
+                                      }
+                                    }
+                                  ]
+                                }
                               }
                             },
-                            "name": "projection"
-                          }
-                        },
-                        {
-                          "SfRequired": {
-                            "form": {
-                              "SfScalar": {
-                                "kind": "SsText"
+                            {
+                              "tag": "refused",
+                              "form": {
+                                "SfRecord": {
+                                  "fields": [
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfEnum": {
+                                            "literals": [
+                                              "refused"
+                                            ]
+                                          }
+                                        },
+                                        "name": "status"
+                                      }
+                                    },
+                                    {
+                                      "SfRequired": {
+                                        "form": {
+                                          "SfScalar": {
+                                            "kind": "SsText"
+                                          }
+                                        },
+                                        "name": "reason"
+                                      }
+                                    },
+                                    {
+                                      "SfOptionalField": {
+                                        "form": {
+                                          "SfJson": {}
+                                        },
+                                        "name": "detail"
+                                      }
+                                    }
+                                  ]
+                                }
                               }
-                            },
-                            "name": "code"
-                          }
-                        },
-                        {
-                          "SfRequired": {
-                            "form": {
-                              "SfJson": {}
-                            },
-                            "name": "detail"
-                          }
+                            }
+                          ]
                         }
-                      ]
+                      },
+                      "name": "retainedReadSet"
                     }
                   }
-                }
-              },
-              "name": "limits"
+                ]
+              }
             }
           },
           {
-            "SfRequired": {
-              "form": {
-                "SfRecord": {
-                  "fields": [
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfArray": {
-                            "item": {
-                              "SfScalar": {
-                                "kind": "SsText"
-                              }
-                            }
-                          }
-                        },
-                        "name": "examined"
-                      }
-                    },
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfArray": {
-                            "item": {
-                              "SfScalar": {
-                                "kind": "SsText"
-                              }
-                            }
-                          }
-                        },
-                        "name": "excluded"
-                      }
-                    },
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfScalar": {
-                            "kind": "SsBool"
-                          }
-                        },
-                        "name": "providerCompletion"
-                      }
-                    },
-                    {
-                      "SfRequired": {
-                        "form": {
-                          "SfArray": {
-                            "item": {
-                              "SfJson": {}
-                            }
-                          }
-                        },
-                        "name": "unsupported"
-                      }
+            "tag": "unavailable",
+            "form": {
+              "SfRecord": {
+                "fields": [
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfEnum": {
+                          "literals": [
+                            "baton2.context.bend2.source-analysis.result.v1"
+                          ]
+                        }
+                      },
+                      "name": "schema"
                     }
-                  ]
-                }
-              },
-              "name": "coverage"
-            }
-          },
-          {
-            "SfRequired": {
-              "form": {
-                "SfScalar": {
-                  "kind": "SsText"
-                }
-              },
-              "name": "applicability"
-            }
-          },
-          {
-            "SfRequired": {
-              "form": {
-                "SfArray": {
-                  "item": {
-                    "SfJson": {}
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfEnum": {
+                          "literals": [
+                            "unavailable"
+                          ]
+                        }
+                      },
+                      "name": "status"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "reason"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfJson": {}
+                      },
+                      "name": "detail"
+                    }
                   }
-                }
-              },
-              "name": "changedInputs"
+                ]
+              }
             }
           }
         ]

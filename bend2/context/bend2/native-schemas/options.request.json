@@ -1,0 +1,107 @@
+{
+  "SchemaDef": {
+    "name": "baton2.context.bend2.source-analysis.options.v1",
+    "form": {
+      "SfRecord": {
+        "fields": [
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "project"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfJson": {}
+              },
+              "name": "readRoots"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "database"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "client"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfJson": {}
+              },
+              "name": "buildProvenance"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfJson": {}
+              },
+              "name": "security"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "analysis"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfJson": {}
+              },
+              "name": "code"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfJson": {}
+              },
+              "name": "tools"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfJson": {}
+              },
+              "name": "configFiles"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfJson": {}
+              },
+              "name": "servicesFile"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

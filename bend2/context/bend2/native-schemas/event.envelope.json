@@ -1,0 +1,221 @@
+{
+  "SchemaDef": {
+    "name": "baton2.context.bend2.source-analysis.event.v1",
+    "form": {
+      "SfRecord": {
+        "fields": [
+          {
+            "SfRequired": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsNumberToken"
+                }
+              },
+              "name": "version"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "query"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "owner"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfRecord": {
+                  "fields": [
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfScalar": {
+                            "kind": "SsText"
+                          }
+                        },
+                        "name": "id"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfScalar": {
+                            "kind": "SsText"
+                          }
+                        },
+                        "name": "revision"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfScalar": {
+                            "kind": "SsText"
+                          }
+                        },
+                        "name": "declarationDigest"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfScalar": {
+                            "kind": "SsText"
+                          }
+                        },
+                        "name": "protocolVersion"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfScalar": {
+                            "kind": "SsText"
+                          }
+                        },
+                        "name": "operation"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfArray": {
+                            "item": {
+                              "SfRecord": {
+                                "fields": [
+                                  {
+                                    "SfRequired": {
+                                      "form": {
+                                        "SfScalar": {
+                                          "kind": "SsText"
+                                        }
+                                      },
+                                      "name": "packagePath"
+                                    }
+                                  },
+                                  {
+                                    "SfRequired": {
+                                      "form": {
+                                        "SfScalar": {
+                                          "kind": "SsText"
+                                        }
+                                      },
+                                      "name": "sha256"
+                                    }
+                                  },
+                                  {
+                                    "SfRequired": {
+                                      "form": {
+                                        "SfScalar": {
+                                          "kind": "SsText"
+                                        }
+                                      },
+                                      "name": "role"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        },
+                        "name": "artifactIdentities"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfArray": {
+                            "item": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            }
+                          }
+                        },
+                        "name": "schemaIdentities"
+                      }
+                    }
+                  ]
+                }
+              },
+              "name": "moduleBinding"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "runtime"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "role"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "incarnation"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "sequence"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "type"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfRef": {
+                  "name": "baton2.context.bend2.source-analysis.result.v1"
+                }
+              },
+              "name": "payload"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,68 +1,72 @@
-// Native provider declaration contract: the admission-bound document for the
-// TypeScript provider behind the v1-to-v2 bridge, and its SchemaDef assets.
+// Bend2 native provider declaration contract: the admission-bound document
+// for the packaged Bend2 sourceAnalysis provider behind the v1-to-v2 bridge,
+// and its SchemaDef assets.
 //
 // Authorities (read-only; nothing below restates them as my own claim):
-//   engines-decl.bend   Decl/Op/Art/Entry/Rule member shapes, refusal set,
-//                       decl_version "1", protocol_version "2"
-//   engines-wire.bend   artifact rows {packagePath, sha256, role}, binding echo
+//   native-declaration.bend (helper pin 495ec1f5)  the decode contract: top
+//                       schema literal, nonempty module/revision/identity,
+//                       protocol 2, valid artifact rows, nonempty operations
+//                       with the operation schema literal, string-array
+//                       projections/effects, one execution token, five
+//                       nonempty schema identities, array dependencies and
+//                       applicability, nonempty entry artifact plus argv array
+//   selected-module.json (helper pin 495ec1f5)     the twelve staged artifact
+//                       rows with their actual byte digests, module bend2,
+//                       protocol 2, upstream pin a495
+//   native-provider.mjs (helper pin 495ec1f5)      invocation/result/event
+//                       frame shapes, binding match, refusal vocabulary
+//   codec-wire.bend / engines-wire.bend            v2 event envelope and
+//                       binding echo member shapes
+//   request.bend        v2 request subject/options shapes
 //   codec-schema.bend   SchemaDef/SchemaForm closed constructor vocabulary
-//   provider-declaration.mjs (this lane, worker-authored, reviewed, merged)
-//                       module id, revision, closure, operations, projections,
-//                       effects, execution token, applicability, named holes
-//   lib/protocol.mjs, lib/query.mjs, lib/refs.mjs
-//                       the v1 request/result/refusal shapes the assets mirror,
-//                       via the reviewed JSON-Schema docs in schemas/
-//   catalogs/provider-declaration.mjs (authoritative tree precedent)
-//                       artifact sha256 is computed at packaging and is not a
-//                       value the authored declaration holds; schema names
-//                       follow baton2.context.<thing>.v1
 //
-// What this suite checks: the declaration carries exactly the decoder's
-// members with conforming values; every asset is vocabulary-exact SchemaDef;
-// every SfRef resolves inside the declared identity set; the operation table
-// matches the worker record; packaging-owned values stay explicitly unheld
-// (null digests, null package identity, empty argv) so admission refuses
-// them by name instead of admitting an invented value.
+// What this suite checks: the declaration satisfies every decode validity
+// rule; the package identity is the documented byte-bound derivation; every
+// asset is vocabulary-exact SchemaDef with resolving refs; the operation
+// carries the exact delivered projections and the empty admitted effects.
+// Byte equality of the rows against staged bytes is the remote gate's check:
+// this tree does not stage the package, so the suite pins shapes, formats
+// and the documented identity instead of rehashing absent files.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { PROVIDER_DECLARATION as WORKER_RECORD } from '../typescript/provider-declaration.mjs';
-
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DECLARATION_PATH = join(HERE, 'native-provider.declaration.json');
 const SCHEMA_DIR = join(HERE, 'native-schemas');
-const DOC_DIR = join(HERE, '..', 'typescript', 'schemas');
 
-const TOP_MEMBERS = ['schema', 'moduleId', 'revision', 'protocolVersion',
-  'packageIdentity', 'entry', 'artifactIdentities', 'dependencies',
-  'schemaIdentities', 'applicability', 'operations'];
-const OPERATION_MEMBERS = ['schema', 'operation', 'implements', 'subjectSchema',
-  'optionsSchema', 'projections', 'effects', 'execution', 'resultSchema',
-  'referenceSchema', 'eventSchema', 'lifetimeProfile', 'dependencies'];
+const DECLARATION_SCHEMA = 'baton2-native-module-declaration-v1';
 const OPERATION_SCHEMA = 'baton2-native-operation-v1';
 const EXECUTION_TOKENS = ['pure', 'direct', 'managed', 'runtime'];
 const RULE_KINDS = ['path', 'manifest', 'subject', 'projection'];
+const HEX64 = /^[0-9a-f]{64}$/;
+
+// sha256 over the concatenation of the twelve staged artifact bytes in
+// artifactIdentities order, verified against the selected-module.json rows
+// at helper pin 495ec1f5. Recompute from staged bytes on any package change.
+const PACKAGE_IDENTITY = 'sha256:069ea8280360ea62c9d6e9a95635765b4db50ae8195d93fbb61963a8d6835ceb';
+
+const ARTIFACT_PATHS = ['native-provider.mjs', 'worktree-capture.mjs',
+  'frontend-adapter.mjs', 'frontend-hook-events.mjs', 'frontend-hooks.mjs',
+  'frontend-invocation.mjs', 'source-binding.mjs', 'upstream/base.bend',
+  'upstream/bend.ts', 'upstream/comp.ts', 'upstream/main.ts', 'upstream/LICENSE'];
 
 const IDENTITY_FILES = {
-  'baton2.context.typescript.subject.v1': 'subject.request.json',
-  'baton2.context.typescript.options.sourceAnalysis.v1': 'options.sourceAnalysis.json',
-  'baton2.context.typescript.options.sqlPlan.v1': 'options.sqlPlan.json',
-  'baton2.context.typescript.result.v1': 'result.frame.json',
-  'baton2.context.typescript.reference.v1': 'reference.record.json',
-  'baton2.context.typescript.event.v1': 'event.refusal-frame.json',
+  'baton2.context.bend2.source-analysis.subject.v1': 'subject.request.json',
+  'baton2.context.bend2.source-analysis.options.v1': 'options.request.json',
+  'baton2.context.bend2.source-analysis.result.v1': 'result.frame.json',
+  'baton2.context.bend2.source-analysis.reference.v1': 'reference.record.json',
+  'baton2.context.bend2.source-analysis.event.v1': 'event.envelope.json',
 };
-// Reviewed doc each asset mirrors (manifest.mjs sharedAs: subject, result,
-// reference and event are byte-identical across operations).
-const IDENTITY_DOCS = {
-  'baton2.context.typescript.subject.v1': 'sourceAnalysis/subject.request.json',
-  'baton2.context.typescript.options.sourceAnalysis.v1': 'sourceAnalysis/options.request.json',
-  'baton2.context.typescript.options.sqlPlan.v1': 'sqlPlan/options.request.json',
-  'baton2.context.typescript.result.v1': 'sourceAnalysis/result.frame.json',
-  'baton2.context.typescript.reference.v1': 'sourceAnalysis/reference.json',
-  'baton2.context.typescript.event.v1': 'sourceAnalysis/event.refusal-frame.json',
+
+const OPERATION_SCHEMAS = {
+  subjectSchema: 'baton2.context.bend2.source-analysis.subject.v1',
+  optionsSchema: 'baton2.context.bend2.source-analysis.options.v1',
+  resultSchema: 'baton2.context.bend2.source-analysis.result.v1',
+  referenceSchema: 'baton2.context.bend2.source-analysis.reference.v1',
+  eventSchema: 'baton2.context.bend2.source-analysis.event.v1',
 };
 
 function readJson(path) {
@@ -77,34 +81,19 @@ function isStringArray(value) {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
-// The NativeDeclaration.decode member contract: every required member
-// present with a conforming value. Returns a refusal code or null.
+function nonemptyText(value) {
+  return typeof value === 'string' && value.length > 0;
+}
+
+// Mirrors declaration_fields_valid plus the per-operation field rules: every
+// decode validity condition, returning a refusal code or null.
 function checkDeclarationShape(doc) {
   if (!isRecord(doc)) return 'declarationMissing';
-  for (const member of TOP_MEMBERS) {
-    if (!(member in doc)) return `missingTopMember:${member}`;
-  }
-  for (const key of Object.keys(doc)) {
-    if (!TOP_MEMBERS.includes(key)) return `unknownTopMember:${key}`;
-  }
-  if (doc.schema !== '1') return 'unsupportedDeclarationVersion';
+  if (doc.schema !== DECLARATION_SCHEMA) return 'unsupportedDeclarationSchema';
+  if (!nonemptyText(doc.moduleId)) return 'emptyModuleId';
+  if (!nonemptyText(doc.revision)) return 'emptyRevision';
+  if (!nonemptyText(doc.packageIdentity)) return 'emptyPackageIdentity';
   if (doc.protocolVersion !== '2') return 'unsupportedProtocolVersion';
-  if (typeof doc.moduleId !== 'string' || doc.moduleId.length === 0) return 'emptyModuleId';
-  if (typeof doc.revision !== 'string' || doc.revision.length === 0) return 'emptyRevision';
-  // packageIdentity is packaging-owned: null stays an explicit refusal, a
-  // name here would be a fabricated byte-bound identity.
-  if (doc.packageIdentity !== null && typeof doc.packageIdentity !== 'string') {
-    return 'packageIdentityMalformed';
-  }
-  const entry = doc.entry;
-  if (!isRecord(entry)) return 'entryMissing';
-  const entryRefusal = checkArtifactRow(entry.artifact);
-  if (entryRefusal !== null) return `entryArtifact:${entryRefusal}`;
-  // The launch vector belongs to the deployment owner (worker record hole
-  // invocationVectorUnadmitted): an empty vector refuses as DrEmptyEntryVector.
-  if (!Array.isArray(entry.argv) || !entry.argv.every((arg) => typeof arg === 'string')) {
-    return 'entryArgvMalformed';
-  }
   if (!Array.isArray(doc.artifactIdentities)) return 'artifactIdentitiesMalformed';
   for (const [index, row] of doc.artifactIdentities.entries()) {
     const refusal = checkArtifactRow(row);
@@ -115,7 +104,12 @@ function checkDeclarationShape(doc) {
     const refusal = checkArtifactRow(row);
     if (refusal !== null) return `dependencies[${index}]:${refusal}`;
   }
-  if (!isStringArray(doc.schemaIdentities)) return 'schemaIdentitiesMalformed';
+  if (!Array.isArray(doc.schemaIdentities)) return 'schemaIdentitiesMalformed';
+  if (!Array.isArray(doc.operations) || doc.operations.length === 0) return 'operationsMissing';
+  for (const [index, op] of doc.operations.entries()) {
+    const refusal = checkOperationShape(op);
+    if (refusal !== null) return `operations[${index}]:${refusal}`;
+  }
   if (!Array.isArray(doc.applicability)) return 'applicabilityMalformed';
   for (const [index, rule] of doc.applicability.entries()) {
     if (!isRecord(rule) || typeof rule.kind !== 'string' || typeof rule.value !== 'string') {
@@ -123,55 +117,43 @@ function checkDeclarationShape(doc) {
     }
     if (!RULE_KINDS.includes(rule.kind)) return `applicability[${index}]UnknownKind`;
   }
-  if (!Array.isArray(doc.operations) || doc.operations.length === 0) return 'operationsMissing';
-  for (const [index, op] of doc.operations.entries()) {
-    const refusal = checkOperationShape(op);
-    if (refusal !== null) return `operations[${index}]:${refusal}`;
+  if (!isRecord(doc.entry)) return 'entryMissing';
+  if (!nonemptyText(doc.entry.artifact)) return 'entryArtifactEmpty';
+  if (!Array.isArray(doc.entry.argv) || !doc.entry.argv.every((arg) => typeof arg === 'string')) {
+    return 'entryArgvMalformed';
   }
   return null;
 }
 
 function checkArtifactRow(row) {
   if (!isRecord(row)) return 'rowMissing';
-  if (typeof row.packagePath !== 'string' || row.packagePath.length === 0) return 'rowPathEmpty';
-  // Digests are computed at packaging (catalog precedent): null stays
-  // explicitly unheld here; a non-null value must be a sha256 hex digest.
-  if (row.sha256 !== null && !/^[0-9a-f]{64}$/.test(row.sha256)) return 'rowDigestMalformed';
-  if (typeof row.role !== 'string' || row.role.length === 0) return 'rowRoleEmpty';
+  if (!nonemptyText(row.packagePath)) return 'rowPathEmpty';
+  if (!nonemptyText(row.sha256)) return 'rowDigestEmpty';
+  if (!nonemptyText(row.role)) return 'rowRoleEmpty';
   return null;
 }
 
 function checkOperationShape(op) {
   if (!isRecord(op)) return 'operationMissing';
-  for (const member of OPERATION_MEMBERS) {
-    if (!(member in op)) return `missingOperationMember:${member}`;
-  }
-  for (const key of Object.keys(op)) {
-    if (!OPERATION_MEMBERS.includes(key)) return `unknownOperationMember:${key}`;
-  }
   if (op.schema !== OPERATION_SCHEMA) return 'unsupportedOperationSchema';
-  if (typeof op.operation !== 'string' || op.operation.length === 0) return 'emptyOperationId';
-  if (typeof op.implements !== 'string' || op.implements.length === 0) return 'emptyImplements';
-  for (const member of ['subjectSchema', 'optionsSchema', 'resultSchema', 'referenceSchema', 'eventSchema']) {
-    if (typeof op[member] !== 'string' || op[member].length === 0) return `emptySchema:${member}`;
-  }
   if (!isStringArray(op.projections)) return 'projectionsMalformed';
   if (!isStringArray(op.effects)) return 'effectsMalformed';
   if (!EXECUTION_TOKENS.includes(op.execution)) return 'unknownExecutionToken';
-  if (typeof op.lifetimeProfile !== 'string') return 'lifetimeProfileMalformed';
   if (!Array.isArray(op.dependencies)) return 'operationDependenciesMalformed';
   for (const [index, edge] of op.dependencies.entries()) {
-    if (!isRecord(edge) || typeof edge.moduleId !== 'string' || typeof edge.declarationDigest !== 'string' ||
-        typeof edge.operation !== 'string') {
+    if (!isRecord(edge) || typeof edge.moduleId !== 'string'
+        || typeof edge.declarationDigest !== 'string' || typeof edge.operation !== 'string') {
       return `operationDependencies[${index}]Malformed`;
     }
+  }
+  for (const member of ['subjectSchema', 'optionsSchema', 'referenceSchema', 'resultSchema', 'eventSchema']) {
+    if (!nonemptyText(op[member])) return `emptySchema:${member}`;
   }
   return null;
 }
 
-// The codec-schema.bend closed vocabulary, as the constructor-keyed JSON
-// encoding the assets use: one constructor per node with exactly the members
-// the Bend type declares. Returns a refusal code or null.
+// The codec-schema.bend closed vocabulary as the constructor-keyed JSON
+// encoding the assets use. Returns a refusal code or null.
 function checkForm(form, path) {
   if (!isRecord(form)) return `${path}:formMissing`;
   const keys = Object.keys(form);
@@ -212,8 +194,15 @@ function checkForm(form, path) {
     }
     case 'SfDict': {
       if (!isRecord(body)) return `${path}:dictMalformed`;
-      const keysRefusal = checkKeys(body.keys, `${path}.keys`);
-      if (keysRefusal !== null) return keysRefusal;
+      const entries = Object.keys(body.keys ?? {});
+      if (entries.length !== 1) return `${path}:keysMalformed`;
+      if (entries[0] === 'SkDeclared') {
+        if (!isStringArray(body.keys.SkDeclared.names)) return `${path}:declaredNamesMalformed`;
+      } else if (entries[0] === 'SkAnyScalarText') {
+        if (!isRecord(body.keys.SkAnyScalarText)) return `${path}:anyKeysMalformed`;
+      } else {
+        return `${path}:unknownKeys:${entries[0]}`;
+      }
       return checkForm(body.value, `${path}.value`);
     }
     case 'SfRef': {
@@ -234,17 +223,6 @@ function checkForm(form, path) {
   }
 }
 
-function checkKeys(keys, path) {
-  if (!isRecord(keys)) return `${path}:keysMissing`;
-  const entries = Object.keys(keys);
-  if (entries.length !== 1) return `${path}:keysNotSingleConstructor`;
-  if (entries[0] === 'SkDeclared') {
-    return isStringArray(keys.SkDeclared.names) ? null : `${path}:declaredNamesMalformed`;
-  }
-  if (entries[0] === 'SkAnyScalarText') return isRecord(keys.SkAnyScalarText) ? null : `${path}:anyKeysMalformed`;
-  return `${path}:unknownKeys:${entries[0]}`;
-}
-
 function checkField(field, path) {
   if (!isRecord(field)) return `${path}:fieldMissing`;
   const entries = Object.keys(field);
@@ -262,9 +240,10 @@ function checkField(field, path) {
 function checkAsset(asset, path) {
   if (!isRecord(asset)) return `${path}:assetMissing`;
   if (Object.keys(asset).length !== 1 || !isRecord(asset.SchemaDef)) return `${path}:assetNotSingleDef`;
-  const def = asset.SchemaDef;
-  if (typeof def.name !== 'string' || def.name.length === 0) return `${path}:defNameEmpty`;
-  return checkForm(def.form, path);
+  if (typeof asset.SchemaDef.name !== 'string' || asset.SchemaDef.name.length === 0) {
+    return `${path}:defNameEmpty`;
+  }
+  return checkForm(asset.SchemaDef.form, path);
 }
 
 function collectRefs(form, into) {
@@ -291,14 +270,6 @@ function collectRefs(form, into) {
   }
 }
 
-function requiredNames(form) {
-  const [tag] = Object.keys(form);
-  if (tag !== 'SfRecord') return null;
-  return form.SfRecord.fields
-    .filter((field) => isRecord(field.SfRequired))
-    .map((field) => field.SfRequired.name);
-}
-
 function loadDeclaration() {
   return readJson(DECLARATION_PATH);
 }
@@ -307,87 +278,79 @@ function loadAsset(identity) {
   return readJson(join(SCHEMA_DIR, IDENTITY_FILES[identity]));
 }
 
-test('declaration carries exactly the decoder member contract', () => {
+test('declaration satisfies every decode validity rule', () => {
   const doc = loadDeclaration();
   assert.equal(checkDeclarationShape(doc), null);
-  assert.equal(doc.schema, '1');
+  assert.equal(doc.schema, DECLARATION_SCHEMA);
+  assert.equal(doc.moduleId, 'bend2');
+  assert.equal(doc.revision, 'development');
   assert.equal(doc.protocolVersion, '2');
-  assert.equal(doc.operations.length, 2);
-  for (const op of doc.operations) {
-    assert.equal(op.schema, OPERATION_SCHEMA);
+  assert.equal(doc.packageIdentity, PACKAGE_IDENTITY);
+  assert.deepEqual(doc.entry, { artifact: 'native-provider.mjs', argv: ['--experimental-strip-types'] });
+  assert.deepEqual(doc.artifactIdentities.map((row) => row.packagePath), ARTIFACT_PATHS);
+  for (const row of [...doc.artifactIdentities, ...doc.dependencies]) {
+    assert.match(row.sha256, /^[0-9a-f]{64}$/);
+  }
+  // The entry digest resolves through the artifact rows, exactly as the
+  // decoder derives it.
+  const entryRow = doc.artifactIdentities.find((row) => row.packagePath === doc.entry.artifact);
+  assert.ok(entryRow);
+  assert.equal(doc.operations.length, 1);
+  const [op] = doc.operations;
+  assert.equal(op.schema, OPERATION_SCHEMA);
+  assert.equal(op.operation, 'sourceAnalysis');
+  assert.equal(op.implements, 'sourceAnalysis');
+  assert.deepEqual(op, {
+    schema: OPERATION_SCHEMA,
+    operation: 'sourceAnalysis',
+    implements: 'sourceAnalysis',
+    ...OPERATION_SCHEMAS,
+    projections: ['definition', 'type', 'references', 'diagnostics'],
+    effects: [],
+    execution: 'managed',
+    lifetimeProfile: '',
+    dependencies: [],
+  });
+  for (const identity of Object.values(OPERATION_SCHEMAS)) {
+    assert.ok(doc.schemaIdentities.includes(identity));
   }
 });
 
 test('declaration checker refuses malformed candidates', () => {
   const base = loadDeclaration();
-  const withoutSchema = structuredClone(base);
-  delete withoutSchema.operations[0].schema;
-  assert.match(checkDeclarationShape(withoutSchema), /missingOperationMember:schema/);
+  const emptyIdentity = structuredClone(base);
+  emptyIdentity.packageIdentity = '';
+  assert.match(checkDeclarationShape(emptyIdentity), /emptyPackageIdentity/);
+  const noSchema = structuredClone(base);
+  delete noSchema.operations[0].schema;
+  assert.match(checkDeclarationShape(noSchema), /unsupportedOperationSchema/);
+  const noOps = structuredClone(base);
+  noOps.operations = [];
+  assert.match(checkDeclarationShape(noOps), /operationsMissing/);
   const badToken = structuredClone(base);
-  badToken.operations[1].execution = 'background';
+  badToken.operations[0].execution = 'background';
   assert.match(checkDeclarationShape(badToken), /unknownExecutionToken/);
+  const emptySubject = structuredClone(base);
+  emptySubject.operations[0].subjectSchema = '';
+  assert.match(checkDeclarationShape(emptySubject), /emptySchema:subjectSchema/);
+  const emptyEntry = structuredClone(base);
+  emptyEntry.entry.artifact = '';
+  assert.match(checkDeclarationShape(emptyEntry), /entryArtifactEmpty/);
+  const badArgv = structuredClone(base);
+  badArgv.entry.argv = 'x';
+  assert.match(checkDeclarationShape(badArgv), /entryArgvMalformed/);
+  const emptyDigest = structuredClone(base);
+  emptyDigest.dependencies[0].sha256 = '';
+  assert.match(checkDeclarationShape(emptyDigest), /rowDigestEmpty/);
   const badKind = structuredClone(base);
-  badKind.applicability.push({ kind: 'owner', value: 'x' });
+  badKind.applicability = [{ kind: 'owner', value: 'x' }];
   assert.match(checkDeclarationShape(badKind), /UnknownKind/);
-  const badRow = structuredClone(base);
-  delete badRow.dependencies[0].role;
-  assert.match(checkDeclarationShape(badRow), /rowRoleEmpty/);
-  const badDigest = structuredClone(base);
-  badDigest.artifactIdentities[0].sha256 = 'not-a-digest';
-  assert.match(checkDeclarationShape(badDigest), /rowDigestMalformed/);
-  const extra = structuredClone(base);
-  extra.readiness = 'ready';
-  assert.match(checkDeclarationShape(extra), /unknownTopMember:readiness/);
-});
-
-test('packaging-owned values stay explicitly unheld', () => {
-  const doc = loadDeclaration();
-  // The staged package identity is byte-bound at packaging; a name here
-  // would be a fabricated null-to-string replacement.
-  assert.equal(doc.packageIdentity, null);
-  for (const row of doc.artifactIdentities) {
-    assert.equal(row.sha256, null);
-  }
-  for (const row of doc.dependencies) {
-    assert.equal(row.sha256, null);
-  }
-  // The launch vector belongs to the deployment owner: an empty vector
-  // refuses as DrEmptyEntryVector instead of admitting an invented argv.
-  assert.deepEqual(doc.entry.argv, []);
-});
-
-test('operation table matches the worker-authored provider record', () => {
-  const doc = loadDeclaration();
-  assert.equal(doc.moduleId, WORKER_RECORD.id);
-  assert.equal(doc.revision, WORKER_RECORD.revision);
-  const workerPaths = new Map(
-    WORKER_RECORD.artifacts.map((row) => [row.path, row.role]),
-  );
-  const declaredPaths = new Map([
-    [doc.entry.artifact.packagePath, doc.entry.artifact.role],
-    ...doc.dependencies.map((row) => [row.packagePath, row.role]),
-  ]);
-  assert.deepEqual([...declaredPaths.entries()], [...workerPaths.entries()]);
-  assert.equal(doc.operations.length, WORKER_RECORD.operations.length);
-  for (const [index, op] of doc.operations.entries()) {
-    const workerOp = WORKER_RECORD.operations[index];
-    assert.equal(op.operation, workerOp.id);
-    assert.equal(op.implements, workerOp.id);
-    assert.deepEqual(op.projections, workerOp.projections);
-    assert.deepEqual(op.effects, workerOp.effects);
-    assert.equal(op.execution, workerOp.execution);
-    assert.equal(op.lifetimeProfile, workerOp.lifetimeProfile);
-  }
-  assert.deepEqual(
-    doc.applicability,
-    WORKER_RECORD.applicability.map((rule) => ({ kind: rule.kind, value: rule.value })),
-  );
 });
 
 test('every asset is vocabulary-exact SchemaDef and every ref resolves', () => {
   const doc = loadDeclaration();
   const identities = new Set(Object.keys(IDENTITY_FILES));
-  assert.deepEqual([...new Set(doc.schemaIdentities)].sort(), [...identities].sort());
+  assert.deepEqual([...doc.schemaIdentities].sort(), [...identities].sort());
   for (const identity of identities) {
     const asset = loadAsset(identity);
     assert.equal(checkAsset(asset, identity), null);
@@ -397,79 +360,21 @@ test('every asset is vocabulary-exact SchemaDef and every ref resolves', () => {
   for (const identity of identities) {
     collectRefs(loadAsset(identity).SchemaDef.form, refs);
   }
+  assert.deepEqual([...new Set(refs)].sort(), [
+    'baton2.context.bend2.source-analysis.reference.v1',
+    'baton2.context.bend2.source-analysis.result.v1',
+    'baton2.context.bend2.source-analysis.subject.v1',
+  ]);
   for (const target of refs) {
     assert.ok(identities.has(target), `unresolved schema ref ${target}`);
-  }
-  const schemasOf = (op) => [op.subjectSchema, op.optionsSchema, op.resultSchema,
-    op.referenceSchema, op.eventSchema];
-  assert.deepEqual([...new Set(schemasOf(doc.operations[0]))].sort(), [
-    'baton2.context.typescript.event.v1',
-    'baton2.context.typescript.options.sourceAnalysis.v1',
-    'baton2.context.typescript.reference.v1',
-    'baton2.context.typescript.result.v1',
-    'baton2.context.typescript.subject.v1',
-  ]);
-  assert.deepEqual([...new Set(schemasOf(doc.operations[1]))].sort(), [
-    'baton2.context.typescript.event.v1',
-    'baton2.context.typescript.options.sqlPlan.v1',
-    'baton2.context.typescript.reference.v1',
-    'baton2.context.typescript.result.v1',
-    'baton2.context.typescript.subject.v1',
-  ]);
-  for (const op of doc.operations) {
-    for (const identity of schemasOf(op)) {
-      assert.ok(identities.has(identity), `operation names undeclared schema ${identity}`);
-    }
   }
 });
 
 test('asset checker refuses non-vocabulary nodes', () => {
-  const asset = loadAsset('baton2.context.typescript.event.v1');
+  const asset = loadAsset('baton2.context.bend2.source-analysis.event.v1');
   assert.equal(checkAsset(asset, 'event'), null);
   const bad = structuredClone(asset);
   bad.SchemaDef.form.SfRecord.fields[0].SfRequired.form = { SfText: {} };
   assert.match(checkAsset(bad, 'event'), /unknownConstructor:SfText/);
-  const two = structuredClone(asset);
-  two.SchemaDef.form = { SfRecord: { fields: [] }, SfJson: {} };
-  assert.match(checkAsset(two, 'event'), /formNotSingleConstructor/);
 });
-
-test('assets cover the reviewed docs required members', () => {
-  const docRequired = (relative) => {
-    const doc = readJson(join(DOC_DIR, relative));
-    if (doc.required === undefined) return { branches: [[]] };
-    if (Array.isArray(doc.required)) return { branches: [doc.required] };
-    if (Array.isArray(doc.oneOf)) {
-      return {
-        branches: doc.oneOf.map((branch) => branch.required ?? []),
-        tags: doc.oneOf.map((branch) => branch.properties?.kind?.const),
-      };
-    }
-    throw new Error(`unexpected doc shape ${relative}`);
-  };
-  for (const [identity, relative] of Object.entries(IDENTITY_DOCS)) {
-    const asset = loadAsset(identity);
-    const { branches, tags } = docRequired(relative);
-    const form = asset.SchemaDef.form;
-    if (tags !== undefined) {
-      const [unionTag] = Object.keys(form);
-      assert.equal(unionTag, 'SfUnion');
-      const caseByTag = new Map(form.SfUnion.cases.map((kase) => [kase.tag, kase.form]));
-      assert.deepEqual([...caseByTag.keys()].sort(), [...tags].sort());
-      for (const [index, required] of branches.entries()) {
-        const names = requiredNames(caseByTag.get(tags[index]));
-        for (const member of required) {
-          assert.ok(names.includes(member), `${identity} case ${tags[index]} drops ${member}`);
-        }
-      }
-    } else {
-      const names = requiredNames(form);
-      assert.ok(names !== null, `${identity} is not a closed record`);
-      for (const member of branches[0]) {
-        assert.ok(names.includes(member), `${identity} drops required ${member}`);
-      }
-    }
-  }
-});
-
 
