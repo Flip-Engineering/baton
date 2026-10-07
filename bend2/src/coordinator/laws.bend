@@ -1292,7 +1292,7 @@ law completion_preparation_checks_the_upstream_recipient:
   for stderr: String
   for outcome: Turn.Outcome
   {Turn.prepare(db,player,id,log,stderr,outcome) == (do IO<Unit>:
-    +generation : String <- IO.pure(String,Logs.attempt_log(log,id))
+    +generation : String <- IO.pure(String,Turn.generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     Turn.prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))) : IO(Unit)}
 

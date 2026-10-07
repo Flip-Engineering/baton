@@ -103,16 +103,19 @@ def prepare_parent(db: String, player: String, id: String, log: String, stderr: 
         case False{}: IO.pure(Unit,Unit{})
         case True{}: prepare_player(db,player,id,log,stderr,error,status,Bool.or(String.eq(status,"start failed"),String.eq(status,"input failed")))
 
+def generation_log(+log: String, +id: String) -> String:
+  Logs.attempt_log(log,id)
+
 # Failure reports are committed while this invocation still owns the session.
 def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
-    +generation : String <- IO.pure(String,Logs.attempt_log(log,id))
+    +generation : String <- IO.pure(String,generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
 
 def record_exit(db: String, player: String, +id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
-    case Ended{status,event,error}: Stop.exited(db,player,id,status,event,error,Logs.attempt_log(log,id))
+    case Ended{status,event,error}: Stop.exited(db,player,id,status,event,error,generation_log(log,id))
 
 def player_finished(+db: String, player: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -545,7 +548,7 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
     case Fail{error}: IO.pure(Outcome,Ended{"start failed","","Player process could not start: " ++ error_text(error)})
     case Done{+handle}:
       do IO<Outcome>:
-        +generation : String <- IO.pure(String,Logs.attempt_log(log,id))
+        +generation : String <- IO.pure(String,generation_log(log,id))
         +policy : Logs.Policy <- Logs.open_attempt(db,player,log,id)
         restored : Result<&1,&1,U32 & String,Unit> <- checkpoint_restore(generation)
         sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness))
@@ -557,7 +560,7 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
 # attempt from its first frame so native completion can be reconstructed.
 def retained_output(+db: String, +player: String, +id: String, +log: String, +harness: String, attempt: String, +handle: U32) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
-    +generation : String <- IO.pure(String,Logs.attempt_log(log,id))
+    +generation : String <- IO.pure(String,generation_log(log,id))
     +policy : Logs.Policy <- Logs.open_attempt(db,player,log,id)
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     +checkpoint_state : Observer.State <- Observer.restore(db,handle)
@@ -653,7 +656,7 @@ def supervise_gone(+db: String, +player: String, +id: String, +cmd: String, +mod
     case False{}: IO.pure(Outcome,first)
     case True{}: do IO<Outcome>:
       note : String <- refused_note(cwd,prompt)
-      child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,Logs.attempt_log(log,id),"",harness,task)
+      child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,generation_log(log,id),"",harness,task)
       restart(db,player,id,log,note,harness,child)
 
 def supervise_retry(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +native: String, +prompt: String, +first: Outcome) -> IO(Outcome):
@@ -666,7 +669,7 @@ def supervise(+db: String, +player: String, +id: String, +cmd: String, +model: S
   do IO<Outcome>:
     alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
-    child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,Logs.attempt_log(log,id),native,harness,task)
+    child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,generation_log(log,id),native,harness,task)
     first : Outcome <- started(db,player,id,log,prompt,harness,child)
     supervise_retry(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,native,prompt,first)
 
