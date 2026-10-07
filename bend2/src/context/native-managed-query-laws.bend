@@ -21,7 +21,7 @@ def ready_keeper() -> Managed.KeeperReadiness:
 
 law bootstrap_contains_the_full_immutable_query_identity:
   {Managed.bootstrap_text(managed_bootstrap()) ==
-    "{\"schema\":\"baton2-managed-context-bootstrap-v1\",\"query\":\"q-1\",\"owner\":\"owner-1\",\"databaseBinding\":\"db-binding\",\"request\":\"{}\",\"planValue\":\"[]\",\"planIdentity\":\"plan-identity\",\"resultSchema\":\"result-v1\",\"artifactPath\":\"/work/.baton/context-artifacts/q\",\"keeperPath\":\"/logs/keeper-q\",\"guardIdentity\":\"[\\\"context-role\\\",[\\\"db-binding\\\",[\\\"query\\\",[\\\"q-1\\\",[\\\"starter\\\",[\\\"0\\\",null]]]]]]]\",\"guardKey\":\"guard-key-64\",\"recoveryArgv\":\"native-recover-argv\"}" : String}
+    "{\"artifactPath\":\"/work/.baton/context-artifacts/q\",\"databaseBinding\":\"db-binding\",\"guardIdentity\":\"[\\\"context-role\\\",\\\"db-binding\\\",\\\"query\\\",\\\"q-1\\\",\\\"starter\\\",\\\"0\\\"]\",\"guardKey\":\"guard-key-64\",\"keeperPath\":\"/logs/keeper-q\",\"owner\":\"owner-1\",\"planIdentity\":\"plan-identity\",\"planValue\":\"[]\",\"query\":\"q-1\",\"recoveryArgv\":\"native-recover-argv\",\"request\":\"{}\",\"resultSchema\":\"result-v1\",\"schema\":\"baton2-managed-context-bootstrap-v1\"}" : String}
 
 def bootstrap_contains_the_full_immutable_query_identity():
   {==}
