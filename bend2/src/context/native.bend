@@ -41,89 +41,87 @@ def installed_provider_path(executable: String) -> String:
 type ProviderAnswer is Data:
   ProviderOutput{value: String, status: String}
   ProviderRefused{reason: String}
-
-type NodeRuntime is Data:
-  NodeRuntimeReady{path: String, version: String}
-  NodeRuntimeRefused{reason: String}
+  ProviderRuntime{path: String, version: String}
 
 def absolute_node_path(+path: String) -> Bool:
   match path:
     case SNil{}: False{}
     case SCon{head, tail}: U32.is_eq(Char.to_u32(head), 47)
 
-def node_runtime_fields(fields: List<String>) -> NodeRuntime:
+def node_runtime_fields(fields: List<String>) -> ProviderAnswer:
   match fields:
     case +path <> +support <> +version <> Nil{}:
-      Bool.pick(NodeRuntime,
+      Bool.pick(ProviderAnswer,
         Bool.and(absolute_node_path(path), String.eq(support, "supported")),
-        NodeRuntimeReady{path, version}, NodeRuntimeRefused{"nodeRuntimeUnsupported"})
-    case other: NodeRuntimeRefused{"nodeRuntimeProbeMalformed"}
+        ProviderRuntime{path, version}, ProviderRefused{"nodeRuntimeUnsupported"})
+    case other: ProviderRefused{"nodeRuntimeProbeMalformed"}
 
-def node_runtime_status(+line: String, +status: String, extra: Maybe<String>) -> NodeRuntime:
-  match extra:
-    case Some{value}: NodeRuntimeRefused{"nodeRuntimeProbeSurplus"}
-    case None{}:
-      Bool.pick(NodeRuntime, String.eq(status, "exit 0"),
-        node_runtime_fields(Tx.split_tabs(line)), NodeRuntimeRefused{"nodeRuntimeProbeExit"})
+def node_runtime_status(+line: String, +status: String, surplus: Bool) -> ProviderAnswer:
+  Bool.pick(ProviderAnswer, surplus, ProviderRefused{"nodeRuntimeProbeSurplus"},
+    Bool.pick(ProviderAnswer, String.eq(status, "exit 0"),
+      node_runtime_fields(Tx.split_tabs(line)), ProviderRefused{"nodeRuntimeProbeExit"}))
 
-def node_runtime_wait(+line: String, extra: Maybe<String>,
-                      waited: Result<&1,&1,U32 & String,String>) -> IO(NodeRuntime):
+def node_runtime_wait(+line: String, surplus: Bool,
+                      waited: Result<&1,&1,U32 & String,String>) -> IO(ProviderAnswer):
   match waited:
-    case Fail{error}: IO.pure(NodeRuntime, NodeRuntimeRefused{"nodeRuntimeProbeWait"})
-    case Done{+status}: IO.pure(NodeRuntime, node_runtime_status(line, status, extra))
+    case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"nodeRuntimeProbeWait"})
+    case Done{+status}: IO.pure(ProviderAnswer, node_runtime_status(line, status, surplus))
 
 def node_runtime_reap_answer(+reason: String,
-                             waited: Result<&1,&1,U32 & String,String>) -> IO(NodeRuntime):
+                             waited: Result<&1,&1,U32 & String,String>) -> IO(ProviderAnswer):
   match waited:
-    case Fail{error}: IO.pure(NodeRuntime, NodeRuntimeRefused{"nodeRuntimeProbeWait"})
-    case Done{status}: IO.pure(NodeRuntime, NodeRuntimeRefused{reason})
+    case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"nodeRuntimeProbeWait"})
+    case Done{+status}: IO.pure(ProviderAnswer, ProviderRefused{reason})
 
-def node_runtime_reap(+handle: U32, +reason: String) -> IO(NodeRuntime):
-  do IO<NodeRuntime>:
+def node_runtime_reap(+handle: U32, +reason: String) -> IO(ProviderAnswer):
+  do IO<ProviderAnswer>:
     waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
     node_runtime_reap_answer(reason, waited)
 
-def node_runtime_wait_extra(+handle: U32, +line: String, +extra: Maybe<String>) -> IO(NodeRuntime):
-  do IO<NodeRuntime>:
+def node_runtime_wait_extra(+handle: U32, +line: String, surplus: Bool) -> IO(ProviderAnswer):
+  do IO<ProviderAnswer>:
     waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
-    node_runtime_wait(line, extra, waited)
+    node_runtime_wait(line, surplus, waited)
 
 def node_runtime_second(+handle: U32, +line: String,
-                        second: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(NodeRuntime):
+                        second: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(ProviderAnswer):
   match second:
     case Fail{error}: node_runtime_reap(handle, "nodeRuntimeProbeRead")
-    case Done{+extra}: node_runtime_wait_extra(handle, line, extra)
+    case Done{+extra}:
+      match extra:
+        case Some{+value}: node_runtime_wait_extra(handle, line, True{})
+        case None{}: node_runtime_wait_extra(handle, line, False{})
 
-def node_runtime_after_first(+handle: U32, +line: String) -> IO(NodeRuntime):
-  do IO<NodeRuntime>:
+def node_runtime_after_first(+handle: U32, +line: String) -> IO(ProviderAnswer):
+  do IO<ProviderAnswer>:
     second : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
     node_runtime_second(handle, line, second)
 
 def node_runtime_read(+handle: U32,
-                      first: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(NodeRuntime):
+                      first: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(ProviderAnswer):
   match first:
     case Fail{error}:
-      do IO<NodeRuntime>:
+      do IO<ProviderAnswer>:
         waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
-        node_runtime_wait("", None{}, waited)
+        node_runtime_wait("", False{}, waited)
     case Done{+line}:
       match line:
         case None{}:
-          do IO<NodeRuntime>:
+          do IO<ProviderAnswer>:
             waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
-            node_runtime_wait("", None{}, waited)
+            node_runtime_wait("", False{}, waited)
         case Some{+value}: node_runtime_after_first(handle, value)
 
-def node_runtime_started(result: Result<&1,&1,U32 & String,U32>) -> IO(NodeRuntime):
+def node_runtime_started(result: Result<&1,&1,U32 & String,U32>) -> IO(ProviderAnswer):
   match result:
-    case Fail{error}: IO.pure(NodeRuntime, NodeRuntimeRefused{"nodeRuntimeProbeSpawn"})
+    case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"nodeRuntimeProbeSpawn"})
     case Done{+handle}:
-      do IO<NodeRuntime>:
+      do IO<ProviderAnswer>:
         first : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
         node_runtime_read(handle, first)
 
-def resolve_node_runtime(+cwd: String) -> IO(NodeRuntime):
-  do IO<NodeRuntime>:
+def resolve_node_runtime(+cwd: String) -> IO(ProviderAnswer):
+  do IO<ProviderAnswer>:
     result : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
       Process.argv(["/usr/bin/env", "node", "-e",
         "const [major,minor]=process.versions.node.split('.').map(Number);process.stdout.write(process.execPath+'\\t'+((major>22||(major===22&&minor>=15))?'supported':'unsupported')+'\\t'+process.versions.node)"]),
@@ -218,15 +216,15 @@ def invoke_frame(+executable: String, +runtime_path: String, +cwd: String,
         provider_spawn(installed_provider_path(executable), cwd, value, spawned)
 
 def invoke_runtime(+executable: String, +cwd: String, +invocation: Sel.Invocation,
-                   runtime: NodeRuntime) -> IO(ProviderAnswer):
+                   runtime: ProviderAnswer) -> IO(ProviderAnswer):
   match runtime:
-    case NodeRuntimeRefused{reason}: IO.pure(ProviderAnswer, ProviderRefused{reason})
-    case NodeRuntimeReady{path, version}: invoke_frame(executable, path, cwd, invocation_frame(invocation))
+    case ProviderRefused{reason}: IO.pure(ProviderAnswer, ProviderRefused{reason})
+    case ProviderRuntime{path, version}: invoke_frame(executable, path, cwd, invocation_frame(invocation))
 
 def invoke(+invocation: Sel.Invocation, +cwd: String) -> IO(ProviderAnswer):
   do IO<ProviderAnswer>:
     executable : String <- IO.try(String, Host.SessionLock.executable())
-    runtime : NodeRuntime <- resolve_node_runtime(cwd)
+    runtime : ProviderAnswer <- resolve_node_runtime(cwd)
     invoke_runtime(executable, cwd, invocation, runtime)
 
 def unavailable(command: String) -> IO(Unit):
