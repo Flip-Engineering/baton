@@ -276,6 +276,10 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     check(report, 'both phases ran in order', JSON.stringify(report.phasesRun) === JSON.stringify(['parse', 'check']), report.phasesRun);
     check(report, 'no diagnostic was reported', report.diagnostics.length === 0, report.diagnostics);
     check(report, 'the capture is complete', report.completeness === 'complete', report.incompleteness);
+    check(report, 'the fixture declaration has both required type observations',
+      ['declared', 'elaboratedTerm'].every((status) => report.types.some((entry) => entry.qualified === 'id' && entry.status === status)),
+      report.types.filter((entry) => entry.qualified === 'id'));
+    report.unrenderedSamples = [...(kernel.bendHookState?.unrenderedSamples ?? [])];
     check(report, 'the owned hook was released', report.ownerAfter === '', report.ownerAfter);
     check(report, 'the session was closed', report.sessionClosed === true, report.sessionClosed);
     check(report, 'the root was acquired once', reads.filter((identity) => identity.endsWith('valid.bend')).length === 1, reads);
@@ -292,6 +296,9 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     check(report, 'a thrown diagnostic was reported', diagnostic !== undefined, report.diagnostics);
     check(report, 'the failure is attributed to the imported file', diagnostic !== undefined && typeof diagnostic.file === 'string' && diagnostic.file.endsWith('invalid.bend'), diagnostic);
     check(report, 'its span is mapped into that file', diagnostic !== undefined && diagnostic.span.status === 'mapped' && diagnostic.span.identity.endsWith('invalid.bend'), diagnostic === undefined ? null : diagnostic.span);
+    check(report, 'the failing fixture declaration has its declared type observation',
+      report.types.some((entry) => entry.qualified === 'invalid.broken' && entry.status === 'declared'),
+      report.types.filter((entry) => entry.qualified === 'invalid.broken'));
     check(report, 'the capture is complete', report.completeness === 'complete', report.incompleteness);
     check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
     return report;
