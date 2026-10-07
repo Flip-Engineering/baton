@@ -543,8 +543,13 @@ def write_batched(policy: Policy, +log: String, lines: List<String>, first: Resu
       rest : Result<&1,&1,U32 & String,Unit> <- write_each(log,lines,Done{Unit{}})
       IO.pure(Result<&1,&1,U32 & String,Unit>,rest)
 
+# An empty batch writes nothing and touches nothing: suppressed
+# held-progress frames and empty flushes read no size and rotate no file.
+# Every nonempty batch keeps one rotation decision.
 def write_batch(policy: Policy, +log: String, lines: List<String>, first: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
-  write_batched(policy,log,lines,first)
+  match lines:
+    case Nil{}: IO.pure(Result<&1,&1,U32 & String,Unit>,first)
+    case Con{head, tail}: write_batched(policy,log,lines,first)
 
 # A log that already failed this turn writes nothing further, so one unwritable
 # or full file is reported once and no frame is retried into it.

@@ -278,6 +278,23 @@ sys.exit(%d)
         self.assertEqual(len(holders), 1)
         self.assertLess(files[holders[0]].index(update), files[holders[0]].index(end))
 
+    def test_held_update_writes_nothing_until_its_end_batch(self):
+        self.call('logs', 'omp-worker', 'default', '65536', '2')
+        pads = [json.dumps({'type': 'response', 'id': 'p%d' % i, 'command': 'probe',
+                            'pad': 'y' * 32000}) for i in range(3)]
+        self.stream(pads, turn='turn-1')
+        self.assertGreater(self.log.stat().st_size, 65536)
+        self.assertFalse((self.cwd / 'turn.jsonl.1').exists())
+        update = json.dumps({'type': 'tool_execution_update', 'toolCallId': 'tool-0',
+                             'toolName': 'bash',
+                             'partialResult': {'content': [{'type': 'text', 'text': 'x' * 2000}]}})
+        end = json.dumps({'type': 'tool_execution_end', 'toolCallId': 'tool-0', 'toolName': 'bash',
+                          'result': {'content': [{'type': 'text', 'text': 'done'}]}})
+        self.stream([update, update, end], turn='turn-2')
+        retained = self.rotated_frames()
+        notes = [line for line in retained if '"moved"' in line]
+        self.assertEqual(len(notes), 1)
+
     def test_storage_previews_rotated_segments_without_writing(self):
         self.call('logs', 'omp-worker', 'default', '65536', '4')
         frames = [json.dumps({'type': 'response', 'id': 'r%d' % i, 'command': 'probe', 'pad': 'y' * 20000}) for i in range(16)]
