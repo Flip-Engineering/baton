@@ -224,7 +224,7 @@ def current_command(db: String, +event: String, previous: String, muse: Bool) ->
     case False{}: IO.pure(String,previous)
     case True{}: do IO<String>:
       found : String <- IO.try(String,DB.Sql.query(db,primary_command_sql(event)))
-      selected : String <- IO.pure(String,Tx.trim_nl(found))
+      +selected : String <- IO.pure(String,Tx.trim_nl(found))
       IO.pure(String,Bool.pick(String,String.is_empty(selected),previous,selected))
 
 def primary_terminal_expr(+event: String, +primary: String) -> String:
