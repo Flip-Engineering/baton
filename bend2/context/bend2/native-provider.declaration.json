@@ -77,7 +77,7 @@
   ],
   "runtime": {
     "name": "node",
-    "minimumVersion": "22.7"
+    "minimumVersion": "22.15"
   },
   "readiness": {
     "status": "ready",

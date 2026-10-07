@@ -88,8 +88,8 @@
     },
     {
       "path": "native-provider.declaration.json",
-      "bytes": 2948,
-      "sha256": "3579eaef4c8c9a95f7ca63da1e33362a993ba70673de53110d912eb4c0034357"
+      "bytes": 2949,
+      "sha256": "b6448a9e7aefb02e942bec289094ef350e99242fba6bd18ad026ef422533c139"
     },
     {
       "path": "native-provider.mjs",

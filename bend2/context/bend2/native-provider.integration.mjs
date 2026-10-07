@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { invokeSourceAnalysis } from './native-provider.mjs';
+import { runSelectedInvocation } from '../../scripts/context-provider.mjs';
 
 const [packageArgument, worktreeArgument, targetArgument] = process.argv.slice(2);
 assert.ok(packageArgument && worktreeArgument && targetArgument, 'usage: node native-provider.integration.mjs MODULE_ROOT WORKTREE TARGET');
@@ -10,10 +12,11 @@ const packageRoot = resolve(packageArgument);
 const worktree = resolve(worktreeArgument);
 const target = resolve(worktree, targetArgument);
 const declaration = JSON.parse(readFileSync(join(packageRoot, 'native-provider.declaration.json'), 'utf8'));
+const declarationDigest = createHash('sha256').update(readFileSync(join(packageRoot, 'native-provider.declaration.json'))).digest('hex');
 const binding = Object.freeze({
   id: declaration.moduleId,
   revision: declaration.revision,
-  declarationDigest: 'integration-declaration',
+  declarationDigest,
   protocolVersion: declaration.protocolVersion,
   operation: 'sourceAnalysis',
   artifactIdentities: declaration.artifactIdentities,
@@ -47,6 +50,30 @@ assert.equal(completed.payload.session.identity, target);
 assert.equal(completed.payload.retainedReadSet.status, 'sealed');
 assert.ok(completed.payload.retainedReadSet.descriptors.some((entry) => entry.real === target && /^[0-9a-f]{64}$/.test(entry.sha256)));
 
+const installedPrefix = mkdtempSync(join(tmpdir(), 'baton2-provider-install-'));
+try {
+  const installedWrapper = join(installedPrefix, 'libexec/baton2/context-provider.mjs');
+  const installedModule = join(installedPrefix, 'lib/context/modules', declaration.moduleId);
+  mkdirSync(join(installedPrefix, 'libexec/baton2'), { recursive: true });
+  mkdirSync(installedModule, { recursive: true });
+  cpSync(packageRoot, installedModule, { recursive: true });
+  writeFileSync(installedWrapper, '// executable-relative provider locator\n');
+  const installed = await runSelectedInvocation(invocation(), { wrapperPath: installedWrapper });
+  assert.equal(installed.type, 'event');
+  assert.equal(installed.query, 'integration-query-1');
+  assert.equal(installed.owner, 'integration-owner-1');
+  const staleBinding = { ...binding, declarationDigest: '0'.repeat(64) };
+  const stale = await runSelectedInvocation(invocation({ moduleBinding: staleBinding,
+    operationPlan: [{ binding: staleBinding, common: 'sourceAnalysis', dependencies: [] }] }),
+  { wrapperPath: installedWrapper });
+  assert.deepEqual(stale, { status: 'refused', reason: 'selectedPackageDoesNotMatchFrozenBinding', detail: null });
+  writeFileSync(join(installedModule, 'native-provider.mjs'), 'throw new Error("must not import altered package");\n');
+  const tamperedPackage = await runSelectedInvocation(invocation(), { wrapperPath: installedWrapper });
+  assert.deepEqual(tamperedPackage, { status: 'refused', reason: 'selectedPackageDoesNotMatchFrozenBinding', detail: null });
+} finally {
+  rmSync(installedPrefix, { recursive: true, force: true });
+}
+
 const changedBinding = structuredClone(binding);
 changedBinding.artifactIdentities[0].sha256 = '0'.repeat(64);
 const changedMetadata = await invokeSourceAnalysis(invocation({ moduleBinding: changedBinding,
@@ -73,5 +100,6 @@ try {
 
 process.stdout.write(JSON.stringify({ status: 'passed', checks: [
   'real-frontend-invocation', 'frozen-owner-and-binding-preserved', 'retained-source-identity',
+  'installed-executable-relative-package-resolution', 'frozen-declaration-digest-required',
   'changed-module-metadata-refused', 'outside-source-refused', 'changed-package-payload-refused',
 ] }) + '\n');

@@ -29,6 +29,7 @@ for test in bend2/test/*.py; do
 done
 node --test bend2/test/git-series.mjs
 node --test \
+  bend2/test/context-provider.test.mjs \
   bend2/context/bend2/acquisition.test.mjs \
   bend2/context/bend2/frontend-adapter.test.mjs \
   bend2/context/bend2/native-provider.test.mjs \

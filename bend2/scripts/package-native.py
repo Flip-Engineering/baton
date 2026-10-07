@@ -241,6 +241,7 @@ def stage_adapters(payload):
             name = harness + '-' + suffix + '.mjs'
             shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/context-provider.mjs', directory / 'context-provider.mjs')
 
 
 def stage_selected_context_payload(payload):

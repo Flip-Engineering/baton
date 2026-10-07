@@ -27,6 +27,12 @@ law native_invocation_frame_refuses_another_protocol_version:
 def native_invocation_frame_refuses_another_protocol_version():
   {==}
 
+law native_installed_provider_path_uses_the_executable_install_prefix:
+  {Native.installed_provider_path("/opt/baton2/bin/baton2") == "/opt/baton2/bin/../libexec/baton2/context-provider.mjs" : String}
+
+def native_installed_provider_path_uses_the_executable_install_prefix():
+  {==}
+
 law native_engines_refuses_without_admission:
   for +db: String
   {Native.engines(db) == Native.unavailable("context-engines") : IO(Unit)}

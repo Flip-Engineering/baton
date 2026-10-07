@@ -1,10 +1,12 @@
 # Native context entry points and the selected-provider invocation frame.
-# The frame is derived only from the frozen Core invocation. The CLI remains
-# unavailable until a selected Bend2 provider can consume it and return events.
+# Provider execution receives only the frozen Core invocation and resolves its
+# installed package from the executable prefix.
 import Base
 import ./codec-wire.bend as Codec
 import ./engines-select.bend as Sel
 import ./engines-wire.bend as EnginesWire
+import ../host/process.bend as Process
+import ../host/session-lock.bend as Host
 
 type InvocationFrame is Data:
   NativeFrameReady{value: String}
@@ -20,6 +22,90 @@ def invocation_frame(+invocation: Sel.Invocation) -> InvocationFrame:
           EnginesWire.captures_text(inputs), EnginesWire.plan_text(operation_plan),
           role, incarnation)},
         NativeFrameRefused{"invocationVersion"})
+
+def dirname_step(+rest: String, +current: String, +last: String) -> String:
+  match rest:
+    case SNil{}: last
+    case SCon{+head, +tail}:
+      Bool.pick(String, U32.is_eq(Char.to_u32(head), 47),
+        dirname_step(tail, current ++ SCon{head, SNil{}}, current ++ SCon{head, SNil{}}),
+        dirname_step(tail, current ++ SCon{head, SNil{}}, last))
+
+def executable_directory(path: String) -> String:
+  dirname_step(path, SNil{}, SNil{})
+
+def installed_provider_path(executable: String) -> String:
+  executable_directory(executable) ++ "/../libexec/baton2/context-provider.mjs"
+
+type ProviderAnswer is Data:
+  ProviderOutput{value: String}
+  ProviderRefused{reason: String}
+
+def provider_read(handle: U32, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(ProviderAnswer):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(ProviderAnswer, ProviderRefused{"providerOutputRead"})
+    case Done{+line}:
+      match line:
+        case None{}: IO.pure(ProviderAnswer, ProviderRefused{"providerOutputMissing"})
+        case Some{+value}:
+          do IO<ProviderAnswer>:
+            extra : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
+            match extra:
+              case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"providerOutputRead"})
+              case Done{+second}:
+                match second:
+                  case None{}:
+                    do IO<ProviderAnswer>:
+                      waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
+                      match waited:
+                        case Done{status}: IO.pure(ProviderAnswer,
+                          Bool.pick(ProviderAnswer, String.eq(status, "exit 0"), ProviderOutput{value}, ProviderRefused{"providerExit"}))
+                        case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"providerWait"})
+                  case Some{value}: IO.pure(ProviderAnswer, ProviderRefused{"providerOutputSurplus"})
+
+def provider_close(handle: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(ProviderAnswer):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(ProviderAnswer, ProviderRefused{"providerInputClose"})
+    case Done{unit}:
+      do IO<ProviderAnswer>:
+        output : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
+        provider_read(handle, output)
+
+def provider_write(handle: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(ProviderAnswer):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(ProviderAnswer, ProviderRefused{"providerInputWrite"})
+    case Done{unit}: provider_close(handle, Process.ProcessChild.close_stdin(handle))
+
+def provider_spawn(+path: String, +cwd: String, +frame: String, result: Result<&1,&1,U32 & String,U32>) -> IO(ProviderAnswer):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(ProviderAnswer, ProviderRefused{"providerSpawn"})
+    case Done{handle}:
+      do IO<ProviderAnswer>:
+        written : Result<&1,&1,U32 & String,Unit> <- Process.ProcessChild.write(handle, frame ++ "\n")
+        provider_write(handle, written)
+
+def invoke_frame(+executable: String, +cwd: String, frame: InvocationFrame) -> IO(ProviderAnswer):
+  match frame:
+    case NativeFrameRefused{reason}: IO.pure(ProviderAnswer, ProviderRefused{reason})
+    case NativeFrameReady{value}:
+      do IO<ProviderAnswer>:
+        spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
+          Process.argv(["/usr/bin/env", "node", "--experimental-strip-types",
+            installed_provider_path(executable)]), cwd, "/dev/null")
+        provider_spawn(installed_provider_path(executable), cwd, value, spawned)
+
+def invoke(+invocation: Sel.Invocation, +cwd: String) -> IO(ProviderAnswer):
+  do IO<ProviderAnswer>:
+    executable : String <- IO.try(String, Host.SessionLock.executable())
+    invoke_frame(executable, cwd, invocation_frame(invocation))
 
 def unavailable(command: String) -> IO(Unit):
   IO.die(Unit, 3, "Native Bend2 context provider is unavailable for " ++ command ++ "; no query was admitted.")
