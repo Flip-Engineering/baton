@@ -108,6 +108,12 @@ def observation_identity(+observation: PolicyObservation) -> PolicyObservationId
           J.Jarr{J.Jstr{sha256}, J.Jnil{}}}}}})},
         PolicyIdentityRefused{"projectPolicyObservationMalformed"})
 
+def observation_identity_text(identity: PolicyObservationIdentity) -> String:
+  match identity:
+    case PolicyReadIdentity{value}: value
+    case PolicyMissingIdentity{value}: value
+    case PolicyIdentityRefused{condition}: "refused:" ++ condition
+
 def selection_identity(+observation: PolicyObservation) -> PolicySelectionIdentity:
   match observation:
     case PolicyPresent{owner, worktree, path, sha256, bytes}:

@@ -50,15 +50,19 @@ def project_policy_refuses_wrong_schema():
   {==}
 
 law project_policy_identity_distinguishes_read_and_absence:
-  {Bool.not(Policy.observation_identity(Policy.PolicyPresent{"owner", "/work", "/work/.baton/context.json", "abc", "{}"}) ==
-   Policy.observation_identity(Policy.PolicyAbsent{"owner", "/work", "/work/.baton/context.json"})) == True{} : Bool}
+  {Bool.not(String.eq(Policy.observation_identity_text(Policy.observation_identity(
+    Policy.PolicyPresent{"owner", "/work", "/work/.baton/context.json", "abc", "{}"})),
+   Policy.observation_identity_text(Policy.observation_identity(
+    Policy.PolicyAbsent{"owner", "/work", "/work/.baton/context.json"})))) == True{} : Bool}
 
 def project_policy_identity_distinguishes_read_and_absence():
   {==}
 
 law project_policy_identity_binds_owner_and_worktree:
-  {Bool.not(Policy.observation_identity(Policy.PolicyAbsent{"owner-a", "/work", "/work/.baton/context.json"}) ==
-   Policy.observation_identity(Policy.PolicyAbsent{"owner-b", "/work", "/work/.baton/context.json"})) == True{} : Bool}
+  {Bool.not(String.eq(Policy.observation_identity_text(Policy.observation_identity(
+    Policy.PolicyAbsent{"owner-a", "/work", "/work/.baton/context.json"})),
+   Policy.observation_identity_text(Policy.observation_identity(
+    Policy.PolicyAbsent{"owner-b", "/work", "/work/.baton/context.json"})))) == True{} : Bool}
 
 def project_policy_identity_binds_owner_and_worktree():
   {==}
