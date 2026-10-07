@@ -87,13 +87,16 @@ def owner_workspace_fields(fields: List<String>) -> OwnerWorkspace:
     case Nil{}: OwnerWorkspaceRefused{"sessionWorkspaceAbsent"}
     case other: OwnerWorkspaceRefused{"sessionWorkspaceShape"}
 
-def owner_workspace_rows(rows: String) -> OwnerWorkspace:
-  match Tx.split_lines(rows):
+def owner_workspace_lines(lines: List<String>) -> OwnerWorkspace:
+  match lines:
     case Nil{}: OwnerWorkspaceRefused{"sessionWorkspaceAbsent"}
     case +line <> rest:
       match rest:
         case Nil{}: owner_workspace_fields(Tx.split_tabs(line))
         case other: OwnerWorkspaceRefused{"sessionWorkspaceSurplus"}
+
+def owner_workspace_rows(rows: String) -> OwnerWorkspace:
+  owner_workspace_lines(Tx.split_lines(rows))
 
 def owner_workspace_result(result: Result<&1,&1,U32 & String,String>) -> IO(OwnerWorkspace):
   match result:
