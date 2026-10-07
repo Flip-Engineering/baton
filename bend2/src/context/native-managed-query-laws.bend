@@ -7,7 +7,7 @@ import ./service.bend as Service
 def managed_bootstrap() -> Managed.Bootstrap:
   Managed.query_bootstrap("db-binding", "q-1", "owner-1", "{}", "[]",
     "plan-identity", "result-v1", "/work/.baton/context-artifacts/q",
-    "/logs/keeper-q", "native-recover-argv")
+    "/logs/keeper-q", "guard-key-64", "native-recover-argv")
 
 def accepted_admission() -> Admission.Admission:
   Admission.AdmissionCreated{"owner-1", "{}", "accepted", "accepted", "0",
@@ -21,7 +21,7 @@ def ready_keeper() -> Managed.KeeperReadiness:
 
 law bootstrap_contains_the_full_immutable_query_identity:
   {Managed.bootstrap_text(managed_bootstrap()) ==
-    "{\"schema\":\"baton2-managed-context-bootstrap-v1\",\"query\":\"q-1\",\"owner\":\"owner-1\",\"databaseBinding\":\"db-binding\",\"request\":\"{}\",\"planValue\":\"[]\",\"planIdentity\":\"plan-identity\",\"resultSchema\":\"result-v1\",\"artifactPath\":\"/work/.baton/context-artifacts/q\",\"keeperPath\":\"/logs/keeper-q\",\"guardIdentity\":\"[\\\"context-role\\\",[\\\"db-binding\\\",[\\\"query\\\",[\\\"q-1\\\",[\\\"starter\\\",[\\\"0\\\",null]]]]]]]\",\"recoveryArgv\":\"native-recover-argv\"}" : String}
+    "{\"schema\":\"baton2-managed-context-bootstrap-v1\",\"query\":\"q-1\",\"owner\":\"owner-1\",\"databaseBinding\":\"db-binding\",\"request\":\"{}\",\"planValue\":\"[]\",\"planIdentity\":\"plan-identity\",\"resultSchema\":\"result-v1\",\"artifactPath\":\"/work/.baton/context-artifacts/q\",\"keeperPath\":\"/logs/keeper-q\",\"guardIdentity\":\"[\\\"context-role\\\",[\\\"db-binding\\\",[\\\"query\\\",[\\\"q-1\\\",[\\\"starter\\\",[\\\"0\\\",null]]]]]]]\",\"guardKey\":\"guard-key-64\",\"recoveryArgv\":\"native-recover-argv\"}" : String}
 
 def bootstrap_contains_the_full_immutable_query_identity():
   {==}
@@ -74,6 +74,27 @@ law rejected_admission_cancels_only_after_exact_retained_identity_readback:
     Managed.StartCancelled{"q-1", "owner-1", "admissionRejected", "/logs/keeper-q"} : Managed.StartDecision}
 
 def rejected_admission_cancels_only_after_exact_retained_identity_readback():
+  {==}
+
+law a_changed_artifact_never_cancels_a_rejected_preparation:
+  {Managed.cancel_rejected(managed_bootstrap(), ready_keeper(),
+    Admission.AdmissionRetained{"owner-1", "{}", "rejected", "refused", "0",
+      "/logs/keeper-q", "/work", "/work/.baton/context-artifacts/other"}) ==
+    Managed.StartHeld{"rejectedAdmissionIdentityMismatch"} : Managed.StartDecision}
+
+def a_changed_artifact_never_cancels_a_rejected_preparation():
+  {==}
+
+law an_accepted_retained_row_can_replay_its_original_start_grant:
+  {Managed.start_from_submission(managed_bootstrap(), ready_keeper(),
+    Service.SubmissionRetainedVerified{
+      Admission.AdmissionRetained{"owner-1", "{}", "accepted", "running", "0",
+        "/logs/keeper-q", "/work", "/work/.baton/context-artifacts/q"},
+      "[]", "result-v1"}) ==
+    Managed.StartGranted{"q-1", "owner-1", "starter", "0",
+      "{}", "/logs/keeper-q", "/work/.baton/context-artifacts/q", "[]", "result-v1"} : Managed.StartDecision}
+
+def an_accepted_retained_row_can_replay_its_original_start_grant():
   {==}
 
 law a_rejected_row_for_another_request_keeps_the_prepared_keeper:

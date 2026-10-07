@@ -11,7 +11,7 @@ type Bootstrap is Data:
   QueryBootstrap{query: String, owner: String, database_binding: String,
     request: String, plan_value: String, plan_identity: String,
     result_schema: String, artifact_path: String, keeper_path: String,
-    guard_identity: String, recovery_argv: String}
+    guard_identity: String, guard_key: String, recovery_argv: String}
 
 type StartDecision is Data:
   StartGranted{query: String, owner: String, role: String, incarnation: String,
@@ -28,42 +28,49 @@ type KeeperReadiness is Data:
 def query_bootstrap(+database_binding: String, +query: String, +owner: String,
                     +request: String, +plan_value: String, +plan_identity: String,
                     +result_schema: String, +artifact_path: String,
-                    +keeper_path: String, +recovery_argv: String) -> Bootstrap:
+                    +keeper_path: String, +guard_key: String,
+                    +recovery_argv: String) -> Bootstrap:
   QueryBootstrap{query, owner, database_binding, request, plan_value,
     plan_identity, result_schema, artifact_path, keeper_path,
     ContextIdentity.guard_identity(database_binding,
       ContextIdentity.SubjectQuery{query}, ContextIdentity.RoleStarter{}, "0"),
-    recovery_argv}
+    guard_key, recovery_argv}
 
 def bootstrap_query(bootstrap: Bootstrap) -> String:
   match bootstrap:
     case QueryBootstrap{query, owner, database_binding, request, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, recovery_argv}: query
+        guard_identity, guard_key, recovery_argv}: query
 
 def bootstrap_owner(bootstrap: Bootstrap) -> String:
   match bootstrap:
     case QueryBootstrap{query, owner, database_binding, request, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, recovery_argv}: owner
+        guard_identity, guard_key, recovery_argv}: owner
 
 def bootstrap_request(bootstrap: Bootstrap) -> String:
   match bootstrap:
     case QueryBootstrap{query, owner, database_binding, request, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, recovery_argv}: request
+        guard_identity, guard_key, recovery_argv}: request
 
 def bootstrap_keeper_path(bootstrap: Bootstrap) -> String:
   match bootstrap:
     case QueryBootstrap{query, owner, database_binding, request, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, recovery_argv}: keeper_path
+        guard_identity, guard_key, recovery_argv}: keeper_path
+
+def bootstrap_artifact_path(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+        plan_identity, result_schema, artifact_path, keeper_path,
+        guard_identity, guard_key, recovery_argv}: artifact_path
 
 def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
   match bootstrap:
     case QueryBootstrap{query, owner, database_binding, request, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, recovery_argv}:
+        guard_identity, guard_key, recovery_argv}:
       J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-managed-context-bootstrap-v1"},
       J.Jpair{"query", J.Jstr{query},
       J.Jpair{"owner", J.Jstr{owner},
@@ -75,10 +82,17 @@ def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
       J.Jpair{"artifactPath", J.Jstr{artifact_path},
       J.Jpair{"keeperPath", J.Jstr{keeper_path},
       J.Jpair{"guardIdentity", J.Jstr{guard_identity},
+      J.Jpair{"guardKey", J.Jstr{guard_key},
       J.Jpair{"recoveryArgv", J.Jstr{recovery_argv}, J.Jnil{}}}}}}}}}}}}}}
 
 def bootstrap_text(+bootstrap: Bootstrap) -> String:
   J.json_text(bootstrap_json(bootstrap))
+
+def accepted_query_state(+state: String) -> Bool:
+  Bool.or(String.eq(state, "accepted"),
+  Bool.or(String.eq(state, "running"),
+  Bool.or(String.eq(state, "complete"),
+  Bool.or(String.eq(state, "failed"), String.eq(state, "interrupted")))))
 
 def admission_identity_match(+expected_owner: String, +expected_request: String,
                              +expected_keeper: String, +expected_artifact: String,
@@ -90,21 +104,21 @@ def admission_identity_match(+expected_owner: String, +expected_request: String,
       Bool.and(String.eq(expected_request, request),
       Bool.and(String.eq(expected_keeper, keeperPath),
       Bool.and(String.eq(expected_artifact, artifactPath),
-      Bool.and(String.eq(decision, "accepted"), String.eq(state, "accepted"))))))
+      Bool.and(String.eq(decision, "accepted"), accepted_query_state(state))))))
     case Admission.AdmissionRetained{+owner, +request, decision, state, attempt,
         +keeperPath, cwd, +artifactPath}:
       Bool.and(String.eq(expected_owner, owner),
       Bool.and(String.eq(expected_request, request),
       Bool.and(String.eq(expected_keeper, keeperPath),
       Bool.and(String.eq(expected_artifact, artifactPath),
-      Bool.and(String.eq(decision, "accepted"), String.eq(state, "accepted"))))))
+      Bool.and(String.eq(decision, "accepted"), accepted_query_state(state))))))
     case _: False{}
 
 def admission_fields_match(bootstrap: Bootstrap, +admission: Admission.Admission) -> Bool:
   match bootstrap:
     case QueryBootstrap{query, owner, database_binding, request, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, recovery_argv}:
+        guard_identity, guard_key, recovery_argv}:
       admission_identity_match(owner, request, keeper_path, artifact_path, admission)
 
 def accepted_admission(+bootstrap: Bootstrap, +role: String, +incarnation: String,
@@ -113,7 +127,7 @@ def accepted_admission(+bootstrap: Bootstrap, +role: String, +incarnation: Strin
   match bootstrap:
     case QueryBootstrap{query, owner, database_binding, request, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, recovery_argv}:
+        guard_identity, guard_key, recovery_argv}:
       Bool.pick(StartDecision,
         Bool.and(admission_fields_match(bootstrap, admission),
         Bool.and(String.eq(plan_value, stored_plan), String.eq(result_schema, stored_schema))),
@@ -128,6 +142,8 @@ def submission_decision(+bootstrap: Bootstrap, +role: String, +incarnation: Stri
       accepted_admission(bootstrap, role, incarnation, admission, planValue, resultSchema)
     case ContextService.SubmissionRetainedVerified{+admission, +planValue, resultSchema}:
       accepted_admission(bootstrap, role, incarnation, admission, planValue, resultSchema)
+    case ContextService.SubmissionRetainedUnverified{admission, planValue, resultSchema}:
+      StartHeld{"retainedAdmissionUnverified"}
     case ContextService.SubmissionRetainedRejected{decision, state, owner, request}:
       StartHeld{"rejectedDecisionRequiresPreparedIdentityReadback"}
     case ContextService.SubmissionPlanRefused{stage, reason}: StartHeld{"planRefused:" ++ stage ++ ":" ++ reason}
@@ -149,20 +165,27 @@ def start_from_submission(+bootstrap: Bootstrap, readiness: KeeperReadiness,
         submission_decision(bootstrap, role, incarnation, submission),
         StartHeld{"observerIdentityMismatch"})
 
-def rejected_admission_decision(+bootstrap: Bootstrap,
-                                +admission: Admission.Admission) -> StartDecision:
+def rejection_identity_match(+expected_owner: String, +expected_request: String,
+                             +expected_keeper: String, +expected_artifact: String,
+                             +admission: Admission.Admission) -> Bool:
   match admission:
     case Admission.AdmissionRetained{+owner, +request, decision, state, attempt,
-        +keeperPath, cwd, artifactPath}:
-      Bool.pick(StartDecision,
-        Bool.and(String.eq(owner, bootstrap_owner(bootstrap)),
-        Bool.and(String.eq(request, bootstrap_request(bootstrap)),
-        Bool.and(String.eq(keeperPath, bootstrap_keeper_path(bootstrap)),
-          String.eq(decision, "rejected")))),
-        StartCancelled{bootstrap_query(bootstrap), bootstrap_owner(bootstrap),
-          "admissionRejected", bootstrap_keeper_path(bootstrap)},
-        StartHeld{"rejectedAdmissionIdentityMismatch"})
-    case _: StartHeld{"rejectedAdmissionNotRetained"}
+        +keeperPath, cwd, +artifactPath}:
+      Bool.and(String.eq(owner, expected_owner),
+      Bool.and(String.eq(request, expected_request),
+      Bool.and(String.eq(keeperPath, expected_keeper),
+      Bool.and(String.eq(artifactPath, expected_artifact),
+      Bool.and(String.eq(decision, "rejected"), String.eq(state, "refused"))))))
+    case _: False{}
+
+def rejected_admission_decision(+bootstrap: Bootstrap,
+                                +admission: Admission.Admission) -> StartDecision:
+  Bool.pick(StartDecision,
+    rejection_identity_match(bootstrap_owner(bootstrap), bootstrap_request(bootstrap),
+      bootstrap_keeper_path(bootstrap), bootstrap_artifact_path(bootstrap), admission),
+    StartCancelled{bootstrap_query(bootstrap), bootstrap_owner(bootstrap),
+      "admissionRejected", bootstrap_keeper_path(bootstrap)},
+    StartHeld{"rejectedAdmissionIdentityMismatch"})
 
 def cancel_rejected(+bootstrap: Bootstrap, readiness: KeeperReadiness,
                     +admission: Admission.Admission) -> StartDecision:
