@@ -381,6 +381,23 @@ function renderTransitions() {
   }
 }
 
+function loadEnsembleOptions() {
+  const keep = state.ensembleFilter;
+  el.ensembleFilter.textContent = "";
+  const all = document.createElement("option");
+  all.value = "all";
+  text(all, "all");
+  el.ensembleFilter.appendChild(all);
+  for (const id of Array.from(state.ensembles.keys()).sort()) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    text(opt, id);
+    el.ensembleFilter.appendChild(opt);
+  }
+  el.ensembleFilter.value = state.ensembles.has(keep) ? keep : "all";
+  state.ensembleFilter = el.ensembleFilter.value;
+}
+
 function applySnapshot(data, label) {
   if (!data || !Array.isArray(data.players)) {
     throw new Error("snapshot needs players[], got " + typeof data);
