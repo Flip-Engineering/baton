@@ -623,9 +623,9 @@ def launch_bootstrap(launch: ManagedLaunch) -> ManagedQuery.Bootstrap:
         worktree, bootstrap_digest}: bootstrap
 
 def managed_observe_complete(+db: String, +binding: String,
-                             launch: ManagedLaunch, handle: U32) -> IO(Unit):
+                             +launch: ManagedLaunch, handle: U32) -> IO(Unit):
   match launch:
-    case ManagedLaunch{bootstrap, invocation_text, executable, runtime_path,
+    case ManagedLaunch{+bootstrap, invocation_text, executable, runtime_path,
         worktree, bootstrap_digest}:
       do IO<Unit>:
         output : ManagedOutput <- managed_observe(handle)
@@ -635,6 +635,39 @@ def managed_observe_complete(+db: String, +binding: String,
           ManagedQuery.bootstrap_query(bootstrap), bootstrap_digest, output)
         store_managed_output(db, binding,
           ManagedQuery.bootstrap_query(bootstrap), persisted)
+
+def managed_start_decision(+db: String, +binding: String, +launch: ManagedLaunch,
+                           handle: U32,
+                           decision: ManagedQuery.StartDecision) -> IO(Unit):
+  match decision:
+    case ManagedQuery.StartGranted{query, owner, role, incarnation, request,
+        keeper_path, artifact_path, plan_value, result_schema}:
+      do IO<Unit>:
+        started : Unit <- IO.try(Unit, Instance.start(handle,
+          ManagedQuery.bootstrap_text(launch_bootstrap(launch)),
+          ManagedQuery.start_decision_text(decision),
+          ManagedQuery.bootstrap_owner_witness(launch_bootstrap(launch))))
+        managed_observe_complete(db, binding, launch, handle)
+    case ManagedQuery.StartCancelled{query, owner, reason, keeper_path}:
+      do IO<Unit>:
+        cancelled : Unit <- IO.try(Unit, Instance.cancel(handle,
+          ManagedQuery.bootstrap_text(launch_bootstrap(launch)),
+          ManagedQuery.start_decision_text(decision),
+          ManagedQuery.bootstrap_owner_witness(launch_bootstrap(launch))))
+        IO.die(Unit, 3, "managedAdmissionCancelled:" ++ reason)
+    case ManagedQuery.StartHeld{reason}:
+      IO.die(Unit, 3, "managedStartHeld:" ++ reason)
+
+def managed_submit_start(+db: String, +binding: String,
+                         +launch: ManagedLaunch, handle: U32,
+                         readiness: ManagedQuery.KeeperReadiness) -> IO(Unit):
+  match launch:
+    case ManagedLaunch{+bootstrap, invocation_text, executable, runtime_path,
+        worktree, bootstrap_digest}:
+      do IO<Unit>:
+        decision : ManagedQuery.StartDecision <- ManagedQuery.submit_after_observer_ready(
+          bootstrap, readiness, db)
+        managed_start_decision(db, binding, launch, handle, decision)
 
 def recovery_file_verify_sql(+output: String) -> String:
   "SELECT coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.status'),''),"
@@ -672,8 +705,8 @@ def recovery_file_verified(+db: String, +binding: String, +executable: String,
           IO.pure(Bool, False{}))
       case other: IO.pure(Bool, False{})
 
-def managed_recovery_association_ok(bootstrap: ManagedQuery.Bootstrap,
-                                   admission: ContextAdmit.Admission,
+def managed_recovery_association_ok(+bootstrap: ManagedQuery.Bootstrap,
+                                   +admission: ContextAdmit.Admission,
                                    association: ContextAdmit.ManagedAssociation) -> Bool:
   Bool.and(Bool.or(ManagedQuery.admission_fields_match(bootstrap, admission),
     ManagedQuery.rejection_identity_match(
@@ -695,7 +728,7 @@ def managed_recovery_association_ok(bootstrap: ManagedQuery.Bootstrap,
       case other: False{})
 
 def managed_recovery_association(+db: String, +binding: String,
-                                 bootstrap: ManagedQuery.Bootstrap,
+                                 +bootstrap: ManagedQuery.Bootstrap,
                                  admission: ContextAdmit.Admission,
                                  result: Result<&1,&1,U32 & String,ContextAdmit.ManagedAssociation>) -> IO(Bool):
   match result:
@@ -704,7 +737,7 @@ def managed_recovery_association(+db: String, +binding: String,
       managed_recovery_association_ok(bootstrap, admission, association))
 
 def managed_recovery_admission(+db: String, +binding: String,
-                               bootstrap: ManagedQuery.Bootstrap,
+                               +bootstrap: ManagedQuery.Bootstrap,
                                result: Result<&1,&1,U32 & String,ContextAdmit.Admission>) -> IO(Bool):
   match result:
     case Fail{error}: IO.pure(Bool, False{})
@@ -715,7 +748,7 @@ def managed_recovery_admission(+db: String, +binding: String,
             ManagedQuery.bootstrap_query(bootstrap))
         managed_recovery_association(db, binding, bootstrap, admission, association)
 
-def managed_recovery_binding(+db: String, bootstrap: ManagedQuery.Bootstrap,
+def managed_recovery_binding(+db: String, +bootstrap: ManagedQuery.Bootstrap,
                              result: Result<&1,&1,U32 & String,String>) -> IO(Bool):
   match result:
     case Fail{error}: IO.pure(Bool, False{})
@@ -731,7 +764,7 @@ def managed_recovery_binding(+db: String, bootstrap: ManagedQuery.Bootstrap,
 
 def managed_recovery_attach(+db: String, +executable: String,
                             +runtime_path: String, +worktree: String,
-                            bootstrap: ManagedQuery.Bootstrap,
+                            +bootstrap: ManagedQuery.Bootstrap,
                             bootstrap_digest: String) -> IO(Unit):
   do IO<Unit>:
     verified : Bool <- recovery_file_verified(db,
@@ -770,7 +803,7 @@ def managed_recovery_bootstrap(+db: String, +owner: String, +query: String,
   match decoded:
     case ProjectPolicyJsonRefused{reason}: IO.die(Unit, 3, "managedRecoveryBootstrapJson")
     case ProjectPolicyJsonReady{+envelope}:
-      value = boundary_member(envelope, "value")
+      +value = boundary_member(envelope, "value")
       bootstrap_text = J.json_text(value)
       bootstrap_digest = boundary_text(envelope, "sha256")
       Bool.pick(IO(Unit), Bool.and(
@@ -830,40 +863,7 @@ def recover_managed_query(+db: String, +owner: String, +query: String,
     managed_recovery_provider(db, owner, query, directory, worktree,
       bootstrap_file, executable, runtime)
 
-def managed_start_decision(+db: String, +binding: String, launch: ManagedLaunch,
-                           handle: U32,
-                           decision: ManagedQuery.StartDecision) -> IO(Unit):
-  match decision:
-    case ManagedQuery.StartGranted{query, owner, role, incarnation, request,
-        keeper_path, artifact_path, plan_value, result_schema}:
-      do IO<Unit>:
-        started : Unit <- IO.try(Unit, Instance.start(handle,
-          ManagedQuery.bootstrap_text(launch_bootstrap(launch)),
-          ManagedQuery.start_decision_text(decision),
-          ManagedQuery.bootstrap_owner_witness(launch_bootstrap(launch))))
-        managed_observe_complete(db, binding, launch, handle)
-    case ManagedQuery.StartCancelled{query, owner, reason, keeper_path}:
-      do IO<Unit>:
-        cancelled : Unit <- IO.try(Unit, Instance.cancel(handle,
-          ManagedQuery.bootstrap_text(launch_bootstrap(launch)),
-          ManagedQuery.start_decision_text(decision),
-          ManagedQuery.bootstrap_owner_witness(launch_bootstrap(launch))))
-        IO.die(Unit, 3, "managedAdmissionCancelled:" ++ reason)
-    case ManagedQuery.StartHeld{reason}:
-      IO.die(Unit, 3, "managedStartHeld:" ++ reason)
-
-def managed_submit_start(+db: String, +binding: String,
-                         launch: ManagedLaunch, handle: U32,
-                         readiness: ManagedQuery.KeeperReadiness) -> IO(Unit):
-  match launch:
-    case ManagedLaunch{bootstrap, invocation_text, executable, runtime_path,
-        worktree, bootstrap_digest}:
-      do IO<Unit>:
-        decision : ManagedQuery.StartDecision <- ManagedQuery.submit_after_observer_ready(
-          bootstrap, readiness, db)
-        managed_start_decision(db, binding, launch, handle, decision)
-
-def managed_prepare_result(+db: String, +binding: String, launch: ManagedLaunch,
+def managed_prepare_result(+db: String, +binding: String, +launch: ManagedLaunch,
                            result: Result<&1,&1,U32 & String,U32 & String & String>) -> IO(Unit):
   match result:
     case Fail{error}: IO.die(Unit, 3, "managedKeeperPrepare")
@@ -895,17 +895,17 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
     +keeper_path = ContextIdentity.role_directory(artifact_path, guard_key)
     bootstrap_file = artifact_path ++ "/bootstrap.json"
     canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
-    recovery_argv = Process.argv([executable, "--recover-context-query", canonical_database,
+    +recovery_argv = Process.argv([executable, "--recover-context-query", canonical_database,
       owner, query, keeper_path, worktree, bootstrap_file])
-    bootstrap = ManagedQuery.query_bootstrap(binding, query, owner, request, cwd,
+    +bootstrap = ManagedQuery.query_bootstrap(binding, query, owner, request, cwd,
       origin_attempt, ManagedQuery.ArtifactEvidence{source_identity, artifact_sha256},
       EnginesWire.plan_value(plan), EnginesWire.plan_identity(plan), result_schema,
       artifact_path, keeper_path, guard_key, physical_role_key, owner_witness,
       recovery_argv)
-    bootstrap_text = ManagedQuery.bootstrap_text(bootstrap)
+    +bootstrap_text = ManagedQuery.bootstrap_text(bootstrap)
     bootstrap_digest : String <- persist_managed_bootstrap(executable, runtime_path,
       cwd, owner, worktree, query, bootstrap_file, bootstrap)
-    launch = ManagedLaunch{bootstrap, invocation_text, executable, runtime_path,
+    +launch = ManagedLaunch{bootstrap, invocation_text, executable, runtime_path,
       worktree, bootstrap_digest}
     argv = Process.argv([runtime_path, "--experimental-strip-types",
       installed_provider_path(executable), "--invoke-file",
