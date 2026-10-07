@@ -111,13 +111,30 @@ export function installedModuleInventory({ wrapperPath = fileURLToPath(import.me
     const wrapper = realpathSync(wrapperPath);
     const prefix = realpathSync(join(dirname(wrapper), '..', '..'));
     const modulesRoot = join(prefix, 'lib', 'context', 'modules');
+    try {
+      if (realpathSync(modulesRoot) !== modulesRoot) return refused('selectedModuleInventoryOutsideInstallation');
+    } catch (error) {
+      if (error.code === 'ENOENT') return Object.freeze({ status: 'available', modules: Object.freeze([]), refusals: Object.freeze([]) });
+      throw error;
+    }
     const modules = [];
     const refusals = [];
-    for (const entry of readdirSync(modulesRoot, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!entry.isDirectory()) continue;
+    let entries;
+    try {
+      entries = readdirSync(modulesRoot, { withFileTypes: true });
+    } catch (error) {
+      if (error.code === 'ENOENT') return Object.freeze({ status: 'available', modules: Object.freeze([]), refusals: Object.freeze([]) });
+      throw error;
+    }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!entry.name.startsWith('m-')) continue;
       const moduleId = moduleIdFromDirectory(entry.name);
       if (moduleId === null) {
         refusals.push(Object.freeze({ directory: entry.name, reason: 'selectedModuleDirectoryNameInvalid' }));
+        continue;
+      }
+      if (!entry.isDirectory()) {
+        refusals.push(Object.freeze({ moduleId, reason: 'selectedModuleEntryNotDirectory' }));
         continue;
       }
       const selected = resolveSelectedPackageRoot(wrapper, moduleId);

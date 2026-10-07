@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -63,13 +64,19 @@ try {
   mkdirSync(join(installedPrefix, 'libexec/baton2'), { recursive: true });
   mkdirSync(installedModule, { recursive: true });
   cpSync(packageRoot, installedModule, { recursive: true });
-  writeFileSync(installedWrapper, '// executable-relative provider locator\n');
+  writeFileSync(installedWrapper, readFileSync(resolve(packageRoot, '../../scripts/context-provider.mjs')));
   const inventory = installedModuleInventory({ wrapperPath: installedWrapper });
   assert.equal(inventory.status, 'available');
   assert.deepEqual(inventory.refusals, []);
   assert.equal(inventory.modules.length, 1);
   assert.equal(inventory.modules[0].moduleId, declaration.moduleId);
   assert.equal(inventory.modules[0].declarationDigest, declarationDigest);
+  const inventoryProcess = spawnSync(process.execPath, [installedWrapper, '--inventory'], { encoding: 'utf8' });
+  assert.equal(inventoryProcess.status, 0, inventoryProcess.stderr);
+  const inventoryFrame = JSON.parse(inventoryProcess.stdout);
+  assert.equal(inventoryFrame.status, 'available');
+  assert.deepEqual(inventoryFrame.refusals, []);
+  assert.equal(inventoryFrame.modules[0].declarationDigest, declarationDigest);
   const installed = await runSelectedInvocation(invocation(), { wrapperPath: installedWrapper });
   assert.equal(installed.type, 'event');
   assert.equal(installed.query, 'integration-query-1');
@@ -120,6 +127,7 @@ try {
 
 process.stdout.write(JSON.stringify({ status: 'passed', checks: [
   'real-frontend-invocation', 'frozen-owner-and-binding-preserved', 'retained-source-identity',
-  'installed-executable-relative-package-resolution', 'installed-module-inventory-authenticates-package-bytes', 'frozen-declaration-digest-required',
+  'installed-executable-relative-package-resolution', 'installed-module-inventory-authenticates-package-bytes',
+  'installed-inventory-subprocess-emits-the-verified-catalog', 'frozen-declaration-digest-required',
   'changed-module-metadata-refused', 'outside-source-refused', 'changed-package-payload-refused',
 ] }) + '\n');
