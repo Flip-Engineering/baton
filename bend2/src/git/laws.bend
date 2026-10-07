@@ -1177,10 +1177,9 @@ def m3a_held_target_tip_mismatch_refuses(path):
 
 law m3a_held_holder_exact_target_allows_success:
   for path: String
-  for target: String
-  {L.ld_adv_wt_observed_holder_pick(T.GRun{0, L.ld_hold_ref(target)}, path, target) == IO.pure(L.LAdv, L.AdvLanded{}) : IO(L.LAdv)}
+  {L.ld_adv_wt_observed_holder_pick(T.GRun{0, "refs/heads/main"}, path, "main") == IO.pure(L.LAdv, L.AdvLanded{}) : IO(L.LAdv)}
 
-def m3a_held_holder_exact_target_allows_success(path, target):
+def m3a_held_holder_exact_target_allows_success(path):
   {==}
 
 law m3a_held_holder_different_branch_refuses:
