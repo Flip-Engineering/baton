@@ -27,11 +27,18 @@ const STATIC_TYPES = new Map([
   ["/styles.css", "text/css; charset=utf-8"],
 ]);
 
+const INITIAL_MODE = arg("--initial-mode", "recovery");
+if (!["recovery", "terminal", "hangonce"].includes(INITIAL_MODE)) {
+  process.stderr.write(`bad --initial-mode ${INITIAL_MODE}\n`);
+  process.exitCode = 2;
+  return;
+}
+
 const log = {
   fixture: FIXTURE_PATH,
   snapshotCount: 0,
   snapshotCursor: "fixture-events-0-boot",
-  mode: "recovery",
+  mode: INITIAL_MODE,
   eventsAttempts: [],
 };
 
@@ -106,7 +113,7 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       try {
         const mode = JSON.parse(raw).mode;
-        if (mode !== "recovery" && mode !== "terminal") return sendJson(res, 400, { error: "bad-mode" });
+        if (!["recovery", "terminal", "hangonce"].includes(mode)) return sendJson(res, 400, { error: "bad-mode" });
         log.mode = mode;
         say("mode", { mode });
         return sendJson(res, 200, { mode });
@@ -141,6 +148,32 @@ const server = http.createServer((req, res) => {
       attempt.error = "native-owner-subscription-unavailable";
       say("events", { ...attempt });
       return sendJson(res, 503, { error: "native-owner-subscription-unavailable" });
+    }
+    if (log.mode === "hangonce") {
+      const modeSeq = log.eventsAttempts.filter((a) => a.mode === "hangonce").length;
+      if (modeSeq === 1) {
+        attempt.status = step1.status;
+        attempt.error = step1.body.error;
+        say("events", { ...attempt });
+        return sendJson(res, step1.status, step1.body);
+      }
+      if (modeSeq === 2) {
+        attempt.hung = true;
+        attempt.headersSentAt = null;
+        attempt.closedBy = null;
+        attempt.headersSentOnClose = null;
+        attempt.hangElapsedMs = null;
+        const start = process.hrtime.bigint();
+        say("events", { ...attempt, note: "holding without headers until client aborts" });
+        req.on("close", () => {
+          attempt.closedAt = new Date().toISOString();
+          attempt.closedBy = "client";
+          attempt.headersSentOnClose = res.headersSent;
+          attempt.hangElapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
+          say("events-closed", { seq: attempt.seq, hangElapsedMs: attempt.hangElapsedMs, headersSent: attempt.headersSentOnClose });
+        });
+        return;
+      }
     }
     if (attempt.seq === 1) {
       attempt.status = step1.status;

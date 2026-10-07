@@ -18,7 +18,36 @@ const STATIC_ROOT = resolve(arg("--static-root", "bend2/ui/orchestra"));
 const FIXTURE_PATH = resolve(arg("--fixture", "bend2/ui/orchestra/fixtures/fixture-events-recovery.json"));
 const HARNESS = resolve(arg("--harness", "gate/ui682-hosted/harness.cjs"));
 const OUT = resolve(arg("--out", "ui682-gate-out"));
+const TAG = arg("--tag", "gate");
+const EXPECTED_PLAYWRIGHT = arg("--expect-playwright", "1.64.0");
+const CANDIDATE = arg("--candidate", "b2f6fcd80915e74df186287ed9ff557af81f8c08");
+const CANDIDATE_TREE = arg("--candidate-tree", "48eeaf57737da6e9d710416df74c804546f1fe05");
+const VIEWPORT = (() => {
+  const [width, height] = arg("--viewport", "1280x800").split("x").map(Number);
+  return { width, height };
+})();
 mkdirSync(OUT, { recursive: true });
+
+function sha256File(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+async function shoot(page, state) {
+  const name = `${state}-${TAG}.png`;
+  const path = resolve(OUT, name);
+  await page.screenshot({ path });
+  return {
+    file: name,
+    sha256: sha256File(path),
+    viewport: { ...VIEWPORT },
+    pageState: state,
+    conn: ((await page.locator("#conn-state").textContent()) || "").trim(),
+    cursor: ((await page.locator("#cursor-state").textContent()) || "").trim(),
+    generation: ((await page.locator("#generation-state").textContent()) || "").trim(),
+    candidate: CANDIDATE,
+    candidateTree: CANDIDATE_TREE,
+  };
+}
 
 const TERMINAL_NOTICE =
   "Live stream unavailable: the shared owner subscription is not installed yet (#676). The snapshot still updates on Reconnect.";
@@ -98,13 +127,16 @@ async function main() {
   }
 
   const { chromium } = require("playwright-core");
+  const installedPlaywright = require("playwright-core/package.json").version;
+  check("playwright-pinned", installedPlaywright === EXPECTED_PLAYWRIGHT, `installed ${installedPlaywright}, expected ${EXPECTED_PLAYWRIGHT}`);
   const executablePath = process.env.CHROME_PATH || undefined;
   const browser = await chromium.launch({
     executablePath,
     channel: executablePath ? undefined : "chrome",
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
   });
-  const page = await browser.newPage();
+  const context = await browser.newContext({ viewport: VIEWPORT });
+  const page = await context.newPage();
   const consoleLines = [];
   page.on("console", (m) => consoleLines.push(`${m.type()} ${m.text()}`));
   page.on("pageerror", (e) => consoleLines.push(`pageerror ${e.message}`));
@@ -136,6 +168,8 @@ async function main() {
   check("combined-count", phase1.eventsAttempts.length === 3, phase1.eventsAttempts.map((a) => `${a.kind}:${a.status}`).join(","));
   check("events-url-binding", a1.subject === fixture.subject && (a1.since || "").length > 0, JSON.stringify({ subject: a1.subject, since: a1.since }));
   check("zero-snapshot-recovery", phase1.snapshotCount === 1, `snapshotCount ${phase1.snapshotCount}`);
+  const screenshots = [await shoot(page, "live")];
+  check("screenshot-live", true, screenshots[0].file);
 
   await httpJson("POST", port, "/harness/mode", { mode: "terminal" });
   const beforeTerminal = (await httpJson("GET", port, "/harness/log")).eventsAttempts.length;
@@ -158,6 +192,8 @@ async function main() {
   check("terminal-no-polling", phase2b.eventsAttempts.length === grew && terminalAttempts.length <= 2,
     `events attempts stable at ${grew}`);
   check("terminal-one-snapshot", phase2.snapshotCount === snapshotsBefore + 1, `snapshotCount ${phase2.snapshotCount}`);
+  screenshots.push(await shoot(page, "terminal"));
+  check("screenshot-terminal", true, screenshots[1].file);
 
   await browser.close();
   child.kill("SIGTERM");
@@ -165,10 +201,22 @@ async function main() {
   const versions = {
     node: process.version,
     chrome: process.env.CHROME_VERSION || "see workflow versions.txt",
-    playwright: require("playwright-core/package.json").version,
+    playwright: installedPlaywright,
   };
-  const results = { fixture: { hello, transition }, servedAppSha256: servedHash, checks, console: consoleLines, serverLog: serverLog.join("") };
-  writeFileSync(resolve(OUT, "results.json"), JSON.stringify(results, null, 2));
+  const results = {
+    tag: TAG,
+    viewport: VIEWPORT,
+    candidate: CANDIDATE,
+    candidateTree: CANDIDATE_TREE,
+    playwright: installedPlaywright,
+    fixture: { hello, transition },
+    servedAppSha256: servedHash,
+    screenshots,
+    checks,
+    console: consoleLines,
+    serverLog: serverLog.join(""),
+  };
+  writeFileSync(resolve(OUT, `results-${TAG}.json`), JSON.stringify(results, null, 2));
   writeFileSync(resolve(OUT, "versions.json"), JSON.stringify(versions, null, 2));
   const failed = checks.filter((c) => !c.pass);
   console.log(`CHECKS ${checks.length - failed.length}/${checks.length} passed`);

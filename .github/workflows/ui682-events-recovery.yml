@@ -11,6 +11,7 @@ permissions:
 jobs:
   fixture-gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
@@ -59,14 +60,20 @@ jobs:
             bend2/ui/orchestra/fixtures/fixture-events-recovery.json > "$out/served-sha256.txt"
           printf 'CHROME_VERSION=%s\n' "$(google-chrome --version)" >> "$GITHUB_ENV"
 
-      - name: Install the fixture driver dependency
+      - name: Install the exact pinned fixture driver dependency
         shell: bash
         run: |
           set -euo pipefail
-          npm install --no-save playwright-core@1 > "$UI682_GATE_OUT/npm-install.log" 2>&1
-          node -e "console.log('playwright-core ' + require('playwright-core/package.json').version)" >> "$UI682_GATE_OUT/runner-source.txt" 2>&1
+          test "$(node -p "require('./gate/ui682-hosted/package.json').dependencies['playwright-core']")" = "1.64.0"
+          npm install --no-audit --no-fund --prefix gate/ui682-hosted > "$UI682_GATE_OUT/npm-install.log" 2>&1
+          installed="$(node -p "require('./gate/ui682-hosted/node_modules/playwright-core/package.json').version")"
+          test "$installed" = "1.64.0"
+          echo "playwright-core $installed" >> "$UI682_GATE_OUT/runner-source.txt" 2>&1
+          npm ls --prefix gate/ui682-hosted --json > "$UI682_GATE_OUT/npm-ls.json" 2>&1
+          npm view playwright-core@1.64.0 dist.integrity dist.tarball dist.shasum > "$UI682_GATE_OUT/npm-registry-integrity.txt" 2>&1
+          cp gate/ui682-hosted/package.json gate/ui682-hosted/package-lock.json "$UI682_GATE_OUT/"
 
-      - name: Run the hosted events-recovery fixture gate
+      - name: Run the hosted events-recovery fixture gate at desktop width
         shell: bash
         run: |
           set -euo pipefail
@@ -74,7 +81,29 @@ jobs:
             --static-root bend2/ui/orchestra \
             --fixture bend2/ui/orchestra/fixtures/fixture-events-recovery.json \
             --harness gate/ui682-hosted/harness.cjs \
-            --out "$UI682_GATE_OUT" 2>&1 | tee "$UI682_GATE_OUT/driver-stdout.log"
+            --viewport 1280x800 --tag desktop \
+            --out "$UI682_GATE_OUT" 2>&1 | tee "$UI682_GATE_OUT/driver-stdout-desktop.log"
+
+      - name: Run the hosted events-recovery fixture gate at narrow width
+        shell: bash
+        run: |
+          set -euo pipefail
+          node gate/ui682-hosted/drive.cjs \
+            --static-root bend2/ui/orchestra \
+            --fixture bend2/ui/orchestra/fixtures/fixture-events-recovery.json \
+            --harness gate/ui682-hosted/harness.cjs \
+            --viewport 390x844 --tag narrow \
+            --out "$UI682_GATE_OUT" 2>&1 | tee "$UI682_GATE_OUT/driver-stdout-narrow.log"
+
+      - name: Run the hosted abort-expiry fixture case
+        shell: bash
+        run: |
+          set -euo pipefail
+          node gate/ui682-hosted/drive-abort.cjs \
+            --static-root bend2/ui/orchestra \
+            --fixture bend2/ui/orchestra/fixtures/fixture-events-recovery.json \
+            --harness gate/ui682-hosted/harness.cjs \
+            --out "$UI682_GATE_OUT" 2>&1 | tee "$UI682_GATE_OUT/driver-stdout-abort.log"
 
       - name: Retain fixture gate evidence
         if: always()

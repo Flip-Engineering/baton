@@ -5,10 +5,13 @@ Focused GitHub-hosted gate for candidate
 (tree `48eeaf57737da6e9d710416df74c804546f1fe05`).
 Runs on `ubuntu-latest`. Serves the exact `bend2/ui/orchestra/`
 bytes with a scripted harness and loads the page in headless
-Chrome through the `drive.cjs` Playwright script.
+Chrome through the driver scripts.
 
 ## Files
 
+- `package.json`: exact `playwright-core` pin (`1.64.0`). The
+  workflow installs from this file and fails unless the
+  installed version matches exactly.
 - `harness.cjs`: dependency-free Node server. Serves the static
   directory, counts snapshot requests, and scripts
   `/orchestra/events` from `fixture-events-recovery.json`:
@@ -16,17 +19,29 @@ Chrome through the `drive.cjs` Playwright script.
   return the held-open 200 SSE with the hello, pending, and
   transition frames. Accepts `probe` versus `eventsource` labels
   from the request Accept header. `POST /harness/mode` switches
-  to the terminal exact-503 behavior.
-- `drive.cjs`: headless-Chrome driver. Checks the hello
-  contractVersion, cursor, generation, and frame order in the
-  DOM; the transient 503 followed by probe cancel-and-resume;
-  the held-open 200; the exact terminal 503 notice with no
-  polling loop; the subject/cursor/generation binding; zero
-  snapshot requests during recovery; the served-bytes identity;
-  and the 5-second probe bindings in the served source.
+  to the terminal exact-503 behavior. With `--initial-mode
+  hangonce`, the second attempt is held with no headers until
+  the client aborts, and the server records monotonic elapsed
+  time and header state at close.
+- `drive.cjs`: headless-Chrome driver for the recovery and
+  terminal cases. Checks the hello contractVersion, cursor,
+  generation, and frame order in the DOM; the transient 503
+  followed by probe cancel-and-resume; the held-open 200; the
+  exact terminal 503 notice with no polling loop; the
+  subject/cursor/generation binding; zero snapshot requests
+  during recovery; the served-bytes identity; the installed
+  Playwright version; and the 5-second probe bindings in the
+  served source. Takes `--viewport` and `--tag` and records one
+  live-state and one terminal-state screenshot per run.
+- `drive-abort.cjs`: headless-Chrome driver for the abort-expiry
+  case. Checks the transient 503, the hung probe aborted by the
+  client near the 5-second budget with no headers sent, the
+  subsequent healthy EventSource hello, attempt order, zero
+  snapshots during recovery, and no terminal notice.
 - `.github/workflows/ui682-events-recovery.yml`: hosted job.
-  Retains runner image, dependency versions, source hashes,
-  driver output, and results as one artifact.
+  Retains runner image, exact dependency resolution and
+  registry integrity, source hashes, driver output, results,
+  and screenshots as one artifact.
 
 ## Scope
 
