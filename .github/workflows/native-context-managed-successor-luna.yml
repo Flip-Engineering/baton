@@ -48,8 +48,8 @@ jobs:
             98b61c6f4803a75bfbd5d8eefd08d91f1c494c2b "$actual_commit"
           if [[ "$actual_commit" != 98b61c6f4803a75bfbd5d8eefd08d91f1c494c2b ]]; then exit 1; fi
           printf 'expected_tree=%s\nactual_tree=%s\n' \
-            909897f4267f42d2818e85b0e9d46e0c3be04a5 "$actual_tree"
-          if [[ "$actual_tree" != 909897f4267f42d2818e85b0e9d46e0c3be04a5 ]]; then exit 1; fi
+            909897f4267f42d2818e85b0e9d46e0c3be04a5d "$actual_tree"
+          if [[ "$actual_tree" != 909897f4267f42d2818e85b0e9d46e0c3be04a5d ]]; then exit 1; fi
           shasum -a 256 \
             candidate/bend2/src/coordinator/main.bend \
             candidate/bend2/src/context/native.bend \
