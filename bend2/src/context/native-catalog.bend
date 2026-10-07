@@ -63,8 +63,8 @@ def append_catalog(+catalog: Decl.Cat, +declaration: Decl.Decl) -> Decl.Cat:
     case Decl.CatNil{}: Decl.CatCons{declaration, Decl.CatNil{}}
     case Decl.CatCons{+head, +rest}: Decl.CatCons{head, append_catalog(rest, declaration)}
 
-def decoded_row(+row: J.Json) -> CatalogDecode:
-  match NativeDecl.decode(member(row, "declaration"), field(row, "declarationDigest")):
+def decoded_declaration(+row: J.Json, decoded: NativeDecl.DeclarationDecode) -> CatalogDecode:
+  match decoded:
     case NativeDecl.DeclarationRefused{field}: CatalogRefused{"moduleDeclaration:" ++ field}
     case NativeDecl.DeclarationDecoded{declaration, inventory}:
       Bool.pick(CatalogDecode,
@@ -72,6 +72,9 @@ def decoded_row(+row: J.Json) -> CatalogDecode:
                  is_array(member(member(row, "declaration"), "schemaIdentities"))),
         CatalogDecoded{Decl.CatCons{declaration, Decl.CatNil{}}, inventory, Eng.ss_one(field(row, "moduleId"))},
         CatalogRefused{"inventoryModuleIdentity"})
+
+def decoded_row(+row: J.Json) -> CatalogDecode:
+  decoded_declaration(row, NativeDecl.decode(member(row, "declaration"), field(row, "declarationDigest")))
 
 def catalog_tail(+rows: J.Json) -> CatalogDecode:
   match rows:
