@@ -169,32 +169,32 @@ lines.push('import ./native-declaration.bend as ND');
 lines.push('import ../json/canonical.bend as J');
 lines.push('');
 for (const def of defs) {
-  lines.push(`def form_${def.name}(): Schema.SchemaForm`);
+  lines.push(`def form_${def.name}() -> Schema.SchemaForm:`);
   lines.push(`  ${schemaForm(def.form)}`);
   lines.push('');
 }
-lines.push('def asset_defs(): Schema.SchemaDefs');
+lines.push('def asset_defs() -> Schema.SchemaDefs:');
 let spine = 'Schema.DefsNil{}';
 for (let index = defs.length - 1; index >= 0; index -= 1) {
   spine = `Schema.DefsCons{Schema.SchemaDef{${bendString(defs[index].identity)}, form_${defs[index].name}()}, ${spine}}`;
 }
 lines.push(`  ${spine}`);
 lines.push('');
-lines.push('def declaration_json(): J.Json');
+lines.push('def declaration_json() -> J.Json:');
 lines.push(`  ${jsonValue(declaration, 'declaration')}`);
 lines.push('');
 const mutated = structuredClone(declaration);
 delete mutated.operations[0].schema;
-lines.push('def declaration_json_missing_op_schema(): J.Json');
+lines.push('def declaration_json_missing_op_schema() -> J.Json:');
 lines.push(`  ${jsonValue(mutated, 'declaration-negative')}`);
 lines.push('');
 for (const name of FIXTURES) {
   const fixture = readLaneJson(`native-fixtures/schema/${name}.json`);
-  lines.push(`def fixture_${name.replaceAll('-', '_')}(): Codec.RawValue`);
+  lines.push(`def fixture_${name.replaceAll('-', '_')}() -> Codec.RawValue:`);
   lines.push(`  ${rawValue(fixture)}`);
   lines.push('');
 }
-lines.push(`def verified_digest(): String`);
+lines.push(`def verified_digest() -> String:`);
 lines.push(`  ${bendString(packageHex)}`);
 lines.push('');
 lines.push('def verdict_code(+verdict: Schema.SchemaVerdict) -> String:');
