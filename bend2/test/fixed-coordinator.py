@@ -443,7 +443,7 @@ class FixedCoordinator(unittest.TestCase):
         self.receiver('w6')
         committed = []
         bodies = {}
-        for attempt in range(5):
+        for attempt, delay in enumerate((.05, .2, .5, 1.0, 2.0)):
             for seq in range(3):
                 ident = f'c{attempt}_{seq}'
                 bodies[ident] = f'client-loss body {attempt} {seq}'
@@ -452,7 +452,7 @@ class FixedCoordinator(unittest.TestCase):
                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                          text=True)
                 self.children.append(child)
-                time.sleep(.05)
+                time.sleep(delay)
                 if child.poll() is None:
                     child.kill()
             for ident, body in bodies.items():
