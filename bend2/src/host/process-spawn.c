@@ -1889,7 +1889,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
       io_str(e,call->unstarted?error:"",call->unstarted?strlen(error):0));
   }
 #endif
-#ifdef CID_INSTANCE_ADMIT
+#ifdef CID_INSTANCE_ADMIT_START
   if(call->kind==BP_INSTANCE_ADMIT && (!call->error || call->unstarted)) {
     const char *error=call->detail?call->detail:strerror(call->error);
     value=io_tup(e,call->unstarted?term_pak(CID_NONE,0):io_box(e,CID_SOME,(Term)call->handle),
@@ -2029,8 +2029,8 @@ BP_EFFECT(baton_process_recovery_argv,CID_PROCESSCHILD_RECOVERY_ARGV,BP_RECOVERY
 #ifdef CID_INSTANCE_OWNER
 BP_EFFECT(baton_instance_owner,CID_INSTANCE_OWNER,BP_INSTANCE_OWNER)
 #endif
-#ifdef CID_INSTANCE_ADMIT
-BP_EFFECT(baton_instance_admit,CID_INSTANCE_ADMIT,BP_INSTANCE_ADMIT)
+#ifdef CID_INSTANCE_ADMIT_START
+BP_EFFECT(baton_instance_admit,CID_INSTANCE_ADMIT_START,BP_INSTANCE_ADMIT)
 #endif
 #ifdef CID_INSTANCE_ATTACH
 BP_EFFECT(baton_instance_attach,CID_INSTANCE_ATTACH,BP_INSTANCE_ATTACH)
