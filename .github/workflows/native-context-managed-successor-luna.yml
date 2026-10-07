@@ -20,7 +20,7 @@ jobs:
       - name: Check out immutable candidate source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: 6fcae161e1e211c2cffd2a72e84e8062400c56d6
+          ref: 79890e52f66cd470ea16b10debf96761c842d3e6
           path: candidate
       - name: Select Node 22
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -41,8 +41,8 @@ jobs:
           set -euo pipefail
           git -C candidate rev-parse HEAD | tee "$NATIVE_CONTEXT_RUN/evidence/source-commit.txt"
           git -C candidate rev-parse 'HEAD^{tree}' | tee "$NATIVE_CONTEXT_RUN/evidence/source-tree.txt"
-          test "$(cat "$NATIVE_CONTEXT_RUN/evidence/source-commit.txt")" = 6fcae161e1e211c2cffd2a72e84e8062400c56d6
-          test "$(cat "$NATIVE_CONTEXT_RUN/evidence/source-tree.txt")" = 2669a590049994db7785584f8922ff6ad226ee0e
+          test "$(cat "$NATIVE_CONTEXT_RUN/evidence/source-commit.txt")" = 79890e52f66cd470ea16b10debf96761c842d3e6
+          test "$(cat "$NATIVE_CONTEXT_RUN/evidence/source-tree.txt")" = 2a917738ae00fa783adfc5db61a4f9023a3c116c
           git -C candidate status --short --branch > "$NATIVE_CONTEXT_RUN/evidence/source-status.txt"
           shasum -a 256 \
             candidate/bend2/src/coordinator/main.bend \
@@ -55,6 +55,8 @@ jobs:
             candidate/bend2/scripts/context-query-artifact.mjs \
             candidate/bend2/scripts/context-query-artifact.test.mjs \
             candidate/bend2/test/shared-instance.py \
+            candidate/bend2/test/context-lifecycle.py \
+            candidate/bend2/tests/context-lifecycle.bend \
             > "$NATIVE_CONTEXT_RUN/evidence/source-files.sha256"
           {
             uname -a
@@ -109,6 +111,13 @@ jobs:
             2>&1 | tee "$NATIVE_CONTEXT_RUN/evidence/instance-build.log"
           python3 bend2/test/shared-instance.py \
             2>&1 | tee "$NATIVE_CONTEXT_RUN/evidence/shared-instance.log"
+      - name: Run managed context store lifecycle suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd candidate
+          BEND="$NATIVE_CONTEXT_RUN/toolchain-home/bin/bend" python3 bend2/test/context-lifecycle.py \
+            2>&1 | tee "$NATIVE_CONTEXT_RUN/evidence/context-lifecycle.log"
       - name: Run context artifact and provider suites
         shell: bash
         run: |
