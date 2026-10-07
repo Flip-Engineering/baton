@@ -98,6 +98,12 @@ One `serve` invocation holds each canonical Orchestra database:
   fresh with the workspace state note through the existing receive path.
   Two `serve` invocations for one database cannot both hold the claim, so
   the same native conversation never resumes twice.
+- Report delivery lag: the keeper records a released native's report
+  through its observe pipeline after the serve exits. The matrix measured
+  about 2 seconds between serve exit and the report reaching the root
+  inbox. Report assertions in `bend2/test/shared-instance-matrix.py`
+  poll the inbox (`await_inbox`, 60 second bound) instead of reading it
+  once after serve exit.
 - Join window: the owner writes its heartbeat on every discovery iteration
   but not while blocked joining forked session tasks. A second claimant
   during that window reads a lapsed row and forks tasks that the
