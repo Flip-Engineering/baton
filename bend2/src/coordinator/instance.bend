@@ -1,23 +1,45 @@
 import Base
 import ./commands.bend as C
 import ./receive.bend as Receive
+import ../host/session-lock.bend as Lock
 import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
 import ../git/text.bend as Tx
 
 # The fixed coordinator drives every session with actionable pending input as
 # concurrent native tasks under the elected database owner. One serve process
-# holds one committed-change subscription per database; the subscription is
-# opened before the first snapshot, so no committed input falls between the
-# snapshot and the subscriber registration. Task completion wakes the loop
-# through the join below, and committed changes wake it through the owner
-# notice while it is idle. The owner publishes the high-water; this loop only
-# reads rows and never publishes.
+# holds the physical coordinator role and one committed-change subscription per
+# database; the subscription is opened before the first snapshot, so no
+# committed input falls between the snapshot and the subscriber registration.
+# The main loop blocks only on one shared event channel. Every native task
+# carries a relay that joins only its own task and reports TaskDone; one
+# independent owner-notice waiter reports Commit, Gap or Closed and the loop
+# rearms it on consumption. Every event replays the full pending snapshot, so
+# a late commit starts while older tasks are still held, and older actionable
+# IDs replay after any restart. The owner publishes the high-water; this loop
+# only reads rows and never publishes.
+type Event is Data:
+  TaskDone{session: String, done: Result<&1,&1,U32 & String,Unit>}
+  Commit{}
+  Gap{}
+  Closed{}
+
+# Loop state travels as one value so event handlers take a single affine
+# continuation back into the drive below.
+type Loop is Data:
+  State{failed: Bool, flying: List<String>, refused: List<String>}
+
+# The fixed coordinator role tag: one constant 64-hex digest, independent of
+# the database path, the query subject and the owner epoch. The lock file also
+# names the physical device, file and birth tuple, so hard-link aliases of one
+# database contend on the same role while UI subscriptions stay multi-client.
+def coordinator_role_key() -> String:
+  "676b676b676b676b676b676b676b676b676b676b676b676b676b676b676b676b"
 
 # Sessions holding actionable pending input: unacknowledged messages on live
-# Codex or OMP sessions with a registered receiver endpoint, excluding
-# terminally stopped sessions like the wake path. The full pending set is
-# read every pass, so older actionable IDs replay after any restart.
+# sessions with a registered receiver endpoint, excluding terminally stopped
+# sessions like the wake path. The harness travels with the session so every
+# task keeps its native identity down to the route.
 def endpoint_field_sql(+session: String, index: String) -> String:
   "SELECT COALESCE(CASE WHEN json_valid(endpoint) THEN json_extract(endpoint,'$[" ++ index ++ "]') ELSE '' END,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"
 
@@ -27,21 +49,90 @@ def recorded_endpoint(+db: String, +session: String, index: String) -> IO(String
     IO.pure(String, Tx.trim_nl(saved))
 
 def dirty_session_sql() -> String:
-  "SELECT DISTINCT m.recipient FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " AND s.harness IN ('codex','omp') AND s.endpoint <> '' ORDER BY m.recipient;"
+  "SELECT DISTINCT m.recipient || '|' || s.harness FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " AND s.harness IN ('codex','omp','muse','claude-code') AND s.endpoint <> '' ORDER BY m.recipient;"
 
-def dirty_sessions(saved: String) -> List<String>:
-  Tx.split_lines(saved)
+def split_pair(line: String) -> String & String:
+  match String.split(line, Char.from_u32(124)):
+    case session <> harness <> Nil{}: (Tx.trim_nl(session), Tx.trim_nl(harness))
+    case other: (Tx.trim_nl(line), "")
 
-def snapshot(+db: String) -> IO(List<String>):
-  do IO<List<String>>:
+def parse_pairs(lines: List<String>) -> List<String & String>:
+  match lines:
+    case Nil{}: Nil{}
+    case line <> rest: Con{split_pair(line), parse_pairs(rest)}
+
+def snapshot(+db: String) -> IO(List<String & String>):
+  do IO<List<String & String>>:
     saved : String <- IO.try(String, DB.Sql.query(db, dirty_session_sql()))
-    IO.pure(List<String>, dirty_sessions(saved))
+    IO.pure(List<String & String>, parse_pairs(Tx.split_lines(saved)))
+
+# Only the receive route can start a native from pending input in this loop:
+# Receive admits Codex and OMP sessions through the session lock and consumes
+# the inbox on completion. Muse and Claude Code sessions keep their Turn
+# handler route, which conductors drive with dispatch-turn; the loop refuses
+# them explicitly instead of attempting a receive that cannot admit them.
+def receivable(+harness: String) -> Bool:
+  Bool.or(String.eq(harness, "codex"), String.eq(harness, "omp"))
+
+def without_session(pairs: List<String & String>, +id: String) -> List<String & String>:
+  match pairs:
+    case Nil{}: Nil{}
+    case (session, harness) <> rest: match String.eq(session, id):
+      case True{}: without_session(rest, id)
+      case False{}: Con{(session, harness), without_session(rest, id)}
+
+# Linear strip: each known session is removed by threading the remainder, so
+# the dirty list is read once per known session and never duplicated.
+def strip_known(pairs: List<String & String>, known: List<String>) -> List<String & String>:
+  match known:
+    case Nil{}: pairs
+    case id <> rest: strip_known(without_session(pairs, id), rest)
+
+def partition_go(pairs: List<String & String>, fork: List<String & String>, refuse: List<String & String>) -> List<String & String> & List<String & String>:
+  match pairs:
+    case Nil{}: (fork, refuse)
+    case (session, harness) <> rest: match receivable(harness):
+      case True{}: partition_go(rest, Con{(session, harness), fork}, refuse)
+      case False{}: partition_go(rest, fork, Con{(session, harness), refuse})
+
+def partition(pairs: List<String & String>) -> List<String & String> & List<String & String>:
+  partition_go(pairs, Nil{}, Nil{})
+
+def novel(pairs: List<String & String>, flying: List<String>, refused: List<String>) -> List<String & String> & List<String & String>:
+  partition(strip_known(strip_known(pairs, flying), refused))
+
+def sessions_of(pairs: List<String & String>) -> List<String>:
+  match pairs:
+    case Nil{}: Nil{}
+    case (session, harness) <> rest: Con{session, sessions_of(rest)}
+
+def without_id(sessions: List<String>, +id: String) -> List<String>:
+  match sessions:
+    case Nil{}: Nil{}
+    case session <> rest: match String.eq(session, id):
+      case True{}: without_id(rest, id)
+      case False{}: Con{session, without_id(rest, id)}
+
+def member(sessions: List<String>, +id: String) -> Bool:
+  match sessions:
+    case Nil{}: False{}
+    case session <> rest: match String.eq(session, id):
+      case True{}: True{}
+      case False{}: member(rest, id)
+
+def fork_of(decided: List<String & String> & List<String & String>) -> List<String>:
+  match decided:
+    case (fork, refuse): sessions_of(fork)
+
+def refuse_of(decided: List<String & String> & List<String & String>) -> List<String>:
+  match decided:
+    case (fork, refuse): sessions_of(refuse)
 
 # One session task runs the recorded receive entry with the recorded harness
 # executable and log resolved from the receiver endpoint array. Model, effort
 # and workspace stay empty so the entry selects the recorded route. The
 # session lock inside Receive refuses a second task for the same session with
-# queued, so a fresh snapshot can fork without tracking live tasks. Stop
+# queued, so the in-flight set plus the lock agree on admission. Stop
 # admission, native conversation identity, pending-input recovery and parent
 # notification run in that path unchanged.
 def serve_task(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -50,14 +141,59 @@ def serve_task(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Un
     log : String <- recorded_endpoint(db, session, "8")
     Receive.run(db, session, cmd, "", "", "", log, "")
 
+def report_send(sent: Bool) -> IO(Event):
+  match sent:
+    case True{}: IO.pure(Event, Commit{})
+    case False{}: do IO<Event>:
+      logged : Unit <- IO.write("completion relay could not queue its event; the serve exits.\n")
+      IO.die(Event, 1, "The event channel refused a completion.")
+
+# A failed send means the event loop is gone; the diagnostic stays on the
+# serve log and the serve exits instead of dropping a completion silently.
+# Unsatisfied work stays in the database for the next serve to replay.
+def send_or_die(chan: Chan(Event), event: Event) -> IO(Event):
+  do IO<Event>:
+    sent : Bool <- Chan.send(Event, chan, event)
+    report_send(sent)
+
+# Each relay joins only its own native task, then queues one TaskDone. The
+# returned event is never observed: no task joins a relay, so the relay result
+# only satisfies the fork type.
 @unsafe
-def fork_tasks(+db: String, sessions: List<String>) -> IO(List<Chan(Result<&1,&1,U32 & String,Unit>)>):
-  match sessions:
-    case Nil{}: IO.pure(List<Chan(Result<&1,&1,U32 & String,Unit>)>, Nil{})
-    case session <> rest: do IO<List<Chan(Result<&1,&1,U32 & String,Unit>)>>:
-      task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>, serve_task(db, session))
-      others : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, rest)
-      IO.pure(List<Chan(Result<&1,&1,U32 & String,Unit>)>, Con{task, others})
+def relay(task: Chan(Result<&1,&1,U32 & String,Unit>), session: String, chan: Chan(Event)) -> IO(Event):
+  do IO<Event>:
+    done : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>, task)
+    send_or_die(chan, TaskDone{session, done})
+
+def kind_event(kind: String) -> IO(Event):
+  match String.eq(kind, "commit"):
+    case True{}: IO.pure(Event, Commit{})
+    case False{}: IO.pure(Event, Gap{})
+
+# A notice carries only the cursor high-water, so every notice replays the
+# full pending snapshot; a gap notice is served by the same snapshot. An
+# unknown kind replays as a gap, the conservative full read.
+def classify(db: String, text: String) -> IO(Event):
+  do IO<Event>:
+    saved : String <- IO.try(String, DB.Sql.query(db, "SELECT json_extract(" ++ C.q(text) ++ ",'$.kind');"))
+    kind_event(Tx.trim_nl(saved))
+
+def await_notice(db: String, result: Result<&1,&1,U32 & String,String>, chan: Chan(Event)) -> IO(Event):
+  match result:
+    case Fail{error}: send_or_die(chan, Closed{})
+    case Done{text}: do IO<Event>:
+      event : Event <- classify(db, text)
+      send_or_die(chan, event)
+
+# The single independent owner-notice waiter: one notice becomes one event,
+# then this task ends and the loop rearms a fresh waiter. A failed notice
+# means the owner is gone; the loop closes the subscription and exits with
+# the carried status instead of acting for a stale owner.
+@unsafe
+def waiter(db: String, handle: U32, chan: Chan(Event)) -> IO(Event):
+  do IO<Event>:
+    result : Result<&1,&1,U32 & String,String> <- Custody.Instance.notice(handle)
+    await_notice(db, result, chan)
 
 # A failed task carries its failure to the shutdown exit. A stop racing the
 # snapshot can fail a task whose input the stop retained; the next serve
@@ -68,6 +204,48 @@ def note_task(failed: Bool, done: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
     case Done{unit}: IO.pure(Bool, failed)
     case Fail{error}: IO.pure(Bool, True{})
 
+def drop_chan(chan: Chan(Event)) -> IO(Unit):
+  IO.pure(Unit, Unit{})
+
+@unsafe
+def fork_each(+db: String, +chan: Chan(Event), pairs: List<String & String>, flying: List<String>) -> IO(List<String>):
+  match pairs:
+    case Nil{}: IO.pure(List<String>, flying)
+    case (session, harness) <> rest: do IO<List<String>>:
+      task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>, serve_task(db, session))
+      relay_task : Chan(Event) <- IO.fork(Event, relay(task, session, chan))
+      dropped : Unit <- drop_chan(relay_task)
+      fork_each(db, chan, rest, Con{session, flying})
+
+# Sessions outside the receive route are refused aloud on every committed
+# change: the refusal names the session, its harness and the conductor Turn
+# route that serves it. Refusals never fork a native and never mark the serve
+# failed; TaskDone events do not re-probe them, so an instantly refused
+# session cannot spin the loop.
+def refuse_each(pairs: List<String & String>, refused: List<String>) -> IO(List<String>):
+  match pairs:
+    case Nil{}: IO.pure(List<String>, refused)
+    case (session, harness) <> rest: do IO<List<String>>:
+      logged : Unit <- IO.write("serve-refused " ++ session ++ " " ++ harness ++ ": this loop serves Codex and OMP sessions through receive; serve " ++ harness ++ " sessions with dispatch-turn.\n")
+      refuse_each(rest, Con{session, refused})
+
+def fork_new(+db: String, +chan: Chan(Event), pairs: List<String & String>, flying: List<String>, refused: List<String>, failed: Bool) -> IO(Loop):
+  match novel(pairs, flying, refused):
+    case (fork, refuse): do IO<Loop>:
+      flying_now : List<String> <- fork_each(db, chan, fork, flying)
+      refused_now : List<String> <- refuse_each(refuse, refused)
+      IO.pure(Loop, State{failed, flying_now, refused_now})
+
+def kept(result: Result<&1,&1,U32 & String,Unit>, failed: Bool) -> IO(Bool):
+  match result:
+    case Done{unit}: IO.pure(Bool, failed)
+    case Fail{error}: IO.pure(Bool, True{})
+
+def release_guard(guard: U32, failed: Bool) -> IO(Bool):
+  do IO<Bool>:
+    result : Result<&1,&1,U32 & String,Unit> <- Lock.SessionLock.release(guard)
+    kept(result, failed)
+
 def close_subscription(+handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match failed:
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -75,73 +253,96 @@ def close_subscription(+handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & Str
       IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{(1, "The serve recorded a swept task failure.")})
     case False{}: Custody.Instance.unsubscribe(handle)
 
-# Joins one forked list to its flag. Fresh snapshots fork through drain_tasks
-# below, so this helper never names the drive loop.
-@unsafe
-def drain_now(+db: String, +handle: U32, +failed: Bool, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>) -> IO(Bool):
-  match tasks:
-    case Nil{}: IO.pure(Bool, failed)
-    case task <> rest: do IO<Bool>:
-      done : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>, task)
-      failed_now : Bool <- note_task(failed, done)
-      drain_now(db, handle, failed_now, rest)
-
-# Tasks join one at a time. After every joined task the loop re-snapshots and
-# forks newly dirty sessions, draining those before rejoining the older tasks,
-# so discovery never waits for all tasks to end. The continuation carries the
-# loop without naming it, keeping every definition ordered before its callers.
-@unsafe
-def drain_tasks(+db: String, +handle: U32, +failed: Bool, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, again: Bool -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match tasks:
-    case Nil{}: again(failed)
-    case task <> rest: do IO<Result<&1,&1,U32 & String,Unit>>:
-      done : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>, task)
-      failed_now : Bool <- note_task(failed, done)
-      fresh : List<String> <- snapshot(db)
-      extra : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, fresh)
-      failed_fresh : Bool <- drain_now(db, handle, failed_now, extra)
-      drain_tasks(db, handle, failed_fresh, rest, again)
-
-def notice_closed(+db: String, +handle: U32, +failed: Bool, result: Result<&1,&1,U32 & String,String>, again: Bool -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match result:
-    case Fail{error}: close_subscription(handle, failed)
-    case Done{text}: again(failed)
-
-# Idle serves block on the owner notice. A notice carries only the cursor
-# high-water, so every notice replays the full pending snapshot; a gap notice
-# is served by the same snapshot. A failed notice means the owner is gone, and
-# the serve closes its subscription and exits with the carried status.
-def idle(+db: String, +handle: U32, +failed: Bool, again: Bool -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def close_guarded(handle: U32, guard: U32, failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    result : Result<&1,&1,U32 & String,String> <- Custody.Instance.notice(handle)
-    notice_closed(db, handle, failed, result, again)
+    failed_now : Bool <- release_guard(guard, failed)
+    close_subscription(handle, failed_now)
 
-def drive_sessions(+db: String, +handle: U32, +failed: Bool, sessions: List<String>, again: Bool -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match sessions:
-    case Nil{}: idle(db, handle, failed, again)
-    case session <> rest: do IO<Result<&1,&1,U32 & String,Unit>>:
-      first : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, sessions)
-      drain_tasks(db, handle, failed, first, again)
-
+# One event advances the loop. TaskDone drops the session from the in-flight
+# set and replays the snapshot without re-probing refusals. Commit and Gap
+# re-arm the notice waiter first, clear the refused set for a fresh probe,
+# and replay the same full snapshot. Closed releases the coordinator role,
+# closes the subscription and exits carrying the swept status.
 @unsafe
-def drive(+db: String, +handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  do IO<Result<&1,&1,U32 & String,Unit>>:
-    sessions : List<String> <- snapshot(db)
-    drive_sessions(db, handle, failed, sessions, failed_next => drive(db, handle, failed_next))
+def on_event(+db: String, handle: U32, guard: U32, +chan: Chan(Event), event: Event, failed: Bool, flying: List<String>, refused: List<String>, again: Loop -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match event:
+    case TaskDone{session, done}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      failed_now : Bool <- note_task(failed, done)
+      fresh : List<String & String> <- snapshot(db)
+      next : Loop <- fork_new(db, chan, fresh, without_id(flying, session), refused, failed_now)
+      again(next)
+    case Commit{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      waiter_task : Chan(Event) <- IO.fork(Event, waiter(db, handle, chan))
+      dropped : Unit <- drop_chan(waiter_task)
+      fresh : List<String & String> <- snapshot(db)
+      next : Loop <- fork_new(db, chan, fresh, flying, Nil{}, failed)
+      again(next)
+    case Gap{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      waiter_task : Chan(Event) <- IO.fork(Event, waiter(db, handle, chan))
+      dropped : Unit <- drop_chan(waiter_task)
+      fresh : List<String & String> <- snapshot(db)
+      next : Loop <- fork_new(db, chan, fresh, flying, Nil{}, failed)
+      again(next)
+    case Closed{}: close_guarded(handle, guard, failed)
 
-def admitted(+db: String, subscribed: Result<&1,&1,U32 & String,U32 & String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def open_state(+db: String, handle: U32, guard: U32, +chan: Chan(Event), event: Event, state: Loop, again: Loop -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match state:
+    case State{failed, flying, refused}: on_event(db, handle, guard, chan, event, failed, flying, refused, again)
+
+def dispatch_maybe(db: String, handle: U32, guard: U32, chan: Chan(Event), state: Loop, event: Maybe<&1,Event>, again: Loop -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match event:
+    case None{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      logged : Unit <- IO.write("The serve event channel closed; the serve exits.\n")
+      close_guarded(handle, guard, True{})
+    case Some{ev}: open_state(db, handle, guard, chan, ev, state, again)
+
+# The main loop blocks only on the shared event channel. The drive itself is
+# the only self-recursive definition; every handler above is ordered before
+# its callers and takes the loop state back through one affine continuation.
+@unsafe
+def drive(+db: String, +handle: U32, +guard: U32, +chan: Chan(Event), state: Loop) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    event : Maybe<&1,Event> <- Chan.recv(Event, chan)
+    dispatch_maybe(db, handle, guard, chan, state, event, next => drive(db, handle, guard, chan, next))
+
+def arm(db: String, handle: U32, chan: Chan(Event)) -> IO(Unit):
+  do IO<Unit>:
+    waiter_task : Chan(Event) <- IO.fork(Event, waiter(db, handle, chan))
+    drop_chan(waiter_task)
+
+def drive_new(+db: String, +handle: U32, guard: U32, +chan: Chan(Event), failed: Bool, pairs: List<String & String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    armed : Unit <- arm(db, handle, chan)
+    next : Loop <- fork_new(db, chan, pairs, Nil{}, Nil{}, failed)
+    drive(db, handle, guard, chan, next)
+
+def admitted(+db: String, guard: U32, subscribed: Result<&1,&1,U32 & String,U32 & String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match subscribed:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{error})
+    case Fail{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      released : Bool <- release_guard(guard, False{})
+      IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{error})
     case Done{(handle, readiness)}: do IO<Result<&1,&1,U32 & String,Unit>>:
       ready : Unit <- IO.write(readiness ++ "\n")
-      drive(db, handle, False{})
+      chan : Chan(Event) <- Chan.new(Event, 1024)
+      fresh : List<String & String> <- snapshot(db)
+      drive_new(db, handle, guard, chan, False{}, fresh)
 
-# The readiness line is printed after the owner registers the subscriber, so a
-# supervisor reading the first line knows the snapshot that follows is coherent.
+def enter(+db: String, guarded: Result<&1,&1,U32 & String,U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match guarded:
+    case Fail{(code, text)}: IO.die(Result<&1,&1,U32 & String,Unit>, 2, "coordinator-held " ++ db ++ ": another serve holds the fixed coordinator role for this database (" ++ text ++ "); join it or stop it first.")
+    case Done{guard}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      subscribed : Result<&1,&1,U32 & String,U32 & String> <- Custody.Instance.subscribe(db, "0", "0")
+      admitted(db, guard, subscribed)
+
+# The coordinator role is acquired before the subscription: the guard names
+# the physical database tuple, so a second serve on the same database or one
+# of its hard-link aliases is refused here and exits short-lived. Ordinary
+# status and UI subscriptions take no role and stay multi-client.
 def serve(+db: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    subscribed : Result<&1,&1,U32 & String,U32 & String> <- Custody.Instance.subscribe(db, "0", "0")
-    admitted(db, subscribed)
+    bound : String <- IO.try(String, DB.Sql.binding(db))
+    guarded : Result<&1,&1,U32 & String,U32> <- DB.Sql.role_guard(db, bound, coordinator_role_key())
+    enter(db, guarded)
 
 def status_read(+db: String, subscribed: Result<&1,&1,U32 & String,U32 & String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match subscribed:
