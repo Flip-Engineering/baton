@@ -19,13 +19,24 @@ original completion missing from coordinator storage after keeper loss
 One `serve` invocation holds each canonical Orchestra database:
 
 - `Instance.claim_sql` (`bend2/src/coordinator/instance.bend`) records the
-  holder in the `instance_owner` row. A second holder for the same database
-  receives the `duplicate-owner` error naming the current holder. A
-  re-claim by the recorded holder refreshes its heartbeat.
-- `Instance.serve_loop` reads `Instance.next_session_sql` cursors and forks
-  one `Instance.serve_session` task per session that holds unacknowledged
+  holder in the `instance_owner` row. The claim transaction first deletes
+  rows whose heartbeat lapsed past `Instance.claim_lapse_seconds` (300).
+  A second holder for the same database receives the `duplicate-owner`
+  error naming the current holder; a refused claimant inserts nothing. A
+  re-claim by the recorded holder refreshes its heartbeat and keeps its
+  generation number. Each new holder epoch carries the next generation
+  number.
+- Liveness is held by the host custody election in the stable per-user IPC
+  directory keyed by the database physical identity. The SQL row records
+  the live holder for status and crash recovery.
+- `Instance.serve_loop` writes its heartbeat, then reads
+  `Instance.next_session_sql` cursors and forks one
+  `Instance.serve_session` task per session that holds unacknowledged
   input. Tasks join with `Instance.combine`, which carries the first
-  failure. Sessions with a terminal stop never enter the cursor.
+  failure. Sessions with a terminal stop never enter the cursor. `serve`
+  drains and exits; the owner-hosted commit notification re-invokes it on
+  later input. A long-lived serve follows only when workload measurements
+  require it.
 - `Instance.serve_session` calls the public receive entry
   (`Receive.run`) with empty command, model, effort, workspace and message
   arguments, which selects the session's recorded values and full pending
@@ -35,13 +46,20 @@ One `serve` invocation holds each canonical Orchestra database:
   that path unchanged.
 - Provider processes run where the harness requires them. Host custody of
   provider children inside the owner process is implemented in
-  `process-spawn.c` under its assigned owner (DS lane). The `owner_path`
-  function names the guard file beside the canonical database for that
-  effect.
-- The owner subscribes to the UI backend's committed-change cursor for wake
- ups. That cursor is the projection owned by `ui682-codex-luna-backend-20261006`
-  with its schema additions and `sqlite.c` postcommit notification. The
-  owner reads that source; it defines no separate event bus.
+  `process-spawn.c` under its assigned owner (DS lane). No election state
+  lives beside the database path; the election lock, token file and socket
+  live in the stable per-user IPC directory keyed by physical identity.
+- The shared owner hosts the canonical committed-change notification
+  source for its database. The UI backend projection consumes that source;
+  its `native_changes` rows carry `change_id`, `recorded_at`, `entity`,
+  `entity_id`, `session_id`, `operation`, `kind` and `summary`, appended
+  by SQLite triggers in the writer transaction and retained by
+  `change_id`. The owner defines no separate event bus. Subscriber
+  contract: a subscriber presents the owner generation from
+  `owner-status` with its cursor; the owner admits the cursor when the
+  generation is current and answers with a snapshot plus the high cursor
+  when it is not. Socket frames for that handshake are implemented in
+  `process-spawn.c` under its assigned owner.
 - Ordinary CLI and MCP use keep their current admission and discovery. The
   owner adds the `serve` and `owner-status` verbs (`Instance.route`) and
   the `baton2_owner` MCP tool. Shared-file wiring for those verbs is listed
@@ -89,10 +107,17 @@ reported on their own lines, apart from resident and private figures.
   (owns projection schema additions): the `instance_owner` table in
   `Instance.owner_schema` enters the schema through the schema owner's
   composition. This lane does not edit `commands.schema()`.
-- DS lane (owns `process-spawn.c` custody): implement the owner-guard file
-  lock at `Instance.owner_path`, per-session generation handles, and
-  in-process provider-child custody with the existing release and
-  acknowledge semantics. This lane makes no edits in `process-spawn.c`.
+- DS lane (owns `process-spawn.c` custody): hold liveness in the flock
+  election in the stable per-user IPC directory keyed by physical
+  identity, with per-session generation handles and in-process
+  provider-child custody under the existing release and acknowledge
+  semantics. This lane makes no edits in `process-spawn.c`.
+- Gates 675 lead (owns heavy validation boundaries): proposed
+  retained-request identity for deduped execution is the tuple of the
+  database physical identity, the request content hash, and the claimant.
+  A repeated identity re-attaches the retained execution and its
+  completion; a conflicting reuse fails admission. Field names follow at
+  composition.
 - Proposed CLI wiring for composition (unapplied in this lane):
   `main.bend` delegates the `serve` and `owner-status` verbs to
   `Instance.route`; `commands.bend` keeps its current `Command` type

@@ -12,18 +12,13 @@ import Base
 import ./instance.bend as Instance
 import ./commands.bend as C
 import ./receive.bend as Receive
+import ../host/sqlite.bend as DB
+import ../git/text.bend as Tx
 
-law owner_guard_path_besides_the_canonical_database:
-  for +canonical: String
-  {Instance.owner_path(canonical) == canonical ++ ".owner" : String}
+law owner_claim_table_names_holder_heartbeat_and_generation:
+  {Instance.owner_schema() == "CREATE TABLE IF NOT EXISTS instance_owner (owner TEXT PRIMARY KEY NOT NULL, heartbeat INTEGER NOT NULL, generation INTEGER NOT NULL);" : String}
 
-def owner_guard_path_besides_the_canonical_database(canonical):
-  {==}
-
-law owner_claim_table_names_holder_and_heartbeat:
-  {Instance.owner_schema() == "CREATE TABLE IF NOT EXISTS instance_owner (owner TEXT PRIMARY KEY NOT NULL, heartbeat INTEGER NOT NULL);" : String}
-
-def owner_claim_table_names_holder_and_heartbeat():
+def owner_claim_table_names_holder_heartbeat_and_generation():
   {==}
 
 law owner_statements_run_inside_one_guarded_transaction:
@@ -33,18 +28,25 @@ law owner_statements_run_inside_one_guarded_transaction:
 def owner_statements_run_inside_one_guarded_transaction(body):
   {==}
 
-law owner_claim_inserts_or_refreshes_then_names_the_holder:
-  for +owner: String
-  {Instance.claim_sql(owner) == "INSERT INTO instance_owner(owner, heartbeat) VALUES(" ++ C.q(owner) ++ ",(SELECT strftime('%s','now'))) ON CONFLICT(owner) DO UPDATE SET heartbeat=excluded.heartbeat;"
-  ++ "SELECT json_object('error','duplicate-owner','owner'," ++ C.q(owner) ++ ",'current',(SELECT owner FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ " LIMIT 1),'condition','One native owner holds each Orchestra database.','next','Read owner status. Serve only after the current owner releases or its heartbeat lapses.') WHERE EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ");"
-  ++ "SELECT json_object('owner',owner,'heartbeat',heartbeat) FROM instance_owner WHERE owner=" ++ C.q(owner) ++ " AND NOT EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ");" : String}
+law lapsed_heartbeats_clear_after_three_hundred_seconds:
+  {Instance.claim_lapse_seconds() == "300" : String}
 
-def owner_claim_inserts_or_refreshes_then_names_the_holder(owner):
+def lapsed_heartbeats_clear_after_three_hundred_seconds():
+  {==}
+
+law owner_claim_clears_lapsed_rows_then_admits_one_holder:
+  for +owner: String
+  {Instance.claim_sql(owner) == "DELETE FROM instance_owner WHERE heartbeat<CAST((SELECT strftime('%s','now')) AS INTEGER)-" ++ Instance.claim_lapse_seconds() ++ ";"
+  ++ "INSERT INTO instance_owner(owner, heartbeat, generation) SELECT " ++ C.q(owner) ++ ",(SELECT strftime('%s','now')),coalesce((SELECT max(generation)+1 FROM instance_owner),1) WHERE NOT EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ") ON CONFLICT(owner) DO UPDATE SET heartbeat=excluded.heartbeat;"
+  ++ "SELECT json_object('error','duplicate-owner','owner'," ++ C.q(owner) ++ ",'current',(SELECT owner FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ " LIMIT 1),'condition','One native owner holds each Orchestra database.','next','Read owner status. Serve only after the current owner releases or its heartbeat lapses.') WHERE EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ");"
+  ++ "SELECT json_object('owner',owner,'heartbeat',heartbeat,'generation',generation) FROM instance_owner WHERE owner=" ++ C.q(owner) ++ " AND NOT EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ");" : String}
+
+def owner_claim_clears_lapsed_rows_then_admits_one_holder(owner):
   {==}
 
 law owner_heartbeat_refreshes_only_the_claimant_row:
   for +owner: String
-  {Instance.heartbeat_sql(owner) == "UPDATE instance_owner SET heartbeat=(SELECT strftime('%s','now')) WHERE owner=" ++ C.q(owner) ++ ";SELECT json_object('owner',owner,'heartbeat',heartbeat) FROM instance_owner WHERE owner=" ++ C.q(owner) ++ ";" : String}
+  {Instance.heartbeat_sql(owner) == "UPDATE instance_owner SET heartbeat=(SELECT strftime('%s','now')) WHERE owner=" ++ C.q(owner) ++ ";SELECT json_object('owner',owner,'heartbeat',heartbeat,'generation',generation) FROM instance_owner WHERE owner=" ++ C.q(owner) ++ ";" : String}
 
 def owner_heartbeat_refreshes_only_the_claimant_row(owner):
   {==}
@@ -57,9 +59,22 @@ def owner_release_deletes_only_the_claimant_row(owner):
   {==}
 
 law owner_status_reads_the_single_held_claim:
-  {Instance.owner_status_sql() == "SELECT coalesce((SELECT json_object('owner',owner,'heartbeat',heartbeat) FROM instance_owner LIMIT 1),json('null'));" : String}
+  {Instance.owner_status_sql() == "SELECT coalesce((SELECT json_object('owner',owner,'heartbeat',heartbeat,'generation',generation) FROM instance_owner LIMIT 1),json('null'));" : String}
 
 def owner_status_reads_the_single_held_claim():
+  {==}
+
+law serve_loop_refreshes_the_claim_before_discovery:
+  for +db: String
+  for +owner: String
+  for cursor: String
+  {Instance.serve_loop(db,owner,cursor,Nil{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+    beat : String <- IO.try(String,DB.Sql.query(db,Instance.heartbeat_sql(owner)))
+    next : String <- IO.try(String,DB.Sql.query(db,Instance.next_session_sql(cursor)))
+    +id : String <- IO.pure(String,Tx.trim_nl(next))
+    Instance.serve_step(db,Nil{},id,String.is_empty(id),next_id => next_tasks => Instance.serve_loop(db,owner,next_id,next_tasks))) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def serve_loop_refreshes_the_claim_before_discovery(db,owner,cursor):
   {==}
 
 law owned_work_cursor_names_unacknowledged_unstopped_sessions:
