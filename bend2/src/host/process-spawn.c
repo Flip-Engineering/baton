@@ -346,6 +346,7 @@ static int br_finalize_stderr(const char *target,const char *spool,const char *m
   int source=open(spool,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);int error=source<0?errno:0;
   struct stat info;uint64_t observed=0,retained=0;
   if(!error && fstat(source,&info))error=errno;
+  if(!error && fsync(source))error=errno;
   if(!error && (!S_ISREG(info.st_mode) || info.st_size<0))error=EINVAL;
   if(!error){observed=(uint64_t)info.st_size;retained=observed<limit?observed:limit;
     int dest=open(target,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC|O_NOFOLLOW,0600);
