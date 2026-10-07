@@ -6,6 +6,7 @@ directory. These tests exercise concurrent attempts, alias election, observer
 loss, the bound observation checkpoint, admission identity and owner shutdown.
 """
 import fcntl
+import hashlib
 import json
 import os
 import pathlib
@@ -31,6 +32,22 @@ print("native-done",flush=True)
 '''
 
 
+MUSE_FIXTURE = r'''import hashlib,json,os,sys
+args=sys.argv[1:]
+path=args[args.index("--prompt-file")+1]
+data=open(path,"rb").read()
+mode=oct(os.stat(path).st_mode & 0o777)
+print(json.dumps({"role":"native","pid":os.getpid(),"ppid":os.getppid(),
+                  "prompt_bytes":len(data),"prompt_sha256":hashlib.sha256(data).hexdigest(),
+                  "prompt_mode":mode,"session_id":args[args.index("--session-id")+1]}),flush=True)
+first=sys.stdin.read(1)
+print("stdin_state:"+("eof" if first=="" else "open"),flush=True)
+for index in range(1,4):
+    print("progress:%d"%index,flush=True)
+print("terminal",flush=True)
+'''
+
+
 class SharedInstance(unittest.TestCase):
     CHECKPOINT_HEADER = struct.Struct('=8sIIQQQQQQQQi4xQQ')
 
@@ -42,6 +59,8 @@ class SharedInstance(unittest.TestCase):
         self.db.touch()
         self.fixture = self.home / 'native.py'
         self.fixture.write_text(FIXTURE)
+        self.muse_fixture = self.home / 'muse.py'
+        self.muse_fixture.write_text(MUSE_FIXTURE)
         self.children = []
         self.addCleanup(self.cleanup)
 
@@ -486,6 +505,63 @@ class SharedInstance(unittest.TestCase):
         print('evidence conflicting-reuse refused with custody preserved')
         child.kill()
         child.wait(timeout=10)
+
+    def begin_file(self, label, artifact, session=None, name='prompt.txt', program=None):
+        directory = pathlib.Path(f'{self.db}.attempt-{label}')
+        args = program or [sys.executable, str(self.muse_fixture),
+                           '--prompt-file', str(directory / name), '--session-id', label]
+        child = self.spawn('admit-file', self.db, session or label, directory, self.home,
+                           artifact, *args)
+        return directory, child
+
+    def test_prepared_file_admission_delivers_exact_bytes(self):
+        artifact = 'the admitted prompt bytes\nwith a second line\n'
+        directory, child = self.begin_file('muse', artifact)
+        output = self.wait_run(child)
+        summary = self.native(output)
+        self.assertEqual(summary['prompt_bytes'], len(artifact))
+        self.assertEqual(summary['prompt_sha256'], hashlib.sha256(artifact.encode()).hexdigest())
+        self.assertEqual(summary['prompt_mode'], '0o400')
+        self.assertIn('stdin_state:eof', output)
+        self.assertEqual(output.count('terminal'), 1)
+        self.assertEqual(output.count('progress:'), 3)
+        record = (directory / 'manifest').read_bytes()
+        self.assertEqual(record[:8], b'BATONRP2')
+        self.assertIn(b'prompt.txt', record)
+        print('evidence prepared-file', summary['prompt_sha256'], summary['prompt_mode'])
+
+    def test_prepared_file_name_is_safely_refused(self):
+        for name in ('../escape', '/absolute', '.', 'a/b', '..'):
+            directory = pathlib.Path(f'{self.db}.attempt-{abs(hash(name))}')
+            child = self.spawn('admit-file', self.db, 'bad', directory, self.home,
+                               'bytes\n', name, sys.executable, str(self.muse_fixture),
+                               '--prompt-file', str(directory / 'x'))
+            child.stdin.close()
+            child.wait(timeout=60)
+            self.assertNotEqual(child.returncode, 0, name)
+            self.assertTrue(str(child.stderr.read()).strip(), name)
+            self.assertFalse((self.home / 'escape').exists(), name)
+            print('evidence artifact-name refused', name)
+
+    def test_prepared_file_identity_is_the_bytes(self):
+        artifact = 'same bytes\n'
+        directory, first = self.begin_file('same', artifact)
+        self.line(first, 'admitted')
+        repeated, second = self.begin_file('same', artifact)
+        second.stdin.close()
+        second.wait(timeout=60)
+        self.assertNotEqual(second.returncode, 0,
+                            'a repeat while an observer holds the attempt is refused, not duplicated')
+        self.assertEqual((directory / 'stdout').read_text(errors='replace').count('"role": "native"'), 1)
+        first.kill()
+        first.wait(timeout=10)
+        differing, third = self.begin_file('same', 'different bytes\n')
+        third.stdin.close()
+        third.wait(timeout=60)
+        self.assertNotEqual(third.returncode, 0,
+                            'different artifact bytes in the same attempt are conflicting reuse')
+        self.assertIn('File exists', third.stderr.read())
+        print('evidence prepared-file identity enforced')
 
     def test_shutdown_releases_the_database_for_a_new_owner(self):
         directory, child = self.begin('a0')
