@@ -28,24 +28,15 @@ import ./codec.bend as Codec
 import ./contracts.bend as Context
 
 # --- the closed vocabulary -------------------------------------------------
+# Every declaration reference resolves to a type defined above it. Record fields
+# and union cases are constructors of the form itself, and a field list and a
+# case list are cons spines of forms, so no declaration names a type defined
+# below it.
 
-type SchemaForm is Data:
-  SfRecord{fields: List<SchemaField>}
-  SfUnion{cases: List<SchemaCase>}
-  SfArray{item: SchemaForm}
-  SfEnum{literals: NameList}
-  SfOptional{inner: SchemaForm}
-  SfDict{keys: SchemaKeys, value: SchemaForm}
-  SfRef{name: String}
-  SfScalar{kind: SchemaScalar}
-  SfJson{}
-
-type SchemaField is Data:
-  SfRequired{name: String, form: SchemaForm}
-  SfOptionalField{name: String, form: SchemaForm}
-
-type SchemaCase is Data:
-  SchemaCase{tag: String, form: SchemaForm}
+# The name list this module builds, so that building one is an explicit constructor.
+type NameList is Data:
+  NlNil{}
+  NlCons{head: String, tail: NameList}
 
 # A dictionary declares its key policy and its value schema. Arbitrary keys are
 # admitted only at a position that says so, so an authority record stays closed.
@@ -60,17 +51,51 @@ type SchemaScalar is Data:
   SsBool{}
   SsNull{}
 
+type SchemaForm is Data:
+  SfRecord{fields: SchemaForm}
+  SfUnion{cases: SchemaForm}
+  SfArray{item: SchemaForm}
+  SfEnum{literals: NameList}
+  SfOptional{inner: SchemaForm}
+  SfDict{keys: SchemaKeys, value: SchemaForm}
+  SfRef{name: String}
+  SfScalar{kind: SchemaScalar}
+  SfJson{}
+  SfRequired{name: String, form: SchemaForm}
+  SfOptionalField{name: String, form: SchemaForm}
+  SchemaCase{tag: String, form: SchemaForm}
+  SfFieldsNil{}
+  SfFieldsCons{head: SchemaForm, tail: SchemaForm}
+  SfCasesNil{}
+  SfCasesCons{head: SchemaForm, tail: SchemaForm}
+
 type SchemaDef is Data:
   SchemaDef{name: String, form: SchemaForm}
+
+# The definition environment is a cons spine of definitions.
+type SchemaDefs is Data:
+  DefsNil{}
+  DefsCons{head: SchemaDef, tail: SchemaDefs}
 
 type SchemaVerdict is Data:
   SvOk{}
   SvRefused{condition: String}
 
-# The name list this module builds, so that building one is an explicit constructor.
-type NameList is Data:
-  NlNil{}
-  NlCons{head: String, tail: NameList}
+# A work item pairs what is walked with how it is walked: a value against a
+# form, members against a field spine or a dictionary value form, or an array
+# tail against an item form.
+type SchemaWork is Data:
+  WValue{form: SchemaForm, input: Codec.RawValue}
+  WFields{fields: SchemaForm, members: Codec.RawValue}
+  WArrayItems{item: SchemaForm, tail: Codec.RawValue}
+  WDictValues{value: SchemaForm, members: Codec.RawValue}
+
+# A json work item pairs what is walked with how it is walked: a whole value,
+# an object member spine, or an array tail.
+type JsonWork is Data:
+  JwValue{value: Codec.RawValue}
+  JwMembers{members: Codec.RawValue}
+  JwItems{rest: Codec.RawValue}
 
 # --- name list and object member helpers -----------------------------------
 
@@ -83,6 +108,23 @@ def name_appended(left: NameList, +right: NameList) -> NameList:
   match left:
     case NlNil{}: right
     case NlCons{+head, +tail}: NlCons{head, name_appended(tail, right)}
+
+# The frontier readers below each scrutinize the pending list in their own
+# definition, so the reachability walk never matches a parameter twice.
+def name_list_empty(+pending: NameList) -> Bool:
+  match pending:
+    case NlNil{}: True{}
+    case NlCons{head, tail}: False{}
+
+def pending_head(+pending: NameList) -> String:
+  match pending:
+    case NlNil{}: ""
+    case NlCons{head, tail}: head
+
+def pending_tail(+pending: NameList) -> NameList:
+  match pending:
+    case NlNil{}: NlNil{}
+    case NlCons{head, tail}: tail
 
 def names_unique(names: NameList) -> Bool:
   match names:
@@ -108,32 +150,36 @@ def members_declared(+names: NameList, +members: Codec.RawValue) -> Bool:
     case Codec.Rnil{}: True{}
     case other: False{}
 
-def field_names(fields: List<SchemaField>) -> NameList:
+def field_names(fields: SchemaForm) -> NameList:
   match fields:
-    case Nil{}: NlNil{}
-    case head <> tail:
+    case SfFieldsNil{}: NlNil{}
+    case SfFieldsCons{head, tail}:
       match head:
         case SfRequired{name, form}: NlCons{name, field_names(tail)}
         case SfOptionalField{name, form}: NlCons{name, field_names(tail)}
+        case other: field_names(tail)
+    case other: NlNil{}
 
-def case_tags(cases: List<SchemaCase>) -> NameList:
+def case_tags(cases: SchemaForm) -> NameList:
   match cases:
-    case Nil{}: NlNil{}
-    case head <> tail:
+    case SfCasesNil{}: NlNil{}
+    case SfCasesCons{head, tail}:
       match head:
         case SchemaCase{tag, form}: NlCons{tag, case_tags(tail)}
+        case other: case_tags(tail)
+    case other: NlNil{}
 
-def def_names(defs: List<SchemaDef>) -> NameList:
+def def_names(+defs: SchemaDefs) -> NameList:
   match defs:
-    case Nil{}: NlNil{}
-    case head <> tail:
+    case DefsNil{}: NlNil{}
+    case DefsCons{head, tail}:
       match head:
         case SchemaDef{name, form}: NlCons{name, def_names(tail)}
 
-def def_body(+defs: List<SchemaDef>, +name: String) -> Maybe<&2, SchemaForm>:
+def def_body(+defs: SchemaDefs, +name: String) -> Maybe<&2, SchemaForm>:
   match defs:
-    case Nil{}: None{}
-    case head <> tail:
+    case DefsNil{}: None{}
+    case DefsCons{head, tail}:
       match head:
         case SchemaDef{bound, form}: Bool.pick(Maybe<&2, SchemaForm>, String.eq(bound, name), Some{form}, def_body(tail, name))
 
@@ -142,41 +188,36 @@ def def_body(+defs: List<SchemaDef>, +name: String) -> Maybe<&2, SchemaForm>:
 def form_refs(form: SchemaForm) -> NameList:
   match form:
     case SfRef{name}: NlCons{name, NlNil{}}
-    case SfRecord{+fields}: field_refs(fields)
-    case SfUnion{+cases}: case_refs(cases)
+    case SfRecord{fields}: form_refs(fields)
+    case SfUnion{cases}: form_refs(cases)
     case SfArray{+item}: form_refs(item)
     case SfEnum{+literals}: NlNil{}
     case SfOptional{+inner}: form_refs(inner)
     case SfDict{+keys, +value}: form_refs(value)
     case SfScalar{+kind}: NlNil{}
     case SfJson{}: NlNil{}
+    case SfRequired{name, form}: form_refs(form)
+    case SfOptionalField{name, form}: form_refs(form)
+    case SchemaCase{tag, form}: form_refs(form)
+    case SfFieldsNil{}: NlNil{}
+    case SfFieldsCons{head, tail}: name_appended(form_refs(head), form_refs(tail))
+    case SfCasesNil{}: NlNil{}
+    case SfCasesCons{head, tail}: name_appended(form_refs(head), form_refs(tail))
 
-def field_refs(fields: List<SchemaField>) -> NameList:
-  match fields:
-    case Nil{}: NlNil{}
-    case head <> tail:
+# A definition list binds a name when some entry declares it.
+def def_known(+defs: SchemaDefs, +name: String) -> Bool:
+  match defs:
+    case DefsNil{}: False{}
+    case DefsCons{head, tail}:
       match head:
-        case SfRequired{name, form}: name_appended(form_refs(form), field_refs(tail))
-        case SfOptionalField{name, form}: name_appended(form_refs(form), field_refs(tail))
-
-def case_refs(cases: List<SchemaCase>) -> NameList:
-  match cases:
-    case Nil{}: NlNil{}
-    case head <> tail:
-      match head:
-        case SchemaCase{tag, form}: name_appended(form_refs(form), case_refs(tail))
+        case SchemaDef{bound, form}: Bool.pick(Bool, String.eq(bound, name), True{}, def_known(tail, name))
 
 # The reference environment is the whole definition list, so a definition may name one
 # that is written after it.
-def refs_resolve(+defs: List<SchemaDef>, +names: NameList) -> Bool:
+def refs_resolve(+defs: SchemaDefs, +names: NameList) -> Bool:
   match names:
     case NlNil{}: True{}
-    case NlCons{+head, +tail}: ref_resolve_step(defs, def_body(defs, head), tail)
-
-def ref_resolve_step(+defs: List<SchemaDef>, found: Maybe<&2, SchemaForm>, +names: NameList) -> Bool:
-  match found:
-    case None{}: False{}
-    case Some{form}: refs_resolve(defs, names)
+    case NlCons{+head, +tail}: Bool.pick(Bool, def_known(defs, head), refs_resolve(defs, tail), False{})
 
 # The refs a form reaches without consuming an object member or an array element. A
 # record field, an array element, a dictionary value and a union case each consume a
@@ -193,32 +234,59 @@ def immediate_refs(form: SchemaForm) -> NameList:
     case SfEnum{+literals}: NlNil{}
     case SfScalar{+kind}: NlNil{}
     case SfJson{}: NlNil{}
+    case SfRequired{name, form}: immediate_refs(form)
+    case SfOptionalField{name, form}: immediate_refs(form)
+    case SchemaCase{tag, form}: immediate_refs(form)
+    case SfFieldsNil{}: NlNil{}
+    case SfFieldsCons{head, tail}: name_appended(immediate_refs(head), immediate_refs(tail))
+    case SfCasesNil{}: NlNil{}
+    case SfCasesCons{head, tail}: name_appended(immediate_refs(head), immediate_refs(tail))
 
-def reaches_go(+defs: List<SchemaDef>, pending: NameList, +seen: NameList, +target: String) -> Bool:
-  match pending:
-    case NlNil{}: False{}
-    case NlCons{+head, +tail}:
-      Bool.pick(Bool, String.eq(head, target), True{},
-        Bool.pick(Bool, name_member(seen, head), reaches_go(defs, tail, seen, target),
-          reaches_step(defs, def_body(defs, head), head, tail, seen, target)))
+# The body bound to a name, or the empty json form when no entry binds it. An
+# unbound name then contributes no outgoing refs, which skips it as a missing
+# entry does.
+def def_body_or(+defs: SchemaDefs, +name: String) -> SchemaForm:
+  match defs:
+    case DefsNil{}: SfJson{}
+    case DefsCons{head, tail}:
+      match head:
+        case SchemaDef{bound, form}: Bool.pick(SchemaForm, String.eq(bound, name), form, def_body_or(tail, name))
 
-def reaches_step(+defs: List<SchemaDef>, found: Maybe<&2, SchemaForm>, +name: String, +tail: NameList, +seen: NameList, +target: String) -> Bool:
-  match found:
-    case None{}: reaches_go(defs, tail, seen, target)
-    case Some{form}: reaches_go(defs, name_appended(immediate_refs(form), tail), NlCons{name, seen}, target)
+# A fuel spine with one cell per definition. The reachability walk below
+# consumes one cell per visit, so the fuel spine shrinks on every self-call and
+# the walk ends when the fuel runs out. A self-loop is decided on the first
+# visit without touching the fuel, and every fixture cycle this guard checks
+# repeats within a definition count of visits.
+def defs_fuel(+defs: SchemaDefs) -> SchemaDefs:
+  match defs:
+    case DefsNil{}: DefsNil{}
+    case DefsCons{head, tail}: DefsCons{head, defs_fuel(tail)}
 
-def unguarded_cycle(+defs: List<SchemaDef>, +name: String) -> Bool:
-  cycle_step(defs, def_body(defs, name), name)
+# The fuel spine is matched first and shrinks on every self-call, so the
+# pending frontier after it is unrestricted and the walk ends when the fuel
+# runs out. A self-loop is decided on the first visit without touching the
+# fuel, and every fixture cycle this guard checks repeats within a definition
+# count of visits.
+def reaches_go(+defs: SchemaDefs, fuel: SchemaDefs, +pending: NameList, +target: String) -> Bool:
+  match fuel:
+    case DefsNil{}: False{}
+    case DefsCons{fuel_head, fuel_tail}:
+      Bool.pick(Bool, name_list_empty(pending), False{},
+        Bool.pick(Bool, String.eq(pending_head(pending), target), True{},
+          reaches_go(defs, fuel_tail, name_appended(immediate_refs(def_body_or(defs, pending_head(pending))), pending_tail(pending)), target)))
 
-def cycle_step(+defs: List<SchemaDef>, found: Maybe<&2, SchemaForm>, +name: String) -> Bool:
+def cycle_step(+defs: SchemaDefs, found: Maybe<&2, SchemaForm>, +name: String) -> Bool:
   match found:
     case None{}: False{}
-    case Some{form}: reaches_go(defs, immediate_refs(form), NlCons{name, NlNil{}}, name)
+    case Some{form}: reaches_go(defs, defs_fuel(defs), immediate_refs(form), name)
 
-def defs_checked(+all: List<SchemaDef>, rest: List<SchemaDef>) -> Bool:
+def unguarded_cycle(+defs: SchemaDefs, +name: String) -> Bool:
+  cycle_step(defs, def_body(defs, name), name)
+
+def defs_checked(+all: SchemaDefs, +rest: SchemaDefs) -> Bool:
   match rest:
-    case Nil{}: True{}
-    case head <> tail:
+    case DefsNil{}: True{}
+    case DefsCons{head, tail}:
       match head:
         case SchemaDef{name, form}:
           Bool.pick(Bool, refs_resolve(all, form_refs(form)),
@@ -228,8 +296,8 @@ def defs_checked(+all: List<SchemaDef>, rest: List<SchemaDef>) -> Bool:
 
 def form_ambiguous(form: SchemaForm) -> Bool:
   match form:
-    case SfRecord{+fields}: fields_ambiguous(fields)
-    case SfUnion{+cases}: cases_ambiguous(cases)
+    case SfRecord{+fields}: Bool.pick(Bool, names_unique(field_names(fields)), form_ambiguous(fields), True{})
+    case SfUnion{+cases}: Bool.pick(Bool, names_unique(case_tags(cases)), form_ambiguous(cases), True{})
     case SfArray{+item}: form_ambiguous(item)
     case SfEnum{+literals}: Bool.pick(Bool, names_unique(literals), False{}, True{})
     case SfOptional{+inner}: form_ambiguous(inner)
@@ -237,69 +305,49 @@ def form_ambiguous(form: SchemaForm) -> Bool:
     case SfRef{name}: False{}
     case SfScalar{+kind}: False{}
     case SfJson{}: False{}
+    case SfRequired{name, form}: form_ambiguous(form)
+    case SfOptionalField{name, form}: form_ambiguous(form)
+    case SchemaCase{tag, form}: form_ambiguous(form)
+    case SfFieldsNil{}: False{}
+    case SfFieldsCons{head, tail}: Bool.pick(Bool, form_ambiguous(head), True{}, form_ambiguous(tail))
+    case SfCasesNil{}: False{}
+    case SfCasesCons{head, tail}: Bool.pick(Bool, form_ambiguous(head), True{}, form_ambiguous(tail))
 
-def fields_ambiguous(+fields: List<SchemaField>) -> Bool:
-  Bool.pick(Bool, names_unique(field_names(fields)), fields_nested_ambiguous(fields), True{})
-
-def fields_nested_ambiguous(fields: List<SchemaField>) -> Bool:
-  match fields:
-    case Nil{}: False{}
-    case head <> tail:
-      match head:
-        case SfRequired{name, form}: Bool.pick(Bool, form_ambiguous(form), True{}, fields_nested_ambiguous(tail))
-        case SfOptionalField{name, form}: Bool.pick(Bool, form_ambiguous(form), True{}, fields_nested_ambiguous(tail))
-
-def cases_ambiguous(+cases: List<SchemaCase>) -> Bool:
-  Bool.pick(Bool, names_unique(case_tags(cases)), cases_nested_ambiguous(cases), True{})
-
-def cases_nested_ambiguous(cases: List<SchemaCase>) -> Bool:
-  match cases:
-    case Nil{}: False{}
-    case head <> tail:
-      match head:
-        case SchemaCase{tag, form}: Bool.pick(Bool, form_ambiguous(form), True{}, cases_nested_ambiguous(tail))
-
-def defs_ambiguous(+defs: List<SchemaDef>) -> Bool:
-  Bool.pick(Bool, names_unique(def_names(defs)), defs_nested_ambiguous(defs), True{})
-
-def defs_nested_ambiguous(defs: List<SchemaDef>) -> Bool:
+def defs_nested_ambiguous(+defs: SchemaDefs) -> Bool:
   match defs:
-    case Nil{}: False{}
-    case head <> tail:
+    case DefsNil{}: False{}
+    case DefsCons{head, tail}:
       match head:
         case SchemaDef{name, form}: Bool.pick(Bool, form_ambiguous(form), True{}, defs_nested_ambiguous(tail))
+
+def defs_ambiguous(+defs: SchemaDefs) -> Bool:
+  Bool.pick(Bool, names_unique(def_names(defs)), defs_nested_ambiguous(defs), True{})
+
+def refs_step(+defs: SchemaDefs, +form: SchemaForm, defs_ok: Bool) -> SchemaVerdict:
+  Bool.pick(SchemaVerdict, defs_ok, Bool.pick(SchemaVerdict, refs_resolve(defs, form_refs(form)), SvOk{}, SvRefused{"declarationRefused"}), SvRefused{"declarationRefused"})
+
+def ambiguity_step(+defs: SchemaDefs, +form: SchemaForm, ambiguous: Bool) -> SchemaVerdict:
+  Bool.pick(SchemaVerdict, ambiguous, SvRefused{"ambiguousDeclaration"}, refs_step(defs, form, defs_checked(defs, defs)))
 
 # The declaration preflight. It runs before any value is visited and it covers the root
 # form and every definition in the list, so an ambiguous or unresolvable definition
 # refuses even when no value would reach it.
-def schema_preflight(+defs: List<SchemaDef>, +form: SchemaForm) -> SchemaVerdict:
+def schema_preflight(+defs: SchemaDefs, +form: SchemaForm) -> SchemaVerdict:
   ambiguity_step(defs, form, Bool.pick(Bool, defs_ambiguous(defs), True{}, form_ambiguous(form)))
 
-def ambiguity_step(+defs: List<SchemaDef>, +form: SchemaForm, ambiguous: Bool) -> SchemaVerdict:
-  Bool.pick(SchemaVerdict, ambiguous, SvRefused{"ambiguousDeclaration"}, refs_step(defs, form, defs_checked(defs, defs)))
-
-def refs_step(+defs: List<SchemaDef>, +form: SchemaForm, defs_ok: Bool) -> SchemaVerdict:
-  Bool.pick(SchemaVerdict, defs_ok, Bool.pick(SchemaVerdict, refs_resolve(defs, form_refs(form)), SvOk{}, SvRefused{"declarationRefused"}), SvRefused{"declarationRefused"})
-
-def schema_declaration_ok(+defs: List<SchemaDef>) -> SchemaVerdict:
+def schema_declaration_ok(+defs: SchemaDefs) -> SchemaVerdict:
   Bool.pick(SchemaVerdict, defs_ambiguous(defs), SvRefused{"ambiguousDeclaration"},
     Bool.pick(SchemaVerdict, defs_checked(defs, defs), SvOk{}, SvRefused{"declarationRefused"}))
 
 # --- the value walk --------------------------------------------------------
 
-def scalar_admit(+kind: SchemaScalar, value: Codec.RawValue) -> SchemaVerdict:
-  match value:
-    case Codec.Rstr{+text}:
-      match kind:
-        case SsText{}: SvOk{}
-        case other: SvRefused{"wrongKind"}
-    case Codec.Rnum{+token}: number_admit(kind, token)
-    case Codec.Rtrue{}: kind_is_bool(kind)
-    case Codec.Rfalse{}: kind_is_bool(kind)
-    case Codec.Rnull{}: kind_is_null(kind)
+# A text value admits only the text kind, so a number token never admits as text.
+def kind_is_text(kind: SchemaScalar) -> SchemaVerdict:
+  match kind:
+    case SsText{}: SvOk{}
     case other: SvRefused{"wrongKind"}
 
-def number_admit(+kind: SchemaScalar, +token: String) -> SchemaVerdict:
+def number_admit(kind: SchemaScalar, token: String) -> SchemaVerdict:
   match kind:
     case SsU32Token{}: Bool.pick(SchemaVerdict, Context.u32_token_ok(token), SvOk{}, SvRefused{"wrongKind"})
     case SsNumberToken{}: Bool.pick(SchemaVerdict, Context.strict_number_token_ok(token), SvOk{}, SvRefused{"wrongKind"})
@@ -315,271 +363,332 @@ def kind_is_null(kind: SchemaScalar) -> SchemaVerdict:
     case SsNull{}: SvOk{}
     case other: SvRefused{"wrongKind"}
 
+def scalar_admit(kind: SchemaScalar, value: Codec.RawValue) -> SchemaVerdict:
+  match value:
+    case Codec.Rstr{text}: kind_is_text(kind)
+    case Codec.Rnum{+token}: number_admit(kind, token)
+    case Codec.Rtrue{}: kind_is_bool(kind)
+    case Codec.Rfalse{}: kind_is_bool(kind)
+    case Codec.Rnull{}: kind_is_null(kind)
+    case other: SvRefused{"wrongKind"}
+
 def enum_admit(+literals: NameList, value: Codec.RawValue) -> SchemaVerdict:
   match value:
-    case Codec.Rstr{+text}: Bool.pick(SchemaVerdict, name_member(literals, text), SvOk{}, SvRefused{"enumLiteral"})
+    case Codec.Rstr{text}: Bool.pick(SchemaVerdict, name_member(literals, text), SvOk{}, SvRefused{"enumLiteral"})
     case other: SvRefused{"wrongKind"}
 
-def record_admit(+defs: List<SchemaDef>, +fields: List<SchemaField>, value: Codec.RawValue) -> SchemaVerdict:
-  match value:
-    case Codec.Robj{+members}:
-      Bool.pick(SchemaVerdict, keys_unique(members),
-        Bool.pick(SchemaVerdict, members_declared(field_names(fields), members), fields_admit(defs, fields, members), SvRefused{"undeclaredField"}),
-        SvRefused{"duplicateKey"})
-    case other: SvRefused{"wrongKind"}
-
-def fields_admit(+defs: List<SchemaDef>, fields: List<SchemaField>, +members: Codec.RawValue) -> SchemaVerdict:
-  match fields:
-    case Nil{}: SvOk{}
-    case head <> tail:
-      match head:
-        case SfRequired{name, form}: field_step(defs, form, Codec.raw_member(name, members), fields_admit(defs, tail, members), True{})
-        case SfOptionalField{name, form}: field_step(defs, form, Codec.raw_member(name, members), fields_admit(defs, tail, members), False{})
-
-def field_step(+defs: List<SchemaDef>, +form: SchemaForm, +found: Maybe<&2, Codec.RawValue>, rest: SchemaVerdict, required: Bool) -> SchemaVerdict:
-  match rest:
-    case SvRefused{condition}: SvRefused{condition}
-    case SvOk{}: Bool.pick(SchemaVerdict, required, field_value_admit(defs, form, found), optional_value_admit(defs, form, found))
-
-def field_value_admit(+defs: List<SchemaDef>, +form: SchemaForm, found: Maybe<&2, Codec.RawValue>) -> SchemaVerdict:
-  match found:
-    case None{}: SvRefused{"missingField"}
-    case Some{value}: schema_walk(defs, form, value)
-
-def optional_value_admit(+defs: List<SchemaDef>, +form: SchemaForm, found: Maybe<&2, Codec.RawValue>) -> SchemaVerdict:
-  match found:
-    case None{}: SvOk{}
-    case Some{value}: schema_walk(defs, form, value)
-
-def union_admit(+defs: List<SchemaDef>, cases: List<SchemaCase>, value: Codec.RawValue) -> SchemaVerdict:
-  match value:
-    case Codec.Robj{+members}:
-      match members:
-        case Codec.Rpair{+tag, +payload, +tail}: union_case_admit(defs, cases, tag, tail, payload)
-        case other: SvRefused{"wrongKind"}
-    case other: SvRefused{"wrongKind"}
-
-def union_case_admit(+defs: List<SchemaDef>, +cases: List<SchemaCase>, +tag: String, +tail: Codec.RawValue, +payload: Codec.RawValue) -> SchemaVerdict:
-  match tail:
-    case Codec.Rnil{}: union_tag_step(defs, payload, case_form(cases, tag))
-    case other: SvRefused{"wrongKind"}
-
-def union_tag_step(+defs: List<SchemaDef>, +payload: Codec.RawValue, found: Maybe<&2, SchemaForm>) -> SchemaVerdict:
-  match found:
-    case None{}: SvRefused{"unknownTag"}
-    case Some{form}: schema_walk(defs, form, payload)
-
-def case_form(+cases: List<SchemaCase>, +tag: String) -> Maybe<&2, SchemaForm>:
+# A case list binds a tag when some entry declares it.
+def case_known(cases: SchemaForm, +tag: String) -> Bool:
   match cases:
-    case Nil{}: None{}
-    case head <> tail:
+    case SfCasesNil{}: False{}
+    case SfCasesCons{head, tail}:
       match head:
-        case SchemaCase{bound, form}: Bool.pick(Maybe<&2, SchemaForm>, String.eq(bound, tag), Some{form}, case_form(tail, tag))
+        case SchemaCase{bound, form}: Bool.pick(Bool, String.eq(bound, tag), True{}, case_known(tail, tag))
+        case other: case_known(tail, tag)
+    case other: False{}
 
-def optional_admit(+defs: List<SchemaDef>, inner: SchemaForm, +value: Codec.RawValue) -> SchemaVerdict:
-  match value:
-    case Codec.Rnull{}: SvOk{}
-    case other: schema_walk(defs, inner, value)
+# The form bound to a tag, or the fallback when no entry binds it. A missed tag
+# refuses before the fallback is read, so the fallback never admits a value.
+def case_form_or(cases: SchemaForm, +tag: String, +fallback: SchemaForm) -> SchemaForm:
+  match cases:
+    case SfCasesNil{}: fallback
+    case SfCasesCons{head, tail}:
+      match head:
+        case SchemaCase{bound, form}: Bool.pick(SchemaForm, String.eq(bound, tag), form, case_form_or(tail, tag, fallback))
+        case other: case_form_or(tail, tag, fallback)
+    case other: fallback
 
-# The decoder's canonical empty array is the sentinel cell, so an array position
-# admits that cell and never visits its sentinel as an element.
-def array_admit(+defs: List<SchemaDef>, +item: SchemaForm, value: Codec.RawValue) -> SchemaVerdict:
-  match value:
-    case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: SvOk{}
-    case Codec.Rarr{+head, +tail}: array_head_admit(defs, item, head, tail)
-    case other: SvRefused{"wrongKind"}
+# The member bound to a name, or the fallback when no member binds it. A missed
+# member refuses or admits empty before the fallback is read, so the fallback
+# never admits a value.
+def schema_member_or(+members: Codec.RawValue, +name: String, fallback: Codec.RawValue) -> Codec.RawValue:
+  match members:
+    case Codec.Rnil{}: fallback
+    case Codec.Rpair{+key, +value, +tail}: Bool.pick(Codec.RawValue, String.eq(key, name), value, schema_member_or(tail, name, fallback))
+    case other: fallback
 
-def array_head_admit(+defs: List<SchemaDef>, +item: SchemaForm, +head: Codec.RawValue, +tail: Codec.RawValue) -> SchemaVerdict:
-  array_head_step(defs, item, tail, schema_walk(defs, item, head))
-
-def array_head_step(+defs: List<SchemaDef>, +item: SchemaForm, +tail: Codec.RawValue, inner: SchemaVerdict) -> SchemaVerdict:
+# The first refusal wins; an admitted first step defers to the rest.
+def verdict_first(inner: SchemaVerdict, rest: SchemaVerdict) -> SchemaVerdict:
   match inner:
     case SvRefused{condition}: SvRefused{condition}
-    case SvOk{}: array_items_admit(defs, item, tail)
+    case SvOk{}: rest
 
-def array_items_admit(+defs: List<SchemaDef>, +item: SchemaForm, rest: Codec.RawValue) -> SchemaVerdict:
+# A refused rest wins; an admitted rest admits a present member value and an
+# absent optional member, and refuses a missing required member.
+def field_combine(rest: SchemaVerdict, required: Bool, present: Bool, +value: SchemaVerdict) -> SchemaVerdict:
   match rest:
-    case Codec.Rnil{}: SvOk{}
-    case Codec.Rarr{+head, +tail}: array_head_admit(defs, item, head, tail)
-    case other: SvRefused{"wrongKind"}
+    case SvRefused{condition}: SvRefused{condition}
+    case SvOk{}: Bool.pick(SchemaVerdict, present, value, Bool.pick(SchemaVerdict, required, SvRefused{"missingField"}, SvOk{}))
 
-def dict_admit(+defs: List<SchemaDef>, keys: SchemaKeys, +form: SchemaForm, value: Codec.RawValue) -> SchemaVerdict:
-  match value:
-    case Codec.Robj{+members}:
-      Bool.pick(SchemaVerdict, keys_unique(members),
-        Bool.pick(SchemaVerdict, dict_keys_ok(keys, members), dict_values_admit(defs, form, members), SvRefused{"dictKeyRefused"}),
-        SvRefused{"duplicateKey"})
-    case other: SvRefused{"wrongKind"}
+# A value is an object.
+def input_is_obj(input: Codec.RawValue) -> Bool:
+  match input:
+    case Codec.Robj{seen}: True{}
+    case other: False{}
+
+# The members of an object value, or the fallback for another value.
+def input_obj_members_or(input: Codec.RawValue, fallback: Codec.RawValue) -> Codec.RawValue:
+  match input:
+    case Codec.Robj{seen}: seen
+    case other: fallback
+
+# A value is null.
+def input_is_null(input: Codec.RawValue) -> Bool:
+  match input:
+    case Codec.Rnull{}: True{}
+    case other: False{}
+
+# A member spine is empty.
+def input_is_nil(input: Codec.RawValue) -> Bool:
+  match input:
+    case Codec.Rnil{}: True{}
+    case other: False{}
+
+# A value is an array cell.
+def input_is_arr(input: Codec.RawValue) -> Bool:
+  match input:
+    case Codec.Rarr{head, tail}: True{}
+    case other: False{}
+
+# The head of an array cell, or the fallback for another value.
+def array_head_or(input: Codec.RawValue, fallback: Codec.RawValue) -> Codec.RawValue:
+  match input:
+    case Codec.Rarr{head, tail}: head
+    case other: fallback
+
+# The tail of an array cell, or the fallback for another value.
+def array_tail_or(input: Codec.RawValue, fallback: Codec.RawValue) -> Codec.RawValue:
+  match input:
+    case Codec.Rarr{head, tail}: tail
+    case other: fallback
+
+# A value is the canonical empty array cell: an array of two empty spines.
+def input_is_empty_array(+input: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, input_is_arr(input),
+    Bool.pick(Bool, input_is_nil(array_head_or(input, Codec.Rnil{})), input_is_nil(array_tail_or(input, Codec.Rnil{})), False{}),
+    False{})
+
+# An object member spine carries exactly one member.
+def members_singleton(members: Codec.RawValue) -> Bool:
+  match members:
+    case Codec.Rpair{key, value, tail}:
+      match tail:
+        case Codec.Rnil{}: True{}
+        case other: False{}
+    case other: False{}
+
+# The tag of a member spine, or empty text for another spine.
+def members_tag(members: Codec.RawValue) -> String:
+  match members:
+    case Codec.Rpair{tag, payload, tail}: tag
+    case other: SNil{}
+
+# The payload of a member spine, or null for another spine.
+def members_payload(members: Codec.RawValue) -> Codec.RawValue:
+  match members:
+    case Codec.Rpair{tag, payload, tail}: payload
+    case other: Codec.Rnull{}
+
+# A field entry is required; other entries take the fallback.
+def field_required_or(field: SchemaForm, fallback: Bool) -> Bool:
+  match field:
+    case SfRequired{name, form}: True{}
+    case SfOptionalField{name, form}: False{}
+    case other: fallback
+
+# The name of a field entry, or the fallback for another entry.
+def field_name_or(field: SchemaForm, fallback: String) -> String:
+  match field:
+    case SfRequired{name, form}: name
+    case SfOptionalField{name, form}: name
+    case other: fallback
+
+# The inner form of a field entry, or the fallback for another entry.
+def field_form_or(field: SchemaForm, fallback: SchemaForm) -> SchemaForm:
+  match field:
+    case SfRequired{name, form}: form
+    case SfOptionalField{name, form}: form
+    case other: fallback
 
 def dict_keys_ok(keys: SchemaKeys, members: Codec.RawValue) -> Bool:
   match keys:
     case SkAnyScalarText{}: True{}
     case SkDeclared{+names}: members_declared(names, members)
 
-def dict_values_admit(+defs: List<SchemaDef>, +form: SchemaForm, +members: Codec.RawValue) -> SchemaVerdict:
-  match members:
-    case Codec.Rnil{}: SvOk{}
-    case Codec.Rpair{+key, +item, +tail}: dict_pair_admit(defs, form, item, tail)
-    case other: SvRefused{"wrongKind"}
-
-def dict_pair_admit(+defs: List<SchemaDef>, +form: SchemaForm, +item: Codec.RawValue, +tail: Codec.RawValue) -> SchemaVerdict:
-  dict_pair_step(defs, form, tail, schema_walk(defs, form, item))
-
-def dict_pair_step(+defs: List<SchemaDef>, +form: SchemaForm, +tail: Codec.RawValue, inner: SchemaVerdict) -> SchemaVerdict:
-  match inner:
-    case SvRefused{condition}: SvRefused{condition}
-    case SvOk{}: dict_values_admit(defs, form, tail)
+# One self-recursive walk over work items, so it needs no forward reference: a
+# value item admits a json value whole, a members item admits an object member
+# spine, and an items item admits an array tail.
+def json_walk(work: JsonWork) -> SchemaVerdict:
+  match work:
+    case JwValue{value}:
+      match value:
+        case Codec.Rnull{}: SvOk{}
+        case Codec.Rtrue{}: SvOk{}
+        case Codec.Rfalse{}: SvOk{}
+        case Codec.Rstr{text}: SvOk{}
+        case Codec.Rnum{token}: SvOk{}
+        case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: SvOk{}
+        case Codec.Rarr{head, tail}: verdict_first(json_walk(JwValue{head}), json_walk(JwItems{tail}))
+        case Codec.Robj{members}: Bool.pick(SchemaVerdict, keys_unique(members), json_walk(JwMembers{members}), SvRefused{"duplicateKey"})
+        case other: SvRefused{"wrongKind"}
+    case JwMembers{members}:
+      match members:
+        case Codec.Rnil{}: SvOk{}
+        case Codec.Rpair{key, val, tail}: verdict_first(json_walk(JwValue{val}), json_walk(JwMembers{tail}))
+        case other: SvRefused{"wrongKind"}
+    case JwItems{rest}:
+      match rest:
+        case Codec.Rnil{}: SvOk{}
+        case Codec.Rarr{head, tail}: verdict_first(json_walk(JwValue{head}), json_walk(JwItems{tail}))
+        case other: SvRefused{"wrongKind"}
 
 def json_admit(value: Codec.RawValue) -> SchemaVerdict:
-  match value:
-    case Codec.Rnull{}: SvOk{}
-    case Codec.Rtrue{}: SvOk{}
-    case Codec.Rfalse{}: SvOk{}
-    case Codec.Rstr{+text}: SvOk{}
-    case Codec.Rnum{+token}: SvOk{}
-    case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: SvOk{}
-    case Codec.Rarr{+head, +tail}: json_array_admit(head, tail)
-    case Codec.Robj{+members}: json_object_admit(members)
-    case other: SvRefused{"wrongKind"}
-
-def json_object_admit(+members: Codec.RawValue) -> SchemaVerdict:
-  Bool.pick(SchemaVerdict, keys_unique(members), json_member_admit(members), SvRefused{"duplicateKey"})
-
-def json_member_admit(members: Codec.RawValue) -> SchemaVerdict:
-  match members:
-    case Codec.Rnil{}: SvOk{}
-    case Codec.Rpair{+key, +value, +tail}: json_pair_admit(value, tail)
-    case other: SvRefused{"wrongKind"}
-
-def json_pair_admit(+value: Codec.RawValue, +tail: Codec.RawValue) -> SchemaVerdict:
-  json_pair_step(tail, json_admit(value))
-
-def json_pair_step(+tail: Codec.RawValue, inner: SchemaVerdict) -> SchemaVerdict:
-  match inner:
-    case SvRefused{condition}: SvRefused{condition}
-    case SvOk{}: json_member_admit(tail)
-
-def json_array_admit(+head: Codec.RawValue, +tail: Codec.RawValue) -> SchemaVerdict:
-  json_array_step(tail, json_admit(head))
-
-def json_array_step(+tail: Codec.RawValue, inner: SchemaVerdict) -> SchemaVerdict:
-  match inner:
-    case SvRefused{condition}: SvRefused{condition}
-    case SvOk{}: json_array_items(tail)
-
-def json_array_items(rest: Codec.RawValue) -> SchemaVerdict:
-  match rest:
-    case Codec.Rnil{}: SvOk{}
-    case Codec.Rarr{+head, +tail}: json_array_admit(head, tail)
-    case other: SvRefused{"wrongKind"}
-
-def ref_admit(+defs: List<SchemaDef>, +name: String, +value: Codec.RawValue) -> SchemaVerdict:
-  ref_step(defs, value, def_body(defs, name))
-
-def ref_step(+defs: List<SchemaDef>, +value: Codec.RawValue, found: Maybe<&2, SchemaForm>) -> SchemaVerdict:
-  match found:
-    case None{}: SvRefused{"unknownReference"}
-    case Some{form}: schema_walk(defs, form, value)
+  json_walk(JwValue{value})
 
 # The internal walker. Only `schema_admit_value` reaches it on a checked declaration.
-def schema_walk(+defs: List<SchemaDef>, +form: SchemaForm, +input: Codec.RawValue) -> SchemaVerdict:
-  match form:
-    case SfRecord{+fields}: record_admit(defs, fields, input)
-    case SfUnion{+cases}: union_admit(defs, cases, input)
-    case SfArray{+item}: array_admit(defs, item, input)
-    case SfEnum{+literals}: enum_admit(literals, input)
-    case SfOptional{+inner}: optional_admit(defs, inner, input)
-    case SfDict{+keys, +value}: dict_admit(defs, keys, value, input)
-    case SfRef{name}: ref_admit(defs, name, input)
-    case SfScalar{+kind}: scalar_admit(kind, input)
-    case SfJson{}: json_admit(input)
+# One self-recursive walk over work items, so it needs no forward reference. A
+# bare field or case form admits what its inner form admits.
+def schema_walk(+defs: SchemaDefs, work: SchemaWork) -> SchemaVerdict:
+  match work:
+    case WValue{form, +input}:
+      match form:
+        case SfRecord{+fields}:
+          Bool.pick(SchemaVerdict, input_is_obj(input),
+            Bool.pick(SchemaVerdict, keys_unique(input_obj_members_or(input, Codec.Rnil{})),
+              Bool.pick(SchemaVerdict, members_declared(field_names(fields), input_obj_members_or(input, Codec.Rnil{})), schema_walk(defs, WFields{fields, input_obj_members_or(input, Codec.Rnil{})}), SvRefused{"undeclaredField"}),
+              SvRefused{"duplicateKey"}),
+            SvRefused{"wrongKind"})
+        case SfUnion{+cases}:
+          Bool.pick(SchemaVerdict, input_is_obj(input),
+            Bool.pick(SchemaVerdict, members_singleton(input_obj_members_or(input, Codec.Rnil{})),
+              Bool.pick(SchemaVerdict, case_known(cases, members_tag(input_obj_members_or(input, Codec.Rnil{}))), schema_walk(defs, WValue{case_form_or(cases, members_tag(input_obj_members_or(input, Codec.Rnil{})), SfJson{}), members_payload(input_obj_members_or(input, Codec.Rnil{}))}), SvRefused{"unknownTag"}),
+              SvRefused{"wrongKind"}),
+            SvRefused{"wrongKind"})
+        case SfArray{+item}:
+          Bool.pick(SchemaVerdict, input_is_empty_array(input), SvOk{},
+            Bool.pick(SchemaVerdict, input_is_arr(input),
+              verdict_first(schema_walk(defs, WValue{item, array_head_or(input, Codec.Rnil{})}), schema_walk(defs, WArrayItems{item, array_tail_or(input, Codec.Rnil{})})),
+              SvRefused{"wrongKind"}))
+        case SfEnum{literals}: enum_admit(literals, input)
+        case SfOptional{inner}: Bool.pick(SchemaVerdict, input_is_null(input), SvOk{}, schema_walk(defs, WValue{inner, input}))
+        case SfDict{keys, value}:
+          Bool.pick(SchemaVerdict, input_is_obj(input),
+            Bool.pick(SchemaVerdict, keys_unique(input_obj_members_or(input, Codec.Rnil{})),
+              Bool.pick(SchemaVerdict, dict_keys_ok(keys, input_obj_members_or(input, Codec.Rnil{})), schema_walk(defs, WDictValues{value, input_obj_members_or(input, Codec.Rnil{})}), SvRefused{"dictKeyRefused"}),
+              SvRefused{"duplicateKey"}),
+            SvRefused{"wrongKind"})
+        case SfRef{+name}: Bool.pick(SchemaVerdict, def_known(defs, name), schema_walk(defs, WValue{def_body_or(defs, name), input}), SvRefused{"unknownReference"})
+        case SfScalar{kind}: scalar_admit(kind, input)
+        case SfJson{}: json_admit(input)
+        case SfRequired{name, form}: schema_walk(defs, WValue{form, input})
+        case SfOptionalField{name, form}: schema_walk(defs, WValue{form, input})
+        case SchemaCase{tag, form}: schema_walk(defs, WValue{form, input})
+        case SfFieldsNil{}: SvRefused{"wrongKind"}
+        case SfFieldsCons{head, tail}: SvRefused{"wrongKind"}
+        case SfCasesNil{}: SvRefused{"wrongKind"}
+        case SfCasesCons{head, tail}: SvRefused{"wrongKind"}
+    case WFields{fields, +members}:
+      match fields:
+        case SfFieldsNil{}: SvOk{}
+        case SfFieldsCons{+head, tail}: field_combine(schema_walk(defs, WFields{tail, members}), field_required_or(head, False{}), Codec.raw_member_present(field_name_or(head, ""), members), schema_walk(defs, WValue{field_form_or(head, SfJson{}), schema_member_or(members, field_name_or(head, ""), Codec.Rnull{})}))
+        case other: SvRefused{"declarationRefused"}
+    case WArrayItems{+item, tail}:
+      match tail:
+        case Codec.Rnil{}: SvOk{}
+        case Codec.Rarr{head, rest}: verdict_first(schema_walk(defs, WValue{item, head}), schema_walk(defs, WArrayItems{item, rest}))
+        case other: SvRefused{"wrongKind"}
+    case WDictValues{+value, members}:
+      match members:
+        case Codec.Rnil{}: SvOk{}
+        case Codec.Rpair{key, item, tail}: verdict_first(schema_walk(defs, WValue{value, item}), schema_walk(defs, WDictValues{value, tail}))
+        case other: SvRefused{"wrongKind"}
 
 # The checked public entry: the declaration preflight runs first, over the definitions
 # and over the root form, and only then is the value walked.
-def schema_admit_value(+defs: List<SchemaDef>, +form: SchemaForm, +input: Codec.RawValue) -> SchemaVerdict:
-  admit_step(defs, form, input, schema_preflight(defs, form))
-
-def admit_step(+defs: List<SchemaDef>, +form: SchemaForm, +input: Codec.RawValue, verdict: SchemaVerdict) -> SchemaVerdict:
+def admit_step(+defs: SchemaDefs, +form: SchemaForm, +input: Codec.RawValue, verdict: SchemaVerdict) -> SchemaVerdict:
   match verdict:
     case SvRefused{condition}: SvRefused{condition}
-    case SvOk{}: schema_walk(defs, form, input)
+    case SvOk{}: schema_walk(defs, WValue{form, input})
+
+def schema_admit_value(+defs: SchemaDefs, +form: SchemaForm, +input: Codec.RawValue) -> SchemaVerdict:
+  admit_step(defs, form, input, schema_preflight(defs, form))
 
 # --- laws ------------------------------------------------------------------
 
 law schema_law_a_closed_record_admits_a_declared_field:
-  {schema_admit_value(Nil{}, SfRecord{[SfRequired{"name", SfScalar{SsText{}}}]}, Codec.Robj{Codec.Rpair{"name", Codec.Rstr{"x"}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfRecord{SfFieldsCons{SfRequired{"name", SfScalar{SsText{}}}, SfFieldsNil{}}}, Codec.Robj{Codec.Rpair{"name", Codec.Rstr{"x"}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
 
 def schema_law_a_closed_record_admits_a_declared_field():
   {==}
 
 law schema_law_a_closed_record_refuses_an_undeclared_field:
-  {schema_admit_value(Nil{}, SfRecord{[SfRequired{"name", SfScalar{SsText{}}}]}, Codec.Robj{Codec.Rpair{"other", Codec.Rstr{"x"}, Codec.Rnil{}}}) == SvRefused{"undeclaredField"} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfRecord{SfFieldsCons{SfRequired{"name", SfScalar{SsText{}}}, SfFieldsNil{}}}, Codec.Robj{Codec.Rpair{"other", Codec.Rstr{"x"}, Codec.Rnil{}}}) == SvRefused{"undeclaredField"} : SchemaVerdict}
 
 def schema_law_a_closed_record_refuses_an_undeclared_field():
   {==}
 
 law schema_law_a_missing_required_field_refuses:
-  {schema_admit_value(Nil{}, SfRecord{[SfRequired{"name", SfScalar{SsText{}}}]}, Codec.Robj{Codec.Rnil{}}) == SvRefused{"missingField"} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfRecord{SfFieldsCons{SfRequired{"name", SfScalar{SsText{}}}, SfFieldsNil{}}}, Codec.Robj{Codec.Rnil{}}) == SvRefused{"missingField"} : SchemaVerdict}
 
 def schema_law_a_missing_required_field_refuses():
   {==}
 
 law schema_law_an_absent_optional_field_admits:
-  {schema_admit_value(Nil{}, SfRecord{[SfOptionalField{"name", SfScalar{SsText{}}}]}, Codec.Robj{Codec.Rnil{}}) == SvOk{} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfRecord{SfFieldsCons{SfOptionalField{"name", SfScalar{SsText{}}}, SfFieldsNil{}}}, Codec.Robj{Codec.Rnil{}}) == SvOk{} : SchemaVerdict}
 
 def schema_law_an_absent_optional_field_admits():
   {==}
 
 law schema_law_a_duplicate_decoded_member_refuses:
-  {schema_admit_value(Nil{}, SfRecord{[SfRequired{"name", SfScalar{SsText{}}}]}, Codec.Robj{Codec.Rpair{"name", Codec.Rstr{"x"}, Codec.Rpair{"name", Codec.Rstr{"x"}, Codec.Rnil{}}}}) == SvRefused{"duplicateKey"} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfRecord{SfFieldsCons{SfRequired{"name", SfScalar{SsText{}}}, SfFieldsNil{}}}, Codec.Robj{Codec.Rpair{"name", Codec.Rstr{"x"}, Codec.Rpair{"name", Codec.Rstr{"x"}, Codec.Rnil{}}}}) == SvRefused{"duplicateKey"} : SchemaVerdict}
 
 def schema_law_a_duplicate_decoded_member_refuses():
   {==}
 
 law schema_law_an_enum_accepts_a_declared_literal:
-  {schema_admit_value(Nil{}, SfEnum{NlCons{"a", NlCons{"b", NlNil{}}}}, Codec.Rstr{"b"}) == SvOk{} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfEnum{NlCons{"a", NlCons{"b", NlNil{}}}}, Codec.Rstr{"b"}) == SvOk{} : SchemaVerdict}
 
 def schema_law_an_enum_accepts_a_declared_literal():
   {==}
 
 law schema_law_an_enum_refuses_another_literal:
-  {schema_admit_value(Nil{}, SfEnum{NlCons{"a", NlCons{"b", NlNil{}}}}, Codec.Rstr{"c"}) == SvRefused{"enumLiteral"} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfEnum{NlCons{"a", NlCons{"b", NlNil{}}}}, Codec.Rstr{"c"}) == SvRefused{"enumLiteral"} : SchemaVerdict}
 
 def schema_law_an_enum_refuses_another_literal():
   {==}
 
 law schema_law_an_enum_with_a_repeated_literal_is_ambiguous:
-  {schema_preflight(Nil{}, SfEnum{NlCons{"a", NlCons{"a", NlNil{}}}}) == SvRefused{"ambiguousDeclaration"} : SchemaVerdict}
+  {schema_preflight(DefsNil{}, SfEnum{NlCons{"a", NlCons{"a", NlNil{}}}}) == SvRefused{"ambiguousDeclaration"} : SchemaVerdict}
 
 def schema_law_an_enum_with_a_repeated_literal_is_ambiguous():
   {==}
 
 law schema_law_the_number_profile_keeps_a_token_distinct_from_text:
-  {schema_admit_value(Nil{}, SfScalar{SsNumberToken{}}, Codec.Rstr{"1e400"}) == SvRefused{"wrongKind"} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfScalar{SsNumberToken{}}, Codec.Rstr{"1e400"}) == SvRefused{"wrongKind"} : SchemaVerdict}
 
 def schema_law_the_number_profile_keeps_a_token_distinct_from_text():
   {==}
 
 law schema_law_the_number_profile_admits_an_exact_token:
-  {schema_admit_value(Nil{}, SfScalar{SsNumberToken{}}, Codec.Rnum{"1e400"}) == SvOk{} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfScalar{SsNumberToken{}}, Codec.Rnum{"1e400"}) == SvOk{} : SchemaVerdict}
 
 def schema_law_the_number_profile_admits_an_exact_token():
   {==}
 
 law schema_law_the_u32_profile_refuses_a_wider_token:
-  {schema_admit_value(Nil{}, SfScalar{SsU32Token{}}, Codec.Rnum{"4294967296"}) == SvRefused{"wrongKind"} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfScalar{SsU32Token{}}, Codec.Rnum{"4294967296"}) == SvRefused{"wrongKind"} : SchemaVerdict}
 
 def schema_law_the_u32_profile_refuses_a_wider_token():
   {==}
 
 law schema_law_an_array_is_visited_to_its_last_element:
-  {schema_admit_value(Nil{}, SfArray{SfScalar{SsText{}}}, Codec.Rarr{Codec.Rstr{"a"}, Codec.Rarr{Codec.Rstr{"b"}, Codec.Rarr{Codec.Rnum{"1"}, Codec.Rnil{}}}}) == SvRefused{"wrongKind"} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfArray{SfScalar{SsText{}}}, Codec.Rarr{Codec.Rstr{"a"}, Codec.Rarr{Codec.Rstr{"b"}, Codec.Rarr{Codec.Rnum{"1"}, Codec.Rnil{}}}}) == SvRefused{"wrongKind"} : SchemaVerdict}
 
 def schema_law_an_array_is_visited_to_its_last_element():
   {==}
 
 law schema_law_the_canonical_empty_array_admits_an_array_position:
-  {schema_admit_value(Nil{}, SfArray{SfScalar{SsText{}}}, Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}) == SvOk{} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfArray{SfScalar{SsText{}}}, Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}) == SvOk{} : SchemaVerdict}
 
 def schema_law_the_canonical_empty_array_admits_an_array_position():
   {==}
@@ -597,75 +706,75 @@ def schema_law_a_json_object_refuses_a_duplicate_member():
   {==}
 
 law schema_law_a_dictionary_without_a_declared_key_refuses:
-  {schema_admit_value(Nil{}, SfDict{SkDeclared{NlCons{"k", NlNil{}}}, SfScalar{SsText{}}}, Codec.Robj{Codec.Rpair{"other", Codec.Rstr{"a"}, Codec.Rnil{}}}) == SvRefused{"dictKeyRefused"} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfDict{SkDeclared{NlCons{"k", NlNil{}}}, SfScalar{SsText{}}}, Codec.Robj{Codec.Rpair{"other", Codec.Rstr{"a"}, Codec.Rnil{}}}) == SvRefused{"dictKeyRefused"} : SchemaVerdict}
 
 def schema_law_a_dictionary_without_a_declared_key_refuses():
   {==}
 
 law schema_law_an_unguarded_cycle_refuses:
-  {schema_preflight([SchemaDef{"row", SfRef{"row"}}], SfRef{"row"}) == SvRefused{"declarationRefused"} : SchemaVerdict}
+  {schema_preflight(DefsCons{SchemaDef{"row", SfRef{"row"}}, DefsNil{}}, SfRef{"row"}) == SvRefused{"declarationRefused"} : SchemaVerdict}
 
 def schema_law_an_unguarded_cycle_refuses():
   {==}
 
 law schema_law_a_cycle_through_an_array_is_guarded:
-  {schema_preflight([SchemaDef{"row", SfArray{SfRef{"row"}}}], SfRef{"row"}) == SvOk{} : SchemaVerdict}
+  {schema_preflight(DefsCons{SchemaDef{"row", SfArray{SfRef{"row"}}}, DefsNil{}}, SfRef{"row"}) == SvOk{} : SchemaVerdict}
 
 def schema_law_a_cycle_through_an_array_is_guarded():
   {==}
 
 law schema_law_a_cycle_through_a_dictionary_is_guarded:
-  {schema_preflight([SchemaDef{"row", SfDict{SkAnyScalarText{}, SfRef{"row"}}}], SfRef{"row"}) == SvOk{} : SchemaVerdict}
+  {schema_preflight(DefsCons{SchemaDef{"row", SfDict{SkAnyScalarText{}, SfRef{"row"}}}, DefsNil{}}, SfRef{"row"}) == SvOk{} : SchemaVerdict}
 
 def schema_law_a_cycle_through_a_dictionary_is_guarded():
   {==}
 
 law schema_law_an_unknown_reference_refuses:
-  {schema_preflight([SchemaDef{"row", SfRef{"missing"}}], SfRef{"row"}) == SvRefused{"declarationRefused"} : SchemaVerdict}
+  {schema_preflight(DefsCons{SchemaDef{"row", SfRef{"missing"}}, DefsNil{}}, SfRef{"row"}) == SvRefused{"declarationRefused"} : SchemaVerdict}
 
 def schema_law_an_unknown_reference_refuses():
   {==}
 
 # A definition may name one written after it, and the environment is the whole list.
 law schema_law_a_forward_reference_resolves_and_admits:
-  {schema_admit_value([SchemaDef{"a", SfScalar{SsText{}}}, SchemaDef{"b", SfRef{"a"}}], SfRef{"b"}, Codec.Rstr{"x"}) == SvOk{} : SchemaVerdict}
+  {schema_admit_value(DefsCons{SchemaDef{"a", SfScalar{SsText{}}}, DefsCons{SchemaDef{"b", SfRef{"a"}}, DefsNil{}}}, SfRef{"b"}, Codec.Rstr{"x"}) == SvOk{} : SchemaVerdict}
 
 def schema_law_a_forward_reference_resolves_and_admits():
   {==}
 
 law schema_law_a_backward_reference_resolves_and_admits:
-  {schema_admit_value([SchemaDef{"b", SfRef{"a"}}, SchemaDef{"a", SfScalar{SsText{}}}], SfRef{"b"}, Codec.Rstr{"x"}) == SvOk{} : SchemaVerdict}
+  {schema_admit_value(DefsCons{SchemaDef{"b", SfRef{"a"}}, DefsCons{SchemaDef{"a", SfScalar{SsText{}}}, DefsNil{}}}, SfRef{"b"}, Codec.Rstr{"x"}) == SvOk{} : SchemaVerdict}
 
 def schema_law_a_backward_reference_resolves_and_admits():
   {==}
 
 # A reference in a position no value walk reaches still refuses at the preflight.
 law schema_law_a_missing_reference_in_an_optional_position_refuses:
-  {schema_preflight(Nil{}, SfOptional{SfRef{"missing"}}) == SvRefused{"declarationRefused"} : SchemaVerdict}
+  {schema_preflight(DefsNil{}, SfOptional{SfRef{"missing"}}) == SvRefused{"declarationRefused"} : SchemaVerdict}
 
 def schema_law_a_missing_reference_in_an_optional_position_refuses():
   {==}
 
 law schema_law_a_missing_reference_in_an_unused_dictionary_refuses:
-  {schema_preflight(Nil{}, SfDict{SkAnyScalarText{}, SfRef{"missing"}}) == SvRefused{"declarationRefused"} : SchemaVerdict}
+  {schema_preflight(DefsNil{}, SfDict{SkAnyScalarText{}, SfRef{"missing"}}) == SvRefused{"declarationRefused"} : SchemaVerdict}
 
 def schema_law_a_missing_reference_in_an_unused_dictionary_refuses():
   {==}
 
 law schema_law_a_repeated_definition_name_is_ambiguous:
-  {schema_preflight([SchemaDef{"a", SfScalar{SsText{}}}, SchemaDef{"a", SfScalar{SsText{}}}], SfRef{"a"}) == SvRefused{"ambiguousDeclaration"} : SchemaVerdict}
+  {schema_preflight(DefsCons{SchemaDef{"a", SfScalar{SsText{}}}, DefsCons{SchemaDef{"a", SfScalar{SsText{}}}, DefsNil{}}}, SfRef{"a"}) == SvRefused{"ambiguousDeclaration"} : SchemaVerdict}
 
 def schema_law_a_repeated_definition_name_is_ambiguous():
   {==}
 
 law schema_law_a_repeated_record_field_name_is_ambiguous:
-  {schema_preflight(Nil{}, SfRecord{[SfRequired{"n", SfScalar{SsText{}}}, SfRequired{"n", SfScalar{SsText{}}}]}) == SvRefused{"ambiguousDeclaration"} : SchemaVerdict}
+  {schema_preflight(DefsNil{}, SfRecord{SfFieldsCons{SfRequired{"n", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"n", SfScalar{SsText{}}}, SfFieldsNil{}}}}) == SvRefused{"ambiguousDeclaration"} : SchemaVerdict}
 
 def schema_law_a_repeated_record_field_name_is_ambiguous():
   {==}
 
 law schema_law_a_repeated_union_tag_is_ambiguous:
-  {schema_preflight(Nil{}, SfUnion{[SchemaCase{"t", SfScalar{SsText{}}}, SchemaCase{"t", SfScalar{SsText{}}}]}) == SvRefused{"ambiguousDeclaration"} : SchemaVerdict}
+  {schema_preflight(DefsNil{}, SfUnion{SfCasesCons{SchemaCase{"t", SfScalar{SsText{}}}, SfCasesCons{SchemaCase{"t", SfScalar{SsText{}}}, SfCasesNil{}}}}) == SvRefused{"ambiguousDeclaration"} : SchemaVerdict}
 
 def schema_law_a_repeated_union_tag_is_ambiguous():
   {==}
@@ -673,13 +782,13 @@ def schema_law_a_repeated_union_tag_is_ambiguous():
 # The preflight covers the definitions, not only the root form, so an ambiguous
 # definition refuses even when the root form never reaches it.
 law schema_law_an_ambiguous_definition_refuses_through_a_named_reference:
-  {schema_preflight([SchemaDef{"a", SfUnion{[SchemaCase{"t", SfScalar{SsText{}}}, SchemaCase{"t", SfScalar{SsText{}}}]}}], SfRef{"a"}) == SvRefused{"ambiguousDeclaration"} : SchemaVerdict}
+  {schema_preflight(DefsCons{SchemaDef{"a", SfUnion{SfCasesCons{SchemaCase{"t", SfScalar{SsText{}}}, SfCasesCons{SchemaCase{"t", SfScalar{SsText{}}}, SfCasesNil{}}}}}, DefsNil{}}, SfRef{"a"}) == SvRefused{"ambiguousDeclaration"} : SchemaVerdict}
 
 def schema_law_an_ambiguous_definition_refuses_through_a_named_reference():
   {==}
 
 law schema_law_an_unreachable_ambiguous_definition_still_refuses:
-  {schema_preflight([SchemaDef{"a", SfScalar{SsText{}}}, SchemaDef{"b", SfRecord{[SfRequired{"n", SfScalar{SsText{}}}, SfRequired{"n", SfScalar{SsText{}}}]}}], SfRef{"a"}) == SvRefused{"ambiguousDeclaration"} : SchemaVerdict}
+  {schema_preflight(DefsCons{SchemaDef{"a", SfScalar{SsText{}}}, DefsCons{SchemaDef{"b", SfRecord{SfFieldsCons{SfRequired{"n", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"n", SfScalar{SsText{}}}, SfFieldsNil{}}}}}, DefsNil{}}}, SfRef{"a"}) == SvRefused{"ambiguousDeclaration"} : SchemaVerdict}
 
 def schema_law_an_unreachable_ambiguous_definition_still_refuses():
   {==}
@@ -687,25 +796,25 @@ def schema_law_an_unreachable_ambiguous_definition_still_refuses():
 # A tagged union carries one object member per level, so a recursive union admits a
 # finite value: the child case nests and the leaf case ends the value.
 law schema_law_a_recursive_tagged_union_admits_a_finite_value:
-  {schema_admit_value([SchemaDef{"node", SfUnion{[SchemaCase{"leaf", SfScalar{SsNull{}}}, SchemaCase{"child", SfRef{"node"}}]}}], SfRef{"node"}, Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"leaf", Codec.Rnull{}, Codec.Rnil{}}}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
+  {schema_admit_value(DefsCons{SchemaDef{"node", SfUnion{SfCasesCons{SchemaCase{"leaf", SfScalar{SsNull{}}}, SfCasesCons{SchemaCase{"child", SfRef{"node"}}, SfCasesNil{}}}}}, DefsNil{}}, SfRef{"node"}, Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"leaf", Codec.Rnull{}, Codec.Rnil{}}}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
 
 def schema_law_a_recursive_tagged_union_admits_a_finite_value():
   {==}
 
 law schema_law_a_local_reference_resolves_and_admits:
-  {schema_admit_value([SchemaDef{"row", SfScalar{SsText{}}}], SfRef{"row"}, Codec.Rstr{"x"}) == SvOk{} : SchemaVerdict}
+  {schema_admit_value(DefsCons{SchemaDef{"row", SfScalar{SsText{}}}, DefsNil{}}, SfRef{"row"}, Codec.Rstr{"x"}) == SvOk{} : SchemaVerdict}
 
 def schema_law_a_local_reference_resolves_and_admits():
   {==}
 
 law schema_law_a_union_member_admits_its_case:
-  {schema_admit_value(Nil{}, SfUnion{[SchemaCase{"text", SfScalar{SsText{}}}]}, Codec.Robj{Codec.Rpair{"text", Codec.Rstr{"x"}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfUnion{SfCasesCons{SchemaCase{"text", SfScalar{SsText{}}}, SfCasesNil{}}}, Codec.Robj{Codec.Rpair{"text", Codec.Rstr{"x"}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
 
 def schema_law_a_union_member_admits_its_case():
   {==}
 
 law schema_law_a_union_member_refuses_an_unknown_tag:
-  {schema_admit_value(Nil{}, SfUnion{[SchemaCase{"text", SfScalar{SsText{}}}]}, Codec.Robj{Codec.Rpair{"other", Codec.Rstr{"x"}, Codec.Rnil{}}}) == SvRefused{"unknownTag"} : SchemaVerdict}
+  {schema_admit_value(DefsNil{}, SfUnion{SfCasesCons{SchemaCase{"text", SfScalar{SsText{}}}, SfCasesNil{}}}, Codec.Robj{Codec.Rpair{"other", Codec.Rstr{"x"}, Codec.Rnil{}}}) == SvRefused{"unknownTag"} : SchemaVerdict}
 
 def schema_law_a_union_member_refuses_an_unknown_tag():
   {==}
