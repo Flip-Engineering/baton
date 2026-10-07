@@ -181,17 +181,21 @@ def readiness_text(+value: J.Json, +key: String) -> String:
 def readiness_json_text(+value: J.Json, +key: String) -> String:
   J.json_text(readiness_member(value, key))
 
-def readiness_true(+value: J.Json, +key: String) -> Bool:
-  member : J.Json = readiness_member(value, key)
+def readiness_is_true(+member: J.Json) -> Bool:
   match member:
     case J.Jtrue{}: True{}
     case other: False{}
 
-def readiness_false(+value: J.Json, +key: String) -> Bool:
-  member : J.Json = readiness_member(value, key)
+def readiness_is_false(+member: J.Json) -> Bool:
   match member:
     case J.Jfalse{}: True{}
     case other: False{}
+
+def readiness_true(+value: J.Json, +key: String) -> Bool:
+  readiness_is_true(readiness_member(value, key))
+
+def readiness_false(+value: J.Json, +key: String) -> Bool:
+  readiness_is_false(readiness_member(value, key))
 
 def readiness_key_allowed(+key: String) -> Bool:
   Bool.or(String.eq(key, "schema"), Bool.or(String.eq(key, "state"),
