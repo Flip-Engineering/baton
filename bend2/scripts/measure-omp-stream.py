@@ -182,6 +182,7 @@ def main():
     evidence={'exe':str(exe),'exe_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),
               'exe_source_revision_supplied':args.source_revision,'pid':child.pid,
               'driver_source_head':driver_head,
+              'driver_source_sha256':hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
               'parameters':vars(args)|{'exe':str(exe),'output':str(directory)},
               'measurements':measures,'semantics':semantics,'returncode':child.returncode,
               'retained_log_bytes':log.stat().st_size}
