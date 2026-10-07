@@ -640,6 +640,18 @@ class SharedInstance(unittest.TestCase):
         self.assertIn('echo:one', text)
         print('evidence oversize-checkpoint', marker)
 
+    def test_adoption_refuses_a_directory_without_custody(self):
+        """The request-level ENOENT adoption path adopts real custody only: a
+        directory that holds no attempt gets no child and no new custody."""
+        directory = self.home / 'no-attempt'
+        directory.mkdir()
+        result = self.command('attach-owned', self.db, directory)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(list(directory.iterdir()), [],
+                         'adoption wrote custody into a directory that holds no attempt')
+        self.assertIn('instance_attach_owned', result.stderr + result.stdout)
+        print('evidence adoption-refusal', (result.stderr + result.stdout).strip().replace('\n', '|'))
+
     def test_shutdown_releases_the_database_for_a_new_owner(self):
         directory, child = self.begin('a0')
         self.wait_run(child)
