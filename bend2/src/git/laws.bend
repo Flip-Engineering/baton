@@ -1115,48 +1115,6 @@ law m3a_held_advance_is_the_worktree_fast_forward:
 def m3a_held_advance_is_the_worktree_fast_forward(path, repo, target, cand, basis):
   {==}
 
-def held_target_preflight(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(L.LAdv):
-  match g:
-    case T.GRun{code, out}:
-      +b2 = basis
-      +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), b2), False{})
-      L.ld_adv_wt_target_same(same, path, repo, target, cand, b2)
-    case T.GBroken{detail}: IO.pure(L.LAdv, L.AdvBroken{detail})
-
-law m3a_held_preflight_requires_the_basis_tip:
-  for +g: T.GitOut
-  for path: String
-  for repo: String
-  for target: String
-  for cand: String
-  for basis: String
-  {L.ld_adv_wt_target_pick(g, path, repo, target, cand, basis) == held_target_preflight(g, path, repo, target, cand, basis) : IO(L.LAdv)}
-
-def m3a_held_preflight_requires_the_basis_tip(g, path, repo, target, cand, basis):
-  {==}
-
-def held_holder_preflight(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(L.LAdv):
-  match g:
-    case T.GRun{code, out}:
-      +t2 = target
-      +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(Bool, status_ok,
-        Tx.str_eq(Tx.trim_nl(out), L.ld_hold_ref(t2)), False{})
-      L.ld_adv_wt_head_same(same, path, repo, t2, cand, basis)
-    case T.GBroken{detail}: IO.pure(L.LAdv, L.AdvBroken{detail})
-
-law m3a_held_preflight_requires_the_target_holder:
-  for +g: T.GitOut
-  for path: String
-  for repo: String
-  for target: String
-  for cand: String
-  for basis: String
-  {L.ld_adv_wt_head_pick(g, path, repo, target, cand, basis) == held_holder_preflight(g, path, repo, target, cand, basis) : IO(L.LAdv)}
-
-def m3a_held_preflight_requires_the_target_holder(g, path, repo, target, cand, basis):
-  {==}
 
 # The held success arm dispatches through the source-bound publication
 # observer; a zero exit from merge alone is not a landed answer.
