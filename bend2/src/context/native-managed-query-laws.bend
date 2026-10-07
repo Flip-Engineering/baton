@@ -5,7 +5,7 @@ import ./bound-admission.bend as Admission
 import ./service.bend as Service
 
 def managed_bootstrap() -> Managed.Bootstrap:
-  Managed.query_bootstrap("db-binding", "q-1", "owner-1", "{}", "[]",
+  Managed.query_bootstrap("db-binding", "q-1", "owner-1", "{}", "/work", "0", "[]",
     "plan-identity", "result-v1", "/work/.baton/context-artifacts/q",
     "/logs/keeper-q", "guard-key-64", "native-recover-argv")
 
@@ -21,7 +21,7 @@ def ready_keeper() -> Managed.KeeperReadiness:
 
 law bootstrap_contains_the_full_immutable_query_identity:
   {Managed.bootstrap_text(managed_bootstrap()) ==
-    "{\"artifactPath\":\"/work/.baton/context-artifacts/q\",\"databaseBinding\":\"db-binding\",\"guardIdentity\":\"[\\\"context-role\\\",\\\"db-binding\\\",\\\"query\\\",\\\"q-1\\\",\\\"starter\\\",\\\"0\\\"]\",\"guardKey\":\"guard-key-64\",\"keeperPath\":\"/logs/keeper-q\",\"owner\":\"owner-1\",\"planIdentity\":\"plan-identity\",\"planValue\":\"[]\",\"query\":\"q-1\",\"recoveryArgv\":\"native-recover-argv\",\"request\":\"{}\",\"resultSchema\":\"result-v1\",\"schema\":\"baton2-managed-context-bootstrap-v1\"}" : String}
+    "{\"artifactPath\":\"/work/.baton/context-artifacts/q\",\"cwd\":\"/work\",\"databaseBinding\":\"db-binding\",\"guardIdentity\":\"[\\\"context-role\\\",\\\"db-binding\\\",\\\"query\\\",\\\"q-1\\\",\\\"starter\\\",\\\"0\\\"]\",\"guardKey\":\"guard-key-64\",\"keeperPath\":\"/logs/keeper-q\",\"originAttempt\":\"0\",\"owner\":\"owner-1\",\"planIdentity\":\"plan-identity\",\"planValue\":\"[]\",\"query\":\"q-1\",\"recoveryArgv\":\"native-recover-argv\",\"request\":\"{}\",\"resultSchema\":\"result-v1\",\"schema\":\"baton2-managed-context-bootstrap-v1\"}" : String}
 
 def bootstrap_contains_the_full_immutable_query_identity():
   {==}
@@ -112,4 +112,21 @@ law an_unreadable_admission_does_not_start_or_cancel_the_keeper:
     Managed.StartHeld{"admissionUncertain:readback"} : Managed.StartDecision}
 
 def an_unreadable_admission_does_not_start_or_cancel_the_keeper():
+  {==}
+
+law no_admission_effect_runs_before_original_observer_readiness:
+  {Managed.submit_after_observer_ready(managed_bootstrap(),
+    Managed.KeeperObserverUnavailable{"observerAttach"}, "db") ==
+    IO.pure(Managed.StartDecision,
+      Managed.StartHeld{"observerUnavailable:observerAttach"}) : IO(Managed.StartDecision)}
+
+def no_admission_effect_runs_before_original_observer_readiness():
+  {==}
+
+law an_observer_for_another_query_cannot_reach_the_admission_effect:
+  {Managed.submit_after_observer_ready(managed_bootstrap(),
+    Managed.KeeperObserverReady{"q-2", "owner-1", "/logs/keeper-q", "starter", "0"}, "db") ==
+    IO.pure(Managed.StartDecision, Managed.StartHeld{"observerIdentityMismatch"}) : IO(Managed.StartDecision)}
+
+def an_observer_for_another_query_cannot_reach_the_admission_effect():
   {==}

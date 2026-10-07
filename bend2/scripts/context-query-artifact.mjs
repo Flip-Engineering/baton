@@ -3,7 +3,7 @@
 // owner and worktree before native admission records it.
 import { closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync, fsyncSync, fchmodSync, unlinkSync, rmdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createRetainedWorktreeCapture } from './context-worktree-capture.mjs';
 
@@ -63,18 +63,21 @@ function immutableWrite(path, bytes) {
   }
 }
 
-function decodeBootstrap(bytes, { owner, query, artifactPath }) {
+function decodeBootstrap(bytes, { owner, worktree, query, artifactPath }) {
   try {
     const text = bytes.toString('utf8');
     if (!text.endsWith('\n') || text.slice(0, -1).includes('\n')) return refusal('queryBootstrapFramingInvalid');
     const value = JSON.parse(text);
-    const fields = ['schema', 'query', 'owner', 'databaseBinding', 'request', 'planValue',
+    const fields = ['schema', 'query', 'owner', 'databaseBinding', 'request', 'cwd',
+      'originAttempt', 'planValue',
       'planIdentity', 'resultSchema', 'artifactPath', 'keeperPath', 'guardIdentity',
       'guardKey', 'recoveryArgv'];
     if (!exactKeys(value, fields) || value.schema !== 'baton2-managed-context-bootstrap-v1'
         || value.query !== query || value.owner !== owner || value.artifactPath !== artifactPath
         || typeof value.databaseBinding !== 'string' || value.databaseBinding.length === 0
         || typeof value.request !== 'string' || value.request.length === 0
+        || typeof value.cwd !== 'string' || value.cwd.length === 0
+        || typeof value.originAttempt !== 'string' || value.originAttempt.length === 0
         || typeof value.planValue !== 'string' || value.planValue.length === 0
         || typeof value.planIdentity !== 'string' || value.planIdentity.length === 0
         || typeof value.resultSchema !== 'string' || value.resultSchema.length === 0
@@ -87,6 +90,13 @@ function decodeBootstrap(bytes, { owner, query, artifactPath }) {
           !== JSON.stringify(['context-role', value.databaseBinding, 'query', query, 'starter', '0'])) {
       return refusal('queryBootstrapIdentityMismatch');
     }
+    const root = realpathSync(worktree);
+    const cwd = realpathSync(value.cwd);
+    const within = relative(root, cwd);
+    if (cwd !== value.cwd || (within !== '' && (within === '..'
+        || within.startsWith('..' + sep) || within.startsWith(sep)))) {
+      return refusal('queryBootstrapWorkspaceMismatch');
+    }
     if (JSON.stringify(stable(value)) + '\n' !== text) return refusal('queryBootstrapCanonicalMismatch');
     return Object.freeze({ status: 'loaded', value });
   } catch (error) {
@@ -98,7 +108,7 @@ function readBootstrap(path, authority) {
   try {
     if (!privateRegularFile(path)) return refusal('queryBootstrapFileInvalid', path);
     const bytes = readFileSync(path);
-    const decoded = decodeBootstrap(bytes, authority);
+  const decoded = decodeBootstrap(bytes, authority);
     if (decoded.status !== 'loaded') return decoded;
     return Object.freeze({ status: 'loaded', bytes, value: decoded.value });
   } catch (error) {
@@ -112,7 +122,8 @@ export function persistQueryBootstrap({ owner, worktree, query, bootstrapText } 
   if (prepared.status !== 'prepared') return prepared;
   const path = join(prepared.path, 'bootstrap.json');
   const bytes = Buffer.from(bootstrapText + '\n');
-  const decoded = decodeBootstrap(bytes, { owner: prepared.owner, query: prepared.query,
+  const decoded = decodeBootstrap(bytes, { owner: prepared.owner, worktree: prepared.worktree,
+    query: prepared.query,
     artifactPath: prepared.path });
   if (decoded.status !== 'loaded') return decoded;
   const saved = immutableWrite(path, bytes);
@@ -129,7 +140,8 @@ export function persistQueryOutcome({ owner, worktree, query, bootstrapSha256,
   const prepared = prepareQueryArtifact({ owner, worktree, query });
   if (prepared.status !== 'prepared') return prepared;
   const bootstrapPath = join(prepared.path, 'bootstrap.json');
-  const bootstrap = readBootstrap(bootstrapPath, { owner, query, artifactPath: prepared.path });
+  const bootstrap = readBootstrap(bootstrapPath, { owner, worktree: prepared.worktree,
+    query, artifactPath: prepared.path });
   if (bootstrap.status !== 'loaded' || sha256(bootstrap.bytes) !== bootstrapSha256) {
     return refusal('queryOutcomeBootstrapMismatch', bootstrap.reason ?? null);
   }

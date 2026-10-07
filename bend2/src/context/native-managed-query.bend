@@ -9,7 +9,8 @@ import ./identity.bend as ContextIdentity
 
 type Bootstrap is Data:
   QueryBootstrap{query: String, owner: String, database_binding: String,
-    request: String, plan_value: String, plan_identity: String,
+    request: String, cwd: String, origin_attempt: String,
+    plan_value: String, plan_identity: String,
     result_schema: String, artifact_path: String, keeper_path: String,
     guard_identity: String, guard_key: String, recovery_argv: String}
 
@@ -26,11 +27,12 @@ type KeeperReadiness is Data:
   KeeperObserverUnavailable{reason: String}
 
 def query_bootstrap(+database_binding: String, +query: String, +owner: String,
-                    +request: String, +plan_value: String, +plan_identity: String,
+                    +request: String, +cwd: String, +origin_attempt: String,
+                    +plan_value: String, +plan_identity: String,
                     +result_schema: String, +artifact_path: String,
                     +keeper_path: String, +guard_key: String,
                     +recovery_argv: String) -> Bootstrap:
-  QueryBootstrap{query, owner, database_binding, request, plan_value,
+  QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
     plan_identity, result_schema, artifact_path, keeper_path,
     ContextIdentity.guard_identity(database_binding,
       ContextIdentity.SubjectQuery{query}, ContextIdentity.RoleStarter{}, "0"),
@@ -38,37 +40,37 @@ def query_bootstrap(+database_binding: String, +query: String, +owner: String,
 
 def bootstrap_query(bootstrap: Bootstrap) -> String:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
         guard_identity, guard_key, recovery_argv}: query
 
 def bootstrap_owner(bootstrap: Bootstrap) -> String:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
         guard_identity, guard_key, recovery_argv}: owner
 
 def bootstrap_request(bootstrap: Bootstrap) -> String:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
         guard_identity, guard_key, recovery_argv}: request
 
 def bootstrap_keeper_path(bootstrap: Bootstrap) -> String:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
         guard_identity, guard_key, recovery_argv}: keeper_path
 
 def bootstrap_artifact_path(bootstrap: Bootstrap) -> String:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
         guard_identity, guard_key, recovery_argv}: artifact_path
 
 def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
         guard_identity, guard_key, recovery_argv}:
       J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-managed-context-bootstrap-v1"},
@@ -76,6 +78,8 @@ def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
       J.Jpair{"owner", J.Jstr{owner},
       J.Jpair{"databaseBinding", J.Jstr{database_binding},
       J.Jpair{"request", J.Jstr{request},
+      J.Jpair{"cwd", J.Jstr{cwd},
+      J.Jpair{"originAttempt", J.Jstr{origin_attempt},
       J.Jpair{"planValue", J.Jstr{plan_value},
       J.Jpair{"planIdentity", J.Jstr{plan_identity},
       J.Jpair{"resultSchema", J.Jstr{result_schema},
@@ -83,7 +87,7 @@ def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
       J.Jpair{"keeperPath", J.Jstr{keeper_path},
       J.Jpair{"guardIdentity", J.Jstr{guard_identity},
       J.Jpair{"guardKey", J.Jstr{guard_key},
-      J.Jpair{"recoveryArgv", J.Jstr{recovery_argv}, J.Jnil{}}}}}}}}}}}}}}}
+      J.Jpair{"recoveryArgv", J.Jstr{recovery_argv}, J.Jnil{}}}}}}}}}}}}}}}}}}
 
 def bootstrap_text(+bootstrap: Bootstrap) -> String:
   J.json_text(bootstrap_json(bootstrap))
@@ -95,37 +99,43 @@ def accepted_query_state(+state: String) -> Bool:
   Bool.or(String.eq(state, "failed"), String.eq(state, "interrupted")))))
 
 def admission_identity_match(+expected_owner: String, +expected_request: String,
-                             +expected_keeper: String, +expected_artifact: String,
+                             +expected_keeper: String, +expected_cwd: String,
+                             +expected_attempt: String, +expected_artifact: String,
                              +admission: Admission.Admission) -> Bool:
   match admission:
     case Admission.AdmissionCreated{+owner, +request, decision, state, attempt,
-        +keeperPath, cwd, +artifactPath}:
+        +keeperPath, +cwd, +artifactPath}:
       Bool.and(String.eq(expected_owner, owner),
       Bool.and(String.eq(expected_request, request),
       Bool.and(String.eq(expected_keeper, keeperPath),
+      Bool.and(String.eq(expected_cwd, cwd),
+      Bool.and(String.eq(expected_attempt, attempt),
       Bool.and(String.eq(expected_artifact, artifactPath),
-      Bool.and(String.eq(decision, "accepted"), accepted_query_state(state))))))
+      Bool.and(String.eq(decision, "accepted"), accepted_query_state(state)))))))
     case Admission.AdmissionRetained{+owner, +request, decision, state, attempt,
-        +keeperPath, cwd, +artifactPath}:
+        +keeperPath, +cwd, +artifactPath}:
       Bool.and(String.eq(expected_owner, owner),
       Bool.and(String.eq(expected_request, request),
       Bool.and(String.eq(expected_keeper, keeperPath),
+      Bool.and(String.eq(expected_cwd, cwd),
+      Bool.and(String.eq(expected_attempt, attempt),
       Bool.and(String.eq(expected_artifact, artifactPath),
-      Bool.and(String.eq(decision, "accepted"), accepted_query_state(state))))))
+      Bool.and(String.eq(decision, "accepted"), accepted_query_state(state)))))))
     case _: False{}
 
 def admission_fields_match(bootstrap: Bootstrap, +admission: Admission.Admission) -> Bool:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
         guard_identity, guard_key, recovery_argv}:
-      admission_identity_match(owner, request, keeper_path, artifact_path, admission)
+      admission_identity_match(owner, request, keeper_path, cwd, origin_attempt,
+        artifact_path, admission)
 
 def accepted_admission(+bootstrap: Bootstrap, +role: String, +incarnation: String,
                        +admission: Admission.Admission, +stored_plan: String,
                        +stored_schema: String) -> StartDecision:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
         plan_identity, result_schema, artifact_path, keeper_path,
         guard_identity, guard_key, recovery_argv}:
       Bool.pick(StartDecision,
@@ -164,6 +174,33 @@ def start_from_submission(+bootstrap: Bootstrap, readiness: KeeperReadiness,
         Bool.and(String.eq(role, "starter"), String.eq(incarnation, "0"))))),
         submission_decision(bootstrap, role, incarnation, submission),
         StartHeld{"observerIdentityMismatch"})
+
+# The admission effect runs only after the prepared keeper is attached to the original
+# observer with the frozen starter identity. The transaction then binds the same owner,
+# canonical request, workspace, attempt, keeper, artifact, and plan to its read-back.
+def submit_after_observer_ready(+bootstrap: Bootstrap, readiness: KeeperReadiness,
+                                +db: String) -> IO(StartDecision):
+  match readiness:
+    case KeeperObserverUnavailable{reason}:
+      IO.pure(StartDecision, StartHeld{"observerUnavailable:" ++ reason})
+    case KeeperObserverReady{query, owner, keeper_path, +role, +incarnation}:
+      Bool.pick(IO(StartDecision),
+        Bool.and(String.eq(query, bootstrap_query(bootstrap)),
+        Bool.and(String.eq(owner, bootstrap_owner(bootstrap)),
+        Bool.and(String.eq(keeper_path, bootstrap_keeper_path(bootstrap)),
+        Bool.and(String.eq(role, "starter"), String.eq(incarnation, "0"))))),
+        do IO<StartDecision>:
+          match bootstrap:
+            case QueryBootstrap{query, owner, database_binding, request, cwd,
+                origin_attempt, plan_value, plan_identity, result_schema,
+                artifact_path, keeper_path, guard_identity, guard_key, recovery_argv}:
+              submission : ContextService.Submission <-
+                ContextService.admitted_associated(db, database_binding, query,
+                  owner, request, keeper_path, cwd, origin_attempt, artifact_path,
+                  plan_value, plan_identity, result_schema)
+              IO.pure(StartDecision, submission_decision(bootstrap, role,
+                incarnation, submission)),
+        IO.pure(StartDecision, StartHeld{"observerIdentityMismatch"}))
 
 def rejection_identity_match(+expected_owner: String, +expected_request: String,
                              +expected_keeper: String, +expected_artifact: String,

@@ -19,10 +19,12 @@ function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1') {
   return JSON.stringify({
     artifactPath: join(worktreePath, '.baton', 'context-artifacts', Buffer.from(query).toString('hex')),
     databaseBinding: 'binding-1',
+    cwd: worktreePath,
     guardIdentity,
     guardKey: createHash('sha256').update(guardIdentity).digest('hex'),
     keeperPath: '/logs/keeper-1',
     owner,
+    originAttempt: '0',
     planIdentity: 'plan-identity-1',
     planValue: '[]',
     query,
@@ -107,6 +109,11 @@ test('persists one immutable canonical bootstrap bound to owner, query and priva
   assert.equal(persistQueryBootstrap({ ...authority,
     bootstrapText: bootstrapText(root).replace('"owner":"owner-1"', '"owner":"owner-2"') }).reason,
   'queryBootstrapIdentityMismatch');
+  const foreignWorkspace = JSON.parse(bootstrapText(root));
+  foreignWorkspace.cwd = tmpdir();
+  assert.equal(persistQueryBootstrap({ ...authority,
+    bootstrapText: JSON.stringify(foreignWorkspace) }).reason,
+  'queryBootstrapWorkspaceMismatch');
   const wrongGuardKey = bootstrapText(root).replace(/"guardKey":"[0-9a-f]{64}"/,
     '"guardKey":"' + 'a'.repeat(64) + '"');
   assert.equal(persistQueryBootstrap({ ...authority, bootstrapText: wrongGuardKey }).reason,
