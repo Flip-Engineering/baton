@@ -104,13 +104,13 @@ def prepare_parent(db: String, player: String, id: String, log: String, stderr: 
         case True{}: prepare_player(db,player,id,log,stderr,error,status,Bool.or(String.eq(status,"start failed"),String.eq(status,"input failed")))
 
 # Failure reports are committed while this invocation still owns the session.
-def prepare(+db: String, +player: String, id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):
+def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
     +generation : String <- IO.pure(String,Logs.attempt_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
 
-def record_exit(db: String, player: String, id: String, log: String, outcome: Outcome) -> IO(Unit):
+def record_exit(db: String, player: String, +id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
     case Ended{status,event,error}: Stop.exited(db,player,id,status,event,error,Logs.attempt_log(log,id))
 
