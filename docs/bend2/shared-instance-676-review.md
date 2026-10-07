@@ -123,9 +123,19 @@ prompts for concurrent sessions; no new keeper on a duplicate receive;
 stop isolation across concurrent sessions; no live keeper after
 acknowledge; topology evidence as sessions increase. It overlaps the
 `queued` status behavior owned by 685 only to assert keeper singularity;
-685 retains pending-input tests. Remote gate status is recorded in the
-turn report; the file passes the exact-source gate before any merge
-claim.
+685 retains pending-input tests.
+
+Remote gate, completed on atari-homelab for exact commit `e7c5ac1b`
+(tree clean): Bend 2.0.25 (`d9c0dad1...`), clang 19.1.1, Node v22.23.3.
+`check-unittest.sh bend2/test/shared-ownership.py` exited 0 with empty
+stdout (no failures, no unjudged lines): 5/5 passed. Full logs are kept
+in the remote job directory `baton-shared676-critic-e7c5ac1b`.
+Measured baseline topology: two concurrent sessions hold 4 Baton2
+processes and 2 keepers; three hold 6 and 3 (two Baton2 runtimes per
+active session: endpoint/receive plus keeper). After completion and
+acknowledge, keepers and Baton2 processes return to 0. A stop during a
+two-session run ended only its own session (`signal 15`) while the
+sibling exited 0.
 
 ## Open coordination items
 
