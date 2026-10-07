@@ -1112,6 +1112,11 @@ def m3a_held_advance_is_the_worktree_fast_forward(path, repo, target, cand, basi
 
 # The held success arm dispatches through the source-bound publication
 # observer; a zero exit from merge alone is not a landed answer.
+
+# The observer proves the states the coordinator read. Git CLI cannot pin
+# symbolic HEAD atomically across its final check and merge: a branch switch in
+# that interval can make merge update another branch. The post-read refuses a
+# landed answer on observed drift, but it cannot undo a concurrent ref update.
 def held_success_arm(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(L.LAdv):
   match g:
     case T.GRun{code, out}:

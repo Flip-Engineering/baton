@@ -235,17 +235,22 @@ class Land(unittest.TestCase):
         action = ['git', '-C', str(holder), 'switch', '--quiet', 'other']
         env = self.git_race_env(holder, 'after-worktree-list', action)
         result = self.call('land', 'w1', self.repo, 'main', env=env)
-        self.assertEqual(result['status'], 'blocked')
-        self.assertIn('changed away from target branch main', result['reason'])
-        self.assertEqual(self.git('rev-parse', 'main').strip(), self.base)
-        self.assertEqual(self.git('rev-parse', 'other').strip(), self.base)
-        self.assertEqual(self.git('rev-parse', 'w1-branch').strip(), candidate)
-        self.assertFalse((holder / 'file.txt').exists())
         head = subprocess.run(
             ['git', '-C', str(holder), 'symbolic-ref', '--quiet', 'HEAD'],
             check=True, text=True, capture_output=True,
         ).stdout.strip()
-        self.assertEqual(head, 'refs/heads/other')
+        observed = (
+            result['status'],
+            'changed away from target branch main' in result['reason'],
+            self.git('rev-parse', 'main').strip(),
+            self.git('rev-parse', 'other').strip(),
+            self.git('rev-parse', 'w1-branch').strip(),
+            head,
+            (holder / 'file.txt').exists(),
+        )
+        expected = ('blocked', True, self.base, self.base, candidate,
+                    'refs/heads/other', False)
+        self.assertEqual(observed, expected)
 
     def test_holder_change_after_successful_merge_is_not_reported_as_landed(self):
         holder = self.separate_target_holder()
@@ -253,17 +258,22 @@ class Land(unittest.TestCase):
         action = ['git', '-C', str(holder), 'switch', '--quiet', 'other']
         env = self.git_race_env(holder, 'after-held-merge', action)
         result = self.call('land', 'w1', self.repo, 'main', env=env)
-        self.assertEqual(result['status'], 'blocked')
-        self.assertIn('changed away from target branch main', result['reason'])
-        self.assertEqual(self.git('rev-parse', 'main').strip(), candidate)
-        self.assertEqual(self.git('rev-parse', 'other').strip(), self.base)
-        self.assertEqual(self.git('rev-parse', 'w1-branch').strip(), candidate)
         head = subprocess.run(
             ['git', '-C', str(holder), 'symbolic-ref', '--quiet', 'HEAD'],
             check=True, text=True, capture_output=True,
         ).stdout.strip()
-        self.assertEqual(head, 'refs/heads/other')
-        self.assertFalse((holder / 'file.txt').exists())
+        observed = (
+            result['status'],
+            'changed away from target branch main' in result['reason'],
+            self.git('rev-parse', 'main').strip(),
+            self.git('rev-parse', 'other').strip(),
+            self.git('rev-parse', 'w1-branch').strip(),
+            head,
+            (holder / 'file.txt').exists(),
+        )
+        expected = ('blocked', True, candidate, self.base, candidate,
+                    'refs/heads/other', False)
+        self.assertEqual(observed, expected)
 
     def test_target_moving_after_successful_held_merge_blocks_success_answer(self):
         holder = self.separate_target_holder()
@@ -279,11 +289,19 @@ class Land(unittest.TestCase):
         ]
         env = self.git_race_env(holder, 'after-held-merge', action)
         result = self.call('land', 'w1', self.repo, 'main', env=env)
-        self.assertEqual(result['status'], 'blocked')
-        self.assertIn('target moved during landing', result['reason'])
-        self.assertEqual(self.git('rev-parse', 'main').strip(), moved)
-        self.assertEqual(self.git('rev-parse', 'w1-branch').strip(), candidate)
-        self.assertEqual(self.git('merge-base', '--is-ancestor', candidate, 'main'), '')
+        observed = (
+            result['status'],
+            'target moved during landing' in result['reason'],
+            self.git('rev-parse', 'main').strip(),
+            self.git('rev-parse', 'w1-branch').strip(),
+            subprocess.run(
+                ['git', '-C', str(self.repo), 'merge-base', '--is-ancestor',
+                 candidate, 'main'],
+                check=False, capture_output=True,
+            ).returncode == 0,
+        )
+        expected = ('blocked', True, moved, candidate, True)
+        self.assertEqual(observed, expected)
         retry = self.call('land', 'w1', self.repo, 'main')
         self.assertEqual(retry['status'], 'already')
         self.assertEqual(retry['commit'], candidate)
