@@ -81,7 +81,7 @@ def without_session(pairs: List<(String & String)>, +id: String) -> List<(String
   match pairs:
     case Nil{}: Nil{}
     case (+session, +harness) <> rest:
-      +tail = without_session(rest, id)
+      tail = without_session(rest, id)
       keep_or_drop(String.eq(session, id), session, harness, tail)
 
 # Linear strip: each known session is removed by threading the remainder, and
@@ -112,7 +112,7 @@ def partition_go(pairs: List<(String & String)>, fork: List<(String & String)>, 
   match pairs:
     case Nil{}: (fork, refuse)
     case (+session, +harness) <> rest:
-      +rest_done = partition_go(rest, fork, refuse)
+      rest_done = partition_go(rest, fork, refuse)
       partition_pick(receivable(harness), (session, harness), rest_done)
 
 def partition(pairs: List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
@@ -132,7 +132,7 @@ def without_id(sessions: List<String>, +id: String) -> List<String>:
   match sessions:
     case Nil{}: Nil{}
     case +session <> rest:
-      +tail = without_id(rest, id)
+      tail = without_id(rest, id)
       keep_or_drop_id(String.eq(session, id), session, tail)
 
 def member_or(hit: Bool, found: Bool) -> Bool:
