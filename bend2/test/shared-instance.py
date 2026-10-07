@@ -48,6 +48,23 @@ print("terminal",flush=True)
 '''
 
 
+SURVIVOR = r'''import json,os,sys,threading,time
+print(json.dumps({"role":"native","pid":os.getpid(),"ppid":os.getppid()}),flush=True)
+def drain():
+    try:
+        for line in sys.stdin:
+            print("echo:"+line.rstrip("\n"),flush=True)
+    except Exception:
+        pass
+threading.Thread(target=drain,daemon=True).start()
+count=0
+while True:
+    print("tick:%d"%count,flush=True)
+    count+=1
+    time.sleep(1)
+'''
+
+
 class SharedInstance(unittest.TestCase):
     CHECKPOINT_HEADER = struct.Struct('=8sIIQQQQQQQQi4xQQ')
 
@@ -61,6 +78,8 @@ class SharedInstance(unittest.TestCase):
         self.fixture.write_text(FIXTURE)
         self.muse_fixture = self.home / 'muse.py'
         self.muse_fixture.write_text(MUSE_FIXTURE)
+        self.survivor = self.home / 'survivor.py'
+        self.survivor.write_text(SURVIVOR)
         self.children = []
         self.addCleanup(self.cleanup)
 
@@ -654,12 +673,14 @@ class SharedInstance(unittest.TestCase):
 
     def test_recovery_after_owner_death_restores_the_committed_state(self):
         """Owner death with a surviving native child: a replacement owner is
-        elected, the observer adopts the same child through its own custody, and
-        the reducer state the previous observer committed is restored at its
-        offset, so the frames that checkpoint covered are not reported again."""
-        directory, child = self.begin('death', mode='partial', payload='one\n')
+        elected, the guard-holding caller adopts the same child through its own
+        custody, and the reducer state the previous observer committed is
+        restored at its offset, so the adopted reader resumes after the frames
+        that checkpoint covered and reports no duplicate child."""
+        directory = pathlib.Path(f'{self.db}.attempt-death')
+        child = self.spawn('partial', self.db, 'death', directory, self.home, 'one\n',
+                           sys.executable, self.survivor)
         self.line(child, 'admitted')
-        self.line(child, 'echo:one')
         self.line(child, 'commit-ok')
         summary = self.native(''.join(child.output))
         owners = self.owner_processes()
@@ -671,10 +692,12 @@ class SharedInstance(unittest.TestCase):
         self.line(adopter, 'attached')
         restored = self.subscription_line(adopter, 'restored:')
         self.assertEqual(restored, {'reducer': 'seen two frames'}, restored)
-        output = ''.join(adopter.output)
-        self.assertNotIn('echo:one', output,
-                         'the adopted reader replayed output the checkpoint already covered')
-        self.assertEqual(os.kill(summary['pid'], 0), None, 'the original native child is gone')
+        # The restored offset stops after the frames the checkpoint covered, so
+        # the adopted reader reports the next tick and not the covered rows.
+        self.line(adopter, 'tick:1')
+        self.assertNotIn('"role": "native"', ''.join(adopter.output),
+                         'the adopted reader replayed the frame the checkpoint covered')
+        os.kill(summary['pid'], 0)
         spool = (directory / 'stdout').read_text(errors='replace')
         self.assertEqual(spool.count('"role": "native"'), 1, 'adoption duplicated the native child')
         print('evidence owner-death restore', restored, 'native', summary['pid'])
