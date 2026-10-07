@@ -1418,7 +1418,9 @@ static int br_attempt_ready(BrKeeper *keeper,struct pollfd *fds,BrControl **clie
       if(event.status<0)return ECHILD;
       keeper->native_waiting=1;
       if((error=br_native_exited(keeper)))return error;
-    } else if(event.kind=='R' && event.generation==keeper->generation) {
+    } else if(event.kind=='R') {
+      /* Recovery waiters belong to this keeper attempt, not an observer
+         generation. A replacement observer must not strand their counts. */
       if(keeper->recovery_pending)keeper->recovery_pending--;
       char pending_text[96];int pending_n=snprintf(pending_text,sizeof(pending_text),"reaped pid %d pending %zu\n",event.pid,keeper->recovery_pending);
       br_file(keeper->directory,"recovery-pending.log",pending_text,(size_t)pending_n,0);
