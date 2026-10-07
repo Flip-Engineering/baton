@@ -112,6 +112,27 @@ law native_installed_provider_path_uses_the_executable_install_prefix:
 def native_installed_provider_path_uses_the_executable_install_prefix():
   {==}
 
+law native_runtime_admission_keeps_the_discovered_absolute_executable:
+  {Native.node_runtime_fields(["/opt/node22/bin/node", "supported", "22.15.0"]) ==
+    Native.NodeRuntimeReady{"/opt/node22/bin/node", "22.15.0"} : Native.NodeRuntime}
+
+def native_runtime_admission_keeps_the_discovered_absolute_executable():
+  {==}
+
+law native_runtime_admission_refuses_an_unsupported_version:
+  {Native.node_runtime_fields(["/opt/node/bin/node", "unsupported", "22.14.9"]) ==
+    Native.NodeRuntimeRefused{"nodeRuntimeUnsupported"} : Native.NodeRuntime}
+
+def native_runtime_admission_refuses_an_unsupported_version():
+  {==}
+
+law native_runtime_admission_refuses_a_non_absolute_executable:
+  {Native.node_runtime_fields(["node", "supported", "22.23.3"]) ==
+    Native.NodeRuntimeRefused{"nodeRuntimeUnsupported"} : Native.NodeRuntime}
+
+def native_runtime_admission_refuses_a_non_absolute_executable():
+  {==}
+
 law native_engines_refuses_without_admission:
   for +db: String
   {Native.engines(db) == Native.unavailable("context-engines") : IO(Unit)}

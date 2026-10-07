@@ -72,22 +72,27 @@ def node_runtime_wait(+line: String, extra: Maybe<String>,
     case Fail{error}: IO.pure(NodeRuntime, NodeRuntimeRefused{"nodeRuntimeProbeWait"})
     case Done{+status}: IO.pure(NodeRuntime, node_runtime_status(line, status, extra))
 
-def node_runtime_read_refused(waited: Result<&1,&1,U32 & String,String>) -> IO(NodeRuntime):
+def node_runtime_reap_answer(+reason: String,
+                             waited: Result<&1,&1,U32 & String,String>) -> IO(NodeRuntime):
   match waited:
     case Fail{error}: IO.pure(NodeRuntime, NodeRuntimeRefused{"nodeRuntimeProbeWait"})
-    case Done{+status}: IO.pure(NodeRuntime, NodeRuntimeRefused{"nodeRuntimeProbeRead"})
+    case Done{status}: IO.pure(NodeRuntime, NodeRuntimeRefused{reason})
+
+def node_runtime_reap(+handle: U32, +reason: String) -> IO(NodeRuntime):
+  do IO<NodeRuntime>:
+    waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
+    node_runtime_reap_answer(reason, waited)
+
+def node_runtime_wait_extra(+handle: U32, +line: String, +extra: Maybe<String>) -> IO(NodeRuntime):
+  do IO<NodeRuntime>:
+    waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
+    node_runtime_wait(line, extra, waited)
 
 def node_runtime_second(+handle: U32, +line: String,
                         second: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(NodeRuntime):
   match second:
-    case Fail{error}:
-      do IO<NodeRuntime>:
-        waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
-        node_runtime_read_refused(waited)
-    case Done{+extra}:
-      do IO<NodeRuntime>:
-        waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
-        node_runtime_wait(line, extra, waited)
+    case Fail{error}: node_runtime_reap(handle, "nodeRuntimeProbeRead")
+    case Done{+extra}: node_runtime_wait_extra(handle, line, extra)
 
 def node_runtime_after_first(+handle: U32, +line: String) -> IO(NodeRuntime):
   do IO<NodeRuntime>:
