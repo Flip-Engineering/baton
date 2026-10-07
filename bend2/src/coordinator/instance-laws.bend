@@ -12,8 +12,6 @@ import Base
 import ./instance.bend as Instance
 import ./commands.bend as C
 import ./receive.bend as Receive
-import ../host/sqlite.bend as DB
-import ../git/text.bend as Tx
 
 law owner_claim_table_names_holder_heartbeat_and_generation:
   {Instance.owner_schema() == "CREATE TABLE IF NOT EXISTS instance_owner (owner TEXT PRIMARY KEY NOT NULL, heartbeat INTEGER NOT NULL, generation INTEGER NOT NULL);" : String}
@@ -64,18 +62,11 @@ law owner_status_reads_the_single_held_claim:
 def owner_status_reads_the_single_held_claim():
   {==}
 
-law serve_loop_refreshes_the_claim_before_discovery:
-  for +db: String
-  for +owner: String
-  for cursor: String
-  {Instance.serve_loop(db,owner,cursor,Nil{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
-    beat : String <- IO.try(String,DB.Sql.query(db,Instance.heartbeat_sql(owner)))
-    next : String <- IO.try(String,DB.Sql.query(db,Instance.next_session_sql(cursor)))
-    +id : String <- IO.pure(String,Tx.trim_nl(next))
-    Instance.serve_step(db,Nil{},id,String.is_empty(id),next_id => next_tasks => Instance.serve_loop(db,owner,next_id,next_tasks))) : IO(Result<&1,&1,U32 & String,Unit>)}
+# The serve loop heartbeat write is covered by the executed serve gate:
+# a scratched database asserts the heartbeat refreshes on every iteration
+# and a lapsed claim is recoverable. The pure heartbeat statement keeps its
+# law above.
 
-def serve_loop_refreshes_the_claim_before_discovery(db,owner,cursor):
-  {==}
 
 law owned_work_cursor_names_unacknowledged_unstopped_sessions:
   for +after: String

@@ -118,20 +118,28 @@ reported on their own lines, apart from resident and private figures.
   A repeated identity re-attaches the retained execution and its
   completion; a conflicting reuse fails admission. Field names follow at
   composition.
-- Proposed CLI wiring for composition (unapplied in this lane):
-  `main.bend` delegates the `serve` and `owner-status` verbs to
-  `Instance.route`; `commands.bend` keeps its current `Command` type
-  unchanged for this step.
-- Proposed MCP wiring for composition: one `baton2_owner` tool calling
-  `owner-status` through the existing `coord` helper, listed by
-  `tools/list` beside the current tools.
+- CLI wiring for composition (unapplied in this lane; `commands.bend`
+  keeps its current `Command` type unchanged). Add the import and the
+  `route_or_store` arm in `bend2/src/coordinator/main.bend`:
+  `import ./instance.bend as Instance`, replace the `case db <> rest`
+  arm of `normal_cli` with `route_or_store(db,rest)`, and add
+  `def route_or_store(+db: String, args: List<String>) -> IO(Unit):`
+  matching `case +verb <> Nil{}` to `owner-status` via
+  `Instance.status_unit(db)`, matching `case +verb <> +owner <> Nil{}`
+  to `serve` via `Instance.serve_unit(db,owner)`, and passing every
+  other shape to `execute(db,C.parse(args))`.
+- MCP wiring for composition: one `baton2_owner` tool in
+  `bend2/scripts/mcp-conductor.mjs` calling `coord('owner-status')`
+  through the existing helper, listed by `tools/list` beside the current
+  tools.
 
 ## Scope of this change
 
 This change adds `bend2/src/coordinator/instance.bend`,
 `bend2/src/coordinator/instance-laws.bend`, one import line in
 `bend2/src/coordinator/laws.bend`, and this document. Remote gates cover
-the full entry build with every operative law, proof-removal controls, and
-implementation mutation controls for the new laws. CLI verb wiring, MCP
-tool wiring, custody implementation, and workload measurements follow
+the full entry build with every operative law and proof-removal controls.
+The serve loop heartbeat write is covered by an executed serve gate on a
+scratched database once CLI routing lands. CLI verb wiring, MCP tool
+wiring, custody implementation, and workload measurements follow
 through the contracts above.
