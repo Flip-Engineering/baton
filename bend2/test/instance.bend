@@ -63,7 +63,7 @@ def restored(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
 
 def restore_step(+handle: U32) -> IO(Unit):
   do IO<Unit>:
-    result : Result<&1,&1,U32 & String,String> <- Custody.Instance.restore_state(handle)
+    result : Result<&1,&1,U32 & String,String> <- Custody.Instance.restore(handle,1)
     printed : Unit <- restored(result)
     IO.pure(Unit,Unit{})
 
@@ -159,8 +159,8 @@ def printed_line(line: Maybe<String>) -> IO(Unit):
 def commit_step(+handle: U32, commit: Bool) -> IO(Unit):
   match commit:
     case True{}: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.commit_state(handle,"{\"reducer\":\"seen two frames\"}")
-      printed : Unit <- operation("commit-state",result)
+      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.commit(handle,1,"{\"reducer\":\"seen two frames\"}")
+      printed : Unit <- operation("commit",result)
       IO.pure(Unit,Unit{})
     case False{}: IO.print("commit-skipped")
 
