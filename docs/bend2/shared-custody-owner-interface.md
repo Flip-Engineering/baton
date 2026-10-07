@@ -204,6 +204,57 @@ generation. A request for a retired generation fails with `ESTALE` and does not
 reach the slot's new child. A slot whose generation reaches the encoding maximum
 is not reused.
 
+## Committed-change subscription
+
+The elected owner fans out committed-change notices on its control socket. The
+subscription belongs to the database, so any client attaches to the same owner
+the attempts use.
+
+Frames, defined in `process-spawn.c`:
+
+| Op | Direction | Payload |
+| --- | --- | --- |
+| `BI_SUBSCRIBE` (8) | client to owner | `BrInstanceSubscribe{uint64_t generation, after_cursor}` |
+| `BI_READY` (11) | owner to client | `BrInstanceReady{uint64_t generation, cursor; uint32_t gap}` |
+| `BI_COMMIT` (9) | writer to owner | `BrInstanceCommit{uint64_t cursor}` |
+| `BI_NOTICE` (10) | owner to subscriber | `BrInstanceNotice{uint64_t cursor; uint32_t kind}`, `kind` `BN_COMMIT` (1) or `BN_GAP` (2) |
+
+Semantics:
+
+- The cursor is the durable `native_changes.change_id` high-water mark. A notice
+  carries the cursor and its kind; the subscriber rereads the rows from SQLite in
+  its own read transaction, scoped to its reader and selected subtree.
+- The writer publishes after its commit. A transaction that rolls back publishes
+  nothing, and a cursor equal to the recorded high-water publishes nothing.
+- The owner records the highest published cursor in the IPC directory as
+  `<key>.cursor` and resumes that value after re-election, so it does not regress.
+- The publisher is the authority for the database's own sequence. A published
+  cursor below the recorded high-water belongs to a different sequence, which the
+  physical `(st_dev, st_ino)` key cannot distinguish when a file reuses an inode;
+  the owner adopts the published value and sends `BN_GAP`.
+- The ready reply sets `gap` when the subscriber names an incarnation other than
+  the owner's epoch, or when its cursor is above the recorded high-water. Both
+  cases require a fresh snapshot; `cursor` states the high-water the subscriber
+  may replay rows up to in either case.
+- A notice whose bytes are still in flight is replaced by the newer notice,
+  because the payload is the cursor alone and the subscriber rereads to the
+  cursor it is told.
+
+Bend boundary in `instance.bend`:
+
+- `Instance.subscribe(database, after_cursor, expected_generation)` returns the
+  handle and the readiness JSON `{"generation":N,"cursor":N,"gap":bool}`.
+- `Instance.notice(handle)` waits for the next notice and returns
+  `{"kind":"commit"|"gap","cursor":N,"generation":N}`.
+- `Instance.unsubscribe(handle)` closes the connection; the owner drops the
+  subscriber when it reads the closed socket.
+- `Instance.publish_commit(database, cursor)` publishes one committed change.
+
+Cursors cross this boundary as decimal text because the language has no 64-bit
+integer type; the host refuses a malformed or oversized value with `EINVAL` or
+`EOVERFLOW` instead of truncating it. A caller with no recorded incarnation
+passes `"0"`, which reports `gap` and still delivers every later commit.
+
 ## Caller changes this interface requires
 
 1. `receive.bend:selected` — `ProcessChild.retain(attempt,argv,cwd,stderr,initial,keep_stdin,lock,recovery_argv)`
@@ -217,6 +268,11 @@ is not reused.
    `Custody.Instance.owner(database)`. It must sit before the
    `case db <> rest` branch so an ordinary `<database> <command>` invocation is
    unaffected. `test/instance.bend:owner_cli` is a working shape for that case.
+5. `store.bend:commit` — after the transaction commits, call
+   `Custody.Instance.publish_commit(db,cursor)` with the maximum committed
+   `native_changes.change_id`. The UI backend binds its
+   `subscribeCommittedChanges` equivalent to `Instance.subscribe`,
+   `Instance.notice` and `Instance.unsubscribe`.
 
 ## What the tests establish
 
@@ -251,6 +307,11 @@ is not reused.
 - A repeated admission with the same identity starts no second native child and
   leaves the existing attempt's custody and stream intact; the same directory
   with different work is refused with `EEXIST`.
+- A committed-change subscription reports its readiness with the owner
+  incarnation, the recorded cursor and the gap flag; it receives one notice per
+  published commit, reports a published cursor below the record as `gap`, stays
+  silent for a repeated cursor, and after the owner is killed the replacement
+  incarnation keeps the cursor and reports `gap` for the earlier incarnation.
 - A write through a retired capability is refused.
 - `Instance.shutdown` ends the owner, and a later attempt starts a new one.
 
@@ -268,8 +329,11 @@ is not reused.
   each attempt's spool file to notify the observer. The observer still reads the
   spool with blocking `read_line`, so readiness-driven child reads remain the
   controls handoff.
-- The custody event subscription a UI client would use is specified in the
-  coordination message that carries this interface; it is not implemented yet.
+- The custody event subscription a UI client would use is the committed-change
+  subscription above: `Instance.subscribe`, `Instance.notice`,
+  `Instance.unsubscribe` and `Instance.publish_commit`. A client that subscribes
+  while no owner runs for the database starts one, as every other `Instance`
+  call does.
 - Owner loss leaves each attempt's native child running with its spool intact,
   and the client falls back to the existing orphan attachment. A replacement
   owner starts custody only for an attempt whose manifest has no `launch` marker,
