@@ -1,0 +1,119 @@
+# Runtime lane consolidation: debug context
+
+Author: semantic-runtime (Associate Conductor), Ensemble semantic-runtime-context, 2026-10-05.
+Requirement reference: docs/bend2/semantic-context-feature.md (Debug context, Native use, Integration and acceptance), credential clarification at commit 98fbfe03.
+Players: semantic-runtime-protocol-research (deepseek-flash), semantic-runtime-protocol-critic (glm-5.3-flash), semantic-runtime-observations-research (deepseek-flash), semantic-runtime-observations-critic (gpt-6-astra). All at base 6929bffe. No runtime source or shared docs were modified; nothing landed or pushed.
+
+## Evidence roots (absolute paths)
+
+- Protocol research: /Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/worktrees/semantic-runtime-protocol-research/.scratch/evidence-protocol/ (report: protocol-research-report.md; transcripts/ with 15 probe scripts + raw CDP frames; lldb-dap/transcripts/ with raw byte streams, hexdumps, crash reports; lldb-dap/notes.md)
+- Protocol critic: /Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/worktrees/semantic-runtime-protocol-critic/.scratch/evidence-protocol-critic/ (report: protocol-critic-report.md; register R1-R13; probes/ + transcripts/ + per-scenario DAP jsonl)
+- Observations research: /Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/worktrees/semantic-runtime-observations-research/.scratch/evidence-observations/ (report: observations-research-report.md; transcripts/, transcripts/diagnostics/, transcripts/crash-reports/, fixtures/, probes/)
+- Observations critic: /Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/worktrees/semantic-runtime-observations-critic/.scratch/evidence-observations-critic/ (report: observations-critic-report.md; cdp-results.json + three full CDP transcripts; diagnosis/sigbus-diagnosis.md + complete diagnosis evidence)
+- Promoted findings (knowledge): net-inspector-port-collision-silent, net-debuggee-held-open-by-client, net-detach-while-stopped-resumes, net-pause-idle-target-deferred, net-debuggee-env-inherited, lldb-dap-cannot-create-target, lldb-dap-terminate-aborts-adapter (protocol-research); protocol-critic-cdp-disconnect-resume, protocol-critic-cdp-local-control, protocol-critic-lldb-launch-sigbus (protocol-critic).
+
+## 1. Backend comparison and selection guidance
+
+Node inspector/CDP (Node v25.8.0, /opt/homebrew/Cellar/node/25.8.0/bin/node): fully demonstrated as a debug-context backend. Discovery via /json/list, /json/version, /json/protocol (200, 97616 bytes); per-target WebSocket sessions; two concurrent clients coexist and share one pause state; --inspect-brk handshake is Runtime.enable + Debugger.enable + Runtime.runIfWaitingForDebugger. Every observations-matrix row is PROVED by probe on this host.
+
+lldb-DAP: unavailable for runtime observation on this host. All three LLDB installs (Xcode 1700.0.9.502, CommandLineTools 1700.0.9.502, Homebrew LLVM 20.1.8) SIGBUS in liblldb at target create, before any inferior exists. Capability exchange succeeds and the full capability JSON is recorded (matches semantic-backends: configurationDone, conditional/hit-conditional/function/instruction breakpoints, logpoints, data breakpoints, stepping granularity, setVariable, evaluate-for-hovers, exceptionInfo/exceptionOptions, readMemory, disassemble, modules, restart, stepInTargets, valueFormatting, terminateDebuggee present; stepBack/restartFrame/loadedSources/gotoTargets false; terminateRequest/setExpression/cancelRequest/writeMemory absent). Capabilities are vendor-declared only; no frame, scope, value or thread was ever observed from lldb-DAP here.
+
+Correction to the revised spec's lldb-dap section: it states the Homebrew build was not probed by the review Ensemble and scopes the crash finding to the Xcode adapter. My lane probed the Homebrew build directly (observations-critic dap-homebrew transcripts; protocol-research reproduce set) and the diagnosis shows the fault is in LLDB core, not the DAP adapter, and is not specific to debug-info binaries (see section 3).
+
+No framework commitment is made. CDP is the only backend with demonstrated runtime observation on this host; lldb-DAP remains the designated native backend whose observed classification is acceptance-gated per exact build/host.
+
+## 2. Signal-10 reproduction, diagnosis and per-target observed availability
+
+Reproduction: three independent reproducers (observations-critic, protocol-research, protocol-critic) plus the models lane's six failures. All launch variants crash: debug-map, dsymutil dSYM, line-tables-only, DWARF4, DWARF5, no-g, stripped. Exit code null, signal SIGBUS, empty stderr, no launch response, no inferior, no orphan.
+
+Diagnosis (observations-critic addendum, sigbus-diagnosis.md):
+- CONFIRMED: fault is in LLDB core target loading, not the DAP adapter. /usr/bin/lldb, Xcode lldb and Homebrew lldb all SIGBUS at `target create`. Minimal repro: `int main(void){return 0;}` compiled `clang -O0` without -g; plain `target create` crashes.
+- CONFIRMED: `target create --no-dependents` avoids the crash on both builds; static symbol resolution (`compute`) and a source breakpoint (`fixture.c:8:10`) resolve with a valid UUID-matched dSYM. Static inspection only.
+- INFERENCE (marked): the failing path is dependent-image symbol loading; the module log shows the fixture, /usr/lib/libSystem.B.dylib and /usr/lib/dyld loaded immediately before SIGBUS. The exact failing image and underlying defect remain UNOBSERVED.
+- Launch after --no-dependents stalled in `process launch` with debugserver and SecurityAgent present; Developer Mode is disabled (DevToolsSecurity -status); the authorization wait is INFERENCE, no denial was captured; owned probes were canceled and reaped without host changes.
+- Attach (protocol-critic R6): REFUTED on this host for all three target classes — platform binary denied via task_for_pid KERN_FAILURE retry loop (unified log evidence), -g binary no response within the observation window, no-g binary adapter SIGBUS. The attach request field on this build is `pid`, not the DAP-standard `processId`.
+
+Per-target observed availability on this host:
+- Node v25.8.0 (JS/TS subjects): observed facts available and PROVED (matrix in section 4).
+- Native Mach-O via lldb-DAP: observed facts UNAVAILABLE (adapter/core crash at target create). Static symbol/source-line facts via lldb CLI with --no-dependents: demonstrated, static scope only.
+- Reverse execution: unsupported on every probed backend (supportsStepBack false; rr absent and Linux-bound).
+
+## 3. Confirmation of the four contract requirements
+
+All four requirements the lead's spec revision lists are confirmed by probe evidence:
+
+1. Pause-namespaced handles — CONFIRMED and strengthened. observations-research: stale object ids after resume fail with -32000 "Could not find object with given id" while the debuggee runs. observations-critic (values:resume-drift): at the NEXT pause the byte-identical callFrameId (-1144555069266087994.1.0) and the old object handle resolve successfully and return the NEW value (state 1 to 2). Consolidated: handle validity across a resume is unpredictable (error while running, silent rebinding at the next pause), so the backend cannot be relied on to reject stale handles; the adapter must scope every handle to an integration-owned pause sequence and refuse foreign-pause handles by name. Debugger.paused carries no pause id (exactly three keys: callFrames, hitBreakpoints, reason); identity must be pid + debuggerId + execution-context id + workerId + pause counter.
+2. Truncation markers — CONFIRMED. Nested string previews shorten at 101 to 100 characters (50 + U+2026 + 49) with overflow=false; plain objects preview 5 of 6 properties (overflow=true at 6); arrays preview 100 of 101 (overflow=true). overflow=false does not establish fidelity. Expansion via Runtime.getProperties returned all 1000 properties, all 1000 array indices plus length, and a full 10000-character string. Direct primitive strings through 10000 characters arrive complete without a preview.
+3. Mutation gating — CONFIRMED. Six getProperties flag combinations never invoked the counted getters; the accessor descriptor is returned instead. Runtime.callFunctionOn reading the getter executes it (counter 0 to 1). throwOnSideEffect rejects with EvalError delivered in-band in exceptionDetails (the transport response contains a result object, so protocol-level error checks alone miss the rejection). Runtime.evaluate reads subject environment values in-band (protocol-critic T5: process.env marker returned). evaluateOnCallFrame, callFunctionOn and Runtime.evaluate execute target code and must be a separate explicit intent; getProperties/getScriptSource are the non-evaluating read path within the tested scope.
+4. Content-hash staleness — CONFIRMED. A disk edit changed SHA-256 (33b64ca9... to 2ce33969...) and mtime with zero inspector notification; getScriptSource and script identity unchanged. For directly-run .ts (Node type stripping), loaded bytes legitimately differ from disk (types removed, sourceURL appended); drift classification must compare against the transformed representation, not raw disk bytes. The result model needs loaded-source identity, disk identity at observation time, and the transformation relationship.
+
+## 4. Observations capability matrix (Node CDP, all PROVED on this host)
+
+- Stack mapping: Debugger.paused callFrames carry GENERATED positions only; V8 applies no source map to protocol frames. A breakpoint set on the original .ts URL returns a breakpointId but never resolves. The client must decode the map named by Debugger.scriptParsed.sourceMapURL; verified with an independent VLQ decoder (main.js 11:4 to src/main.ts 13:3; util.js 24:8 to src/util.ts 27:5; main.js 7:11 to src/main.ts 8:10). Node applies source maps to error.stack strings when --enable-source-maps is on, not to protocol locations.
+- Source-map limits (critic): mapped positions are segment lookups, not character-exact; maps carry names: [] in the tested compile; the renamed CommonJS binding (dependency_1.original) is not recoverable as a runtime variable (typeof renamed evaluates "undefined"); inlined constants map to their source expression. Variable recovery is qualified separately from location mapping.
+- Scopes/values: scopeChain types local/closure/global/block; one level per getProperties request; `this` on a class method is the instance (label="probe", total=10 observed); module bindings appear in the CJS wrapper frame's local scope — the top frame alone is insufficient.
+- Async frames: asyncStackTrace is null unless Debugger.setAsyncCallStackDepth was set before the chain formed (maxDepth 32 probed).
+- Exceptions: six throw shapes measured. setPauseOnExceptions "uncaught" pauses only on uncaught; "all"/"caught" pause on caught throws; an uncaught throw inside async main yields reason "promiseRejection". Runtime.exceptionThrown fires only while not paused; during a pause the exception value is Debugger.paused.data (RemoteObject). exceptionThrown stackTrace strings are source-mapped under --enable-source-maps. ESM module-level throws behave differently from timer-callback throws under "uncaught" (protocol-research).
+- Threads/workers: no Target domain (-32601); Schema.getDomains = Runtime, Debugger, Profiler, HeapProfiler, Schema; NodeWorker.enable is accepted despite not being listed. NodeWorker.attachedToWorker delivers workerInfo (workerId, type, title, url); per-worker sessions via NodeWorker.sendMessageToWorker have distinct debuggerIds (globalThis.__threadId 1/2, __isMainThread false; Debugger.pause produced an 11-frame worker stack). Workers inherit the parent's inspect flags via execArgv: a parent under --inspect-brk pauses every worker at start unless execArgv: [] is set. A worker exposes its own ws endpoint only if it calls inspector.open(0).
+- Value representation: getProperties returns isOwn, accessor descriptors, internalProperties ([[Prototype]]); distinct object handles can alias one object (circular reference proved by function comparison returning true); ownership/accessor/internal metadata must be retained.
+
+## 5. Protocol and process-ownership facts (Node, all probed)
+
+- Port collision silently disables the inspector: stderr banner only, program runs to completion, exit 0; /json/list on the port keeps serving the FIRST process (finding net-inspector-port-collision-silent; critic R3). Launch must use --inspect=0 and read the port from the child's stderr banner, then verify subject identity (pid, script path) in /json/list before attaching.
+- A finished debuggee waits for the client: "Waiting for the debugger to disconnect...", exits about 20ms after the socket closes (net-debuggee-held-open-by-client).
+- Client death resumes the debuggee: clean close and client SIGKILL both auto-resume a paused subject to exit 0 (net-detach-while-stopped-resumes; critic R4 adds: the --inspect-brk pre-release wait state blocks the subject until Runtime.runIfWaitingForDebugger; Debugger.resume there errors -32000 "Can only perform operation while paused").
+- Debugger.pause on an idle target returns {} but the pause arrives only at the next JS execution opportunity (measured 3498ms later at a timer callback); a target with no pending JavaScript produces no stop (net-pause-idle-target-deferred). "Pause requested, not yet effective" must be a distinct result state; no timeout cutoff may be invented.
+- An unreaped launcher orphans the debuggee to PID 1, still serving /json/list, program never started (protocol-research detected and cleaned two such leaks from its own probes).
+- Launch environment: default spawn inherits the launcher's full environment (104 keys including a credential-shaped marker); an explicit env passes exactly what was declared plus the macOS-injected __CF_USER_TEXT_ENCODING (net-debuggee-env-inherited). Debuggee launch environment must always be declared explicitly.
+
+## 6. Access and credential boundary facts
+
+- The inspector WebSocket's only credential is the UUID path segment; /json/list publishes it to any local HTTP client; an unauthenticated client executed Runtime.evaluate (6*7 -> 42); an attacker Origin was accepted; a forged Host is rejected 400; default bind is loopback (lsof), --inspect=0.0.0.0 binds all interfaces (protocol-critic R1/R2). Env/argv markers were absent from endpoint bodies on v25.8.0. Debug endpoint URLs and UUIDs are privileged session-scoped data; context results must exclude them.
+- DAP framing: Content-Length + compact JSON with NO trailing newline; a newline-based read hung 3s then glued two messages (critic R12). A length-delimited read primitive is a hard prerequisite for any native DAP/LSP client (matches semantic-backends' finding for clangd/sourcekit-lsp).
+- lldb-DAP request gating: sending terminate (and eight other requests behind false/absent capabilities) SIGABRTs the adapter with no response (lldb-dap-terminate-aborts-adapter). The adapter must gate every outgoing request against the initialize capability set each session; an unsupported request is fatal, not an error return. Shutdown is disconnect with an explicit terminateDebuggee; the disconnect/terminateDebuggee matrix itself is UNOBSERVED on this host (blocked by launch/attach failures) and the inferior's state after disconnect must be verified, not assumed.
+
+## 7. Runtime-session intent vocabulary and ownership (consolidation answer to the open decision)
+
+Intents: launch {program, args?, stopAt?, stopOnException?, env (declared, complete)} / attach {pid} / observe (against a stopped subject of the same session) / resume-step {action: resume|next|stepIn|stepOut} / evaluate {expression, frame} — explicit, disclosed as a mutating effect / release {onRelease: terminate|detach}.
+
+Ownership at every moment:
+- launch: the adapter spawns the subject with the declared environment, owns the child, and must reap it. Attempt exit closes the session: the debuggee is terminated (disconnect + terminateDebuggee) or detached as declared. An adapter that exits without releasing leaves an orphaned debuggee serving its inspector — the retained-adapter child must be keyed to the requesting attempt so attempt exit triggers release.
+- attach: subject identity is verified against backend listings before seizing; denial, silence and adapter crash are three distinct first-class results.
+- observe: valid only against a stopped subject; the result names its pause identity and every handle is pause-scoped; "pause requested, not yet effective" is a distinct state.
+- resume-step: resume invalidates all pause-scoped handles; the next observe re-binds to a new pause sequence.
+- release: the shutdown claim reflects the inferior's verified state after the disconnect response; adapter death mid-request is surfaced with its exit signal and crash attribution where available.
+
+Session lifetime vs the no-hidden-scheduler rule: a runtime session is owned by the requesting Baton2 session's attempt; nothing persists past attempt exit; a paused external debuggee is not an agent and the owner always acts on it (release or declared detach). Baton never parks a live agent on debuggee state.
+
+## 8. Acceptance gate and useful acceptance examples
+
+Debug acceptance gate (per exact backend build + host/toolchain): (1) target load and the selected launch/attach complete without crash or unresolved authorization, with executable path, versions, arch, flags and symbol artifacts recorded; (2) a requested source breakpoint resolves AND produces an actual stopped event on the intended target/thread; (3) frames, scopes and variables match the stopped fixture at declared optimization levels, with the exact optimized-out/unavailable representation retained; (4) resume plus a second stop demonstrates pause-scoped handle applicability and changed values; (5) crash, denied authorization, missing symbols and unavailable values are reported as distinct limitations. Only a passing configuration may promise observed facts for native targets. On this host, lldb-DAP currently fails condition 1; Node passes.
+
+Useful acceptance examples (Node lane, proved feasible):
+- TS fixture (two modules, class with closure, async main) compiled by tsc 5.9.3 with source maps, launched with --inspect=0 and a declared env. Query at a known stop: assert at least three frames map to the original .ts positions via the recorded map; assert closure scope values (prefix/seen) and the instance `this` (label/total); assert the CJS wrapper frame is consulted for module bindings.
+- Exception case: uncaught throw in async main; assert reason "promiseRejection" and that the exception value is read from Debugger.paused.data.
+- Worker case: spawn a worker_threads worker; assert the worker appears via NodeWorker with a distinct debuggerId; assert the parent session does not silently pause the worker (execArgv handling).
+- Staleness case: observe a value, resume, mutate, pause again; assert the result identifies the new pause sequence and refuses the old handle by name.
+
+## 9. Unresolved issues
+
+- Exact failing system image and root defect of the LLDB SIGBUS: UNOBSERVED (narrowed to dependent-image symbol loading; dyld shared-cache link is inference).
+- lldb launch authorization outcome (Developer Mode enable requires a privileged host change, not performed): UNOBSERVED.
+- lldb-DAP disconnect/terminateDebuggee matrix, setVariable, readMemory, native expression evaluation: UNOBSERVED (no inferior ever created).
+- Worker breakpoints/scopes/exception pauses (workers probed with pause/evaluate only): UNOBSERVED.
+- Remote-host (non-loopback) inspector behavior: UNOBSERVED (no second host).
+- How a packaged adapter reads a .map that is not on the local filesystem: unresolved design note.
+- LLDB Python SB API as an alternative native surface: UNOBSERVED.
+- Whether /json/list title includes script arguments under other invocation patterns: one pattern probed.
+
+## 10. Scope and module overlap
+
+- Wire-framing (length-delimited reads) is shared with the code lane's LSP adapters (clangd, sourcekit-lsp) — one read primitive serves both.
+- Declared debuggee environment and credential exclusion overlap the models lane's environment Section (98fbfe03 boundary; __CF_USER_TEXT_ENCODING platform injection).
+- Debug endpoint URL/UUID secrecy and the explicit-inspection access/output policy overlap the security Section.
+- Retained-adapter ownership keyed to the requesting attempt overlaps the integration lane's keeper subsystem and store design.
+
+## 11. Harness observations for the coordinator (not feature scope)
+
+Both deepseek OMP sessions (protocol-research, observations-research) ended with "Native output observation failed: malformed JSON" and "process ended without a native result (exit 0)"; their substantive reports and findings had already been delivered via the report command, so no work was lost. The GLM and Codex sessions produced normal turn receipts. Worth a look by whoever owns native result extraction for OMP receive sessions.
+

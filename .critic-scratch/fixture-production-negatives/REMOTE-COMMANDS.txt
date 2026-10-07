@@ -1,0 +1,78 @@
+Remote-only commands for the production-critic negative fixture
+================================================================
+
+Boundary: all compilation, checks and fixture executions run ONLY on admitted
+remote runners (operator execution boundary, message
+runtime-remote-recovery-60, 2026-10-05). Nothing here runs on the laptop.
+Submit through semantic-impl-runtime to synthesis/root for admission; root
+alone admits candidates to codex/bend2-homelab-validation-20261005.
+
+Inputs (exact reviewed bytes, already copied read-only):
+
+  FIXTURE DIR
+  .critic-scratch/fixture-production-negatives/
+    fixture-runtime-negatives.mjs     (this fixture runner)
+    modules/                          (10 copied adapter modules)
+    MODULES-SHA256SUMS.txt            (hashes of the copied bytes)
+    SNAPSHOT-SHA256SUMS.txt           (worktree state at snapshot 19:59:43Z;
+                                       cdp-transport.mjs changed mid-snapshot:
+                                       c618feed... recorded vs b147efcd...
+                                       copied — the copied bytes are what the
+                                       fixture imports and what this review read)
+    cdp-terminality-witness.bend      (Bend half; place beside pinned module)
+
+  PINNED REVIEW TARGET
+  worktree semantic-impl-cdp, untracked:
+    bend2/context/runtime/  (18 .mjs; cdp-intents 2fdd5492707f73909ef491da9cb02682b7ae98c7b95384ddb28ffc68ae4804a4)
+    bend2/src/context/runtime/cdp-runtime.bend
+      dc36d1e75ec6c03e6cb890a1d6d882aab444d7269d8d839b1e181175561d6644
+
+  TOOLCHAIN
+  Node exact floor (read-only staging, reuse, no install):
+    /Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/native-package-critic/toolchain/node-v22.15.0-darwin-arm64/bin/node
+    binary SHA-256 6a1137a572bc6648411bfe51032173a535e010576cad6da87547f414daa11fdb
+    (host-arch match required on the runner; otherwise any >=22.15 Node with the
+     version recorded in evidence)
+  Bend (qualified compiler, remote):
+    .scratch/native-artifact-qualification-20261002T174637Z/toolchain-home/bin/bend
+    SHA-256 3850c7cd281a687715a181ad6a2ecdef041704f320ea2b4304cf9e802309203c
+
+1) JS negative suite (pure computation, no sockets, no providers)
+----------------------------------------------------------------
+  NODE=<exact-floor node path>
+  "$NODE" fixture-runtime-negatives.mjs 2>&1 | tee "cdp-negatives-$(date -u +%Y%m%dT%H%M%SZ).stdout"
+  echo "exit=$?"
+  shasum -a 256 modules/*.mjs fixture-runtime-negatives.mjs > fixtures.evidence.sha256
+
+Expected: exit 0. Cases tagged DEFECT-EXPECTED assert current source behavior
+reported as a defect (startup ordering refusals A3/A5b, unknown-thread
+admission C2, unknown worker sessionId D3); FIXED cases (C1, D2, E1, E2, E4)
+assert the corrections present in the reviewed bytes. Any mismatch is a
+surprise and needs the full stdout attached.
+
+2) Bend terminality witness
+----------------------------------------------------------------
+  BEND=<qualified bend path>
+  # same directory as the pinned cdp-runtime.bend
+  "$BEND" cdp-terminality-witness.bend 2>&1 | tee "bend-witness-$(date -u +%Y%m%dT%H%M%SZ).stdout"
+  echo "exit=$?"
+
+Expected on the reviewed bytes: stdout bendRefuses=False (documents the Bend/JS
+terminality divergence; JS side refuses, B2 in the JS suite). A compile error
+in the witness file is fixture syntax, not source truth — fix the witness, not
+the module, and rerun; attach the exact stderr either way.
+
+3) Native gate placement proof (informational, cheap)
+----------------------------------------------------------------
+  grep -rn "cdp-runtime" <repo>/bend2/src/coordinator/ | wc -l   # expected 0
+  grep -c '^law ' <repo>/bend2/src/context/runtime/cdp-runtime.bend  # expected 0
+  test -f <repo>/bend2/src/context/runtime/cdp-runtime-laws.bend && echo present || echo absent
+
+Expected today: 0 / 0 / absent — the native module is outside the laws-check
+entry compile and states no operative laws (report section 4).
+
+4) Evidence retention
+----------------------------------------------------------------
+Preserve full stdout/stderr, exit status, runner identity, toolchain hashes and
+the fixture/module hashes together. Version/hash provisioning alone establishes
+no provider/native lifecycle/installed acceptance.
