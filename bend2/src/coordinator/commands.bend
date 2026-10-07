@@ -86,9 +86,16 @@ def messaging_schema() -> String:
 # Projection rows are written by triggers in the same transaction as the
 # coordinator state change. A rolled-back state change leaves no event row.
 def native_change_schema() -> String:
+  native_change_base_schema() ++ native_session_change_schema()
+  ++ native_message_change_schema()
+  ++ native_topology_change_schema()
+
+def native_change_base_schema() -> String:
   "CREATE TABLE IF NOT EXISTS native_changes (change_id INTEGER PRIMARY KEY AUTOINCREMENT,recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),entity TEXT NOT NULL,entity_id TEXT NOT NULL,session_id TEXT NOT NULL DEFAULT '',operation TEXT NOT NULL CHECK(operation IN ('insert','update','delete')),kind TEXT NOT NULL DEFAULT '',summary TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_retention AFTER INSERT ON native_changes BEGIN DELETE FROM native_changes WHERE change_id<=NEW.change_id-10000; END;"
-  ++ "CREATE TRIGGER IF NOT EXISTS native_changes_sessions_insert AFTER INSERT ON sessions BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('player',NEW.id,NEW.id,'insert','session','session insert'); END;"
+
+def native_session_change_schema() -> String:
+  "CREATE TRIGGER IF NOT EXISTS native_changes_sessions_insert AFTER INSERT ON sessions BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('player',NEW.id,NEW.id,'insert','session','session insert'); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_sessions_update AFTER UPDATE ON sessions WHEN OLD.parent IS NOT NEW.parent OR OLD.harness IS NOT NEW.harness OR OLD.model IS NOT NEW.model OR OLD.effort IS NOT NEW.effort OR OLD.native IS NOT NEW.native OR OLD.observed_harness IS NOT NEW.observed_harness OR OLD.observed_model IS NOT NEW.observed_model OR OLD.observed_effort IS NOT NEW.observed_effort OR OLD.endpoint IS NOT NEW.endpoint OR OLD.workspace IS NOT NEW.workspace OR OLD.branch IS NOT NEW.branch OR OLD.base IS NOT NEW.base BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('player',NEW.id,NEW.id,'update','session','session update'); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_sessions_delete AFTER DELETE ON sessions BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('player',OLD.id,OLD.id,'delete','session','session delete'); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_roles_insert AFTER INSERT ON session_roles BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('role',NEW.session,NEW.session,'insert','role',NEW.role); END;"
@@ -100,13 +107,17 @@ def native_change_schema() -> String:
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_stops_insert AFTER INSERT ON session_stops BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('stop',NEW.session,NEW.session,'insert','stop',NEW.outcome); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_stops_update AFTER UPDATE ON session_stops WHEN OLD.id IS NOT NEW.id OR OLD.reason IS NOT NEW.reason OR OLD.attempt IS NOT NEW.attempt OR OLD.directory IS NOT NEW.directory OR OLD.signal IS NOT NEW.signal OR OLD.applied_signal IS NOT NEW.applied_signal OR OLD.control_error IS NOT NEW.control_error OR OLD.outcome IS NOT NEW.outcome OR OLD.native_status IS NOT NEW.native_status OR OLD.report_id IS NOT NEW.report_id BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('stop',NEW.session,NEW.session,'update','stop',NEW.outcome); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_stops_delete AFTER DELETE ON session_stops BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('stop',OLD.session,OLD.session,'delete','stop',OLD.outcome); END;"
-  ++ "CREATE TRIGGER IF NOT EXISTS native_changes_messages_insert AFTER INSERT ON messages BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',NEW.id,NEW.recipient,'insert','message:' || NEW.kind,NEW.kind || ' from ' || NEW.sender); END;"
+
+def native_message_change_schema() -> String:
+  "CREATE TRIGGER IF NOT EXISTS native_changes_messages_insert AFTER INSERT ON messages BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',NEW.id,NEW.recipient,'insert','message:' || NEW.kind,NEW.kind || ' from ' || NEW.sender); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_messages_receipt AFTER UPDATE OF receipt ON messages WHEN OLD.receipt IS NOT NEW.receipt BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',NEW.id,NEW.recipient,'update','receipt','acknowledged'); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_messages_delete AFTER DELETE ON messages BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',OLD.id,OLD.recipient,'delete','message:' || OLD.kind,OLD.kind || ' from ' || OLD.sender); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_turns_insert AFTER INSERT ON turns BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('turn',NEW.id,NEW.worker,'insert','report','turn report recorded'); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_turns_update AFTER UPDATE ON turns WHEN OLD.worker IS NOT NEW.worker OR OLD.event IS NOT NEW.event BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('turn',NEW.id,NEW.worker,'update','report','turn report recorded'); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_turns_delete AFTER DELETE ON turns BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('turn',OLD.id,OLD.worker,'delete','report','turn report removed'); END;"
-  ++ "CREATE TRIGGER IF NOT EXISTS native_changes_ensembles_insert AFTER INSERT ON ensembles BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('ensemble',NEW.id,NEW.owner,'insert','ensemble',NEW.coupling); END;"
+
+def native_topology_change_schema() -> String:
+  "CREATE TRIGGER IF NOT EXISTS native_changes_ensembles_insert AFTER INSERT ON ensembles BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('ensemble',NEW.id,NEW.owner,'insert','ensemble',NEW.coupling); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_ensembles_update AFTER UPDATE ON ensembles WHEN OLD.owner IS NOT NEW.owner OR OLD.coupling IS NOT NEW.coupling BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('ensemble',NEW.id,NEW.owner,'update','ensemble',NEW.coupling); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_ensembles_delete AFTER DELETE ON ensembles BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('ensemble',OLD.id,OLD.owner,'delete','ensemble',OLD.coupling); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_members_insert AFTER INSERT ON ensemble_members BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('membership',NEW.ensemble,NEW.session,'insert','membership',NEW.ensemble); END;"
@@ -120,14 +131,16 @@ def native_change_schema() -> String:
 # Stored role families and turn columns retain their existing names. Section
 # membership references the existing Ensemble membership of each Player.
 
-def schema() -> String:
+def base_schema() -> String:
   "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
   ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);"
   ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');"
   ++ messaging_schema()
-  ++ native_change_schema()
+
+def schema() -> String:
+  base_schema() ++ native_change_schema()
 
 def stopped_session_sql(session: String) -> String:
   "EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ session ++ ")"
