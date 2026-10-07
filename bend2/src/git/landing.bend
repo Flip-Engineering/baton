@@ -41,6 +41,30 @@ type Landing is Data:
 # The attempt scratch is derived from the canonical common directory and the attempt name:
 # the directory the publication writes into and the artifact the guarded capture retains both
 # come from these two, so neither is a free-standing caller string.
+def landingreq_artifact(request: LandingRequest) -> String:
+  match request:
+    case LandingRequested{intent, name, old_target, content, guard, artifact, attempt_directory, repository}: artifact
+
+def landingreq_guard(request: LandingRequest) -> String:
+  match request:
+    case LandingRequested{intent, name, old_target, content, guard, artifact, attempt_directory, repository}: guard
+
+def landingreq_intent(request: LandingRequest) -> String:
+  match request:
+    case LandingRequested{intent, name, old_target, content, guard, artifact, attempt_directory, repository}: intent
+
+def landingreq_name(request: LandingRequest) -> String:
+  match request:
+    case LandingRequested{intent, name, old_target, content, guard, artifact, attempt_directory, repository}: name
+
+def landingreq_old_target(request: LandingRequest) -> String:
+  match request:
+    case LandingRequested{intent, name, old_target, content, guard, artifact, attempt_directory, repository}: old_target
+
+def landingreq_repository(request: LandingRequest) -> String:
+  match request:
+    case LandingRequested{intent, name, old_target, content, guard, artifact, attempt_directory, repository}: repository
+
 def attempt_directory_for(common: String, attempt: String) -> String:
   +c = common
   +a = attempt
@@ -141,7 +165,7 @@ def Landing.old_value_checked(handle: U32, request: LandingRequest, published: S
   +cand = candidate
   +base = basis
   +found = head
-  +expected = expected_head(req.old_target)
+  +expected = expected_head(landingreq_old_target(req))
   Bool.pick(IO(Landing), Tx.str_eq(found, expected),
     Landing.mutated(h, req, cand, base, pub),
     Landing.stopped(req, h, LandingOldValueMismatch{expected, found, Done{Unit{}}}))
@@ -153,9 +177,9 @@ def Landing.mutated(handle: U32, request: LandingRequest, candidate: String, bas
   +pub = published
   +cand = candidate
   +base = basis
-  +argv = Tx.enc_argv(Con{"git", Con{"update-ref", Con{qualified_target(intent_target(req.intent)), Con{cand, Con{mutation_old_value(req.old_target), Nil{}}}}}})
+  +argv = Tx.enc_argv(Con{"git", Con{"update-ref", Con{qualified_target(intent_target(landingreq_intent(req))), Con{cand, Con{mutation_old_value(landingreq_old_target(req)), Nil{}}}}}})
   do IO<Landing>:
-    observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(argv, req.repository, h, req.guard, req.artifact)
+    observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(argv, landingreq_repository(req), h, landingreq_guard(req), landingreq_artifact(req))
     Landing.release(h, req, cand, base, pub, observed)
 
 def Landing.release(handle: U32, request: LandingRequest, candidate: String, basis: String, published: String, mutation: Result<&1,&1,U32 & String,String & String>) -> IO(Landing):
@@ -185,7 +209,7 @@ def Landing.associate_now(handle: U32, request: LandingRequest, published: Strin
   +h = handle
   +req = request
   +pub = published
-  +intent = req.intent
+  +intent = landingreq_intent(req)
   do IO<Landing>:
     decision : A.Association <- A.Association.decide(A.AssociationRequested{intent.attempt, intent.common, intent.target, intent.destination, intent.candidate, intent.basis, intent.holder, intent.retry})
     Landing.associations(req, h, pub, decision)
@@ -195,7 +219,7 @@ def Landing.associate_now(handle: U32, request: LandingRequest, published: Strin
 def Landing.claimed_associated(handle: U32, request: LandingRequest) -> IO(Landing):
   +h = handle
   +req = request
-  +intent = req.intent
+  +intent = landingreq_intent(req)
   do IO<Landing>:
     decision : A.Association <- A.Association.decide(A.AssociationRequested{intent.attempt, intent.common, intent.target, intent.destination, intent.candidate, intent.basis, intent.holder, intent.retry})
     Landing.association_before_publish(h, req, decision)
@@ -212,9 +236,9 @@ def Landing.publish_now(handle: U32, request: LandingRequest, candidate: String,
   +req = request
   +cand = candidate
   +base = basis
-  +intent = req.intent
+  +intent = landingreq_intent(req)
   do IO<Landing>:
-    written : P.IntentPublish <- P.Intent.publish_intent(intent, attempt_directory_for(intent_common(intent), intent_name(intent)), req.name, intent_content(cand, base, intent_target(intent)))
+    written : P.IntentPublish <- P.Intent.publish_intent(intent, attempt_directory_for(intent_common(intent), intent_name(intent)), landingreq_name(req), intent_content(cand, base, intent_target(intent)))
     Landing.published(h, req, written)
 
 def Landing.decided(request: LandingRequest, claimed: Result<&1, &1, U32 & String, Maybe<U32>>) -> IO(Landing):
@@ -248,7 +272,7 @@ def preconditions_four(name: Bool, guard: Bool, artifact: Bool, attempt_director
 
 def Landing.run(request: LandingRequest) -> IO(Landing):
   +req = request
-  +intent = req.intent
+  +intent = landingreq_intent(req)
   do IO<Landing>:
     claimed : Result<&1, &1, U32 & String, Maybe<U32>> <- R.Receipt.claim(intent.common, intent.target)
     Landing.decided(req, claimed)

@@ -211,7 +211,7 @@ def pub_count(lines: List<String>, +want: String, +which: U32) -> U32:
 def pub_first(lines: List<String>, +want: String, +which: U32) -> String:
   match lines:
     case Nil{}: ""
-    case Con{h, rest}:
+    case Con{+h, rest}:
       Bool.pick(String, pub_hit(h, want, which), h, pub_first(rest, want, which))
 
 def pub_flag_of(+line: String) -> String:
@@ -294,7 +294,7 @@ def obs_reread_broken(code: U32, out: String, record: PubRecord, +destination: S
 
 def verify_ref_pick(+obs: PubObservation, r: T.GitOut, +ref: String) -> PubObservation:
   match obs:
-    case ObsAttempted{code, out, record, destination, target, oid, basis, post, reread}:
+    case ObsAttempted{+code, +out, +record, +destination, +target, +oid, +basis, post, reread}:
       match r:
         case T.GRun{rcode, rout}: obs_reread(code, out, record, destination, target, oid, basis, rcode, rout, ref)
         case T.GBroken{detail}: obs_reread_broken(code, out, record, destination, target, oid, basis, detail, ref)
@@ -308,7 +308,7 @@ def verify_ref(+obs: PubObservation, +repo: String, +target: String, +ref: Strin
 
 def verify_observation(+obs: PubObservation, +repo: String) -> IO(PubObservation):
   match obs:
-    case ObsAttempted{code, out, record, destination, target, oid, basis, post, reread}:
+    case ObsAttempted{code, out, record, destination, +target, oid, basis, post, reread}:
       Bool.pick(IO(PubObservation), U32.is_eq(code, 0),
         verify_ref(obs, repo, target, Tx.str_cat("refs/heads/", target)),
         IO.pure(PubObservation, obs))
@@ -392,13 +392,20 @@ type HolderObservation is Data:
   HolderObserved{request: HolderRequest, code: U32, out: String, verdict: HolderVerdict}
   HolderObservedBroken{request: HolderRequest, detail: String, verdict: HolderVerdict}
 
-def prefix_drop(line: String, prefix: String) -> Maybe<String>:
-  match line prefix:
-    case SNil{} SNil{}: Some{line}
-    case SNil{} SCon{pc, pr}: None{}
-    case SCon{lc, lr} SNil{}: Some{line}
-    case SCon{lc, lr} SCon{pc, pr}:
-      Bool.pick(Maybe<String>, Char.is_eq(lc, pc), prefix_drop(lr, pr), None{})
+def prefix_drop_go(rest: String, prefix: String, whole: String) -> Maybe<String>:
+  match rest:
+    case SNil{}:
+      match prefix:
+        case SNil{}: Some{whole}
+        case SCon{pc, pr}: None{}
+    case SCon{lc, lr}:
+      match prefix:
+        case SNil{}: Some{whole}
+        case SCon{pc, pr}:
+          Bool.pick(Maybe<String>, Char.is_eq(lc, pc), prefix_drop_go(lr, pr, whole), None{})
+
+def prefix_drop(+line: String, prefix: String) -> Maybe<String>:
+  prefix_drop_go(line, prefix, line)
 
 def holder_path_of(+line: String) -> Maybe<String>:
   prefix_drop(line, "worktree ")
@@ -431,7 +438,7 @@ def holder_valid_branch(+line: String) -> Bool:
   holder_branch_value(prefix_drop(line, "branch refs/heads/"))
 def holder_close(acc: HolderScan, +request: String) -> HolderScan:
   match acc:
-    case ScanState{block, matched, seen, bad, blocks}:
+    case ScanState{block, +matched, +seen, +bad, +blocks}:
       match block:
         case InBlock{path, has_state, branches}:
           Bool.pick(HolderScan, has_state,
@@ -441,7 +448,7 @@ def holder_close(acc: HolderScan, +request: String) -> HolderScan:
 
 def holder_open_fresh_path(block: HolderBlock, matched: Maybe<String>, seen: U32, bad: U32, blocks: U32, path: Maybe<String>) -> HolderScan:
   match path:
-    case Some{value}:
+    case Some{+value}:
       Bool.pick(HolderScan, holder_path_ok(value),
         ScanState{InBlock{value, False{}, 0}, matched, seen, bad, blocks},
         ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks})
@@ -454,7 +461,7 @@ def holder_open_fresh(+path: Maybe<String>, +acc: HolderScan, +request: String) 
 
 def holder_open(+path: Maybe<String>, +acc: HolderScan, +request: String) -> HolderScan:
   match acc:
-    case ScanState{block, matched, seen, bad, blocks}:
+    case ScanState{+block, matched, seen, bad, blocks}:
       match block:
         case InBlock{openpath, has_state, branches}:
           ScanState{block, matched, seen, U32.add(bad, 1), blocks}
@@ -469,23 +476,23 @@ def holder_in_block(+acc: HolderScan, +request: String) -> Bool:
 
 def holder_state_seen(+acc: HolderScan, +request: String) -> HolderScan:
   match acc:
-    case ScanState{block, matched, seen, bad, blocks}:
+    case ScanState{block, +matched, +seen, +bad, +blocks}:
       match block:
         case InBlock{path, has_state, branches}: ScanState{InBlock{path, True{}, branches}, matched, seen, bad, blocks}
         case NoBlock{}: ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks}
 
 def holder_match_first(+path: String, has_state: Bool, branches: U32, +acc: HolderScan, matched: Maybe<String>) -> HolderScan:
   match acc:
-    case ScanState{block, prior, seen, bad, blocks}:
+    case ScanState{block, prior, +seen, +bad, +blocks}:
       match prior:
         case Some{value}: ScanState{InBlock{path, has_state, U32.add(branches, 1)}, Some{value}, U32.add(seen, 1), bad, blocks}
         case None{}: ScanState{InBlock{path, has_state, U32.add(branches, 1)}, Some{path}, U32.add(seen, 1), bad, blocks}
 
 def holder_match_seen(+line: String, +target: String, +acc: HolderScan, +request: String) -> HolderScan:
   match acc:
-    case ScanState{block, matched, seen, bad, blocks}:
+    case ScanState{block, +matched, +seen, +bad, +blocks}:
       match block:
-        case InBlock{path, has_state, branches}:
+        case InBlock{+path, +has_state, +branches}:
           Bool.pick(HolderScan, U32.is_lt(0, branches),
             ScanState{InBlock{path, has_state, branches}, matched, seen, U32.add(bad, 1), blocks},
             holder_match_first(path, has_state, branches, acc, matched))
@@ -493,9 +500,9 @@ def holder_match_seen(+line: String, +target: String, +acc: HolderScan, +request
 
 def holder_branch_ok(+acc: HolderScan, +request: String) -> HolderScan:
   match acc:
-    case ScanState{block, matched, seen, bad, blocks}:
+    case ScanState{block, +matched, +seen, +bad, +blocks}:
       match block:
-        case InBlock{path, has_state, branches}:
+        case InBlock{+path, +has_state, +branches}:
           Bool.pick(HolderScan, U32.is_lt(0, branches),
             ScanState{InBlock{path, has_state, branches}, matched, seen, U32.add(bad, 1), blocks},
             ScanState{InBlock{path, has_state, U32.add(branches, 1)}, matched, seen, bad, blocks})
@@ -508,7 +515,7 @@ def holder_verdict_of(matched: Maybe<String>, seen: U32, +request: HolderRequest
 
 def holder_verdict(+acc: HolderScan, +request: HolderRequest) -> HolderVerdict:
   match acc:
-    case ScanState{block, matched, seen, bad, blocks}:
+    case ScanState{block, matched, +seen, bad, blocks}:
       Bool.pick(HolderVerdict, U32.is_lt(0, bad), VerdictAmbiguous{request, "the worktree listing is unsupported, incomplete or malformed"},
         Bool.pick(HolderVerdict, U32.is_lt(1, seen), VerdictAmbiguous{request, "the target branch is named more than once"},
           Bool.pick(HolderVerdict, U32.is_eq(blocks, 0), VerdictAmbiguous{request, "the worktree listing carries no complete block"},
@@ -540,7 +547,7 @@ def holder_line_step(+line: String, +branch: String, +target: String, +acc: Hold
 def holder_step(lines: List<String>, +branch: String, +target: String, +acc: HolderScan, +request: String) -> HolderScan:
   match lines:
     case Nil{}: holder_close(acc, request)
-    case Con{h, rest}:
+    case Con{+h, +rest}:
       Bool.pick(HolderScan, String.is_empty(h),
         holder_step(rest, branch, target, holder_close(acc, request), request),
         holder_step(rest, branch, target, holder_line_step(h, branch, target, acc, request), request))
@@ -565,7 +572,7 @@ def holder_discover(request: HolderRequest, g: T.GitOut) -> HolderDiscovery:
 # instead of being rendered as a status that was never observed.
 def holder_verdict_of_discovery(discovery: HolderDiscovery) -> HolderVerdict:
   match discovery:
-    case DiscoverRead{request, code, out}:
+    case DiscoverRead{+request, +code, +out}:
       Bool.pick(HolderVerdict, U32.is_eq(code, 0),
         holder_scan(Tx.split_lines(out), request),
         VerdictUnreadable{request, code, out})
@@ -824,6 +831,18 @@ def shared_record_failed(step: String, record: String, handle: U32) -> IO(Shared
 
 type LdAdvCtx is Data:
   LdAdvContext{claim: U32, guard: String, artifact: String}
+def ladvctx_claim(context: LdAdvCtx) -> U32:
+  match context:
+    case LdAdvContext{claim, guard, artifact}: claim
+
+def ladvctx_guard(context: LdAdvCtx) -> String:
+  match context:
+    case LdAdvContext{claim, guard, artifact}: guard
+
+def ladvctx_artifact(context: LdAdvCtx) -> String:
+  match context:
+    case LdAdvContext{claim, guard, artifact}: artifact
+
 
 # The target commit lookup used by the existing unheld compare-and-swap path.
 def ld_tip_argv(target: String) -> List<String>:
@@ -990,7 +1009,7 @@ def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ct
   +b2 = basis
   +cx = ctx
   do IO<LdAdvObs>:
-    captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", ld_update_argv(t2, c2, b2)}), r2, cx.claim, cx.guard, cx.artifact)
+    +captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", ld_update_argv(t2, c2, b2)}), r2, ladvctx_claim(cx), ladvctx_guard(cx), ladvctx_artifact(cx))
     ld_adv_cas_qualified(t2, c2, captured, ld_adv_status(captured), r2)
 # The attached branch name of a worktree, or a nonzero result when detached.
 def ld_head_argv() -> List<String>:
@@ -1092,7 +1111,7 @@ def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, 
       +c2 = cand
       +b2 = basis
       do IO<LdAdvObs>:
-        captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"merge", Con{"--ff-only", Con{c2, Nil{}}}}}), p2, ctx.claim, ctx.guard, ctx.artifact)
+        +captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"merge", Con{"--ff-only", Con{c2, Nil{}}}}}), p2, ladvctx_claim(ctx), ladvctx_guard(ctx), ladvctx_artifact(ctx))
         ld_adv_wt_pick(ld_adv_status(captured), p2, r2, t2, c2, b2, ctx, captured)
 def ld_adv_wt_head_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   match g:
@@ -1196,7 +1215,7 @@ def shared_attempt_name(base: String, attempt: U32) -> String:
 def shared_reserve_observed(+handle: U32, +repo: String, +target: String, +cand: String, +basis: String, +guard: String, +parent: String, +base: String, +attempt: U32, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   match observed:
     case Fail{error}: shared_step_failed("reserve", error, handle)
-    case Done{record}:
+    case Done{+record}:
       +created_ok = Tx.str_eq(record, Pb.production_record("created", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0"))
       +existing_ok = Tx.str_eq(record, Pb.production_record("existing", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0"))
       Bool.pick(IO(SharedLanding), created_ok,

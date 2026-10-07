@@ -25,6 +25,30 @@ type Association is Data:
                   target_head: String, holder_common: String, destination_common: String}
 
 # The supported object-name profile: forty lowercase hexadecimal characters.
+def assocreq_basis(request: AssociationRequest) -> String:
+  match request:
+    case AssociationRequested{attempt, common, target, destination, candidate, basis, holder, retry}: basis
+
+def assocreq_candidate(request: AssociationRequest) -> String:
+  match request:
+    case AssociationRequested{attempt, common, target, destination, candidate, basis, holder, retry}: candidate
+
+def assocreq_common(request: AssociationRequest) -> String:
+  match request:
+    case AssociationRequested{attempt, common, target, destination, candidate, basis, holder, retry}: common
+
+def assocreq_destination(request: AssociationRequest) -> String:
+  match request:
+    case AssociationRequested{attempt, common, target, destination, candidate, basis, holder, retry}: destination
+
+def assocreq_holder(request: AssociationRequest) -> String:
+  match request:
+    case AssociationRequested{attempt, common, target, destination, candidate, basis, holder, retry}: holder
+
+def assocreq_target(request: AssociationRequest) -> String:
+  match request:
+    case AssociationRequested{attempt, common, target, destination, candidate, basis, holder, retry}: target
+
 def hex_is(c: Char, n: U32) -> Bool:
   +ch = c
   +value = n
@@ -151,9 +175,9 @@ def requested_compared(request: AssociationRequest, candidate: String, basis: St
   +tip = head
   +holder_common = common
   +dest_common = destination_common
-  Bool.pick(IO(Association), Tx.str_eq(holder_common, req.common),
+  Bool.pick(IO(Association), Tx.str_eq(holder_common, assocreq_common(req)),
     IO.pure(Association, AssociationHeld{req, cand, base, tip, holder_common, dest_common}),
-    IO.pure(Association, AssociationRefused{"requested-common", T.GBroken{Tx.str_cat("holder answers ", Tx.str_cat(holder_common, Tx.str_cat(" for the requested ", req.common)))}}))
+    IO.pure(Association, AssociationRefused{"requested-common", T.GBroken{Tx.str_cat("holder answers ", Tx.str_cat(holder_common, Tx.str_cat(" for the requested ", assocreq_common(req))))}}))
 
 def common_compared(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, observation: T.GitOut, destination_common: String) -> IO(Association):
   +req = request
@@ -185,7 +209,7 @@ def destination_read(request: AssociationRequest, candidate: String, basis: Stri
   +tip = head
   +holder_common = common
   do IO<Association>:
-    observed : T.GitOut <- Git.runGit(req.destination, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    observed : T.GitOut <- Git.runGit(assocreq_destination(req), ["rev-parse", "--path-format=absolute", "--git-common-dir"])
     destination_decided(req, cand, base, tip, holder_common, observed)
 
 def holder_decided(request: AssociationRequest, candidate: String, basis: String, head: String, observation: T.GitOut) -> IO(Association):
@@ -204,7 +228,7 @@ def holder_read(request: AssociationRequest, candidate: String, basis: String, h
   +base = basis
   +tip = head
   do IO<Association>:
-    observed : T.GitOut <- Git.runGit(req.holder, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["rev-parse", "--path-format=absolute", "--git-common-dir"])
     holder_decided(req, cand, base, tip, observed)
 
 def ancestor_decided(request: AssociationRequest, candidate: String, basis: String, head: String, observation: T.GitOut) -> IO(Association):
@@ -225,7 +249,7 @@ def ancestor_read(request: AssociationRequest, candidate: String, basis: String,
   Bool.pick(IO(Association), Tx.str_eq(tip, ""),
     holder_read(req, cand, base, tip),
     do IO<Association>:
-        observed : T.GitOut <- Git.runGit(req.holder, ["merge-base", "--is-ancestor", "--end-of-options", tip, cand])
+        observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["merge-base", "--is-ancestor", "--end-of-options", tip, cand])
         ancestor_decided(req, cand, base, tip, observed))
 
 def target_profile(request: AssociationRequest, candidate: String, basis: String, observation: T.GitOut) -> IO(Association):
@@ -261,7 +285,7 @@ def target_read(request: AssociationRequest, candidate: String, basis: String) -
   +cand = candidate
   +base = basis
   do IO<Association>:
-    observed : T.GitOut <- Git.runGit(req.holder, ["rev-parse", "--verify", "--quiet", "--end-of-options", Tx.str_cat("refs/heads/", req.target)])
+    observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["rev-parse", "--verify", "--quiet", "--end-of-options", Tx.str_cat("refs/heads/", assocreq_target(req))])
     target_decided(req, cand, base, observed)
 
 # An absent target ref is the first landing and is carried as an empty head; a failed read is
@@ -288,7 +312,7 @@ def basis_read(request: AssociationRequest, candidate: String) -> IO(Association
   +req = request
   +cand = candidate
   do IO<Association>:
-    observed : T.GitOut <- Git.runGit(req.holder, ["rev-parse", "--verify", "--end-of-options", Tx.str_cat(req.basis, "^{commit}")])
+    observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["rev-parse", "--verify", "--end-of-options", Tx.str_cat(assocreq_basis(req), "^{commit}")])
     basis_checked(req, cand, observed)
 
 def oid_profile(step: String, request: AssociationRequest, observation: T.GitOut, oid: String) -> IO(Association):
@@ -315,7 +339,7 @@ def Association.decide_observed(request: AssociationRequest, observation: T.GitO
 def Association.decide(request: AssociationRequest) -> IO(Association):
   +req = request
   do IO<Association>:
-    observed : T.GitOut <- Git.runGit(req.holder, ["rev-parse", "--verify", "--end-of-options", Tx.str_cat(req.candidate, "^{commit}")])
+    observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["rev-parse", "--verify", "--end-of-options", Tx.str_cat(assocreq_candidate(req), "^{commit}")])
     Association.decide_observed(req, observed)
 
 law a_full_lowercase_hex_name_is_an_oid:
