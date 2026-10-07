@@ -755,6 +755,28 @@ while True: time.sleep(1)
         self.assertEqual(answer['attemptLogs'], [])
         self.assertEqual(generation.read_text(), 'unreported generation view\n')
 
+    def test_storage_reports_terminal_event_metadata(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
+                   if item['attempt'] == attempt)
+        self.assertEqual(row['terminalType'], 'agent_end')
+        self.assertGreater(row['eventChars'], 0)
+        self.assertGreater(row['eventCount'], 0)
+        self.assertTrue(row['reported'])
+
+    def test_storage_reports_empty_terminal_metadata_without_a_turn_row(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        with sqlite3.connect(self.db) as connection:
+            connection.execute('DELETE FROM turns WHERE id=?', (attempt,))
+        row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
+                   if item['attempt'] == attempt)
+        self.assertFalse(row['reported'])
+        self.assertEqual(row['terminalType'], '')
+        self.assertEqual(row['eventChars'], 0)
+        self.assertEqual(row['eventCount'], 0)
+
     def test_unwritable_log_reports_the_failure_and_keeps_the_report(self):
         unwritable = self.cwd / 'log-directory'
         unwritable.mkdir()

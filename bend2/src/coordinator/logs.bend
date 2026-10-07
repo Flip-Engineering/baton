@@ -679,7 +679,7 @@ def log_items(rows: List<String>, acc: String) -> IO(String):
 # a durable turn/report row, and an empty pending-input queue. Diagnostic mode
 # retains attempt files for targeted debugging.
 def attempt_rows_sql(+db: String, +session: String) -> String:
-  "SELECT e.session,e.id,e.mode,e.phase,e.status,e.directory,(SELECT count(*) FROM messages WHERE recipient=e.session AND receipt IS NULL),coalesce((SELECT level FROM log_policies WHERE session=e.session),'default'),CASE WHEN EXISTS(SELECT 1 FROM turns t JOIN messages m ON m.id=t.id AND m.sender=t.worker AND m.kind='report' WHERE t.id=e.id AND t.worker=e.session AND e.status='exit 0') OR EXISTS(SELECT 1 FROM session_stops ss JOIN messages m ON m.id=ss.report_id AND m.kind='report' AND m.sender=e.session WHERE ss.session=e.session AND ss.attempt=e.id AND ss.outcome='stopped') THEN 1 ELSE 0 END,CASE WHEN e.directory=" ++ C.q(db ++ ".attempt-") ++ " || lower(hex(e.id)) THEN 1 ELSE 0 END FROM executions e WHERE (" ++ C.q(session) ++ "='' OR e.session=" ++ C.q(session) ++ ") AND e.directory<>'' ORDER BY e.session,e.directory;"
+  "SELECT e.session,e.id,e.mode,e.phase,e.status,e.directory,(SELECT count(*) FROM messages WHERE recipient=e.session AND receipt IS NULL),coalesce((SELECT level FROM log_policies WHERE session=e.session),'default'),CASE WHEN EXISTS(SELECT 1 FROM turns t JOIN messages m ON m.id=t.id AND m.sender=t.worker AND m.kind='report' WHERE t.id=e.id AND t.worker=e.session AND e.status='exit 0') OR EXISTS(SELECT 1 FROM session_stops ss JOIN messages m ON m.id=ss.report_id AND m.kind='report' AND m.sender=e.session WHERE ss.session=e.session AND ss.attempt=e.id AND ss.outcome='stopped') THEN 1 ELSE 0 END,CASE WHEN e.directory=" ++ C.q(db ++ ".attempt-") ++ " || lower(hex(e.id)) THEN 1 ELSE 0 END,coalesce((SELECT json_extract(t.event,'$.type') FROM turns t WHERE t.id=e.id),''),coalesce((SELECT length(t.event) FROM turns t WHERE t.id=e.id),'0'),coalesce((SELECT CASE WHEN json_valid(t.event) AND json_type(t.event,'$.messages')='array' THEN json_array_length(t.event,'$.messages') END FROM turns t WHERE t.id=e.id),'0') FROM executions e WHERE (" ++ C.q(session) ++ "='' OR e.session=" ++ C.q(session) ++ ") AND e.directory<>'' ORDER BY e.session,e.directory;"
 
 type AttemptDecision is Data:
   AttemptDecision{reason: String, eligible: Bool}
@@ -699,7 +699,7 @@ def attempt_decision(phase: String, status: String, released: String, acknowledg
                 Bool.pick(AttemptDecision,String.eq(reported,"0"),AttemptDecision{"observation-unreported",False{}},
                   Bool.pick(AttemptDecision,U32.is_lt(0,bytes),AttemptDecision{"eligible",True{}},AttemptDecision{"no-diagnostic-files",False{}})))))))))
 
-def attempt_json_fields(session: String, attempt: String, mode: String, phase: String, status: String, +directory: String, +stdout: U32, +stderr: U32, +observer: U32, +keeper: U32, released: U32, acknowledged: U32, reported: String, pending: String, decision: AttemptDecision) -> String:
+def attempt_json_fields(session: String, attempt: String, mode: String, phase: String, status: String, +directory: String, +stdout: U32, +stderr: U32, +observer: U32, +keeper: U32, released: U32, acknowledged: U32, reported: String, pending: String, terminal: String, event_chars: String, event_messages: String, decision: AttemptDecision) -> String:
   match decision:
     case AttemptDecision{reason,eligible}:
       "{\"session\":" ++ J.string_literal(session)
@@ -707,6 +707,9 @@ def attempt_json_fields(session: String, attempt: String, mode: String, phase: S
       ++ ",\"mode\":" ++ J.string_literal(mode)
       ++ ",\"phase\":" ++ J.string_literal(phase)
       ++ ",\"status\":" ++ J.string_literal(status)
+      ++ ",\"terminalType\":" ++ J.string_literal(terminal)
+      ++ ",\"eventChars\":" ++ event_chars
+      ++ ",\"eventCount\":" ++ event_messages
       ++ ",\"directory\":" ++ J.string_literal(directory)
       ++ ",\"bytes\":" ++ U32.show(U32.add(stdout,U32.add(stderr,U32.add(observer,keeper))))
       ++ ",\"stdoutBytes\":" ++ U32.show(stdout)
@@ -720,12 +723,12 @@ def attempt_json_fields(session: String, attempt: String, mode: String, phase: S
       ++ ",\"cleanupEligible\":" ++ Bool.pick(String,eligible,"true","false")
       ++ ",\"cleanupReason\":" ++ J.string_literal(reason) ++ "}"
 
-def attempt_json(session: String, attempt: String, mode: String, +phase: String, +status: String, +directory: String, +stdout: U32, +stderr: U32, +observer: U32, +keeper: U32, +released: U32, +acknowledged: U32, +reported: String, +pending: String, level: String, path: String) -> String:
-  attempt_json_fields(session,attempt,mode,phase,status,directory,stdout,stderr,observer,keeper,released,acknowledged,reported,pending,attempt_decision(phase,status,Bool.pick(String,U32.is_lt(0,released),"1","0"),Bool.pick(String,U32.is_lt(0,acknowledged),"1","0"),reported,pending,level,path,U32.add(stdout,U32.add(stderr,U32.add(observer,keeper)))) )
+def attempt_json(session: String, attempt: String, mode: String, +phase: String, +status: String, +directory: String, +stdout: U32, +stderr: U32, +observer: U32, +keeper: U32, +released: U32, +acknowledged: U32, +reported: String, +pending: String, +terminal: String, +event_chars: String, +event_messages: String, level: String, path: String) -> String:
+  attempt_json_fields(session,attempt,mode,phase,status,directory,stdout,stderr,observer,keeper,released,acknowledged,reported,pending,terminal,event_chars,event_messages,attempt_decision(phase,status,Bool.pick(String,U32.is_lt(0,released),"1","0"),Bool.pick(String,U32.is_lt(0,acknowledged),"1","0"),reported,pending,level,path,U32.add(stdout,U32.add(stderr,U32.add(observer,keeper)))) )
 
 def attempt_fields(fields: List<String>) -> IO(String):
   match fields:
-    case session <> attempt <> mode <> phase <> status <> +directory <> pending <> level <> reported <> path <> rest: do IO<String>:
+    case session <> attempt <> mode <> phase <> status <> +directory <> pending <> level <> reported <> path <> terminal <> event_chars <> event_messages <> rest: do IO<String>:
       stdout : U32 <- IO.try(U32,F.Files.size(directory ++ "/stdout"))
       stderr : U32 <- IO.try(U32,F.Files.size(directory ++ "/native.stderr"))
       observer : U32 <- IO.try(U32,F.Files.size(directory ++ "/observer.log"))
@@ -734,7 +737,7 @@ def attempt_fields(fields: List<String>) -> IO(String):
       acknowledged_file : String <- IO.try(String,F.Files.regular(directory ++ "/acknowledged"))
       released : U32 = number_of(U32.read(Bool.pick(String,String.eq(released_file,"1"),"1","0")),0)
       acknowledged : U32 = number_of(U32.read(Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")),0)
-      IO.pure(String,attempt_json(session,attempt,mode,phase,status,directory,stdout,stderr,observer,keeper,released,acknowledged,reported,pending,level,path))
+      IO.pure(String,attempt_json(session,attempt,mode,phase,status,directory,stdout,stderr,observer,keeper,released,acknowledged,reported,pending,terminal,event_chars,event_messages,level,path))
     case other: IO.pure(String,"")
 
 def attempt_item(row: String) -> IO(String):

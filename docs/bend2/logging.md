@@ -138,7 +138,11 @@ The Turn owner adopts this by rebinding the log path once per turn to
 restore and the stderr sidecar. Root moved resumed receivers to fresh
 continuation paths (`<name>-continuation-<epoch>.jsonl`, receipt
 `/private/tmp/baton-cleanup-20261006/fresh-continuation-logs-20261007.json`);
-generations apply the same pattern at the log registry.
+generations apply the same pattern at the log registry. Duplicate consumer
+incarnations append duplicate frames into the same generation file. Rotation
+still bounds the file and cleanup stays gated on exit and acknowledgement, so
+a live incarnation blocks removal. The log layer keeps every unique frame; one
+authorized reducer per attempt is owned by the receive, host, and turn lanes.
 
 ## Storage inspection and cleanup
 
@@ -157,7 +161,10 @@ per attempt directory with the sizes of its `stdout`, `native.stderr`,
 `observer.log` and `keeper.log` sampled at inspection time, so a removed or
 never-written file reports 0 and the manifest's size is not counted in the
 retained byte total, plus its release and
-acknowledgement markers. A segment the session's `keep_segments` no longer
+acknowledgement markers. Each attempt entry also names the retained terminal
+event: its type, its character count, and its message count, read from the
+matching `turns` row; an attempt without a turn row reports an empty type and
+zero counts. A segment the session's `keep_segments` no longer
 covers is marked `"eligible": true`.
 
 `logs-clean SESSION` removes the segments marked eligible for that session and
@@ -210,6 +217,16 @@ restated turn-gate status lines: 13 "Verification turn closed" lines with 10
 "No completion claimed" and 10 cursor-tracking restatements. Those lines are
 report message prose, not frames the log policy classifies, so no log-policy
 rule addresses them. Fewer restatements per turn is turn-gate behavior.
+
+Five retained `agent_end` events hold 889,320 to 1,024,862 characters with 71
+to 216 messages each. Every message body is unique within its event. Each
+event holds 1 to 4 user texts, 34 to 70 thinking blocks, 33 to 116 tool calls
+with matching tool results, and 21 to 86 assistant texts. The 251 thinking
+blocks hold 844,942 characters, about 65% of the text bytes. Exact-duplicate
+text parts cover 60,794 of 1,287,560 bytes (4.7%). The final message holds
+3,342 to 8,369 characters; over 99% of each event is history. Across 3,702
+turns the event size median is 624 characters, p90 133,742, p99 593,996; 520
+events pass 100KB and 52 pass 500KB.
 
 Native Codex traces show one start and one completion per command id, so no
 deduplication applies. One 1,311-line session holds 536 command ids with
