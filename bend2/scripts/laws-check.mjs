@@ -294,13 +294,13 @@ async function fileContains(path, needle) {
 }
 
 export async function outputMatches(paths, pattern) {
-  // A removed proof must produce Bend's incomplete-proof diagnostic. A generic
-  // compiler error does not show that the law rejected the removed proof.
-  const markers = pattern === 'proof' ? [] : [pattern];
+  const markers = pattern === 'proof'
+    ? ['TODO found.', 'not a valid proof yet.']
+    : ['expected :', 'observed :', 'Location:', pattern.law];
   for (const path of paths) {
-    if (await fileContains(path, 'TODO found.') &&
-        await fileContains(path, 'not a valid proof yet.') &&
-        (markers.length === 0 || await fileContains(path, markers[0]))) return true;
+    let matched = true;
+    for (const marker of markers) if (!(await fileContains(path, marker))) matched = false;
+    if (matched) return true;
   }
   return false;
 }
@@ -400,7 +400,7 @@ export async function verifyResults(expected, results) {
         failures.push({ id: result.id, reason: `${stream} artifact is unavailable` });
       }
     }
-    const expectedDiagnostic = descriptor.kind === 'proof' ? 'proof' : descriptor.payload.law;
+    const expectedDiagnostic = descriptor.kind === 'proof' ? 'proof' : { kind: 'mutation', law: descriptor.payload.law };
     if (outputPaths.length === 2 && !(await outputMatches(outputPaths, expectedDiagnostic))) {
       failures.push({ id: result.id, reason: 'compiler output does not contain the producer diagnostic' });
     }
@@ -469,7 +469,7 @@ async function runControl(control, runRoot) {
   if (applied && outcome.exitCode !== null && outcome.signal === null && outcome.startupError === null) {
     rejectedForExpectedReason = control.kind === 'proof'
       ? await outputMatches([stdoutPath, stderrPath], 'proof')
-      : await outputMatches([stdoutPath, stderrPath], control.payload.law);
+      : await outputMatches([stdoutPath, stderrPath], { kind: 'mutation', law: control.payload.law });
   }
   const completed = applied && outcome.exitCode !== null && outcome.signal === null && outcome.startupError === null;
   const passed = completed && outcome.exitCode === 1 && rejectedForExpectedReason;

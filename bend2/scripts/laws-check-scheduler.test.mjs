@@ -23,7 +23,7 @@ const workspaceRoot = mkdtempSync(join(tmpdir(), 'laws-check-workspace-fixture-'
 const complete = dispatched.map((control, index) => {
   const diagnostic = control.kind === 'proof'
     ? 'Error: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.'
-    : `Error in ${control.payload.law}: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.`;
+    : `Error:\n- expected : {left == right}\n- observed : {left == different}\nLocation: ../laws.${control.payload.law}\n`;
   const stdoutPath = join(artifactRoot, `${index}.stdout.log`);
   const stderrPath = join(artifactRoot, `${index}.stderr.log`);
   writeFileSync(stdoutPath, diagnostic);
@@ -128,19 +128,19 @@ test('implementation mutations require one exact source match', () => {
   assert.equal(applyMutation(modulePath, mutation), false);
 });
 
-test('proof controls require the incomplete-proof diagnostic', async () => {
+test('proof removal and implementation mutation require their distinct law diagnostics', async () => {
   const genericError = join(artifactRoot, 'generic-error.log');
   const incompleteProof = join(artifactRoot, 'incomplete-proof.log');
-  const namedButGenericError = join(artifactRoot, 'named-generic-error.log');
-  const namedIncompleteProof = join(artifactRoot, 'named-incomplete-proof.log');
+  const namedGenericError = join(artifactRoot, 'named-generic-error.log');
+  const namedProofFailure = join(artifactRoot, 'named-proof-failure.log');
   writeFileSync(genericError, 'Error: unrelated type mismatch');
-  writeFileSync(namedButGenericError, 'Error in first_law: unrelated type mismatch');
+  writeFileSync(namedGenericError, 'Error in first_law: unrelated type mismatch');
   writeFileSync(incompleteProof, 'Error: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.');
-  writeFileSync(namedIncompleteProof, 'Error in first_law: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.');
+  writeFileSync(namedProofFailure, 'Error:\n- expected : {left == right}\n- observed : {left == different}\nLocation: ../laws.first_law\n');
   assert.equal(await outputMatches([genericError], 'proof'), false);
   assert.equal(await outputMatches([incompleteProof], 'proof'), true);
-  assert.equal(await outputMatches([namedButGenericError], 'first_law'), false);
-  assert.equal(await outputMatches([namedIncompleteProof], 'first_law'), true);
+  assert.equal(await outputMatches([namedGenericError], { kind: 'mutation', law: 'first_law' }), false);
+  assert.equal(await outputMatches([namedProofFailure], { kind: 'mutation', law: 'first_law' }), true);
 });
 
 test('request and job artifacts cannot overwrite a prior execution', () => {
@@ -161,7 +161,7 @@ test('producer discovery returns each proof and mutation identity once', async (
   assert.throws(() => producerSet(rows, [mutations[0], mutations[0]]), /not unique/);
 });
 
-test('mutation results reject output that names the law without an incomplete-proof diagnostic', async () => {
+test('mutation results reject output that names the law without a failed proof step', async () => {
   const resultIndex = dispatched.findIndex(({ kind }) => kind === 'mutation');
   const result = complete[resultIndex];
   const stdoutPath = join(artifactRoot, 'mutation-generic-error.log');
