@@ -1,0 +1,151 @@
+{
+  "schema": "baton2.context.bend2.source-analysis.result.v1",
+  "status": "completed",
+  "session": {
+    "token": "adapter-1-invocation-2",
+    "owner": "adapter-1-invocation-2",
+    "identity": "/work/imports.bend",
+    "completeness": "incomplete",
+    "incompleteness": [
+      "preParseMismatch"
+    ],
+    "counterDelta": {
+      "adapterFailures": 0,
+      "acquisitionFailures": 0,
+      "ambiguousAttributions": 0,
+      "evidenceFailures": 0,
+      "foreignOwnerEvents": 0,
+      "frontendRefusals": 0,
+      "hookInstallFailures": 0,
+      "invalidEvents": 0,
+      "ownerlessEvents": 0,
+      "preParseMismatches": 1,
+      "uncapturedDependencies": 0,
+      "outsideQuery": 0,
+      "outsideQueryReads": 0,
+      "overlappingQueries": 0
+    },
+    "files": [
+      {
+        "identity": "/work/imports.bend",
+        "namespace": "",
+        "captured": true,
+        "closureIdentity": "/work/imports.bend",
+        "digest": "4bc1031684490257a17643e1ab7c8c052afbc97b003c2413517bb755fb470071",
+        "byteLength": 21
+      }
+    ],
+    "attempts": [],
+    "imports": [
+      {
+        "file": "/work/imports.bend",
+        "namespace": "",
+        "alias": null,
+        "specifier": "import Base",
+        "removed": {
+          "from": 4,
+          "to": 15
+        },
+        "removedText": "import Base",
+        "specifierSpan": {
+          "status": "unavailable",
+          "reason": "missingSpan",
+          "detail": null
+        }
+      }
+    ],
+    "aliases": [
+      {
+        "file": "/work/imports.bend",
+        "namespace": "",
+        "aliases": {},
+        "preParse": true,
+        "view": "finalized",
+        "parsedTextMatchesView": false
+      }
+    ],
+    "declarations": [
+      {
+        "phase": "parse",
+        "form": "def",
+        "name": "body",
+        "qualified": "body",
+        "namespace": "",
+        "file": "/work/imports.bend",
+        "unsafe": false,
+        "orderIndex": 0,
+        "span": {
+          "status": "mapped",
+          "identity": "/work/imports.bend",
+          "digest": "4bc1031684490257a17643e1ab7c8c052afbc97b003c2413517bb755fb470071",
+          "original": {
+            "start": {
+              "index": 16,
+              "line": 2,
+              "column": 1
+            },
+            "end": {
+              "index": 20,
+              "line": 2,
+              "column": 5
+            }
+          },
+          "byteRange": {
+            "start": 16,
+            "end": 20
+          },
+          "text": "body"
+        }
+      },
+      {
+        "phase": "parse",
+        "form": "def",
+        "name": "across",
+        "qualified": "across",
+        "namespace": "",
+        "file": "/work/imports.bend",
+        "unsafe": false,
+        "orderIndex": 1,
+        "span": {
+          "status": "unavailable",
+          "reason": "spansOmitted",
+          "detail": {
+            "detail": "the range crosses text left out of the transformed string"
+          }
+        }
+      }
+    ],
+    "references": [],
+    "diagnostics": [],
+    "types": [],
+    "phases": [],
+    "limitations": [
+      {
+        "code": "proofStatusUnavailable",
+        "detail": "completion gates are observable as completionGate events, but no proved-law claim is made here: runtime execution, deployment, semantic equivalence and the selected-step invocation remain unqualified"
+      },
+      {
+        "code": "frontendGateOnly",
+        "detail": "a completed frontend gate is the frontend gate result, not a proof of an individual law"
+      },
+      {
+        "code": "noSelectedStepAbi",
+        "detail": "the derived frontend is invoked by the internal entry in frontend-invocation.mjs; the admitted native invocation ABI remains external"
+      },
+      {
+        "code": "preParseMismatch",
+        "detail": "/work/imports.bend"
+      }
+    ],
+    "acquisitions": [
+      {
+        "requested": "/work/imports.bend",
+        "status": "captured",
+        "canonical": "/work/imports.bend",
+        "detail": null,
+        "role": null,
+        "producer": null
+      }
+    ]
+  }
+}

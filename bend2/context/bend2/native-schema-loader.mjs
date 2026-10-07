@@ -35,6 +35,7 @@ const ASSETS = [
 const FIXTURES = ['result.valid', 'result.unavailable', 'result.missing-status',
   'result.unknown-member', 'result.bad-scalar', 'result.unavailable.missing-reason',
   'result.unavailable.extra-member', 'result.completed.bad-phase',
+  'result.completed.producer-session',
   'subject.valid', 'subject.unknown-kind', 'subject.position.valid',
   'subject.position.missing-line', 'subject.position.bad-line',
   'subject.position.unknown-member', 'subject.symbol.wrong-branch',
@@ -48,12 +49,13 @@ const FIXTURE_FORMS = { 'result.valid': 'result', 'result.unavailable': 'result'
   'subject.position.valid': 'subject', 'subject.position.missing-line': 'subject',
   'subject.position.bad-line': 'subject', 'subject.position.unknown-member': 'subject',
   'subject.symbol.wrong-branch': 'subject', 'subject.symbol.missing-name': 'subject',
-  'reference.file.valid': 'reference',
+  'reference.file.valid': 'reference', 'result.completed.producer-session': 'result',
   'reference.absent.with-sha': 'reference', 'event.valid': 'event' };
 const FIXTURE_EXPECT = { 'result.valid': '"ok"', 'result.unavailable': '"ok"',
   'result.missing-status': '"missingField"', 'result.unknown-member': '"undeclaredField"',
   'result.bad-scalar': '"wrongKind"', 'result.unavailable.missing-reason': '"missingField"',
   'result.unavailable.extra-member': '"undeclaredField"', 'result.completed.bad-phase': '"enumLiteral"',
+  'result.completed.producer-session': '"ok"',
   'subject.valid': '"ok"', 'subject.unknown-kind': '"unknownTag"',
   'subject.position.valid': '"ok"', 'subject.position.missing-line': '"missingField"',
   'subject.position.bad-line': '"wrongKind"', 'subject.position.unknown-member': '"undeclaredField"',
@@ -117,6 +119,14 @@ function nameList(names) {
   let out = 'Schema.NlNil{}';
   for (let index = names.length - 1; index >= 0; index -= 1) {
     out = `Schema.NlCons{${bendString(names[index])}, ${out}}`;
+  }
+  return out;
+}
+
+function ssChain(strings) {
+  let out = 'Eng.SSNil{}';
+  for (let index = strings.length - 1; index >= 0; index -= 1) {
+    out = `Eng.SSCons{${bendString(strings[index])}, ${out}}`;
   }
   return out;
 }
@@ -214,6 +224,16 @@ delete mutated.operations[0].schema;
 lines.push('def declaration_json_missing_op_schema() -> J.Json:');
 lines.push(`  ${jsonValue(mutated, 'declaration-negative')}`);
 lines.push('');
+const badEffect = structuredClone(declaration);
+badEffect.operations[0].effects = ['bogusEffect'];
+lines.push('def declaration_json_bad_effect() -> J.Json:');
+lines.push(`  ${jsonValue(badEffect, 'declaration-bad-effect')}`);
+lines.push('');
+const runtimeNoProfile = structuredClone(declaration);
+runtimeNoProfile.operations[0].execution = 'runtime';
+lines.push('def declaration_json_runtime_no_profile() -> J.Json:');
+lines.push(`  ${jsonValue(runtimeNoProfile, 'declaration-runtime-no-profile')}`);
+lines.push('');
 for (const name of FIXTURES) {
   const fixture = readLaneJson(`native-fixtures/schema/${name}.json`);
   lines.push(`def fixture_${name.replaceAll('-', '_').replaceAll('.', '_')}() -> Codec.RawValue:`);
@@ -304,6 +324,55 @@ lines.push('law probe_op_execution_managed:');
 lines.push('  {decl_single_op_execution_managed(ND.decode(declaration_json(), verified_digest())) == True{} : Bool}');
 lines.push('');
 lines.push('def probe_op_execution_managed():');
+lines.push('  {==}');
+lines.push('');
+lines.push('# Operation admission under the real Decl checker: the admitted');
+lines.push('# inventory carries the five lane schema identities and no digests,');
+lines.push('# which check_operations does not consult (edges are empty).');
+lines.push('def admission_inv() -> Decl.Inv:');
+lines.push(`  Decl.Inv{Decl.ArtsNil{}, ${ssChain(defs.map((def) => def.identity))}, Decl.DigsNil{}}`);
+lines.push('');
+lines.push('def chk_ok(+c: Decl.Chk) -> Bool:');
+lines.push('  match c:');
+lines.push('    case Decl.ChkOk{}: True{}');
+lines.push('    case Decl.ChkFail{reason}: False{}');
+lines.push('');
+lines.push('def decl_admission_ok(+decoded: ND.DeclarationDecode) -> Bool:');
+lines.push('  match decoded:');
+lines.push('    case ND.DeclarationDecoded{+declaration, +inventory}:');
+lines.push('      match declaration:');
+lines.push('        case Decl.Decl{decl_version, module_id, revision, protocol_version, package_identity, entry, dependencies, operations, applicability}:');
+lines.push('          chk_ok(Decl.check_operations("bend2", operations, admission_inv()))');
+lines.push('    case ND.DeclarationRefused{+field}: False{}');
+lines.push('');
+lines.push('law probe_op_admission_admits:');
+lines.push('  {decl_admission_ok(ND.decode(declaration_json(), verified_digest())) == True{} : Bool}');
+lines.push('');
+lines.push('def probe_op_admission_admits():');
+lines.push('  {==}');
+lines.push('');
+lines.push('law probe_decode_bad_effect_accepts:');
+lines.push('  {decode_ok(ND.decode(declaration_json_bad_effect(), verified_digest())) == True{} : Bool}');
+lines.push('');
+lines.push('def probe_decode_bad_effect_accepts():');
+lines.push('  {==}');
+lines.push('');
+lines.push('law probe_admission_bad_effect_refuses:');
+lines.push('  {decl_admission_ok(ND.decode(declaration_json_bad_effect(), verified_digest())) == False{} : Bool}');
+lines.push('');
+lines.push('def probe_admission_bad_effect_refuses():');
+lines.push('  {==}');
+lines.push('');
+lines.push('law probe_decode_runtime_no_profile_accepts:');
+lines.push('  {decode_ok(ND.decode(declaration_json_runtime_no_profile(), verified_digest())) == True{} : Bool}');
+lines.push('');
+lines.push('def probe_decode_runtime_no_profile_accepts():');
+lines.push('  {==}');
+lines.push('');
+lines.push('law probe_admission_runtime_no_profile_refuses:');
+lines.push('  {decl_admission_ok(ND.decode(declaration_json_runtime_no_profile(), verified_digest())) == False{} : Bool}');
+lines.push('');
+lines.push('def probe_admission_runtime_no_profile_refuses():');
 lines.push('  {==}');
 lines.push('');
 for (const name of FIXTURES) {

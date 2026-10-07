@@ -2,7 +2,7 @@
   "format": "baton2-branch-requirements-v1",
   "role": "coordination record for Schema Muse generic discriminated-record support; not a SchemaDef and not admitted by the walker",
   "decoder_pin": "495ec1f5",
-  "schema_pin": "237b5ba280fe373c16f46d7c0c78224010ef82d8",
+  "schema_pin": "ac55c2ef0514612869367bc246b4a7f5cab4831f",
   "note": "strict rows are implemented as SfDiscriminated branch records in the lane assets and gated by refusal laws; open rows name the exact missing evidence and must not be treated as contract",
   "entries": [
     {
@@ -63,13 +63,13 @@
         {
           "value": "mapped",
           "required": ["status", "identity", "digest", "original", "byteRange", "text"],
-          "evidence": "asset contract only; no lane producer frame carries a mapped span",
-          "status": "strict-unproven"
+          "evidence": "producer spanOutcome in frontend-adapter.mjs emits exactly these six members; gated by result.completed.producer-session.json whose declarations[0].span was captured from the real adapter on atari-homelab",
+          "status": "strict"
         },
         {
           "value": "unavailable",
           "required": ["status", "reason"],
-          "evidence": "native-fixtures/schema/result.valid.json declarations[0].span carries status unavailable with reason and no detail; detail is admitted when present but not required",
+          "evidence": "result.valid.json declarations[0].span carries reason without detail; the producer snapshot declarations[1].span carries reason spansOmitted with a detail object; producer spanOutcome always emits the detail key (null when absent)",
           "status": "strict"
         }
       ]
