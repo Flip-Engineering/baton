@@ -994,8 +994,7 @@ def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ct
   +cx = ctx
   do IO<LdAdvObs>:
     captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", ld_update_argv(t2, c2, b2)}), r2, cx.claim, cx.guard, cx.artifact)
-    +capture = captured
-    ld_adv_cas_qualified(t2, c2, capture, ld_adv_status(capture), r2)
+    ld_adv_cas_qualified(t2, c2, captured, ld_adv_status(captured), r2)
 # The attached branch name of a worktree, or a nonzero result when detached.
 def ld_head_argv() -> List<String>:
   ["symbolic-ref", "--quiet", "HEAD"]
