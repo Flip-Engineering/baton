@@ -619,36 +619,66 @@ def log_items(rows: List<String>, acc: String) -> IO(String):
       deeper : String <- log_items(tail,items_join(acc,item))
       IO.pure(String,deeper)
 
-# An attempt directory is retained evidence: storage inspection reports its
-# files and markers, and no command removes it.
-def attempt_rows_sql() -> String:
-  "SELECT session,id,mode,phase,status,directory FROM executions WHERE directory<>'' ORDER BY session,directory;"
+# An attempt is cleanup-eligible only after native exit, release, acknowledgement,
+# a durable turn/report row, and an empty pending-input queue. Diagnostic mode
+# retains attempt files for targeted debugging.
+def attempt_rows_sql(+db: String, +session: String) -> String:
+  "SELECT e.session,e.id,e.mode,e.phase,e.status,e.directory,(SELECT count(*) FROM messages WHERE recipient=e.session AND receipt IS NULL),coalesce((SELECT level FROM log_policies WHERE session=e.session),'default'),CASE WHEN EXISTS(SELECT 1 FROM turns t JOIN messages m ON m.id=t.id AND m.sender=t.worker AND m.kind='report' WHERE t.id=e.id AND t.worker=e.session AND e.status='exit 0') OR EXISTS(SELECT 1 FROM session_stops ss JOIN messages m ON m.id=ss.report_id AND m.kind='report' AND m.sender=e.session WHERE ss.session=e.session AND ss.attempt=e.id AND ss.outcome='stopped') THEN 1 ELSE 0 END,CASE WHEN e.directory=" ++ C.q(db ++ ".attempt-") ++ " || lower(hex(e.id)) THEN 1 ELSE 0 END FROM executions e WHERE (" ++ C.q(session) ++ "='' OR e.session=" ++ C.q(session) ++ ") AND e.directory<>'' ORDER BY e.session,e.directory;"
 
-def attempt_json(session: String, attempt: String, mode: String, phase: String, status: String, +directory: String, +stdout: U32, +stderr: U32, +observer: U32, +keeper: U32, released: U32, acknowledged: U32) -> String:
-  "{\"session\":" ++ J.string_literal(session)
-  ++ ",\"attempt\":" ++ J.string_literal(attempt)
-  ++ ",\"mode\":" ++ J.string_literal(mode)
-  ++ ",\"phase\":" ++ J.string_literal(phase)
-  ++ ",\"status\":" ++ J.string_literal(status)
-  ++ ",\"directory\":" ++ J.string_literal(directory)
-  ++ ",\"bytes\":" ++ U32.show(U32.add(stdout,U32.add(stderr,U32.add(observer,keeper))))
-  ++ ",\"stdoutBytes\":" ++ U32.show(stdout)
-  ++ ",\"stderrBytes\":" ++ U32.show(stderr)
-  ++ ",\"observerBytes\":" ++ U32.show(observer)
-  ++ ",\"keeperBytes\":" ++ U32.show(keeper)
-  ++ ",\"released\":" ++ Bool.pick(String,U32.is_lt(0,released),"true","false")
-  ++ ",\"acknowledged\":" ++ Bool.pick(String,U32.is_lt(0,acknowledged),"true","false") ++ "}"
+type AttemptDecision is Data:
+  AttemptDecision{reason: String, eligible: Bool}
+
+def attempt_decision_eligible(decision: AttemptDecision) -> Bool:
+  match decision:
+    case AttemptDecision{reason,eligible}: eligible
+
+def attempt_decision(phase: String, status: String, released: String, acknowledged: String, reported: String, pending: String, level: String, path: String, bytes: U32) -> AttemptDecision:
+  Bool.pick(AttemptDecision,Bool.not(String.eq(pending,"0")),AttemptDecision{"pending-input",False{}},
+    Bool.pick(AttemptDecision,String.eq(level,"diagnostic"),AttemptDecision{"diagnostic-policy",False{}},
+      Bool.pick(AttemptDecision,String.eq(path,"0"),AttemptDecision{"attempt-path-unverified",False{}},
+        Bool.pick(AttemptDecision,Bool.not(String.eq(phase,"exited")),AttemptDecision{"native-not-exited",False{}},
+          Bool.pick(AttemptDecision,String.eq(released,"0"),AttemptDecision{"native-not-released",False{}},
+            Bool.pick(AttemptDecision,String.eq(acknowledged,"0"),AttemptDecision{"native-not-acknowledged",False{}},
+              Bool.pick(AttemptDecision,Bool.not(String.eq(status,"exit 0")),AttemptDecision{"native-turn-failed",False{}},
+                Bool.pick(AttemptDecision,String.eq(reported,"0"),AttemptDecision{"observation-unreported",False{}},
+                  Bool.pick(AttemptDecision,U32.is_lt(0,bytes),AttemptDecision{"eligible",True{}},AttemptDecision{"no-diagnostic-files",False{}})))))))))
+
+def attempt_json_fields(session: String, attempt: String, mode: String, phase: String, status: String, +directory: String, +stdout: U32, +stderr: U32, +observer: U32, +keeper: U32, released: U32, acknowledged: U32, reported: String, pending: String, decision: AttemptDecision) -> String:
+  match decision:
+    case AttemptDecision{reason,eligible}:
+      "{\"session\":" ++ J.string_literal(session)
+      ++ ",\"attempt\":" ++ J.string_literal(attempt)
+      ++ ",\"mode\":" ++ J.string_literal(mode)
+      ++ ",\"phase\":" ++ J.string_literal(phase)
+      ++ ",\"status\":" ++ J.string_literal(status)
+      ++ ",\"directory\":" ++ J.string_literal(directory)
+      ++ ",\"bytes\":" ++ U32.show(U32.add(stdout,U32.add(stderr,U32.add(observer,keeper))))
+      ++ ",\"stdoutBytes\":" ++ U32.show(stdout)
+      ++ ",\"stderrBytes\":" ++ U32.show(stderr)
+      ++ ",\"observerBytes\":" ++ U32.show(observer)
+      ++ ",\"keeperBytes\":" ++ U32.show(keeper)
+      ++ ",\"released\":" ++ Bool.pick(String,U32.is_lt(0,released),"true","false")
+      ++ ",\"acknowledged\":" ++ Bool.pick(String,U32.is_lt(0,acknowledged),"true","false")
+      ++ ",\"reported\":" ++ Bool.pick(String,String.eq(reported,"1"),"true","false")
+      ++ ",\"pendingInput\":" ++ pending
+      ++ ",\"cleanupEligible\":" ++ Bool.pick(String,eligible,"true","false")
+      ++ ",\"cleanupReason\":" ++ J.string_literal(reason) ++ "}"
+
+def attempt_json(session: String, attempt: String, mode: String, +phase: String, +status: String, +directory: String, +stdout: U32, +stderr: U32, +observer: U32, +keeper: U32, +released: U32, +acknowledged: U32, +reported: String, +pending: String, level: String, path: String) -> String:
+  attempt_json_fields(session,attempt,mode,phase,status,directory,stdout,stderr,observer,keeper,released,acknowledged,reported,pending,attempt_decision(phase,status,Bool.pick(String,U32.is_lt(0,released),"1","0"),Bool.pick(String,U32.is_lt(0,acknowledged),"1","0"),reported,pending,level,path,U32.add(stdout,U32.add(stderr,U32.add(observer,keeper)))) )
 
 def attempt_fields(fields: List<String>) -> IO(String):
   match fields:
-    case session <> attempt <> mode <> phase <> status <> +directory <> rest: do IO<String>:
+    case session <> attempt <> mode <> phase <> status <> +directory <> pending <> level <> reported <> path <> rest: do IO<String>:
       stdout : U32 <- IO.try(U32,F.Files.size(directory ++ "/stdout"))
       stderr : U32 <- IO.try(U32,F.Files.size(directory ++ "/native.stderr"))
       observer : U32 <- IO.try(U32,F.Files.size(directory ++ "/observer.log"))
       keeper : U32 <- IO.try(U32,F.Files.size(directory ++ "/keeper.log"))
-      released : U32 <- IO.try(U32,F.Files.size(directory ++ "/released"))
-      acknowledged : U32 <- IO.try(U32,F.Files.size(directory ++ "/acknowledged"))
-      IO.pure(String,attempt_json(session,attempt,mode,phase,status,directory,stdout,stderr,observer,keeper,released,acknowledged))
+      released_file : String <- IO.try(String,F.Files.regular(directory ++ "/released"))
+      acknowledged_file : String <- IO.try(String,F.Files.regular(directory ++ "/acknowledged"))
+      released : U32 = number_of(U32.read(Bool.pick(String,String.eq(released_file,"1"),"1","0")),0)
+      acknowledged : U32 = number_of(U32.read(Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")),0)
+      IO.pure(String,attempt_json(session,attempt,mode,phase,status,directory,stdout,stderr,observer,keeper,released,acknowledged,reported,pending,level,path))
     case other: IO.pure(String,"")
 
 def attempt_item(row: String) -> IO(String):
@@ -677,7 +707,7 @@ def storage(+db: String) -> IO(String):
     ensured : Unit <- Schema.ensure(db)
     log_text : String <- IO.try(String,DB.Sql.query(db,schema() ++ log_rows_sql()))
     logs : String <- log_items(Tx.split_lines(log_text),"")
-    attempt_text : String <- IO.try(String,DB.Sql.query(db,attempt_rows_sql()))
+    attempt_text : String <- IO.try(String,DB.Sql.query(db,attempt_rows_sql(db,"")))
     attempts : String <- attempt_items(Tx.split_lines(attempt_text),"")
     database : U32 <- IO.try(U32,F.Files.size(db))
     root : U32 <- IO.try(U32,F.Files.size(db ++ ".root.log"))
@@ -740,11 +770,64 @@ def clean_sql(+session: String) -> String:
 def clean_pending_sql(+session: String) -> String:
   "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL;"
 
-def clean_json(session: String, removed: String) -> String:
-  "{\"session\":" ++ J.string_literal(session) ++ ",\"removed\":[" ++ removed ++ "]}"
+def clean_json(session: String, removed: String, attempt_files: String) -> String:
+  "{\"session\":" ++ J.string_literal(session) ++ ",\"removed\":[" ++ removed ++ "],\"attemptFiles\":[" ++ attempt_files ++ "]}"
+
+def attempt_cleanup_result(name: String, size: U32, result: Result<&1,&1,U32 & String,String>) -> String:
+  match result:
+    case Fail{(code,text)}: "{\"file\":" ++ J.string_literal(name) ++ ",\"removed\":false,\"error\":" ++ J.string_literal(U32.show(code) ++ ": " ++ text) ++ "}"
+    case Done{state}: "{\"file\":" ++ J.string_literal(name) ++ ",\"bytes\":" ++ U32.show(size) ++ ",\"removed\":" ++ Bool.pick(String,String.eq(state,"removed"),"true","false") ++ "}"
+
+def attempt_cleanup_file(db: String, +directory: String, +name: String) -> IO(String):
+  do IO<String>:
+    size : U32 <- IO.try(U32,F.Files.size(directory ++ "/" ++ name))
+    result : Result<&1,&1,U32 & String,String> <- F.Files.remove_attempt_file(db,directory,name)
+    IO.pure(String,attempt_cleanup_result(name,size,result))
+
+def attempt_cleanup_files(+db: String, +directory: String) -> IO(String):
+  do IO<String>:
+    stdout : String <- attempt_cleanup_file(db,directory,"stdout")
+    stderr : String <- attempt_cleanup_file(db,directory,"native.stderr")
+    observer : String <- attempt_cleanup_file(db,directory,"observer.log")
+    keeper : String <- attempt_cleanup_file(db,directory,"keeper.log")
+    IO.pure(String,items_join(stdout,items_join(stderr,items_join(observer,keeper))))
+
+def attempt_cleanup_fields(db: String, fields: List<String>) -> IO(String):
+  match fields:
+    case session <> attempt <> mode <> phase <> status <> +directory <> pending <> level <> reported <> path <> rest: do IO<String>:
+      released_file : String <- IO.try(String,F.Files.regular(directory ++ "/released"))
+      acknowledged_file : String <- IO.try(String,F.Files.regular(directory ++ "/acknowledged"))
+      stdout : U32 <- IO.try(U32,F.Files.size(directory ++ "/stdout"))
+      stderr : U32 <- IO.try(U32,F.Files.size(directory ++ "/native.stderr"))
+      observer : U32 <- IO.try(U32,F.Files.size(directory ++ "/observer.log"))
+      keeper : U32 <- IO.try(U32,F.Files.size(directory ++ "/keeper.log"))
+      released : String = Bool.pick(String,String.eq(released_file,"1"),"1","0")
+      acknowledged : String = Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")
+      bytes : U32 = U32.add(stdout,U32.add(stderr,U32.add(observer,keeper)))
+      eligible : Bool = attempt_decision_eligible(attempt_decision(phase,status,released,acknowledged,reported,pending,level,path,bytes))
+      files : String <- Bool.pick(IO(String),eligible,attempt_cleanup_files(db,directory),IO.pure(String,""))
+      IO.pure(String,files)
+    case other: IO.pure(String,"")
+
+def attempt_cleanup_row(db: String, row: String) -> IO(String):
+  attempt_cleanup_fields(db,Tx.split_tabs(row))
+
+def attempt_cleanup_rows(+db: String, rows: List<String>, acc: String) -> IO(String):
+  match rows:
+    case Nil{}: IO.pure(String,acc)
+    case head <> tail: do IO<String>:
+      item : String <- attempt_cleanup_row(db,head)
+      deeper : String <- attempt_cleanup_rows(db,tail,items_join(acc,item))
+      IO.pure(String,deeper)
+
+def clean_attempts(+db: String, session: String) -> IO(String):
+  do IO<String>:
+    rows : String <- IO.try(String,DB.Sql.query(db,attempt_rows_sql(db,session)))
+    removed : String <- attempt_cleanup_rows(db,Tx.split_lines(rows),"")
+    IO.pure(String,removed)
 
 def clean_skipped(session: String, pending: String) -> String:
-  "{\"session\":" ++ J.string_literal(session) ++ ",\"removed\":[],\"pendingInput\":" ++ pending ++ ",\"skipped\":\"pending-input\"}"
+  "{\"session\":" ++ J.string_literal(session) ++ ",\"removed\":[],\"attemptFiles\":[],\"pendingInput\":" ++ pending ++ ",\"skipped\":\"pending-input\"}"
 
 def unknown_session(session: String) -> String:
   "{\"error\":\"unknown-session\",\"session\":" ++ J.string_literal(session) ++ ",\"next\":\"Read session ID; recruit or attach the session before cleaning its logs.\"}"
@@ -754,11 +837,12 @@ def unknown_session(session: String) -> String:
 def refused(+saved: String) -> Bool:
   Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-log-setting\""),Tx.starts_with(saved,"{\"error\":\"unknown-session\""))
 
-def cleaned(db: String, +session: String) -> IO(String):
+def cleaned(+db: String, +session: String) -> IO(String):
   do IO<String>:
     rows : String <- IO.try(String,DB.Sql.query(db,clean_sql(session)))
     removed : String <- clean_rows(Tx.split_lines(rows),"")
-    IO.pure(String,clean_json(session,removed))
+    attempt_removed : String <- clean_attempts(db,session)
+    IO.pure(String,clean_json(session,removed,attempt_removed))
 
 def clean_known(db: String, +session: String, +pending: String) -> IO(String):
   Bool.pick(IO(String),String.eq(pending,"0"),cleaned(db,session),IO.pure(String,clean_skipped(session,pending)))

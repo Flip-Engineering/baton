@@ -1,6 +1,9 @@
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -136,6 +139,119 @@ static Term baton_file_remove_run(Env e,Term *f,IoWork *w) {
   return io_work(w,baton_file_remove_call,baton_file_unit_pack);
 }
 static void __attribute__((constructor)) baton_file_remove_use(void) {io_eff(CID_FILES_REMOVE,baton_file_remove_run,0);}
+#endif
+
+/* Attempt cleanup is limited to regular diagnostic files in a sibling
+   <database>.attempt-* directory. Open the directory without following its
+   final component, verify it shares the database's canonical parent, and
+   unlink only the named regular file relative to that directory handle. */
+typedef struct { char *database,*directory,*name,*answer; int error; } BatonAttemptFile;
+
+static int baton_attempt_name_allowed(const char *name) {
+  return !strcmp(name,"stdout") || !strcmp(name,"native.stderr") ||
+    !strcmp(name,"observer.log") || !strcmp(name,"keeper.log");
+}
+
+static char *baton_parent_path(const char *path) {
+  char *copy=strdup(path);
+  if(!copy)return NULL;
+  char *slash=strrchr(copy,'/');
+  if(!slash) {free(copy);return strdup(".");}
+  if(slash==copy) slash[1]=0;
+  else *slash=0;
+  return copy;
+}
+
+static const char *baton_base_name(const char *path) {
+  const char *slash=strrchr(path,'/');
+  return slash?slash+1:path;
+}
+
+static void baton_attempt_remove_call(IoWork *w) {
+  BatonAttemptFile *call=(BatonAttemptFile *)w->data;
+  char *database=realpath(call->database,NULL),*directory=realpath(call->directory,NULL);
+  char *database_parent=database?baton_parent_path(database):NULL;
+  char *directory_parent=directory?baton_parent_path(directory):NULL;
+  struct stat before,opened,canonical;
+  int dirfd=-1;
+  if(!baton_attempt_name_allowed(call->name) || !database || !directory ||
+     !database_parent || !directory_parent) call->error=EINVAL;
+  else if(strcmp(database_parent,directory_parent)) call->error=EPERM;
+  else {
+    size_t prefix=strlen(baton_base_name(call->database));
+    const char *base=baton_base_name(call->directory);
+    if(strncmp(base,baton_base_name(call->database),prefix) ||
+       strncmp(base+prefix,".attempt-",9)) call->error=EPERM;
+    else if(lstat(call->directory,&before)) call->error=errno;
+    else if(!S_ISDIR(before.st_mode)) call->error=EINVAL;
+    else if((dirfd=open(call->directory,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC))<0) call->error=errno;
+    else if(fstat(dirfd,&opened) || stat(directory,&canonical) ||
+            opened.st_dev!=before.st_dev || opened.st_ino!=before.st_ino ||
+            opened.st_dev!=canonical.st_dev || opened.st_ino!=canonical.st_ino) call->error=ESTALE;
+    else {
+      struct stat file;
+      if(fstatat(dirfd,call->name,&file,AT_SYMLINK_NOFOLLOW)) {
+        if(errno==ENOENT) call->answer=strdup("missing");
+        else call->error=errno;
+      } else if(!S_ISREG(file.st_mode)) call->error=EINVAL;
+      else if(unlinkat(dirfd,call->name,0)) call->error=errno;
+      else call->answer=strdup("removed");
+      if(!call->answer && !call->error) call->error=ENOMEM;
+    }
+  }
+  if(dirfd>=0)close(dirfd);
+  free(database);free(directory);free(database_parent);free(directory_parent);
+}
+
+static Term baton_attempt_file_pack(Env e,IoWork *w) {
+  BatonAttemptFile *call=(BatonAttemptFile *)w->data;
+  Term result=call->error?io_fail(e,call->error,"attempt cleanup requires a regular file inside its database directory")
+    :io_done(e,io_str(e,call->answer,strlen(call->answer)));
+  free(call->database);free(call->directory);free(call->name);free(call->answer);free(call);w->data=NULL;
+  return result;
+}
+
+#ifdef CID_FILES_REMOVE_ATTEMPT_FILE
+static Term baton_attempt_file_run(Env e,Term *f,IoWork *w) {
+  BatonAttemptFile *call=calloc(1,sizeof(*call));
+  if(!call)return io_fail(e,ENOMEM,NULL);
+  u64 length=0;
+  call->database=io_cstr(e,f[0],&length);
+  if(!call->database || strlen(call->database)!=length)call->error=EINVAL;
+  call->directory=io_cstr(e,f[1],&length);
+  if(!call->directory || strlen(call->directory)!=length)call->error=EINVAL;
+  call->name=io_cstr(e,f[2],&length);
+  if(!call->name || strlen(call->name)!=length)call->error=EINVAL;
+  if(call->error) {free(call->database);free(call->directory);free(call->name);free(call);return io_fail(e,EINVAL,"database, directory or file name contains NUL");}
+  w->data=(char *)call;
+  return io_work(w,baton_attempt_remove_call,baton_attempt_file_pack);
+}
+static void __attribute__((constructor)) baton_attempt_file_use(void) {io_eff(CID_FILES_REMOVE_ATTEMPT_FILE,baton_attempt_file_run,0);}
+#endif
+
+typedef struct { char *path; char answer[2]; int error; } BatonRegularFile;
+static void baton_regular_file_call(IoWork *w) {
+  BatonRegularFile *call=(BatonRegularFile *)w->data;
+  struct stat info;
+  if(!lstat(call->path,&info))call->answer[0]=S_ISREG(info.st_mode)?'1':'0';
+  else if(errno==ENOENT)call->answer[0]='0';
+  else call->error=errno;
+  call->answer[1]=0;
+}
+static Term baton_regular_file_pack(Env e,IoWork *w) {
+  BatonRegularFile *call=(BatonRegularFile *)w->data;
+  Term result=call->error?io_fail(e,call->error,NULL):io_done(e,io_str(e,call->answer,1));
+  free(call->path);free(call);w->data=NULL;return result;
+}
+#ifdef CID_FILES_REGULAR
+static Term baton_regular_file_run(Env e,Term *f,IoWork *w) {
+  BatonRegularFile *call=calloc(1,sizeof(*call));
+  if(!call)return io_fail(e,ENOMEM,NULL);
+  u64 length=0;call->path=io_cstr(e,f[0],&length);
+  if(!call->path || strlen(call->path)!=length) {free(call->path);free(call);return io_fail(e,EINVAL,"path contains NUL");}
+  w->data=(char *)call;return io_work(w,baton_regular_file_call,baton_regular_file_pack);
+}
+static void __attribute__((constructor)) baton_regular_file_use(void) {io_eff(CID_FILES_REGULAR,baton_regular_file_run,0);}
 #endif
 
 /* The numbered segments beside one log: directory entries whose name is the

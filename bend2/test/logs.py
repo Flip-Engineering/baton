@@ -1,6 +1,7 @@
 """Log policy, rotation, storage inspection and cleanup checks."""
 import json
 import pathlib
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -57,7 +58,7 @@ class Logs(unittest.TestCase):
         self.player.write_text('#!' + sys.executable + '\n' + body)
         self.player.chmod(0o700)
 
-    def stream(self, frames, player='omp-worker', turn='turn-1'):
+    def stream(self, frames, player='omp-worker', turn='turn-1', exit_code=0):
         """Write one native OMP stream, then run the turn over it."""
         self.events.write_text('\n'.join(frames) + '\n')
         self.harness('''import pathlib,sys
@@ -66,9 +67,25 @@ sys.stdin.readline()
 sys.stdin.readline()
 print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
 assert sys.stdin.read()==''
-''')
+sys.exit(%d)
+''' % exit_code)
         return self.call('turn', player, turn, str(self.player), 'model', 'low',
                          str(self.cwd), str(self.task), str(self.log), '')
+
+    def prepare_attempt_artifacts(self):
+        """Give the completed fixture turn a deterministic retained-attempt directory."""
+        with sqlite3.connect(self.db) as connection:
+            session, attempt, phase = connection.execute(
+                'SELECT session,id,phase FROM executions WHERE session=?', ('omp-worker',)).fetchone()
+            self.assertEqual(phase, 'exited')
+            directory = str(self.db) + '.attempt-' + attempt.encode().hex()
+            connection.execute('UPDATE executions SET directory=? WHERE session=?', (directory, session))
+        attempt_dir = pathlib.Path(directory)
+        attempt_dir.mkdir()
+        for name, body in (('manifest', b'retained manifest'), ('status', b'0\n'),
+                           ('released', b'released\n'), ('acknowledged', b'acknowledged\n')):
+            (attempt_dir / name).write_bytes(body)
+        return attempt, attempt_dir
 
     def lines(self, path=None):
         return (path or self.log).read_text().splitlines()
@@ -268,6 +285,101 @@ assert sys.stdin.read()==''
         self.assertEqual(sorted(p.name for p in self.cwd.glob('second.jsonl.*')), second_rotated)
         self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['removed'], [])
         self.assertEqual(self.refusal('logs-clean', 'absent-session')['error'], 'unknown-session')
+
+    def test_cleanup_removes_only_reported_settled_attempt_diagnostics(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        for name in ('stdout', 'native.stderr', 'observer.log', 'keeper.log'):
+            (attempt_dir / name).write_text('diagnostic data for ' + name)
+        protected = ('manifest', 'status', 'released', 'acknowledged')
+        for name in protected:
+            self.assertTrue((attempt_dir / name).is_file(), name)
+        preview = json.loads(self.call('logs-storage'))['attempts']
+        row = next(item for item in preview if item['attempt'] == attempt)
+        self.assertTrue(row['released'])
+        self.assertTrue(row['acknowledged'])
+        self.assertTrue(row['reported'])
+        self.assertTrue(row['cleanupEligible'], row)
+        answer = json.loads(self.call('logs-clean', 'omp-worker'))
+        self.assertEqual({item['file'] for item in answer['attemptFiles'] if item['removed']},
+                         {'stdout', 'native.stderr', 'observer.log', 'keeper.log'})
+        for name in protected:
+            self.assertTrue((attempt_dir / name).is_file(), name)
+        self.assertEqual(json.loads(self.call('delivery', 'turn-1'))['body'], 'Complete answer λ')
+
+    def test_attempt_without_durable_turn_record_is_retained(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        with sqlite3.connect(self.db) as connection:
+            connection.execute('DELETE FROM turns WHERE id=?', (attempt,))
+            for report_id in (attempt, attempt + ':exit', attempt + ':observation'):
+                connection.execute('DELETE FROM messages WHERE id=? AND kind=?', (report_id, 'report'))
+        evidence = attempt_dir / 'observer.log'
+        evidence.write_text('observer evidence')
+        row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
+                   if item['attempt'] == attempt)
+        self.assertFalse(row['reported'])
+        self.assertEqual(row['cleanupReason'], 'observation-unreported')
+        answer = json.loads(self.call('logs-clean', 'omp-worker'))
+        self.assertEqual(answer['attemptFiles'], [])
+        self.assertEqual(evidence.read_text(), 'observer evidence')
+
+    def test_failed_native_turn_retains_attempt_diagnostics(self):
+        self.stream([self.terminal()], exit_code=1)
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        evidence = attempt_dir / 'observer.log'
+        evidence.write_text('failure diagnostics')
+        with sqlite3.connect(self.db) as connection:
+            status, report_count = connection.execute(
+                "SELECT e.status,(SELECT count(*) FROM messages m WHERE m.sender=e.session AND m.kind='report') "
+                'FROM executions e WHERE e.session=?', ('omp-worker',)).fetchone()
+        self.assertEqual(status, 'exit 1')
+        self.assertGreater(report_count, 0)
+        row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
+                   if item['attempt'] == attempt)
+        self.assertFalse(row['cleanupEligible'], row)
+        self.assertEqual(row['cleanupReason'], 'native-turn-failed')
+        self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['attemptFiles'], [])
+        self.assertEqual(evidence.read_text(), 'failure diagnostics')
+
+    def test_attempt_with_pending_input_is_retained(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        evidence = attempt_dir / 'observer.log'
+        evidence.write_text('observer evidence')
+        self.call('message', 'pending-attempt-cleanup', 'root', 'omp-worker', 'guidance', 'Review this first.')
+        row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
+                   if item['attempt'] == attempt)
+        self.assertEqual(row['cleanupReason'], 'pending-input')
+        answer = json.loads(self.call('logs-clean', 'omp-worker'))
+        self.assertEqual(answer['skipped'], 'pending-input')
+        self.assertEqual(evidence.read_text(), 'observer evidence')
+
+    def test_diagnostic_policy_retains_attempt_files(self):
+        self.call('logs', 'omp-worker', 'diagnostic')
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        evidence = attempt_dir / 'observer.log'
+        evidence.write_text('observer evidence')
+        row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
+                   if item['attempt'] == attempt)
+        self.assertEqual(row['cleanupReason'], 'diagnostic-policy')
+        self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['attemptFiles'], [])
+        self.assertEqual(evidence.read_text(), 'observer evidence')
+
+    def test_attempt_cleanup_rejects_symlink_diagnostic_file(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        outside = self.cwd / 'outside.log'
+        outside.write_text('must remain')
+        evidence = attempt_dir / 'observer.log'
+        evidence.symlink_to(outside)
+        answer = json.loads(self.call('logs-clean', 'omp-worker'))
+        row = next(item for item in answer['attemptFiles'] if item['file'] == 'observer.log')
+        self.assertFalse(row['removed'])
+        self.assertIn('error', row)
+        self.assertTrue(evidence.is_symlink())
+        self.assertEqual(outside.read_text(), 'must remain')
 
     def test_cleanup_during_a_live_turn_keeps_the_live_log(self):
         self.call('logs', 'omp-worker', 'default', '65536', '1')
