@@ -1361,6 +1361,9 @@ static int br_checkpoint_load(const char *directory,int spool_fd,uint32_t schema
   if(fd<0){int error=errno;free(path);return error==ENOENT?0:error;}
   BrCheckpoint checkpoint;
   int error=br_read_all(fd,&checkpoint,sizeof(checkpoint));
+  /* A record shorter than its header is a torn write, which is corruption and
+     not a transport failure: it must reach the replay path. */
+  if(error==EPIPE)error=EINVAL;
   struct stat info;
   if(!error && fstat(fd,&info))error=errno;
   if(!error && memcmp(checkpoint.magic,BR_CHECKPOINT_MAGIC,8))error=EINVAL;
@@ -1380,7 +1383,10 @@ static int br_checkpoint_load(const char *directory,int spool_fd,uint32_t schema
   if(!error && checkpoint.length) {
     buffer=malloc((size_t)checkpoint.length+1);
     if(!buffer)error=ENOMEM;
-    else if((error=br_read_all(fd,buffer,(size_t)checkpoint.length))) {free(buffer);buffer=NULL;}
+    else if((error=br_read_all(fd,buffer,(size_t)checkpoint.length))) {
+      free(buffer);buffer=NULL;
+      if(error==EPIPE)error=EINVAL;
+    }
     else buffer[checkpoint.length]=0;
   }
   if(!error && checkpoint.check!=br_checkpoint_check(&checkpoint,buffer?buffer:"",(size_t)checkpoint.length))
