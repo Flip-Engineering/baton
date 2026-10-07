@@ -31,18 +31,18 @@ def Instance.shutdown(database: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 def Instance.retire(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
-# Records one observation checkpoint: the consumed offset together with the
-# reducer state the observation owner had durably committed at that offset. The
-# host binds both to this native process and this owner incarnation in one
-# atomic record. A bare offset is never a resume decision.
-def Instance.commit_state(handle: U32, state: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+# Writes one atomic record carrying the consumed offset and the reducer state the
+# caller committed after its own durable store and reducer effects for that
+# frame. The state is versioned JSON text and the schema is supplied explicitly;
+# the record is bound to this attempt's manifest, native process and spool file.
+def Instance.commit(handle: U32, schema: U32, state: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
-# Hands back the reducer state recorded at the checkpoint and resumes this
-# observer at that offset. A damaged record, or one bound to another native
-# process or another owner incarnation, yields an empty state and no resume, so
-# the caller replays from the beginning with its own deduplication.
-def Instance.restore_state(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):
+# Returns the persisted reducer state and positions the reader at the validated
+# matching offset. An empty String means no usable checkpoint and offset zero: a
+# corrupted or stale record returns empty with a durable diagnostic, while an
+# actual transport or effect error returns a failure.
+def Instance.restore(handle: U32, schema: U32) -> IO(Result<&1,&1,U32 & String,String>):
   import "./process-spawn.c"
 
 def Instance.started(result: Result<&1,&1,U32 & String,Maybe<U32> & String>) -> Result<&1,&1,U32 & String,P.RetainedStart>:
