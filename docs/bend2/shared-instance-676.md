@@ -135,7 +135,11 @@ composition with the concurrent workload.
   directory) beside each session claim; release, clear and `claim_left`
   act only when the caller presents the recorded identity; the launch
   handoff carries that identity so a second driver cannot launch between
-  claim and handoff. This lane makes no edits in those files.
+  claim and handoff. Serve resolves each session's harness executable
+  and log from the recorded receiver endpoint array at indexes four
+  and eight through SQL-side extraction; the array order is the
+  receiver endpoint shape owned by that writer. This lane makes no
+  edits in those files.
 - Ordinary routing is implemented in this lane: `serve`, `owner-status`
   and `subscribe` commands in `commands.bend`, entry arms in `main.bend`,
   and `baton2_owner` plus `baton2_subscribe` tools in

@@ -136,6 +136,20 @@ law clean_owner_output_is_admitted:
 def clean_owner_output_is_admitted(owner):
   {==}
 
+law owned_task_reads_the_recorded_executable:
+  for +session: String
+  {Instance.recorded_cmd_sql(session) == "SELECT coalesce((SELECT json_extract(endpoint,'$[4]') FROM sessions WHERE id=" ++ C.q(session) ++ "),'');" : String}
+
+def owned_task_reads_the_recorded_executable(session):
+  {==}
+
+law owned_task_reads_the_recorded_log:
+  for +session: String
+  {Instance.recorded_log_sql(session) == "SELECT coalesce((SELECT json_extract(endpoint,'$[8]') FROM sessions WHERE id=" ++ C.q(session) ++ "),'');" : String}
+
+def owned_task_reads_the_recorded_log(session):
+  {==}
+
 law denied_owner_claim_names_its_rule:
   for saved: String
   {Instance.claim_result(saved,True{}) == IO.die(String,2,saved) : IO(String)}

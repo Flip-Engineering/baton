@@ -84,11 +84,24 @@ def combine(first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U32 & S
     case Fail{error}: Fail{error}
     case Done{unit}: second
 
-# One owned session task. The empty command, model, effort, workspace and
-# message arguments select the session's recorded values and its full
-# pending inbox through the receive entry.
+# One owned session task. The harness executable and log come from the
+# session's recorded receiver endpoint; model, effort, workspace and
+# message select the recorded values and the full pending inbox. The
+# endpoint array carries the executable at index four and the log at
+# index eight, per the receiver endpoint shape.
+def recorded_cmd_sql(+session: String) -> String:
+  "SELECT coalesce((SELECT json_extract(endpoint,'$[4]') FROM sessions WHERE id=" ++ C.q(session) ++ "),'');"
+
+def recorded_log_sql(+session: String) -> String:
+  "SELECT coalesce((SELECT json_extract(endpoint,'$[8]') FROM sessions WHERE id=" ++ C.q(session) ++ "),'');"
+
 def serve_session(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  Receive.run(db,session,"","","","","","")
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    found_cmd : String <- IO.try(String,DB.Sql.query(db,recorded_cmd_sql(session)))
+    found_log : String <- IO.try(String,DB.Sql.query(db,recorded_log_sql(session)))
+    +cmd : String <- IO.pure(String,Tx.trim_nl(found_cmd))
+    +log : String <- IO.pure(String,Tx.trim_nl(found_log))
+    Receive.run(db,session,cmd,"","","",log,"")
 
 def join_all(tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match tasks:
