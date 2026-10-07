@@ -7,6 +7,7 @@ import pathlib
 import sqlite3
 import subprocess
 import sys
+import time
 import unittest
 
 SPEC = importlib.util.spec_from_file_location(
@@ -31,6 +32,15 @@ class NativeObservation(RECEIVE.Receive):
             "        continue\n")
         self.assertIn(needle, fixture)
         self.fixture.write_text(fixture.replace(needle, needle + addition, 1))
+
+    def eventually_slow_case(self, observation, description):
+        deadline = time.monotonic() + 180
+        while True:
+            result = observation()
+            if result:
+                return result
+            self.assertLess(time.monotonic(), deadline, description)
+            time.sleep(.01)
 
     def test_mixed_agent_end_members_preserve_completion_and_raw_frame(self):
         self.player(harness='omp')
@@ -206,7 +216,7 @@ class NativeObservation(RECEIVE.Receive):
         self.eventually(lambda: (self.directory / 'parent.jsonl').exists() and
                         'oversized-checkpoint-assistant' in (self.directory / 'parent.jsonl').read_text(),
                         'the complete oversized assistant frame was not logged')
-        checkpoint_diagnostic = self.eventually(
+        checkpoint_diagnostic = self.eventually_slow_case(
             lambda: next((row for row in self.coord('inbox', 'root')
                           if row['id'] == turn_id + ':checkpoint'), None),
             'oversized checkpoint failure did not produce its bounded diagnostic')
@@ -226,8 +236,9 @@ class NativeObservation(RECEIVE.Receive):
         self.action(stream, exit_fixture=True)
         self.finish(resumed)
 
-        turns = self.eventually(lambda: self.coord('turns', 'parent'),
-                                'reattached observer did not preserve the oversized completion')
+        turns = self.eventually_slow_case(
+            lambda: self.coord('turns', 'parent'),
+            'reattached observer did not preserve the oversized completion')
         self.assertEqual(len(turns), 1)
         report_body = turns[0]['reportBody']
         self.assertEqual(len(report_body), len(text))
