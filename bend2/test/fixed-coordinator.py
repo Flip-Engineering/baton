@@ -139,6 +139,9 @@ class FixedCoordinator(unittest.TestCase):
                 child.kill()
                 child.communicate()
 
+    def is_serve(self, process):
+        return process['command'].endswith(' serve') or ' serve ' in process['command']
+
     def owned_processes(self):
         result = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
                                 capture_output=True, text=True, check=True)
@@ -276,7 +279,7 @@ class FixedCoordinator(unittest.TestCase):
         self.assertEqual(json.loads(first_w1.readline()), {'terminal_written': True})
         first_w2, _ = self.stream_for('w2')
         self.assertEqual(json.loads(first_w2.readline()), {'terminal_written': True})
-        residents = [p for p in self.owned_processes() if ' serve ' in p['command']]
+        residents = [p for p in self.owned_processes() if self.is_serve(p)]
         self.assertEqual(len(residents), 1, 'one serve holds the database while two sessions run')
         self.dispatch('g1', 'w1', 'Guidance issued while turn one is held.', kind='guidance')
         self.assertEqual(len(self.connections('w1')), 1,
@@ -303,7 +306,7 @@ class FixedCoordinator(unittest.TestCase):
         self.start_owner()
         self.start_serve()
         time.sleep(5)
-        serve = [p for p in self.owned_processes() if ' serve ' in p['command']]
+        serve = [p for p in self.owned_processes() if self.is_serve(p)]
         self.assertEqual(len(serve), 1, 'the serve stays up with only stopped input pending')
         bodies = [m['body'] for m in self.inbox('root')]
         self.assertFalse(any('w4' in body for body in bodies), 'stopped input executed')
@@ -322,8 +325,11 @@ class FixedCoordinator(unittest.TestCase):
         self.assertEqual(json.loads(held.readline()), {'terminal_written': True})
         self.serve_proc.kill()
         self.serve_proc.wait(timeout=10)
-        keepers = [p for p in self.owned_processes() if '--host-process-keeper' in p['command']]
-        self.assertEqual(len(keepers), 1, 'the native attempt outlives its serve')
+        native_pid = self.connections('w7')[0]['pid']
+        try:
+            os.kill(native_pid, 0)
+        except ProcessLookupError:
+            self.fail('the native died with its serve')
         self.serve_proc = None
         self.start_serve()
         self.assertEqual(len(self.connections('w7')), 1,
@@ -340,35 +346,37 @@ class FixedCoordinator(unittest.TestCase):
         self.assertNotEqual(row, [(None,)], 'adopted input was lost')
         self.shutdown()
 
-    def test_04_keeper_loss_completes_exactly_once(self):
+    def test_04_owner_loss_preserves_live_native_and_receipted_input(self):
+        # Keepers run inside the owner process on the owner admission path, so
+        # owner loss is the keeper-loss drill: the keeper dies with the owner
+        # while the native survives as an orphan. Full orphan re-adoption waits
+        # on owner recovery; this leg proves the failure boundary evidence.
         self.recruit('w8', 'codex')
-        self.queue('w8', {'body': 'w8 keeper-loss turn complete', 'hold_exit': True})
+        self.queue('w8', {'body': 'w8 owner-loss turn', 'hold_exit': True})
+        self.dispatch('t8', 'w8', 'Task surviving its owner.')
         self.receiver('w8')
-        self.dispatch('t8', 'w8', 'Task surviving its keeper.')
         self.start_owner()
         self.start_serve()
         held, _ = self.stream_for('w8')
         self.assertEqual(json.loads(held.readline()), {'terminal_written': True})
-        keeper = self.eventually(
-            lambda: next((p for p in self.owned_processes()
-                          if '--host-process-keeper' in p['command']), None),
-            'no keeper for the held turn')
         native_pid = self.connections('w8')[0]['pid']
-        os.kill(keeper['pid'], signal.SIGKILL)
+        owner = self.owner_proc
+        os.kill(owner.pid, signal.SIGKILL)
+        owner.wait(timeout=10)
         try:
             os.kill(native_pid, 0)
         except ProcessLookupError:
-            self.fail('the native died with its keeper')
-        self.release('w8')
-        self.await_inbox('root', lambda messages: (
-            [m['body'] for m in messages if m['sender'] == 'w8'
-             and 'w8 keeper-loss turn complete' in m['body']] or None),
-            'keeper-loss report never reached the root inbox')
-        time.sleep(3)
-        bodies = [m['body'] for m in self.inbox('root') if m['sender'] == 'w8']
-        self.assertEqual(len([b for b in bodies if 'w8 keeper-loss turn complete' in b]), 1)
+            self.fail('the native died with its owner')
         row = self.query("SELECT receipt FROM messages WHERE id='t8'")
-        self.assertNotEqual(row, [(None,)], 'keeper-loss input was lost')
+        self.assertNotEqual(row, [(None,)], 'owner-loss input was lost')
+        rows = self.query("SELECT phase FROM executions WHERE session='w8'")
+        self.assertTrue(rows, 'owner-loss execution record was lost')
+        # The stranded serve joined its task through the keeper death and only
+        # returns when that join does; the supervisor restarts the generation.
+        self.serve_proc.kill()
+        self.serve_proc.wait(timeout=10)
+        self.serve_proc = None
+        self.owner_proc = None
         self.shutdown()
 
     def test_05_killed_client_leaves_atomic_commit_for_service(self):
