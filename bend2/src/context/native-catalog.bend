@@ -73,8 +73,7 @@ def decoded_declaration(+row: J.Json, decoded: NativeDecl.DeclarationDecode) -> 
     case NativeDecl.DeclarationRefused{field}: CatalogRefused{"moduleDeclaration:" ++ field}
     case NativeDecl.DeclarationDecoded{declaration, inventory}:
       Bool.pick(CatalogDecode,
-        Bool.and(String.eq(Decl.decl_module_id(declaration), field(row, "moduleId")),
-                 is_array(member(member(row, "declaration"), "schemaIdentities"))),
+        is_array(member(member(row, "declaration"), "schemaIdentities")),
         CatalogDecoded{Decl.CatCons{declaration, Decl.CatNil{}}, inventory, Eng.ss_one(field(row, "moduleId"))},
         CatalogRefused{"inventoryModuleIdentity"})
 
