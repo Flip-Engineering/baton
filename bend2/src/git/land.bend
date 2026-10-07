@@ -398,7 +398,7 @@ def prefix_drop(line: String, prefix: String) -> Maybe<&2, String>:
     case SNil{} SCon{pc, pr}: None{}
     case SCon{lc, lr} SNil{}: Some{SCon{lc, lr}}
     case SCon{lc, lr} SCon{pc, pr}:
-      Bool.pick(Maybe<String>, Char.is_eq(lc, pc), prefix_drop(lr, pr), None{})
+      Bool.pick(Maybe<&2, String>, Char.is_eq(lc, pc), prefix_drop(lr, pr), None{})
 
 def holder_path_of(+line: String) -> Maybe<&2, String>:
   prefix_drop(line, "worktree ")
@@ -422,7 +422,7 @@ def holder_modifier(+line: String) -> Bool:
   Bool.pick(Bool, Tx.str_eq(line, "locked"), True{},
     Bool.pick(Bool, Tx.starts_with(line, "locked "), True{}, Tx.starts_with(line, "prunable ")))
 
-def holder_branch_value(found: Maybe<String>) -> Bool:
+def holder_branch_value(found: Maybe<&2, String>) -> Bool:
   match found:
     case Some{value}: Bool.not(String.is_empty(value))
     case None{}: False{}
@@ -439,7 +439,7 @@ def holder_close(acc: HolderScan, +request: String) -> HolderScan:
             ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks})
         case NoBlock{}: ScanState{NoBlock{}, matched, seen, bad, blocks}
 
-def holder_open_fresh_path(block: HolderBlock, matched: Maybe<&2, String>, seen: U32, bad: U32, blocks: U32, path: Maybe<String>) -> HolderScan:
+def holder_open_fresh_path(block: HolderBlock, matched: Maybe<&2, String>, seen: U32, bad: U32, blocks: U32, path: Maybe<&2, String>) -> HolderScan:
   match path:
     case Some{+value}:
       Bool.pick(HolderScan, holder_path_ok(value),
@@ -447,12 +447,12 @@ def holder_open_fresh_path(block: HolderBlock, matched: Maybe<&2, String>, seen:
         ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks})
     case None{}: ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks}
 
-def holder_open_fresh(+path: Maybe<String>, +acc: HolderScan, +request: String) -> HolderScan:
+def holder_open_fresh(+path: Maybe<&2, String>, +acc: HolderScan, +request: String) -> HolderScan:
   match acc:
     case ScanState{block, matched, seen, bad, blocks}:
       holder_open_fresh_path(block, matched, seen, bad, blocks, path)
 
-def holder_open(+path: Maybe<String>, +acc: HolderScan, +request: String) -> HolderScan:
+def holder_open(+path: Maybe<&2, String>, +acc: HolderScan, +request: String) -> HolderScan:
   match acc:
     case ScanState{+block, matched, seen, bad, blocks}:
       match block:
@@ -677,26 +677,19 @@ def ff_stage5_framing(target: String, candidate: String, artifact: String, repo:
   +diag = diagnostics
   +held = Tx.str_cat("stderr bytes ", Tx.str_cat(diag, Tx.str_cat("; artifact ", art)))
   ff_stage5_runres(tg, cand, art, rp, held, Tx.run_res(Done{framed}))
-def ff_stage5_captured(target: String, candidate: String, artifact: String, repo: String, observed: Result<&1,&1,U32 & String,String & String>) -> IO(FFLD):
+def ff_stage5_captured_observation(target: String, candidate: String, artifact: String, repo: String, +observed: T.CapturedRaw) -> IO(FFLD):
   match observed:
-    case Fail{error}:
-      match error:
-        case (code, detail): ff_stage5_blocked(Tx.str_cat("capture failed; stderr at ", Tx.str_cat(artifact, Tx.str_cat("; ", detail))))
-    case Done{pair}:
-      match pair:
-        case (framing, diagnostics): ff_stage5_framing(target, candidate, artifact, repo, framing, diagnostics)
-
+    case T.CapturedFailed{code, detail}: ff_stage5_blocked(Tx.str_cat("capture failed; stderr at ", Tx.str_cat(artifact, Tx.str_cat("; ", detail))))
+    case T.CapturedDone{framing, diagnostics}: ff_stage5_framing(target, candidate, artifact, repo, framing, diagnostics)
 def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo: String, +outcome: Lg.Landing) -> IO(FFLD):
   match outcome:
     case Lg.LandingHeld{request, candidate, basis, published, mutation, released}:
-      match released:
-        case Fail{error}:
-          match error:
-            case (code, detail): ff_stage5_blocked(Tx.str_cat("release failed: ", Tx.str_cat(detail, Tx.str_cat("; artifact ", artifact))))
-        case Done{unit}: ff_stage5_captured(target, candidate, artifact, repo, mutation)
-    case Lg.LandingClaimFailed{error}:
-      match error:
-        case (code, detail): ff_stage5_blocked(Tx.str_cat("claim failed: ", detail))
+      Bool.pick(IO(FFLD), T.release_done(released),
+        ff_stage5_captured_observation(target, candidate, artifact, repo, mutation),
+        Bool.pick(IO(FFLD), T.release_unperformed(released),
+          ff_stage5_blocked("the release was not performed"),
+          ff_stage5_blocked(Tx.str_cat("release failed: ", Tx.str_cat(T.release_detail(released), Tx.str_cat("; artifact ", artifact))))))
+    case Lg.LandingClaimFailed{error}: ff_stage5_blocked(Tx.str_cat("claim failed: ", T.host_detail(error)))
     case Lg.LandingGuardBusy{target}: ff_stage5_blocked("guard busy")
     case Lg.LandingAssociationRefused{step, observation, released}: ff_stage5_blocked(Tx.str_cat("association refused at ", step))
     case Lg.LandingOldValueMismatch{expected, found, released}: ff_stage5_blocked("old target moved during landing; retry")
@@ -780,8 +773,8 @@ def ff_stage5_adv_answer(+a: LAdv, target: String, cand: String) -> FFLD:
 
 type LdAdvObs is Data:
   LdAdvNoCapture{advance: LAdv}
-  LdAdvCaptured{advance: LAdv, +capture: T.CapturedRaw}
-  LdAdvQualified{advance: LAdv, +capture: T.CapturedRaw, readback: T.GitOut}
+  LdAdvCaptured{advance: LAdv, capture: T.CapturedRaw}
+  LdAdvQualified{advance: LAdv, capture: T.CapturedRaw, readback: T.GitOut}
 
 # The public shared boundary. The canonical common directory is read once here, the target
 # claim is taken around the holder selection and the selected advance, and the release runs for
@@ -940,17 +933,10 @@ def ld_adv_runres(rr: T.RunRes) -> T.GitOut:
 def ld_adv_framed(framing: String) -> T.GitOut:
   ld_adv_runres(Tx.run_res(Done{framing}))
 
-def ld_adv_pair(pair: String & String) -> T.GitOut:
-  match pair:
-    case (framing, diagnostics): ld_adv_framed(framing)
-def ld_adv_host_error(error: U32 & String) -> T.GitOut:
-  match error:
-    case (code, detail): T.GBroken{detail}
-
 def ld_adv_status(+capture: T.CapturedRaw) -> T.GitOut:
   match capture:
-    case Fail{error}: ld_adv_host_error(error)
-    case Done{pair}: ld_adv_pair(pair)
+    case T.CapturedFailed{code, detail}: T.GBroken{detail}
+    case T.CapturedDone{framing, diagnostics}: ld_adv_framed(framing)
 
 def ld_adv_with(advance: LAdv, +capture: T.CapturedRaw) -> LdAdvObs:
   +a = advance
@@ -1224,7 +1210,7 @@ def shared_attempt_name(base: String, attempt: U32) -> String:
 def shared_reserve_observed(+handle: U32, +repo: String, +target: String, +cand: String, +basis: String, +guard: String, +parent: String, +base: String, +attempt: U32, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   match observed:
     case Fail{error}: shared_step_failed("reserve", error, handle)
-    case Done{record}:
+    case Done{+record}:
       +created_ok = Tx.str_eq(record, Pb.production_record("created", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0"))
       +existing_ok = Tx.str_eq(record, Pb.production_record("existing", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0"))
       Bool.pick(IO(SharedLanding), created_ok,
@@ -1283,7 +1269,7 @@ def shared_parent_classified(handle: U32, repo: String, target: String, cand: St
 def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   match observed:
     case Fail{error}: shared_step_failed("ensure", error, handle)
-    case Done{record}: shared_parent_classified(handle, repo, target, cand, basis, guard, parent, base, record)
+    case Done{+record}: shared_parent_classified(handle, repo, target, cand, basis, guard, parent, base, record)
 
 def shared_token_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, guard: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   match observed:
@@ -1361,7 +1347,7 @@ def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String)
     case SharedGuardBusy{target}: FFDone{T.LBlocked{"another landing holds the target"}}
     case SharedStepFailed{step, error, released}: FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " failed: "), T.host_detail(error))}}
     case SharedStepRecordFailed{step, record, released}: FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " refused: "), record)}}
-    case SharedAdvanced{obs, released, guard, reserved}:
+    case SharedAdvanced{obs, +released, guard, reserved}:
       Bool.pick(FFLD, T.release_done(released),
         ff_stage5_adv_answer(ld_adv_of(obs), target, cand),
         Bool.pick(FFLD, T.release_unperformed(released),
@@ -1709,7 +1695,7 @@ def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String
     case SharedGuardBusy{target}: LdFail{T.FCmd{"land", "another landing holds the target; rerun land-checked to prepare and check against the current target"}}
     case SharedStepFailed{step, error, released}: LdFail{T.FCmd{"land", T.host_detail(error)}}
     case SharedStepRecordFailed{step, record, released}: LdFail{T.FCmd{"land", record}}
-    case SharedAdvanced{obs, released, guard, reserved}:
+    case SharedAdvanced{obs, +released, guard, reserved}:
       Bool.pick(Ld, T.release_done(released),
         ld_adv_answer(ld_adv_of(obs), target, cand),
         Bool.pick(Ld, T.release_unperformed(released),
@@ -1931,10 +1917,10 @@ def ld_stage5(repo: String, scratch: String, worker: String, sha: String, tip: S
 
 # The gate: every unjudged run and every candidate failure line the target
 # run does not show blocks; otherwise the advance starts.
-def ld_judged_news(+news: List<String>, repo: String, target: String, scratch: String, tip: String, cand: String) -> IO(Ld):
+def ld_judged_news(news: List<String>, repo: String, target: String, scratch: String, tip: String, cand: String) -> IO(Ld):
   match news:
     case Nil{}: ld_advance(repo, target, cand, tip)
-    case Con{h, rest}: IO.pure(Ld, LdDone{T.LBlocked{Tx.str_cat("new failures: ", Tx.join("; ", news))}})
+    case Con{h, rest}: IO.pure(Ld, LdDone{T.LBlocked{Tx.str_cat("new failures: ", Tx.join("; ", Con{h, rest}))}})
 
 def ld_judged(pvs: List<PV>, repo: String, target: String, scratch: String, tip: String, cand: String) -> IO(Ld):
   ld_judged_news(pairs_news(pvs), repo, target, scratch, tip, cand)
@@ -2332,25 +2318,25 @@ def prepared_holder_discovery_rejects_a_quoted_or_relative_path():
   {==}
 
 law a_prefix_is_dropped_to_its_suffix:
-  {prefix_drop("worktree /tmp/w", "worktree ") == Some{"/tmp/w"} : Maybe<String>}
+  {prefix_drop("worktree /tmp/w", "worktree ") == Some{"/tmp/w"} : Maybe<&2, String>}
 
 def a_prefix_is_dropped_to_its_suffix():
   {==}
 
 law a_prefix_that_ends_the_line_leaves_it_empty:
-  {prefix_drop("worktree ", "worktree ") == Some{""} : Maybe<String>}
+  {prefix_drop("worktree ", "worktree ") == Some{""} : Maybe<&2, String>}
 
 def a_prefix_that_ends_the_line_leaves_it_empty():
   {==}
 
 law a_mismatched_prefix_is_not_dropped:
-  {prefix_drop("branch refs/heads/x", "worktree ") == None{} : Maybe<String>}
+  {prefix_drop("branch refs/heads/x", "worktree ") == None{} : Maybe<&2, String>}
 
 def a_mismatched_prefix_is_not_dropped():
   {==}
 
 law an_empty_prefix_leaves_the_whole_line:
-  {prefix_drop("worktree /tmp/w", "") == Some{"worktree /tmp/w"} : Maybe<String>}
+  {prefix_drop("worktree /tmp/w", "") == Some{"worktree /tmp/w"} : Maybe<&2, String>}
 
 def an_empty_prefix_leaves_the_whole_line():
   {==}
