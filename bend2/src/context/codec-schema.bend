@@ -54,6 +54,7 @@ type SchemaScalar is Data:
 type SchemaForm is Data:
   SfRecord{fields: SchemaForm}
   SfUnion{cases: SchemaForm}
+  SfDiscriminated{tag: String, cases: SchemaForm}
   SfArray{item: SchemaForm}
   SfEnum{literals: NameList}
   SfOptional{inner: SchemaForm}
@@ -119,6 +120,21 @@ def member_seen(+key: String, +members: Codec.RawValue) -> Bool:
   match members:
     case Codec.Rpair{+name, +value, +tail}: Bool.pick(Bool, String.eq(name, key), True{}, member_seen(key, tail))
     case other: False{}
+
+# The value under a member key. Call only when member_seen holds, so the
+# Rnil fallthrough is unreachable on checked spines.
+def member_value(+key: String, +members: Codec.RawValue) -> Codec.RawValue:
+  match members:
+    case Codec.Rpair{+name, +value, +tail}: Bool.pick(Codec.RawValue, String.eq(name, key), value, member_value(key, tail))
+    case other: Codec.Rnil{}
+
+# A singleton member spine carrying the whole record as its payload, so the
+# existing case walk selects the branch. A non-string tag value yields an
+# empty spine, which the case walk refuses as the wrong kind.
+def disc_pseudo(+tagval: Codec.RawValue, +members: Codec.RawValue) -> Codec.RawValue:
+  match tagval:
+    case Codec.Rstr{+tagstr}: Codec.Rpair{tagstr, Codec.Robj{members}, Codec.Rnil{}}
+    case other: Codec.Rnil{}
 
 # A decoded object key that appears twice refuses, for schema members and for the
 # json-value profile alike.
@@ -187,6 +203,7 @@ def form_refs(form: SchemaForm) -> NameList:
     case SfRef{name}: NlCons{name, NlNil{}}
     case SfRecord{fields}: form_refs(fields)
     case SfUnion{cases}: form_refs(cases)
+    case SfDiscriminated{tag, cases}: form_refs(cases)
     case SfArray{+item}: form_refs(item)
     case SfEnum{+literals}: NlNil{}
     case SfOptional{+inner}: form_refs(inner)
@@ -224,6 +241,7 @@ def immediate_refs(form: SchemaForm) -> NameList:
   match form:
     case SfRef{name}: NlCons{name, NlNil{}}
     case SfUnion{+cases}: NlNil{}
+    case SfDiscriminated{+tag, +cases}: NlNil{}
     case SfOptional{+inner}: immediate_refs(inner)
     case SfRecord{+fields}: NlNil{}
     case SfArray{+item}: NlNil{}
@@ -336,6 +354,7 @@ def form_ambiguous(form: SchemaForm) -> Bool:
   match form:
     case SfRecord{+fields}: Bool.pick(Bool, names_unique(field_names(fields)), form_ambiguous(fields), True{})
     case SfUnion{+cases}: union_cases_ambiguous(cases)
+    case SfDiscriminated{+tag, +cases}: union_cases_ambiguous(cases)
     case SfArray{+item}: form_ambiguous(item)
     case SfEnum{+literals}: Bool.pick(Bool, names_unique(literals), False{}, True{})
     case SfOptional{+inner}: form_ambiguous(inner)
@@ -735,6 +754,15 @@ def nest_nofuel(+form: SchemaForm, +value: Codec.RawValue) -> SchemaVerdict:
             nest_nofuel(cases, members),
             SvRefused{"wrongKind"})
         case other: SvRefused{"wrongKind"}
+    case SfDiscriminated{+tag, cases}:
+      match value:
+        case Codec.Robj{+members}:
+          Bool.pick(SchemaVerdict, keys_unique(members),
+            Bool.pick(SchemaVerdict, member_seen(tag, members),
+              nest_nofuel(cases, disc_pseudo(member_value(tag, members), members)),
+              SvRefused{"missingField"}),
+            SvRefused{"duplicateKey"})
+        case other: SvRefused{"wrongKind"}
     case SfCasesCons{SchemaCase{bound, f}, ctail}:
       match value:
         case Codec.Rpair{tag, payload, tail}:
@@ -846,6 +874,15 @@ def nest_admit(+fuel: SchemaDefs, +defs: SchemaDefs, +form: SchemaForm, +value: 
               Bool.pick(SchemaVerdict, members_singleton(members),
                 nest_admit(fuel, defs,cases, members),
                 SvRefused{"wrongKind"})
+            case other: SvRefused{"wrongKind"}
+        case SfDiscriminated{+tag, cases}:
+          match value:
+            case Codec.Robj{+members}:
+              Bool.pick(SchemaVerdict, keys_unique(members),
+                Bool.pick(SchemaVerdict, member_seen(tag, members),
+                  nest_admit(fuel, defs, cases, disc_pseudo(member_value(tag, members), members)),
+                  SvRefused{"missingField"}),
+                SvRefused{"duplicateKey"})
             case other: SvRefused{"wrongKind"}
         case SfCasesCons{SchemaCase{bound, f}, ctail}:
           match value:
@@ -999,6 +1036,7 @@ def subst_form(+fuel: SchemaDefs, +form: SchemaForm, +defs: SchemaDefs) -> Schem
         case SfFieldsCons{head, tail}: SfFieldsCons{subst_form(fuel, head, defs), subst_form(fuel, tail, defs)}
         case SfFieldsNil{}: SfFieldsNil{}
         case SfUnion{cases}: SfUnion{subst_form(fuel, cases, defs)}
+        case SfDiscriminated{tag, cases}: SfDiscriminated{tag, subst_form(fuel, cases, defs)}
         case SfCasesCons{head, tail}: SfCasesCons{subst_form(fuel, head, defs), subst_form(fuel, tail, defs)}
         case SfCasesNil{}: SfCasesNil{}
         case SfDict{keys, value}: SfDict{keys, subst_form(fuel, value, defs)}
@@ -1040,6 +1078,15 @@ def walk_nofuel(+form: SchemaForm, +defs: SchemaDefs, +input: Codec.RawValue, +c
           Bool.pick(SchemaVerdict, members_singleton(members),
             walk_nofuel(cases, defs, members, ctxd, members),
             SvRefused{"wrongKind"})
+        case other: SvRefused{"wrongKind"}
+    case SfDiscriminated{+tag, cases}:
+      match input:
+        case Codec.Robj{+members}:
+          Bool.pick(SchemaVerdict, keys_unique(members),
+            Bool.pick(SchemaVerdict, member_seen(tag, members),
+              walk_nofuel(cases, defs, disc_pseudo(member_value(tag, members), members), ctxd, disc_pseudo(member_value(tag, members), members)),
+              SvRefused{"missingField"}),
+            SvRefused{"duplicateKey"})
         case other: SvRefused{"wrongKind"}
     case SfCasesCons{SchemaCase{bound, f}, ctail}:
       match input:
@@ -1106,6 +1153,15 @@ def schema_walk(+fuel: SchemaDefs, +form: SchemaForm, +defs: SchemaDefs, +input:
               Bool.pick(SchemaVerdict, members_singleton(members),
                 schema_walk(fuel,cases, defs, members, ctxd, members),
                 SvRefused{"wrongKind"})
+            case other: SvRefused{"wrongKind"}
+        case SfDiscriminated{+tag, cases}:
+          match input:
+            case Codec.Robj{+members}:
+              Bool.pick(SchemaVerdict, keys_unique(members),
+                Bool.pick(SchemaVerdict, member_seen(tag, members),
+                  schema_walk(fuel, cases, defs, disc_pseudo(member_value(tag, members), members), ctxd, disc_pseudo(member_value(tag, members), members)),
+                  SvRefused{"missingField"}),
+                SvRefused{"duplicateKey"})
             case other: SvRefused{"wrongKind"}
         case SfCasesCons{SchemaCase{bound, f}, ctail}:
           match input:
@@ -1557,4 +1613,87 @@ law schema_law_a_branching_union_unknown_tag_refuses:
   {schema_admit_value(DefsCons{SchemaDef{"node", SfUnion{SfCasesCons{SchemaCase{"end", SfScalar{SsNull{}}}, SfCasesCons{SchemaCase{"left", SfRef{"node"}}, SfCasesCons{SchemaCase{"right", SfRef{"node"}}, SfCasesNil{}}}}}}, DefsNil{}}, SfRef{"node"}, Codec.Robj{Codec.Rpair{"bogus", Codec.Rnull{}, Codec.Rnil{}}}) == SvRefused{"unknownTag"} : SchemaVerdict}
 
 def schema_law_a_branching_union_unknown_tag_refuses():
+  {==}
+
+# A flat position subject admits through its kind tag.
+law schema_law_disc_flat_position_subject_admits:
+  {schema_admit_value(DefsNil{}, SfDiscriminated{"kind", SfCasesCons{SchemaCase{"position", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"position", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"symbol", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"symbol", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"name", SfScalar{SsText{}}}, SfFieldsCons{SfOptionalField{"container", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"diagnostic", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"diagnostic", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"code", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}}, SfCasesNil{}}}}}, Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"position"}, Codec.Rpair{"path", Codec.Rstr{"src/a.bend"}, Codec.Rpair{"line", Codec.Rnum{"7"}, Codec.Rpair{"column", Codec.Rnum{"3"}, Codec.Rnil{}}}}}}) == SvOk{} : SchemaVerdict}
+
+def schema_law_disc_flat_position_subject_admits():
+  {==}
+
+# A reordered symbol subject admits with its optional member absent.
+law schema_law_disc_flat_symbol_subject_reordered_admits:
+  {schema_admit_value(DefsNil{}, SfDiscriminated{"kind", SfCasesCons{SchemaCase{"position", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"position", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"symbol", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"symbol", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"name", SfScalar{SsText{}}}, SfFieldsCons{SfOptionalField{"container", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"diagnostic", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"diagnostic", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"code", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}}, SfCasesNil{}}}}}, Codec.Robj{Codec.Rpair{"name", Codec.Rstr{"f"}, Codec.Rpair{"kind", Codec.Rstr{"symbol"}, Codec.Rpair{"path", Codec.Rstr{"p"}, Codec.Rnil{}}}}}) == SvOk{} : SchemaVerdict}
+
+def schema_law_disc_flat_symbol_subject_reordered_admits():
+  {==}
+
+# A flat unavailable result admits through its status tag.
+law schema_law_disc_flat_unavailable_result_admits:
+  {schema_admit_value(DefsNil{}, SfDiscriminated{"status", SfCasesCons{SchemaCase{"unavailable", SfRecord{SfFieldsCons{SfRequired{"schema", SfEnum{NlCons{"baton2.context.bend2.source-analysis.result.v1", NlNil{}}}}, SfFieldsCons{SfRequired{"status", SfEnum{NlCons{"unavailable", NlNil{}}}}, SfFieldsCons{SfRequired{"reason", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"detail", SfJson{}}, SfFieldsNil{}}}}}}}, SfCasesNil{}}}, Codec.Robj{Codec.Rpair{"schema", Codec.Rstr{"baton2.context.bend2.source-analysis.result.v1"}, Codec.Rpair{"status", Codec.Rstr{"unavailable"}, Codec.Rpair{"reason", Codec.Rstr{"r"}, Codec.Rpair{"detail", Codec.Rnum{"1"}, Codec.Rnil{}}}}}}) == SvOk{} : SchemaVerdict}
+
+def schema_law_disc_flat_unavailable_result_admits():
+  {==}
+
+# Proof control: an unknown tag value refuses.
+law schema_law_disc_unknown_tag_value_refuses:
+  {schema_admit_value(DefsNil{}, SfDiscriminated{"kind", SfCasesCons{SchemaCase{"position", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"position", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"symbol", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"symbol", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"name", SfScalar{SsText{}}}, SfFieldsCons{SfOptionalField{"container", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"diagnostic", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"diagnostic", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"code", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}}, SfCasesNil{}}}}}, Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"bogus"}, Codec.Rpair{"path", Codec.Rstr{"p"}, Codec.Rpair{"line", Codec.Rnum{"1"}, Codec.Rpair{"column", Codec.Rnum{"2"}, Codec.Rnil{}}}}}}) == SvRefused{"unknownTag"} : SchemaVerdict}
+
+def schema_law_disc_unknown_tag_value_refuses():
+  {==}
+
+# Proof control: a missing tag member refuses.
+law schema_law_disc_missing_tag_member_refuses:
+  {schema_admit_value(DefsNil{}, SfDiscriminated{"kind", SfCasesCons{SchemaCase{"position", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"position", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"symbol", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"symbol", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"name", SfScalar{SsText{}}}, SfFieldsCons{SfOptionalField{"container", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"diagnostic", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"diagnostic", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"code", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}}, SfCasesNil{}}}}}, Codec.Robj{Codec.Rpair{"path", Codec.Rstr{"p"}, Codec.Rpair{"line", Codec.Rnum{"1"}, Codec.Rpair{"column", Codec.Rnum{"2"}, Codec.Rnil{}}}}}) == SvRefused{"missingField"} : SchemaVerdict}
+
+def schema_law_disc_missing_tag_member_refuses():
+  {==}
+
+# Proof control: a non-string tag value refuses.
+law schema_law_disc_nonstring_tag_value_refuses:
+  {schema_admit_value(DefsNil{}, SfDiscriminated{"kind", SfCasesCons{SchemaCase{"position", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"position", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"symbol", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"symbol", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"name", SfScalar{SsText{}}}, SfFieldsCons{SfOptionalField{"container", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"diagnostic", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"diagnostic", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"code", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}}, SfCasesNil{}}}}}, Codec.Robj{Codec.Rpair{"kind", Codec.Rnum{"1"}, Codec.Rpair{"path", Codec.Rstr{"p"}, Codec.Rpair{"line", Codec.Rnum{"1"}, Codec.Rpair{"column", Codec.Rnum{"2"}, Codec.Rnil{}}}}}}) == SvRefused{"wrongKind"} : SchemaVerdict}
+
+def schema_law_disc_nonstring_tag_value_refuses():
+  {==}
+
+# Proof control: a duplicate member key refuses.
+law schema_law_disc_duplicate_member_key_refuses:
+  {schema_admit_value(DefsNil{}, SfDiscriminated{"kind", SfCasesCons{SchemaCase{"position", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"position", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"symbol", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"symbol", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"name", SfScalar{SsText{}}}, SfFieldsCons{SfOptionalField{"container", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"diagnostic", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"diagnostic", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"code", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}}, SfCasesNil{}}}}}, Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"position"}, Codec.Rpair{"path", Codec.Rstr{"a"}, Codec.Rpair{"path", Codec.Rstr{"b"}, Codec.Rpair{"line", Codec.Rnum{"1"}, Codec.Rpair{"column", Codec.Rnum{"2"}, Codec.Rnil{}}}}}}}) == SvRefused{"duplicateKey"} : SchemaVerdict}
+
+def schema_law_disc_duplicate_member_key_refuses():
+  {==}
+
+# Proof control: an unknown member refuses.
+law schema_law_disc_unknown_member_refuses:
+  {schema_admit_value(DefsNil{}, SfDiscriminated{"kind", SfCasesCons{SchemaCase{"position", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"position", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"symbol", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"symbol", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"name", SfScalar{SsText{}}}, SfFieldsCons{SfOptionalField{"container", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"diagnostic", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"diagnostic", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"code", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}}, SfCasesNil{}}}}}, Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"position"}, Codec.Rpair{"path", Codec.Rstr{"p"}, Codec.Rpair{"line", Codec.Rnum{"1"}, Codec.Rpair{"column", Codec.Rnum{"2"}, Codec.Rpair{"extra", Codec.Rstr{"x"}, Codec.Rnil{}}}}}}}) == SvRefused{"undeclaredField"} : SchemaVerdict}
+
+def schema_law_disc_unknown_member_refuses():
+  {==}
+
+# Proof control: a missing branch field refuses.
+law schema_law_disc_missing_branch_field_refuses:
+  {schema_admit_value(DefsNil{}, SfDiscriminated{"kind", SfCasesCons{SchemaCase{"position", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"position", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"symbol", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"symbol", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"name", SfScalar{SsText{}}}, SfFieldsCons{SfOptionalField{"container", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"diagnostic", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"diagnostic", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"code", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}}, SfCasesNil{}}}}}, Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"position"}, Codec.Rpair{"path", Codec.Rstr{"p"}, Codec.Rpair{"line", Codec.Rnum{"1"}, Codec.Rnil{}}}}}) == SvRefused{"missingField"} : SchemaVerdict}
+
+def schema_law_disc_missing_branch_field_refuses():
+  {==}
+
+# Proof control: fields of another branch do not admit.
+law schema_law_disc_wrong_branch_fields_refuse:
+  {schema_admit_value(DefsNil{}, SfDiscriminated{"kind", SfCasesCons{SchemaCase{"position", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"position", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"symbol", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"symbol", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"name", SfScalar{SsText{}}}, SfFieldsCons{SfOptionalField{"container", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}, SfCasesCons{SchemaCase{"diagnostic", SfRecord{SfFieldsCons{SfRequired{"kind", SfEnum{NlCons{"diagnostic", NlNil{}}}}, SfFieldsCons{SfRequired{"path", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"line", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"column", SfScalar{SsU32Token{}}}, SfFieldsCons{SfRequired{"code", SfScalar{SsText{}}}, SfFieldsNil{}}}}}}}}, SfCasesNil{}}}}}, Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"symbol"}, Codec.Rpair{"path", Codec.Rstr{"p"}, Codec.Rpair{"line", Codec.Rnum{"1"}, Codec.Rpair{"column", Codec.Rnum{"2"}, Codec.Rnil{}}}}}}) == SvRefused{"undeclaredField"} : SchemaVerdict}
+
+def schema_law_disc_wrong_branch_fields_refuse():
+  {==}
+# A nested discriminated branch admits and unfolds its references.
+law schema_law_disc_nested_branch_reference_admits:
+  {schema_admit_value(DefsCons{SchemaDef{"t", SfScalar{SsText{}}}, DefsNil{}}, SfRecord{SfFieldsCons{SfRequired{"outer", SfDiscriminated{"k", SfCasesCons{SchemaCase{"a", SfRecord{SfFieldsCons{SfRequired{"k", SfEnum{NlCons{"a", NlNil{}}}}, SfFieldsCons{SfRequired{"x", SfRef{"t"}}, SfFieldsNil{}}}}}, SfCasesCons{SchemaCase{"b", SfRecord{SfFieldsCons{SfRequired{"k", SfEnum{NlCons{"b", NlNil{}}}}, SfFieldsCons{SfRequired{"y", SfScalar{SsText{}}}, SfFieldsNil{}}}}}, SfCasesNil{}}}}}, SfFieldsNil{}}}, Codec.Robj{Codec.Rpair{"outer", Codec.Robj{Codec.Rpair{"k", Codec.Rstr{"a"}, Codec.Rpair{"x", Codec.Rstr{"s"}, Codec.Rnil{}}}}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
+
+def schema_law_disc_nested_branch_reference_admits():
+  {==}
+
+# Proof control: a wrong-typed leaf under a nested branch refuses.
+law schema_law_disc_nested_branch_wrong_leaf_refuses:
+  {schema_admit_value(DefsCons{SchemaDef{"t", SfScalar{SsText{}}}, DefsNil{}}, SfRecord{SfFieldsCons{SfRequired{"outer", SfDiscriminated{"k", SfCasesCons{SchemaCase{"a", SfRecord{SfFieldsCons{SfRequired{"k", SfEnum{NlCons{"a", NlNil{}}}}, SfFieldsCons{SfRequired{"x", SfRef{"t"}}, SfFieldsNil{}}}}}, SfCasesCons{SchemaCase{"b", SfRecord{SfFieldsCons{SfRequired{"k", SfEnum{NlCons{"b", NlNil{}}}}, SfFieldsCons{SfRequired{"y", SfScalar{SsText{}}}, SfFieldsNil{}}}}}, SfCasesNil{}}}}}, SfFieldsNil{}}}, Codec.Robj{Codec.Rpair{"outer", Codec.Robj{Codec.Rpair{"k", Codec.Rstr{"a"}, Codec.Rpair{"x", Codec.Rnum{"1"}, Codec.Rnil{}}}}, Codec.Rnil{}}}) == SvRefused{"wrongKind"} : SchemaVerdict}
+
+def schema_law_disc_nested_branch_wrong_leaf_refuses():
   {==}
