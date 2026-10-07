@@ -296,14 +296,21 @@ async function fileContains(path, needle) {
 export async function outputMatches(paths, pattern) {
   // A removed proof must produce Bend's incomplete-proof diagnostic. A generic
   // compiler error does not show that the law rejected the removed proof.
-  if (pattern === 'proof') {
-    for (const path of paths) {
-      if (await fileContains(path, 'TODO found.') && await fileContains(path, 'not a valid proof yet.')) return true;
-    }
-    return false;
+  const markers = pattern === 'proof' ? [] : [pattern];
+  for (const path of paths) {
+    if (await fileContains(path, 'TODO found.') &&
+        await fileContains(path, 'not a valid proof yet.') &&
+        (markers.length === 0 || await fileContains(path, markers[0]))) return true;
   }
-  for (const path of paths) if (await fileContains(path, pattern)) return true;
   return false;
+}
+
+export function applyMutation(modulePath, mutation) {
+  const text = readFileSync(modulePath, 'utf8');
+  const first = text.indexOf(mutation.find);
+  if (first < 0 || first !== text.lastIndexOf(mutation.find)) return false;
+  writeFileSync(modulePath, text.slice(0, first) + mutation.replace + text.slice(first + mutation.find.length));
+  return true;
 }
 
 function sourceIdentity(rows) {
@@ -451,11 +458,7 @@ async function runControl(control, runRoot) {
   detachFile(copied);
   let applied;
   if (control.kind === 'proof') applied = removeProof(copied, control.payload.law);
-  else {
-    const text = readFileSync(copied, 'utf8');
-    applied = text.includes(control.payload.find);
-    if (applied) writeFileSync(copied, text.replace(control.payload.find, control.payload.replace));
-  }
+  else applied = applyMutation(copied, control.payload);
   const startedAt = new Date().toISOString();
   const started = process.hrtime.bigint();
   const outcome = applied

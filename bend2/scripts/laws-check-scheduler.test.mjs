@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cloneLinkedTree, concurrencyFor, createRunRoot, detachFile, laws, outputMatches, producerSet, removeProof, supportedNodeVersion, verifyResults } from './laws-check.mjs';
+import { applyMutation, cloneLinkedTree, concurrencyFor, createRunRoot, detachFile, laws, outputMatches, producerSet, removeProof, supportedNodeVersion, verifyResults } from './laws-check.mjs';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 const rows = [
@@ -114,13 +114,33 @@ test('proof removal removes exactly one definition and leaves other definitions 
   assert.equal(readFileSync(modulePath, 'utf8'), before);
 });
 
+test('implementation mutations require one exact source match', () => {
+  const modulePath = join(workspaceRoot, 'mutation.bend');
+  const mutation = { find: 'target expression', replace: 'changed expression' };
+  writeFileSync(modulePath, 'before\ntarget expression\nafter\n');
+  assert.equal(applyMutation(modulePath, mutation), true);
+  assert.equal(readFileSync(modulePath, 'utf8'), 'before\nchanged expression\nafter\n');
+  writeFileSync(modulePath, 'target expression\ntarget expression\n');
+  const before = readFileSync(modulePath, 'utf8');
+  assert.equal(applyMutation(modulePath, mutation), false);
+  assert.equal(readFileSync(modulePath, 'utf8'), before);
+  writeFileSync(modulePath, 'another expression\n');
+  assert.equal(applyMutation(modulePath, mutation), false);
+});
+
 test('proof controls require the incomplete-proof diagnostic', async () => {
   const genericError = join(artifactRoot, 'generic-error.log');
   const incompleteProof = join(artifactRoot, 'incomplete-proof.log');
+  const namedButGenericError = join(artifactRoot, 'named-generic-error.log');
+  const namedIncompleteProof = join(artifactRoot, 'named-incomplete-proof.log');
   writeFileSync(genericError, 'Error: unrelated type mismatch');
+  writeFileSync(namedButGenericError, 'Error in first_law: unrelated type mismatch');
   writeFileSync(incompleteProof, 'Error: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.');
+  writeFileSync(namedIncompleteProof, 'Error in first_law: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.');
   assert.equal(await outputMatches([genericError], 'proof'), false);
   assert.equal(await outputMatches([incompleteProof], 'proof'), true);
+  assert.equal(await outputMatches([namedButGenericError], 'first_law'), false);
+  assert.equal(await outputMatches([namedIncompleteProof], 'first_law'), true);
 });
 
 test('request and job artifacts cannot overwrite a prior execution', () => {
