@@ -34,12 +34,17 @@ def apply(+db: String, +command: C.Command) -> IO(Result<&1, &1, U32 & String, S
     committed(db,command,result)
 
 # Wake-claim transitions for issue #685. The table is created by
-# C.wake_claim_schema(), which C.schema() runs on every commit. Claimed when a
-# driver takes the session lock and re-reads a nonzero pending count. Released
-# to unclaimed when the driver exits without acknowledging. Deleted when
-# acknowledgement clears the obligation.
-def claim_sql(+session: String) -> String:
-  "INSERT OR REPLACE INTO wake_claims(session,state) VALUES(" ++ C.q(session) ++ ",'claimed');"
+# C.wake_claim_schema(), which C.schema() runs on every commit. Claimed only
+# while holding the session lock, after re-reading a nonzero pending count:
+# holding the lock proves no live owner exists, so the write is a safe
+# takeover and a dead owner never suppresses the wake. The owner names the
+# message the obligation hands over; the generation fences takeovers so a
+# late finisher can never mistake an older write for the live row. Released
+# to unclaimed only by a lock holder when input is owed and no retained
+# attempt is recorded live. Deleted when acknowledgement clears every owed
+# input, or when an admitted stop resolves the obligation.
+def claim_sql(+session: String, +owner: String) -> String:
+  "INSERT OR REPLACE INTO wake_claims(session,state,owner,generation) VALUES(" ++ C.q(session) ++ ",'claimed'," ++ C.q(owner) ++ ",coalesce((SELECT generation FROM wake_claims WHERE session=" ++ C.q(session) ++ "),0)+1);"
 
 def release_sql(+session: String) -> String:
   "UPDATE wake_claims SET state='unclaimed' WHERE session=" ++ C.q(session) ++ ";"
@@ -69,9 +74,9 @@ def claim_state(+db: String, +session: String) -> IO(String):
     state : String <- read_claim_when_present(db,session,String.eq(present,"1\n"))
     IO.pure(String,state)
 
-def claim(db: String, session: String) -> IO(Unit):
+def claim(db: String, session: String, owner: String) -> IO(Unit):
   do IO<Unit>:
-    claimed : String <- IO.try(String,DB.Sql.query(db,claim_sql(session)))
+    claimed : String <- IO.try(String,DB.Sql.query(db,claim_sql(session,owner)))
     IO.pure(Unit,Unit{})
 
 def release(db: String, session: String) -> IO(Unit):
@@ -86,9 +91,10 @@ def clear_claim(db: String, session: String) -> IO(Unit):
 
 law claim_sql_writes_a_claimed_row:
   for session: String
-  {claim_sql(session) == "INSERT OR REPLACE INTO wake_claims(session,state) VALUES(" ++ C.q(session) ++ ",'claimed');" : String}
+  for owner: String
+  {claim_sql(session,owner) == "INSERT OR REPLACE INTO wake_claims(session,state,owner,generation) VALUES(" ++ C.q(session) ++ ",'claimed'," ++ C.q(owner) ++ ",coalesce((SELECT generation FROM wake_claims WHERE session=" ++ C.q(session) ++ "),0)+1);" : String}
 
-def claim_sql_writes_a_claimed_row(session):
+def claim_sql_writes_a_claimed_row(session,owner):
   {==}
 
 law release_sql_marks_the_session_unclaimed:
@@ -121,9 +127,10 @@ def clear_claim_sql_updates_no_state(session):
 
 law claim_and_release_are_distinct_transitions:
   for session: String
-  {String.eq(claim_sql(session),release_sql(session)) == False{} : Bool}
+  for owner: String
+  {String.eq(claim_sql(session,owner),release_sql(session)) == False{} : Bool}
 
-def claim_and_release_are_distinct_transitions(session):
+def claim_and_release_are_distinct_transitions(session,owner):
   {==}
 
 law missing_claim_table_reads_empty:

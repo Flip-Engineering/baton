@@ -702,7 +702,7 @@ law m8_acknowledgement_is_bound_to_its_recipient:
   for +id: String
   for +recipient: String
   for +receipt: String
-  {C.sql(C.Ack{id, recipient, receipt}) == "UPDATE messages SET receipt=coalesce(receipt," ++ C.q(receipt) ++ ") WHERE id=" ++ C.q(id) ++ " AND recipient=" ++ C.q(recipient) ++ ";DELETE FROM wake_claims WHERE session=" ++ C.q(recipient) ++ ";SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ C.q(id) ++ " AND recipient=" ++ C.q(recipient) ++ ";" : String}
+  {C.sql(C.Ack{id, recipient, receipt}) == "UPDATE messages SET receipt=coalesce(receipt," ++ C.q(receipt) ++ ") WHERE id=" ++ C.q(id) ++ " AND recipient=" ++ C.q(recipient) ++ ";DELETE FROM wake_claims WHERE session=" ++ C.q(recipient) ++ " AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=" ++ C.q(recipient) ++ " AND receipt IS NULL);SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ C.q(id) ++ " AND recipient=" ++ C.q(recipient) ++ ";" : String}
 
 def m8_acknowledgement_is_bound_to_its_recipient(id, recipient, receipt):
   {==}

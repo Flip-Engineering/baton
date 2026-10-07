@@ -1598,10 +1598,26 @@ class Receive(unittest.TestCase):
             rows = database.execute('SELECT session, state FROM wake_claims ORDER BY session').fetchall()
         return [row for row in rows if session is None or row[0] == session]
 
-    def claim(self, session, state='claimed'):
+    def claim_rows(self, session=None):
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            rows = database.execute('SELECT session, state, owner, generation FROM wake_claims'
+                                    ' ORDER BY session').fetchall()
+        return [row for row in rows if session is None or row[0] == session]
+
+    def claim(self, session, state='claimed', owner='', generation=0):
         with sqlite3.connect(str(self.db)) as database:
-            database.execute('INSERT OR REPLACE INTO wake_claims(session, state) VALUES (?, ?)',
-                             (session, state))
+            database.execute('INSERT OR REPLACE INTO wake_claims(session, state, owner, generation)'
+                             ' VALUES (?, ?, ?, ?)',
+                             (session, state, owner, generation))
+
+    def session_lock_path(self, session):
+        return os.path.realpath(str(self.db)) + '.lock-' + session.encode().hex()
+
+    def hold_session_lock(self, session):
+        held = os.open(self.session_lock_path(session), os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lambda: (fcntl.flock(held, fcntl.LOCK_UN), os.close(held)))
+        return held
 
     def test_stop_clears_the_wake_claim(self):
         """A terminal stop is the operator resolution: the session's claim goes with it
@@ -1636,6 +1652,107 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.claims('parent'), [('parent', 'unclaimed')])
         self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
 
+
+    def test_acknowledgement_with_a_missing_id_is_refused_and_preserves_the_claim(self):
+        """A refused acknowledgement writes nothing: the live claim row stays exactly
+        as it was, owner and generation included."""
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent', 'claimed', 'owed', 4)
+        refused = self.coord('ack', 'no-such-message', 'parent', 'read-accepted', ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 4)])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_acknowledgement_to_the_wrong_recipient_is_refused_and_preserves_the_claim(self):
+        self.player()
+        self.player('other')
+        self.message('owed', 'parent')
+        self.claim('parent', 'claimed', 'owed', 4)
+        refused = self.coord('ack', 'owed', 'other', 'read-accepted', ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 4)])
+        self.assertEqual(self.claim_rows('other'), [])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_acknowledgement_with_remaining_input_keeps_the_claim(self):
+        """The Ack guard clears the claim only when no unacknowledged input remains:
+        acknowledging one of two owed messages writes its receipt and keeps the row."""
+        self.player()
+        self.message('first', 'parent')
+        self.message('second', 'parent')
+        self.claim('parent', 'claimed', 'first', 2)
+        receipt = self.coord('ack', 'first', 'parent', 'read-accepted')
+        self.assertEqual(receipt['receipt'], 'read-accepted')
+        self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'first', 2)])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['second'])
+
+    def test_stop_with_an_unsupported_harness_is_refused_and_preserves_the_claim(self):
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent', 'claimed', 'owed', 4)
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute("UPDATE sessions SET harness='muse' WHERE id='parent'")
+        refused = self.coord('stop', 'parent', 'stop-unsupported', 'operator resolution', ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 4)])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_stop_with_an_active_direct_execution_is_refused_and_preserves_the_claim(self):
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent', 'claimed', 'owed', 4)
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute("INSERT INTO executions(session, id, mode, directory, phase, status)"
+                             " VALUES ('parent', 'direct-1', 'direct', '/tmp', 'running', '')")
+        refused = self.coord('stop', 'parent', 'stop-direct', 'operator resolution', ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 4)])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_stop_with_a_conflicting_identity_is_refused_and_preserves_the_claim(self):
+        self.player()
+        self.message('owed', 'parent')
+        stopped = self.coord('stop', 'parent', 'stop-first', 'operator resolution')
+        self.assertEqual(stopped['status'], 'stopped')
+        self.assertEqual(self.claim_rows('parent'), [])
+        self.claim('parent', 'claimed', 'owed', 9)
+        refused = self.coord('stop', 'parent', 'stop-second', 'changed reason', ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('identity', refused.stderr)
+        self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 9)])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_queued_non_owner_cannot_clear_a_live_claim(self):
+        """While another driver holds the session lock, the queued sweep returns
+        without touching the live claim row: owner and generation survive intact."""
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent', 'claimed', 'owed', 6)
+        self.hold_session_lock('parent')
+        queued = self.coord(*self.receive_args('parent'))
+        self.assertEqual(queued['status'], 'queued')
+        self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 6)])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_stale_claim_from_a_dead_driver_is_taken_over_with_a_fenced_generation(self):
+        """A claim row left by a driver that died before launch never suppresses the
+        wake: the next driver takes the obligation over under the lock, names the
+        head message as owner, and fences the takeover past the stale generation."""
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent', 'claimed', 'dead-attempt', 7)
+        child = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.assertIn('[id: owed]', started['prompt'])
+        self.action(control, ack=False)
+        self.finish(child)
+        taken = self.eventually(
+            lambda: next((row for row in self.claim_rows('parent')
+                          if row[2] == 'owed' and row[3] > 7), None),
+            'a live driver never took over the stale claim')
+        self.assertEqual(taken[2:], ('owed', taken[3]))
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
 
     def test_idle_arrival_starts_one_turn_and_leaves_no_duplicate(self):
         """A message admitted to an idle session with a recorded receiver starts one turn

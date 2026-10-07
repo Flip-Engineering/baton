@@ -716,18 +716,38 @@ law the_continuation_reads_the_count_before_it_locks:
 def the_continuation_reads_the_count_before_it_locks(db,session,cursor,again):
   {==}
 
-def handed_invocation_marks_the_claim_unclaimed(+db: String, +session: String) -> IO(Unit):
-  do IO<Unit>:
-    pending : String <- IO.try(String,DB.Sql.query(db,Receive.pending_count_sql(session,"0")))
-    left : Unit <- Receive.release_if_owed(db,session,Bool.not(String.eq(pending,"0\n")))
-    IO.pure(Unit,Unit{})
+def handed_invocation_settles_the_claim_under_the_lock(+db: String, +session: String) -> IO(Unit):
+  Lock.SessionLock.acquire_session(Unit,db,session,
+    +canonical => lock => Receive.settle_owned(canonical,session,lock))
 
-law a_handed_invocation_marks_the_claim_unclaimed_when_input_is_owed:
+law a_handed_invocation_settles_the_claim_only_while_holding_the_lock:
   for +db: String
   for +session: String
-  {Receive.claim_left(db,session) == handed_invocation_marks_the_claim_unclaimed(db,session) : IO(Unit)}
+  {Receive.claim_left(db,session) == handed_invocation_settles_the_claim_under_the_lock(db,session) : IO(Unit)}
 
-def a_handed_invocation_marks_the_claim_unclaimed_when_input_is_owed(db,session):
+def a_handed_invocation_settles_the_claim_only_while_holding_the_lock(db,session):
+  {==}
+
+law a_queued_invocation_without_the_lock_clears_nothing:
+  for +db: String
+  for +session: String
+  {Receive.settle_owned(db,session,None{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
+
+def a_queued_invocation_without_the_lock_clears_nothing(db,session):
+  {==}
+
+law the_holder_releases_only_when_no_input_remains_owed:
+  for +db: String
+  for +session: String
+  for +handle: U32
+  {Receive.settle_owned(db,session,Some{handle}) == (do IO<Unit>:
+    pending : String <- IO.try(String,DB.Sql.query(db,Receive.pending_count_sql(session,"0")))
+    live : String <- IO.try(String,DB.Sql.query(db,Receive.retained_attempt_live_sql(session)))
+    left : Unit <- Receive.release_if_settled(db,session,Bool.and(String.eq(pending,"0\n"),String.eq(live,"0\n")))
+    unlocked : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
+    IO.pure(Unit,Unit{})) : IO(Unit)}
+
+def the_holder_releases_only_when_no_input_remains_owed(db,session,handle):
   {==}
 
 # Negative controls. Each names the step a mutant would take and shows the code

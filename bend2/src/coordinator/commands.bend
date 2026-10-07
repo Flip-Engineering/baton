@@ -95,7 +95,7 @@ def messaging_schema() -> String:
 # databases upgrade-safe: every commit runs schema(), so the table
 # self-creates on first commit after upgrade, and readers tolerate absence.
 def wake_claim_schema() -> String:
-  "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed');"
+  "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);"
 
 def schema() -> String:
   wake_claim_schema()
@@ -372,7 +372,7 @@ def sql(command: Command) -> String:
     case Ask{+id, +player, body}:
       "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(player) ++ ",(SELECT parent FROM sessions WHERE id=" ++ q(player) ++ "),'question'," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
     case Ack{+id, +recipient, receipt}:
-      "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";DELETE FROM wake_claims WHERE session=" ++ q(recipient) ++ ";SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";"
+      "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";DELETE FROM wake_claims WHERE session=" ++ q(recipient) ++ " AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=" ++ q(recipient) ++ " AND receipt IS NULL);SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";"
     case Session{id}: session_result(id)
     case Delivery{id}:
       "SELECT " ++ delivery_row() ++ " FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ q(id) ++ ";"

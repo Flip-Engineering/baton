@@ -70,6 +70,14 @@ def continue_if(again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), present: Boo
 def pending_count_sql(+session: String, cursor: String) -> String:
   "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"
 
+# The message the wake hands to the invocation. It is the first unacknowledged
+# message after the cursor, so the wake never re-delivers input the attempt
+# already carried. Claim writers record it as the obligation owner.
+def wake_found(db: String, session: String, cursor: String) -> IO(String):
+  do IO<String>:
+    found : String <- IO.try(String,DB.Sql.query(db,Delivery.wake_sql(session,cursor)))
+    IO.pure(String,Tx.trim_nl(found))
+
 # The continuation takes the session lock and re-reads the count while holding
 # it, so the in-invocation continuation and the wake driver cannot both proceed
 # for one session. The claim records the driver that took the obligation.
@@ -78,7 +86,8 @@ def continue_owned(+db: String, +session: String, +cursor: String, again: Unit -
     case None{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case Some{handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
       pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,cursor)))
-      claimed : Unit <- Store.claim(db,session)
+      head : String <- wake_found(db,session,cursor)
+      claimed : Unit <- Store.claim(db,session,head)
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
       continue_if(again,Bool.not(String.eq(pending,"0\n")))
 
@@ -93,19 +102,47 @@ def continue_pending(+db: String, +session: String, +cursor: String, again: Unit
     pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,cursor)))
     continue_locked(db,session,cursor,again,Bool.not(String.eq(pending,"0\n")))
 
+# The lock holder deletes the claim row only once nothing is owed and no
+# retained attempt is recorded live. A finished turn with unacknowledged input
+# still owes the wake, so the row survives for the next driver.
+def release_if_settled(+db: String, +session: String, settled: Bool) -> IO(Unit):
+  match settled:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: Store.release(db,session)
+
+# A retained attempt recorded live keeps its claim however the lock moves: the
+# attempt may run without holding the session lock while it reattaches, and
+# releasing its row would invite a second driver to launch over it.
+def retained_attempt_live_sql(+session: String) -> String:
+  "SELECT EXISTS(SELECT 1 FROM executions WHERE session=" ++ C.q(session) ++ " AND phase IN ('starting','running'));"
+
+# Only the lock holder settles a claim. A queued invocation that finds the lock
+# held returns without touching the row, so it can never clear a live driver's
+# claim. The holder deletes the row only when no unacknowledged input remains
+# and no retained attempt is recorded live, so a finished turn that still owes
+# input keeps the obligation for the next driver. Takeover never reads the
+# row: any driver that takes the lock may claim again, so a dead owner never
+# suppresses the wake. Acknowledging the owed input deletes the row on the
+# acknowledgement path; an admitted stop deletes it on the stop path.
+def settle_owned(+db: String, +session: String, lock: Maybe<U32>) -> IO(Unit):
+  match lock:
+    case None{}: IO.pure(Unit,Unit{})
+    case Some{handle}: do IO<Unit>:
+      pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,"0")))
+      live : String <- IO.try(String,DB.Sql.query(db,retained_attempt_live_sql(session)))
+      left : Unit <- release_if_settled(db,session,Bool.and(String.eq(pending,"0\n"),String.eq(live,"0\n")))
+      unlocked : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
+      IO.pure(Unit,Unit{})
+
+def claim_left(+db: String, +session: String) -> IO(Unit):
+  Lock.SessionLock.acquire_session(Unit,db,session,
+    +canonical => lock => settle_owned(canonical,session,lock))
+
 # How much input is still owed after the cursor.
 def wake_owed(db: String, session: String, cursor: String) -> IO(Bool):
   do IO<Bool>:
     pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,cursor)))
     IO.pure(Bool,Bool.not(String.eq(pending,"0\n")))
-
-# The message the wake hands to the invocation. It is the first unacknowledged
-# message after the cursor, so the wake never re-delivers input the attempt
-# already carried.
-def wake_found(db: String, session: String, cursor: String) -> IO(String):
-  do IO<String>:
-    found : String <- IO.try(String,DB.Sql.query(db,Delivery.wake_sql(session,cursor)))
-    IO.pure(String,Tx.trim_nl(found))
 
 # The launch of one message through the existing delivery path. The delivery runs
 # as the detached self entry the admission path already uses, so the handing
@@ -121,19 +158,19 @@ def wake_refused(+db: String, +session: String, launched: Result<&1,&1,U32 & Str
   match launched:
     case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,launched)
     case Fail{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      released : Unit <- Store.release(db,session)
+      settled : Unit <- claim_left(db,session)
       IO.pure(Result<&1,&1,U32 & String,Unit>,launched)
 
 # A target that is absent or already handed over leaves the obligation as it
-# stands. A refused launch marks the claim unclaimed, so the next driver may
-# take the same obligation again.
-def wake_target(+db: String, +session: String, target: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, empty: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+# stands. A refused launch settles through the lock-gated sweep, which skips
+# when a live owner has taken the obligation in the meantime.
+def wake_target(+db: String, +session: String, +target: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, empty: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match empty:
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      claimed : Unit <- Store.claim(db,session)
+      claimed : Unit <- Store.claim(db,session,target)
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       launched : Result<&1,&1,U32 & String,Unit> <- launch(target)
       wake_refused(db,session,launched)
@@ -169,19 +206,6 @@ def wake_due(+db: String, +session: String, +cursor: String, launch: String -> I
     owed : Bool <- wake_owed(db,session,cursor)
     wake_locked(db,session,cursor,launch,owed)
 
-def release_if_owed(+db: String, +session: String, owed: Bool) -> IO(Unit):
-  match owed:
-    case False{}: IO.pure(Unit,Unit{})
-    case True{}: Store.release(db,session)
-
-# The handed invocation marks the claim unclaimed when it exits with input still
-# owed, so a later driver may take the same obligation again. Acknowledging the
-# owed input deletes the row on the acknowledgement path.
-def claim_left(+db: String, +session: String) -> IO(Unit):
-  do IO<Unit>:
-    pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,"0")))
-    left : Unit <- release_if_owed(db,session,Bool.not(String.eq(pending,"0\n")))
-    IO.pure(Unit,Unit{})
 
 def release_observer(lock: Maybe<U32>) -> IO(Unit):
   match lock:
@@ -283,12 +307,18 @@ def started(+db: String, +session: String, +id: String, +log: String, cursor: St
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       finish_pending(db,session,id,log,cursor,outcome,Nil{},again,u => IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
 
+# An admitted start takes the obligation under the held session lock before the
+# native process exists: the claim names the head unacknowledged message as
+# owner and fences the generation past any stale row, so a driver that dies
+# before launch never suppresses the next wake.
 def start_admitted(+db: String, +session: String, +id: String, cmd: String, route: String, thinking: String, +workspace: String, +log: String, +lock: U32, cursor: String, +native: String, +attempt: String, +harness: String, storage: String, prompt: String, recovery: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), allowed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match allowed:
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")})
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      head : String <- wake_found(db,session,"0")
+      owned : Unit <- Store.claim(db,session,head)
       start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained(db,session,attempt,cmd,route,thinking,workspace,native,harness,storage,prompt,lock,recovery))
       started(db,session,id,log,cursor,native,workspace,attempt,harness,lock,start,again)
 
