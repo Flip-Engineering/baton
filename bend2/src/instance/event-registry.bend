@@ -526,7 +526,8 @@ law a_foreign_capability_registration_is_refused:
 def a_foreign_capability_registration_is_refused(identity,owner,capability,revision,other_capability,other_revision,database,request,session,adoptions,lease_references,armed,event,cancelled):
   {==}
 
-# A cancelled registration refuses re-registration in either revision state.
+# A cancelled registration refuses re-registration in either revision state,
+# preserving its outstanding occurrence and pending duty.
 law a_cancelled_registration_refuses_registration:
   for +identity: String
   for +owner: String
@@ -540,14 +541,25 @@ law a_cancelled_registration_refuses_registration:
   for +lease_references: U32
   for +armed: Bool
   for +event: Bool
-  {register_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,armed,event,True{}},Generation{owner,capability,other_revision}) == Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,armed,event,True{}} : Registration}
+  for +outstanding: Maybe<U32>
+  for +pending: Bool
+  {register_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,armed,event,True{},outstanding,pending},Generation{owner,capability,other_revision}) == Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,armed,event,True{},outstanding,pending} : Registration}
 
-def a_cancelled_registration_refuses_registration(identity,owner,capability,revision,other_revision,database,request,session,adoptions,lease_references,armed,event):
+def a_cancelled_registration_refuses_registration(identity,owner,capability,revision,other_revision,database,request,session,adoptions,lease_references,armed,event,outstanding,pending):
   {==}
 
-# An armed registration refuses repeated arming until its references
-# resolve.
-law an_armed_registration_refuses_repeated_arming:
+# An armed registration refuses repeated arming: on the same revision the
+# busy refusal preserves every stored field and records a pending readiness
+# duty when an occurrence is outstanding; a cancelled registration returns
+# unchanged with its pending duty preserved.
+def armed_refusal_expected(+registration: Registration) -> Registration:
+  match reg_cancelled_of(registration):
+    case True{}: registration
+    case other: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),reg_armed_of(registration),reg_event_retained_of(registration),reg_cancelled_of(registration),reg_outstanding_of(registration),Bool.or(reg_pending_of(registration),Bool.not(outstanding_is_none(registration)))}
+
+# The armed registration observes the same revision in this law; the
+# changed-revision notification path is separate production behavior.
+law an_armed_registration_refuses_rearming_and_records_outstanding_readiness:
   for +identity: String
   for +owner: String
   for +capability: String
@@ -559,15 +571,30 @@ law an_armed_registration_refuses_repeated_arming:
   for +lease_references: U32
   for +event: Bool
   for +cancelled: Bool
-  {register_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,True{},event,cancelled},Generation{owner,capability,revision}) == Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,True{},event,cancelled} : Registration}
+  for +outstanding: Maybe<U32>
+  for +pending: Bool
+  {register_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,True{},event,cancelled,outstanding,pending},Generation{owner,capability,revision}) == armed_refusal_expected(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,True{},event,cancelled,outstanding,pending}) : Registration}
 
-def an_armed_registration_refuses_repeated_arming(identity,owner,capability,revision,database,request,session,adoptions,lease_references,event,cancelled):
+def an_armed_registration_refuses_rearming_and_records_outstanding_readiness(identity,owner,capability,revision,database,request,session,adoptions,lease_references,event,cancelled,outstanding,pending):
   {==}
+
+# Expected acceptance outcome, constructed from the exhaustion and task
+# capacity decisions: an exhausted adoption bound returns the original
+# records; otherwise a destination below task capacity adopts with the next
+# occurrence token, and a destination at capacity refuses with both records
+# unchanged.
+def acceptance_expected(exhausted: Bool, below_task_capacity: Bool, +registration: Registration, +destination: Destination, +adopted_registration: Registration, +adopted_destination: Destination, +task_event: TaskEvent) -> Acceptance:
+  match exhausted:
+    case True{}: Exhausted{registration,destination}
+    case other: match below_task_capacity:
+      case True{}: Adopted{adopted_registration,adopted_destination,task_event}
+      case other: Refused{registration,destination}
 
 # Adopting a retained event against the bound destination issues the next
 # occurrence token, advances the adoption count, clears the retained event
-# and records the task; below task capacity it adopts, and at capacity it
-# refuses with both records unchanged.
+# and records the task; an exhausted adoption bound returns the original
+# records before the capacity choice; below task capacity it adopts, and at
+# capacity it refuses with both records unchanged.
 law accepting_a_ready_event_issues_the_next_occurrence:
   for +identity: String
   for +owner: String
@@ -582,9 +609,10 @@ law accepting_a_ready_event_issues_the_next_occurrence:
   for +database: String
   for +request: String
   for +session: String
-  {accept_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},True{},False{},None{},False{}},Destination{database,owner,request,session,lease_references,lease_tasks},task_capacity,adoptions_bound) == Bool.pick(Acceptance,U32.is_lt(lease_tasks,task_capacity),Adopted{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,U32.add(adoptions,1),reg_references,False{},False{},False{},Some{adoptions}},Destination{database,owner,request,session,lease_references,U32.add(lease_tasks,1)},TaskEvent{identity,adoptions,Generation{owner,capability,revision},database,owner,request,session,AdoptedOutstanding{}}},Refused{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},True{},False{},None{},False{}},Destination{database,owner,request,session,lease_references,lease_tasks}}) : Acceptance}
+  for +pending: Bool
+  {accept_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},True{},False{},None{},pending},Destination{database,owner,request,session,lease_references,lease_tasks},task_capacity,adoptions_bound) == acceptance_expected(Bool.not(U32.is_lt(adoptions,adoptions_bound)),U32.is_lt(lease_tasks,task_capacity),Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},True{},False{},None{},pending},Destination{database,owner,request,session,lease_references,lease_tasks},Registration{identity,Generation{owner,capability,revision},database,owner,request,session,U32.add(adoptions,1),reg_references,False{},False{},False{},Some{adoptions},pending},Destination{database,owner,request,session,lease_references,U32.add(lease_tasks,1)},TaskEvent{identity,adoptions,Generation{owner,capability,revision},database,owner,request,session,AdoptedOutstanding{}}) : Acceptance}
 
-def accepting_a_ready_event_issues_the_next_occurrence(identity,owner,capability,revision,adoptions,reg_references,lease_references,lease_tasks,task_capacity,adoptions_bound,database,request,session):
+def accepting_a_ready_event_issues_the_next_occurrence(identity,owner,capability,revision,adoptions,reg_references,lease_references,lease_tasks,task_capacity,adoptions_bound,database,request,session,pending):
   {==}
 
 # The issued token presents exactly while its occurrence is the
