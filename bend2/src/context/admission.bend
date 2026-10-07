@@ -154,4 +154,3 @@ def stopped_owner_admitted(subject: OwnerSubject) -> Bool:
 
 def owner_admission(active: Bool, owned: Bool, subject: OwnerSubject) -> Bool:
   Bool.and(owned, Bool.or(active, stopped_owner_admitted(subject)))
-

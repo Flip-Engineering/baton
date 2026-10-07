@@ -173,4 +173,3 @@ def progress_document(+phase: Phase, waiting: List<Waiting>, +control: Control, 
 # array, and a nonempty list is the element chain the shared encoder walks.
 def progress_json(has_roles: Bool, +phase: Phase, waiting: List<Waiting>, control: Control, cleanup: Cleanup) -> String:
   Bool.pick(String, has_roles, progress_document(phase, waiting, control, cleanup), "null")
-

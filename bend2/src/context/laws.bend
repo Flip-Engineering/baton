@@ -1299,7 +1299,7 @@ def a_supplied_plan_identity_is_carried_unexamined():
 # The retained admission association.
 
 law an_absent_association_row_is_a_missing_association:
-  {ContextAdmit.association_decode("absent\t\t\n") == ContextAdmit.AssociationMissing{} : ContextAdmit.Association}
+  {ContextAdmit.association_decode("absent\t\t\t\n") == ContextAdmit.AssociationMissing{} : ContextAdmit.Association}
 
 def an_absent_association_row_is_a_missing_association():
   {==}
