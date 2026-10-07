@@ -333,7 +333,7 @@ def query_catalog_result(db: String, binding: String, answer: ProviderAnswer,
     case ProviderOutput{value, status}: query_catalog_output(db, binding, request, status, value)
 
 def query_request_result(db: String, binding: String, owner: String, query: String,
-                         path: String, result: NativeRequest.RequestDecode) -> IO(Unit):
+                         result: NativeRequest.RequestDecode) -> IO(Unit):
   match result:
     case NativeRequest.RequestDecodeRefused{condition}:
       IO.die(Unit, 3, "request:" ++ condition)
@@ -353,7 +353,7 @@ def query_binding_result(db: String, owner: String, query: String, path: String,
     case Done{+binding}:
       do IO<Unit>:
         request : NativeRequest.RequestDecode <- NativeRequest.read_file(db, binding, path)
-        query_request_result(db, binding, owner, query, path, request)
+        query_request_result(db, binding, owner, query, request)
 
 def query_file(db: String, owner: String, query: String, path: String) -> IO(Unit):
   do IO<Unit>:
