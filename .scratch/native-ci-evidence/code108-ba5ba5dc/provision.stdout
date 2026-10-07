@@ -1,0 +1,23 @@
+source.bundle: OK
+pinned/bend.ts: OK
+pinned/main.ts: OK
+pinned/comp.ts: OK
+pinned/base.bend: OK
+pinned/LICENSE: OK
+provision.sh: OK
+qualify.py: OK
+executor.sh: OK
+collect.py: OK
+candidate-files.sha256: OK
+toolchain.sha256: OK
+python-stdlib.sha256: OK
+ba5ba5dc7cf6f68caa288023b4c3a2625365d1dd
+019ca071b789863a6c3aa1d7158621a24ff2b69c
+source-binding.mjs: OK
+source-binding.test.mjs: OK
+frontend-hooks.mjs: OK
+frontend-hook-events.mjs: OK
+frontend-adapter.mjs: OK
+frontend-adapter.test.mjs: OK
+frontend-invocation.mjs: OK
+frontend-invocation.harness.mjs: OK

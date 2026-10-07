@@ -1,0 +1,15 @@
+Cloning into 'candidate'...
+Warning: you are leaving 4 commits behind, not connected to
+any of your branches:
+
+  eb72fc17 bend2: name the custody answer and the owners still unnamed
+  e5cc9187 bend2: state the capture ingress distinction
+  03f95117 bend2: correct the README remaining claims
+  21fc001c bend2: state how dependency evidence and the plan identity are consumed
+
+If you want to keep them by creating a new branch, this may be a good time
+to do so with:
+
+ git branch <new-branch-name> eb72fc17
+
+HEAD is now at ba5ba5dc bend2: split the gate lookup, drop the generation claim, harden the record boundary

@@ -1,0 +1,6 @@
+{
+  "status": "failed",
+  "source_directory": "/Users/runner/work/_temp/baton2-native-37579232858-1/build-source",
+  "output": "/Users/runner/work/_temp/baton2-native-37579232858-1/package",
+  "error": "RuntimeError('laws-check failed; full output is retained at /Users/runner/work/_temp/baton2-native-37579232858-1/package/gates/laws-check.log')"
+}

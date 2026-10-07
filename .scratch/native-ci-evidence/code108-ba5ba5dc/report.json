@@ -1,0 +1,71 @@
+{
+  "job": "frontend-code108-ba5ba5dc",
+  "started": "2026-10-06T18:52:19.695580+00:00",
+  "stages": [
+    {
+      "stage": "source-binding-test",
+      "argv": [
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/tool-cache/node/22.23.3/x64/bin/node",
+        "--test",
+        "bend2/context/bend2/source-binding.test.mjs"
+      ],
+      "env_extra": {},
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/frontend-code108-ba5ba5dc/candidate",
+      "exit_code": 0,
+      "started": "2026-10-06T18:52:19.781229+00:00",
+      "ended": "2026-10-06T18:52:19.987422+00:00",
+      "stdout_sha256": "878f2a079d95909488342615b07bc8705dabe660941f7fef28ed735b3cb11d44",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes": 2930,
+      "stderr_bytes": 0
+    },
+    {
+      "stage": "frontend-adapter-test",
+      "argv": [
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/tool-cache/node/22.23.3/x64/bin/node",
+        "--test",
+        "bend2/context/bend2/frontend-adapter.test.mjs"
+      ],
+      "env_extra": {},
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/frontend-code108-ba5ba5dc/candidate",
+      "exit_code": 1,
+      "started": "2026-10-06T18:52:19.988213+00:00",
+      "ended": "2026-10-06T18:52:20.224873+00:00",
+      "stdout_sha256": "0d1bf97093faadaf5a0ea412ba64d664602f51f7652e5fd0f1dc1ac916ab197f",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes": 25945,
+      "stderr_bytes": 0
+    },
+    {
+      "stage": "frontend-invocation-harness",
+      "argv": [
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/tool-cache/node/22.23.3/x64/bin/node",
+        "--experimental-strip-types",
+        "bend2/context/bend2/frontend-invocation.harness.mjs"
+      ],
+      "env_extra": {
+        "BATON2_BEND_TS": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/frontend-code108-ba5ba5dc/pinned/bend.ts",
+        "BATON2_MAIN_TS": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/frontend-code108-ba5ba5dc/pinned/main.ts",
+        "BATON2_COMP_TS": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/frontend-code108-ba5ba5dc/pinned/comp.ts",
+        "BATON2_BASE_BEND": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/frontend-code108-ba5ba5dc/pinned/base.bend",
+        "BATON2_FIXTURE_DIR": "bend2/context/bend2/fixtures"
+      },
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/frontend-code108-ba5ba5dc/candidate",
+      "exit_code": 1,
+      "started": "2026-10-06T18:52:20.225944+00:00",
+      "ended": "2026-10-06T18:52:26.854697+00:00",
+      "stdout_sha256": "693aff189632ac98d25d56ebef8d3f483e6a61eb747ded81152e1f7f93b02f5c",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes": 65536,
+      "stderr_bytes": 0
+    }
+  ],
+  "node_version": "v22.23.3",
+  "node_help_strip_types": true,
+  "uname": "Linux acp-compute-cluster-001 6.14.0-37-generic #37~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Thu Nov 20 10:25:38 UTC 2 x86_64 x86_64 x86_64 GNU/Linux",
+  "source_state": {
+    "head": "ba5ba5dc7cf6f68caa288023b4c3a2625365d1dd"
+  },
+  "error": null,
+  "ended": "2026-10-06T18:52:26.855837+00:00"
+}

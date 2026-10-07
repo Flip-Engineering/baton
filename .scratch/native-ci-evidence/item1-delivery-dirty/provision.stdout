@@ -1,0 +1,18 @@
+source.bundle: OK
+delivery.bend.dirty: OK
+delivery-dirty.patch: OK
+provision.sh: OK
+qualify.py: OK
+executor.sh: OK
+collect.py: OK
+toolchain.sha256: OK
+compiler.sha256: OK
+python-stdlib.sha256: OK
+compiler.tar.gz: OK
+compiler.tar.gz: OK
+toolchain-home/bin/bend: OK
+/usr/bin/clang-19: OK
+3d164b96cd03d495d5b13f850c709edc616bfe10
+a843be44f3165541ca8cf7a0e8aed4467afd7b31
+candidate/bend2/src/coordinator/delivery.bend: OK
+candidate-dirty.patch: OK

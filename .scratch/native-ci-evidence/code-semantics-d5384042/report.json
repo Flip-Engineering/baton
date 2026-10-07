@@ -1,0 +1,93 @@
+{
+  "job": "code-semantics-d5384042",
+  "started": "2026-10-06T19:05:53.813450+00:00",
+  "stages": [
+    {
+      "stage": "oracle-ts",
+      "argv": [
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/node/bin/node",
+        "run.mjs",
+        "ts",
+        "--typescript",
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/typescript/package/lib/typescript.js",
+        "--evidence-dir",
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/evidence/ts-run"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/candidate/bend2/context/acceptance/code-semantics",
+      "exit_code": 1,
+      "started": "2026-10-06T19:05:54.223766+00:00",
+      "ended": "2026-10-06T19:06:08.496352+00:00",
+      "stdout_sha256": "d231da73114530a034c1e9d471c716f587a4e887147cfa8da8aa56d3069cbc98",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes": 16965,
+      "stderr_bytes": 0
+    },
+    {
+      "stage": "oracle-c",
+      "argv": [
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/node/bin/node",
+        "run.mjs",
+        "c",
+        "--clang",
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm/bin/clang",
+        "--clangd",
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm/bin/clangd",
+        "--evidence-dir",
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/evidence/c-run"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/candidate/bend2/context/acceptance/code-semantics",
+      "exit_code": 1,
+      "started": "2026-10-06T19:06:08.497140+00:00",
+      "ended": "2026-10-06T19:06:08.573820+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "38a9356c4a422889a6a72ec21aec82e578c85d7926ccdb3101ac5783e29b5f1b",
+      "stdout_bytes": 0,
+      "stderr_bytes": 700
+    }
+  ],
+  "tool_versions": {
+    "node": {
+      "argv": [
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/node/bin/node",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "v22.15.0",
+      "stderr": ""
+    },
+    "typescript": {
+      "argv": [
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/node/bin/node",
+        "-e",
+        "console.log(require('/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/typescript/package/lib/typescript.js').version)"
+      ],
+      "exit_code": 0,
+      "stdout": "5.9.3",
+      "stderr": ""
+    },
+    "clang": {
+      "argv": [
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm/bin/clang",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "clang version 20.1.8 (https://github.com/llvm/llvm-project 87f0227cb60147a26a1eeb4fb06e3b505e9c7261)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm/bin",
+      "stderr": ""
+    },
+    "clangd": {
+      "argv": [
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm/bin/clangd",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "clangd version 20.1.8 (https://github.com/llvm/llvm-project 87f0227cb60147a26a1eeb4fb06e3b505e9c7261)\nFeatures: linux\nPlatform: x86_64-unknown-linux-gnu",
+      "stderr": ""
+    }
+  },
+  "uname": "Linux acp-compute-cluster-001 6.14.0-37-generic #37~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Thu Nov 20 10:25:38 UTC 2 x86_64 x86_64 x86_64 GNU/Linux",
+  "source_state": {
+    "head": "d5384042dff2d108496b25e2422220fc2a701556"
+  },
+  "error": null,
+  "ended": "2026-10-06T19:06:08.574494+00:00"
+}

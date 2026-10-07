@@ -1,0 +1,52 @@
+{
+  "job": "delivery-dirty-3d164b96-item1",
+  "started": "2026-10-06T18:44:44.646980+00:00",
+  "stages": [
+    {
+      "stage": "compile",
+      "argv": [
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/delivery-dirty-3d164b96-item1/toolchain-home/bin/bend",
+        "bend2/src/coordinator/main.bend",
+        "--check-only"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/delivery-dirty-3d164b96-item1/candidate",
+      "exit_code": 1,
+      "started": "2026-10-06T18:44:44.765327+00:00",
+      "ended": "2026-10-06T18:44:44.973903+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "9c762991c8a62e809b8122de2f3899763a94fe63b641d278300118fc0dd237fb",
+      "stdout_bytes": 0,
+      "stderr_bytes": 167
+    },
+    {
+      "stage": "laws-check",
+      "argv": [
+        "/mnt/nvme4tb/ci-runners/baton2-native-homelab/tool-cache/node/22.23.3/x64/bin/node",
+        "bend2/scripts/laws-check.mjs"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/delivery-dirty-3d164b96-item1/candidate",
+      "exit_code": 1,
+      "started": "2026-10-06T18:44:44.974687+00:00",
+      "ended": "2026-10-06T18:44:45.330916+00:00",
+      "stdout_sha256": "d9686976c0d41073d37bc93c2a6f46e96283362885e5ce62246eafaed4d25c91",
+      "stderr_sha256": "9c762991c8a62e809b8122de2f3899763a94fe63b641d278300118fc0dd237fb",
+      "stdout_bytes": 316,
+      "stderr_bytes": 167
+    }
+  ],
+  "tool_versions": {
+    "bend": "bend 2.0.25",
+    "node": "v22.23.3",
+    "uname": "Linux acp-compute-cluster-001 6.14.0-37-generic #37~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Thu Nov 20 10:25:38 UTC 2 x86_64 x86_64 x86_64 GNU/Linux"
+  },
+  "source_state_before": {
+    "head": "3d164b96cd03d495d5b13f850c709edc616bfe10",
+    "delivery_bend_sha256": "cb183f7438e246e5d82ce626a86b0a50d1d72d94dd5249b89e63bcc04883aaa6",
+    "status": " M bend2/src/coordinator/delivery.bend\n"
+  },
+  "source_state_after": {
+    "status": " M bend2/src/coordinator/delivery.bend\n"
+  },
+  "error": null,
+  "ended": "2026-10-06T18:44:45.364516+00:00"
+}
