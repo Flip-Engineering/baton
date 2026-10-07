@@ -238,14 +238,21 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual(len(checkpoint_reports), 1)
         self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
         log = (self.directory / 'parent.jsonl').read_text()
-        self.assertEqual(log.count('oversized-checkpoint-assistant'), 1)
-        self.assertEqual(log.count('checkpoint-barrier'), 1)
+        spool = (pathlib.Path(attempt) / 'stdout').read_text()
+        self.assertEqual(spool.count('oversized-checkpoint-assistant'), 1)
+        self.assertEqual(spool.count('checkpoint-barrier'), 1)
         assistant_frames = [json.loads(line) for line in log.splitlines()
                             if 'oversized-checkpoint-assistant' in line]
+        self.assertEqual(len(assistant_frames), 2)
+        self.assertEqual(assistant_frames[0], assistant_frames[1])
         raw_text = assistant_frames[0]['message']['content'][0]['text']
         self.assertEqual(len(raw_text), len(text))
         self.assertEqual(hashlib.sha256(raw_text.encode()).hexdigest(),
                          hashlib.sha256(text.encode()).hexdigest())
+        barrier_frames = [json.loads(line) for line in log.splitlines()
+                          if 'checkpoint-barrier' in line]
+        self.assertEqual(len(barrier_frames), 2)
+        self.assertEqual(barrier_frames[0], barrier_frames[1])
         launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
         self.eventually(lambda: not self.owned_processes(), 'oversized OMP fixture did not exit')
