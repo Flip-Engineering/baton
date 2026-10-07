@@ -399,7 +399,7 @@ def legacy_cli(args: List<String>) -> IO(Unit):
   match args:
     case +directory <> cwd <> payload <> program: do IO<Unit>:
       executable : String <- IO.try(String,Lock.SessionLock.executable())
-      start : P.RetainedStart <- IO.try(P.RetainedStart,P.ProcessChild.retain(directory,P.argv(program),cwd,directory ++ "/native.stderr",payload,1,0,P.argv([executable,"recover-retained",directory])))
+      start : P.RetainedStart <- IO.try(P.RetainedStart,P.ProcessChild.retain(directory,P.argv(program),cwd,directory ++ "/native.stderr","",1,0,P.argv([executable,"recover-retained",directory])))
       run : Unit <- legacy_started(start,payload)
       IO.pure(Unit,Unit{})
     case _: IO.die(Unit,2,"legacy-retain ATTEMPT CWD PAYLOAD PROGRAM ARGS...")
