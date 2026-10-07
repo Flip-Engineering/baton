@@ -9,7 +9,7 @@ law muse_primary_identity_comes_from_the_admitted_turn_input:
 law muse_terminal_requires_the_admitted_command:
   for +event: String
   for +primary: String
-  {Turn.primary_terminal_sql(event,primary) == "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='run_terminal' AND " ++ C.q(primary) ++ "<>'' AND json_extract(" ++ C.q(event) ++ ",'$.payload.command_id')=" ++ C.q(primary) ++ " THEN 1 ELSE 0 END ELSE 0 END;" : String}
+  {Turn.primary_terminal_expr(event,primary) == "CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='run_terminal' AND " ++ C.q(primary) ++ "<>'' AND json_extract(" ++ C.q(event) ++ ",'$.payload.command_id')=" ++ C.q(primary) ++ " THEN 1 ELSE 0 END ELSE 0 END" : String}
 
 law omp_terminal_normalizes_only_terminal_message_members:
   for +event: String
