@@ -60,11 +60,10 @@ def note_task(+db: String, +failed: Bool, +session: String, done: Result<&1,&1,U
       stopped : Bool <- Stop.stopped(db, session)
       IO.pure(Bool, Bool.or(failed, Bool.not(stopped)))
 
-# Tasks join one at a time. After every joined task the loop re-snapshots and
-# forks newly dirty sessions, draining those before rejoining the older tasks,
-# so discovery never waits for all tasks to end.
+# Joins one task list to its flag. Fresh snapshots fork through drain_tasks
+# below, so this helper never names the drive loop.
 @unsafe
-def drain(+db: String, +handle: U32, +failed: Bool, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, sessions: List<String>) -> IO(Bool):
+def drain_now(+db: String, +handle: U32, +failed: Bool, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, sessions: List<String>) -> IO(Bool):
   match tasks:
     case Nil{}: IO.pure(Bool, failed)
     case task <> rest_tasks:
@@ -73,10 +72,7 @@ def drain(+db: String, +handle: U32, +failed: Bool, tasks: List<Chan(Result<&1,&
         case session <> rest_sessions: do IO<Bool>:
           done : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>, task)
           failed_now : Bool <- note_task(db, failed, session, done)
-          +fresh : List<String> <- snapshot(db)
-          extra : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, fresh)
-          failed_fresh : Bool <- drain(db, handle, failed_now, extra, fresh)
-          drain(db, handle, failed_fresh, rest_tasks, rest_sessions)
+          drain_now(db, handle, failed_now, rest_tasks, rest_sessions)
 
 def close_subscription(+handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match failed:
@@ -85,33 +81,57 @@ def close_subscription(+handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & Str
       IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{(1, "The serve recorded a swept task failure.")})
     case False{}: Custody.Instance.unsubscribe(handle)
 
+# Tasks join one at a time. After every joined task the loop re-snapshots and
+# forks newly dirty sessions, draining those before rejoining the older tasks,
+# so discovery never waits for all tasks to end. The continuation carries the
+# loop without naming it, keeping every definition ordered before its callers.
+@unsafe
+def drain_tasks(+db: String, +handle: U32, +failed: Bool, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, sessions: List<String>, again: Bool -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match tasks:
+    case Nil{}: again(failed)
+    case task <> rest_tasks:
+      match sessions:
+        case Nil{}: again(failed)
+        case session <> rest_sessions: do IO<Result<&1,&1,U32 & String,Unit>>:
+          done : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>, task)
+          failed_now : Bool <- note_task(db, failed, session, done)
+          +fresh : List<String> <- snapshot(db)
+          extra : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, fresh)
+          failed_fresh : Bool <- drain_now(db, handle, failed_now, extra, fresh)
+          drain_tasks(db, handle, failed_fresh, rest_tasks, rest_sessions, again)
+
+def notice_closed(+db: String, +handle: U32, +failed: Bool, result: Result<&1,&1,U32 & String,String>, again: Bool -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match result:
+    case Fail{error}: close_subscription(handle, failed)
+    case Done{text}: again(failed)
+
 # Idle serves block on the owner notice. A notice carries only the cursor
 # high-water, so every notice replays the full pending snapshot; a gap notice
 # is served by the same snapshot. A failed notice means the owner is gone, and
 # the serve closes its subscription and exits with the carried status.
-# The loop is one self-recursive function: every back edge below targets drive
-# itself, so discovery never waits for all tasks to end and no join-all gate
-# stands between a commit and its snapshot.
+def idle(+db: String, +handle: U32, +failed: Bool, again: Bool -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    result : Result<&1,&1,U32 & String,String> <- Custody.Instance.notice(handle)
+    notice_closed(db, handle, failed, result, again)
+
+def drive_sessions(+db: String, +handle: U32, +failed: Bool, sessions: List<String>, again: Bool -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match sessions:
+    case Nil{}: idle(db, handle, failed, again)
+    case session <> rest: do IO<Result<&1,&1,U32 & String,Unit>>:
+      +both : List<String> <- IO.pure(List<String>, Con{session, rest})
+      first : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, both)
+      drain_tasks(db, handle, failed, first, both, again)
+
 @unsafe
 def drive(+db: String, +handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     sessions : List<String> <- snapshot(db)
-    match sessions:
-      case Nil{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-        result : Result<&1,&1,U32 & String,String> <- Custody.Instance.notice(handle)
-        match result:
-          case Fail{error}: close_subscription(handle, failed)
-          case Done{text}: drive(db, handle, failed)
-      case session <> rest: do IO<Result<&1,&1,U32 & String,Unit>>:
-        +both : List<String> <- IO.pure(List<String>, Con{session, rest})
-        first : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, both)
-        failed_now : Bool <- drain(db, handle, failed, first, both)
-        drive(db, handle, failed_now)
+    drive_sessions(db, handle, failed, sessions, failed_next => drive(db, handle, failed_next))
 
 def admitted(+db: String, subscribed: Result<&1,&1,U32 & String,U32 & String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match subscribed:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{error})
-    case Done{(+handle, +readiness)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+    case Done{(handle, readiness)}: do IO<Result<&1,&1,U32 & String,Unit>>:
       ready : Unit <- IO.write(readiness ++ "\n")
       drive(db, handle, False{})
 
@@ -125,7 +145,7 @@ def serve(+db: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 def status_read(+db: String, subscribed: Result<&1,&1,U32 & String,U32 & String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match subscribed:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{error})
-    case Done{(+handle, +readiness)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+    case Done{(handle, readiness)}: do IO<Result<&1,&1,U32 & String,Unit>>:
       ready : Unit <- IO.write(readiness ++ "\n")
       Custody.Instance.unsubscribe(handle)
 
