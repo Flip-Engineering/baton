@@ -1224,6 +1224,27 @@ def ld_adv_cas(g: T.GitOut) -> LAdv:
     case T.GRun{code, out}: Bool.pick(LAdv, U32.is_eq(code, 0), AdvLanded{}, AdvRefused{})
     case T.GBroken{detail}: AdvBroken{detail}
 
+def ld_adv_cas_compared(cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut, tip: String) -> IO(LdAdvObs):
+  +c2 = cand
+  +cp = capture
+  +obs = after
+  +seen = tip
+  match Tx.str_eq(seen, c2):
+    case True{}: IO.pure(LdAdvObs, LdAdvQualified{AdvLanded{}, cp, obs})
+    case False{}: IO.pure(LdAdvObs, LdAdvQualified{AdvMoved{}, cp, obs})
+
+def ld_adv_cas_readback(target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut) -> IO(LdAdvObs):
+  +c2 = cand
+  +cp = capture
+  +obs = after
+  match obs:
+    case T.GRun{code, out}:
+      +c0 = code
+      match U32.is_eq(c0, 0):
+        case False{}: IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{"the target could not be read back after the advance"}, cp, obs})
+        case True{}: ld_adv_cas_compared(c2, cp, obs, Tx.trim_nl(out))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{detail}, cp, obs})
+
 # The unheld advance is not landed on exit zero alone: while the target claim is still held the
 # target ref is read back and required to be the candidate. A moved target answers AdvMoved with
 # the capture retained; an unreadable readback answers AdvBroken with it.
@@ -1242,27 +1263,6 @@ def ld_adv_cas_qualified(target: String, cand: String, capture: Result<&1,&1,U32
             after : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
             ld_adv_cas_readback(t2, c2, cp, after)
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(st), cp))
-
-def ld_adv_cas_readback(target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut) -> IO(LdAdvObs):
-  +c2 = cand
-  +cp = capture
-  +obs = after
-  match obs:
-    case T.GRun{code, out}:
-      +c0 = code
-      match U32.is_eq(c0, 0):
-        case False{}: IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{"the target could not be read back after the advance"}, cp, obs})
-        case True{}: ld_adv_cas_compared(c2, cp, obs, Tx.trim_nl(out))
-    case T.GBroken{detail}: IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{detail}, cp, obs})
-
-def ld_adv_cas_compared(cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut, tip: String) -> IO(LdAdvObs):
-  +c2 = cand
-  +cp = capture
-  +obs = after
-  +seen = tip
-  match Tx.str_eq(seen, c2):
-    case True{}: IO.pure(LdAdvObs, LdAdvQualified{AdvLanded{}, cp, obs})
-    case False{}: IO.pure(LdAdvObs, LdAdvQualified{AdvMoved{}, cp, obs})
 
 def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +r2 = repo
@@ -1446,6 +1446,14 @@ def ld_adv_pick(g: T.GitOut, repo: String, target: String, cand: String, basis: 
         ld_adv_same(Tx.str_eq(Tx.trim_nl(out), b2), repo, target, cand, b2, cx),
         IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{"the target commit could not be read before publication"})))
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
+type LdAdvCtx is Data:
+  LdAdvContext{claim: U32, guard: String, artifact: String}
+
+type LdAdvObs is Data:
+  LdAdvNoCapture{advance: LAdv}
+  LdAdvCaptured{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>}
+  LdAdvQualified{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>, readback: T.GitOut}
+
 def ld_adv_wrap(advance: LAdv) -> LdAdvObs:
   +a = advance
   LdAdvNoCapture{a}
@@ -1454,14 +1462,6 @@ def ld_adv_with(advance: LAdv, capture: Result<&1,&1,U32 & String,String & Strin
   +a = advance
   +c = capture
   LdAdvCaptured{a, c}
-
-type LdAdvCtx is Data:
-  LdAdvContext{claim: U32, guard: String, artifact: String}
-
-type LdAdvObs is Data:
-  LdAdvNoCapture{advance: LAdv}
-  LdAdvCaptured{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>}
-  LdAdvQualified{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>, readback: T.GitOut}
 
 def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
   +c = capture
