@@ -89,7 +89,7 @@ class SharedOwner(unittest.TestCase):
         threading.Thread(target=read, daemon=True).start()
         return child
 
-    def run(self, *args):
+    def command(self, *args):
         return subprocess.run([str(EXE), *map(str, args)], capture_output=True,
                               text=True, timeout=30, env=self.environment)
 
@@ -232,7 +232,7 @@ class SharedOwner(unittest.TestCase):
             except OSError:
                 pass
         self.sweep_home_processes()
-        self.run('shutdown', self.db)
+        self.command('shutdown', self.db)
         for pid in self.owner_pids():
             try:
                 os.kill(pid, signal.SIGKILL)
@@ -278,7 +278,7 @@ class SharedOwner(unittest.TestCase):
         # never silently dropped.
         payload = self.home / 'late.payload'
         payload.write_bytes(b'late\n')
-        refused = self.run('control-write', directory, payload)
+        refused = self.command('control-write', directory, payload)
         self.assertNotEqual(refused.returncode, 0,
                             'control-write into an unserved attempt succeeded silently')
         self.evidence('control-write-after-death-refused', refused.returncode)
@@ -337,7 +337,7 @@ class SharedOwner(unittest.TestCase):
             self.wait_spool(directory, 'echo:' + line)
         payload = self.home / 'control.payload'
         payload.write_bytes('file "input" λ🙂\n'.encode('utf-8'))
-        result = self.run('control-write', directory, payload)
+        result = self.command('control-write', directory, payload)
         self.assertIn('control-write-complete', result.stdout, result.stderr)
         self.wait_spool(directory, 'echo:file "input" λ🙂')
         child.stdin.close()
