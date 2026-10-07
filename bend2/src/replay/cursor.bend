@@ -19,7 +19,7 @@ import Base
 
 # CASE|name|restart|basis|rows|readerCursor
 type CaseRow is Data:
-  CaseRow{name: String, restart: String, basis: String, +: U32, +: U32}
+  CaseRow{name: String, restart: String, basis: String, rows: U32, readerCursor: U32}
 
 def field_of(m: Maybe<&2, String>) -> String:
   match m:
@@ -31,7 +31,7 @@ def field_of(m: Maybe<&2, String>) -> String:
 def field(fs: List<&2, String>, n: Nat) -> String:
   field_of(List.head(&2, String, List.drop(&2, String, fs, n)))
 
-def parse_digits(xs: List<&2, Char>, +: U32) -> U32:
+def parse_digits(xs: List<&2, Char>, acc: U32) -> U32:
   match xs:
     case Nil{}:
       acc
@@ -78,7 +78,7 @@ def render_live(+name: String, +rows: U32, readerCursor: U32) -> String:
   String.concat(["RESULT|", name, "|source=live|checkpoint=none|cursor=", U32.show(rows),
     "|owed=", U32.show(U32.sub(rows, readerCursor))])
 
-def render_restarted(is_restart: Bool, +: String, basis: String, rows: U32, readerCursor: U32) -> String:
+def render_restarted(is_restart: Bool, name: String, basis: String, rows: U32, readerCursor: U32) -> String:
   match is_restart:
     case True{}:
       render_restart(String.eq(basis, "same"), name, rows, readerCursor)

@@ -43,7 +43,7 @@ def classify(+code: U32) -> UintInput:
     Bool.pick(UintInput, is_space(code), UintSpace{}, UintOther{}),
     Bool.pick(UintInput, U32.is_lt(code, 58), UintDigit{U32.sub(code, 48)}, UintOther{}))
 
-def begin(+: UintInput) -> UintState:
+def begin(input: UintInput) -> UintState:
   match input:
     case UintDigit{+value}: Bool.pick(UintState, U32.is_eq(value, 0), UintZero{}, UintDigits{value})
     case UintSpace{}: UintStart{}
@@ -56,7 +56,7 @@ def after_zero(input: UintInput) -> UintState:
     case UintOther{}: UintRejected{"invalid_character"}
 
 # 4294967295 = 429496729 * 10 + 5. The predicate precedes arithmetic.
-def append_checked(+: U32, digit: U32, fits: Bool) -> UintState:
+def append_checked(value: U32, digit: U32, fits: Bool) -> UintState:
   match fits:
     case True{}: UintDigits{U32.add(U32.mul(value, 10), digit)}
     case False{}: UintRejected{"u32_overflow"}
@@ -78,7 +78,7 @@ def after_space(value: U32, input: UintInput) -> UintState:
     case UintSpace{}: UintTrailing{value}
     case UintOther{}: UintRejected{"trailing_data"}
 
-def step(+: UintState, input: UintInput) -> UintState:
+def step(state: UintState, input: UintInput) -> UintState:
   match state:
     case UintStart{}: begin(input)
     case UintZero{}: after_zero(input)
@@ -86,7 +86,7 @@ def step(+: UintState, input: UintInput) -> UintState:
     case UintTrailing{value}: after_space(value, input)
     case UintRejected{reason}: UintRejected{reason}
 
-def feed(chunk: String, +: UintState) -> UintState:
+def feed(chunk: String, state: UintState) -> UintState:
   match chunk:
     case SNil{}: state
     case SCon{head, tail}: feed(tail, step(state, classify(Char.to_u32(head))))
@@ -122,17 +122,17 @@ def text_of(xs: List<U32>) -> String:
     case Nil{}: SNil{}
     case h <> t: SCon{Char.from_u32(h), text_of(t)}
 
-def singles_of(+: String) -> List<String>:
+def singles_of(text: String) -> List<String>:
   match text:
     case SNil{}: Nil{}
     case SCon{h, t}: SCon{h, SNil{}} <> singles_of(t)
 
-def cat_list(xs: List<String>, +: List<String>) -> List<String>:
+def cat_list(xs: List<String>, ys: List<String>) -> List<String>:
   match xs:
     case Nil{}: ys
     case h <> t: h <> cat_list(t, ys)
 
-def cat_cases(xs: List<List<String>>, +: List<List<String>>) -> List<List<String>>:
+def cat_cases(xs: List<List<String>>, ys: List<List<String>>) -> List<List<String>>:
   match xs:
     case Nil{}: ys
     case h <> t: h <> cat_cases(t, ys)

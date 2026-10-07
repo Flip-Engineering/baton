@@ -12,11 +12,11 @@
 import Base
 
 type CaseRow is Data:
-  CaseRow{name: String, basis: String, integrity: String, +: U32, rowTargets: U32, +: U32}
+  CaseRow{name: String, basis: String, integrity: String, rowSeq: U32, rowTargets: U32, readerCursor: U32}
 
 type Verdict is Data:
   Admitted{targets: U32, cursor: U32}
-  Refused{classification: String, +: Bool, cursor: U32}
+  Refused{classification: String, quarantine: Bool, cursor: U32}
 
 def show_bool(b: Bool) -> String:
   match b:
@@ -35,7 +35,7 @@ def field_of(m: Maybe<&2, String>) -> String:
 def field(fs: List<&2, String>, n: Nat) -> String:
   field_of(List.head(&2, String, List.drop(&2, String, fs, n)))
 
-def parse_digits(xs: List<&2, Char>, +: U32) -> U32:
+def parse_digits(xs: List<&2, Char>, acc: U32) -> U32:
   match xs:
     case Nil{}:
       acc
@@ -58,7 +58,7 @@ def case_fields(+fs: List<&2, String>) -> CaseRow:
 def case_of(+line: String) -> CaseRow:
   case_fields(String.split(line, '|'))
 
-def judge_basis(present: Bool, +: U32, rowTargets: U32) -> Verdict:
+def judge_basis(present: Bool, rowSeq: U32, rowTargets: U32) -> Verdict:
   match present:
     case True{}:
       Admitted{rowTargets, rowSeq}
@@ -82,7 +82,7 @@ def show_remedy(quarantine: Bool) -> String:
     case False{}:
       "none"
 
-def render_verdict(+: String, readerCursor: U32, v: Verdict) -> String:
+def render_verdict(name: String, readerCursor: U32, v: Verdict) -> String:
   match v:
     case Admitted{targets, +cursor}:
       String.concat(["RESULT|", name, "|admitted=true|refusal=none|classification=none|quarantine=false|targets=",

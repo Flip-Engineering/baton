@@ -26,10 +26,10 @@ def source_suffix(+native: String) -> String:
 
 # Two stores can each carry a file for the same native identity. Nothing records
 # which one the session wrote last, so the read names both and refuses.
-def source_ambiguous(+: String, +: String, +native: String) -> String:
+def source_ambiguous(first: String, second: String, +native: String) -> String:
   "Two recorded conversations match the native identity " ++ native ++ ": " ++ first ++ " and " ++ second ++ "; the read does not choose one. Both conversations stay preserved; inspect them and repair the recorded source identity, then retry."
 
-def source_first_case(first: String, second: String, +: String, second_present: Bool) -> IO(String):
+def source_first_case(first: String, second: String, native: String, second_present: Bool) -> IO(String):
   match second_present:
     case True{}: IO.die(String,2,source_ambiguous(first,second,native))
     case False{}: IO.pure(String,first)
@@ -66,7 +66,7 @@ def usage_recorded_name(+recorded: String) -> String:
 
 # The selected file must record the session's own native identity, or the
 # projection would describe another conversation.
-def usage_recorded_conversation(+: String, +native: String, matches: Bool) -> IO(Unit):
+def usage_recorded_conversation(recorded: String, +native: String, matches: Bool) -> IO(Unit):
   match matches:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: IO.die(Unit,2,"The selected conversation file records " ++ usage_recorded_name(recorded) ++ " rather than " ++ native ++ "; inspect the session's recorded identity and its conversation files.")
@@ -144,7 +144,7 @@ def projection_rows_cte() -> String:
 # observation states the component, the components the source did not state
 # throughout, the components a record stated without a number, and the recorded
 # routes. A repeated identity keeps its first record.
-def projection_summary_cte(+: String) -> String:
+def projection_summary_cte(malformed: String) -> String:
   "counts AS (SELECT (SELECT count(*) FROM keyed) AS records, (SELECT count(*) FROM firsts) AS observations,"
   ++ " (SELECT count(*) FROM (SELECT identity FROM keyed GROUP BY identity HAVING count(DISTINCT signature) > 1)) AS conflicts,"
   ++ " (" ++ malformed ++ ") AS malformed),"
@@ -193,7 +193,7 @@ def projection_summary_cte(+: String) -> String:
 # The declared conversation and the projected usage. Every recorded component of
 # one observation is preserved independently: a component the source did not
 # state is left out of the sums rather than reported as zero.
-def projection_answer_cte(+: String, +: String, native: String, +: String) -> String:
+def projection_answer_cte(session: String, harness: String, native: String, source: String) -> String:
   "answer AS (SELECT json_object("
   ++ "'session'," ++ C.q(session) ++ ",'harness'," ++ C.q(harness) ++ ",'native'," ++ C.q(native) ++ ",'source'," ++ C.q(source) ++ ","
   ++ "'shape',(SELECT shape FROM shape),"
@@ -232,7 +232,7 @@ def projection_select() -> String:
   ++ " WHEN cost_stated AND sums_qualified THEN json_remove(document,'$.observed')"
   ++ " ELSE json_remove(document,'$.observed','$.cost') END FROM answer;"
 
-def project_sql(malformed: String, entries_json: String, +: String, harness: String, native: String, source: String) -> String:
+def project_sql(malformed: String, entries_json: String, session: String, harness: String, native: String, source: String) -> String:
   projection_entries_cte(entries_json) ++ projection_rows_cte() ++ projection_summary_cte(malformed) ++ projection_answer_cte(session,harness,native,source) ++ projection_select()
 
 # --- the command ------------------------------------------------------------

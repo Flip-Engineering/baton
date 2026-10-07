@@ -142,7 +142,7 @@ def composition(tag: Tag) -> +List<Row>:
   []
 
 
-def size(+: +List<Row>) -> Nat:
+def size(rows: +List<Row>) -> Nat:
   match rows:
     case Nil{}:
       0n
@@ -166,7 +166,7 @@ def succ(n: Nat) -> Nat:
 
 # Collection counts over a retained prefix. A policy row SETS the swarm's policy, so the Po arm
 # writes 1n whatever earlier policy rows did; every other arm adds one key to its collection.
-def counts(rows: +List<Row>, +: Nat, +: Nat, +: Nat, +: Nat, +: Nat, +: Nat, +: Nat, +: Nat, +: Nat, +: Nat, +: Nat) -> (Nat & Nat & Nat & Nat & Nat & Nat & Nat & Nat & Nat & Nat & Nat):
+def counts(rows: +List<Row>, pa: Nat, gr: Nat, wo: Nat, cl: Nat, asn: Nat, pr: Nat, cx: Nat, co: Nat, rv: Nat, cp: Nat, po: Nat) -> (Nat & Nat & Nat & Nat & Nat & Nat & Nat & Nat & Nat & Nat & Nat):
   match rows:
     case Nil{}:
       (pa, gr, wo, cl, asn, pr, cx, co, rv, cp, po)

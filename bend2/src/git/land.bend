@@ -63,7 +63,7 @@ def ff_answer(r: FFLD) -> IO(T.LandOutcome):
     case FFNext{wc, tb}: IO.pure(T.LandOutcome, T.LBlocked{"unreachable stage"})
 
 # Stage 1: resolve the worker branch to a commit.
-def ff_stage1_ok(+: Bool, +: String) -> FFLD:
+def ff_stage1_ok(ok: Bool, out: String) -> FFLD:
   match ok:
     case True{}: FFNext{Tx.trim_nl(out), ""}
     case False{}: FFDone{T.LBlocked{"worker branch not found"}}
@@ -73,7 +73,7 @@ def ff_stage1_pick(r: T.GitOut) -> FFLD:
     case T.GRun{code, out}: ff_stage1_ok(U32.is_eq(code, 0), out)
     case T.GBroken{detail}: FFDone{T.LBlocked{detail}}
 
-def ff_stage1(+: String, workerBranch: String) -> IO(FFLD):
+def ff_stage1(repo: String, workerBranch: String) -> IO(FFLD):
   +wb = workerBranch
   +rp = repo
   do IO<FFLD>:
@@ -81,17 +81,17 @@ def ff_stage1(+: String, workerBranch: String) -> IO(FFLD):
     IO.pure(FFLD, ff_stage1_pick(r))
 
 # Stage 2: check if the target already contains the worker commit.
-def ff_stage2_ancestor(+: Bool, +: String) -> FFLD:
+def ff_stage2_ancestor(ok: Bool, wc: String) -> FFLD:
   match ok:
     case True{}: FFDone{T.LAlready{wc}}
     case False{}: FFNext{wc, ""}
 
-def ff_stage2_pick(r: T.GitOut, +: String) -> FFLD:
+def ff_stage2_pick(r: T.GitOut, wc: String) -> FFLD:
   match r:
     case T.GRun{code, out}: ff_stage2_ancestor(U32.is_eq(code, 0), wc)
     case T.GBroken{detail}: FFDone{T.LBlocked{detail}}
 
-def ff_stage2(wc: String, +: String, +: String) -> IO(FFLD):
+def ff_stage2(wc: String, repo: String, target: String) -> IO(FFLD):
   +wc2 = wc
   +rp = repo
   +tg = target
@@ -99,13 +99,13 @@ def ff_stage2(wc: String, +: String, +: String) -> IO(FFLD):
     r : T.GitOut <- Git.runGit(rp, Con{"merge-base", Con{"--is-ancestor", Con{wc2, Con{tg, Nil{}}}}})
     IO.pure(FFLD, ff_stage2_pick(r, wc2))
 
-def ff_go2(r: FFLD, +: String, +: String) -> IO(FFLD):
+def ff_go2(r: FFLD, repo: String, target: String) -> IO(FFLD):
   match r:
     case FFDone{outcome}: IO.pure(FFLD, FFDone{outcome})
     case FFNext{wc, tb}: ff_stage2(wc, repo, target)
 
 # Stage 3: record the current target HEAD.
-def ff_stage3_ok(+: Bool, out: String, wc: String) -> FFLD:
+def ff_stage3_ok(ok: Bool, out: String, wc: String) -> FFLD:
   match ok:
     case True{}: FFNext{wc, Tx.trim_nl(out)}
     case False{}: FFDone{T.LBlocked{"target branch not found"}}
@@ -115,7 +115,7 @@ def ff_stage3_pick(r: T.GitOut, wc: String) -> FFLD:
     case T.GRun{code, out}: ff_stage3_ok(U32.is_eq(code, 0), out, wc)
     case T.GBroken{detail}: FFDone{T.LBlocked{detail}}
 
-def ff_stage3(wc: String, +: String, +: String) -> IO(FFLD):
+def ff_stage3(wc: String, repo: String, target: String) -> IO(FFLD):
   +wc2 = wc
   +rp = repo
   +tg = target
@@ -123,13 +123,13 @@ def ff_stage3(wc: String, +: String, +: String) -> IO(FFLD):
     r : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--verify", Con{"--quiet", Con{Tx.str_cat("refs/heads/", tg), Nil{}}}}})
     IO.pure(FFLD, ff_stage3_pick(r, wc2))
 
-def ff_go3(r: FFLD, +: String, +: String) -> IO(FFLD):
+def ff_go3(r: FFLD, repo: String, target: String) -> IO(FFLD):
   match r:
     case FFDone{outcome}: IO.pure(FFLD, FFDone{outcome})
     case FFNext{wc, tb}: ff_stage3(wc, repo, target)
 
 # Stage 4: verify the target is an ancestor of the worker (fast-forward).
-def ff_stage4_ff(ok: Bool, wc: String, +: String) -> FFLD:
+def ff_stage4_ff(ok: Bool, wc: String, tb: String) -> FFLD:
   match ok:
     case True{}: FFNext{wc, tb}
     case False{}: FFDone{T.LBlocked{"not a fast-forward; rebase the worker branch onto the target"}}
@@ -139,7 +139,7 @@ def ff_stage4_pick(r: T.GitOut, wc: String, tb: String) -> FFLD:
     case T.GRun{code, out}: ff_stage4_ff(U32.is_eq(code, 0), wc, tb)
     case T.GBroken{detail}: FFDone{T.LBlocked{detail}}
 
-def ff_stage4(wc: String, tb: String, repo: String, +: String) -> IO(FFLD):
+def ff_stage4(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
   +wc2 = wc
   +tb2 = tb
   +rp = repo
@@ -148,7 +148,7 @@ def ff_stage4(wc: String, tb: String, repo: String, +: String) -> IO(FFLD):
     r : T.GitOut <- Git.runGit(rp, Con{"merge-base", Con{"--is-ancestor", Con{tg, Con{wc2, Nil{}}}}})
     IO.pure(FFLD, ff_stage4_pick(r, wc2, tb2))
 
-def ff_go4(r: FFLD, repo: String, +: String) -> IO(FFLD):
+def ff_go4(r: FFLD, repo: String, target: String) -> IO(FFLD):
   match r:
     case FFDone{outcome}: IO.pure(FFLD, FFDone{outcome})
     case FFNext{wc, tb}: ff_stage4(wc, tb, repo, target)
@@ -221,18 +221,18 @@ def pub_flag_of(+line: String) -> String:
         Bool.pick(String, Tx.starts_with(line, "+"), "forced", "unclassified"))))
 
 type PubRecord is Data:
-  RecordMatched{cls: String, +: String}
+  RecordMatched{cls: String, line: String}
   RecordAmbiguous{count: U32, sample: String}
   RecordAbsent{}
 
 type RereadObs is Data:
-  RereadRead{code: U32, out: String, +: String}
+  RereadRead{code: U32, out: String, ref: String}
   RereadBroken{detail: String}
 
 type PubObservation is Data:
-  ObsAttempted{code: U32, out: String, +: PubRecord, destination: String, +: String, oid: String, +: String, post: String, reread: RereadObs}
-  ObsNotAttempted{reason: String, destination: String, +: String, oid: String, +: String}
-  ObsBroken{detail: String, destination: String, +: String, oid: String, +: String}
+  ObsAttempted{code: U32, out: String, record: PubRecord, destination: String, target: String, oid: String, basis: String, post: String, reread: RereadObs}
+  ObsNotAttempted{reason: String, destination: String, target: String, oid: String, basis: String}
+  ObsBroken{detail: String, destination: String, target: String, oid: String, basis: String}
 
 def pub_record(out: String, +want: String) -> PubRecord:
   +lines = Tx.split_lines(out)
@@ -257,7 +257,7 @@ def record_class(record: PubRecord) -> String:
     case RecordAmbiguous{count, sample}: "ambiguous"
     case RecordAbsent{}: "unclassified"
 
-def obs_class_pick(+: U32, record: PubRecord) -> String:
+def obs_class_pick(code: U32, record: PubRecord) -> String:
   Bool.pick(String, U32.is_eq(code, 0), record_class(record), "failed")
 
 def obs_class(+obs: PubObservation) -> String:
@@ -282,7 +282,7 @@ def obs_refusal(+obs: PubObservation) -> T.LandOutcome:
     case ObsNotAttempted{reason, destination, target, oid, basis}: T.LBlocked{reason}
     case ObsBroken{detail, destination, target, oid, basis}: T.LBlocked{detail}
 
-def obs_reread(code: U32, out: String, record: PubRecord, +destination: String, +target: String, +oid: String, +basis: String, +: U32, +: String, +ref: String) -> PubObservation:
+def obs_reread(code: U32, out: String, record: PubRecord, +destination: String, +target: String, +oid: String, +basis: String, rcode: U32, rout: String, +ref: String) -> PubObservation:
   Bool.pick(PubObservation, U32.is_eq(rcode, 0),
     Bool.pick(PubObservation, Tx.str_eq(Tx.trim_nl(rout), oid),
       ObsAttempted{code, out, record, destination, target, oid, basis, "verified-object", RereadRead{rcode, rout, ref}},
@@ -356,31 +356,31 @@ def publish_observe(+destination: String, +target: String, +oid: String, +basis:
 # and never found or none. Every answer carries the immutable request identity and the
 # full raw result; the verdict is derived from the observation, never rendered text.
 type HolderBlock is Data:
-  InBlock{path: String, +: Bool, +: U32}
+  InBlock{path: String, has_state: Bool, branches: U32}
   NoBlock{}
 
 # The holder's read state: the canonical path the caller supplied, with the raw
 # result of every HEAD, index and tracked-status observation it made there.
 type HolderState is Data:
-  HolderRead{path: String, head: RereadObs, index: RereadObs, +: RereadObs}
+  HolderRead{path: String, head: RereadObs, index: RereadObs, status: RereadObs}
 
 # The immutable discovery request: the destination the listing is about, the target
 # it is interpreted for, and the exact command used, so a retained observation
 # cannot be reinterpreted for another target.
 type HolderRequest is Data:
-  HolderRequest{destination: String, +: String, argv: String}
+  HolderRequest{destination: String, target: String, argv: String}
 
 # The accumulator keeps the block being read and the selected match separately, so a
 # later worktree cannot replace the target path that was already matched.
 type HolderScan is Data:
-  ScanState{block: HolderBlock, +: Maybe<String>, +: U32, +: U32, +: U32}
+  ScanState{block: HolderBlock, matched: Maybe<String>, seen: U32, bad: U32, blocks: U32}
 
 type HolderDiscovery is Data:
   DiscoverRead{request: HolderRequest, code: U32, out: String}
   DiscoverBroken{request: HolderRequest, detail: String}
 
 type HolderVerdict is Data:
-  VerdictFound{request: HolderRequest, +: String}
+  VerdictFound{request: HolderRequest, path: String}
   VerdictNone{request: HolderRequest}
   VerdictUnreadable{request: HolderRequest, code: U32, out: String}
   VerdictBroken{request: HolderRequest, detail: String}
@@ -392,13 +392,13 @@ type HolderObservation is Data:
   HolderObserved{request: HolderRequest, code: U32, out: String, verdict: HolderVerdict}
   HolderObservedBroken{request: HolderRequest, detail: String, verdict: HolderVerdict}
 
-def prefix_drop_tail(+: String, head: String, rest: String) -> Maybe<String>:
+def prefix_drop_tail(line: String, head: String, rest: String) -> Maybe<String>:
   match line:
     case SNil{}: None{}
     case SCon{got, gotrest}:
       Bool.pick(Maybe<String>, Char.is_eq(head, got), prefix_drop_tail(gotrest, rest), None{})
 
-def prefix_drop(+: String, prefix: String) -> Maybe<String>:
+def prefix_drop(line: String, prefix: String) -> Maybe<String>:
   match prefix:
     case SNil{}: Some{line}
     case SCon{head, rest}: prefix_drop_tail(line, head, rest)
@@ -432,7 +432,7 @@ def holder_branch_value(found: Maybe<String>) -> Bool:
 
 def holder_valid_branch(+line: String) -> Bool:
   holder_branch_value(prefix_drop(line, "branch refs/heads/"))
-def holder_close(+: HolderScan, +request: String) -> HolderScan:
+def holder_close(acc: HolderScan, +request: String) -> HolderScan:
   match acc:
     case ScanState{block, matched, seen, bad, blocks}:
       match block:
@@ -442,7 +442,7 @@ def holder_close(+: HolderScan, +request: String) -> HolderScan:
             ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks})
         case NoBlock{}: ScanState{NoBlock{}, matched, seen, bad, blocks}
 
-def holder_open_fresh_path(+: HolderBlock, matched: Maybe<String>, seen: U32, bad: U32, blocks: U32, path: Maybe<String>) -> HolderScan:
+def holder_open_fresh_path(block: HolderBlock, matched: Maybe<String>, seen: U32, bad: U32, blocks: U32, path: Maybe<String>) -> HolderScan:
   match path:
     case Some{value}:
       Bool.pick(HolderScan, holder_path_ok(value),
@@ -547,7 +547,7 @@ def holder_step(lines: List<String>, +branch: String, +target: String, +acc: Hol
       Bool.pick(HolderScan, String.is_empty(h),
         holder_step(rest, branch, target, holder_close(acc, request), request),
         holder_step(rest, branch, target, holder_line_step(h, branch, target, acc, request), request))
-def holder_request_target(+: HolderRequest) -> String:
+def holder_request_target(request: HolderRequest) -> String:
   match request:
     case HolderRequest{destination, target, argv}: target
 
@@ -566,7 +566,7 @@ def holder_discover(request: HolderRequest, g: T.GitOut) -> HolderDiscovery:
 
 # The target is taken from the retained request, and a broken command stays broken
 # instead of being rendered as a status that was never observed.
-def holder_verdict_of_discovery(+: HolderDiscovery) -> HolderVerdict:
+def holder_verdict_of_discovery(discovery: HolderDiscovery) -> HolderVerdict:
   match discovery:
     case DiscoverRead{request, code, out}:
       Bool.pick(HolderVerdict, U32.is_eq(code, 0),
@@ -596,17 +596,17 @@ def holder_state(+path: String) -> IO(HolderState):
 def holder_path_same(+expected: String, +found: String) -> Bool:
   Tx.str_eq(expected, found)
 
-def ff_stage5_ok(ok: Bool, wc: String, +: String) -> FFLD:
+def ff_stage5_ok(ok: Bool, wc: String, target: String) -> FFLD:
   match ok:
     case True{}: FFDone{T.LLanded{target, wc}}
     case False{}: FFDone{T.LBlocked{"target moved during landing; retry"}}
 
-def ff_stage5_pick(r: T.GitOut, wc: String, +: String) -> FFLD:
+def ff_stage5_pick(r: T.GitOut, wc: String, target: String) -> FFLD:
   match r:
     case T.GRun{code, out}: ff_stage5_ok(U32.is_eq(code, 0), wc, target)
     case T.GBroken{detail}: FFDone{T.LBlocked{detail}}
 
-def ff_stage5(wc: String, tb: String, repo: String, +: String) -> IO(FFLD):
+def ff_stage5(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
   +wc2 = wc
   +tb2 = tb
   +rp = repo
@@ -622,7 +622,7 @@ def ff_stage5(wc: String, tb: String, repo: String, +: String) -> IO(FFLD):
 # zero exit and a completed release reports LLanded; a refusal, a mismatch, a capture that
 # did not complete, or a release failure reports LBlocked and names the artifact that holds
 # the raw evidence, so a post-state or release failure can never read as an ordinary landing.
-def ff_stage5_landed(+: String, +: String) -> IO(FFLD):
+def ff_stage5_landed(target: String, candidate: String) -> IO(FFLD):
   +tg = target
   +cand = candidate
   IO.pure(FFLD, FFDone{T.LLanded{tg, cand}})
@@ -631,7 +631,7 @@ def ff_stage5_blocked(detail: String) -> IO(FFLD):
   +d = detail
   IO.pure(FFLD, FFDone{T.LBlocked{d}})
 
-def ff_stage5_postread_compared(+: String, +: String, +: String, +: String, head: String) -> IO(FFLD):
+def ff_stage5_postread_compared(target: String, candidate: String, artifact: String, evidence: String, head: String) -> IO(FFLD):
   +tg = target
   +cand = candidate
   +art = artifact
@@ -640,14 +640,14 @@ def ff_stage5_postread_compared(+: String, +: String, +: String, +: String, head
   Bool.pick(IO(FFLD), Tx.str_eq(seen, cand),
     ff_stage5_landed(tg, cand),
     ff_stage5_blocked(Tx.str_cat("post-state is not the candidate; ", ev)))
-def ff_stage5_postread_seen(+: String, +: String, +: String, +: String, +: T.GitOut) -> IO(FFLD):
+def ff_stage5_postread_seen(target: String, candidate: String, artifact: String, evidence: String, observed: T.GitOut) -> IO(FFLD):
   match observed:
     case T.GBroken{detail}: ff_stage5_blocked(Tx.str_cat("post-state unreadable: ", detail))
     case T.GRun{code, head}:
       Bool.pick(IO(FFLD), U32.is_eq(code, 0),
         ff_stage5_postread_compared(target, candidate, artifact, evidence, Tx.trim_nl(head)),
         ff_stage5_blocked(Tx.str_cat("post-state read failed; ", evidence)))
-def ff_stage5_postread(+: String, candidate: String, repo: String, +: String, evidence: String) -> IO(FFLD):
+def ff_stage5_postread(target: String, candidate: String, repo: String, artifact: String, evidence: String) -> IO(FFLD):
   +tg = target
   +cand = candidate
   +rp = repo
@@ -657,21 +657,21 @@ def ff_stage5_postread(+: String, candidate: String, repo: String, +: String, ev
     observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--verify", Con{"--end-of-options", Con{Tx.str_cat("refs/heads/", tg), Nil{}}}}})
     ff_stage5_postread_seen(tg, cand, art, ev, observed)
 
-def ff_stage5_status(+: String, candidate: String, repo: String, artifact: String, evidence: String, status: T.Status) -> IO(FFLD):
+def ff_stage5_status(target: String, candidate: String, repo: String, artifact: String, evidence: String, status: T.Status) -> IO(FFLD):
   match status:
     case T.SSignal{num}: ff_stage5_blocked(Tx.str_cat("mutation signalled; ", evidence))
     case T.SExit{code}:
       Bool.pick(IO(FFLD), U32.is_eq(code, 0),
         ff_stage5_postread(target, candidate, repo, artifact, evidence),
         ff_stage5_blocked(Tx.str_cat("mutation exited nonzero; ", evidence)))
-def ff_stage5_runres(+: String, candidate: String, artifact: String, repo: String, held: String, rr: T.RunRes) -> IO(FFLD):
+def ff_stage5_runres(target: String, candidate: String, artifact: String, repo: String, held: String, rr: T.RunRes) -> IO(FFLD):
   match rr:
     case T.RSpawn{detail}: ff_stage5_blocked(Tx.str_cat("mutation could not be spawned: ", detail))
     case T.RRun{status, out}:
       +observed = Tx.str_cat("stdout bytes ", Tx.str_cat(out, Tx.str_cat("; ", held)))
       ff_stage5_status(target, candidate, repo, artifact, observed, status)
 
-def ff_stage5_framing(+: String, candidate: String, artifact: String, repo: String, framing: String, diagnostics: String) -> IO(FFLD):
+def ff_stage5_framing(target: String, candidate: String, artifact: String, repo: String, framing: String, diagnostics: String) -> IO(FFLD):
   +tg = target
   +cand = candidate
   +art = artifact
@@ -680,7 +680,7 @@ def ff_stage5_framing(+: String, candidate: String, artifact: String, repo: Stri
   +diag = diagnostics
   +held = Tx.str_cat("stderr bytes ", Tx.str_cat(diag, Tx.str_cat("; artifact ", art)))
   ff_stage5_runres(tg, cand, art, rp, held, Tx.run_res(Done{framed}))
-def ff_stage5_captured(+: String, candidate: String, artifact: String, repo: String, observed: Result<&1,&1,U32 & String,String & String>) -> IO(FFLD):
+def ff_stage5_captured(target: String, candidate: String, artifact: String, repo: String, observed: Result<&1,&1,U32 & String,String & String>) -> IO(FFLD):
   match observed:
     case Fail{error}:
       match error:
@@ -689,7 +689,7 @@ def ff_stage5_captured(+: String, candidate: String, artifact: String, repo: Str
       match pair:
         case (framing, diagnostics): ff_stage5_framing(target, candidate, artifact, repo, framing, diagnostics)
 
-def ff_stage5_outcome(+: String, candidate: String, artifact: String, repo: String, +: Lg.Landing) -> IO(FFLD):
+def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo: String, outcome: Lg.Landing) -> IO(FFLD):
   match outcome:
     case Lg.LandingHeld{request, candidate, basis, published, mutation, released}:
       match released:
@@ -705,7 +705,7 @@ def ff_stage5_outcome(+: String, candidate: String, artifact: String, repo: Stri
     case Lg.LandingOldValueMismatch{expected, found, released}: ff_stage5_blocked("old target moved during landing; retry")
     case Lg.LandingPublishRefused{outcome, released}: ff_stage5_blocked("intent publication refused")
 
-def ff_stage5_named(candidate: String, +: String, repo: String, +: String, +: String, guard: String, observed: Result<&1, &1, U32 & String, String>) -> IO(FFLD):
+def ff_stage5_named(candidate: String, old: String, repo: String, target: String, common: String, guard: String, observed: Result<&1, &1, U32 & String, String>) -> IO(FFLD):
   match observed:
     case Fail{error}: ff_stage5_blocked("cannot name the attempt token for this target")
     case Done{token}:
@@ -718,7 +718,7 @@ def ff_stage5_named(candidate: String, +: String, repo: String, +: String, +: St
       do IO<FFLD>:
         outcome : Lg.Landing <- Lg.Landing.run(request)
         ff_stage5_outcome(target, candidate, art, repo, outcome)
-def ff_stage5_guarded_now(candidate: String, old: String, repo: String, +: String, common: String, guard: String) -> IO(FFLD):
+def ff_stage5_guarded_now(candidate: String, old: String, repo: String, target: String, common: String, guard: String) -> IO(FFLD):
   +cand = candidate
   +tb = old
   +rp = repo
@@ -729,13 +729,13 @@ def ff_stage5_guarded_now(candidate: String, old: String, repo: String, +: Strin
     token : Result<&1, &1, U32 & String, String> <- Rec.Receipt.attempt_token(tg)
     ff_stage5_named(cand, tb, rp, tg, cm, gd, token)
 
-def ff_stage5_guard_observed(+: String, old: String, repo: String, +: String, common: String, observed: Result<&1, &1, U32 & String, String>) -> IO(FFLD):
+def ff_stage5_guard_observed(cand: String, old: String, repo: String, target: String, common: String, observed: Result<&1, &1, U32 & String, String>) -> IO(FFLD):
   match observed:
     case Fail{error}: ff_stage5_blocked("cannot name the landing guard")
     case Done{guard}: ff_stage5_guarded_now(cand, old, repo, target, common, guard)
 
 
-def ff_stage5_guardpath(+: String, old: String, repo: String, +: String, common: String) -> IO(FFLD):
+def ff_stage5_guardpath(cand: String, old: String, repo: String, target: String, common: String) -> IO(FFLD):
   +candidate = cand
   +tb = old
   +rp = repo
@@ -745,14 +745,14 @@ def ff_stage5_guardpath(+: String, old: String, repo: String, +: String, common:
     guard_g : Result<&1, &1, U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
     ff_stage5_guard_observed(candidate, tb, rp, tg, cm, guard_g)
 
-def ff_stage5_common(cand: String, old: String, repo: String, +: String, observed: T.GitOut) -> IO(FFLD):
+def ff_stage5_common(cand: String, old: String, repo: String, target: String, observed: T.GitOut) -> IO(FFLD):
   match observed:
     case T.GBroken{detail}: ff_stage5_blocked(detail)
     case T.GRun{code, out}:
       Bool.pick(IO(FFLD), U32.is_eq(code, 0),
         ff_stage5_guardpath(cand, old, repo, target, Tx.trim_nl(out)),
         ff_stage5_blocked("cannot read the common directory for the landing guard"))
-def ff_stage5_guarded(wc: String, tb: String, repo: String, +: String) -> IO(FFLD):
+def ff_stage5_guarded(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
   +cand = wc
   +old = tb
   +rp = repo
@@ -772,7 +772,7 @@ type LAdv is Data:
 # The fast-forward now advances through the same holder-aware path the checked landing uses,
 # so both reach one effect. Only a landed answer reports LLanded; a moved target, a held
 # worktree, a changed holder, a refused update and a broken read each keep their own answer.
-def ff_stage5_adv_answer(+: LAdv, +: String, cand: String) -> FFLD:
+def ff_stage5_adv_answer(a: LAdv, target: String, cand: String) -> FFLD:
   match a:
     case AdvLanded{}: FFDone{T.LLanded{target, cand}}
     case AdvMoved{}: FFDone{T.LBlocked{"target moved during landing; retry"}}
@@ -783,8 +783,8 @@ def ff_stage5_adv_answer(+: LAdv, +: String, cand: String) -> FFLD:
 
 type LdAdvObs is Data:
   LdAdvNoCapture{advance: LAdv}
-  LdAdvCaptured{advance: LAdv, +: Result<&1,&1,U32 & String,String & String>}
-  LdAdvQualified{advance: LAdv, +: Result<&1,&1,U32 & String,String & String>, readback: T.GitOut}
+  LdAdvCaptured{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>}
+  LdAdvQualified{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>, readback: T.GitOut}
 
 # The public shared boundary. The canonical common directory is read once here, the target
 # claim is taken around the holder selection and the selected advance, and the release runs for
@@ -800,7 +800,7 @@ type SharedLanding is Data:
 
 # Every step failure releases the acquired descriptor and keeps its own stage, its complete
 # error or raw record, and the actual release Result.
-def shared_step_failed(step: String, error: U32 & String, +: U32) -> IO(SharedLanding):
+def shared_step_failed(step: String, error: U32 & String, handle: U32) -> IO(SharedLanding):
   +s = step
   +e = error
   +h = handle
@@ -817,7 +817,7 @@ def shared_parent_path(directory: String, name: String) -> String:
   +n = name
   Tx.str_cat(d, Tx.str_cat("/", n))
 
-def shared_record_failed(step: String, record: String, +: U32) -> IO(SharedLanding):
+def shared_record_failed(step: String, record: String, handle: U32) -> IO(SharedLanding):
   +s = step
   +r = record
   +h = handle
@@ -829,7 +829,7 @@ type LdAdvCtx is Data:
   LdAdvContext{claim: U32, guard: String, artifact: String}
 
 # The target commit lookup used by the existing unheld compare-and-swap path.
-def ld_tip_argv(+: String) -> List<String>:
+def ld_tip_argv(target: String) -> List<String>:
   ["rev-parse", "--verify", Tx.str_cat(target, "^{commit}")]
 
 def ld_adv_wrap(advance: LAdv) -> LdAdvObs:
@@ -843,11 +843,11 @@ type LdHold is Data:
   HoldPath{path: String}
   HoldBlocked{detail: String}
 
-def ld_hold_ref(+: String) -> String:
+def ld_hold_ref(target: String) -> String:
   Tx.str_cat("refs/heads/", target)
 
 # The branch line a worktree report carries when it holds the target.
-def ld_hold_branch(+: String) -> String:
+def ld_hold_branch(target: String) -> String:
   Tx.str_cat("branch ", ld_hold_ref(target))
 # The holder's block in a `git worktree list --porcelain` report: each block is
 # one "worktree <path>" line and the state lines that follow it, and the block
@@ -859,7 +859,7 @@ type LdHoldScan is Data:
 
 # The path one worktree-list line names: the line with its label match off,
 # or the empty string for a line that does not carry the label.
-def wt_path_go(+: String, label: String) -> String:
+def wt_path_go(line: String, label: String) -> String:
   match line label:
     case SNil{} SNil{}: ""
     case SNil{} SCon{lc, lr}: ""
@@ -880,7 +880,7 @@ def ld_hold_named(+cur: String, +found: String, +seen: U32) -> LdHoldScan:
       HoldScan{cur, cur, 1},
       HoldScan{cur, found, 2}))
 
-def ld_hold_line(+line: String, +: LdHoldScan, want: String) -> LdHoldScan:
+def ld_hold_line(+line: String, acc: LdHoldScan, want: String) -> LdHoldScan:
   match acc:
     case HoldScan{+cur, +found, +seen}:
       Bool.pick(LdHoldScan, Tx.starts_with(line, "worktree "),
@@ -889,13 +889,13 @@ def ld_hold_line(+line: String, +: LdHoldScan, want: String) -> LdHoldScan:
           ld_hold_named(cur, found, seen),
           HoldScan{cur, found, seen}))
 
-def ld_hold_scan(lines: List<String>, +: LdHoldScan, +want: String) -> LdHoldScan:
+def ld_hold_scan(lines: List<String>, acc: LdHoldScan, +want: String) -> LdHoldScan:
   match lines:
     case Nil{}: acc
     case Con{h, rest}: ld_hold_scan(rest, ld_hold_line(h, acc, want), want)
 
 # The holder one report names, or the reason it names no usable one.
-def ld_hold_end(+: LdHoldScan) -> LdHold:
+def ld_hold_end(acc: LdHoldScan) -> LdHold:
   match acc:
     case HoldScan{cur, found, +seen}:
       Bool.pick(LdHold, U32.is_eq(seen, 0), HoldNone{},
@@ -934,7 +934,7 @@ def ld_adv_host_error(error: U32 & String) -> T.GitOut:
   match error:
     case (code, detail): T.GBroken{detail}
 
-def ld_adv_status(+: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
+def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
   match capture:
     case Fail{error}: ld_adv_host_error(error)
     case Done{pair}: ld_adv_pair(pair)
@@ -955,7 +955,7 @@ def ld_adv_cas(g: T.GitOut) -> LAdv:
     case T.GRun{code, out}: Bool.pick(LAdv, U32.is_eq(code, 0), AdvLanded{}, AdvRefused{})
     case T.GBroken{detail}: AdvBroken{detail}
 
-def ld_adv_cas_compared(cand: String, capture: Result<&1,&1,U32 & String,String & String>, +: T.GitOut, +: String) -> IO(LdAdvObs):
+def ld_adv_cas_compared(cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut, tip: String) -> IO(LdAdvObs):
   +c2 = cand
   +cp = capture
   +obs = after
@@ -986,7 +986,7 @@ def ld_adv_cas_qualified(target: String, cand: String, capture: Result<&1,&1,U32
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(status), capture))
 
 # The compare-and-swap where no worktree holds the target.
-def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, +: LdAdvCtx) -> IO(LdAdvObs):
+def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +r2 = repo
   +t2 = target
   +c2 = cand
@@ -1170,7 +1170,7 @@ def ld_adv_run(repo: String, target: String, cand: String, basis: String, ctx: L
     ld_adv_pick(g, r2, t2, c2, b2, cx)
 # Admission runs the advance for the reserved directory and releases, carrying the guard and
 # the reserved path forward for the capture sites.
-def shared_reserved_continue(+: U32, repo: String, target: String, cand: String, basis: String, guard: String, reserved: String) -> IO(SharedLanding):
+def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, reserved: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -1187,7 +1187,7 @@ def shared_reserved_continue(+: U32, repo: String, target: String, cand: String,
 # The attempt name: the bare base for the first attempt, then the base extended with the
 # counter rendered by U32.show. The only refusal past a collision is the U32 maximum, checked
 # before the increment; there is no chosen suffix-length limit.
-def shared_attempt_name(+: String, attempt: U32) -> String:
+def shared_attempt_name(base: String, attempt: U32) -> String:
   +b = base
   +n = attempt
   Bool.pick(String, U32.is_eq(n, 1),
@@ -1416,15 +1416,15 @@ type PV is Data:
 type Ld is Data:
   LdDone{made: T.LandOutcome}
   LdFail{fail: T.GitFail}
-  LdWk{worker: String, +: String}
-  LdTip{worker: String, sha: String, +: String}
+  LdWk{worker: String, sha: String}
+  LdTip{worker: String, sha: String, tip: String}
   LdCand{tip: String, cand: String}
 
 def ld_unreach() -> IO(Ld):
   IO.pure(Ld, LdFail{T.FCmd{"land", "unreachable stage"}})
 
 # The check argv for one selected file.
-def check_argv(script: String, +: String) -> List<String>:
+def check_argv(script: String, file: String) -> List<String>:
   +s2 = script
   Con{"/bin/sh", Con{s2, Con{file, Nil{}}}}
 
@@ -1455,7 +1455,7 @@ def hex_ok(s: String) -> Bool:
   +ne = Tx.non_empty(s2)
   hex_ok_go(s2, ne)
 
-def count_go(fs: List<String>, +: U32) -> U32:
+def count_go(fs: List<String>, n: U32) -> U32:
   match fs:
     case Nil{}: n
     case Con{h, rest}:
@@ -1480,7 +1480,7 @@ def line_ok(line: String) -> Bool:
 # The first line of a run's output that is not a failure identity, so an
 # unjudged verdict carries its cause: the offending line, or the fact that the
 # check printed nothing.
-def first_bad_go(lines: List<String>, +: String) -> String:
+def first_bad_go(lines: List<String>, acc: String) -> String:
   match lines:
     case Nil{}: acc
     case Con{line, rest}:
@@ -1488,7 +1488,7 @@ def first_bad_go(lines: List<String>, +: String) -> String:
       +a2 = acc
       Bool.pick(String, String.is_empty(a2), Bool.pick(String, line_ok(l2), first_bad_go(rest, a2), l2), a2)
 
-def first_bad(+: String) -> String:
+def first_bad(block: String) -> String:
   first_bad_go(Tx.split_lines(block), "")
 
 def unjudged_why(block: String) -> String:
@@ -1517,15 +1517,15 @@ def block_has_go(lines: List<String>, want: String) -> Bool:
 def block_has(block: String, want: String) -> Bool:
   block_has_go(Tx.split_lines(block), want)
 
-def exit_fail_ok(ok: Bool, +block: String, +: String) -> FV:
+def exit_fail_ok(ok: Bool, +block: String, file: String) -> FV:
   match ok:
     case True{}: FV{file, VFail{block}}
     case False{}: FV{file, VNone{unjudged_why(block)}}
 
-def exit_fail(block: String, +: String) -> FV:
+def exit_fail(block: String, file: String) -> FV:
   exit_fail_ok(block_ok(block), block, file)
 
-def exit_verdict(ok: Bool, out: String, +: String) -> FV:
+def exit_verdict(ok: Bool, out: String, file: String) -> FV:
   match ok:
     case True{}: FV{file, VPass{}}
     case False{}: exit_fail(Tx.join("\n", Tx.split_lines(out)), file)
@@ -1545,13 +1545,13 @@ def run_check(dir: String, script: String, file: String) -> IO(FV):
     IO.pure(FV, run_verdict(r, f2))
 
 # The list with the element prepended only when the flag holds.
-def append_when(keep: Bool, f: String, +: List<String>) -> List<String>:
+def append_when(keep: Bool, f: String, acc: List<String>) -> List<String>:
   match keep:
     case True{}: Con{f, acc}
     case False{}: acc
 
 # The candidate failure lines its target run does not show.
-def new_lines_go(cand: List<String>, targ: String, +: List<String>) -> List<String>:
+def new_lines_go(cand: List<String>, targ: String, acc: List<String>) -> List<String>:
   match cand:
     case Nil{}: List.reverse(&1, String, acc)
     case Con{h, rest}:
@@ -1561,10 +1561,10 @@ def new_lines_go(cand: List<String>, targ: String, +: List<String>) -> List<Stri
 
 # The line naming one unjudged run; it never matches a hex identity line, so
 # an unjudged run always blocks.
-def unjudged_line(side: String, +: String) -> String:
+def unjudged_line(side: String, why: String) -> String:
   Tx.str_cat("?unjudged ", T.str_cat3(side, ": ", why))
 
-def pair_targ(+: String, tv: Verdict, file: String, +: List<String>) -> List<String>:
+def pair_targ(hex: String, tv: Verdict, file: String, acc: List<String>) -> List<String>:
   match tv:
     case VPass{}: Con{Tx.str_cat("?uncovered: ", hex), acc}
     case VFail{thex}: new_lines_go(Tx.split_lines(hex), thex, acc)
@@ -1634,21 +1634,21 @@ def ld_update_pick(g: T.GitOut, target: String, cand: String) -> Ld:
     case T.GRun{code, out}: ld_update_ok(U32.is_eq(code, 0), Tx.trim_nl(out), target, cand)
     case T.GBroken{detail}: LdFail{T.FCmd{"land", detail}}
 
-def ld_conflict_of(has: Bool, +: String, +: String, why: String) -> Ld:
+def ld_conflict_of(has: Bool, paths: String, scratch: String, why: String) -> Ld:
   match has:
     case True{}: LdDone{T.LConflict{paths, scratch}}
     case False{}: LdFail{T.FCmd{"land", why}}
 
-def ld_unmerged_pick_go(paths: String, +: String, why: String) -> Ld:
+def ld_unmerged_pick_go(paths: String, scratch: String, why: String) -> Ld:
   +p2 = paths
   ld_conflict_of(Tx.non_empty(p2), p2, scratch, why)
 
-def ld_unmerged_pick(g: T.GitOut, +: String, why: String) -> Ld:
+def ld_unmerged_pick(g: T.GitOut, scratch: String, why: String) -> Ld:
   match g:
     case T.GRun{code, out}: ld_unmerged_pick_go(Tx.join("\n", Tx.split_lines(out)), scratch, why)
     case T.GBroken{detail}: LdFail{T.FCmd{"land", detail}}
 
-def ld_unmerged(+: String, why: String) -> IO(Ld):
+def ld_unmerged(scratch: String, why: String) -> IO(Ld):
   +sc = scratch
   +w2 = why
   do IO<Ld>:
@@ -1673,7 +1673,7 @@ def ld_adv_held_text(target: String, path: String) -> String:
 
 # ---------------------------------------------------------------------------
 
-def ld_adv_answer(+: LAdv, target: String, cand: String) -> Ld:
+def ld_adv_answer(a: LAdv, target: String, cand: String) -> Ld:
   match a:
     case AdvLanded{}: LdDone{T.LLanded{target, cand}}
     case AdvMoved{}: LdDone{T.LBlocked{"target moved during checked landing; rerun land-checked to prepare and check against the current target"}}
@@ -1711,17 +1711,17 @@ def ld_advance(repo: String, target: String, cand: String, basis: String) -> IO(
 
 # Stage 1 resolves the worker commit; the pipeline carries the resolved sha
 # so the LAlready answer names the worker commit.
-def ld_resolved_ok(ok: Bool, out: String, +: String) -> IO(Ld):
+def ld_resolved_ok(ok: Bool, out: String, worker: String) -> IO(Ld):
   match ok:
     case True{}: IO.pure(Ld, LdWk{worker, Tx.trim_nl(out)})
     case False{}: IO.pure(Ld, LdFail{T.FUnknownBase{worker}})
 
-def ld_resolved_pick(g: T.GitOut, +: String) -> IO(Ld):
+def ld_resolved_pick(g: T.GitOut, worker: String) -> IO(Ld):
   match g:
     case T.GRun{code, out}: ld_resolved_ok(U32.is_eq(code, 0), out, worker)
     case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
 
-def ld_stage1(repo: String, target: String, +: String) -> IO(Ld):
+def ld_stage1(repo: String, target: String, worker: String) -> IO(Ld):
   +r2 = repo
   +t2 = target
   +w2 = worker
@@ -1730,17 +1730,17 @@ def ld_stage1(repo: String, target: String, +: String) -> IO(Ld):
     ld_resolved_pick(g, w2)
 
 # Stage 2 resolves the target tip the candidate is prepared on.
-def ld_tip_ok(ok: Bool, +: String, +: String, sha: String) -> Ld:
+def ld_tip_ok(ok: Bool, tip: String, worker: String, sha: String) -> Ld:
   match ok:
     case True{}: LdTip{worker, sha, tip}
     case False{}: LdFail{T.FCmd{"land", "unknown target"}}
 
-def ld_tip_of(g: T.GitOut, +: String, sha: String) -> Ld:
+def ld_tip_of(g: T.GitOut, worker: String, sha: String) -> Ld:
   match g:
     case T.GRun{code, out}: ld_tip_ok(U32.is_eq(code, 0), Tx.trim_nl(out), worker, sha)
     case T.GBroken{detail}: LdFail{T.FCmd{"land", detail}}
 
-def ld_stage2(repo: String, target: String, +: String, sha: String) -> IO(Ld):
+def ld_stage2(repo: String, target: String, worker: String, sha: String) -> IO(Ld):
   +r2 = repo
   +t2 = target
   +w2 = worker
@@ -1749,12 +1749,12 @@ def ld_stage2(repo: String, target: String, +: String, sha: String) -> IO(Ld):
     IO.pure(Ld, ld_tip_of(g, w2, sha))
 
 # Stage 3 creates the candidate worktree, detached at the target tip.
-def ld_wt_ok(ok: Bool, out: String, +: String, sha: String, +: String) -> Ld:
+def ld_wt_ok(ok: Bool, out: String, worker: String, sha: String, tip: String) -> Ld:
   match ok:
     case True{}: LdTip{worker, sha, tip}
     case False{}: LdFail{T.FCmd{"land", Tx.cmd_failed("git worktree add --detach")}}
 
-def ld_wt_pick(g: T.GitOut, worker: String, sha: String, +: String) -> Ld:
+def ld_wt_pick(g: T.GitOut, worker: String, sha: String, tip: String) -> Ld:
   match g:
     case T.GRun{code, out}: ld_wt_ok(U32.is_eq(code, 0), Tx.trim_nl(out), worker, sha, tip)
     case T.GBroken{detail}: LdFail{T.FCmd{"land", detail}}
@@ -1838,7 +1838,7 @@ def ld_commit_next(g: T.GitOut, scratch: String, worker: String, sha: String, ti
 def ld_message(workerMessage: String, worker: String, paths: String) -> String:
   Tx.trim_nl(workerMessage) ++ "\n\nlanded from " ++ worker ++ Deb.debris_note(paths)
 
-def ld_commit_now(+: String, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+def ld_commit_now(text: String, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
   +t2 = text
   +w2 = worker
   +p2 = paths
@@ -1904,7 +1904,7 @@ def ld_msg_read(+worker: String, +sha: String, +tip: String, +scratch: String, +
     g : T.GitOut <- Git.runGit(scratch, ["merge-base", sha, tip])
     ld_history_base(g, worker, sha, tip, scratch, paths)
 
-def ld_debris_go(+: Deb.Debris, scratch: String, worker: String, sha: String, tip: String) -> IO(Ld):
+def ld_debris_go(d: Deb.Debris, scratch: String, worker: String, sha: String, tip: String) -> IO(Ld):
   match d:
     case Deb.DFine{paths}: ld_msg_read(worker, sha, tip, scratch, paths)
     case Deb.DFail{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", "debris judgment failed: " ++ detail}})
@@ -1918,7 +1918,7 @@ def ld_stage5(repo: String, scratch: String, worker: String, sha: String, tip: S
 
 # The gate: every unjudged run and every candidate failure line the target
 # run does not show blocks; otherwise the advance starts.
-def ld_judged_news(+: List<String>, repo: String, target: String, scratch: String, tip: String, cand: String) -> IO(Ld):
+def ld_judged_news(news: List<String>, repo: String, target: String, scratch: String, tip: String, cand: String) -> IO(Ld):
   match news:
     case Nil{}: ld_advance(repo, target, cand, tip)
     case Con{h, rest}: IO.pure(Ld, LdDone{T.LBlocked{Tx.str_cat("new failures: ", Tx.join("; ", news))}})
@@ -2131,14 +2131,14 @@ def land(repo: String, workerBranch: String, target: String) -> IO(T.LandOutcome
 
 # The push argv: the declared remote is the destination and the branch is the
 # refspec. Nothing reads a default remote.
-def push_argv(+: String, +: String) -> List<String>:
+def push_argv(branch: String, remote: String) -> List<String>:
   Con{"push", Con{remote, Con{branch, Nil{}}}}
 
 # The landed target pushed to the remote the deployment declares. The answer
 # is the push's own exit and output: a non-zero code is the remote's refusal
 # (a non-fast-forward is the common one) and the caller names it, never reads
 # it as a landing.
-def push_git(repo: String, +: String, +: String) -> IO(T.GitOut):
+def push_git(repo: String, branch: String, remote: String) -> IO(T.GitOut):
   +r2 = repo
   +b2 = branch
   +rm = remote
@@ -2163,7 +2163,7 @@ def tip_match(named: Bool, +subject: String) -> String:
     case True{}: subject
     case False{}: ""
 
-def tip_named(more: List<String>, subject: String, +: String) -> String:
+def tip_named(more: List<String>, subject: String, ref: String) -> String:
   match more:
     case Nil{}: ""
     case name <> tail: tip_match(Tx.str_eq(name, ref), subject)

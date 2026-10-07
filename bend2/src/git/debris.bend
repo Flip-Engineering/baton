@@ -32,12 +32,12 @@ type Debris is Data:
 # The git argv for one index: the worktree's own index when INDEX is empty, a
 # private index file otherwise, so a snapshot can stage without touching the
 # worktree's index.
-def debris_argv(+: String, +: String, +: List<String>) -> List<String>:
+def debris_argv(index: String, dir: String, args: List<String>) -> List<String>:
   match index:
     case SNil{}: Con{"git", Con{"-C", Con{dir, args}}}
     case SCon{c, rest}: Con{"/usr/bin/env", Con{"GIT_INDEX_FILE=" ++ index, Con{"git", Con{"-C", Con{dir, args}}}}}
 
-def debris_run(+: String, dir: String, args: List<String>) -> IO(T.GitOut):
+def debris_run(index: String, dir: String, args: List<String>) -> IO(T.GitOut):
   +i2 = index
   +d2 = dir
   do IO<T.GitOut>:
@@ -57,7 +57,7 @@ def debris_note_of(s: String) -> String:
   Tx.join(" ", debris_line_list(s2))
 
 # One rm --cached for the whole dropped set; the worktree files stay.
-def debris_rm_pick(ok: Bool, +: String, judged: String) -> IO(Debris):
+def debris_rm_pick(ok: Bool, out: String, judged: String) -> IO(Debris):
   match ok:
     case True{}: IO.pure(Debris, DFine{debris_note_of(judged)})
     case False{}: IO.pure(Debris, DFail{Tx.cmd_failed("git rm --cached")})
@@ -67,7 +67,7 @@ def debris_rm_ok(g: T.GitOut, judged: String) -> IO(Debris):
     case T.GRun{code, out}: debris_rm_pick(U32.is_eq(code, 0), out, judged)
     case T.GBroken{detail}: IO.pure(Debris, DFail{detail})
 
-def debris_drop(+: String, dir: String, +: List<String>, judged: String) -> IO(Debris):
+def debris_drop(index: String, dir: String, ps: List<String>, judged: String) -> IO(Debris):
   +i2 = index
   +d2 = dir
   +j2 = judged
@@ -138,7 +138,7 @@ def drop_added_ignored(repo: String, index: String, dir: String) -> IO(Debris):
     IO.pure(Debris, r)
 
 # The dropped paths as a line a caller can name them on, empty when none fell.
-def debris_note(+: String) -> String:
+def debris_note(paths: String) -> String:
   match paths:
     case SNil{}: ""
     case SCon{c, rest}: "\ndropped (ignored by this repository): " ++ paths

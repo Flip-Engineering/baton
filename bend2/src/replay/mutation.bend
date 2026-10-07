@@ -12,7 +12,7 @@
 import Base
 
 type CaseRow is Data:
-  CaseRow{name: String, request: String, +: U32, +: U32}
+  CaseRow{name: String, request: String, rowsBefore: U32, readerCursor: U32}
 
 type Verdict is Data:
   Admitted{rows: U32, cursor: U32}
@@ -28,7 +28,7 @@ def field_of(m: Maybe<&2, String>) -> String:
 def field(fs: List<&2, String>, n: Nat) -> String:
   field_of(List.head(&2, String, List.drop(&2, String, fs, n)))
 
-def parse_digits(xs: List<&2, Char>, +: U32) -> U32:
+def parse_digits(xs: List<&2, Char>, acc: U32) -> U32:
   match xs:
     case Nil{}:
       acc
@@ -49,7 +49,7 @@ def case_fields(+fs: List<&2, String>) -> CaseRow:
 def case_of(+line: String) -> CaseRow:
   case_fields(String.split(line, '|'))
 
-def judge_shape(is_unknown_field: Bool, +: U32) -> Verdict:
+def judge_shape(is_unknown_field: Bool, rowsBefore: U32) -> Verdict:
   match is_unknown_field:
     case True{}:
       Refused{"invalid_request", 0, rowsBefore}
@@ -66,7 +66,7 @@ def judge_request(is_valid: Bool, request: String, rowsBefore: U32) -> Verdict:
 def decide(+request: String, rowsBefore: U32) -> Verdict:
   judge_request(String.eq(request, "valid"), request, rowsBefore)
 
-def render_verdict(+: String, readerCursor: U32, v: Verdict) -> String:
+def render_verdict(name: String, readerCursor: U32, v: Verdict) -> String:
   match v:
     case Admitted{+rows, +cursor}:
       String.concat(["RESULT|", name, "|admitted=true|refusal_class=none|rows_written=", U32.show(rows),

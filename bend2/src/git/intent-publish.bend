@@ -29,14 +29,14 @@ import ../host/receipt.bend as R
 import ../host/text.bend as Text
 
 type IntentPublish is Data:
-  PublishHostFailed{step: String, +: I.IntentInput, error: U32 & String}
-  PublishRefused{request: I.IntentInput, step: String, +: String, raw: String}
-  PublishExistingPending{request: I.IntentInput, raw: String, +: String}
+  PublishHostFailed{step: String, request: I.IntentInput, error: U32 & String}
+  PublishRefused{request: I.IntentInput, step: String, name: String, raw: String}
+  PublishExistingPending{request: I.IntentInput, raw: String, path: String}
   PublishContentMismatch{request: I.IntentInput, raw: String, expected: String, found: String}
-  PublishReadbackFailed{request: I.IntentInput, +: String, +: String, error: U32 & String}
+  PublishReadbackFailed{request: I.IntentInput, publication: String, path: String, error: U32 & String}
   IntentBytesPublished{request: I.IntentInput, raw: String, path: String, content: String}
 
-def intent_path(+: String, +: String) -> String:
+def intent_path(directory: String, name: String) -> String:
   +d = directory
   +n = name
   Tx.str_cat(d, Tx.str_cat("/", n))
@@ -69,7 +69,7 @@ def name_char_ok(c: Char) -> Bool:
   Bool.pick(Bool, Tx.is_tab(ch),
     False{},
     name_char_ok_next(ch))
-def name_go_char(rest: String, +: Bool, c: Char) -> Bool:
+def name_go_char(rest: String, ok: Bool, c: Char) -> Bool:
   +tail = rest
   +sofar = ok
   +here = c
@@ -122,7 +122,7 @@ def name_precondition(name: String) -> Bool:
   Bool.pick(Bool, Tx.str_eq(n, ""),
     False{},
     name_precondition_go(n))
-def directory_tab(+: String) -> Bool:
+def directory_tab(directory: String) -> Bool:
   +d = directory
   Bool.pick(Bool, I.carries_tab(d),
     False{},
@@ -167,7 +167,7 @@ def classify_ensure(raw: String, path: String) -> String:
   Bool.pick(String, Tx.str_eq(r, production_record("created", p, "0")),
     "created",
     ensure_second(r, p))
-def Intent.refused(+: I.IntentInput, step: String, name: String, raw: String) -> IO(IntentPublish):
+def Intent.refused(request: I.IntentInput, step: String, name: String, raw: String) -> IO(IntentPublish):
   +req = request
   +s = step
   +n = name
@@ -176,7 +176,7 @@ def Intent.refused(+: I.IntentInput, step: String, name: String, raw: String) ->
 
 # The publication observation is carried into the readback failure so a receipt that exists
 # cannot be mistaken for a publication that never happened.
-def Intent.read_back_compare(+: I.IntentInput, publication: String, path: String, content: String, seen: String) -> IO(IntentPublish):
+def Intent.read_back_compare(request: I.IntentInput, publication: String, path: String, content: String, seen: String) -> IO(IntentPublish):
   +req = request
   +pub = publication
   +p = path

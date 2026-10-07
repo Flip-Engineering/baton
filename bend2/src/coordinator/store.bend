@@ -4,7 +4,7 @@ import ./commands.bend as C
 import ./delivery.bend as Delivery
 import ../git/text.bend as Tx
 
-def accepted(db: String, command: C.Command, saved: String, +: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def accepted(db: String, command: C.Command, saved: String, stopped: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match stopped:
     case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Session is terminally stopped; input was not committed. Read its session and retained inbox, or recruit a new session.")})
     case False{}: Delivery.after(db,command,saved)

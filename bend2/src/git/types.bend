@@ -49,7 +49,7 @@ type LandOutcome is Data:
   LConflict{files: String, dir: String}
   LBlocked{reason: String}
 
-def str_cat2(+: String, b: String) -> String:
+def str_cat2(a: String, b: String) -> String:
   a ++ b
 
 def str_cat3(a: String, b: String, c: String) -> String:

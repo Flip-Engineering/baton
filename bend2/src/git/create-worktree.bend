@@ -26,7 +26,7 @@ def cw_stage4_ok(ok: Bool, out: String, bc2: String, br2: String, p2: String) ->
     case True{}: CWDone{T.WCreated{br2, p2, bc2}}
     case False{}: CWFail{T.FCmd{"create-worktree", Tx.cmd_failed("git worktree add")}}
 
-def cw_stage4_pick(r: T.GitOut, +: String, branch: String, path: String) -> CW:
+def cw_stage4_pick(r: T.GitOut, bc: String, branch: String, path: String) -> CW:
   match r:
     case T.GRun{code, out}: cw_stage4_ok(U32.is_eq(code, 0), out, bc, branch, path)
     case T.GBroken{detail}: CWFail{T.FCmd{"create-worktree", detail}}

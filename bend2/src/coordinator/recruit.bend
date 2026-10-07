@@ -10,7 +10,7 @@ import ../git/text.bend as Tx
 import ../json/canonical.bend as J
 
 # SQLite text output has one terminating newline.
-def line_tail(rest: String, +: String, newline: Bool) -> String:
+def line_tail(rest: String, original: String, newline: Bool) -> String:
   match newline:
     case True{}: Tx.str_rev(rest)
     case False{}: original
@@ -23,7 +23,7 @@ def line_reversed(s: String, original: String) -> String:
 def line(+s: String) -> String:
   line_reversed(Tx.str_rev(s),s)
 
-def absolute(repo: String, +: String, rooted: Bool) -> String:
+def absolute(repo: String, path: String, rooted: Bool) -> String:
   match rooted:
     case True{}: path
     case False{}: repo ++ "/" ++ path
@@ -43,7 +43,7 @@ def require_parent(found: Bool) -> IO(Unit):
     case True{}: IO.pure(Unit,Unit{})
     case False{}: IO.die(Unit,2,"The parent session is not registered.")
 
-def register(db: String, +: String, +: String, +: String, +: String, +: String, made: Result<&1,&1,G.GitFail,G.WorktreeCreated>) -> IO(Unit):
+def register(db: String, id: String, parent: String, harness: String, model: String, effort: String, made: Result<&1,&1,G.GitFail,G.WorktreeCreated>) -> IO(Unit):
   match made:
     case Fail{error}: IO.die(Unit,1,G.fail_text(error))
     case Done{G.WCreated{branch,path,base}}:
@@ -51,7 +51,7 @@ def register(db: String, +: String, +: String, +: String, +: String, +: String, 
         saved : String <- IO.try(String,Store.apply(db,C.Player{id,parent,harness,model,effort,path,branch,base}))
         IO.write(saved)
 
-def create(+db: String,+: String,parent: String,harness: String,model: String,effort: String,repo: String,+: String,+: String,+: String,exists: Bool) -> IO(Unit):
+def create(+db: String,id: String,parent: String,harness: String,model: String,effort: String,repo: String,branch: String,path: String,base: String,exists: Bool) -> IO(Unit):
   match exists:
     case True{}: register(db,id,parent,harness,model,effort,Done{G.WCreated{branch,path,base}})
     case False{}:
@@ -59,7 +59,7 @@ def create(+db: String,+: String,parent: String,harness: String,model: String,ef
         made : Result<&1,&1,G.GitFail,G.WorktreeCreated> <- CW.createWorktree(repo,branch,path,base)
         register(db,id,parent,harness,model,effort,made)
 
-def recruit(+db: String,+id: String,+parent: String,harness: String,model: String,effort: String,+repo: String,+: String,+path: String,base: String) -> IO(Unit):
+def recruit(+db: String,+id: String,+parent: String,harness: String,model: String,effort: String,+repo: String,branch: String,+path: String,base: String) -> IO(Unit):
   do IO<Unit>:
     parent_row : String <- IO.try(String,Store.apply(db,C.Session{parent}))
     present : Unit <- require_parent(Bool.not(String.is_empty(parent_row)))
@@ -70,7 +70,7 @@ def recruit(+db: String,+id: String,+parent: String,harness: String,model: Strin
     existing : String <- IO.try(String,Store.apply(db,C.Session{id}))
     create(db,id,parent,harness,model,effort,repo,branch,absolute(root,path,Tx.starts_with(path,"/")),commit,Bool.not(String.is_empty(existing)))
 
-def status_json(id: String,path: String,branch: String,+: String,+: Bool) -> String:
+def status_json(id: String,path: String,branch: String,commit: String,dirty: Bool) -> String:
   "{\"id\":" ++ J.string_literal(id) ++ ",\"workspace\":" ++ J.string_literal(path) ++ ",\"branch\":" ++ J.string_literal(branch) ++ ",\"commit\":" ++ J.string_literal(commit) ++ ",\"dirty\":" ++ Bool.pick(String,dirty,"true","false") ++ "}"
 
 def status_result(id: String,path: String,result: Result<&1,&1,G.GitFail,G.WtStatus>) -> IO(String):

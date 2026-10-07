@@ -870,7 +870,7 @@ def m3a_publication_invokes_checked_pair(repo, target, cand, basis):
 # an entry, reordered two, or handed an entry the other tree's path breaks this
 # proof. What each entry does with the state it is handed is a separate
 # obligation, bound by the m10 laws over the ld_go entries.
-def checked_landing_stages(repo: String, +: String, worker: String, script: String, files: List<String>, scratch: String) -> IO(Result<&1, &1, T.GitFail, T.LandOutcome>):
+def checked_landing_stages(repo: String, target: String, worker: String, script: String, files: List<String>, scratch: String) -> IO(Result<&1, &1, T.GitFail, T.LandOutcome>):
   +r2 = repo
   +t2 = target
   +k2 = script
@@ -1329,7 +1329,7 @@ def m10_a_normal_exit_reads_its_own_status(code, out, file):
 
 # M-10: the candidate tree that is checked is the scratch tree, the target tree
 # is its "-target" sibling, and the pairs reach the verdict unchanged.
-def ld_tree_judged(repo: String, +: String, script: String, files: List<String>, scratch: String, tip: String, cand: String, tw: String) -> IO(L.Ld):
+def ld_tree_judged(repo: String, target: String, script: String, files: List<String>, scratch: String, tip: String, cand: String, tw: String) -> IO(L.Ld):
   +s2 = scratch
   do IO<L.Ld>:
     pvs : List<L.PV> <- L.run_pairs(script, files, s2, tw)
@@ -1364,7 +1364,7 @@ def m10_the_verdict_judges_the_pairs_the_checks_produced(pvs, repo, target, scra
 
 # M-10: stage 6 prepares one detached tree at the target tip, named as the
 # candidate scratch tree's "-target" sibling, and checks through it.
-def stage_six_checks_the_sibling(repo: String, +: String, script: String, files: List<String>, scratch: String, tip: String, cand: String) -> IO(L.Ld):
+def stage_six_checks_the_sibling(repo: String, target: String, script: String, files: List<String>, scratch: String, tip: String, cand: String) -> IO(L.Ld):
   +r2 = repo
   +sc = scratch
   +t2 = tip

@@ -17,7 +17,7 @@ def require_player(found: Bool) -> IO(Unit):
     case True{}: IO.pure(Unit, Unit{})
     case False{}: IO.die(Unit, 2, "The player session is not registered.")
 
-def require_branch_pick(empty: Bool, +: String) -> IO(String):
+def require_branch_pick(empty: Bool, branch: String) -> IO(String):
   match empty:
     case True{}: IO.die(String, 2, "The player has no recorded branch.")
     case False{}: IO.pure(String, branch)
@@ -25,7 +25,7 @@ def require_branch_pick(empty: Bool, +: String) -> IO(String):
 def require_branch(+branch: String) -> IO(String):
   require_branch_pick(String.is_empty(branch), branch)
 
-def line_tail(rest: String, +: String, newline: Bool) -> String:
+def line_tail(rest: String, original: String, newline: Bool) -> String:
   match newline:
     case True{}: Tx.str_rev(rest)
     case False{}: original
@@ -77,12 +77,12 @@ def land_checked_player(+db: String, +player: String, +repo: String, +target: St
     branch : String <- require_branch(line(branch_raw))
     run_checked(db, player, repo, target, check, files, branch)
 
-def push_ok(ok: Bool, +: String, +: String) -> IO(Unit):
+def push_ok(ok: Bool, branch: String, remote: String) -> IO(Unit):
   match ok:
     case True{}: IO.print("{\"status\":\"pushed\",\"branch\":" ++ J.string_literal(branch) ++ ",\"remote\":" ++ J.string_literal(remote) ++ "}")
     case False{}: IO.print("{\"status\":\"rejected\",\"reason\":" ++ J.string_literal(Tx.cmd_failed(Tx.str_cat("git push to ", remote))) ++ "}")
 
-def push_pick(r: G.GitOut, branch: String, +: String) -> IO(Unit):
+def push_pick(r: G.GitOut, branch: String, remote: String) -> IO(Unit):
   match r:
     case G.GRun{code, out}: push_ok(U32.is_eq(code, 0), branch, remote)
     case G.GBroken{detail}: IO.die(Unit, 1, detail)
@@ -94,7 +94,7 @@ def push_branch(+repo: String, +branch: String, +remote: String) -> IO(Unit):
 
 # The declared remote read's answer. The status names which outcome the read
 # reached, and every answer names the declared repository, branch and remote.
-def tip_json(+: String, tail: String, +: String, branch: String, +: String) -> IO(Unit):
+def tip_json(status: String, tail: String, repo: String, branch: String, remote: String) -> IO(Unit):
   IO.print("{\"status\":" ++ J.string_literal(status) ++ ",\"repo\":" ++ J.string_literal(repo) ++ ",\"branch\":" ++ J.string_literal(branch) ++ ",\"remote\":" ++ J.string_literal(remote) ++ tail)
 
 def tip_object_tail(subject: String) -> String:
@@ -239,7 +239,7 @@ def assoc_same(w: String, r: String, +workspace: String, +repo: String) -> IO(Un
 
 # The host realpath canonicalizes the git-reported directory, so a symlinked
 # spelling and its resolved spelling compare equal.
-def assoc_real_pick(+: Result<&1,&1,U32 & String,String>, +workspace: String, +repo: String, +directory: String) -> IO(String):
+def assoc_real_pick(resolved: Result<&1,&1,U32 & String,String>, +workspace: String, +repo: String, +directory: String) -> IO(String):
   match resolved:
     case Done{value}: IO.pure(String, value)
     case Fail{error}: IO.die(String, 2, "The recorded workspace repository directory cannot be resolved for " ++ workspace ++ " against " ++ repo ++ ": " ++ directory)

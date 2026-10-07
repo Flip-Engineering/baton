@@ -35,22 +35,22 @@ type ReceiptVerdict is Data:
 
 type IntentPrepared is Data:
   IntentUnready{step: String, reason: String, raw: String}
-  IntentHostFailed{step: String, +: IntentInput, error: U32 & String}
+  IntentHostFailed{step: String, request: IntentInput, error: U32 & String}
   IntentPending{request: IntentInput, raw: String, pending: String}
   IntentObserved{request: IntentInput, raw: String, qualified_path: String, head: T.GitOut, index: T.GitOut, status: T.GitOut}
 
 # Field access through the declared constructor, in place of an unverified accessor form.
-def requested_path(+: IntentInput) -> String:
+def requested_path(request: IntentInput) -> String:
   match request:
     case IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}: intent_path
 
-def requested_holder(+: IntentInput) -> String:
+def requested_holder(request: IntentInput) -> String:
   match request:
     case IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}: holder
 
 # A separator in the requested path would make the comparison ambiguous, because the
 # producer does not escape it.
-def carries_tab_go(text: String, +: Bool) -> Bool:
+def carries_tab_go(text: String, found: Bool) -> Bool:
   match text:
     case SNil{}: found
     case SCon{c, rest}:

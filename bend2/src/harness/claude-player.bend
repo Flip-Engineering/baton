@@ -2,7 +2,7 @@ import Base
 import ../host/process.bend as P
 import ../json/canonical.bend as J
 
-def arguments(cmd: String, +: String, +: String) -> List<String>:
+def arguments(cmd: String, model: String, effort: String) -> List<String>:
   [cmd,"--print","--input-format","stream-json","--output-format","stream-json","--verbose","--permission-mode","bypassPermissions","--model",model,"--effort",effort]
 
 def start_player(cmd: String, model: String, effort: String, cwd: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):

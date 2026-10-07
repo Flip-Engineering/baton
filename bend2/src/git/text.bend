@@ -26,7 +26,7 @@ def char_bytes(c: Char) -> U32:
     Bool.pick(U32, U32.is_lt(code, 2048), 2,
       Bool.pick(U32, U32.is_lt(code, 65536), 3, 4)))
 
-def byte_len_go(+: String, +: U32) -> U32:
+def byte_len_go(s: String, acc: U32) -> U32:
   match s:
     case SNil{}: acc
     case SCon{c, rest}:
@@ -37,7 +37,7 @@ def byte_len(s: String) -> U32:
   byte_len_go(s, 0)
 
 # Reversed copy of a string, building the answer head first.
-def rev_go(s: String, +: String) -> String:
+def rev_go(s: String, acc: String) -> String:
   match s:
     case SNil{}: acc
     case SCon{c, rest}: rev_go(rest, SCon{c, acc})
@@ -46,22 +46,22 @@ def str_rev(s: String) -> String:
 
 # The char-level splitters: one line or field accumulates in acc, a completed
 # piece goes character-reversed onto out, and the caller reverses the list.
-def split_emit(nl: Bool, +: String, +: List<String>) -> List<String>:
+def split_emit(nl: Bool, acc: String, out: List<String>) -> List<String>:
   match nl:
     case True{}: Con{str_rev(acc), out}
     case False{}: out
 
-def split_keep(nl: Bool, c: Char, +: String) -> String:
+def split_keep(nl: Bool, c: Char, acc: String) -> String:
   match nl:
     case True{}: SNil{}
     case False{}: SCon{c, acc}
 
-def split_flush(+: String, +: List<String>) -> List<String>:
+def split_flush(acc: String, out: List<String>) -> List<String>:
   match acc:
     case SNil{}: out
     case SCon{c, r}: Con{str_rev(acc), out}
 
-def split_at(s: String, +: String, +: List<String>) -> List<String>:
+def split_at(s: String, acc: String, out: List<String>) -> List<String>:
   match s:
     case SNil{}: split_flush(acc, out)
     case SCon{c, rest}:
@@ -75,22 +75,22 @@ def split_lines(s: String) -> List<String>:
 
 # The NUL splitter, for the -z outputs git writes with one raw path per record
 # and no quoting: split_lines above would keep a name git had to quote.
-def split_keep_nul(nl: Bool, c: Char, +: String) -> String:
+def split_keep_nul(nl: Bool, c: Char, acc: String) -> String:
   match nl:
     case True{}: SNil{}
     case False{}: SCon{c, acc}
 
-def split_emit_nul(nl: Bool, +: String, +: List<String>) -> List<String>:
+def split_emit_nul(nl: Bool, acc: String, out: List<String>) -> List<String>:
   match nl:
     case True{}: Con{str_rev(acc), out}
     case False{}: out
 
-def split_flush_nul(+: String, +: List<String>) -> List<String>:
+def split_flush_nul(acc: String, out: List<String>) -> List<String>:
   match acc:
     case SNil{}: out
     case SCon{c, r}: Con{str_rev(acc), out}
 
-def split_at_nul(s: String, +: String, +: List<String>) -> List<String>:
+def split_at_nul(s: String, acc: String, out: List<String>) -> List<String>:
   match s:
     case SNil{}: split_flush_nul(acc, out)
     case SCon{c, rest}:
@@ -102,22 +102,22 @@ def split_at_nul(s: String, +: String, +: List<String>) -> List<String>:
 def split_nul(s: String) -> List<String>:
   List.reverse(&1, String, split_at_nul(s, SNil{}, Nil{}))
 
-def split_keep_sp(nl: Bool, c: Char, +: String) -> String:
+def split_keep_sp(nl: Bool, c: Char, acc: String) -> String:
   match nl:
     case True{}: SNil{}
     case False{}: SCon{c, acc}
 
-def split_emit_sp(nl: Bool, +: String, +: List<String>) -> List<String>:
+def split_emit_sp(nl: Bool, acc: String, out: List<String>) -> List<String>:
   match nl:
     case True{}: Con{str_rev(acc), out}
     case False{}: out
 
-def split_flush_sp(acc: String, +: List<String>) -> List<String>:
+def split_flush_sp(acc: String, out: List<String>) -> List<String>:
   match acc:
     case SNil{}: out
     case SCon{c, r}: Con{str_rev(acc), out}
 
-def split_at_sp(s: String, acc: String, +: List<String>) -> List<String>:
+def split_at_sp(s: String, acc: String, out: List<String>) -> List<String>:
   match s:
     case SNil{}: split_flush_sp(acc, out)
     case SCon{c, rest}:
@@ -136,17 +136,17 @@ def split_keep_tab(nl: Bool, c: Char, acc: String) -> String:
     case True{}: SNil{}
     case False{}: SCon{c, acc}
 
-def split_emit_tab(nl: Bool, acc: String, +: List<String>) -> List<String>:
+def split_emit_tab(nl: Bool, acc: String, out: List<String>) -> List<String>:
   match nl:
     case True{}: Con{str_rev(acc), out}
     case False{}: out
 
-def split_flush_tab(acc: String, +: List<String>) -> List<String>:
+def split_flush_tab(acc: String, out: List<String>) -> List<String>:
   match acc:
     case SNil{}: out
     case SCon{c, r}: Con{str_rev(acc), out}
 
-def split_at_tab(s: String, acc: String, +: List<String>) -> List<String>:
+def split_at_tab(s: String, acc: String, out: List<String>) -> List<String>:
   match s:
     case SNil{}: split_flush_tab(acc, out)
     case SCon{c, rest}:
@@ -222,7 +222,7 @@ def hex_char2(a: Char, b: Char) -> Char:
   +lo = hex_val(b)
   Char.from_u32(U32.add(U32.mul(hi, 16), lo))
 
-def hex_char_b(a: Char, +: String) -> Char:
+def hex_char_b(a: Char, rest: String) -> Char:
   match rest:
     case SNil{}: Char.from_u32(0)
     case SCon{b, more}: hex_char2(a, b)
@@ -232,12 +232,12 @@ def hex_char_a(p: String) -> Char:
     case SNil{}: Char.from_u32(0)
     case SCon{a, rest}: hex_char_b(a, rest)
 
-def hex_pairs_emit(+: String, a: Char, +: List<String>) -> List<String>:
+def hex_pairs_emit(prev: String, a: Char, out: List<String>) -> List<String>:
   match prev:
     case SNil{}: out
     case SCon{p, pr}: Con{SCon{p, SCon{a, SNil{}}}, out}
 
-def hex_pairs_end(prev: String, +: List<String>) -> List<String>:
+def hex_pairs_end(prev: String, out: List<String>) -> List<String>:
   match prev:
     case SNil{}: out
     case SCon{p, pr}: out
@@ -245,7 +245,7 @@ def hex_pairs_end(prev: String, +: List<String>) -> List<String>:
 def one_char(c: Char) -> String:
   SCon{c, SNil{}}
 
-def hex_pairs_go(s: String, prev: String, +: List<String>) -> List<String>:
+def hex_pairs_go(s: String, prev: String, out: List<String>) -> List<String>:
   match s:
     case SNil{}: hex_pairs_end(prev, out)
     case SCon{a, rest}:
@@ -273,10 +273,10 @@ def enc_argv_go(xs: List<String>, acc: String) -> String:
 def enc_argv(xs: List<String>) -> String:
   enc_argv_go(xs, SNil{})
 
-def run_res_mk(st: T.Status, +: String) -> T.RunRes:
+def run_res_mk(st: T.Status, rest: String) -> T.RunRes:
   T.RRun{st, rest}
 
-def run_res_sig1(+: U32, rest: String) -> T.RunRes:
+def run_res_sig1(n: U32, rest: String) -> T.RunRes:
   run_res_mk(T.SSignal{n}, rest)
 
 def run_res_sig0(n: U32, rest: String) -> T.RunRes:
@@ -292,7 +292,7 @@ def run_res_parsed(m: Maybe<&2, U32>, rest: String, sig: Bool) -> T.RunRes:
     case None{}: T.RSpawn{"malformed status number"}
     case Some{n}: run_res_sig(sig, n, rest)
 
-def run_res_num(+: String, rest: String, sig: Bool) -> T.RunRes:
+def run_res_num(num: String, rest: String, sig: Bool) -> T.RunRes:
   run_res_parsed(U32.read(num), rest, sig)
 
 def run_res_issig(eq: Bool, num: String, rest: String) -> T.RunRes:
