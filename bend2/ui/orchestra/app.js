@@ -13,6 +13,7 @@ const state = {
   generation: "",
   opened: false,
   gapHeld: false,
+  gapText: "",
   players: new Map(),
   ensembles: new Map(),
   transitions: [],
@@ -169,12 +170,14 @@ function setGeneration(generation) {
 
 function holdGapNotice(message) {
   state.gapHeld = true;
+  state.gapText = message;
   setNotice(message);
 }
 
 function clearGapNotice() {
   if (state.gapHeld) {
     state.gapHeld = false;
+    state.gapText = "";
     setNotice("");
   }
 }
@@ -519,6 +522,8 @@ function connectEvents() {
     state.opened = true;
     state.reconnectDelay = 1000;
     setConn("live");
+    if (state.gapHeld) setNotice(state.gapText);
+    else setNotice("");
   });
 
   es.addEventListener("gap", (ev) => {
@@ -607,7 +612,7 @@ function connectEvents() {
     state.sse = null;
     if (!state.opened) {
       setConn("retrying");
-      scheduleEndpointRetry(new Error("event endpoint refused before first hello"));
+      scheduleEventsRetry();
       return;
     }
     setConn("reconnecting");
@@ -632,6 +637,17 @@ function scheduleEndpointRetry(cause) {
   setConn("retrying");
   setNotice("Snapshot endpoint unreachable (" + (cause && cause.message ? cause.message : cause) + "). Retrying in " + Math.round(wait / 1000) + "s.");
   setTimeout(resnapshotThenResume, wait);
+}
+
+function scheduleEventsRetry() {
+  const wait = state.reconnectDelay;
+  state.reconnectDelay = Math.min(state.reconnectDelay * 2, 30000);
+  setConn("retrying");
+  setNotice("Event stream unavailable before first hello. Retrying events in " + Math.round(wait / 1000) + "s.");
+  setTimeout(() => {
+    if (state.opened) return;
+    connectEvents();
+  }, wait);
 }
 
 function init() {
