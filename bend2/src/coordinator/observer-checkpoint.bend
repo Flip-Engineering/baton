@@ -132,13 +132,13 @@ def after_observation(db: String, handle: U32, +state: ReducerState, enabled: Bo
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
     case Done{text}: commit(db,handle,state,enabled)
 
-def restore_json(db: String, +handle: U32) -> IO(String):
+def restore_json(+db: String, +handle: U32) -> IO(String):
   do IO<String>:
     +state : ReducerState <- restore(db,handle)
     +saved : String <- IO.try(String,DB.Sql.query(db,encode_sql(state)))
     IO.pure(String,without_query_newline(saved))
 
-def field_value(db: String, +snapshot: String, +field: String) -> IO(String):
+def field_value(+db: String, +snapshot: String, +field: String) -> IO(String):
   do IO<String>:
     +value : String <- IO.try(String,DB.Sql.query(db,field_sql(snapshot,field)))
     IO.pure(String,without_query_newline(value))
