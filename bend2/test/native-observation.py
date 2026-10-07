@@ -43,13 +43,31 @@ class NativeObservation(RECEIVE.Receive):
             time.sleep(.01)
 
     def shutdown_idle_database_owner(self, description):
-        processes = self.owned_processes()
         expected = f'{RECEIVE.EXE} --instance-owner {self.db}'
+        def only_owner():
+            processes = self.owned_processes()
+            commands = [process['command'] for process in processes]
+            return processes if commands == [expected] else None
+
+        processes = self.eventually(only_owner,
+                                    description + '; a completed attempt observer did not exit')
         self.assertEqual([process['command'] for process in processes], [expected])
         stopped = subprocess.run([str(RECEIVE.EXE), '--instance-shutdown', str(self.db)],
                                  capture_output=True, text=True)
         self.assertEqual(stopped.returncode, 0, stopped.stderr)
         self.eventually(lambda: not self.owned_processes(), description)
+
+    def recovery_observers(self):
+        return [process for process in self.owned_processes()
+                if ' --recover-receive ' in process['command']]
+
+    def assert_attempt_acknowledged(self, attempt):
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            row = database.execute(
+                "SELECT phase,status FROM executions WHERE session='parent' AND mode='retained'").fetchone()
+        self.assertEqual(row, ('exited', 'exit 0'))
+        self.assertTrue((pathlib.Path(attempt) / 'released').is_file())
+        self.assertTrue((pathlib.Path(attempt) / 'acknowledged').is_file())
 
     def test_mixed_agent_end_members_preserve_completion_and_raw_frame(self):
         self.player(harness='omp')
@@ -158,6 +176,8 @@ class NativeObservation(RECEIVE.Receive):
         self.coord('message', 'checkpoint-task', 'root', 'parent', 'task', 'Retain the assistant message before the terminal.')
         observer = self.spawn(*self.receive_args('parent'))
         stream, started = self.accept('parent')
+        attempt, _ = self.eventually(self._retained_attempt,
+                                     'retained attempt was not admitted')
 
         assistant = {'type': 'message_end', 'message': {
             'id': 'checkpoint-assistant', 'role': 'assistant', 'provider': 'fixture',
@@ -176,6 +196,10 @@ class NativeObservation(RECEIVE.Receive):
 
         observer.kill()
         observer.wait(timeout=5)
+        recovery = self.eventually(self.recovery_observers,
+                                   'attempt-scoped recovery observer did not attach')
+        self.assertEqual(len(recovery), 1)
+        self.assertIn(attempt, recovery[0]['command'])
         resumed = self.spawn(*self.receive_args('parent'))
         self.action(stream, native_frame={'type': 'agent_end', 'isTerminal': True,
                                           'is_error': False, 'messages': []})
@@ -193,6 +217,7 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
+        self.assert_attempt_acknowledged(attempt)
         self.assertFalse(any('Native output observation failed' in row['body']
                              for row in self.coord('inbox', 'root')))
         self.shutdown_idle_database_owner('fixture database owner did not exit after OMP completion')
@@ -275,6 +300,7 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual(barrier_frames[0], barrier_frames[1])
         launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
+        self.assert_attempt_acknowledged(attempt)
         self.shutdown_idle_database_owner('fixture database owner did not exit after oversized OMP completion')
 
     def _retained_attempt(self):
