@@ -215,6 +215,98 @@ def admit_cli(args: List<String>, kind: U32) -> IO(Unit):
       Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => attempted_locked(directory,canonical,cwd,payload,program,lock,kind))
     case _: IO.die(Unit,2,"admit DATABASE SESSION ATTEMPT CWD PAYLOAD PROGRAM ARGS...")
 
+def prepared_finished(+handle: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match result:
+    case Fail{(code,text)}: IO.print("start-refused:" ++ U32.show(code) ++ ":" ++ text)
+    case Done{unit}: do IO<Unit>:
+      printed : Unit <- IO.print("start-ok")
+      written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,"exit\n"))
+      closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
+      line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      drained : Unit <- read_all_lines(handle,line)
+      IO.pure(Unit,Unit{})
+
+def prepared_double_started(+handle: U32, first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U32 & String,Unit>, changed: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  do IO<Unit>:
+    first_shown : Unit <- operation("start-first",first)
+    second_shown : Unit <- operation("start-second",second)
+    changed_shown : Unit <- operation("start-changed",changed)
+    written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,"exit\n"))
+    closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
+    line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+    drained : Unit <- read_all_lines(handle,line)
+    IO.pure(Unit,Unit{})
+
+def prepared_cancelled(+handle: U32, bootstrap: String, decision: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  do IO<Unit>:
+    cancelled : Unit <- operation("cancel",result)
+    repeated : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.cancel(handle,bootstrap,decision)
+    repeated_shown : Unit <- operation("cancel-repeat",repeated)
+    changed : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.cancel(handle,bootstrap,decision ++ "-changed")
+    changed_shown : Unit <- operation("cancel-changed",changed)
+    state : String <- IO.try(String,Custody.Instance.state(handle))
+    shown : Unit <- IO.print("cancel-state:" ++ state)
+    started : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision)
+    refused : Unit <- operation("start-after-cancel",started)
+    IO.pure(Unit,Unit{})
+
+def prepared_changed_grant(+handle: U32, bootstrap: String, decision: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match result:
+    case Fail{(code,text)}: IO.print("start-refused:" ++ U32.show(code) ++ ":" ++ text)
+    case Done{unit}: do IO<Unit>:
+      first : Unit <- operation("start-first",result)
+      second : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision ++ "-changed")
+      changed : Unit <- operation("start-changed",second)
+      written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,"exit\n"))
+      closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
+      line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      drained : Unit <- read_all_lines(handle,line)
+      IO.pure(Unit,Unit{})
+
+def prepared_action(+handle: U32, payload: String, bootstrap: String, decision: String, action: String) -> IO(Unit):
+  Bool.pick(IO<Unit>,String.eq(action,"only"),IO.print("prepared-only"),
+  Bool.pick(IO<Unit>,String.eq(action,"wrong-start"),
+    operation("start",Custody.Instance.start(handle,bootstrap ++ "-changed",decision)),
+  Bool.pick(IO<Unit>,String.eq(action,"double-start"),
+    do IO<Unit>:
+      first : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision)
+      second : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision)
+      changed : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision ++ "-changed")
+      prepared_double_started(handle,first,second,changed),
+  Bool.pick(IO<Unit>,String.eq(action,"changed-grant"),
+    do IO<Unit>:
+      first : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision)
+      prepared_changed_grant(handle,bootstrap,decision,first),
+  Bool.pick(IO<Unit>,String.eq(action,"cancel"),
+    do IO<Unit>:
+      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.cancel(handle,bootstrap,decision)
+      prepared_cancelled(handle,bootstrap,decision,result),
+  do IO<Unit>:
+    result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision)
+    prepared_finished(handle,result)))))
+
+def prepared_result(result: Result<&1,&1,U32 & String,U32 & String & String>, payload: String, bootstrap: String, decision: String, action: String) -> IO(Unit):
+  match result:
+    case Fail{(code,text)}: IO.print("prepare-refused:" ++ U32.show(code) ++ ":" ++ text)
+    case Done{(handle,(bound,witness))}: do IO<Unit>:
+      ready : Unit <- IO.print("prepare-ready:" ++ witness)
+      matched : Unit <- Bool.pick(IO<Unit>,String.eq(bound,bootstrap),IO.print("prepare-bootstrap:true"),IO.print("prepare-bootstrap:false"))
+      prepared_action(handle,payload,bootstrap,decision,action)
+
+def prepared_locked(+directory: String, +database: String, cwd: String, payload: String, executable: String, script: String, bootstrap: String, decision: String, action: String, lock: Maybe<U32>) -> IO(Unit):
+  match lock:
+    case None{}: IO.die(Unit,1,"fixture session busy")
+    case Some{+guard}: do IO<Unit>:
+      helper : String <- IO.try(String,Lock.SessionLock.executable())
+      result : Result<&1,&1,U32 & String,U32 & String & String> <- Custody.Instance.prepare_start(database,directory,P.argv([executable,script]),cwd,directory ++ "/native.stderr",payload,1,guard,P.argv([helper,"recover-retained",database,directory]),bootstrap)
+      prepared_result(result,payload,bootstrap,decision,action)
+
+def prepared_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case database <> session <> directory <> cwd <> payload <> executable <> script <> bootstrap <> decision <> action <> Nil{}:
+      Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => prepared_locked(directory,canonical,cwd,payload,executable,script,bootstrap,decision,action,lock))
+    case _: IO.die(Unit,2,"prepare DATABASE SESSION ATTEMPT CWD PAYLOAD EXECUTABLE SCRIPT BOOTSTRAP DECISION ACTION")
+
 def write_cli(args: List<String>) -> IO(Unit):
   match args:
     case directory <> path <> Nil{}: do IO<Unit>:
@@ -385,8 +477,10 @@ def nolock_cli(args: List<String>) -> IO(Unit):
     case _: IO.die(Unit,2,"admit-nolock DATABASE ATTEMPT CWD PAYLOAD PROGRAM ARGS...")
 
 def mode_number(+mode: String) -> U32:
+  Bool.pick(U32,String.eq(mode,"prepare"),19,
   Bool.pick(U32,String.eq(mode,"state"),17,
   Bool.pick(U32,String.eq(mode,"admit-nolock"),18,mode_legacy(mode)))
+  )
 
 def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
   match mode:
@@ -408,6 +502,7 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 16: publish_cli(rest)
     case 17: state_cli(rest)
     case 18: nolock_cli(rest)
+    case 19: prepared_cli(rest)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):
