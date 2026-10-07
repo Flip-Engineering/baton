@@ -267,14 +267,17 @@ def usage_selected(+db: String, +session: String, +native: String, harness: Stri
     projection : String <- IO.try(String,DB.Sql.query(db,project_sql(Tx.trim_nl(malformed),entries,session,Tx.trim_nl(harness),native,file)))
     IO.pure(String,projection)
 
-def with_account_sql(conversation: String, account: String) -> String:
-  "SELECT json_set(" ++ C.q(conversation) ++ ",'$.providerUsage',json(" ++ C.q(account) ++ "));"
+# project_sql supplies a nonempty JSON object. Add the account member directly
+# so a later account database failure preserves the accumulated conversation.
+def print_with_account(conversation: String, account: String) -> IO(Unit):
+  match conversation:
+    case SCon{'{',rest}: IO.print("{\"providerUsage\":" ++ account ++ "," ++ rest)
+    case other: IO.die(Unit,2,"Observed usage conversation projection is not an object")
 
 def usage_with_account(+db: String, +session: String, conversation: String) -> IO(Unit):
   do IO<Unit>:
     account : String <- Account.observe(db,session)
-    answer : String <- IO.try(String,DB.Sql.read(db,with_account_sql(conversation,account)))
-    IO.print(answer)
+    print_with_account(conversation,account)
 
 def observed_usage(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:
@@ -294,10 +297,15 @@ law observed_usage_includes_the_account_observation:
   for conversation: String
   {usage_with_account(db,session,conversation) == (do IO<Unit>:
     account : String <- Account.observe(db,session)
-    answer : String <- IO.try(String,DB.Sql.read(db,with_account_sql(conversation,account)))
-    IO.print(answer)) : IO(Unit)}
+    print_with_account(conversation,account)) : IO(Unit)}
 
 def observed_usage_includes_the_account_observation(db,session,conversation):
+  {==}
+
+law account_failure_output_retains_the_conversation_fields:
+  {print_with_account("{\"session\":\"reader\",\"observed\":{\"input\":7}}\n",Account.host_failure("usageField.command",14,"read failed\n")) == IO.print("{\"providerUsage\":" ++ Account.host_failure("usageField.command",14,"read failed\n") ++ ",\"session\":\"reader\",\"observed\":{\"input\":7}}\n") : IO(Unit)}
+
+def account_failure_output_retains_the_conversation_fields():
   {==}
 
 # --- the operative laws -----------------------------------------------------

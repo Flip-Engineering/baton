@@ -1,4 +1,5 @@
 """Check observed usage against recorded conversations and controlled usage children."""
+import errno
 import json
 import pathlib
 import sqlite3
@@ -275,6 +276,8 @@ root = pathlib.Path(__file__).parent
 with (root / 'calls.jsonl').open('a') as calls:
     calls.write(json.dumps({'argv': sys.argv, 'cwd': os.getcwd()}) + '\\n')
 answer = json.loads((root / 'child-answer.json').read_text())
+if answer.get('removeDatabase'):
+    os.unlink(answer['removeDatabase'])
 sys.stdout.write(answer['stdout'])
 sys.stderr.write(answer['stderr'])
 sys.stdout.flush()
@@ -303,10 +306,11 @@ sys.exit(answer['code'])
                 'limits': [{'id': 'weekly', 'used': 100, 'limit': 100, 'remaining': 0,
                             'window': {'resetsAt': now + 86400000 if reset is None else reset}}]}
 
-    def answer(self, value, code=0, stderr='', signal=None):
+    def answer(self, value, code=0, stderr='', signal=None, remove_database=False):
         stdout = json.dumps(value) + '\n' if isinstance(value, dict) else value
         (self.directory / 'child-answer.json').write_text(json.dumps(
-            {'stdout': stdout, 'stderr': stderr, 'code': code, 'signal': signal}))
+            {'stdout': stdout, 'stderr': stderr, 'code': code, 'signal': signal,
+             'removeDatabase': str(self.db) if remove_database else None}))
         return stdout
 
     def calls(self):
@@ -454,13 +458,38 @@ sys.exit(answer['code'])
             self.assertEqual(list(connection.iterdump()), before)
         self.assertEqual(self.source.read_text(), json.dumps(header()) + '\n')
 
+    def test_account_database_failure_preserves_accumulated_conversation(self):
+        self.write([record('retained', usage(7, 2, 0, 0))])
+        stdout = self.answer(self.document([self.report()]), stderr='report notice\n',
+                             remove_database=True)
+        result = self.read()
+        self.assertEqual(result['session'], 'reader')
+        self.assertEqual(result['native'], 'native-1')
+        self.assertEqual(result['source'], str(self.source))
+        self.assertEqual(result['observed'], {'input': 7, 'output': 2, 'cacheRead': 0,
+                                             'cacheWrite': 0, 'totalTokens': 9})
+        account = result['providerUsage']
+        self.assertEqual(account['availability'], 'unknown')
+        self.assertEqual(account['observationState'], 'unknown')
+        self.assertEqual(account['failure']['stage'], 'reportValidity')
+        self.assertEqual(account['failure']['code'], sqlite3.SQLITE_CANTOPEN)
+        self.assertTrue(account['failure']['detail'])
+        self.assertEqual(account['process'], {'status': 'exit', 'code': 0,
+                                             'stdout': stdout, 'stderr': 'report notice\n'})
+        self.assertEqual(len(self.calls()), 1)
+        self.assertFalse(self.db.exists())
+
     def test_missing_executable_retains_failure_as_unknown(self):
         self.child.unlink()
         result = self.account()
         self.assertEqual(result['availability'], 'unknown')
         self.assertEqual(result['observationState'], 'unknown')
         self.assertEqual(self.calls(), [])
-        self.assertTrue(result.get('condition') in ('hostFailure', 'usageCommandFailed'), result)
+        self.assertEqual(result['condition'], 'hostFailure')
+        self.assertEqual(result['stage'], 'usageCapture')
+        self.assertEqual(result['code'], errno.ENOENT)
+        self.assertIsInstance(result['detail'], str)
+        self.assertNotIn('process', result)
 
 
 if __name__ == '__main__':

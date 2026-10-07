@@ -37,22 +37,6 @@ def remove_sql_lf(reversed: String) -> String:
 def field_sql(document: String, field: String) -> String:
   "SELECT coalesce(json_extract(" ++ C.q(document) ++ "," ++ C.q("$." ++ field) ++ "),'');"
 
-def read_field(+db: String, document: String, field: String) -> IO(String):
-  do IO<String>:
-    value : String <- IO.try(String,DB.Sql.read(db,field_sql(document,field)))
-    IO.pure(String,remove_sql_lf(Tx.str_rev(value)))
-
-def selected(+db: String, +document: String, kind: String) -> IO(Selection):
-  match kind:
-    case "omp": do IO<Selection>:
-      command : String <- read_field(db,document,"command")
-      workspace : String <- read_field(db,document,"workspace")
-      provider : String <- read_field(db,document,"provider")
-      IO.pure(Selection,OmpUsage{command,workspace,provider})
-    case other: do IO<Selection>:
-      condition : String <- read_field(db,document,"condition")
-      IO.pure(Selection,UsageUnknown{condition})
-
 def usage_args(command: String, provider: String) -> List<String>:
   Omp.usage_arguments(command,provider)
 
@@ -170,25 +154,53 @@ def observe_selected(+db: String, selection: Selection) -> IO(String):
       result : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture(Tx.enc_argv(usage_args(command,provider)),workspace)
       captured(db,command,workspace,provider,result)
 
+# Field failures terminate this account observation before any child launch.
+def field_after(field: String, result: Result<&1,&1,U32 & String,String>, next: String -> IO(String)) -> IO(String):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code,detail): IO.pure(String,host_failure("usageField." ++ field,code,detail))
+    case Done{value}: next(remove_sql_lf(Tx.str_rev(value)))
+
+def read_field(db: String, document: String, +field: String, next: String -> IO(String)) -> IO(String):
+  do IO<String>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,field_sql(document,field))
+    field_after(field,result,next)
+
+def workspace_selected(+db: String, document: String, command: String, workspace: String) -> IO(String):
+  read_field(db,document,"provider",provider => observe_selected(db,OmpUsage{command,workspace,provider}))
+
+def command_selected(+db: String, +document: String, command: String) -> IO(String):
+  read_field(db,document,"workspace",workspace => workspace_selected(db,document,command,workspace))
+
+def selected(+db: String, +document: String, kind: String) -> IO(String):
+  match kind:
+    case "omp": read_field(db,document,"command",command => command_selected(db,document,command))
+    case other: read_field(db,document,"condition",condition => IO.pure(String,unknown(condition)))
+
 def selection_after(+db: String, result: Result<&1,&1,U32 & String,String>) -> IO(String):
   match result:
     case Fail{error}:
       match error:
         case (code,detail): IO.pure(String,host_failure("usageSelection",code,detail))
-    case Done{+document}: do IO<String>:
-      kind : String <- read_field(db,document,"kind")
-      selection : Selection <- selected(db,document,kind)
-      observe_selected(db,selection)
+    case Done{+document}: read_field(db,document,"kind",kind => selected(db,document,kind))
 
 def observe_canonical(+db: String, session: String) -> IO(String):
   do IO<String>:
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,selection_sql(db,session))
     selection_after(db,result)
 
+def canonical_after(session: String, result: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code,detail): IO.pure(String,host_failure("usageCanonical",code,detail))
+    case Done{database}: observe_canonical(database,session)
+
 def observe(db: String, session: String) -> IO(String):
   do IO<String>:
-    database : String <- IO.try(String,Lock.SessionLock.canonical(db))
-    observe_canonical(database,session)
+    result : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(db)
+    canonical_after(session,result)
 
 law usage_invokes_the_recorded_command_with_literal_provider:
   {usage_args("/configured/omp","kimi-code") == ["/configured/omp","usage","--json","--provider","kimi-code"] : List<String>}
@@ -260,4 +272,46 @@ law signaled_usage_keeps_partial_output:
   {captured("db","/omp","/work","kimi-code",Done{("signal 15\npartial\n","diagnostic\n")}) == IO.pure(String,process_document("usageCommandSignaled","signal",15,"partial\n","diagnostic\n")) : IO(String)}
 
 def signaled_usage_keeps_partial_output():
+  {==}
+
+
+law canonical_failure_is_an_unknown_account_observation:
+  {canonical_after("reader",Fail{(13,"canonical denied\n")}) == IO.pure(String,host_failure("usageCanonical",13,"canonical denied\n")) : IO(String)}
+
+def canonical_failure_is_an_unknown_account_observation():
+  {==}
+
+law field_failure_preserves_its_stage_and_bypasses_the_continuation:
+  for next: String -> IO(String)
+  {field_after("workspace",Fail{(14,"field read failed\n")},next) == IO.pure(String,host_failure("usageField.workspace",14,"field read failed\n")) : IO(String)}
+
+def field_failure_preserves_its_stage_and_bypasses_the_continuation(next):
+  {==}
+
+law selected_kind_read_uses_the_failure_preserving_field_path:
+  for +db: String
+  for +document: String
+  {selection_after(db,Done{document}) == read_field(db,document,"kind",kind => selected(db,document,kind)) : IO(String)}
+
+def selected_kind_read_uses_the_failure_preserving_field_path(db,document):
+  {==}
+
+law field_read_observes_the_host_result_before_continuing:
+  for db: String
+  for document: String
+  for next: String -> IO(String)
+  {read_field(db,document,"command",next) == (do IO<String>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,field_sql(document,"command"))
+    field_after("command",result,next)) : IO(String)}
+
+def field_read_observes_the_host_result_before_continuing(db,document,next):
+  {==}
+
+law account_observe_preserves_the_canonicalization_result:
+  for db: String
+  {observe(db,"reader") == (do IO<String>:
+    result : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(db)
+    canonical_after("reader",result)) : IO(String)}
+
+def account_observe_preserves_the_canonicalization_result(db):
   {==}
