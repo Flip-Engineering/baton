@@ -299,13 +299,13 @@ def publish_directory(request: I.IntentInput, path: String, content: String, dir
 # The entry. The requested receipt path and the derived path are the same one, and the name
 # and directory preconditions hold, before any effect runs.
 
-def preflight_directory(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO<IntentPublish>:
+def preflight_directory(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO(IntentPublish):
   +req = request
   +p = path
   +want = content
   +dir = directory
   +n = name
-  Bool.pick(IO<IntentPublish>, directory_precondition(dir),
+  Bool.pick(IO(IntentPublish), directory_precondition(dir),
     publish_directory(req, p, want, dir, n),
     IO.pure(IntentPublish, PublishRefused{req, "directory", n, dir}))
 law a_fresh_publication_record_is_admitted:
@@ -330,12 +330,6 @@ def Intent.publish_intent(request: I.IntentInput, directory: String, name: Strin
   Bool.pick(IO(IntentPublish), Tx.str_eq(asked, derived),
     preflight_name(req, derived, want, dir, n),
     IO.pure(IntentPublish, PublishRefused{req, "association", n, derived}))
-law a_fresh_publication_record_is_admitted:
-  {classify_publish("published\t/d/n\t0\t\t0\t", "/d/n") == "published" : String}
-
-def a_fresh_publication_record_is_admitted():
-  {==}
-
 law an_existing_record_with_pending_zero_is_admitted:
   {classify_publish("existing\t/d/n\t0\t\t0\t", "/d/n") == "existing" : String}
 

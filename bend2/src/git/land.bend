@@ -423,11 +423,13 @@ def holder_modifier(+line: String) -> Bool:
   Bool.pick(Bool, Tx.str_eq(line, "locked"), True{},
     Bool.pick(Bool, Tx.starts_with(line, "locked "), True{}, Tx.starts_with(line, "prunable ")))
 
-def holder_valid_branch(+line: String) -> Bool:
-  match prefix_drop(line, "branch refs/heads/"):
+def holder_branch_value(found: Maybe<String>) -> Bool:
+  match found:
     case Some{value}: Bool.not(String.is_empty(value))
     case None{}: False{}
 
+def holder_valid_branch(+line: String) -> Bool:
+  holder_branch_value(prefix_drop(line, "branch refs/heads/"))
 def holder_close(acc: HolderScan, +request: String) -> HolderScan:
   match acc:
     case ScanState{block, match, seen, bad, blocks}:
@@ -666,6 +668,18 @@ def ff_stage5_status(target: String, candidate: String, repo: String, artifact: 
       Bool.pick(IO(FFLD), U32.is_eq(code, 0),
         ff_stage5_postread(tg, cand, rp, art, ev),
         ff_stage5_blocked(Tx.str_cat("mutation exited nonzero; ", ev)))
+def ff_stage5_runres(target: String, candidate: String, artifact: String, repo: String, held: String, rr: T.RunRes) -> IO(FFLD):
+  +tg = target
+  +cand = candidate
+  +art = artifact
+  +rp = repo
+  +evidence = held
+  match rr:
+    case T.RSpawn{detail}: ff_stage5_blocked(Tx.str_cat("mutation could not be spawned: ", detail))
+    case T.RRun{status, out}:
+      +observed = Tx.str_cat("stdout bytes ", Tx.str_cat(out, Tx.str_cat("; ", evidence)))
+      ff_stage5_status(tg, cand, rp, art, observed, status)
+
 def ff_stage5_framing(target: String, candidate: String, artifact: String, repo: String, framing: String, diagnostics: String) -> IO(FFLD):
   +tg = target
   +cand = candidate
@@ -674,12 +688,7 @@ def ff_stage5_framing(target: String, candidate: String, artifact: String, repo:
   +framed = framing
   +diag = diagnostics
   +held = Tx.str_cat("stderr bytes ", Tx.str_cat(diag, Tx.str_cat("; artifact ", art)))
-  match Tx.run_res(Done{framed}):
-    case T.RSpawn{detail}: ff_stage5_blocked(Tx.str_cat("mutation could not be spawned: ", detail))
-    case T.RRun{status, out}:
-      +observed = Tx.str_cat("stdout bytes ", Tx.str_cat(out, Tx.str_cat("; ", held)))
-      ff_stage5_status(tg, cand, rp, art, observed, status)
-
+  ff_stage5_runres(tg, cand, art, rp, held, Tx.run_res(Done{framed}))
 def ff_stage5_captured(target: String, candidate: String, artifact: String, repo: String, observed: Result<&1,&1,U32 & String,String & String>) -> IO(FFLD):
   +tg = target
   +cand = candidate
@@ -942,20 +951,27 @@ def ld_hold_read(g: T.GitOut, target: String) -> LdHold:
 def ld_update_argv(target: String, cand: String, basis: String) -> List<String>:
   ["update-ref", Tx.str_cat("refs/heads/", target), cand, basis]
 
-def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
-  +c = capture
-  match c:
-    case Fail{error}:
-      match error:
-        case (code, detail): T.GBroken{detail}
-    case Done{pair}:
-      match pair:
-        case (framing, diagnostics):
-          match Tx.run_res(Done{framing}):
-            case T.RRun{T.SExit{code}, out}: T.GRun{code, out}
-            case T.RRun{T.SSignal{num}, out}: T.GBroken{"the mutation signalled"}
-            case T.RSpawn{detail}: T.GBroken{detail}
+def ld_adv_runres(rr: T.RunRes) -> T.GitOut:
+  match rr:
+    case T.RRun{T.SExit{code}, out}: T.GRun{code, out}
+    case T.RRun{T.SSignal{num}, out}: T.GBroken{"the mutation signalled"}
+    case T.RSpawn{detail}: T.GBroken{detail}
 
+def ld_adv_framed(framing: String) -> T.GitOut:
+  ld_adv_runres(Tx.run_res(Done{framing}))
+
+def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
+  match capture:
+    case Fail{error}: ld_adv_host_error(error)
+    case Done{pair}: ld_adv_pair(pair)
+
+def ld_adv_host_error(error: U32 & String) -> T.GitOut:
+  match error:
+    case (code, detail): T.GBroken{detail}
+
+def ld_adv_pair(pair: String & String) -> T.GitOut:
+  match pair:
+    case (framing, diagnostics): ld_adv_framed(framing)
 def ld_adv_with(advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>) -> LdAdvObs:
   +a = advance
   +c = capture
@@ -1254,13 +1270,9 @@ def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String,
           shared_reserved_continue(h, rp, tg, c, b, gd, shared_parent_path(pa, shared_attempt_name(bs, n))),
           Bool.pick(IO(SharedLanding), existing_ok,
             Bool.pick(IO(SharedLanding), U32.is_lt(n, 4294967295),
-              shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, shared_next_attempt(n)),
+              shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, U32.add(n, 1)),
               shared_record_failed("reserve-counter-maximum", r, h)),
             shared_record_failed("reserve", r, h)))
-
-def shared_next_attempt(attempt: U32) -> U32:
-  +n = attempt
-  U32.add(n, 1)
 
 def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle

@@ -18,7 +18,7 @@ import ../host/receipt.bend as R
 type AttemptCapture is Data:
   AttemptClaimFailed{error: U32 & String}
   AttemptClaimBusy{target: String}
-  AttemptCaptured{observed: Result<&1,&1,U32 & String,String & String>, released: Result<U32 & String,Unit>}
+  AttemptCaptured{observed: Result<&1,&1,U32 & String,String & String>, released: Result<&1, &1, U32 & String, Unit>}
 
 # The chain, leaf first. The release is attempted only where a handle exists.
 def Attempt.under_claim(handle: U32, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
