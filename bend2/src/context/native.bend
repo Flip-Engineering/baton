@@ -715,6 +715,26 @@ def recovery_file_digest_lines(lines: List<String>) -> String:
 def recovery_file_digest(+rows: String) -> String:
   recovery_file_digest_lines(Tx.split_lines(rows))
 
+def recovery_file_db_result(+expected_digest: String,
+                            result: Result<&1,&1,U32 & String,String>) -> IO(Bool):
+  match result:
+    case Fail{error}: IO.pure(Bool, False{})
+    case Done{+row}: IO.pure(Bool,
+      String.eq(recovery_file_digest(row), expected_digest))
+
+def recovery_file_provider_answer(+db: String, +binding: String,
+                                  +expected_digest: String,
+                                  answer: ProviderAnswer) -> IO(Bool):
+  match answer:
+    case ProviderOutput{+value, +status}:
+      Bool.pick(IO(Bool), String.eq(status, "exit 0"),
+        do IO<Bool>:
+          rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db,
+            binding, recovery_file_verify_sql(value))
+          recovery_file_db_result(expected_digest, rows),
+        IO.pure(Bool, False{}))
+    case other: IO.pure(Bool, False{})
+
 def recovery_file_verified(+db: String, +binding: String, +executable: String,
                            +runtime_path: String, +cwd: String,
                            +artifact_file: String, +expected_digest: String) -> IO(Bool):
@@ -724,18 +744,7 @@ def recovery_file_verified(+db: String, +binding: String, +executable: String,
       cwd, "/dev/null")
     answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
       cwd, SNil{}, spawned)
-    match answer:
-      case ProviderOutput{+value, +status}:
-        Bool.pick(IO(Bool), String.eq(status, "exit 0"),
-          do IO<Bool>:
-            rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db,
-              binding, recovery_file_verify_sql(value))
-            match rows:
-              case Fail{error}: IO.pure(Bool, False{})
-              case Done{+row}: IO.pure(Bool,
-                String.eq(recovery_file_digest(row), expected_digest)),
-          IO.pure(Bool, False{}))
-      case other: IO.pure(Bool, False{})
+    recovery_file_provider_answer(db, binding, expected_digest, answer)
 
 def managed_recovery_association_ok(+bootstrap: ManagedQuery.Bootstrap,
                                    +admission: ContextAdmit.Admission,
