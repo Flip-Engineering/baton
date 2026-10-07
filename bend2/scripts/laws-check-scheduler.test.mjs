@@ -131,12 +131,14 @@ test('implementation mutations require one exact source match', () => {
 });
 
 test('every configured implementation mutation has one exact producer source match', () => {
+  const invalid = [];
   for (const mutation of MUTATIONS) {
     const source = readFileSync(join(root, mutation.file), 'utf8');
     const first = source.indexOf(mutation.find);
-    assert.notEqual(first, -1, `${mutation.name} source match is missing`);
-    assert.equal(first, source.lastIndexOf(mutation.find), `${mutation.name} source match is not unique`);
+    const last = source.lastIndexOf(mutation.find);
+    if (first < 0 || first !== last) invalid.push({ name: mutation.name, matches: first < 0 ? 0 : source.split(mutation.find).length - 1 });
   }
+  assert.deepEqual(invalid, [], `mutation producer source matches must be unique: ${JSON.stringify(invalid)}`);
 });
 
 test('implementation mutations detach linked source before writing', () => {
