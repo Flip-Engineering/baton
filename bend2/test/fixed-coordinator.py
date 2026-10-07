@@ -587,19 +587,20 @@ class FixedCoordinator(unittest.TestCase):
         self.dispatch('tm1', 'm1', 'Task for a Muse session.')
         self.start_owner()
         self.start_serve()
-        os.set_blocking(self.serve_proc.stdout.fileno(), False)
+        self._serve_lines = []
+
+        def _drain():
+            try:
+                for line in self.serve_proc.stdout:
+                    self._serve_lines.append(line)
+            except (OSError, ValueError):
+                pass
+        drain = threading.Thread(target=_drain, daemon=True)
+        drain.start()
 
         def refusal():
-            try:
-                chunk = self.serve_proc.stdout.read()
-            except (OSError, ValueError):
-                return None
-            if not chunk:
-                return None
-            self._refusal_log = getattr(self, '_refusal_log', '') + chunk
-            if 'serve-refused m1 muse' in self._refusal_log:
-                return self._refusal_log
-            return None
+            log = ''.join(self._serve_lines)
+            return log if 'serve-refused m1 muse' in log else None
         log = self.eventually(refusal, 'serve never refused the Muse session', timeout=30)
         self.assertIn('dispatch-turn', log, 'refusal names no Turn route')
         self.assertEqual(self.connections('m1'), [],
