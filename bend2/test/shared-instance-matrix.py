@@ -284,6 +284,10 @@ class Matrix(unittest.TestCase):
         row = self.query(f"SELECT receipt FROM messages WHERE id='{ident}'")
         self.assertEqual(row, [(None,)], f'{ident} did not stay queued')
 
+    def ack_inbox(self, recipient):
+        for message in self.inbox(recipient):
+            self.coord('ack', message['id'], recipient, 'matrix-reviewed')
+
     def test_01_serve_drives_concurrent_codex_and_omp_with_queued_guidance(self):
         self.recruit('w1', 'codex')
         self.recruit('w2', 'omp')
@@ -445,14 +449,17 @@ class Matrix(unittest.TestCase):
             if row:
                 self.assertEqual(row[0][0], body, f'{ident} committed partially')
                 committed.append(ident)
+        self.ack_inbox('root')
         serve = self.spawn('serve', 'matrix-owner-client-loss')
         stdout, stderr = serve.communicate(timeout=90)
-        self.assertEqual(serve.returncode, 0, stderr)
-        for ident in committed:
-            row = self.query(f"SELECT receipt FROM messages WHERE id='{ident}'")
-            self.assertNotEqual(row, [(None,)], f'{ident} was committed but never serviced')
-        serviced = self.query("SELECT COUNT(*) FROM messages WHERE sender='w6' AND kind='report'")
-        self.assertGreaterEqual(serviced[0][0], len(committed),
+        self.assertIn(serve.returncode, (0, 1),
+                      f'unexpected serve exit: {stderr}')
+        def serviced():
+            return all(self.query(f"SELECT receipt FROM messages WHERE id='{ident}'") != [(None,)]
+                       for ident in committed)
+        self.eventually(serviced, 'committed input was never serviced', timeout=60)
+        reported = self.query("SELECT COUNT(*) FROM messages WHERE sender='w6' AND kind='report'")
+        self.assertGreaterEqual(reported[0][0], len(committed),
                                 'committed input was lost without a report')
         adapter = subprocess.Popen(
             ['node', str(MCP), str(self.db), str(EXE), '--session', 'root'],
@@ -475,6 +482,7 @@ class Matrix(unittest.TestCase):
         self.dispatch(f'{prefix}-t2', names[1], f'{prefix} second task.')
         self.assert_pending(f'{prefix}-t1')
         self.assert_pending(f'{prefix}-t2')
+        self.ack_inbox('root')
         self.receiver(names[0])
         self.receiver(names[1])
         self.start_sampler()

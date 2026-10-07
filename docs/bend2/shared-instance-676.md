@@ -52,11 +52,14 @@ One `serve` invocation holds each canonical Orchestra database:
   failure. Sessions with a terminal stop never enter the cursor. `serve`
   drains and exits; the owner-hosted commit notification re-invokes it on
   later input. A long-lived serve follows only when workload measurements
-  require it.
+  require it. A swept attempt that records a failure makes `serve` exit
+  1, matching the direct receive entry; the claim is still released and
+  the input stays pending with its recorded failure.
 - `Instance.serve_session` calls the public receive entry
-  (`Receive.run`) with empty command, model, effort, workspace and message
-  arguments, which selects the session's recorded values and full pending
-  inbox. Prepared admission (`Stop.admit`), native conversation identity
+  (`Receive.run`) with the recorded harness executable and log and empty
+  model, effort, workspace and message arguments, which selects the
+  session's recorded values and full pending inbox. Prepared admission
+  (`Stop.admit`), native conversation identity
   (`sessions.native` with the `executions` directory and recovery argv),
   pending-input recovery, stop handling and parent notification execute in
   that path unchanged.
