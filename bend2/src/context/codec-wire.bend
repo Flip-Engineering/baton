@@ -47,39 +47,76 @@ type WireRead is Data:
 # --- the owned value encoder ----------------------------------------------
 # One self-recursive walk with a mode, so it needs no forward reference, and it keeps an
 # exact number token verbatim: 1e400 and a negative decimal stay numbers, and text stays
-# text. The mode names whether the value opens a container or continues one. The mode is
-# declared first because the walk matches it first, and a definition matches its
-# parameters in declaration order.
+# text. The mode names whether the value opens a container or continues one. The value is
+# the first parameter and the mode follows it, because the walk matches the value first
+# and its recursive calls hand back a part of it.
 
-def wire_value_text(+mode: String, +v: Codec.RawValue) -> String:
+# The closing text of the two continuation modes. A value mode closes nothing.
+def wire_mode_close(+mode: String) -> String:
   match mode:
-    case "value":
-      match v:
-        case Codec.Rnull{}: "null"
-        case Codec.Rtrue{}: "true"
-        case Codec.Rfalse{}: "false"
-        case Codec.Rstr{+text}: J.json_text(J.Jstr{text})
-        case Codec.Rnum{+token}: token
-        case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: "[]"
-        case Codec.Rarr{+head, +tail}: "[" ++ wire_value_text("value", head) ++ wire_value_text("items", tail)
-        case Codec.Robj{Codec.Rnil{}}: "{}"
-        case Codec.Robj{Codec.Rpair{+key, +value, +rest}}: "{" ++ J.json_text(J.Jstr{key}) ++ ":" ++ wire_value_text("value", value) ++ wire_value_text("members", rest)
-        case Codec.Robj{+members}: "{}"
-        case other: "null"
-    case "items":
-      match v:
-        case Codec.Rnil{}: "]"
-        case Codec.Rarr{+head, +tail}: "," ++ wire_value_text("value", head) ++ wire_value_text("items", tail)
-        case other: "]"
-    case "members":
-      match v:
-        case Codec.Rnil{}: "}"
-        case Codec.Rpair{+key, +value, +rest}: "," ++ J.json_text(J.Jstr{key}) ++ ":" ++ wire_value_text("value", value) ++ wire_value_text("members", rest)
-        case other: "}"
+    case "items": "]"
+    case "members": "}"
     case other: ""
 
+# An atom renders as itself in value mode and as the container close in the
+# continuation modes.
+def wire_atom_text(+mode: String, +atom: String) -> String:
+  match mode:
+    case "value": atom
+    case other: wire_mode_close(mode)
+
+# The empty-list sentinel is a value in value mode: the null it encodes.
+def wire_nil_text(+mode: String) -> String:
+  match mode:
+    case "value": "null"
+    case "items": "]"
+    case "members": "}"
+    case other: ""
+
+# The empty array renders as its own pair of brackets in value mode; as a continued
+# item it is read as the null sentinel plus the closing bracket.
+def wire_empty_arr_text(+mode: String) -> String:
+  match mode:
+    case "value": "[]"
+    case "items": "," ++ wire_nil_text("value") ++ wire_nil_text("items")
+    case other: wire_mode_close(mode)
+
+def wire_value_text(+v: Codec.RawValue, +mode: String) -> String:
+  match v:
+    case Codec.Rnull{}: wire_atom_text(mode, "null")
+    case Codec.Rtrue{}: wire_atom_text(mode, "true")
+    case Codec.Rfalse{}: wire_atom_text(mode, "false")
+    case Codec.Rstr{+text}:
+      match mode:
+        case "value": J.json_text(J.Jstr{text})
+        case other: wire_mode_close(mode)
+    case Codec.Rnum{+token}:
+      match mode:
+        case "value": token
+        case other: wire_mode_close(mode)
+    case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: wire_empty_arr_text(mode)
+    case Codec.Rarr{+head, +tail}:
+      match mode:
+        case "value": "[" ++ wire_value_text(head, "value") ++ wire_value_text(tail, "items")
+        case "items": "," ++ wire_value_text(head, "value") ++ wire_value_text(tail, "items")
+        case other: wire_mode_close(mode)
+    case Codec.Robj{Codec.Rnil{}}: wire_atom_text(mode, "{}")
+    case Codec.Robj{Codec.Rpair{+key, +value, +rest}}:
+      match mode:
+        case "value": "{" ++ J.json_text(J.Jstr{key}) ++ ":" ++ wire_value_text(value, "value") ++ wire_value_text(rest, "members")
+        case "members": "," ++ J.json_text(J.Jstr{key}) ++ ":" ++ wire_value_text(value, "value") ++ wire_value_text(rest, "members")
+        case other: wire_mode_close(mode)
+    case Codec.Robj{+members}: wire_atom_text(mode, "{}")
+    case Codec.Rnil{}: wire_nil_text(mode)
+    case Codec.Rpair{+key, +value, +rest}:
+      match mode:
+        case "value": "null"
+        case "members": "," ++ J.json_text(J.Jstr{key}) ++ ":" ++ wire_value_text(value, "value") ++ wire_value_text(rest, "members")
+        case other: wire_mode_close(mode)
+    case other: wire_atom_text(mode, "null")
+
 def wire_value(+v: Codec.RawValue) -> String:
-  wire_value_text("value", v)
+  wire_value_text(v, "value")
 
 # A scalar member: null when it is absent, otherwise the canonical text of the string.
 def wire_scalar_text(+text: String) -> String:
@@ -241,38 +278,59 @@ def wire_event_kinds_ok(+members: Codec.RawValue) -> Bool:
 # forward reference. A number token must be a valid token, so a constructed one refuses;
 # a decoded key that appears twice in one object refuses at every depth; and the empty
 # array sentinel is a value rather than a missing element. Number tokens stay numbers:
-# the rule admits -0.25, 0.5 and 1e400 exactly as written. The mode is declared first
-# because the walk matches it first, and a definition matches its parameters in
-# declaration order.
-def wire_value_ok(+mode: String, +v: Codec.RawValue) -> Bool:
+# the rule admits -0.25, 0.5 and 1e400 exactly as written. The value is the first
+# parameter and the mode follows it, because the walk matches the value first and its
+# recursive calls hand back a part of it.
+
+# An atom is checked only where it stands as a value.
+def wire_atom_ok(+mode: String, +ok: Bool) -> Bool:
   match mode:
-    case "value":
-      match v:
-        case Codec.Rnull{}: True{}
-        case Codec.Rtrue{}: True{}
-        case Codec.Rfalse{}: True{}
-        case Codec.Rstr{+text}: True{}
-        case Codec.Rnum{+token}: Context.strict_number_token_ok(token)
-        case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: True{}
-        case Codec.Rarr{+head, +tail}: Bool.pick(Bool, wire_value_ok("value", head), wire_value_ok("items", tail), False{})
-        case Codec.Robj{Codec.Rnil{}}: True{}
-        case Codec.Robj{Codec.Rpair{+key, +value, +rest}}: Bool.pick(Bool, Codec.raw_member_present(key, rest), False{}, Bool.pick(Bool, wire_value_ok("value", value), wire_value_ok("members", rest), False{}))
-        case Codec.Robj{+members}: False{}
+    case "value": ok
+    case other: False{}
+
+# The empty-list sentinel terminates the two continuation modes and is no value.
+def wire_ok_nil(+mode: String) -> Bool:
+  match mode:
+    case "items": True{}
+    case "members": True{}
+    case other: False{}
+
+def wire_value_ok(+v: Codec.RawValue, +mode: String) -> Bool:
+  match v:
+    case Codec.Rnull{}: wire_atom_ok(mode, True{})
+    case Codec.Rtrue{}: wire_atom_ok(mode, True{})
+    case Codec.Rfalse{}: wire_atom_ok(mode, True{})
+    case Codec.Rstr{+text}: wire_atom_ok(mode, True{})
+    case Codec.Rnum{+token}:
+      match mode:
+        case "value": Context.strict_number_token_ok(token)
         case other: False{}
-    case "items":
-      match v:
-        case Codec.Rnil{}: True{}
-        case Codec.Rarr{+head, +tail}: Bool.pick(Bool, wire_value_ok("value", head), wire_value_ok("items", tail), False{})
+    case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}:
+      match mode:
+        case "value": True{}
+        case "items": Bool.pick(Bool, wire_ok_nil("value"), wire_ok_nil("items"), False{})
         case other: False{}
-    case "members":
-      match v:
-        case Codec.Rnil{}: True{}
-        case Codec.Rpair{+key, +value, +rest}: Bool.pick(Bool, Codec.raw_member_present(key, rest), False{}, Bool.pick(Bool, wire_value_ok("value", value), wire_value_ok("members", rest), False{}))
+    case Codec.Rarr{+head, +tail}:
+      match mode:
+        case "value": Bool.pick(Bool, wire_value_ok(head, "value"), wire_value_ok(tail, "items"), False{})
+        case "items": Bool.pick(Bool, wire_value_ok(head, "value"), wire_value_ok(tail, "items"), False{})
+        case other: False{}
+    case Codec.Robj{Codec.Rnil{}}: wire_atom_ok(mode, True{})
+    case Codec.Robj{Codec.Rpair{+key, +value, +rest}}:
+      match mode:
+        case "value": Bool.pick(Bool, Codec.raw_member_present(key, rest), False{}, Bool.pick(Bool, wire_value_ok(value, "value"), wire_value_ok(rest, "members"), False{}))
+        case "members": Bool.pick(Bool, Codec.raw_member_present(key, rest), False{}, Bool.pick(Bool, wire_value_ok(value, "value"), wire_value_ok(rest, "members"), False{}))
+        case other: False{}
+    case Codec.Robj{+members}: False{}
+    case Codec.Rnil{}: wire_ok_nil(mode)
+    case Codec.Rpair{+key, +value, +rest}:
+      match mode:
+        case "members": Bool.pick(Bool, Codec.raw_member_present(key, rest), False{}, Bool.pick(Bool, wire_value_ok(value, "value"), wire_value_ok(rest, "members"), False{}))
         case other: False{}
     case other: False{}
 
 def wire_payload_ok(+v: Codec.RawValue) -> Bool:
-  wire_value_ok("value", v)
+  wire_value_ok(v, "value")
 
 def wire_read_invocation(+members: Codec.RawValue) -> WireRead:
   WrInvocation{"2", wire_text_member("query", members), wire_text_member("owner", members),
@@ -547,13 +605,13 @@ def wire_law_an_exact_token_inside_the_payload_passes():
   {==}
 
 law wire_law_a_negative_decimal_inside_the_payload_passes:
-  {wire_value_ok("value", Codec.Rnum{"-0.25"}) == True{} : Bool}
+  {wire_value_ok(Codec.Rnum{"-0.25"}, "value") == True{} : Bool}
 
 def wire_law_a_negative_decimal_inside_the_payload_passes():
   {==}
 
 law wire_law_a_constructed_token_that_is_not_a_number_refuses:
-  {wire_value_ok("value", Codec.Rnum{"x"}) == False{} : Bool}
+  {wire_value_ok(Codec.Rnum{"x"}, "value") == False{} : Bool}
 
 def wire_law_a_constructed_token_that_is_not_a_number_refuses():
   {==}

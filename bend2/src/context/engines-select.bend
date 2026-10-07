@@ -817,6 +817,14 @@ def plan_walk_next(+in_path: Bool, +head: Pending, +cat: Decl.Cat,
 # One self-recursive walk: a step already on its own ancestor path is a cycle,
 # and every other step contributes its binding, its common operation and its
 # declared effect additions before its dependencies are drained.
+#
+# The walk consumes one pending per step and prepends the pendings that step's
+# dependencies resolve to, so the list it hands to the next step is built from
+# the matched list rather than taken from it, and the termination check cannot
+# see the descent. The walk terminates for every finite catalog: a pending whose
+# step key is already on its own path expands nothing, so each expansion chain is
+# a simple path over the finitely many step keys.
+@unsafe
 def plan_drain(+pending: Pendings, +cat: Decl.Cat, +inv: Decl.Inv,
                +w: Walk) -> Walk:
   match pending:
