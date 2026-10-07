@@ -274,6 +274,11 @@ static int br_artifact_name_ok(const char *name,size_t length);
 static uint64_t br_digest_bytes(const char *bytes,size_t length);
 static int br_artifact_write(const char *directory,const char *name,const char *bytes,size_t length);
 static int br_artifact_digest(const char *directory,const char *name,size_t name_length,uint64_t *digest);
+static int br_artifact_binding(const char *directory,const char *name,size_t name_length,
+                               unsigned char digest[32],uint64_t *length);
+static int br_artifact_same(const char *directory,const char *name,size_t name_length,
+                            const char *bytes,size_t length);
+static int br_manifest_same(const char *directory,const BrManifestHeader *header,char *const *fields,int count);
 static int br_manifest_store(const char *directory,const char *manifest_path,BrManifestHeader *header,char **fields,size_t *lengths,int count);
 typedef struct {
   int listener,lock,finishing,single,database_fd,bound;
@@ -1142,12 +1147,12 @@ static int br_keeper_start(BrKeeper *keeper,const char *directory,int lock) {
        starts, so the file cannot be swapped between preparation and launch. */
     const char *name=keeper->manifest.field[6];
     size_t name_length=(size_t)keeper->manifest.header.lengths[6];
-    uint64_t recorded=0,held=0;
-    if(keeper->manifest.header.lengths[7]!=sizeof(uint64_t))error=EINVAL;
-    else memcpy(&recorded,keeper->manifest.field[7],sizeof(uint64_t));
+    unsigned char recorded[32],held[32];uint64_t held_length=0;
+    if(keeper->manifest.header.lengths[7]!=sizeof(recorded))error=EINVAL;
+    else memcpy(recorded,keeper->manifest.field[7],sizeof(recorded));
     if(!error)error=br_artifact_name_ok(name,name_length);
-    if(!error)error=br_artifact_digest(directory,name,name_length,&held);
-    if(!error && held!=recorded)error=EINVAL;
+    if(!error)error=br_artifact_binding(directory,name,name_length,held,&held_length);
+    if(!error && memcmp(held,recorded,sizeof(recorded)))error=EINVAL;
     if(error)return error;
   }
   keeper->identity=br_manifest_digest(&keeper->manifest.header,keeper->manifest.field,keeper->manifest.count);
@@ -1598,12 +1603,18 @@ static int br_owner_admit(BrOwner *owner,const char *directory,int lock,int *exi
     BrKeeper *held=br_owner_find(owner,resolved);
     if(held) {
       /* The same admission identity resolves the attempt that already owns the
-         work; a different identity for the same directory is conflicting reuse
-         and is refused. Either way no second native child starts. */
-      uint64_t identity=0;
-      error=br_manifest_digest_file(resolved,&identity);
-      if(!error && identity!=held->identity)error=EEXIST;
-      else *existing=1;
+         work. The comparison is exact, field by field: a short digest is not the
+         identity. A different manifest for the same directory is conflicting
+         reuse and is refused. */
+      BrManifest stored={0};
+      error=br_manifest_read(resolved,&stored);
+      if(!error && (stored.count!=held->manifest.count ||
+                    stored.header.keep_stdin!=held->manifest.header.keep_stdin))error=EEXIST;
+      for(int i=0;!error && i<stored.count;i++)
+        if(stored.header.lengths[i]!=held->manifest.header.lengths[i] ||
+           memcmp(stored.field[i],held->manifest.field[i],(size_t)stored.header.lengths[i]))error=EEXIST;
+      br_manifest_free(&stored);
+      if(!error)*existing=1;
     }
   }
   if(!error && !*existing) {
@@ -2000,11 +2011,7 @@ static int br_artifact_name_ok(const char *name,size_t length) {
   if(strlen(name)!=length)return EINVAL;
   return 0;
 }
-static uint64_t br_digest_bytes(const char *bytes,size_t length) {
-  uint64_t digest=0xcbf29ce484222325ULL;
-  for(size_t i=0;i<length;i++) {digest^=(unsigned char)bytes[i];digest*=0x100000001b3ULL;}
-  return digest;
-}
+/* Exact comparison of the artifact already in custody with a requested byte
 /* Writes the prepared artifact into private attempt custody: exclusive creation,
    no symlink following, read-only mode, the file flushed and its directory
    flushed, all before any child is spawned. */
@@ -2027,19 +2034,133 @@ static int br_artifact_write(const char *directory,const char *name,const char *
   free(path);
   return error;
 }
-static int br_artifact_digest(const char *directory,const char *name,size_t name_length,uint64_t *digest) {
+/* SHA-256 over the prepared artifact's bytes. The manifest binds this value, and
+   the owner recomputes it at custody start, so the content binding does not rely
+   on a short hash. */
+typedef struct { uint32_t state[8]; uint64_t length; unsigned char block[64]; size_t used; } BrSha256;
+static const uint32_t br_sha256_k[64]={
+  0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+  0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+  0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+  0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+  0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+  0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+  0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+  0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2};
+#define BR_ROR(x,n) (((x)>>(n))|((x)<<(32-(n))))
+static void br_sha256_block(BrSha256 *sha,const unsigned char *block) {
+  uint32_t w[64];
+  for(int i=0;i<16;i++)
+    w[i]=((uint32_t)block[i*4]<<24)|((uint32_t)block[i*4+1]<<16)|((uint32_t)block[i*4+2]<<8)|(uint32_t)block[i*4+3];
+  for(int i=16;i<64;i++) {
+    uint32_t a=w[i-15],b=w[i-2];
+    uint32_t s0=BR_ROR(a,7)^BR_ROR(a,18)^(a>>3),s1=BR_ROR(b,17)^BR_ROR(b,19)^(b>>10);
+    w[i]=w[i-16]+s0+w[i-7]+s1;
+  }
+  uint32_t a=sha->state[0],b=sha->state[1],c=sha->state[2],d=sha->state[3];
+  uint32_t e=sha->state[4],f=sha->state[5],g=sha->state[6],h=sha->state[7];
+  for(int i=0;i<64;i++) {
+    uint32_t s1=BR_ROR(e,6)^BR_ROR(e,11)^BR_ROR(e,25);
+    uint32_t ch=(e&f)^((~e)&g);
+    uint32_t t1=h+s1+ch+br_sha256_k[i]+w[i];
+    uint32_t s0=BR_ROR(a,2)^BR_ROR(a,13)^BR_ROR(a,22);
+    uint32_t maj=(a&b)^(a&c)^(b&c);
+    uint32_t t2=s0+maj;
+    h=g;g=f;f=e;e=d+t1;d=c;c=b;b=a;a=t1+t2;
+  }
+  sha->state[0]+=a;sha->state[1]+=b;sha->state[2]+=c;sha->state[3]+=d;
+  sha->state[4]+=e;sha->state[5]+=f;sha->state[6]+=g;sha->state[7]+=h;
+}
+static void br_sha256_init(BrSha256 *sha) {
+  static const uint32_t initial[8]={0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
+    0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
+  memset(sha,0,sizeof(*sha));
+  memcpy(sha->state,initial,sizeof(initial));
+}
+static void br_sha256_update(BrSha256 *sha,const unsigned char *data,size_t length) {
+  sha->length+=(uint64_t)length;
+  while(length) {
+    size_t room=64-sha->used,count=length<room?length:room;
+    memcpy(sha->block+sha->used,data,count);
+    sha->used+=count;data+=count;length-=count;
+    if(sha->used==64){br_sha256_block(sha,sha->block);sha->used=0;}
+  }
+}
+static void br_sha256_final(BrSha256 *sha,unsigned char out[32]) {
+  uint64_t bits=sha->length*8;
+  unsigned char pad=0x80;
+  br_sha256_update(sha,&pad,1);
+  pad=0;
+  while(sha->used!=56)br_sha256_update(sha,&pad,1);
+  unsigned char tail[8];
+  for(int i=0;i<8;i++)tail[i]=(unsigned char)(bits>>(56-i*8));
+  br_sha256_update(sha,tail,8);
+  for(int i=0;i<8;i++) {
+    out[i*4]=(unsigned char)(sha->state[i]>>24);out[i*4+1]=(unsigned char)(sha->state[i]>>16);
+    out[i*4+2]=(unsigned char)(sha->state[i]>>8);out[i*4+3]=(unsigned char)sha->state[i];
+  }
+}
+/* The artifact's recorded content binding: its SHA-256 and its exact length. */
+static int br_artifact_binding(const char *directory,const char *name,size_t name_length,
+                               unsigned char digest[32],uint64_t *length) {
   if(br_artifact_name_ok(name,name_length))return EINVAL;
   char *path=br_path(directory,name);
   if(!path)return ENOMEM;
   int fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
   if(fd<0){int error=errno;free(path);return error;}
-  uint64_t value=0xcbf29ce484222325ULL;
-  char buffer[8192];ssize_t n;int error=0;
-  while((n=read(fd,buffer,sizeof(buffer)))>0)
-    for(ssize_t i=0;i<n;i++) {value^=(unsigned char)buffer[i];value*=0x100000001b3ULL;}
+  BrSha256 sha;br_sha256_init(&sha);
+  unsigned char buffer[8192];ssize_t n;uint64_t total=0;int error=0;
+  while((n=read(fd,buffer,sizeof(buffer)))>0){br_sha256_update(&sha,buffer,(size_t)n);total+=(uint64_t)n;}
   if(n<0)error=errno;
   close(fd);free(path);
-  if(!error)*digest=value;
+  if(error)return error;
+  br_sha256_final(&sha,digest);
+  *length=total;
+  return 0;
+}
+static int br_artifact_digest(const char *directory,const char *name,size_t name_length,uint64_t *digest) {
+  unsigned char value[32];uint64_t length=0;
+  int error=br_artifact_binding(directory,name,name_length,value,&length);
+  if(!error)memcpy(digest,value,sizeof(*digest));
+  return error;
+}
+/* Exact comparison of the artifact already in custody with a requested byte
+   string: the same length and the same bytes. */
+static int br_artifact_same(const char *directory,const char *name,size_t name_length,
+                            const char *bytes,size_t length) {
+  if(br_artifact_name_ok(name,name_length))return EINVAL;
+  char *path=br_path(directory,name);
+  if(!path)return ENOMEM;
+  struct stat info;
+  int error=0;
+  if(lstat(path,&info))error=errno;
+  else if(!S_ISREG(info.st_mode))error=EINVAL;
+  else if(info.st_size!=(off_t)length)error=EEXIST;
+  int fd=error?-1:open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
+  if(!error && fd<0)error=errno;
+  char buffer[8192];size_t offset=0;
+  while(!error && offset<length) {
+    size_t take=length-offset<sizeof(buffer)?length-offset:sizeof(buffer);
+    ssize_t n=read(fd,buffer,take);
+    if(n<0 && errno==EINTR)continue;
+    if(n<=0){error=n<0?errno:EIO;break;}
+    if(memcmp(buffer,bytes+offset,(size_t)n))error=EEXIST;
+    offset+=(size_t)n;
+  }
+  if(fd>=0)close(fd);
+  free(path);
+  return error;
+}
+/* Exact comparison of the stored manifest with a requested one: the same field
+   count, the same lengths and the same bytes in every field. */
+static int br_manifest_same(const char *directory,const BrManifestHeader *header,char *const *fields,int count) {
+  BrManifest stored={0};
+  int error=br_manifest_read(directory,&stored);
+  if(!error && (stored.count!=count || stored.header.keep_stdin!=header->keep_stdin))error=EEXIST;
+  for(int i=0;!error && i<count;i++)
+    if(stored.header.lengths[i]!=header->lengths[i] ||
+       memcmp(stored.field[i],fields[i],(size_t)header->lengths[i]))error=EEXIST;
+  br_manifest_free(&stored);
   return error;
 }
 static int br_manifest_store(const char *directory,const char *manifest_path,BrManifestHeader *header,char **fields,size_t *lengths,int count) {
@@ -2074,29 +2195,25 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
     char *fields[8]={call->args,call->cwd,call->log,call->initial,call->recovery,NULL,NULL,NULL};
     size_t lengths[8]={call->length,strlen(call->cwd),strlen(call->log),call->initial_length,call->recovery_length,0,0,0};
     int count=6;
-    char digest_text[sizeof(uint64_t)]={0};
+    unsigned char digest_bytes[32]={0};
     if(call->artifact_name) {
       error=br_artifact_name_ok(call->artifact_name,call->artifact_name_length);
+      /* A repeated request must present exactly the bytes already in custody:
+         same length, same bytes. A digest alone is not the comparison. */
+      if(!error)error=br_artifact_same(existing,call->artifact_name,call->artifact_name_length,
+                                       call->artifact,call->artifact_length);
       if(!error) {
-        uint64_t requested_digest=br_digest_bytes(call->artifact,call->artifact_length);
-        uint64_t held_digest=0;
-        /* The artifact already in custody must be exactly the requested bytes,
-           or this is conflicting reuse of the same attempt. */
-        error=br_artifact_digest(existing,call->artifact_name,call->artifact_name_length,&held_digest);
-        if(!error && held_digest!=requested_digest)error=EEXIST;
-        if(!error) {
-          memcpy(digest_text,&requested_digest,sizeof(uint64_t));
-          count=8;memcpy(header.magic,"BATONRP2",8);
-          fields[6]=(char *)call->artifact_name;lengths[6]=call->artifact_name_length;
-          fields[7]=digest_text;lengths[7]=sizeof(uint64_t);
-        }
+        BrSha256 sha;br_sha256_init(&sha);
+        br_sha256_update(&sha,(const unsigned char *)call->artifact,call->artifact_length);
+        br_sha256_final(&sha,digest_bytes);
+        count=8;memcpy(header.magic,"BATONRP2",8);
+        fields[6]=(char *)call->artifact_name;lengths[6]=call->artifact_name_length;
+        fields[7]=(char *)digest_bytes;lengths[7]=sizeof(digest_bytes);
       }
     } else memcpy(header.magic,"BATONRP1",8);
     for(int i=0;i<count;i++)header.lengths[i]=lengths[i];
-    uint64_t requested=error?0:br_manifest_digest(&header,fields,count);
-    uint64_t found=0;
-    if(!error)error=br_manifest_digest_file(existing,&found);
-    if(!error && found!=requested)error=EEXIST;
+    /* The stored manifest must describe exactly this request, field by field. */
+    if(!error)error=br_manifest_same(existing,&header,fields,count);
     BrManifest manifest={0};
     if(!error)error=br_manifest_read(existing,&manifest);
     char *address=error?NULL:strdup(manifest.field[5]);
@@ -2123,19 +2240,20 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
     char *fields[8]={call->args,call->cwd,call->log,call->initial,call->recovery,address,NULL,NULL};
     size_t lengths[8]={call->length,strlen(call->cwd),strlen(call->log),call->initial_length,call->recovery_length,strlen(address),0,0};
     int count=6;
-    char digest_text[sizeof(uint64_t)]={0};
+    unsigned char digest_bytes[32]={0};
     if(call->artifact_name) {
       error=br_artifact_name_ok(call->artifact_name,call->artifact_name_length);
       /* The prepared artifact is written, flushed and made read-only inside
-         private attempt custody before anything is spawned, and its bytes are
-         bound into the admission identity below. */
+         private attempt custody before anything is spawned, and the SHA-256 of
+         its bytes is bound into the admission identity below. */
       if(!error)error=br_artifact_write(directory,call->artifact_name,call->artifact,call->artifact_length);
       if(!error) {
-        uint64_t digest=br_digest_bytes(call->artifact,call->artifact_length);
-        memcpy(digest_text,&digest,sizeof(uint64_t));
+        BrSha256 sha;br_sha256_init(&sha);
+        br_sha256_update(&sha,(const unsigned char *)call->artifact,call->artifact_length);
+        br_sha256_final(&sha,digest_bytes);
         count=8;memcpy(header.magic,"BATONRP2",8);
         fields[6]=(char *)call->artifact_name;lengths[6]=call->artifact_name_length;
-        fields[7]=digest_text;lengths[7]=sizeof(uint64_t);
+        fields[7]=(char *)digest_bytes;lengths[7]=sizeof(digest_bytes);
       }
     } else memcpy(header.magic,"BATONRP1",8);
     for(int i=0;i<count;i++)header.lengths[i]=lengths[i];
