@@ -54,7 +54,7 @@ def held(state: State) -> String:
 # Held OMP prefixes stay in memory while a message or tool call is active. They
 # are included in the next semantic checkpoint, but do not cause a disk write
 # for every cumulative progress frame. Restart replays from the prior offset.
-def checkpoint_due(previous: State, next: State) -> Bool:
+def checkpoint_due(+previous: State, +next: State) -> Bool:
   +guidance_changed = Bool.not(String.eq(cursor(previous),cursor(next)))
   +message_changed = Bool.not(String.eq(last_message(previous),last_message(next)))
   +primary_changed = Bool.not(String.eq(muse_primary(previous),muse_primary(next)))
