@@ -454,12 +454,12 @@ def native_completion_is_committed_before_owner_release(db,session,id,log,stderr
 # combined outcome keeps the same failure order for a successful acknowledge.
 def settle_attempt_before_joining_continuation(+db: String, +session: String, id: String, log: String, cursor: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    failed : Bool <- Receive.outcome_failed(db,outcome)
+    +failed : Bool <- Receive.outcome_failed(db,outcome)
     delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Turn.finish(db,session,id,log,outcome))
     continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Receive.continue_pending(db,session,cursor,again))
     finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
-    ack : Result<&1,&1,U32 & String,Unit> <- acknowledge(Unit{})
+    ack : Result<&1,&1,U32 & String,Unit> <- Receive.acknowledge_if_succeeded(failed,acknowledge)
     status : Result<&1,&1,U32 & String,Unit> <- Receive.exit_status(failed)
     next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))
@@ -477,6 +477,16 @@ law completed_attempt_settles_before_continuation_joins:
   {Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,acknowledge) == settle_attempt_before_joining_continuation(db,session,id,log,cursor,outcome,deliveries,again,acknowledge) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def completed_attempt_settles_before_continuation_joins(db,session,id,log,cursor,outcome,deliveries,again,acknowledge):
+  {==}
+
+# A failed report, commit, or native outcome skips the acknowledgement, so
+# the attempt is never acknowledged or retired and stays recorded for
+# same-attempt recovery.
+law failed_completion_skips_acknowledgement:
+  for -acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acknowledge_if_succeeded(True{},acknowledge) == IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def failed_completion_skips_acknowledgement(acknowledge):
   {==}
 
 # Retirement follows acknowledgment on the same attempt handle: the shared

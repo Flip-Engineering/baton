@@ -307,14 +307,23 @@ def release_observer(lock: Maybe<U32>) -> IO(Unit):
 # The acknowledge callback returns its Result as a value. An acknowledge
 # failure returns through that Result; the queued continuation is joined and
 # the failure is part of the combined outcome.
+# A failed report, commit, or native outcome never acknowledges or retires
+# the attempt: the unacknowledged input stays owed and the retained attempt
+# stays recorded for same-attempt recovery. The failure itself is already
+# reported through the exit status below.
+def acknowledge_if_succeeded(failed: Bool, acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match failed:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case False{}: acknowledge(Unit{})
+
 def finish_pending(+db: String, +session: String, id: String, log: String, cursor: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    failed : Bool <- outcome_failed(db,outcome)
+    +failed : Bool <- outcome_failed(db,outcome)
     delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Turn.finish(db,session,id,log,outcome))
     continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,continue_pending(db,session,cursor,again))
     finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
-    ack : Result<&1,&1,U32 & String,Unit> <- acknowledge(Unit{})
+    ack : Result<&1,&1,U32 & String,Unit> <- acknowledge_if_succeeded(failed,acknowledge)
     status : Result<&1,&1,U32 & String,Unit> <- exit_status(failed)
     next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))
