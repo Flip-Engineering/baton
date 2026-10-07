@@ -1091,13 +1091,18 @@ law m3a_unusable_listing_advances_nothing:
 def m3a_unusable_listing_advances_nothing(detail, repo, target, cand, basis):
   {==}
 
-# The production effect for a held target is Git's own fast-forward inside the
-# worktree that holds it, which is what makes the branch, the index and the
-# files move together and keeps that worktree's uncommitted work.
+# The held advance checks the exact local target and holder before running Git's
+# fast-forward in the worktree. A successful exit reaches the publication
+# observer, which preserves the holder's branch, index and worktree boundary.
 def held_pair_update(+path: String, +repo: String, +target: String, +cand: String, +basis: String) -> IO(L.LAdv):
+  +p2 = path
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  +b2 = basis
   do IO<L.LAdv>:
-    g : T.GitOut <- P.runGit(path, ["merge", "--ff-only", cand])
-    L.ld_adv_wt_pick(g, path, repo, target, cand, basis)
+    tip : T.GitOut <- P.runGit(r2, L.ld_target_ref_argv(t2))
+    L.ld_adv_wt_target_pick(tip, p2, r2, t2, c2, b2)
 
 law m3a_held_advance_is_the_worktree_fast_forward:
   for path: String
@@ -1108,6 +1113,49 @@ law m3a_held_advance_is_the_worktree_fast_forward:
   {L.ld_adv_wt(path, repo, target, cand, basis) == held_pair_update(path, repo, target, cand, basis) : IO(L.LAdv)}
 
 def m3a_held_advance_is_the_worktree_fast_forward(path, repo, target, cand, basis):
+  {==}
+
+def held_target_preflight(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(L.LAdv):
+  match g:
+    case T.GRun{code, out}:
+      +b2 = basis
+      +status_ok = U32.is_eq(code, 0)
+      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), b2), False{})
+      L.ld_adv_wt_target_same(same, path, repo, target, cand, b2)
+    case T.GBroken{detail}: IO.pure(L.LAdv, L.AdvBroken{detail})
+
+law m3a_held_preflight_requires_the_basis_tip:
+  for +g: T.GitOut
+  for path: String
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  {L.ld_adv_wt_target_pick(g, path, repo, target, cand, basis) == held_target_preflight(g, path, repo, target, cand, basis) : IO(L.LAdv)}
+
+def m3a_held_preflight_requires_the_basis_tip(g, path, repo, target, cand, basis):
+  {==}
+
+def held_holder_preflight(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(L.LAdv):
+  match g:
+    case T.GRun{code, out}:
+      +t2 = target
+      +status_ok = U32.is_eq(code, 0)
+      +same = Bool.pick(Bool, status_ok,
+        Tx.str_eq(Tx.trim_nl(out), L.ld_hold_ref(t2)), False{})
+      L.ld_adv_wt_head_same(same, path, repo, t2, cand, basis)
+    case T.GBroken{detail}: IO.pure(L.LAdv, L.AdvBroken{detail})
+
+law m3a_held_preflight_requires_the_target_holder:
+  for +g: T.GitOut
+  for path: String
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  {L.ld_adv_wt_head_pick(g, path, repo, target, cand, basis) == held_holder_preflight(g, path, repo, target, cand, basis) : IO(L.LAdv)}
+
+def m3a_held_preflight_requires_the_target_holder(g, path, repo, target, cand, basis):
   {==}
 
 # The held success arm dispatches through the source-bound publication

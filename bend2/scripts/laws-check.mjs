@@ -1088,6 +1088,13 @@ MUTATIONS.push(
     replace: '+same = True{}\n      ld_adv_wt_observed_target_same(same, path, target)',
     law: 'm3a_held_target_observation_requires_the_candidate_tip',
   },
+  {
+    name: 'held-preflight-skips-holder-branch-check',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '+same = Bool.pick(Bool, status_ok,\n        Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)), False{})\n      ld_adv_wt_head_same(same, path, repo, target, cand, basis)',
+    replace: 'ld_adv_wt_head_same(True{}, path, repo, target, cand, basis)',
+    law: 'm3a_held_preflight_requires_the_target_holder',
+  },
 );
 
 for (const mutation of MUTATIONS) {
