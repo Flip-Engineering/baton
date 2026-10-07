@@ -163,7 +163,9 @@ composition with the concurrent workload.
   `codex/shared676-deepseek-impl-20261006`, which reports attempt,
   generation, spool bytes, checkpoint offset, status and observation
   ownership for any number of readers; a duplicate admission takes that
-  reference, not a second child.
+  reference, not a second child. Request-level attach ENOENT routes to
+  orphan adoption at pin `cf3881f0` on the same branch, green on the
+  reviewer fixture.
 - CLI wiring is implemented: `Serve`, `OwnerStatus` and `Subscribe`
   commands with `sql` arms returning no statement, `parse` arms for
   `serve OWNER`, `owner-status` and `subscribe`, entry arms in `main.bend`
