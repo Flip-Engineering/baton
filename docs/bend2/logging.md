@@ -43,6 +43,28 @@ every level. The classification covers the OMP frame vocabulary
 `extension_ui_request`); a Codex, Muse or Claude frame therefore keeps its
 default record until its types are classified.
 
+## Default trace inventory
+
+At `default`, one OMP turn writes complete frames once and holds the newest
+snapshot per open identity:
+
+| Frame | Disposition at `default` |
+| --- | --- |
+| `message_update` | held newest per `messageId`; dropped when its `message_end` arrives; flushed at turn end when the end never arrives |
+| `tool_execution_update` | held newest per `toolCallId`; written before its `tool_execution_end`; flushed at turn end when the end never arrives |
+| `message_start` | held per `messageId`; dropped when its `message_end` arrives |
+| `message_end`, `tool_execution_start`, `tool_execution_end`, `response` | written complete |
+| `agent_end`, `result`, `turn_end` | written complete |
+| unclassified `type` | written complete |
+
+Final payloads stay inline. Terminal frames carry the full result text.
+The default writes each complete frame once and holds one newest snapshot
+per open identity. A measured OMP seat wrote 47 KB per
+retained frame with 95.8% of a 773 MB log in cumulative
+`tool_execution_update` snapshots; the 2026-10-06 workload retains 26,164,652
+bytes before the policy and 112 after it on the same `tool_execution_update`
+batch.
+
 A direct turn atomically replaces `OUTPUT_LOG.pending` when its incomplete
 frames change. The replacement is synced before its name becomes visible.
 An observer process killed during a tool call leaves the newest observed
@@ -59,7 +81,10 @@ coordinator reads the file size. At the budget the numbered segments shift one
 position up, the replacement of the highest one included, and the live log then
 takes the name `<log>.1` and opens with one `baton_log_rotation` frame naming
 the level, the budget and the numbered segments that held a file when the
-rotation ran. The live log moves exactly once per rotation.
+rotation ran. The live log moves exactly once per rotation. The lines one
+frame contributes pass one rotation check together, so a held update and its
+end land in the same file; a batch can carry the live log past the budget
+the way a single large frame can.
 A budget admits 65536 bytes or more, which holds at least one
 observed frame: a measured OMP seat wrote 47 KB per retained frame, and a
 budget below one frame rotates on every append. The upper bound is the U32
@@ -139,7 +164,10 @@ inbox holds the message.
 A turn whose native output read fails writes the prefix frames it still holds
 and then one `baton_log_interrupted` frame naming how many it wrote, so the
 partial output is in the log and its interruption is named. Both writes are
-best effort: a log that already failed takes neither.
+best effort: a log that already failed takes neither. The frame appears only
+when a read fails while the turn holds prefix frames. A failure on the first
+read holds nothing, so neither write emits a line; the turn outcome still
+names the read failure.
 
 ## Measurement
 

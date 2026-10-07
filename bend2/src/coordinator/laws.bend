@@ -89,6 +89,7 @@ import ./stop-laws.bend as StopLaws
 import ./native-request-laws.bend as NativeRequestLaws
 import ./knowledge-laws.bend as KnowledgeLaws
 import ./observation-laws.bend as ObservationLaws
+import ./observer-checkpoint-laws.bend as ObserverCheckpointLaws
 import ./messaging-laws.bend as MessagingLaws
 import ./connect-laws.bend as ConnectLaws
 import ./naming-laws.bend as NamingLaws
@@ -108,6 +109,7 @@ import ../harness/muse-player.bend as Muse
 import ../host/laws.bend as HostLaws
 import ../json/laws.bend as JsonLaws
 import ../json/canonical.bend as J
+import ../context/codec-schema-integration-laws.bend as CodecSchemaLaws
 import ../git/laws.bend as GitLaws
 import ../git/types.bend as T
 import ../git/text.bend as Tx
