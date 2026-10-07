@@ -41,8 +41,12 @@
           {
             "SfOptionalField": {
               "form": {
-                "SfScalar": {
-                  "kind": "SsText"
+                "SfOptional": {
+                  "inner": {
+                    "SfScalar": {
+                      "kind": "SsText"
+                    }
+                  }
                 }
               },
               "name": "sha256"

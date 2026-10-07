@@ -157,8 +157,12 @@
           {
             "SfOptionalField": {
               "form": {
-                "SfScalar": {
-                  "kind": "SsText"
+                "SfOptional": {
+                  "inner": {
+                    "SfScalar": {
+                      "kind": "SsText"
+                    }
+                  }
                 }
               },
               "name": "runtime"
@@ -167,8 +171,12 @@
           {
             "SfOptionalField": {
               "form": {
-                "SfScalar": {
-                  "kind": "SsText"
+                "SfOptional": {
+                  "inner": {
+                    "SfScalar": {
+                      "kind": "SsText"
+                    }
+                  }
                 }
               },
               "name": "role"
@@ -177,8 +185,12 @@
           {
             "SfOptionalField": {
               "form": {
-                "SfScalar": {
-                  "kind": "SsText"
+                "SfOptional": {
+                  "inner": {
+                    "SfScalar": {
+                      "kind": "SsText"
+                    }
+                  }
                 }
               },
               "name": "incarnation"

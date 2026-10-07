@@ -7,9 +7,7 @@
           {
             "SfOptionalField": {
               "form": {
-                "SfScalar": {
-                  "kind": "SsText"
-                }
+                "SfJson": {}
               },
               "name": "project"
             }

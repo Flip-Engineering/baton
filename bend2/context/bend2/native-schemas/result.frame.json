@@ -76,8 +76,12 @@
                     {
                       "SfOptionalField": {
                         "form": {
-                          "SfScalar": {
-                            "kind": "SsText"
+                          "SfOptional": {
+                            "inner": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            }
                           }
                         },
                         "name": "identity"
@@ -151,7 +155,7 @@
                               "SfRecord": {
                                 "fields": [
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -161,7 +165,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -171,7 +175,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsBool"
@@ -183,8 +187,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "closureIdentity"
@@ -193,8 +201,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "digest"
@@ -203,8 +215,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsNumberToken"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsNumberToken"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "byteLength"
@@ -226,7 +242,7 @@
                               "SfRecord": {
                                 "fields": [
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -236,7 +252,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -246,7 +262,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsBool"
@@ -256,7 +272,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsBool"
@@ -266,7 +282,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfEnum": {
                                           "literals": [
@@ -297,7 +313,7 @@
                               "SfRecord": {
                                 "fields": [
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -307,7 +323,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -319,8 +335,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "alias"
@@ -329,8 +349,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "specifier"
@@ -339,29 +363,41 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfRecord": {
-                                          "fields": [
-                                            {
-                                              "SfRequired": {
-                                                "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsNumberToken"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfRecord": {
+                                              "fields": [
+                                                {
+                                                  "SfOptionalField": {
+                                                    "form": {
+                                                      "SfOptional": {
+                                                        "inner": {
+                                                          "SfScalar": {
+                                                            "kind": "SsNumberToken"
+                                                          }
+                                                        }
+                                                      }
+                                                    },
+                                                    "name": "from"
                                                   }
                                                 },
-                                                "name": "from"
-                                              }
-                                            },
-                                            {
-                                              "SfRequired": {
-                                                "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsNumberToken"
+                                                {
+                                                  "SfOptionalField": {
+                                                    "form": {
+                                                      "SfOptional": {
+                                                        "inner": {
+                                                          "SfScalar": {
+                                                            "kind": "SsNumberToken"
+                                                          }
+                                                        }
+                                                      }
+                                                    },
+                                                    "name": "to"
                                                   }
-                                                },
-                                                "name": "to"
-                                              }
+                                                }
+                                              ]
                                             }
-                                          ]
+                                          }
                                         }
                                       },
                                       "name": "removed"
@@ -370,8 +406,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "removedText"
@@ -380,86 +420,106 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfRecord": {
-                                          "fields": [
-                                            {
-                                              "SfRequired": {
-                                                "form": {
-                                                  "SfEnum": {
-                                                    "literals": [
-                                                      "mapped",
-                                                      "unavailable"
-                                                    ]
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfRecord": {
+                                              "fields": [
+                                                {
+                                                  "SfRequired": {
+                                                    "form": {
+                                                      "SfEnum": {
+                                                        "literals": [
+                                                          "mapped",
+                                                          "unavailable"
+                                                        ]
+                                                      }
+                                                    },
+                                                    "name": "status"
                                                   }
                                                 },
-                                                "name": "status"
-                                              }
-                                            },
-                                            {
-                                              "SfOptionalField": {
-                                                "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                {
+                                                  "SfOptionalField": {
+                                                    "form": {
+                                                      "SfOptional": {
+                                                        "inner": {
+                                                          "SfScalar": {
+                                                            "kind": "SsText"
+                                                          }
+                                                        }
+                                                      }
+                                                    },
+                                                    "name": "identity"
                                                   }
                                                 },
-                                                "name": "identity"
-                                              }
-                                            },
-                                            {
-                                              "SfOptionalField": {
-                                                "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                {
+                                                  "SfOptionalField": {
+                                                    "form": {
+                                                      "SfOptional": {
+                                                        "inner": {
+                                                          "SfScalar": {
+                                                            "kind": "SsText"
+                                                          }
+                                                        }
+                                                      }
+                                                    },
+                                                    "name": "digest"
                                                   }
                                                 },
-                                                "name": "digest"
-                                              }
-                                            },
-                                            {
-                                              "SfOptionalField": {
-                                                "form": {
-                                                  "SfJson": {}
-                                                },
-                                                "name": "original"
-                                              }
-                                            },
-                                            {
-                                              "SfOptionalField": {
-                                                "form": {
-                                                  "SfJson": {}
-                                                },
-                                                "name": "byteRange"
-                                              }
-                                            },
-                                            {
-                                              "SfOptionalField": {
-                                                "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                {
+                                                  "SfOptionalField": {
+                                                    "form": {
+                                                      "SfJson": {}
+                                                    },
+                                                    "name": "original"
                                                   }
                                                 },
-                                                "name": "text"
-                                              }
-                                            },
-                                            {
-                                              "SfOptionalField": {
-                                                "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                {
+                                                  "SfOptionalField": {
+                                                    "form": {
+                                                      "SfJson": {}
+                                                    },
+                                                    "name": "byteRange"
                                                   }
                                                 },
-                                                "name": "reason"
-                                              }
-                                            },
-                                            {
-                                              "SfOptionalField": {
-                                                "form": {
-                                                  "SfJson": {}
+                                                {
+                                                  "SfOptionalField": {
+                                                    "form": {
+                                                      "SfOptional": {
+                                                        "inner": {
+                                                          "SfScalar": {
+                                                            "kind": "SsText"
+                                                          }
+                                                        }
+                                                      }
+                                                    },
+                                                    "name": "text"
+                                                  }
                                                 },
-                                                "name": "detail"
-                                              }
+                                                {
+                                                  "SfOptionalField": {
+                                                    "form": {
+                                                      "SfOptional": {
+                                                        "inner": {
+                                                          "SfScalar": {
+                                                            "kind": "SsText"
+                                                          }
+                                                        }
+                                                      }
+                                                    },
+                                                    "name": "reason"
+                                                  }
+                                                },
+                                                {
+                                                  "SfOptionalField": {
+                                                    "form": {
+                                                      "SfJson": {}
+                                                    },
+                                                    "name": "detail"
+                                                  }
+                                                }
+                                              ]
                                             }
-                                          ]
+                                          }
                                         }
                                       },
                                       "name": "specifierSpan"
@@ -481,7 +541,7 @@
                               "SfRecord": {
                                 "fields": [
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -491,7 +551,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -501,7 +561,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfDict": {
                                           "keys": {
@@ -516,7 +576,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsBool"
@@ -526,7 +586,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfEnum": {
                                           "literals": [
@@ -541,8 +601,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsBool"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsBool"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "parsedTextMatchesView"
@@ -564,7 +628,7 @@
                               "SfRecord": {
                                 "fields": [
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfEnum": {
                                           "literals": [
@@ -580,7 +644,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -590,7 +654,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -600,7 +664,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -610,7 +674,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -622,15 +686,19 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "file"
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsBool"
@@ -640,7 +708,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsNumberToken"
@@ -650,7 +718,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfRecord": {
                                           "fields": [
@@ -670,8 +738,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "identity"
@@ -680,8 +752,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "digest"
@@ -706,8 +782,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "text"
@@ -716,8 +796,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "reason"
@@ -753,7 +837,7 @@
                               "SfRecord": {
                                 "fields": [
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfEnum": {
                                           "literals": [
@@ -769,7 +853,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -779,7 +863,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfEnum": {
                                           "literals": [
@@ -810,8 +894,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsNumberToken"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsNumberToken"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "binderIndex"
@@ -820,28 +908,40 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsNumberToken"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsNumberToken"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "frameIndex"
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "qualified"
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "namespace"
@@ -850,8 +950,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "file"
@@ -860,54 +964,74 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfRecord": {
-                                          "fields": [
-                                            {
-                                              "SfRequired": {
-                                                "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfRecord": {
+                                              "fields": [
+                                                {
+                                                  "SfOptionalField": {
+                                                    "form": {
+                                                      "SfOptional": {
+                                                        "inner": {
+                                                          "SfScalar": {
+                                                            "kind": "SsText"
+                                                          }
+                                                        }
+                                                      }
+                                                    },
+                                                    "name": "qualified"
                                                   }
                                                 },
-                                                "name": "qualified"
-                                              }
-                                            },
-                                            {
-                                              "SfRequired": {
-                                                "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                {
+                                                  "SfOptionalField": {
+                                                    "form": {
+                                                      "SfOptional": {
+                                                        "inner": {
+                                                          "SfScalar": {
+                                                            "kind": "SsText"
+                                                          }
+                                                        }
+                                                      }
+                                                    },
+                                                    "name": "form"
                                                   }
                                                 },
-                                                "name": "form"
-                                              }
-                                            },
-                                            {
-                                              "SfRequired": {
-                                                "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsNumberToken"
+                                                {
+                                                  "SfOptionalField": {
+                                                    "form": {
+                                                      "SfOptional": {
+                                                        "inner": {
+                                                          "SfScalar": {
+                                                            "kind": "SsNumberToken"
+                                                          }
+                                                        }
+                                                      }
+                                                    },
+                                                    "name": "orderIndex"
                                                   }
-                                                },
-                                                "name": "orderIndex"
-                                              }
+                                                }
+                                              ]
                                             }
-                                          ]
+                                          }
                                         }
                                       },
                                       "name": "owner"
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfRecord": {
                                           "fields": [
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "namespace"
@@ -916,8 +1040,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsNumberToken"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsNumberToken"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "binderIndex"
@@ -930,7 +1058,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfRecord": {
                                           "fields": [
@@ -950,8 +1078,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "identity"
@@ -960,8 +1092,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "digest"
@@ -986,8 +1122,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "text"
@@ -996,8 +1136,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "reason"
@@ -1033,7 +1177,7 @@
                               "SfRecord": {
                                 "fields": [
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfEnum": {
                                           "literals": [
@@ -1049,7 +1193,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -1059,7 +1203,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfEnum": {
                                           "literals": [
@@ -1107,29 +1251,37 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfRecord": {
-                                          "fields": [
-                                            {
-                                              "SfRequired": {
-                                                "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfRecord": {
+                                              "fields": [
+                                                {
+                                                  "SfRequired": {
+                                                    "form": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    },
+                                                    "name": "kind"
                                                   }
                                                 },
-                                                "name": "kind"
-                                              }
-                                            },
-                                            {
-                                              "SfOptionalField": {
-                                                "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                {
+                                                  "SfOptionalField": {
+                                                    "form": {
+                                                      "SfOptional": {
+                                                        "inner": {
+                                                          "SfScalar": {
+                                                            "kind": "SsText"
+                                                          }
+                                                        }
+                                                      }
+                                                    },
+                                                    "name": "value"
                                                   }
-                                                },
-                                                "name": "value"
-                                              }
+                                                }
+                                              ]
                                             }
-                                          ]
+                                          }
                                         }
                                       },
                                       "name": "thrown"
@@ -1146,8 +1298,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "definition"
@@ -1156,15 +1312,19 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "file"
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfRecord": {
                                           "fields": [
@@ -1184,8 +1344,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "identity"
@@ -1194,8 +1358,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "digest"
@@ -1220,8 +1388,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "text"
@@ -1230,8 +1402,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "reason"
@@ -1267,7 +1443,7 @@
                               "SfRecord": {
                                 "fields": [
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfEnum": {
                                           "literals": [
@@ -1283,7 +1459,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -1293,7 +1469,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfScalar": {
                                           "kind": "SsText"
@@ -1305,8 +1481,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "definition"
@@ -1315,15 +1495,19 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "file"
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfJson": {}
                                       },
@@ -1331,33 +1515,45 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
-                                        "SfArray": {
-                                          "item": {
-                                            "SfRecord": {
-                                              "fields": [
-                                                {
-                                                  "SfRequired": {
-                                                    "form": {
-                                                      "SfScalar": {
-                                                        "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfArray": {
+                                              "item": {
+                                                "SfRecord": {
+                                                  "fields": [
+                                                    {
+                                                      "SfOptionalField": {
+                                                        "form": {
+                                                          "SfOptional": {
+                                                            "inner": {
+                                                              "SfScalar": {
+                                                                "kind": "SsText"
+                                                              }
+                                                            }
+                                                          }
+                                                        },
+                                                        "name": "quant"
                                                       }
                                                     },
-                                                    "name": "quant"
-                                                  }
-                                                },
-                                                {
-                                                  "SfOptionalField": {
-                                                    "form": {
-                                                      "SfScalar": {
-                                                        "kind": "SsText"
+                                                    {
+                                                      "SfOptionalField": {
+                                                        "form": {
+                                                          "SfOptional": {
+                                                            "inner": {
+                                                              "SfScalar": {
+                                                                "kind": "SsText"
+                                                              }
+                                                            }
+                                                          }
+                                                        },
+                                                        "name": "name"
                                                       }
-                                                    },
-                                                    "name": "name"
-                                                  }
+                                                    }
+                                                  ]
                                                 }
-                                              ]
+                                              }
                                             }
                                           }
                                         }
@@ -1366,7 +1562,7 @@
                                     }
                                   },
                                   {
-                                    "SfRequired": {
+                                    "SfOptionalField": {
                                       "form": {
                                         "SfRecord": {
                                           "fields": [
@@ -1386,8 +1582,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "identity"
@@ -1396,8 +1596,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "digest"
@@ -1422,8 +1626,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "text"
@@ -1432,8 +1640,12 @@
                                             {
                                               "SfOptionalField": {
                                                 "form": {
-                                                  "SfScalar": {
-                                                    "kind": "SsText"
+                                                  "SfOptional": {
+                                                    "inner": {
+                                                      "SfScalar": {
+                                                        "kind": "SsText"
+                                                      }
+                                                    }
                                                   }
                                                 },
                                                 "name": "reason"
@@ -1505,8 +1717,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "definition"
@@ -1523,8 +1739,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "file"
@@ -1533,8 +1753,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsNumberToken"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsNumberToken"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "orderLength"
@@ -1691,8 +1915,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "canonical"
@@ -1743,8 +1971,12 @@
                     {
                       "SfOptionalField": {
                         "form": {
-                          "SfScalar": {
-                            "kind": "SsText"
+                          "SfOptional": {
+                            "inner": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            }
                           }
                         },
                         "name": "reason"
@@ -1818,8 +2050,12 @@
                                   {
                                     "SfOptionalField": {
                                       "form": {
-                                        "SfScalar": {
-                                          "kind": "SsText"
+                                        "SfOptional": {
+                                          "inner": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          }
                                         }
                                       },
                                       "name": "sha256"
@@ -1836,8 +2072,12 @@
                     {
                       "SfOptionalField": {
                         "form": {
-                          "SfScalar": {
-                            "kind": "SsNumberToken"
+                          "SfOptional": {
+                            "inner": {
+                              "SfScalar": {
+                                "kind": "SsNumberToken"
+                              }
+                            }
                           }
                         },
                         "name": "fileCount"
@@ -1846,8 +2086,12 @@
                     {
                       "SfOptionalField": {
                         "form": {
-                          "SfScalar": {
-                            "kind": "SsText"
+                          "SfOptional": {
+                            "inner": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            }
                           }
                         },
                         "name": "reason"
