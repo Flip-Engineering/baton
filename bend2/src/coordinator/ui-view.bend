@@ -1,4 +1,4 @@
-# The optional read-only Orchestra live view (#682). `view SUBJECT [READER] [PORT]`
+# The optional read-only Orchestra live view (#682). `view SUBJECT [READER [PORT]]`
 # starts the packaged Node server bound to loopback under one immutable reader
 # identity, prints the URL, tries to open a browser, and serves until this command
 # exits. The server reads only committed coordinator state through the native_changes
@@ -10,7 +10,6 @@ import ../host/control.bend as Host
 import ../host/session-lock.bend as Lock
 import ../git/text.bend as Tx
 
-# The text before the last '/' of a path; the executable's install directory.
 def drop_to_slash(s: String) -> Maybe<String>:
   match s:
     case SNil{}: None{}
@@ -18,7 +17,7 @@ def drop_to_slash(s: String) -> Maybe<String>:
       Bool.pick(Maybe<String>,Char.is_eq(head,Char.from_u32(47)),Some{tail},drop_to_slash(tail))
 
 # The text before the last '/' of a path; the executable's install directory.
-# Matches scrutinize parameters, so the reversed string gets its own def.
+# Matches scrutinize parameters, so computed values get their own defs.
 def directory_of_rev(rev: Maybe<String>) -> Maybe<String>:
   match rev:
     case None{}: None{}
@@ -49,6 +48,11 @@ def server_candidates_in(dir: Maybe<String>) -> List<String>:
 def server_candidates(executable: String) -> List<String>:
   server_candidates_in(directory_of(executable))
 
+def resolve_step(resolved: Result<&1,&1,U32 & String,String>, rest: List<String>) -> IO(String):
+  match resolved:
+    case Done{+path}: IO.pure(String,path)
+    case Fail{error}: resolve_server(rest)
+
 def resolve_server(candidates: List<String>) -> IO(String):
   match candidates:
     case Nil{}:
@@ -56,27 +60,45 @@ def resolve_server(candidates: List<String>) -> IO(String):
     case +candidate <> rest:
       do IO<String>:
         resolved : Result<&1,&1,U32 & String,String> <- Host.Control.command(candidate)
-        match resolved:
-          case Done{+path}: IO.pure(String,path)
-          case Fail{error}: resolve_server(rest)
+        resolve_step(resolved,rest)
 
 def error_text(error: U32 & String) -> String:
   (code,text) = error
   text
 
+def open_fallback_result(opened: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match opened:
+    case Done{+text}: IO.pure(Unit,Unit{})
+    case Fail{error}: IO.write("No browser opener answered; visit the URL above in a browser.\n")
+
 def open_fallback(db: String, url: String) -> IO(Unit):
   do IO<Unit>:
     opened : Result<&1,&1,U32 & String,String> <- Host.Control.launch(Tx.enc_argv(["xdg-open",url]),db,"view-open")
-    match opened:
-      case Done{+text}: IO.pure(Unit,Unit{})
-      case Fail{error}: IO.write("No browser opener answered; visit the URL above in a browser.\n")
+    open_fallback_result(opened)
+
+def open_result(db: String, url: String, opened: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match opened:
+    case Done{+text}: IO.pure(Unit,Unit{})
+    case Fail{error}: open_fallback(db,url)
 
 def open_browser(db: String, url: String) -> IO(Unit):
   do IO<Unit>:
     opened : Result<&1,&1,U32 & String,String> <- Host.Control.launch(Tx.enc_argv(["open",url]),db,"view-open")
-    match opened:
-      case Done{+text}: IO.pure(Unit,Unit{})
-      case Fail{error}: open_fallback(db,url)
+    open_result(db,url,opened)
+
+def finish(status: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match status:
+    case Done{+text}: IO.write("Orchestra live view server exited: " ++ text)
+    case Fail{+error}: IO.die(Unit,2,"The view server wait failed: " ++ error_text(error))
+
+def serving(db: String, reader: String, url: String, handle: U32, line: String) -> IO(Unit):
+  do IO<Unit>:
+    IO.write("Orchestra live view: " ++ url ++ "\n")
+    IO.write("Reader " ++ reader ++ "; read-only recorded coordinator state; the reader's admitted scope applies. Serving until this command exits (Ctrl-C stops it).\n")
+    IO.write("Server: " ++ line)
+    opened : Unit <- open_browser(db,url)
+    status : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
+    finish(status)
 
 def serve(db: String, reader: String, url: String, handle: U32, first: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
   match first:
@@ -85,29 +107,29 @@ def serve(db: String, reader: String, url: String, handle: U32, first: Result<&1
     case Done{None{}}:
       IO.die(Unit,2,"The view server exited before reporting its address; the port may be in use. Pass another PORT. See " ++ db ++ ".view.stderr.")
     case Done{Some{+line}}:
-      do IO<Unit>:
-        IO.write("Orchestra live view: " ++ url ++ "\n")
-        IO.write("Reader " ++ reader ++ "; read-only recorded coordinator state; the reader's admitted scope applies. Serving until this command exits (Ctrl-C stops it).\n")
-        IO.write("Server: " ++ line)
-        opened : Unit <- open_browser(db,url)
-        status : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
-        match status:
-          case Done{+text}: IO.write("Orchestra live view server exited: " ++ text)
-          case Fail{+error}: IO.die(Unit,2,"The view server wait failed: " ++ error_text(error))
+      serving(db,reader,url,handle,line)
 
-def run(db: String, subject: String, reader: String, port: String) -> IO(Unit):
+def run_started(db: String, reader: String, url: String, spawned: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+  match spawned:
+    case Fail{+error}:
+      IO.die(Unit,2,"The view server could not start: " ++ error_text(error))
+    case Done{+handle}:
+      do IO<Unit>:
+        first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
+        serve(db,reader,url,handle,first)
+
+def run_body(db: String, subject: String, reader: String, port: String, canonical: String) -> IO(Unit):
   do IO<Unit>:
-    canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     node : String <- IO.try(String,Host.Control.command("node"))
     server : String <- resolve_server(server_candidates(executable))
     spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([node,server,"--database",canonical,"--reader",reader,"--subject",subject,"--host","127.0.0.1","--port",port]),".",canonical ++ ".view.stderr")
-    match spawned:
-      case Fail{+error}:
-        IO.die(Unit,2,"The view server could not start: " ++ error_text(error))
-      case Done{+handle}:
-        first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        serve(canonical,reader,"http://127.0.0.1:" ++ port ++ "/",handle,first)
+    run_started(canonical,reader,"http://127.0.0.1:" ++ port ++ "/",spawned)
+
+def run(db: String, subject: String, reader: String, port: String) -> IO(Unit):
+  do IO<Unit>:
+    canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    run_body(db,subject,reader,port,canonical)
 
 # The entry serves the canonical database under the declared reader: it resolves the
 # installed server beside the executable, spawns it bound to loopback with the durable
@@ -119,16 +141,7 @@ law view_run_serves_the_canonical_database_under_the_declared_reader:
   for port: String
   {run(db,subject,reader,port) == (do IO<Unit>:
     canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
-    executable : String <- IO.try(String,Lock.SessionLock.executable())
-    node : String <- IO.try(String,Host.Control.command("node"))
-    server : String <- resolve_server(server_candidates(executable))
-    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([node,server,"--database",canonical,"--reader",reader,"--subject",subject,"--host","127.0.0.1","--port",port]),".",canonical ++ ".view.stderr")
-    match spawned:
-      case Fail{+error}:
-        IO.die(Unit,2,"The view server could not start: " ++ error_text(error))
-      case Done{+handle}:
-        first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        serve(canonical,reader,"http://127.0.0.1:" ++ port ++ "/",handle,first)) : IO(Unit)}
+    run_body(db,subject,reader,port,canonical)) : IO(Unit)}
 
 def view_run_serves_the_canonical_database_under_the_declared_reader(db,subject,reader,port):
   {==}
