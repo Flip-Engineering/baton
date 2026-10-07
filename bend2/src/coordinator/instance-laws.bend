@@ -31,17 +31,18 @@ law lapsed_heartbeats_clear_after_three_hundred_seconds:
 def lapsed_heartbeats_clear_after_three_hundred_seconds():
   {==}
 
-law owner_claim_clears_lapsed_rows_first:
-  {Instance.claim_clear_sql() == "DELETE FROM instance_owner WHERE heartbeat<CAST((SELECT strftime('%s','now')) AS INTEGER)-" ++ Instance.claim_lapse_seconds() ++ ";" : String}
+law owner_claim_clears_only_lapsed_foreign_rows:
+  for +owner: String
+  {Instance.claim_clear_sql(owner) == "DELETE FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ " AND heartbeat<CAST((SELECT strftime('%s','now')) AS INTEGER)-" ++ Instance.claim_lapse_seconds() ++ ";" : String}
 
-def owner_claim_clears_lapsed_rows_first():
+def owner_claim_clears_only_lapsed_foreign_rows(owner):
   {==}
 
-law owner_claim_inserts_only_without_another_holder:
+law owner_claim_inserts_only_without_a_live_holder:
   for +owner: String
-  {Instance.claim_insert_sql(owner) == "INSERT INTO instance_owner(owner, heartbeat, generation) SELECT " ++ C.q(owner) ++ ",(SELECT strftime('%s','now')),coalesce((SELECT max(generation)+1 FROM instance_owner),1) WHERE NOT EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ") ON CONFLICT(owner) DO UPDATE SET heartbeat=excluded.heartbeat;" : String}
+  {Instance.claim_insert_sql(owner) == "INSERT INTO instance_owner(owner, heartbeat, generation) SELECT " ++ C.q(owner) ++ ",(SELECT strftime('%s','now')),coalesce((SELECT max(generation)+1 FROM instance_owner),1) WHERE NOT EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ " AND heartbeat>=CAST((SELECT strftime('%s','now')) AS INTEGER)-" ++ Instance.claim_lapse_seconds() ++ ") ON CONFLICT(owner) DO UPDATE SET heartbeat=excluded.heartbeat;" : String}
 
-def owner_claim_inserts_only_without_another_holder(owner):
+def owner_claim_inserts_only_without_a_live_holder(owner):
   {==}
 
 law owner_claim_decision_names_holder_or_refusal:
@@ -52,11 +53,11 @@ law owner_claim_decision_names_holder_or_refusal:
 def owner_claim_decision_names_holder_or_refusal(owner):
   {==}
 
-law owner_claim_assembles_clear_insert_decide:
+law owner_claim_assembles_insert_clear_decide:
   for +owner: String
-  {Instance.claim_sql(owner) == Instance.claim_clear_sql() ++ Instance.claim_insert_sql(owner) ++ Instance.claim_decide_sql(owner) : String}
+  {Instance.claim_sql(owner) == Instance.claim_insert_sql(owner) ++ Instance.claim_clear_sql(owner) ++ Instance.claim_decide_sql(owner) : String}
 
-def owner_claim_assembles_clear_insert_decide(owner):
+def owner_claim_assembles_insert_clear_decide(owner):
   {==}
 
 law owner_heartbeat_refreshes_only_the_claimant_row:

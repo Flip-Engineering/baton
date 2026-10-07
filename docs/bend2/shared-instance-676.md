@@ -24,8 +24,11 @@ One `serve` invocation holds each canonical Orchestra database:
   A second holder for the same database receives the `duplicate-owner`
   error naming the current holder; a refused claimant inserts nothing. A
   re-claim by the recorded holder refreshes its heartbeat and keeps its
-  generation number. Each new holder epoch carries the next generation
-  number.
+  generation number. The insert reads the generation counter before the
+  clear deletes lapsed rows, so each new holder epoch carries the next
+  generation number across owner crashes. Each `serve` invocation passes
+  an owner name unique to that invocation. Two simultaneous first claims
+  refuse together; the custody election owns liveness past that point.
 - Liveness is held by the host custody election in the stable per-user IPC
   directory keyed by the database physical identity. The SQL row records
   the live holder for status and crash recovery.
