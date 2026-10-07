@@ -192,6 +192,18 @@ reference batch is
 [bend2/test/fixtures/muse-trace-audit-20261007.jsonl](../test/fixtures/muse-trace-audit-20261007.jsonl)
 with text payloads replaced by equal-length runs.
 
+Native Codex traces repeat full command output per frame. One 1,311-line
+session holds 1,072 `command_execution` frames at 12.29 MB; one command
+re-emits 68 frames totaling 3.36 MB while its final frame carries 3 bytes,
+and another re-emits 54 frames totaling 2.59 MB with 739 final bytes. Each
+`item.completed` frame carries the whole aggregate output so far, and empty
+`item.started` frames mark progress only. Keeping the newest completed frame
+per command id preserves every final outcome; the earlier frames are
+superseded. The shape-faithful reference batch is
+[bend2/test/fixtures/codex-trace-audit-20261007.jsonl](../test/fixtures/codex-trace-audit-20261007.jsonl)
+with outputs replaced by equal-length runs and user paths redacted. The
+coordinator does not classify these frames yet.
+
 ## Open work
 
 A receive that attaches to a retained attempt reads the attempt from its first
