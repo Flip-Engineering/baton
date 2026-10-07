@@ -290,7 +290,7 @@ class SharedInstance(unittest.TestCase):
         present a record the host did not write itself."""
         header = struct.Struct('=8sQQQQQi4xQQ')
         if birth is None:
-            pid, first, second = struct.unpack('=iQQ', (directory / 'native.birth').read_bytes())
+            pid, first, second = struct.unpack('=i4xQQ', (directory / 'native.birth').read_bytes())
         else:
             pid, first, second = birth
         body = header.pack(b'BATONC02', incarnation, attempt, offset, len(blob), 0, pid, first, second)
