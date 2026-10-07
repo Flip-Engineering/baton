@@ -1224,6 +1224,36 @@ def ld_adv_cas(g: T.GitOut) -> LAdv:
     case T.GRun{code, out}: Bool.pick(LAdv, U32.is_eq(code, 0), AdvLanded{}, AdvRefused{})
     case T.GBroken{detail}: AdvBroken{detail}
 
+# The unheld advance is not landed on exit zero alone: while the target claim is still held the
+# target ref is read back and required to be the candidate. A moved target answers AdvMoved with
+# the capture retained; an unreadable readback answers AdvBroken with it.
+def ld_adv_cas_qualified(target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>, status: T.GitOut, repo: String) -> IO(LdAdvObs):
+  +t2 = target
+  +c2 = cand
+  +cp = capture
+  +st = status
+  +r2 = repo
+  match st:
+    case T.GRun{code, out}:
+      match U32.is_eq(code, 0):
+        case False{}: IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(st), cp))
+        case True{}:
+          do IO<LdAdvObs>:
+            after : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
+            ld_adv_cas_readback(t2, c2, cp, after)
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(st), cp))
+
+def ld_adv_cas_readback(target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut) -> IO(LdAdvObs):
+  +c2 = cand
+  +cp = capture
+  match after:
+    case T.GRun{code, out}:
+      +ok = Bool.pick(Bool, U32.is_eq(code, 0), Tx.str_eq(Tx.trim_nl(out), c2), False{})
+      match ok:
+        case True{}: IO.pure(LdAdvObs, ld_adv_with(AdvLanded{}, cp))
+        case False{}: IO.pure(LdAdvObs, ld_adv_with(AdvMoved{}, cp))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(AdvBroken{detail}, cp))
+
 def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +r2 = repo
   +t2 = target
@@ -1233,7 +1263,7 @@ def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ct
   do IO<LdAdvObs>:
     captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", ld_update_argv(t2, c2, b2)}), r2, cx.claim, cx.guard, cx.artifact)
     +capture = captured
-    IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(ld_adv_status(capture)), capture))
+    ld_adv_cas_qualified(t2, c2, capture, ld_adv_status(capture), r2)
 def ld_adv_refused_same(same: Bool, path: String) -> LAdv:
   match same:
     case True{}: AdvHeld{path}
