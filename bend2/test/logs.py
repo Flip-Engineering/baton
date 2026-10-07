@@ -260,6 +260,22 @@ sys.exit(%d)
                                                self.cwd / 'turn.jsonl.2'] if p.exists())
         self.assertLessEqual(total, (keep + 1) * (budget + 4096))
 
+    def test_unclassified_command_frames_keep_verbatim(self):
+        self.call('logs', 'omp-worker', 'default', '65536', '2')
+        started = json.dumps({'type': 'item.started', 'item': {'type': 'command_execution',
+                             'id': 'cmd-1', 'command': 'probe', 'status': 'in_progress'}})
+        first = json.dumps({'type': 'item.completed', 'item': {'type': 'command_execution',
+                            'id': 'cmd-1', 'command': 'probe', 'status': 'in_progress',
+                            'exit_code': None, 'aggregated_output': 'part one'}})
+        second = json.dumps({'type': 'item.completed', 'item': {'type': 'command_execution',
+                             'id': 'cmd-1', 'command': 'probe', 'status': 'completed',
+                             'exit_code': 0, 'aggregated_output': 'part one part two'}})
+        self.stream([started, first, second, self.terminal()])
+        retained = self.rotated_frames()
+        self.assertIn(started, retained)
+        self.assertIn(first, retained)
+        self.assertIn(second, retained)
+
     def test_held_update_and_end_share_one_rotation_decision(self):
         self.call('logs', 'omp-worker', 'default', '65536', '2')
         pad = json.dumps({'type': 'response', 'id': 'p0', 'command': 'probe', 'pad': 'y' * 64000})

@@ -181,6 +181,20 @@ and a `raw` batch that fixes the retention semantics of frames that name
 26,164,652 retained bytes before the policy and 112 after it on the same
 `tool_execution_update` workload.
 
+Native Codex traces show one start and one completion per command id, so no
+deduplication applies. One 1,311-line session holds 536 command ids with
+exactly one `item.started` and one `item.completed` each and 11,381,350
+completed-output bytes; a second 371-line session holds 157 ids with zero
+repeats. The 128 ids shared across the two sessions name different commands
+with different outputs, so ids reset across turns and must never coalesce
+across them. An earlier grouping by command-text prefix reported repeated
+frames; that grouping mixed distinct executions and is withdrawn. Every
+completed execution is unique evidence: the default keeps all of them within
+the rotation bound, with terminal outcomes inline. The shape-faithful
+reference batch is
+[bend2/test/fixtures/codex-trace-audit-20261007.jsonl](../test/fixtures/codex-trace-audit-20261007.jsonl)
+with outputs replaced by equal-length runs and user paths redacted.
+
 ## Open work
 
 A receive that attaches to a retained attempt reads the attempt from its first
