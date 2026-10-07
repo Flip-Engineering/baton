@@ -64,11 +64,14 @@ function discover(dir) {
 }
 
 // One row per `law <name>:` in the tree, with the module that states it.
-function laws() {
+export function laws(dir = SRC) {
   const rows = [];
-  for (const file of discover(SRC)) {
+  for (const file of discover(dir)) {
     const lines = readFileSync(file, 'utf8').split('\n');
-    for (const line of lines) {
+    for (const [index, line] of lines.entries()) {
+      if (/^\s*law\b/.test(line) && !/^law [A-Za-z0-9_]+:/.test(line)) {
+        throw new Error(`malformed law declaration at ${file}:${index + 1}`);
+      }
       const match = /^law ([A-Za-z0-9_]+):/.exec(line);
       if (match) rows.push({ law: match[1], file });
     }
@@ -78,11 +81,12 @@ function laws() {
 
 // Remove the `def <name>(...)` block that proves <name>: the def line and every
 // following blank or indented line. Returns false when no such def exists.
-function removeProof(modulePath, name) {
+export function removeProof(modulePath, name) {
   const text = readFileSync(modulePath, 'utf8');
   const lines = text.split('\n');
-  const start = lines.findIndex((line) => line.startsWith(`def ${name}(`));
-  if (start === -1) return false;
+  const starts = lines.flatMap((line, index) => line.startsWith(`def ${name}(`) ? [index] : []);
+  if (starts.length !== 1) return false;
+  const [start] = starts;
   let end = start + 1;
   while (end < lines.length && (lines[end] === '' || /^\s/.test(lines[end]))) end++;
   lines.splice(start, end - start);
@@ -169,7 +173,7 @@ function runnerCpuCapacity() {
   let capacity = availableParallelism();
   try {
     const [quota, period] = readFileSync('/sys/fs/cgroup/cpu.max', 'utf8').trim().split(/\s+/);
-    if (quota !== 'max') capacity = Math.min(capacity, Math.max(1, Math.floor(Number(quota) / Number(period))));
+    if (quota !== 'max') capacity = Math.min(capacity, Number(quota) / Number(period));
   } catch {}
   return { cpuCapacity: capacity, cpuLoadAverage: Math.max(0, readCpuLoadAverage()) };
 }
@@ -187,29 +191,24 @@ function cpuTicksPerSecond() {
   return cachedCpuTicksPerSecond;
 }
 
-function processTreeUsage(pid) {
-  if (!pid || process.platform !== 'linux') return { rssBytes: 0, cpuTicksByPid: new Map(), processCount: 0 };
-  const pending = [pid];
-  const seen = new Set();
-  let rssBytes = 0;
+function processGroupUsage(processGroup) {
+  if (!processGroup || process.platform !== 'linux') return { rssBytes: 0, cpuTicksByPid: new Map(), processCount: 0 };
   const cpuTicksByPid = new Map();
-  while (pending.length) {
-    const current = pending.pop();
-    if (seen.has(current)) continue;
-    seen.add(current);
+  let rssBytes = 0;
+  for (const entry of readdirSync('/proc')) {
+    if (!/^\d+$/.test(entry)) continue;
     try {
-      const stat = readFileSync(`/proc/${current}/stat`, 'utf8');
+      const stat = readFileSync(`/proc/${entry}/stat`, 'utf8');
       const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
-      cpuTicksByPid.set(current, Number(fields[11]) + Number(fields[12]));
-      const status = readFileSync(`/proc/${current}/status`, 'utf8').match(/^VmRSS:\s+(\d+)\s+kB/m);
+      if (Number(fields[2]) !== processGroup) continue;
+      cpuTicksByPid.set(Number(entry), Number(fields[11]) + Number(fields[12]));
+      const status = readFileSync(`/proc/${entry}/status`, 'utf8').match(/^VmRSS:\s+(\d+)\s+kB/m);
       if (status) rssBytes += Number(status[1]) * 1024;
-      const children = readFileSync(`/proc/${current}/task/${current}/children`, 'utf8').trim();
-      if (children) pending.push(...children.split(/\s+/).map(Number));
     } catch {
-      // A process can exit between reading its parent and its own status.
+      // A process can exit between listing /proc and reading its stat.
     }
   }
-  return { rssBytes, cpuTicksByPid, processCount: seen.size };
+  return { rssBytes, cpuTicksByPid, processCount: cpuTicksByPid.size };
 }
 
 function excerpt(path) {
@@ -242,7 +241,7 @@ function runCompiler(args, cwd, stdoutPath, stderrPath) {
   return new Promise((resolveResult) => {
     const stdoutFd = openSync(stdoutPath, 'w');
     const stderrFd = openSync(stderrPath, 'w');
-    const child = spawn(BEND, args, { cwd, env: ENV, stdio: ['ignore', stdoutFd, stderrFd] });
+    const child = spawn(BEND, args, { cwd, env: ENV, stdio: ['ignore', stdoutFd, stderrFd], detached: process.platform !== 'win32' });
     const processId = child.pid ?? null;
     let maxRssBytes = 0;
     let maxProcessCount = 0;
@@ -253,7 +252,7 @@ function runCompiler(args, cwd, stdoutPath, stderrPath) {
     let startupError = null;
     const recordUsage = () => {
       const sampledAt = process.hrtime.bigint();
-      const usage = processTreeUsage(child.pid);
+      const usage = processGroupUsage(child.pid);
       maxRssBytes = Math.max(maxRssBytes, usage.rssBytes);
       maxProcessCount = Math.max(maxProcessCount, usage.processCount);
       if (previousSampleAt && ticksPerSecond > 0) {
@@ -270,7 +269,7 @@ function runCompiler(args, cwd, stdoutPath, stderrPath) {
       previousSampleAt = sampledAt;
     };
     recordUsage();
-    const sample = setInterval(recordUsage, 100);
+    const sample = setInterval(recordUsage, 50);
     child.on('error', (error) => { startupError = `${error.name}: ${error.message}`; });
     child.on('close', (code, signal) => {
       clearInterval(sample);
@@ -295,11 +294,16 @@ async function fileContains(path, needle) {
   return false;
 }
 
-async function outputMatches(paths, pattern) {
-  // Existing controls classify these compiler diagnostics by their complete
-  // raw output; streaming keeps large logs outside the scheduler process.
-  const needles = pattern === 'proof' ? ['TODO found', 'expected :', 'Error'] : [pattern];
-  for (const path of paths) for (const needle of needles) if (await fileContains(path, needle)) return true;
+export async function outputMatches(paths, pattern) {
+  // A removed proof must produce Bend's incomplete-proof diagnostic. A generic
+  // compiler error does not show that the law rejected the removed proof.
+  if (pattern === 'proof') {
+    for (const path of paths) {
+      if (await fileContains(path, 'TODO found.') && await fileContains(path, 'not a valid proof yet.')) return true;
+    }
+    return false;
+  }
+  for (const path of paths) if (await fileContains(path, pattern)) return true;
   return false;
 }
 
@@ -370,8 +374,8 @@ export async function verifyResults(expected, results) {
     }
     if (!Number.isInteger(result.exitCode) || result.signal !== null || result.startupError !== null) {
       failures.push({ id: result.id, reason: 'compiler process did not report an ordinary completed exit' });
-    } else if (result.exitCode === 0) {
-      failures.push({ id: result.id, reason: 'compiler accepted the control' });
+    } else if (result.exitCode !== 1) {
+      failures.push({ id: result.id, reason: 'compiler did not return the expected rejection exit code' });
     }
     const outputPaths = [];
     for (const stream of ['stdout', 'stderr']) {
@@ -401,12 +405,13 @@ export async function verifyResults(expected, results) {
 }
 
 export function concurrencyFor({ cpuCapacity, cpuLoadAverage = 0, cpuDemandPerCompiler = 1, memoryAvailableBytes, memoryEstimateBytes, runnerCapacity }) {
-  const configuredCapacity = Number.isInteger(runnerCapacity) && runnerCapacity > 0 ? runnerCapacity : cpuCapacity;
+  const hasRunnerCapacity = Number.isInteger(runnerCapacity) && runnerCapacity >= 0;
+  const configuredCapacity = hasRunnerCapacity ? runnerCapacity : cpuCapacity;
   const availableCpuCores = Math.max(0, cpuCapacity - Math.min(Math.max(0, cpuLoadAverage), cpuCapacity));
-  const cpuAvailableCapacity = Math.max(1, Math.floor(availableCpuCores / Math.max(cpuDemandPerCompiler, 1)));
+  const cpuAvailableCapacity = Math.floor(availableCpuCores / Math.max(cpuDemandPerCompiler, 1));
   const memoryCapacity = Math.floor(memoryAvailableBytes / Math.max(memoryEstimateBytes, 1));
   return {
-    admitted: Math.max(1, Math.min(cpuAvailableCapacity, configuredCapacity, memoryCapacity)),
+    admitted: Math.min(cpuAvailableCapacity, configuredCapacity, memoryCapacity),
     cpuCapacity,
     cpuLoadAverage,
     availableCpuCores,
@@ -417,8 +422,13 @@ export function concurrencyFor({ cpuCapacity, cpuLoadAverage = 0, cpuDemandPerCo
     memoryCapacity,
     totalMemoryBytes: totalmem(),
     runnerCapacity: configuredCapacity,
-    runnerCapacitySource: Number.isInteger(runnerCapacity) && runnerCapacity > 0 ? 'configured' : 'available CPU capacity',
+    runnerCapacitySource: hasRunnerCapacity ? 'configured' : 'available CPU capacity',
   };
+}
+
+export function createRunRoot(runRoot) {
+  mkdirSync(dirname(runRoot), { recursive: true });
+  mkdirSync(runRoot);
 }
 
 function admittedConcurrency(memoryEstimateBytes, cpuDemandPerCompiler) {
@@ -460,7 +470,7 @@ async function runControl(control, runRoot) {
       : await outputMatches([stdoutPath, stderrPath], control.payload.law);
   }
   const completed = applied && outcome.exitCode !== null && outcome.signal === null && outcome.startupError === null;
-  const passed = completed && outcome.exitCode !== 0 && rejectedForExpectedReason;
+  const passed = completed && outcome.exitCode === 1 && rejectedForExpectedReason;
   const outputs = applied ? {
     stdout: { ...(await excerpt(stdoutPath)), sha256: await hashFile(stdoutPath) },
     stderr: { ...(await excerpt(stderrPath)), sha256: await hashFile(stderrPath) },
@@ -1532,7 +1542,8 @@ async function runGate() {
   }
   const runRoot = join(SCRATCH, ...requestParts, 'artifacts', job);
   const artifactRoot = join(runRoot, 'artifacts');
-  mkdirSync(artifactRoot, { recursive: true });
+  createRunRoot(runRoot);
+  mkdirSync(artifactRoot);
   const controlsPath = join(runRoot, 'controls.json');
   writeJson(controlsPath, controls);
   const controlsArtifactSha256 = await hashFile(controlsPath);
@@ -1618,6 +1629,14 @@ async function runGate() {
     console.error(`expected Node >=22.15.0 and bend 2.0.25, got Node ${process.version}, Bend ${version || toolchain.versionError || `exit ${versionRun.status}`}`);
     return 1;
   }
+  if (process.platform !== 'linux') {
+    metadata.status = 'red';
+    metadata.finishedAt = new Date().toISOString();
+    metadata.failure = 'compiler resource admission requires Linux process-group accounting';
+    writeJson(join(runRoot, 'run.json'), metadata);
+    console.error(metadata.failure);
+    return 1;
+  }
 
   const baselineCwd = join(runRoot, 'workspaces', 'entry-baseline');
   mkdirSync(dirname(baselineCwd), { recursive: true });
@@ -1676,6 +1695,14 @@ async function runGate() {
   metadata.capacity = capacity;
   metadata.producerCount = controls.length;
   console.log(JSON.stringify({ scheduler: 'admitted', ...capacity, producerCount: controls.length }));
+  if (capacity.admitted < 1) {
+    metadata.status = 'red';
+    metadata.finishedAt = new Date().toISOString();
+    metadata.failure = 'no measured CPU and memory capacity is available for compiler controls';
+    writeJson(join(runRoot, 'run.json'), metadata);
+    console.error(metadata.failure);
+    return 1;
+  }
   const controlsStarted = process.hrtime.bigint();
   const results = await runPool(dispatchedControls, capacity.admitted, runRoot);
   const controlsElapsedMs = Number(process.hrtime.bigint() - controlsStarted) / 1e6;
@@ -1685,6 +1712,11 @@ async function runGate() {
   }
   if (await hashFile(dispatchesPath) !== dispatchesArtifactSha256) {
     integrityFailures.push({ id: 'producer-dispatch', reason: 'producer dispatch artifact changed during execution' });
+  }
+  const finalIdentity = sourceIdentity(rows);
+  metadata.sourceFinalSha256 = finalIdentity.sha256;
+  if (finalIdentity.sha256 !== identity.sha256) {
+    integrityFailures.push({ id: 'source', reason: 'source changed during control execution' });
   }
   const completedCount = results.filter(({ completed }) => completed === true).length;
   const elapsedMs = baselineElapsedMs + controlsElapsedMs;

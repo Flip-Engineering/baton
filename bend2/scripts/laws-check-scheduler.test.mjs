@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cloneLinkedTree, concurrencyFor, detachFile, producerSet, supportedNodeVersion, verifyResults } from './laws-check.mjs';
+import { cloneLinkedTree, concurrencyFor, createRunRoot, detachFile, laws, outputMatches, producerSet, removeProof, supportedNodeVersion, verifyResults } from './laws-check.mjs';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 const rows = [
@@ -21,7 +21,9 @@ const dispatched = controls.map((control) => ({ ...control, workToken: randomUUI
 const artifactRoot = mkdtempSync(join(tmpdir(), 'laws-check-scheduler-fixture-'));
 const workspaceRoot = mkdtempSync(join(tmpdir(), 'laws-check-workspace-fixture-'));
 const complete = dispatched.map((control, index) => {
-  const diagnostic = control.kind === 'proof' ? 'Error expected :' : control.payload.law;
+  const diagnostic = control.kind === 'proof'
+    ? 'Error: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.'
+    : control.payload.law;
   const stdoutPath = join(artifactRoot, `${index}.stdout.log`);
   const stderrPath = join(artifactRoot, `${index}.stderr.log`);
   writeFileSync(stdoutPath, diagnostic);
@@ -86,6 +88,45 @@ test('Node support follows the published minimum and preserves exact runtime ide
   assert.equal(supportedNodeVersion('v22.23.3'), true);
   assert.equal(supportedNodeVersion('v23.0.0'), true);
   assert.equal(supportedNodeVersion('v22'), false);
+});
+
+test('law discovery includes new nested producer files and rejects malformed declarations', () => {
+  const source = join(workspaceRoot, 'law-discovery');
+  mkdirSync(join(source, 'nested'), { recursive: true });
+  writeFileSync(join(source, 'first.bend'), 'law first_law:\n\ndef first_law():\n  True\n');
+  writeFileSync(join(source, 'nested', 'second.bend'), 'law second_law:\n\ndef second_law():\n  True\n');
+  assert.deepEqual(laws(source).map(({ law }) => law), ['first_law', 'second_law']);
+  writeFileSync(join(source, 'nested', 'third.bend'), 'law third_law:\n');
+  assert.deepEqual(laws(source).map(({ law }) => law), ['first_law', 'second_law', 'third_law']);
+  writeFileSync(join(source, 'nested', 'malformed.bend'), '  law omitted_law:\n');
+  assert.throws(() => laws(source), /malformed law declaration/);
+});
+
+test('proof removal removes exactly one definition and leaves other definitions intact', () => {
+  const modulePath = join(workspaceRoot, 'proof-removal.bend');
+  writeFileSync(modulePath, 'def first_law():\n  True\n\ndef second_law():\n  True\n');
+  assert.equal(removeProof(modulePath, 'first_law'), true);
+  assert.equal(readFileSync(modulePath, 'utf8'), 'def second_law():\n  True\n');
+  assert.equal(removeProof(modulePath, 'missing_law'), false);
+  writeFileSync(modulePath, 'def duplicate_law():\n  True\n\ndef duplicate_law():\n  False\n');
+  const before = readFileSync(modulePath, 'utf8');
+  assert.equal(removeProof(modulePath, 'duplicate_law'), false);
+  assert.equal(readFileSync(modulePath, 'utf8'), before);
+});
+
+test('proof controls require the incomplete-proof diagnostic', async () => {
+  const genericError = join(artifactRoot, 'generic-error.log');
+  const incompleteProof = join(artifactRoot, 'incomplete-proof.log');
+  writeFileSync(genericError, 'Error: unrelated type mismatch');
+  writeFileSync(incompleteProof, 'Error: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.');
+  assert.equal(await outputMatches([genericError], 'proof'), false);
+  assert.equal(await outputMatches([incompleteProof], 'proof'), true);
+});
+
+test('request and job artifacts cannot overwrite a prior execution', () => {
+  const runRoot = join(workspaceRoot, 'run-root-collision', 'request', 'artifacts', 'job');
+  createRunRoot(runRoot);
+  assert.throws(() => createRunRoot(runRoot), /EEXIST/);
 });
 
 test('producer discovery returns each proof and mutation identity once', async () => {
@@ -215,4 +256,21 @@ test('admission uses CPU, available memory, and runner capacity', () => {
   assert.equal(loadLimited.admitted, 28);
   assert.equal(loadLimited.runnerCapacity, 32);
   assert.equal(loadLimited.runnerCapacitySource, 'available CPU capacity');
+  assert.equal(concurrencyFor({
+    cpuCapacity: 32,
+    cpuLoadAverage: 32,
+    memoryAvailableBytes: 64 * 1024,
+    memoryEstimateBytes: 1024,
+  }).admitted, 0);
+  assert.equal(concurrencyFor({
+    cpuCapacity: 32,
+    memoryAvailableBytes: 0,
+    memoryEstimateBytes: 1024,
+  }).admitted, 0);
+  assert.equal(concurrencyFor({
+    cpuCapacity: 32,
+    memoryAvailableBytes: 64 * 1024,
+    memoryEstimateBytes: 1024,
+    runnerCapacity: 0,
+  }).admitted, 0);
 });
