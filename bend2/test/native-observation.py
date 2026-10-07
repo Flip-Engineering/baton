@@ -19,6 +19,7 @@ SPEC.loader.exec_module(RECEIVE)
 class NativeObservation(RECEIVE.Receive):
     def setUp(self):
         super().setUp()
+        self.addCleanup(self.preserve_failed_fixture)
         fixture = self.fixture.read_text()
         needle = "    action=json.loads(line)\n"
         addition = (
@@ -32,6 +33,19 @@ class NativeObservation(RECEIVE.Receive):
             "        continue\n")
         self.assertIn(needle, fixture)
         self.fixture.write_text(fixture.replace(needle, needle + addition, 1))
+
+    def preserve_failed_fixture(self):
+        outcome = getattr(self, '_outcome', None)
+        errors = list(getattr(outcome, 'errors', ())) if outcome is not None else []
+        result = getattr(outcome, 'result', None) if outcome is not None else None
+        if result is not None:
+            errors.extend(getattr(result, 'failures', ()))
+            errors.extend(getattr(result, 'errors', ()))
+        if not any(test is self for test, _ in errors):
+            return
+        self.temp._finalizer.detach()
+        print(f'preserved_native_observation_fixture={self.directory}',
+              file=sys.stderr, flush=True)
 
     def eventually_slow_case(self, observation, description):
         deadline = time.monotonic() + 180
@@ -62,12 +76,20 @@ class NativeObservation(RECEIVE.Receive):
                 if ' --recover-receive ' in process['command']]
 
     def assert_attempt_acknowledged(self, attempt):
-        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
-            row = database.execute(
-                "SELECT phase,status FROM executions WHERE session='parent' AND mode='retained'").fetchone()
-        self.assertEqual(row, ('exited', 'exit 0'))
-        self.assertTrue((pathlib.Path(attempt) / 'released').is_file())
-        self.assertTrue((pathlib.Path(attempt) / 'acknowledged').is_file())
+        deadline = time.monotonic() + 10
+        latest = None
+        while True:
+            with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+                row = database.execute(
+                    "SELECT phase,status FROM executions WHERE session='parent' AND mode='retained'").fetchone()
+            released = (pathlib.Path(attempt) / 'released').is_file()
+            acknowledged = (pathlib.Path(attempt) / 'acknowledged').is_file()
+            latest = (row, released, acknowledged)
+            if row == ('exited', 'exit 0') and released and acknowledged:
+                return
+            if time.monotonic() >= deadline:
+                self.fail(f'retained attempt did not reach successful ACK: {latest!r}')
+            time.sleep(.01)
 
     def test_mixed_agent_end_members_preserve_completion_and_raw_frame(self):
         self.player(harness='omp')
