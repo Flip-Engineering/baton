@@ -138,14 +138,14 @@ def clean_owner_output_is_admitted(owner):
 
 law owned_task_reads_the_recorded_executable:
   for +session: String
-  {Instance.recorded_cmd_sql(session) == "SELECT coalesce((SELECT json_extract(endpoint,'$[4]') FROM sessions WHERE id=" ++ C.q(session) ++ "),'');" : String}
+  {Instance.recorded_cmd_sql(session) == "SELECT coalesce((SELECT CASE WHEN json_valid(endpoint) THEN json_extract(endpoint,'$[4]') ELSE NULL END FROM sessions WHERE id=" ++ C.q(session) ++ "),'');" : String}
 
 def owned_task_reads_the_recorded_executable(session):
   {==}
 
 law owned_task_reads_the_recorded_log:
   for +session: String
-  {Instance.recorded_log_sql(session) == "SELECT coalesce((SELECT json_extract(endpoint,'$[8]') FROM sessions WHERE id=" ++ C.q(session) ++ "),'');" : String}
+  {Instance.recorded_log_sql(session) == "SELECT coalesce((SELECT CASE WHEN json_valid(endpoint) THEN json_extract(endpoint,'$[8]') ELSE NULL END FROM sessions WHERE id=" ++ C.q(session) ++ "),'');" : String}
 
 def owned_task_reads_the_recorded_log(session):
   {==}

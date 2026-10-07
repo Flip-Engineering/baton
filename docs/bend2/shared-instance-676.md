@@ -137,9 +137,10 @@ composition with the concurrent workload.
   handoff carries that identity so a second driver cannot launch between
   claim and handoff. Serve resolves each session's harness executable
   and log from the recorded receiver endpoint array at indexes four
-  and eight through SQL-side extraction; the array order is the
-  receiver endpoint shape owned by that writer. This lane makes no
-  edits in those files.
+  and eight through SQL-side extraction guarded by json_valid, since
+  the runner SQLite errors on json_extract of an empty endpoint; the
+  array order is the receiver endpoint shape owned by that writer.
+  This lane makes no edits in those files.
 - Ordinary routing is implemented in this lane: `serve`, `owner-status`
   and `subscribe` commands in `commands.bend`, entry arms in `main.bend`,
   and `baton2_owner` plus `baton2_subscribe` tools in

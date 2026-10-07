@@ -90,10 +90,10 @@ def combine(first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U32 & S
 # endpoint array carries the executable at index four and the log at
 # index eight, per the receiver endpoint shape.
 def recorded_cmd_sql(+session: String) -> String:
-  "SELECT coalesce((SELECT json_extract(endpoint,'$[4]') FROM sessions WHERE id=" ++ C.q(session) ++ "),'');"
+  "SELECT coalesce((SELECT CASE WHEN json_valid(endpoint) THEN json_extract(endpoint,'$[4]') ELSE NULL END FROM sessions WHERE id=" ++ C.q(session) ++ "),'');"
 
 def recorded_log_sql(+session: String) -> String:
-  "SELECT coalesce((SELECT json_extract(endpoint,'$[8]') FROM sessions WHERE id=" ++ C.q(session) ++ "),'');"
+  "SELECT coalesce((SELECT CASE WHEN json_valid(endpoint) THEN json_extract(endpoint,'$[8]') ELSE NULL END FROM sessions WHERE id=" ++ C.q(session) ++ "),'');"
 
 def serve_session(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:

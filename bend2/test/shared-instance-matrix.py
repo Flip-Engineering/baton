@@ -253,9 +253,16 @@ class Matrix(unittest.TestCase):
                         rss = int(fields[0])
                     except ValueError:
                         continue
-                    kind = ('keeper' if '--host-process-keeper' in fields[1]
-                            else 'fixture' if 'native-fixture' in fields[1]
-                            else 'coordinator')
+                    first = fields[1].split(None, 1)[0]
+                    is_baton = first.endswith('/baton2') or first == 'baton2'
+                    if '--host-process-keeper' in fields[1]:
+                        kind = 'keeper'
+                    elif is_baton:
+                        kind = 'coordinator'
+                    elif 'native-fixture' in fields[1]:
+                        kind = 'fixture'
+                    else:
+                        continue
                     totals[kind] = totals.get(kind, 0) + rss
                     counts[kind] = counts.get(kind, 0) + 1
                 for kind, total in totals.items():
