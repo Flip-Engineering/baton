@@ -140,7 +140,7 @@ static Term baton_event_digest_pack(Env e, IoWork *w) {
 }
 
 /* The effect ID uses the definition name from the Bend source. */
-#ifdef CID_LOGS_EVENT_SHA256
+#ifdef CID_EVENT_SHA256
 static Term baton_event_digest_run(Env e, Term *f, IoWork *w) {
   BatonEventDigest *call = calloc(1, sizeof(*call));
   if (!call) return io_fail(e, ENOMEM, NULL);
@@ -154,6 +154,6 @@ static Term baton_event_digest_run(Env e, Term *f, IoWork *w) {
   return io_work(w, baton_event_digest_call, baton_event_digest_pack);
 }
 static void __attribute__((constructor)) baton_event_digest_use(void) {
-  io_eff(CID_LOGS_EVENT_SHA256, baton_event_digest_run, 0);
+  io_eff(CID_EVENT_SHA256, baton_event_digest_run, 0);
 }
 #endif
