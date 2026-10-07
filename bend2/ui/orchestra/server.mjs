@@ -218,15 +218,18 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
   try {
     subscription = await subscribeCommittedChanges({
       databasePath,
-      reader,
-      subject,
+      afterCursor: String(initialCursor),
+      expectedGeneration,
       onNotice: (notice) => subscription ? onNotice(notice) : earlyNotices.push(notice),
     });
   } catch {
     return json(response, 503, { error: 'native-owner-subscription-unavailable' });
   }
-  if (!subscription || typeof subscription.generation !== 'string'
+  if (!subscription || subscription.ready !== true
+      || typeof subscription.generation !== 'string'
+      || parseCursor(subscription.cursor) === null
       || typeof subscription.close !== 'function') {
+    try { subscription?.close?.(); } catch {}
     return json(response, 503, { error: 'native-owner-subscription-unavailable' });
   }
   let cursor = initialCursor;
@@ -342,6 +345,7 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
       return endWithGap('owner-generation-changed');
     }
     if (notice.kind === 'commit') pump();
+    if (notice.kind === 'gap') endWithGap(notice.reason || 'cursor-gap');
     if (notice.kind === 'lost' || notice.kind === 'unavailable') endWithGap('owner-notification-lost');
   };
   response.on('close', () => {
@@ -357,6 +361,10 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
     cursor: String(cursor),
     generation: subscription.generation,
   });
+  if (subscription.gap) {
+    endWithGap('cursor-gap');
+    return;
+  }
   for (const notice of earlyNotices) onNotice(notice);
   pump();
 }

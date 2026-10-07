@@ -99,11 +99,13 @@ function fixture() {
 function commitNotifications(generation = 'owner-1') {
   const subscribers = new Set();
   return {
-    subscribeCommittedChanges: async ({ onNotice }) => {
+    subscribeCommittedChanges: async ({ afterCursor, onNotice }) => {
       const subscriber = { onNotice };
       subscribers.add(subscriber);
       return {
+        ready: true,
         generation,
+        cursor: afterCursor,
         close: () => subscribers.delete(subscriber),
       };
     },
@@ -178,6 +180,31 @@ test('event endpoint stays unavailable when the canonical owner has no subscript
   const response = await fetch(`${base}/orchestra/events?subject=root&since=0`);
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), { error: 'native-owner-subscription-unavailable' });
+});
+
+test('event endpoint requires a ready owner subscription with a durable cursor', async (t) => {
+  const f = fixture();
+  const server = createOrchestraServer({ databasePath: f.databasePath, reader: 'root',
+    subscribeCommittedChanges: async () => ({ generation: 'owner-1', close() {} }) });
+  t.after(async () => { await close(server); rmSync(f.directory, { recursive: true, force: true }); });
+  const base = await listen(server);
+  const response = await fetch(`${base}/orchestra/events?subject=child&since=0`);
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: 'native-owner-subscription-unavailable' });
+});
+
+test('owner replay gap sends hello then closes with a snapshot gap', async (t) => {
+  const f = fixture();
+  const server = createOrchestraServer({ databasePath: f.databasePath, reader: 'root',
+    subscribeCommittedChanges: async () => ({ ready: true, generation: 'owner-1',
+      cursor: '0', gap: true, close() {} }) });
+  t.after(async () => { await close(server); rmSync(f.directory, { recursive: true, force: true }); });
+  const base = await listen(server);
+  const response = await fetch(`${base}/orchestra/events?subject=child&since=0`);
+  assert.equal(response.status, 200);
+  const frames = await response.text();
+  assert.match(frames, /event: hello/);
+  assert.match(frames, /event: gap[\s\S]*cursor-gap/);
 });
 
 test('CLI reports its actual URL and exits cleanly when stdin reaches EOF', async (t) => {
