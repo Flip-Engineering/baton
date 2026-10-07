@@ -445,6 +445,22 @@ def query_artifact_json(+owner: String, +worktree: String, +query: String,
           BoundaryPathReady{boundary_text(value, "path")}),
         BoundaryPathRefused{"queryArtifactObservationMismatch"})
 
+def query_boundary_rows(+db: String, +binding: String, +owner: String,
+                        +worktree: String, +query: String, +source: Bool,
+                        result: Result<&1,&1,U32 & String,String>) -> IO(BoundaryPath):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(BoundaryPath, BoundaryPathRefused{"queryBoundaryDecodeRead"})
+    case Done{+rows}:
+      match project_policy_json_rows(rows):
+        case ProjectPolicyJsonRefused{reason}:
+          IO.pure(BoundaryPath, BoundaryPathRefused{reason})
+        case ProjectPolicyJsonReady{+value}:
+          IO.pure(BoundaryPath, Bool.pick(BoundaryPath, source,
+            query_source_json(owner, worktree, ProjectPolicyJsonReady{value}),
+            query_artifact_json(owner, worktree, query, ProjectPolicyJsonReady{value})))
+
 def query_boundary_output(+db: String, +binding: String, +owner: String,
                          +worktree: String, +query: String,
                          +source: Bool, +answer: ProviderAnswer) -> IO(BoundaryPath):
@@ -456,16 +472,7 @@ def query_boundary_output(+db: String, +binding: String, +owner: String,
         do IO<BoundaryPath>:
           result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
             Req.json_tree_sql(value))
-          match result:
-            case Fail{error}:
-              match error:
-                case (code, detail): IO.pure(BoundaryPath, BoundaryPathRefused{"queryBoundaryDecodeRead"})
-            case Done{+rows}:
-              decoded : ProjectPolicyJson <- IO.pure(ProjectPolicyJson, project_policy_json_rows(rows))
-              IO.pure(BoundaryPath, Bool.pick(BoundaryPath,
-                source,
-                query_source_json(owner, worktree, decoded),
-                query_artifact_json(owner, worktree, query, decoded))),
+          query_boundary_rows(db, binding, owner, worktree, query, source, result),
         IO.pure(BoundaryPath, BoundaryPathRefused{"queryBoundaryProcessRefused"}))
 
 def query_boundary_runtime_answer(+db: String, +binding: String, +executable: String,
