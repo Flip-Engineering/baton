@@ -56,7 +56,7 @@ def declaration_object() -> J.Json:
   J.Jpair{"entry", J.Jobj{J.Jpair{"artifact", J.Jstr{"native-provider.mjs"},
     J.Jpair{"argv", J.Jarr{J.Jstr{"--experimental-strip-types"}, J.Jnil{}}, J.Jnil{}}}},
   J.Jpair{"artifactIdentities", J.Jarr{J.Jobj{J.Jpair{"packagePath", J.Jstr{"native-provider.mjs"},
-    J.Jpair{"sha256", J.Jstr{"aa"}, J.Jpair{"role", J.Jstr{"provider"}, J.Jnil{}}}}, J.Jnil{}},
+    J.Jpair{"sha256", J.Jstr{"aa"}, J.Jpair{"role", J.Jstr{"provider"}, J.Jnil{}}}}}, J.Jnil{}},
   J.Jpair{"dependencies", J.Jarr{J.Jnil{}, J.Jnil{}},
   J.Jpair{"schemaIdentities", J.Jarr{J.Jstr{"sub"}, J.Jarr{J.Jstr{"opt"}, J.Jarr{J.Jstr{"res"}, J.Jarr{J.Jstr{"ref"}, J.Jarr{J.Jstr{"evt"}, J.Jnil{}}}}}},
   J.Jpair{"applicability", J.Jarr{J.Jnil{}, J.Jnil{}},
