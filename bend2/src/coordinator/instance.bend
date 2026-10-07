@@ -27,7 +27,7 @@ type Event is Data:
 # Loop state travels as one value so event handlers take a single affine
 # continuation back into the drive below.
 type Loop is Data:
-  State{failed: Bool, flying: List<String>, refused: List<String>}
+  LoopState{failed: Bool, flying: List<String>, refused: List<String>}
 
 # The fixed coordinator role tag: one constant 64-hex digest, independent of
 # the database path, the query subject and the owner epoch. The lock file also
@@ -266,7 +266,7 @@ def fork_split(+db: String, +chan: Chan(Event), split: List<(String & String)> &
     case (fork, refuse): do IO<Loop>:
       flying_now : List<String> <- fork_each(db, chan, fork, flying)
       refused_now : List<String> <- refuse_each(refuse, refused)
-      IO.pure(Loop, State{failed, flying_now, refused_now})
+      IO.pure(Loop, LoopState{failed, flying_now, refused_now})
 
 def fork_stripped2(+db: String, +chan: Chan(Event), stripped2: List<(String & String)> & List<String>, flying: List<String>, failed: Bool) -> IO(Loop):
   match stripped2:
@@ -330,7 +330,7 @@ def on_event(+db: String, handle: U32, guard: U32, +chan: Chan(Event), event: Ev
 
 def open_state(+db: String, handle: U32, guard: U32, +chan: Chan(Event), event: Event, state: Loop, again: Loop -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match state:
-    case State{failed, flying, refused}: on_event(db, handle, guard, chan, event, failed, flying, refused, again)
+    case LoopState{failed, flying, refused}: on_event(db, handle, guard, chan, event, failed, flying, refused, again)
 
 def dispatch_maybe(db: String, handle: U32, guard: U32, chan: Chan(Event), state: Loop, event: Maybe<&1,Event>, again: Loop -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match event:
