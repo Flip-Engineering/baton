@@ -1,0 +1,174 @@
+{
+  "SchemaDef": {
+    "form": {
+      "SfUnion": {
+        "cases": [
+          {
+            "form": {
+              "SfRecord": {
+                "fields": [
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfEnum": {
+                          "literals": [
+                            "position"
+                          ]
+                        }
+                      },
+                      "name": "kind"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "path"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsU32Token"
+                        }
+                      },
+                      "name": "line"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsU32Token"
+                        }
+                      },
+                      "name": "column"
+                    }
+                  }
+                ]
+              }
+            },
+            "tag": "position"
+          },
+          {
+            "form": {
+              "SfRecord": {
+                "fields": [
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfEnum": {
+                          "literals": [
+                            "symbol"
+                          ]
+                        }
+                      },
+                      "name": "kind"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "path"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "name"
+                    }
+                  },
+                  {
+                    "SfOptionalField": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "container"
+                    }
+                  }
+                ]
+              }
+            },
+            "tag": "symbol"
+          },
+          {
+            "form": {
+              "SfRecord": {
+                "fields": [
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfEnum": {
+                          "literals": [
+                            "diagnostic"
+                          ]
+                        }
+                      },
+                      "name": "kind"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "path"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsU32Token"
+                        }
+                      },
+                      "name": "line"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsU32Token"
+                        }
+                      },
+                      "name": "column"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "code"
+                    }
+                  }
+                ]
+              }
+            },
+            "tag": "diagnostic"
+          }
+        ]
+      }
+    },
+    "name": "baton2.context.typescript.subject.v1"
+  }
+}

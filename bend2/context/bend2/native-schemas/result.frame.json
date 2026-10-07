@@ -1,0 +1,656 @@
+{
+  "SchemaDef": {
+    "name": "baton2.context.typescript.result.v1",
+    "form": {
+      "SfRecord": {
+        "fields": [
+          {
+            "SfRequired": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsNumberToken"
+                }
+              },
+              "name": "version"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "engine"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfOptional": {
+                  "inner": {
+                    "SfScalar": {
+                      "kind": "SsText"
+                    }
+                  }
+                }
+              },
+              "name": "query"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfRecord": {
+                  "fields": [
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfScalar": {
+                            "kind": "SsText"
+                          }
+                        },
+                        "name": "name"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfScalar": {
+                            "kind": "SsText"
+                          }
+                        },
+                        "name": "version"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfScalar": {
+                            "kind": "SsText"
+                          }
+                        },
+                        "name": "libraryPath"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfScalar": {
+                            "kind": "SsText"
+                          }
+                        },
+                        "name": "librarySha"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfScalar": {
+                            "kind": "SsText"
+                          }
+                        },
+                        "name": "node"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfScalar": {
+                            "kind": "SsText"
+                          }
+                        },
+                        "name": "runtime"
+                      }
+                    }
+                  ]
+                }
+              },
+              "name": "provider"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfRef": {
+                  "name": "baton2.context.typescript.subject.v1"
+                }
+              },
+              "name": "subject"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfRecord": {
+                  "fields": [
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfScalar": {
+                            "kind": "SsText"
+                          }
+                        },
+                        "name": "snapshotId"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfOptional": {
+                            "inner": {
+                              "SfJson": {}
+                            }
+                          }
+                        },
+                        "name": "worktree"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfJson": {}
+                        },
+                        "name": "effectiveOptions"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfRecord": {
+                            "fields": [
+                              {
+                                "SfRequired": {
+                                  "form": {
+                                    "SfScalar": {
+                                      "kind": "SsText"
+                                    }
+                                  },
+                                  "name": "name"
+                                }
+                              },
+                              {
+                                "SfRequired": {
+                                  "form": {
+                                    "SfScalar": {
+                                      "kind": "SsText"
+                                    }
+                                  },
+                                  "name": "version"
+                                }
+                              },
+                              {
+                                "SfRequired": {
+                                  "form": {
+                                    "SfScalar": {
+                                      "kind": "SsText"
+                                    }
+                                  },
+                                  "name": "libraryPath"
+                                }
+                              },
+                              {
+                                "SfRequired": {
+                                  "form": {
+                                    "SfScalar": {
+                                      "kind": "SsText"
+                                    }
+                                  },
+                                  "name": "librarySha"
+                                }
+                              },
+                              {
+                                "SfRequired": {
+                                  "form": {
+                                    "SfScalar": {
+                                      "kind": "SsText"
+                                    }
+                                  },
+                                  "name": "node"
+                                }
+                              },
+                              {
+                                "SfRequired": {
+                                  "form": {
+                                    "SfScalar": {
+                                      "kind": "SsText"
+                                    }
+                                  },
+                                  "name": "runtime"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "name": "provider"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfArray": {
+                            "item": {
+                              "SfJson": {}
+                            }
+                          }
+                        },
+                        "name": "inputs"
+                      }
+                    }
+                  ]
+                }
+              },
+              "name": "snapshot"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfArray": {
+                  "item": {
+                    "SfRecord": {
+                      "fields": [
+                        {
+                          "SfRequired": {
+                            "form": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            },
+                            "name": "id"
+                          }
+                        },
+                        {
+                          "SfRequired": {
+                            "form": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            },
+                            "name": "kind"
+                          }
+                        },
+                        {
+                          "SfRequired": {
+                            "form": {
+                              "SfEnum": {
+                                "literals": [
+                                  "observed",
+                                  "static-possible",
+                                  "checked",
+                                  "declared"
+                                ]
+                              }
+                            },
+                            "name": "classification"
+                          }
+                        },
+                        {
+                          "SfOptionalField": {
+                            "form": {
+                              "SfJson": {}
+                            },
+                            "name": "value"
+                          }
+                        },
+                        {
+                          "SfRequired": {
+                            "form": {
+                              "SfArray": {
+                                "item": {
+                                  "SfJson": {}
+                                }
+                              }
+                            },
+                            "name": "evidence"
+                          }
+                        },
+                        {
+                          "SfRequired": {
+                            "form": {
+                              "SfArray": {
+                                "item": {
+                                  "SfRecord": {
+                                    "fields": [
+                                      {
+                                        "SfRequired": {
+                                          "form": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          },
+                                          "name": "projection"
+                                        }
+                                      },
+                                      {
+                                        "SfRequired": {
+                                          "form": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          },
+                                          "name": "code"
+                                        }
+                                      },
+                                      {
+                                        "SfRequired": {
+                                          "form": {
+                                            "SfJson": {}
+                                          },
+                                          "name": "detail"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            "name": "limits"
+                          }
+                        },
+                        {
+                          "SfOptionalField": {
+                            "form": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            },
+                            "name": "from"
+                          }
+                        },
+                        {
+                          "SfOptionalField": {
+                            "form": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            },
+                            "name": "to"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "name": "facts"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfArray": {
+                  "item": {
+                    "SfRecord": {
+                      "fields": [
+                        {
+                          "SfRequired": {
+                            "form": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            },
+                            "name": "id"
+                          }
+                        },
+                        {
+                          "SfRequired": {
+                            "form": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            },
+                            "name": "kind"
+                          }
+                        },
+                        {
+                          "SfRequired": {
+                            "form": {
+                              "SfEnum": {
+                                "literals": [
+                                  "observed",
+                                  "static-possible",
+                                  "checked",
+                                  "declared"
+                                ]
+                              }
+                            },
+                            "name": "classification"
+                          }
+                        },
+                        {
+                          "SfOptionalField": {
+                            "form": {
+                              "SfJson": {}
+                            },
+                            "name": "value"
+                          }
+                        },
+                        {
+                          "SfRequired": {
+                            "form": {
+                              "SfArray": {
+                                "item": {
+                                  "SfJson": {}
+                                }
+                              }
+                            },
+                            "name": "evidence"
+                          }
+                        },
+                        {
+                          "SfRequired": {
+                            "form": {
+                              "SfArray": {
+                                "item": {
+                                  "SfRecord": {
+                                    "fields": [
+                                      {
+                                        "SfRequired": {
+                                          "form": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          },
+                                          "name": "projection"
+                                        }
+                                      },
+                                      {
+                                        "SfRequired": {
+                                          "form": {
+                                            "SfScalar": {
+                                              "kind": "SsText"
+                                            }
+                                          },
+                                          "name": "code"
+                                        }
+                                      },
+                                      {
+                                        "SfRequired": {
+                                          "form": {
+                                            "SfJson": {}
+                                          },
+                                          "name": "detail"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            "name": "limits"
+                          }
+                        },
+                        {
+                          "SfOptionalField": {
+                            "form": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            },
+                            "name": "from"
+                          }
+                        },
+                        {
+                          "SfOptionalField": {
+                            "form": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            },
+                            "name": "to"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "name": "relations"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfArray": {
+                  "item": {
+                    "SfRef": {
+                      "name": "baton2.context.typescript.reference.v1"
+                    }
+                  }
+                }
+              },
+              "name": "refs"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfArray": {
+                  "item": {
+                    "SfRecord": {
+                      "fields": [
+                        {
+                          "SfRequired": {
+                            "form": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            },
+                            "name": "projection"
+                          }
+                        },
+                        {
+                          "SfRequired": {
+                            "form": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            },
+                            "name": "code"
+                          }
+                        },
+                        {
+                          "SfRequired": {
+                            "form": {
+                              "SfJson": {}
+                            },
+                            "name": "detail"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "name": "limits"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfRecord": {
+                  "fields": [
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfArray": {
+                            "item": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            }
+                          }
+                        },
+                        "name": "examined"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfArray": {
+                            "item": {
+                              "SfScalar": {
+                                "kind": "SsText"
+                              }
+                            }
+                          }
+                        },
+                        "name": "excluded"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfScalar": {
+                            "kind": "SsBool"
+                          }
+                        },
+                        "name": "providerCompletion"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfArray": {
+                            "item": {
+                              "SfJson": {}
+                            }
+                          }
+                        },
+                        "name": "unsupported"
+                      }
+                    }
+                  ]
+                }
+              },
+              "name": "coverage"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "applicability"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfArray": {
+                  "item": {
+                    "SfJson": {}
+                  }
+                }
+              },
+              "name": "changedInputs"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

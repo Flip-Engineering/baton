@@ -1,0 +1,90 @@
+{
+  "SchemaDef": {
+    "name": "baton2.context.typescript.event.v1",
+    "form": {
+      "SfRecord": {
+        "fields": [
+          {
+            "SfRequired": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsNumberToken"
+                }
+              },
+              "name": "version"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "engine"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfOptional": {
+                  "inner": {
+                    "SfScalar": {
+                      "kind": "SsText"
+                    }
+                  }
+                }
+              },
+              "name": "query"
+            }
+          },
+          {
+            "SfRequired": {
+              "form": {
+                "SfRecord": {
+                  "fields": [
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfEnum": {
+                            "literals": [
+                              "validationRefusal"
+                            ]
+                          }
+                        },
+                        "name": "kind"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfScalar": {
+                            "kind": "SsText"
+                          }
+                        },
+                        "name": "condition"
+                      }
+                    },
+                    {
+                      "SfRequired": {
+                        "form": {
+                          "SfArray": {
+                            "item": {
+                              "SfJson": {}
+                            }
+                          }
+                        },
+                        "name": "limits"
+                      }
+                    }
+                  ]
+                }
+              },
+              "name": "error"
+            }
+          }
+        ]
+      }
+    }
+  }
+}
