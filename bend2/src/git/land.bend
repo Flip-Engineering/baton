@@ -1267,7 +1267,7 @@ def ld_adv_wt_capture(path: String, repo: String, target: String, cand: String, 
 # Git provides no atomic CLI operation that pins symbolic HEAD across the final identity check
 # and the merge, so a switch in that interval can still direct the merge to another branch. The
 # target claim coordinates participating landings; it does not lock an independent Git process.
-def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
+def ld_adv_wt_head_same(same: Bool, +path: String, repo: String, target: String, cand: String, basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match same:
     case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvHolderChanged{path}, MutationHeld{path}))
     case True{}:
@@ -2962,3 +2962,77 @@ law a_rejected_attempt_refuses_the_advance:
 def a_rejected_attempt_refuses_the_advance():
   {==}
 
+# The mode and capture laws, each consuming a production helper. The framing strings are the ones the
+# Tx.run_res contract parses: "exit 0\n..." succeeds, "exit 7\n" is a failed exit, "signal 9\n" is a
+# signalled run, and unparseable text is malformed.
+law a_held_preflight_refusal_keeps_its_selected_mode:
+  {ld_adv_qualification(ld_adv_wrap(AdvBroken{"head unreadable"}, MutationHeld{"/holder"})) == QualDecided{MutationHeld{"/holder"}, ReadSkipped{}, ReadSkipped{}} : LdQualified}
+
+def a_held_preflight_refusal_keeps_its_selected_mode():
+  {==}
+
+law an_unheld_capture_failure_keeps_its_selected_mode:
+  {ld_adv_qualification(ld_adv_with(AdvBroken{"the target could not be read"}, T.CapturedFailed{13, "i/o error"}, MutationUnheld{})) == QualDecided{MutationUnheld{}, ReadSkipped{}, ReadSkipped{}} : LdQualified}
+
+def an_unheld_capture_failure_keeps_its_selected_mode():
+  {==}
+
+law an_unheld_success_needs_the_exact_candidate_and_a_skipped_head:
+  {qualification_landed_of(QualDecided{MutationUnheld{}, ReadObserved{T.GRun{0, "cand\n"}}, ReadSkipped{}}, "cand", "tgt") == True{} : Bool}
+
+def an_unheld_success_needs_the_exact_candidate_and_a_skipped_head():
+  {==}
+
+law a_held_success_needs_the_candidate_and_the_symbolic_target_head:
+  {qualification_landed_of(QualDecided{MutationHeld{"/holder"}, ReadObserved{T.GRun{0, "cand\n"}}, ReadObserved{T.GRun{0, "refs/heads/tgt\n"}}}, "cand", "tgt") == True{} : Bool}
+
+def a_held_success_needs_the_candidate_and_the_symbolic_target_head():
+  {==}
+
+law a_held_attempt_without_a_head_read_is_not_landed:
+  {qualification_landed_of(QualDecided{MutationHeld{"/holder"}, ReadObserved{T.GRun{0, "cand\n"}}, ReadSkipped{}}, "cand", "tgt") == False{} : Bool}
+
+def a_held_attempt_without_a_head_read_is_not_landed():
+  {==}
+
+law a_wrong_candidate_read_is_not_landed:
+  {qualification_landed_of(QualDecided{MutationUnheld{}, ReadObserved{T.GRun{0, "other\n"}}, ReadSkipped{}}, "cand", "tgt") == False{} : Bool}
+
+def a_wrong_candidate_read_is_not_landed():
+  {==}
+
+law a_wrong_symbolic_head_is_not_landed:
+  {qualification_landed_of(QualDecided{MutationHeld{"/holder"}, ReadObserved{T.GRun{0, "cand\n"}}, ReadObserved{T.GRun{0, "refs/heads/other\n"}}}, "cand", "tgt") == False{} : Bool}
+
+def a_wrong_symbolic_head_is_not_landed():
+  {==}
+
+law an_unknown_mode_is_not_landed:
+  {qualification_landed_of(QualDecided{MutationUnknown{}, ReadObserved{T.GRun{0, "cand\n"}}, ReadObserved{T.GRun{0, "refs/heads/tgt\n"}}}, "cand", "tgt") == False{} : Bool}
+
+def an_unknown_mode_is_not_landed():
+  {==}
+
+law a_successful_mutation_framing_is_landed_evidence:
+  {capture_landed(T.CapturedDone{"exit 0\nrest", "diagnostics bytes"}) == True{} : Bool}
+
+def a_successful_mutation_framing_is_landed_evidence():
+  {==}
+
+law a_nonzero_mutation_framing_is_not_landed_evidence:
+  {capture_landed(T.CapturedDone{"exit 7\n", "diagnostics bytes"}) == False{} : Bool}
+
+def a_nonzero_mutation_framing_is_not_landed_evidence():
+  {==}
+
+law a_signalled_mutation_framing_is_not_landed_evidence:
+  {capture_landed(T.CapturedDone{"signal 9\n", "diagnostics bytes"}) == False{} : Bool}
+
+def a_signalled_mutation_framing_is_not_landed_evidence():
+  {==}
+
+law a_malformed_mutation_framing_is_not_landed_evidence:
+  {capture_landed(T.CapturedDone{"not a run result", "diagnostics bytes"}) == False{} : Bool}
+
+def a_malformed_mutation_framing_is_not_landed_evidence():
+  {==}
