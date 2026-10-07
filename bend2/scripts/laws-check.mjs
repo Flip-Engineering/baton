@@ -1062,6 +1062,10 @@ MUTATIONS.push(
   {"name": "failed-replay-halts-before-release", "file": "bend2/src/coordinator/turn.bend", "find": "    case Fail{error}: replay_finished(db,player,lock,Fail{error})", "replace": "    case Fail{error}: IO.pass(Unit,Fail{error})", "law": "failed_replay_output_reaches_the_completion_boundary"}
 );
 
+MUTATIONS.push(
+  {"name": "member-presence-matches-parentage-not-registration", "file": "bend2/src/coordinator/commands.bend", "find": "\"EXISTS(SELECT 1 FROM sessions WHERE sessions.id=\" ++ session ++ \")\"", "replace": "\"EXISTS(SELECT 1 FROM sessions WHERE sessions.parent=\" ++ session ++ \")\"", "law": "member_presence_requires_a_stored_player_record"}
+);
+
 for (const mutation of MUTATIONS) {
   const copied = join(SCRATCH, mutation.file);
   cpSync(join(ROOT, mutation.file), copied);
