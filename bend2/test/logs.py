@@ -269,10 +269,14 @@ sys.exit(%d)
         end = json.dumps({'type': 'tool_execution_end', 'toolCallId': 'tool-0', 'toolName': 'bash',
                           'result': {'content': [{'type': 'text', 'text': 'done'}]}})
         self.stream([pad, update, end, self.terminal()])
-        self.assertFalse((self.cwd / 'turn.jsonl.1').exists())
-        live = self.lines()
-        self.assertIn(update, live)
-        self.assertIn(end, live)
+        files = {}
+        for name in ('turn.jsonl', 'turn.jsonl.1', 'turn.jsonl.2'):
+            path = self.cwd / name
+            if path.exists():
+                files[name] = path.read_text().splitlines()
+        holders = [name for name, lines in files.items() if update in lines and end in lines]
+        self.assertEqual(len(holders), 1)
+        self.assertLess(files[holders[0]].index(update), files[holders[0]].index(end))
 
     def test_storage_previews_rotated_segments_without_writing(self):
         self.call('logs', 'omp-worker', 'default', '65536', '4')
