@@ -276,9 +276,13 @@ def recover_cli(db: String, session: String, id: String, cursor: String, cmd: St
     case True{}: IO.try(Unit,Receive.recover(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native))
     case False{}: execute("",C.Invalid{})
 
+def instance_shutdown_cli(+database: String, +flag: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(flag,"--instance-shutdown"),
+    IO.try(Unit,Custody.Instance.shutdown(database)),normal_cli([flag,database]))
+
 def instance_owner_cli(+database: String, +flag: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(flag,"--instance-owner"),
-    IO.try(Unit,Custody.Instance.owner(database)),normal_cli([flag,database]))
+    IO.try(Unit,Custody.Instance.owner(database)),instance_shutdown_cli(database,flag))
 
 def cli(args: List<String>) -> IO(Unit):
   match args:
@@ -429,4 +433,11 @@ law internal_instance_owner_entry_runs_native_custody:
   {cli(["--instance-owner",database]) == IO.try(Unit,Custody.Instance.owner(database)) : IO(Unit)}
 
 def internal_instance_owner_entry_runs_native_custody(database):
+  {==}
+
+law internal_instance_shutdown_requests_graceful_owner_exit:
+  for database: String
+  {cli(["--instance-shutdown",database]) == IO.try(Unit,Custody.Instance.shutdown(database)) : IO(Unit)}
+
+def internal_instance_shutdown_requests_graceful_owner_exit(database):
   {==}
