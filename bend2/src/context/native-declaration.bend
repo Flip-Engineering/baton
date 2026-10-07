@@ -11,10 +11,13 @@ type DeclarationDecode is Data:
   DeclarationDecoded{declaration: Decl.Decl, inventory: Decl.Inv}
   DeclarationRefused{field: String}
 
-def member(+object: J.Json, +key: String) -> J.Json:
-  match Req.member_lookup(key, object):
+def member_value(found: Maybe<&2, J.Json>) -> J.Json:
+  match found:
     case None{}: J.Jnil{}
     case Some{+value}: value
+
+def member(+object: J.Json, +key: String) -> J.Json:
+  member_value(Req.member_lookup(key, object))
 
 def text_field(+object: J.Json, +key: String) -> String:
   Req.text_of(member(object, key))
