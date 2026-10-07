@@ -72,7 +72,7 @@ law force_stop_keeps_the_recorded_live_attempt:
 def force_stop_keeps_the_recorded_live_attempt(session,id):
   {==}
 
-def submit_term(+db: String, session: String, attempt: String, directory: String) -> IO(Unit):
+def submit_term(db: String, session: String, attempt: String, directory: String) -> IO(Unit):
   do IO<Unit>:
     result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.control_signal(directory,15)
     saved : String <- IO.try(String,DB.Sql.query(db,Stop.control_result_sql(session,attempt,15,result)))
@@ -88,7 +88,7 @@ law ordinary_stop_submits_term_to_its_attempt:
 def ordinary_stop_submits_term_to_its_attempt(db,session,attempt,directory):
   {==}
 
-def submit_force(+db: String, session: String, attempt: String, directory: String) -> IO(Unit):
+def submit_force(db: String, session: String, attempt: String, directory: String) -> IO(Unit):
   do IO<Unit>:
     result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.control_signal(directory,9)
     saved : String <- IO.try(String,DB.Sql.query(db,Stop.control_result_sql(session,attempt,9,result)))
@@ -116,7 +116,7 @@ def idle_stop_submits_no_signal(db,session,attempt,directory):
 
 # Stop acceptance writes its current state after control submission. Native
 # exit and parent report delivery are performed by the retained observer.
-def accepted_stop(+db: String, +session: String, id: String, reason: String, force: Bool) -> IO(Unit):
+def accepted_stop(db: String, session: String, id: String, reason: String, force: Bool) -> IO(Unit):
   do IO<Unit>:
     error : String <- IO.try(String,Stop.request(db,session,id,reason,force))
     checked : Unit <- Stop.validate(error)
@@ -137,7 +137,7 @@ def stop_acceptance_does_not_wait_for_completion(db,session,id,reason,force):
 
 # Signal selection reads the terminal stop and current execution together. The
 # submitted signal is compared by identity: TERM and KILL have unrelated numbers.
-def reconcile_recorded_stop(+db: String, +session: String, +attempt: String, directory: String) -> IO(Unit):
+def reconcile_recorded_stop(db: String, session: String, attempt: String, directory: String) -> IO(Unit):
   do IO<Unit>:
     signal : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT s.signal FROM session_stops s JOIN executions e ON e.session=s.session AND e.id=s.attempt WHERE s.session=" ++ C.q(session) ++ " AND s.attempt=" ++ C.q(attempt) ++ " AND e.phase<>'exited' AND s.applied_signal<>s.signal),0);"))
     Stop.send_control(db,session,attempt,directory,Stop.selected_signal(U32.read(Tx.trim_nl(signal))))

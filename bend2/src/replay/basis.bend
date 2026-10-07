@@ -38,7 +38,7 @@ def parse_digits(xs: List<&2, Char>, acc: U32) -> U32:
 def parse_u32(s: String) -> U32:
   parse_digits(String.to_list(s), 0)
 
-def case_fields(+fs: List<&2, String>) -> CaseRow:
+def case_fields(fs: List<&2, String>) -> CaseRow:
   CaseRow{
     field(fs, 1n),
     field(fs, 2n),

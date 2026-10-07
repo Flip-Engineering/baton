@@ -13,7 +13,7 @@ def with_observation(-A: Type, observation: List<Chan(Result<&1,&1,U32 & String,
 def schema() -> String:
   "CREATE TABLE IF NOT EXISTS native_requests (id TEXT PRIMARY KEY NOT NULL,worker TEXT NOT NULL REFERENCES sessions(id),parent TEXT NOT NULL REFERENCES sessions(id),attempt TEXT NOT NULL,native_id TEXT NOT NULL,method TEXT NOT NULL,event TEXT NOT NULL,reply TEXT,written INTEGER NOT NULL DEFAULT 0,closed TEXT,UNIQUE(attempt,native_id));"
 
-def request_sql(+player: String, +turn: String, +attempt: String, +event: String) -> String:
+def request_sql(player: String, turn: String, attempt: String, event: String) -> String:
   "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) INSERT INTO native_requests(id,worker,parent,attempt,native_id,method,event) SELECT " ++ C.q(turn ++ ":native:") ++ " || lower(hex(json_extract(value,'$.id'))),s.id,s.parent," ++ C.q(attempt) ++ ",json_extract(value,'$.id'),json_extract(value,'$.method'),value FROM frame,sessions s WHERE s.id=" ++ C.q(player) ++ " AND s.harness='omp' AND json_type(value,'$.id')='text' AND json_extract(value,'$.method') IN ('input','select','confirm','editor') ON CONFLICT(attempt,native_id) DO UPDATE SET id=CASE WHEN native_requests.worker=excluded.worker AND native_requests.parent=excluded.parent AND native_requests.event=excluded.event THEN native_requests.id ELSE NULL END;"
   ++ "UPDATE native_requests SET closed=coalesce(closed,'native-cancelled') WHERE attempt=" ++ C.q(attempt) ++ " AND native_id=json_extract(" ++ C.q(event) ++ ",'$.targetId') AND json_extract(" ++ C.q(event) ++ ",'$.method')='cancel';"
   ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT id,worker,parent,'question',json_object('nativeRequest',json(event),'requestId',id,'replyCommand',json_array('native-reply',parent,id),'replyFormat',CASE WHEN method='confirm' THEN '{\"confirmed\":true} or {\"confirmed\":false} or {\"cancelled\":true}' ELSE '{\"value\":\"answer\"} or {\"cancelled\":true}' END,'completion','stdin-written records transport completion; native continuation is observed separately') FROM native_requests WHERE attempt=" ++ C.q(attempt) ++ " AND native_id=json_extract(" ++ C.q(event) ++ ",'$.id')" ++ C.message_upsert()
@@ -24,12 +24,12 @@ def dispatch(attempt: String, frame: String, allowed: Bool) -> IO(Result<&1,&1,U
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(1,"Native request is closed, unavailable, or belongs to another parent.")})
     case True{}: P.ProcessChild.control_write(attempt,frame)
 
-def written(db: String, +id: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,String>):
+def written(db: String, id: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
     case Done{unit}: DB.Sql.query(db,"UPDATE native_requests SET written=1 WHERE id=" ++ C.q(id) ++ ";SELECT json_object('request'," ++ C.q(id) ++ ",'status','stdin-written');")
 
-def send(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+def send(+db: String, id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     allowed : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM native_requests WHERE id=" ++ C.q(id) ++ " AND reply IS NOT NULL AND closed IS NULL AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=native_requests.worker));"))
     attempt : String <- IO.try(String,DB.Sql.query(db,"SELECT attempt FROM native_requests WHERE id=" ++ C.q(id) ++ ";"))
@@ -43,7 +43,7 @@ def deliver_pending(db: String, id: String, state: String) -> IO(Result<&1,&1,U3
     case "question\n": Delivery.deliver(db,id,"1","")
     case other: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
 
-def deliver(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+def deliver(db: String, id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     state : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN closed IS NOT NULL OR written=1 THEN '' WHEN reply IS NOT NULL THEN 'reply' ELSE 'question' END FROM native_requests WHERE id=" ++ C.q(id) ++ ";"))
     deliver_pending(db,id,state)
@@ -72,7 +72,7 @@ def record(+db: String, player: String, turn: String, attempt: String, event: St
       result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ request_sql(player,turn,attempt,event) ++ "COMMIT;")
       saved(db,tasks,result)
 
-def observe(+db: String, +player: String, turn: String, attempt: String, +event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, enabled: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
+def observe(+db: String, player: String, turn: String, attempt: String, event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, enabled: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
   match enabled:
     case False{}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,""))
     case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
@@ -100,7 +100,7 @@ def settle(tasks: List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Result<&1
 
 # The native ID and destination are read from the original request. A response
 # contains exactly one method value or an explicit cancellation.
-def response_sql(+parent: String, +id: String, +response: String) -> String:
+def response_sql(+parent: String, id: String, response: String) -> String:
   "WITH supplied(value) AS (VALUES(" ++ C.q(response) ++ ")), valid(frame) AS (SELECT json_patch(json_object('type','extension_ui_response','id',r.native_id),json(supplied.value)) FROM supplied,native_requests r WHERE r.id=" ++ C.q(id) ++ " AND r.parent=" ++ C.q(parent) ++ " AND r.closed IS NULL AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=r.worker) AND CASE WHEN json_valid(supplied.value) THEN json_type(supplied.value)='object' AND (SELECT count(*) FROM json_each(supplied.value))=1 AND (json_type(supplied.value,'$.cancelled')='true' OR (r.method='confirm' AND json_type(supplied.value,'$.confirmed') IN ('true','false')) OR (r.method IN ('input','editor') AND json_type(supplied.value,'$.value')='text') OR (r.method='select' AND json_type(supplied.value,'$.value')='text' AND EXISTS(SELECT 1 FROM json_each(r.event,'$.options') o WHERE o.value=json_extract(supplied.value,'$.value')))) ELSE 0 END) UPDATE native_requests SET id=CASE WHEN reply IS NULL OR reply=(SELECT frame FROM valid) THEN id ELSE NULL END,reply=coalesce(reply,(SELECT frame FROM valid)) WHERE id=" ++ C.q(id) ++ " AND EXISTS(SELECT 1 FROM valid);"
 
 def refused(db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
@@ -116,7 +116,7 @@ def reply_result(db: String, id: String, accepted: Bool, already: Bool) -> IO(Re
         case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{"{\"status\":\"stdin-written\"}\n"})
         case False{}: send(db,id)
 
-def reply(+db: String, +parent: String, +id: String, +response: String) -> IO(Unit):
+def reply(db: String, parent: String, id: String, response: String) -> IO(Unit):
   do IO<Unit>:
     accepted : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ schema() ++ response_sql(parent,id,response) ++ "SELECT changes();COMMIT;"))
     written : String <- IO.try(String,DB.Sql.query(db,"SELECT written FROM native_requests WHERE id=" ++ C.q(id) ++ ";"))

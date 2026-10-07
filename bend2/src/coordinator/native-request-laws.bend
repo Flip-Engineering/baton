@@ -48,7 +48,7 @@ law native_question_failed_record_cannot_wake:
 def native_question_failed_record_cannot_wake(db,code,text,tasks):
   {==}
 
-def recorded_send(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+def recorded_send(db: String, id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     allowed : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM native_requests WHERE id=" ++ C.q(id) ++ " AND reply IS NOT NULL AND closed IS NULL AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=native_requests.worker));"))
     attempt : String <- IO.try(String,DB.Sql.query(db,"SELECT attempt FROM native_requests WHERE id=" ++ C.q(id) ++ ";"))
@@ -76,7 +76,7 @@ law native_reply_failed_write_has_no_success_marker:
 def native_reply_failed_write_has_no_success_marker(db,id,code,text):
   {==}
 
-def admitted_reply(+db: String, +parent: String, +id: String, +response: String) -> IO(Unit):
+def admitted_reply(db: String, parent: String, id: String, response: String) -> IO(Unit):
   do IO<Unit>:
     accepted : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ Requests.schema() ++ Requests.response_sql(parent,id,response) ++ "SELECT changes();COMMIT;"))
     written : String <- IO.try(String,DB.Sql.query(db,"SELECT written FROM native_requests WHERE id=" ++ C.q(id) ++ ";"))
@@ -93,7 +93,7 @@ law native_reply_dispatch_follows_response_admission:
 def native_reply_dispatch_follows_response_admission(db,parent,id,response):
   {==}
 
-def refusal_context(db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+def refusal_context(db: String, id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     context : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT json_object('request',id,'player',worker,'parent',parent,'method',method,'closed',closed,'stdinWritten',written,'responseStored',reply IS NOT NULL,'sessionStopped',EXISTS(SELECT 1 FROM session_stops WHERE session=native_requests.worker)) FROM native_requests WHERE id=" ++ C.q(id) ++ "),json_object('request'," ++ C.q(id) ++ ",'condition','unknown-request'));"))
     IO.pure(Result<&1,&1,U32 & String,String>,Fail{(1,"Native reply refused. Use the recorded parent and response shape; closed requests and stopped sessions cannot accept replies. " ++ context)})

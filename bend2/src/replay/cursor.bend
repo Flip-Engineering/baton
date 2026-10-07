@@ -41,7 +41,7 @@ def parse_digits(xs: List<&2, Char>, acc: U32) -> U32:
 def parse_u32(s: String) -> U32:
   parse_digits(String.to_list(s), 0)
 
-def case_fields(+fs: List<&2, String>) -> CaseRow:
+def case_fields(fs: List<&2, String>) -> CaseRow:
   CaseRow{
     field(fs, 1n),
     field(fs, 2n),
@@ -70,11 +70,11 @@ def checkpoint_of(same: Bool) -> String:
     case False{}:
       "stale_authority"
 
-def render_restart(+same: Bool, +name: String, +rows: U32, readerCursor: U32) -> String:
+def render_restart(same: Bool, name: String, rows: U32, readerCursor: U32) -> String:
   String.concat(["RESULT|", name, "|source=", source_of(same), "|checkpoint=", checkpoint_of(same),
     "|cursor=", U32.show(rows), "|owed=", U32.show(U32.sub(rows, readerCursor))])
 
-def render_live(+name: String, +rows: U32, readerCursor: U32) -> String:
+def render_live(+name: String, rows: U32, readerCursor: U32) -> String:
   String.concat(["RESULT|", name, "|source=live|checkpoint=none|cursor=", U32.show(rows),
     "|owed=", U32.show(U32.sub(rows, readerCursor))])
 

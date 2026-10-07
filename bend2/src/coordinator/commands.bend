@@ -56,7 +56,7 @@ type Command is Data:
   Help{}
   Invalid{}
 
-def escape_char(+head: Char, tail: String, quote: Bool) -> String:
+def escape_char(head: Char, tail: String, quote: Bool) -> String:
   match quote:
     case True{}: SCon{head,SCon{head,tail}}
     case False{}: SCon{head,tail}
@@ -97,7 +97,7 @@ def stopped_session_sql(session: String) -> String:
 def execution_input_sql(kind: String) -> String:
   kind ++ " IN ('task','guidance','recovery')"
 
-def input_state_sql(+row: String) -> String:
+def input_state_sql(row: String) -> String:
   "CASE WHEN " ++ stopped_session_sql(row ++ ".recipient") ++ " THEN json_object('stopId',(SELECT id FROM session_stops WHERE session=" ++ row ++ ".recipient),'executionDisposition',CASE WHEN " ++ row ++ ".receipt IS NOT NULL THEN 'accepted' WHEN " ++ execution_input_sql(row ++ ".kind") ++ " THEN 'stopped' ELSE 'retained-for-stopped-session' END) ELSE json('{}') END"
 
 def session_state_sql(session: String) -> String:
@@ -112,10 +112,10 @@ def public_role(+session: String) -> String:
 def session_kind(session: String) -> String:
   "CASE WHEN " ++ assigned_role(session) ++ "='operator' THEN 'operator' ELSE 'player' END"
 
-def role_family(+role: String) -> String:
+def role_family(role: String) -> String:
   Bool.pick(String,Bool.or(String.eq(role,"principal-conductor"),String.eq(role,"associate-conductor")),"conductor",role)
 
-def role_admitted(+session: String, +role: String) -> String:
+def role_admitted(+session: String, role: String) -> String:
   "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ " AND (" ++ q(role) ++ " IN ('player','conductor') OR (" ++ q(role) ++ " IN ('principal-conductor','operator') AND parent IS NULL) OR (" ++ q(role) ++ "='associate-conductor' AND parent IS NOT NULL)))"
 
 def role_result(session: String) -> String:
@@ -136,7 +136,7 @@ def session_result(id: String) -> String:
 def player_matches(parent: String, harness: String, model: String, effort: String, workspace: String, branch: String, base: String) -> String:
   "(parent IS " ++ q(parent) ++ " AND harness=" ++ q(harness) ++ " AND model=" ++ q(model) ++ " AND effort=" ++ q(effort) ++ " AND workspace=" ++ q(workspace) ++ " AND branch=" ++ q(branch) ++ " AND base=" ++ q(base) ++ ")"
 
-def player_sql(+id: String, +parent: String, +harness: String, +model: String, +effort: String, +workspace: String, +branch: String, +base: String) -> String:
+def player_sql(+id: String, parent: String, harness: String, model: String, effort: String, workspace: String, branch: String, base: String) -> String:
   "INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base) VALUES(" ++ q(id) ++ "," ++ q(parent) ++ "," ++ q(harness) ++ "," ++ q(model) ++ "," ++ q(effort) ++ "," ++ q(workspace) ++ "," ++ q(branch) ++ "," ++ q(base) ++ ") ON CONFLICT(id) DO NOTHING;"
   ++ "SELECT json_object('error','player-assignment-conflict','session',id,'existing',json_object('parent',parent,'harness',harness,'model',model,'effort',effort,'workspace',workspace,'branch',branch,'base',base),'requested',json_object('parent'," ++ q(parent) ++ ",'harness'," ++ q(harness) ++ ",'model'," ++ q(model) ++ ",'effort'," ++ q(effort) ++ ",'workspace'," ++ q(workspace) ++ ",'branch'," ++ q(branch) ++ ",'base'," ++ q(base) ++ "),'condition','The session ID is already registered with a different assignment.','next','Read session ID and worktree ID. Retry recruit with the recorded assignment, or recruit a new ID with a new branch and unused path; retain the original work.') FROM sessions WHERE id=" ++ q(id) ++ " AND NOT " ++ player_matches(parent,harness,model,effort,workspace,branch,base) ++ ";"
   ++ session_result_where("id=" ++ q(id) ++ " AND " ++ player_matches(parent,harness,model,effort,workspace,branch,base))
@@ -146,7 +146,7 @@ def player_sql(+id: String, +parent: String, +harness: String, +model: String, +
 def endpoint_admitted(+endpoint: String) -> String:
   "(" ++ q(endpoint) ++ "='' OR CASE WHEN json_valid(" ++ q(endpoint) ++ ") THEN json_type(" ++ q(endpoint) ++ ")='array' AND json_array_length(" ++ q(endpoint) ++ ")>0 AND NOT EXISTS(SELECT 1 FROM json_each(" ++ q(endpoint) ++ ") WHERE type<>'text' OR instr(value,char(0))>0) AND coalesce(json_extract(" ++ q(endpoint) ++ ",'$[0]'),'')<>'' ELSE 0 END)"
 
-def connect_sql(+id: String, native: String, +endpoint: String) -> String:
+def connect_sql(+id: String, native: String, endpoint: String) -> String:
   "UPDATE sessions SET native=" ++ q(native) ++ ",endpoint=" ++ q(endpoint) ++ " WHERE id=" ++ q(id) ++ " AND " ++ endpoint_admitted(endpoint) ++ ";"
   ++ "SELECT json_object('error','invalid-endpoint','session'," ++ q(id) ++ ",'condition','Use an empty endpoint to disconnect, or a nonempty JSON array of text arguments with a nonempty executable and no NUL characters.','next','Pass the JSON argv array itself as one ENDPOINT argument; inspect session and inbox, then retry retained input after connecting.') WHERE NOT " ++ endpoint_admitted(endpoint) ++ ";"
   ++ session_result_where("id=" ++ q(id) ++ " AND " ++ endpoint_admitted(endpoint))
@@ -172,26 +172,26 @@ def report_recipient(+session: String) -> String:
 def terminal_body(+event: String) -> String:
   "CASE WHEN json_extract(" ++ q(event) ++ ",'$.is_error')=1 OR (json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ q(event) ++ ",'$.payload.terminal')<>'completed') THEN " ++ q(event) ++ " ELSE coalesce(json_extract(" ++ q(event) ++ ",'$.result'),CASE WHEN json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ q(event) ++ ",'$.payload.text') END,(SELECT group_concat(json_extract(c.value,'$.text'),char(10)) FROM json_each((SELECT m.value FROM json_each(" ++ q(event) ++ ",'$.messages') m WHERE json_extract(m.value,'$.role')='assistant' ORDER BY m.key DESC LIMIT 1),'$.content') c WHERE json_extract(c.value,'$.type')='text')," ++ q(event) ++ ") END"
 
-def observe_identity_sql(+player: String, +event: String) -> String:
+def observe_identity_sql(+player: String, event: String) -> String:
   "UPDATE sessions SET native=coalesce(CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='response' AND json_extract(" ++ q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ q(event) ++ ",'$.success')=1 THEN json_extract(" ++ q(event) ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='thread.started' THEN json_extract(" ++ q(event) ++ ",'$.thread_id') END,json_extract(" ++ q(event) ++ ",'$.session_id'),CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='session' THEN json_extract(" ++ q(event) ++ ",'$.id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.stream.kind')='session' THEN json_extract(" ++ q(event) ++ ",'$.stream.id') END,native),observed_model=coalesce(CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='response' AND json_extract(" ++ q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ q(event) ++ ",'$.success')=1 THEN json_extract(" ++ q(event) ++ ",'$.data.model.provider') || '/' || json_extract(" ++ q(event) ++ ",'$.data.model.id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.payload_type')='run.model.configured' THEN json_extract(" ++ q(event) ++ ",'$.payload.model_id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.message.provider') IS NOT NULL AND json_extract(" ++ q(event) ++ ",'$.message.model') IS NOT NULL THEN json_extract(" ++ q(event) ++ ",'$.message.provider') || '/' || json_extract(" ++ q(event) ++ ",'$.message.model') END,json_extract(" ++ q(event) ++ ",'$.message.model'),json_extract(" ++ q(event) ++ ",'$.model'),observed_model) WHERE id=" ++ q(player) ++ ";"
 
-def completion_sql(+id: String, +player: String, +event: String) -> String:
+def completion_sql(+id: String, +player: String, event: String) -> String:
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ report_recipient("sessions.id") ++ ",'report'," ++ terminal_body(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal(event) ++ message_upsert()
   ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(player) ++ "," ++ q(event) ++ " WHERE " ++ report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
   ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ q(event) ++ ",'$.type'),json_extract(" ++ q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
 
-def observe_completion_sql(+id: String, +player: String, +event: String, sealed: Bool) -> String:
+def observe_completion_sql(+id: String, +player: String, event: String, sealed: Bool) -> String:
   Bool.pick(String,sealed,"",completion_sql(id,player,event))
 
-def observe_sql(+id: String, +player: String, +event: String, sealed: Bool) -> String:
+def observe_sql(+id: String, +player: String, event: String, sealed: Bool) -> String:
   observe_identity_sql(player,event) ++ observe_completion_sql(id,player,event,sealed)
 
 
 # UNION makes ancestry finite even if a database has malformed cyclic parentage.
-def ancestors(+session: String) -> String:
+def ancestors(session: String) -> String:
   "WITH RECURSIVE ancestors(id) AS (SELECT parent FROM sessions WHERE id=" ++ session ++ " AND parent IS NOT NULL UNION SELECT s.parent FROM sessions s JOIN ancestors a ON s.id=a.id WHERE s.parent IS NOT NULL) SELECT id FROM ancestors"
 
-def descendant(+ancestor: String, session: String) -> String:
+def descendant(ancestor: String, session: String) -> String:
   "EXISTS(SELECT 1 FROM (" ++ ancestors(session) ++ ") WHERE id=" ++ ancestor ++ ")"
 
 def depth(session: String) -> String:
@@ -209,13 +209,13 @@ def operator_route(+sender: String, +recipient: String) -> String:
 def message_route(+sender: String, +recipient: String) -> String:
   "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR (" ++ assigned_role(sender) ++ "='conductor' AND " ++ descendant(sender,recipient) ++ ") OR " ++ tight_peers(sender,recipient) ++ ")) OR " ++ operator_route(sender,recipient) ++ "))"
 
-def exact_message(+id: String, +sender: String, +recipient: String, +kind: String, +body: String) -> String:
+def exact_message(+id: String, +sender: String, recipient: String, kind: String, body: String) -> String:
   "EXISTS(SELECT 1 FROM messages WHERE id=" ++ q(id) ++ " AND sender=" ++ q(sender) ++ " AND recipient=" ++ q(recipient) ++ " AND kind=" ++ q(kind) ++ " AND body=" ++ q(body) ++ ")"
 
 def matching_message_result(+id: String, sender: String, recipient: String, kind: String, body: String) -> String:
   "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ input_state_sql("messages") ++ ") FROM messages WHERE id=" ++ q(id) ++ " AND " ++ exact_message(id,sender,recipient,kind,body) ++ ";"
 
-def message_sql(+id: String, +sender: String, +recipient: String, +kind: String, +body: String) -> String:
+def message_sql(+id: String, +sender: String, recipient: String, kind: String, body: String) -> String:
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ "," ++ q(sender) ++ "," ++ q(recipient) ++ "," ++ q(kind) ++ "," ++ q(body) ++ " WHERE (" ++ message_route(q(sender),q(recipient)) ++ " AND NOT (" ++ stopped_session_sql(q(recipient)) ++ " AND " ++ execution_input_sql(q(kind)) ++ ")) OR " ++ exact_message(id,sender,recipient,kind,body) ++ message_upsert()
   ++ "SELECT json_object('error','message-route-denied','sender'," ++ q(sender) ++ ",'recipient'," ++ q(recipient) ++ ",'condition','Use an immediate parent, a conductor descendant route, an explicitly tight Ensemble peer, or the operator and top-level conductor route.','next','Inspect session roles and Ensemble membership; send through your immediate conductor when a direct route is unavailable.') WHERE NOT " ++ message_route(q(sender),q(recipient)) ++ " AND NOT " ++ exact_message(id,sender,recipient,kind,body) ++ ";"
   ++ "SELECT json_object('error','session-stopped','session'," ++ q(recipient) ++ ") WHERE NOT " ++ exact_message(id,sender,recipient,kind,body) ++ " AND " ++ message_route(q(sender),q(recipient)) ++ " AND " ++ stopped_session_sql(q(recipient)) ++ " AND " ++ execution_input_sql(q(kind)) ++ ";" ++ matching_message_result(id,sender,recipient,kind,body)
@@ -231,10 +231,10 @@ def section_row(+row: String) -> String:
 def ensemble_row(+row: String) -> String:
   "json_object('id'," ++ row ++ ".id,'owner'," ++ row ++ ".owner,'coupling'," ++ row ++ ".coupling,'members',(SELECT json_group_array(session) FROM (SELECT session FROM ensemble_members WHERE ensemble=" ++ row ++ ".id ORDER BY session)),'sections',(SELECT json_group_array(json(item)) FROM (SELECT " ++ section_row("sc") ++ " AS item FROM sections sc WHERE sc.ensemble=" ++ row ++ ".id ORDER BY sc.id)))"
 
-def ensemble_sql(+id: String, +owner: String, +coupling: String) -> String:
+def ensemble_sql(+id: String, +owner: String, coupling: String) -> String:
   "INSERT INTO ensembles(id,owner,coupling) SELECT " ++ q(id) ++ "," ++ q(owner) ++ "," ++ q(coupling) ++ " WHERE " ++ assigned_role(q(owner)) ++ "='conductor' AND " ++ q(coupling) ++ " IN ('loose','tight') ON CONFLICT(id) DO UPDATE SET id=CASE WHEN ensembles.owner=excluded.owner THEN ensembles.id ELSE NULL END,coupling=excluded.coupling;SELECT " ++ ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ " AND coupling=" ++ q(coupling) ++ ";"
 
-def ensemble_member_sql(+id: String, +owner: String, +session: String, +action: String) -> String:
+def ensemble_member_sql(+id: String, +owner: String, session: String, action: String) -> String:
   "DELETE FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ " AND " ++ q(action) ++ "='remove' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ");"
   ++ "INSERT OR IGNORE INTO ensemble_members(ensemble,session) SELECT " ++ q(id) ++ "," ++ q(session) ++ " WHERE " ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND " ++ assigned_role(q(owner)) ++ "='conductor' AND " ++ assigned_role(q(session)) ++ "<>'operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ ");"
   ++ "SELECT json_object('ensemble'," ++ q(id) ++ ",'owner'," ++ q(owner) ++ ",'session'," ++ q(session) ++ ",'membership'," ++ q(action) ++ ") WHERE EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND ((" ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ ")) OR (" ++ q(action) ++ "='remove' AND NOT EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ ")));"
@@ -249,15 +249,15 @@ def section_admitted(ensemble: String, owner: String, capability: String) -> Str
 def section_refusal(ensemble: String, id: String, owner: String, admitted: String) -> String:
   "SELECT json_object('error','section-refused','ensemble'," ++ q(ensemble) ++ ",'section'," ++ q(id) ++ ",'owner'," ++ q(owner) ++ ",'condition','Use the named Ensemble conductor owner, a nonempty capability, and an existing Ensemble Player for membership.','next','Read ensemble ID and section ENSEMBLE SECTION. Add the Player to that Ensemble before assigning its Section; use add or remove for membership.') WHERE NOT " ++ admitted ++ ";"
 
-def section_sql(+ensemble: String, +id: String, +owner: String, +capability: String) -> String:
+def section_sql(+ensemble: String, +id: String, owner: String, capability: String) -> String:
   "INSERT INTO sections(ensemble,id,capability) SELECT " ++ q(ensemble) ++ "," ++ q(id) ++ "," ++ q(capability) ++ " WHERE " ++ section_admitted(ensemble,owner,capability) ++ " ON CONFLICT(ensemble,id) DO UPDATE SET capability=excluded.capability;"
   ++ section_refusal(ensemble,id,owner,section_admitted(ensemble,owner,capability))
   ++ "SELECT " ++ section_row("sections") ++ " FROM sections WHERE ensemble=" ++ q(ensemble) ++ " AND id=" ++ q(id) ++ " AND " ++ section_admitted(ensemble,owner,capability) ++ ";"
 
-def section_member_admitted(+ensemble: String, +id: String, owner: String, +player: String, +action: String) -> String:
+def section_member_admitted(+ensemble: String, +id: String, owner: String, player: String, action: String) -> String:
   "(" ++ section_owner(ensemble,owner) ++ " AND EXISTS(SELECT 1 FROM sections WHERE ensemble=" ++ q(ensemble) ++ " AND id=" ++ q(id) ++ ") AND (" ++ q(action) ++ "='remove' OR (" ++ q(action) ++ "='add' AND " ++ assigned_role(q(player)) ++ "<>'operator' AND EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(ensemble) ++ " AND session=" ++ q(player) ++ "))))"
 
-def section_member_sql(+ensemble: String, +id: String, +owner: String, +player: String, +action: String) -> String:
+def section_member_sql(+ensemble: String, +id: String, owner: String, player: String, action: String) -> String:
   "DELETE FROM section_members WHERE ensemble=" ++ q(ensemble) ++ " AND section=" ++ q(id) ++ " AND session=" ++ q(player) ++ " AND " ++ q(action) ++ "='remove' AND " ++ section_member_admitted(ensemble,id,owner,player,action) ++ ";"
   ++ "INSERT OR IGNORE INTO section_members(ensemble,section,session) SELECT " ++ q(ensemble) ++ "," ++ q(id) ++ "," ++ q(player) ++ " WHERE " ++ q(action) ++ "='add' AND " ++ section_member_admitted(ensemble,id,owner,player,action) ++ ";"
   ++ section_refusal(ensemble,id,owner,section_member_admitted(ensemble,id,owner,player,action))

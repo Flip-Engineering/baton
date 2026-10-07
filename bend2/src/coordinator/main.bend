@@ -23,7 +23,7 @@ def output(value: String, empty: Bool) -> IO(Unit):
     case True{}: IO.die(Unit,1,"No matching session or message; inspect status and the requested ID.")
     case False{}: IO.write(value)
 
-def print_result(+result: String) -> IO(Unit):
+def print_result(result: String) -> IO(Unit):
   output(result, String.is_empty(result))
 
 # The entry's own answer path. An empty answer is a refusal that names the next

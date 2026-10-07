@@ -41,7 +41,7 @@ def identity_endpoint(executable: String, db: String, session: String, cmd: Stri
 # identity. An endpoint and a native turn embed that key, and the helper refuses
 # an unmapped one at delivery, so resolve the key while the operator is present
 # and report its refusal at the configuration command.
-def identity_check_args(+registry: String, +helper: String, +model: String) -> List<String>:
+def identity_check_args(registry: String, helper: String, model: String) -> List<String>:
   ["node", helper, "check", "--registry", registry, "--model-key", model]
 
 def identity_check_refusal(+model: String, result: T.RunRes) -> IO(Unit):
@@ -49,7 +49,7 @@ def identity_check_refusal(+model: String, result: T.RunRes) -> IO(Unit):
     case T.RRun{T.SExit{0}, out}: IO.pure(Unit,Unit{})
     case other: IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.")
 
-def identity_check_body(+registry: String, +helper: String, +model: String, absent: Bool) -> IO(Unit):
+def identity_check_body(registry: String, helper: String, model: String, absent: Bool) -> IO(Unit):
   match absent:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
@@ -87,7 +87,7 @@ def command_present(empty: Bool) -> IO(Unit):
     case True{}: IO.die(Unit,2,"The native harness command is empty; select its executable before startup.")
     case False{}: IO.pure(Unit,Unit{})
 
-def configured_endpoint(+db: String, session: String, +cmd: String, log: String, +model: String) -> IO(String):
+def configured_endpoint(db: String, session: String, cmd: String, log: String, model: String) -> IO(String):
   do IO<String>:
     present : Unit <- command_present(String.is_empty(cmd))
     native : String <- IO.try(String,Host.Control.command(cmd))
@@ -101,12 +101,12 @@ def configured_endpoint(+db: String, session: String, +cmd: String, log: String,
 def receiver_admitted(+session: String, endpoint: String) -> String:
   "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")"
 
-def receiver_update_sql(+session: String, +endpoint: String, +admitted: String) -> String:
+def receiver_update_sql(+session: String, endpoint: String, admitted: String) -> String:
   "UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
   ++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered, active Codex or OMP session and valid text argv.','next','Inspect the session and retained inbox. Use turn for Muse or Claude Players; recruit a new session after a terminal stop.') WHERE NOT " ++ admitted ++ ";"
   ++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ ")) WHERE " ++ admitted ++ ";"
 
-def receiver_sql(+session: String, +endpoint: String) -> String:
+def receiver_sql(+session: String, endpoint: String) -> String:
   receiver_update_sql(session,endpoint,receiver_admitted(session,endpoint))
 
 def receiver_result(saved: String, denied: Bool) -> IO(String):
@@ -114,7 +114,7 @@ def receiver_result(saved: String, denied: Bool) -> IO(String):
     case True{}: IO.die(String,2,saved)
     case False{}: IO.pure(String,saved)
 
-def receiver(+db: String, +session: String, cmd: String, log: String) -> IO(String):
+def receiver(db: String, session: String, cmd: String, log: String) -> IO(String):
   do IO<String>:
     found : String <- IO.try(String,Store.apply(db,C.Session{session}))
     accepted : String <- registered(found)
@@ -123,13 +123,13 @@ def receiver(+db: String, +session: String, cmd: String, log: String) -> IO(Stri
     +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_sql(session,endpoint) ++ "COMMIT;"))
     receiver_result(saved,Tx.starts_with(saved,"{\"error\":\"receiver-refused\""))
 
-def principal_matches(+session: String, +harness: String, +model: String, +effort: String, +cwd: String) -> String:
+def principal_matches(+session: String, harness: String, model: String, effort: String, cwd: String) -> String:
   "(id=" ++ C.q(session) ++ " AND parent IS NULL AND harness=" ++ C.q(harness) ++ " AND (model='' OR model=" ++ C.q(model) ++ ") AND (effort='' OR effort=" ++ C.q(effort) ++ ") AND (workspace='' OR workspace=" ++ C.q(cwd) ++ ") AND " ++ C.assigned_role("sessions.id") ++ "<>'operator' AND NOT " ++ C.stopped_session_sql("sessions.id") ++ ")"
 
 def start_admission(+session: String, +harness: String, model: String, effort: String, cwd: String) -> String:
   "(" ++ C.q(session) ++ "<>'operator' AND " ++ C.q(session) ++ "<>'' AND " ++ C.q(harness) ++ " IN ('codex','omp') AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ") OR EXISTS(SELECT 1 FROM sessions WHERE " ++ principal_matches(session,harness,model,effort,cwd) ++ ")) AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id='operator') OR EXISTS(SELECT 1 FROM sessions WHERE id='operator' AND parent IS NULL AND ((harness='operator' AND NOT EXISTS(SELECT 1 FROM session_roles WHERE session='operator')) OR " ++ C.assigned_role("sessions.id") ++ "='operator'))))"
 
-def principal_assignment_sql(+session: String, +harness: String, +model: String, +effort: String, +cwd: String, +endpoint: String, +admitted: String) -> String:
+def principal_assignment_sql(+session: String, +harness: String, model: String, effort: String, cwd: String, endpoint: String, admitted: String) -> String:
   "INSERT INTO sessions(id,harness,model,effort,workspace) SELECT " ++ C.q(session) ++ "," ++ C.q(harness) ++ "," ++ C.q(model) ++ "," ++ C.q(effort) ++ "," ++ C.q(cwd) ++ " WHERE " ++ admitted ++ " ON CONFLICT(id) DO NOTHING;"
   ++ "UPDATE sessions SET model=" ++ C.q(model) ++ ",effort=" ++ C.q(effort) ++ ",workspace=" ++ C.q(cwd) ++ " WHERE " ++ principal_matches(session,harness,model,effort,cwd) ++ " AND " ++ admitted ++ ";"
   ++ "INSERT INTO sessions(id,harness) SELECT 'operator','operator' WHERE " ++ admitted ++ " ON CONFLICT(id) DO NOTHING;"
@@ -138,7 +138,7 @@ def principal_assignment_sql(+session: String, +harness: String, +model: String,
   ++ "UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
   ++ "SELECT CASE WHEN " ++ admitted ++ " THEN '' ELSE json_object('error','principal-assignment-conflict','session'," ++ C.q(session) ++ ",'condition','Principal startup requires a compatible parentless Codex or OMP session and the operator role.','next','Inspect the existing session, role and pending input. Retain its work and use the recorded assignment or a new session ID.') END;"
 
-def start_sql(+session: String, +harness: String, +model: String, +effort: String, +cwd: String, +endpoint: String) -> String:
+def start_sql(+session: String, +harness: String, model: String, effort: String, cwd: String, endpoint: String) -> String:
   principal_assignment_sql(session,harness,model,effort,cwd,endpoint,"(" ++ start_admission(session,harness,model,effort,cwd) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")")
 
 def startup_refused(saved: String) -> IO(Unit):
@@ -165,7 +165,7 @@ def dispatch_file(+db: String, +id: String, sender: String, recipient: String, k
     body : String <- IO.try(String,Text.Text.read(path))
     dispatch_body(db,id,sender,recipient,kind,body)
 
-def start(+db: String, +session: String, harness: String, cmd: String, +model: String, effort: String, cwd: String, log: String, id: String, task: String) -> IO(String):
+def start(+db: String, +session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String, id: String, task: String) -> IO(String):
   do IO<String>:
     body : String <- IO.try(String,Text.Text.read(task))
     workspace : String <- IO.try(String,Host.Control.workspace(cwd))
@@ -221,7 +221,7 @@ def recorded_field(db: String, player: String, column: String) -> IO(String):
     value : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ column ++ " FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     IO.pure(String,Tx.trim_nl(value))
 
-def dispatch_turn(+db: String, +player: String, +id: String, +cmd: String, log: String, +task: String) -> IO(String):
+def dispatch_turn(+db: String, +player: String, id: String, cmd: String, log: String, task: String) -> IO(String):
   do IO<String>:
     found : String <- IO.try(String,Store.commit(db,C.Session{player}))
     present : String <- registered(found)

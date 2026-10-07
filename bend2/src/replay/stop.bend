@@ -45,7 +45,7 @@ def parse_digits(xs: List<&2, Char>, acc: U32) -> U32:
 def parse_u32(s: String) -> U32:
   parse_digits(String.to_list(s), 0)
 
-def case_fields(+fs: List<&2, String>) -> CaseRow:
+def case_fields(fs: List<&2, String>) -> CaseRow:
   CaseRow{
     field(fs, 1n),
     field(fs, 2n),
@@ -84,7 +84,7 @@ def show_remedy(quarantine: Bool) -> String:
 
 def render_verdict(name: String, readerCursor: U32, v: Verdict) -> String:
   match v:
-    case Admitted{targets, +cursor}:
+    case Admitted{targets, cursor}:
       String.concat(["RESULT|", name, "|admitted=true|refusal=none|classification=none|quarantine=false|targets=",
         U32.show(targets), "|cursor=", U32.show(cursor),
         "|owed=", U32.show(U32.sub(cursor, readerCursor)), "|remedy=none"])

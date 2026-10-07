@@ -20,7 +20,7 @@ def line_reversed(s: String, original: String) -> String:
     case SNil{}: original
     case SCon{c,rest}: line_tail(rest,original,Char.is_eq(c,Char.from_u32(10)))
 
-def line(+s: String) -> String:
+def line(s: String) -> String:
   line_reversed(Tx.str_rev(s),s)
 
 def absolute(repo: String, path: String, rooted: Bool) -> String:
@@ -59,7 +59,7 @@ def create(+db: String,id: String,parent: String,harness: String,model: String,e
         made : Result<&1,&1,G.GitFail,G.WorktreeCreated> <- CW.createWorktree(repo,branch,path,base)
         register(db,id,parent,harness,model,effort,made)
 
-def recruit(+db: String,+id: String,+parent: String,harness: String,model: String,effort: String,+repo: String,branch: String,+path: String,base: String) -> IO(Unit):
+def recruit(db: String,id: String,parent: String,harness: String,model: String,effort: String,repo: String,branch: String,path: String,base: String) -> IO(Unit):
   do IO<Unit>:
     parent_row : String <- IO.try(String,Store.apply(db,C.Session{parent}))
     present : Unit <- require_parent(Bool.not(String.is_empty(parent_row)))
@@ -83,7 +83,7 @@ def show_status(id: String,path: String,result: Result<&1,&1,G.GitFail,G.WtStatu
     saved : String <- status_result(id,path,result)
     IO.print(saved)
 
-def inspect_path_result(id: String,+path: String,missing: Bool) -> IO(String):
+def inspect_path_result(id: String,path: String,missing: Bool) -> IO(String):
   match missing:
     case True{}: IO.die(String,2,"The player has no recorded workspace.")
     case False{}:
@@ -96,7 +96,7 @@ def inspect_path(id: String,path: String,missing: Bool) -> IO(Unit):
     saved : String <- inspect_path_result(id,path,missing)
     IO.print(saved)
 
-def inspect_result(+db: String,+id: String) -> IO(String):
+def inspect_result(db: String,id: String) -> IO(String):
   do IO<String>:
     ready : String <- IO.try(String,Store.apply(db,C.Session{id}))
     +path : String <- IO.try(String,DB.Sql.query(db,"SELECT workspace FROM sessions WHERE id=" ++ C.q(id) ++ ";"))

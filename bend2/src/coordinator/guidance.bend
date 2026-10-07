@@ -3,12 +3,12 @@ import ./commands.bend as C
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 
-def relevant(+kind: String, omp: Bool) -> Bool:
+def relevant(kind: String, omp: Bool) -> Bool:
   Bool.or(Bool.not(omp),Bool.or(String.eq(kind,"response\n"),
     Bool.or(String.eq(kind,"message_end\n"),Bool.or(String.eq(kind,"tool_execution_start\n"),
     Bool.or(String.eq(kind,"tool_execution_end\n"),String.eq(kind,"agent_end\n"))))))
 
-def send(+db: String, handle: U32, cursor: String, +next: String, same: Bool) -> IO(String):
+def send(+db: String, handle: U32, cursor: String, next: String, same: Bool) -> IO(String):
   match same:
     case True{}: IO.pure(String,cursor)
     case False{}: do IO<String>:
@@ -22,10 +22,10 @@ def send(+db: String, handle: U32, cursor: String, +next: String, same: Bool) ->
 def outstanding_sql(+player: String) -> String:
   "coalesce((SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " ORDER BY seq)),'')"
 
-def pending_sql(+player: String, +cursor: String) -> String:
+def pending_sql(+player: String, cursor: String) -> String:
   "SELECT coalesce((SELECT seq FROM messages WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),CAST(" ++ C.q(cursor) ++ " AS INTEGER));"
 
-def pending(+db: String, +player: String, handle: U32, +cursor: String) -> IO(String):
+def pending(+db: String, player: String, handle: U32, cursor: String) -> IO(String):
   do IO<String>:
     +next : String <- IO.try(String,DB.Sql.query(db,pending_sql(player,cursor)))
     send(db,handle,cursor,next,String.eq(cursor,next))
@@ -36,7 +36,7 @@ def pending_live(db: String, player: String, handle: U32, cursor: String, closed
     case 0: pending(db,player,handle,cursor)
     case other: IO.pure(String,cursor)
 
-def continued(db: String, player: String, +handle: U32, cursor: String, ended: Bool) -> IO(String):
+def continued(db: String, player: String, handle: U32, cursor: String, ended: Bool) -> IO(String):
   match ended:
     case True{}: do IO<String>:
       closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
@@ -45,7 +45,7 @@ def continued(db: String, player: String, +handle: U32, cursor: String, ended: B
       closed : U32 <- IO.try(U32,P.ProcessChild.input_closed(handle))
       pending_live(db,player,handle,cursor,closed)
 
-def accepted_sql(+player: String, +event: String) -> String:
+def accepted_sql(+player: String, event: String) -> String:
   "UPDATE messages SET receipt=coalesce(receipt," ++ C.q(event) ++ ") WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND id=json_extract(" ++ C.q(event) ++ ",'$.id') AND json_extract(" ++ C.q(event) ++ ",'$.type')='response' AND json_extract(" ++ C.q(event) ++ ",'$.command')='steer' AND json_extract(" ++ C.q(event) ++ ",'$.success')=1;"
 
 def terminal_sql(+event: String) -> String:
@@ -55,13 +55,13 @@ def terminal_sql(+event: String) -> String:
 # terminal for the attempt, including a replay of an attempt whose native input
 # the host already closed. A response that arrives after the first terminal
 # leaves the guidance for the next receive.
-def accepted(db: String, player: String, +event: String, sealed: Bool) -> IO(String):
+def accepted(db: String, player: String, event: String, sealed: Bool) -> IO(String):
   match sealed:
     case True{}: IO.try(String,DB.Sql.query(db,terminal_sql(event)))
     case False{}: IO.try(String,DB.Sql.query(db,accepted_sql(player,event) ++ terminal_sql(event)))
 
 # The receipt records native acceptance; the cursor covers this process's sends.
-def observe(+db: String, +player: String, handle: U32, +event: String, cursor: String, enabled: Bool, sealed: Bool) -> IO(String):
+def observe(+db: String, player: String, handle: U32, event: String, cursor: String, enabled: Bool, sealed: Bool) -> IO(String):
   match enabled:
     case False{}: IO.pure(String,cursor)
     case True{}: do IO<String>:

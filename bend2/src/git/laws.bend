@@ -842,7 +842,7 @@ def m3a_cas_argv_binds_checked_pair(target, cand, basis):
 
 # The production effect invokes Git with that exact pair. Git's atomic old-value
 # comparison and the host's report of its exit status remain boundary assumptions.
-def checked_pair_update(repo: String, +target: String, +cand: String, basis: String) -> IO(L.Ld):
+def checked_pair_update(repo: String, target: String, cand: String, basis: String) -> IO(L.Ld):
   do IO<L.Ld>:
     g : T.GitOut <- P.runGit(repo, ["update-ref", "refs/heads/" ++ target, cand, basis])
     IO.pure(L.Ld, L.ld_update_pick(g, target, cand))

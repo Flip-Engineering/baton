@@ -22,7 +22,7 @@ def require_branch_pick(empty: Bool, branch: String) -> IO(String):
     case True{}: IO.die(String, 2, "The player has no recorded branch.")
     case False{}: IO.pure(String, branch)
 
-def require_branch(+branch: String) -> IO(String):
+def require_branch(branch: String) -> IO(String):
   require_branch_pick(String.is_empty(branch), branch)
 
 def line_tail(rest: String, original: String, newline: Bool) -> String:
@@ -41,7 +41,7 @@ def line(+s: String) -> String:
 def show_outcome(o: G.LandOutcome) -> IO(Unit):
   IO.print(GitLand.outcome_json(o))
 
-def land_player(+db: String, +player: String, +repo: String, +target: String) -> IO(Unit):
+def land_player(+db: String, player: String, repo: String, target: String) -> IO(Unit):
   do IO<Unit>:
     player_row : String <- IO.try(String, Store.apply(db, C.Session{player}))
     present : Unit <- require_player(Bool.not(String.is_empty(player_row)))
@@ -57,7 +57,7 @@ def show_checked_outcome(result: Result<&1,&1,G.GitFail,G.LandOutcome>) -> IO(Un
 
 # One attempt's scratch path comes from the Git landing module, which drops the
 # trees the player's earlier attempt kept before this attempt prepares its own.
-def run_checked(+db: String, +player: String, +repo: String, +target: String, +check: String, +files: String, +branch: String) -> IO(Unit):
+def run_checked(+db: String, player: String, repo: String, target: String, check: String, files: String, branch: String) -> IO(Unit):
   do IO<Unit>:
     ts_raw : String <- IO.try(String, DB.Sql.query(db, "" ++ "SELECT hex(randomblob(8));"))
     ts : String <- IO.pure(String, line(ts_raw))
@@ -69,7 +69,7 @@ def run_checked(+db: String, +player: String, +repo: String, +target: String, +c
 # the selected checks run on the candidate and on the target before the
 # target advances. FILES is space-separated; CHECK runs as /bin/sh CHECK
 # FILE inside each checked tree.
-def land_checked_player(+db: String, +player: String, +repo: String, +target: String, +check: String, +files: String) -> IO(Unit):
+def land_checked_player(+db: String, player: String, repo: String, target: String, check: String, files: String) -> IO(Unit):
   do IO<Unit>:
     player_row : String <- IO.try(String, Store.apply(db, C.Session{player}))
     present : Unit <- require_player(Bool.not(String.is_empty(player_row)))
@@ -87,7 +87,7 @@ def push_pick(r: G.GitOut, branch: String, remote: String) -> IO(Unit):
     case G.GRun{code, out}: push_ok(U32.is_eq(code, 0), branch, remote)
     case G.GBroken{detail}: IO.die(Unit, 1, detail)
 
-def push_branch(+repo: String, +branch: String, +remote: String) -> IO(Unit):
+def push_branch(+repo: String, +branch: String, remote: String) -> IO(Unit):
   do IO<Unit>:
     r : G.GitOut <- GitLand.push_git(repo, branch, remote)
     push_pick(r, branch, remote)
@@ -105,27 +105,27 @@ def tip_object_tail(subject: String) -> String:
 def tip_exit_tail(code: U32, remote: String) -> String:
   ",\"exit\":" ++ U32.show(code) ++ ",\"reason\":" ++ J.string_literal(Tx.cmd_failed(Tx.str_cat("git ls-remote ", remote))) ++ "}"
 
-def tip_present(present: Bool, subject: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
+def tip_present(present: Bool, subject: String, repo: String, branch: String, remote: String) -> IO(Unit):
   match present:
     case True{}: tip_json("advertised", tip_object_tail(subject), repo, branch, remote)
     case False{}: tip_json("absent", "}", repo, branch, remote)
 
-def tip_zero(zero: Bool, code: U32, +subject: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
+def tip_zero(zero: Bool, code: U32, subject: String, repo: String, branch: String, remote: String) -> IO(Unit):
   match zero:
     case True{}: tip_present(Bool.not(String.is_empty(subject)), subject, repo, branch, remote)
     case False{}: tip_json("failed", tip_exit_tail(code, remote), repo, branch, remote)
 
-def tip_run(+code: U32, subject: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
+def tip_run(+code: U32, subject: String, repo: String, branch: String, remote: String) -> IO(Unit):
   tip_zero(U32.is_eq(code, 0), code, subject, repo, branch, remote)
 
-def tip_pick(r: G.GitOut, +repo: String, +branch: String, +remote: String) -> IO(Unit):
+def tip_pick(r: G.GitOut, +repo: String, branch: String, remote: String) -> IO(Unit):
   match r:
     case G.GRun{code, out}: tip_run(code, GitLand.tip_object(out, GitLand.tip_ref(branch)), repo, branch, remote)
     case G.GBroken{detail}: IO.die(Unit, 1, detail)
 
 # The declared remote-tip read: report the object the named remote advertises
 # for the named branch, the absence of that branch, or the read's own failure.
-def remote_tip(+repo: String, +branch: String, +remote: String) -> IO(Unit):
+def remote_tip(+repo: String, +branch: String, remote: String) -> IO(Unit):
   do IO<Unit>:
     r : G.GitOut <- GitLand.remote_tip_git(repo, branch, remote)
     tip_pick(r, repo, branch, remote)
@@ -144,9 +144,9 @@ type Selected is Data:
 
 # The selected source must resolve to a commit. A missing or non-commit selector
 # refuses; an unusable git command is an operation failure with its own detail.
-def sel_commit_pick(r: G.GitOut, +commit: String) -> Selected:
+def sel_commit_pick(r: G.GitOut, commit: String) -> Selected:
   match r:
-    case G.GRun{+code, +out}:
+    case G.GRun{+code, out}:
       Bool.pick(Selected, U32.is_eq(code, 0),
         SelPicked{Tx.trim_nl(out)},
         Bool.pick(Selected, U32.is_eq(code, 1),
@@ -164,7 +164,7 @@ def sel_commit(repo: String, +commit: String) -> IO(Selected):
 # SelPicked here carries the resolved recorded-branch tip.
 def sel_branch_pick(r: G.GitOut, +branch: String) -> Selected:
   match r:
-    case G.GRun{+code, +out}:
+    case G.GRun{+code, out}:
       Bool.pick(Selected, U32.is_eq(code, 0),
         SelPicked{Tx.trim_nl(out)},
         Bool.pick(Selected, U32.is_eq(code, 1),
@@ -184,7 +184,7 @@ def sel_branch(repo: String, +branch: String) -> IO(Selected):
 # failure carrying that status and the command that produced it.
 def sel_ancestor_pick(r: G.GitOut, +oid: String, +branchOid: String) -> Selected:
   match r:
-    case G.GRun{+code, +out}:
+    case G.GRun{+code, out}:
       Bool.pick(Selected, U32.is_eq(code, 0),
         SelPicked{oid},
         Bool.pick(Selected, U32.is_eq(code, 1),
@@ -205,7 +205,7 @@ def sel_ancestor_after_branch(s: Selected, repo: String, +oid: String) -> IO(Sel
     case SelPicked{branchOid}: sel_ancestor(repo, oid, branchOid)
     case other: IO.pure(Selected, other)
 
-def sel_branch_after_commit(s: Selected, +repo: String, +branch: String, +commit: String) -> IO(Selected):
+def sel_branch_after_commit(s: Selected, repo: String, branch: String, commit: String) -> IO(Selected):
   match s:
     case SelPicked{commitOid}:
       do IO<Selected>:
@@ -213,14 +213,14 @@ def sel_branch_after_commit(s: Selected, +repo: String, +branch: String, +commit
         sel_ancestor_after_branch(b, repo, commitOid)
     case other: IO.pure(Selected, other)
 
-def select_reviewed(+repo: String, +branch: String, +commit: String) -> IO(Selected):
+def select_reviewed(repo: String, branch: String, commit: String) -> IO(Selected):
   do IO<Selected>:
     c : Selected <- sel_commit(repo, commit)
     sel_branch_after_commit(c, repo, branch, commit)
 
 # The refusal crosses as exit 2 with its specific reason; an operation failure
 # crosses with its own non-zero status and detail.
-def selected_or_die(s: Selected, +player: String) -> IO(String):
+def selected_or_die(s: Selected, player: String) -> IO(String):
   match s:
     case SelPicked{oid}: IO.pure(String, oid)
     case SelRefused{reason}: IO.die(String, 2, reason)
@@ -232,30 +232,30 @@ def selected_or_die(s: Selected, +player: String) -> IO(String):
 # to carry a branch of the same name. An unrecorded workspace refuses, because
 # absence does not establish the recorded source repository, and a recorded one
 # that cannot be read refuses as well.
-def assoc_same(w: String, r: String, +workspace: String, +repo: String) -> IO(Unit):
+def assoc_same(w: String, r: String, workspace: String, repo: String) -> IO(Unit):
   Bool.pick(IO(Unit), String.eq(w, r),
     IO.pure(Unit, Unit{}),
     IO.die(Unit, 2, "The recorded workspace belongs to a different repository than " ++ repo ++ ": " ++ workspace))
 
 # The host realpath canonicalizes the git-reported directory, so a symlinked
 # spelling and its resolved spelling compare equal.
-def assoc_real_pick(resolved: Result<&1,&1,U32 & String,String>, +workspace: String, +repo: String, +directory: String) -> IO(String):
+def assoc_real_pick(resolved: Result<&1,&1,U32 & String,String>, workspace: String, repo: String, directory: String) -> IO(String):
   match resolved:
     case Done{value}: IO.pure(String, value)
     case Fail{error}: IO.die(String, 2, "The recorded workspace repository directory cannot be resolved for " ++ workspace ++ " against " ++ repo ++ ": " ++ directory)
 
-def assoc_real(+directory: String, +workspace: String, +repo: String) -> IO(String):
+def assoc_real(directory: String, workspace: String, repo: String) -> IO(String):
   do IO<String>:
     resolved : Result<&1,&1,U32 & String,String> <- Host.Control.workspace(directory)
     assoc_real_pick(resolved, workspace, repo, directory)
 
-def assoc_canonical(+workspace: String, +repo: String, wdir: String, rdir: String) -> IO(Unit):
+def assoc_canonical(workspace: String, repo: String, wdir: String, rdir: String) -> IO(Unit):
   do IO<Unit>:
     w : String <- assoc_real(wdir, workspace, repo)
     r : String <- assoc_real(rdir, workspace, repo)
     assoc_same(w, r, workspace, repo)
 
-def assoc_pair(+workspace: String, +repo: String, w: G.GitOut, r: G.GitOut) -> IO(Unit):
+def assoc_pair(workspace: String, repo: String, w: G.GitOut, r: G.GitOut) -> IO(Unit):
   match w:
     case G.GRun{wcode, wout}:
       match r:
@@ -273,13 +273,13 @@ def assoc_pair(+workspace: String, +repo: String, w: G.GitOut, r: G.GitOut) -> I
 def assoc_missing() -> IO(Unit):
   IO.die(Unit, 2, "The player has no recorded workspace, so the reviewed source repository cannot be established; inspect the session and record its workspace.")
 
-def assoc_probe(+workspace: String, +repo: String) -> IO(Unit):
+def assoc_probe(workspace: String, repo: String) -> IO(Unit):
   do IO<Unit>:
     w : G.GitOut <- Git.runGit(workspace, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
     r : G.GitOut <- Git.runGit(repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
     assoc_pair(workspace, repo, w, r)
 
-def require_association(+db: String, +player: String, +repo: String) -> IO(Unit):
+def require_association(db: String, player: String, repo: String) -> IO(Unit):
   do IO<Unit>:
     workspace_raw : String <- IO.try(String, DB.Sql.query(db, "SELECT workspace FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +workspace : String <- IO.pure(String, line(workspace_raw))
@@ -287,7 +287,7 @@ def require_association(+db: String, +player: String, +repo: String) -> IO(Unit)
 
 # The recorded branch tip is the default source; the reviewed entry selects an
 # exact commit from that same recorded branch and lands only that object.
-def land_player_at(+db: String, +player: String, +repo: String, +target: String, +commit: String) -> IO(Unit):
+def land_player_at(+db: String, +player: String, +repo: String, +target: String, commit: String) -> IO(Unit):
   do IO<Unit>:
     player_row : String <- IO.try(String, Store.apply(db, C.Session{player}))
     present : Unit <- require_player(Bool.not(String.is_empty(player_row)))
@@ -299,7 +299,7 @@ def land_player_at(+db: String, +player: String, +repo: String, +target: String,
     outcome : G.LandOutcome <- GitLand.land_fast_forward_at(repo, oid, target)
     show_outcome(outcome)
 
-def land_checked_player_at(+db: String, +player: String, +repo: String, +target: String, +check: String, +files: String, +commit: String) -> IO(Unit):
+def land_checked_player_at(+db: String, +player: String, +repo: String, +target: String, check: String, files: String, commit: String) -> IO(Unit):
   do IO<Unit>:
     player_row : String <- IO.try(String, Store.apply(db, C.Session{player}))
     present : Unit <- require_player(Bool.not(String.is_empty(player_row)))

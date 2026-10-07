@@ -3,7 +3,7 @@ import ../host/process.bend as P
 import ../json/canonical.bend as J
 import ../host/files.bend as F
 
-def select_file(directory: String, +session: String, +first: String, found: Bool) -> IO(String):
+def select_file(directory: String, session: String, first: String, found: Bool) -> IO(String):
   match found:
     case True{}: IO.pure(String,first)
     case False{}: do IO<String>:
@@ -11,7 +11,7 @@ def select_file(directory: String, +session: String, +first: String, found: Bool
       IO.pure(String,Bool.pick(String,String.is_empty(second),session,second))
 
 # OMP accepts a session file path when continuing across Player and Conductor stores.
-def resume_file(primary: String, alternate: String, +session: String, enabled: Bool) -> IO(String):
+def resume_file(primary: String, alternate: String, session: String, enabled: Bool) -> IO(String):
   match enabled:
     case False{}: IO.pure(String,session)
     case True{}: do IO<String>:
@@ -26,7 +26,7 @@ def argv(cmd: String, model: String, effort: String, sessions: String, session: 
     case True{}: P.argv(arguments(cmd,model,effort,sessions))
     case False{}: P.argv(List.append(&1,String,arguments(cmd,model,effort,sessions),["--resume",session]))
 
-def start_player(cmd: String, model: String, effort: String, cwd: String, +log: String, sessions: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
+def start_player(cmd: String, model: String, effort: String, cwd: String, log: String, sessions: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   P.ProcessChild.spawn(argv(cmd,model,effort,sessions,session,fresh),cwd,log ++ ".stderr")
 
 # The setup asks the server for the documented delta projection (issue #662):
@@ -45,7 +45,7 @@ def prompt(text: String) -> String:
 # successful full-category delta selection activates the projection, a failed
 # answer is refused, a successful answer without that selection is
 # unconfirmed, and a missing answer keeps the state the turn already holds.
-def filter_next(+state: String, +mode: String) -> String:
+def filter_next(state: String, mode: String) -> String:
   Bool.pick(String,String.is_empty(mode),state,mode)
 
 # The completed turn records what the server's answer actually established, so

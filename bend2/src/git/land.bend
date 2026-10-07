@@ -171,16 +171,16 @@ def ff_go4(r: FFLD, repo: String, target: String) -> IO(FFLD):
 def publish_receiver() -> String:
   "git -c receive.denyCurrentBranch=updateInstead -c receive.denyNonFastForwards=true -c core.hooksPath=/dev/null receive-pack"
 
-def publish_refspec(+oid: String, +target: String) -> String:
+def publish_refspec(oid: String, target: String) -> String:
   T.str_cat3(oid, ":refs/heads/", target)
 
-def publish_field(+oid: String, +target: String) -> String:
+def publish_field(+oid: String, target: String) -> String:
   T.str_cat3("\t", publish_refspec(oid, target), "\t")
 
 def publish_destination_ok(+path: String) -> Bool:
   Tx.starts_with(path, "/")
 
-def publish_argv(+destination: String, +target: String, +oid: String, +basis: String) -> List<String>:
+def publish_argv(destination: String, target: String, oid: String, basis: String) -> List<String>:
   Bool.pick(List<String>, publish_destination_ok(destination),
     Con{"push", Con{"--porcelain", Con{Tx.str_cat("--receive-pack=", publish_receiver()), Con{T.str_cat3("--force-with-lease=refs/heads/", target, Tx.str_cat(":", basis)), Con{destination, Con{publish_refspec(oid, target), Nil{}}}}}}},
     Nil{})
@@ -191,24 +191,24 @@ def pub_flag_like(+line: String) -> Bool:
       Bool.pick(Bool, Tx.starts_with(line, "!\t"), True{},
         Bool.pick(Bool, Tx.starts_with(line, "+\t"), True{}, Tx.starts_with(line, "*\t")))))
 
-def pub_record_matches(+line: String, +want: String) -> Bool:
+def pub_record_matches(+line: String, want: String) -> Bool:
   Bool.pick(Bool, Tx.starts_with(line, Tx.str_cat(" ", want)), True{},
     Bool.pick(Bool, Tx.starts_with(line, Tx.str_cat("=", want)), True{},
       Bool.pick(Bool, Tx.starts_with(line, Tx.str_cat("!", want)), True{},
         Bool.pick(Bool, Tx.starts_with(line, Tx.str_cat("+", want)), True{},
           Tx.starts_with(line, Tx.str_cat("*", want))))))
 
-def pub_hit(+line: String, +want: String, +which: U32) -> Bool:
+def pub_hit(+line: String, want: String, which: U32) -> Bool:
   Bool.pick(Bool, U32.is_eq(which, 0), pub_flag_like(line), pub_record_matches(line, want))
 
-def pub_count(lines: List<String>, +want: String, +which: U32) -> U32:
+def pub_count(lines: List<String>, want: String, which: U32) -> U32:
   match lines:
     case Nil{}: 0
     case Con{h, rest}:
       +tail = pub_count(rest, want, which)
       Bool.pick(U32, pub_hit(h, want, which), U32.add(tail, 1), tail)
 
-def pub_first(lines: List<String>, +want: String, +which: U32) -> String:
+def pub_first(lines: List<String>, want: String, which: U32) -> String:
   match lines:
     case Nil{}: ""
     case Con{h, rest}:
@@ -246,7 +246,7 @@ def pub_record(out: String, +want: String) -> PubRecord:
       Bool.pick(PubRecord, U32.is_eq(flagged, 0), RecordAbsent{}, RecordAmbiguous{flagged, pub_first(lines, want, 0)}),
       RecordAmbiguous{relevant, pub_first(lines, want, 1)}))
 
-def pub_obs(r: T.GitOut, +want: String, +destination: String, +target: String, +oid: String, +basis: String) -> PubObservation:
+def pub_obs(r: T.GitOut, +want: String, destination: String, target: String, oid: String, basis: String) -> PubObservation:
   match r:
     case T.GRun{code, out}: ObsAttempted{code, out, pub_record(out, want), destination, target, oid, basis, "unverified", RereadBroken{"not read"}}
     case T.GBroken{detail}: ObsBroken{detail, destination, target, oid, basis}
@@ -266,7 +266,7 @@ def obs_class(+obs: PubObservation) -> String:
     case ObsNotAttempted{reason, destination, target, oid, basis}: "not-attempted"
     case ObsBroken{detail, destination, target, oid, basis}: "broken"
 
-def obs_refuse(code: U32, record: PubRecord, +post: String, +target: String, +oid: String) -> T.LandOutcome:
+def obs_refuse(code: U32, record: PubRecord, post: String, target: String, oid: String) -> T.LandOutcome:
   Bool.pick(T.LandOutcome, U32.is_eq(code, 0),
     Bool.pick(T.LandOutcome, Tx.str_eq(post, "verified-object"),
       T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " reached the post-state " ++ post ++ " but holder verification and custody do not exist yet; the observation stays pending and must not be treated as a completion"},
@@ -282,17 +282,17 @@ def obs_refusal(+obs: PubObservation) -> T.LandOutcome:
     case ObsNotAttempted{reason, destination, target, oid, basis}: T.LBlocked{reason}
     case ObsBroken{detail, destination, target, oid, basis}: T.LBlocked{detail}
 
-def obs_reread(code: U32, out: String, record: PubRecord, +destination: String, +target: String, +oid: String, +basis: String, rcode: U32, rout: String, +ref: String) -> PubObservation:
+def obs_reread(code: U32, out: String, record: PubRecord, destination: String, target: String, oid: String, basis: String, rcode: U32, rout: String, ref: String) -> PubObservation:
   Bool.pick(PubObservation, U32.is_eq(rcode, 0),
     Bool.pick(PubObservation, Tx.str_eq(Tx.trim_nl(rout), oid),
       ObsAttempted{code, out, record, destination, target, oid, basis, "verified-object", RereadRead{rcode, rout, ref}},
       ObsAttempted{code, out, record, destination, target, oid, basis, "mismatch-ref", RereadRead{rcode, rout, ref}}),
     ObsAttempted{code, out, record, destination, target, oid, basis, "unreadable-ref", RereadRead{rcode, rout, ref}})
 
-def obs_reread_broken(code: U32, out: String, record: PubRecord, +destination: String, +target: String, +oid: String, +basis: String, +detail: String, +ref: String) -> PubObservation:
+def obs_reread_broken(code: U32, out: String, record: PubRecord, destination: String, target: String, oid: String, basis: String, detail: String, ref: String) -> PubObservation:
   ObsAttempted{code, out, record, destination, target, oid, basis, "unreadable-ref", RereadBroken{detail}}
 
-def verify_ref_pick(+obs: PubObservation, r: T.GitOut, +ref: String) -> PubObservation:
+def verify_ref_pick(obs: PubObservation, r: T.GitOut, ref: String) -> PubObservation:
   match obs:
     case ObsAttempted{code, out, record, destination, target, oid, basis, post, reread}:
       match r:
@@ -300,7 +300,7 @@ def verify_ref_pick(+obs: PubObservation, r: T.GitOut, +ref: String) -> PubObser
         case T.GBroken{detail}: obs_reread_broken(code, out, record, destination, target, oid, basis, detail, ref)
     case other: other
 
-def verify_ref(+obs: PubObservation, +repo: String, +target: String, +ref: String) -> IO(PubObservation):
+def verify_ref(obs: PubObservation, repo: String, target: String, ref: String) -> IO(PubObservation):
   +r2 = repo
   do IO<PubObservation>:
     reread : T.GitOut <- Git.runGit(r2, Con{"rev-parse", Con{Tx.str_cat("refs/heads/", target), Nil{}}})
@@ -314,13 +314,13 @@ def verify_observation(+obs: PubObservation, +repo: String) -> IO(PubObservation
         IO.pure(PubObservation, obs))
     case other: IO.pure(PubObservation, other)
 
-def publish_run(+destination: String, +target: String, +oid: String, +basis: String, +want: String) -> IO(PubObservation):
+def publish_run(+destination: String, +target: String, oid: String, basis: String, want: String) -> IO(PubObservation):
   do IO<PubObservation>:
     pushed : T.GitOut <- Git.runGit(destination, publish_argv(destination, target, oid, basis))
     observation : PubObservation <- IO.pure(PubObservation, pub_obs(pushed, want, destination, target, oid, basis))
     verify_observation(observation, destination)
 
-def publish_observe(+destination: String, +target: String, +oid: String, +basis: String) -> IO(PubObservation):
+def publish_observe(+destination: String, +target: String, +oid: String, basis: String) -> IO(PubObservation):
   +d2 = destination
   +t2 = target
   +o2 = oid
@@ -415,7 +415,7 @@ def holder_branch_line(+target: String) -> String:
 
 # A required state line carries the worktree's own HEAD, detachment or bare state,
 # with an object named; locked and prunable are modifiers and never complete a block.
-def holder_required_state(+line: String) -> Bool:
+def holder_required_state(line: String) -> Bool:
   Bool.pick(Bool, Tx.starts_with(line, "HEAD "),
     Bool.pick(Bool, Tx.str_eq(line, "HEAD "), False{}, True{}),
     Bool.pick(Bool, Tx.str_eq(line, "detached"), True{}, Tx.str_eq(line, "bare")))
@@ -460,28 +460,28 @@ def holder_open(+path: Maybe<String>, +acc: HolderScan, +request: String) -> Hol
           ScanState{block, matched, seen, U32.add(bad, 1), blocks}
         case NoBlock{}: holder_open_fresh(path, acc, request)
 
-def holder_in_block(+acc: HolderScan, +request: String) -> Bool:
+def holder_in_block(acc: HolderScan, request: String) -> Bool:
   match acc:
     case ScanState{block, matched, seen, bad, blocks}:
       match block:
         case InBlock{path, has_state, branches}: True{}
         case NoBlock{}: False{}
 
-def holder_state_seen(+acc: HolderScan, +request: String) -> HolderScan:
+def holder_state_seen(acc: HolderScan, request: String) -> HolderScan:
   match acc:
     case ScanState{block, matched, seen, bad, blocks}:
       match block:
         case InBlock{path, has_state, branches}: ScanState{InBlock{path, True{}, branches}, matched, seen, bad, blocks}
         case NoBlock{}: ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks}
 
-def holder_match_first(+path: String, has_state: Bool, branches: U32, +acc: HolderScan, matched: Maybe<String>) -> HolderScan:
+def holder_match_first(path: String, has_state: Bool, branches: U32, acc: HolderScan, matched: Maybe<String>) -> HolderScan:
   match acc:
     case ScanState{block, prior, seen, bad, blocks}:
       match prior:
         case Some{value}: ScanState{InBlock{path, has_state, U32.add(branches, 1)}, Some{value}, U32.add(seen, 1), bad, blocks}
         case None{}: ScanState{InBlock{path, has_state, U32.add(branches, 1)}, Some{path}, U32.add(seen, 1), bad, blocks}
 
-def holder_match_seen(+line: String, +target: String, +acc: HolderScan, +request: String) -> HolderScan:
+def holder_match_seen(line: String, target: String, acc: HolderScan, request: String) -> HolderScan:
   match acc:
     case ScanState{block, matched, seen, bad, blocks}:
       match block:
@@ -524,7 +524,7 @@ def holder_ok_state(+acc: HolderScan, +request: String) -> HolderScan:
 def holder_ok_branch(+acc: HolderScan, +request: String) -> HolderScan:
   Bool.pick(HolderScan, holder_in_block(acc, request), acc, holder_bad(acc, request))
 
-def holder_line_step(+line: String, +branch: String, +target: String, +acc: HolderScan, +request: String) -> HolderScan:
+def holder_line_step(+line: String, +branch: String, +target: String, +acc: HolderScan, request: String) -> HolderScan:
   Bool.pick(HolderScan, Tx.starts_with(line, "worktree "),
     holder_open(holder_path_of(line), acc, request),
     Bool.pick(HolderScan, holder_required_state(line),
@@ -537,7 +537,7 @@ def holder_line_step(+line: String, +branch: String, +target: String, +acc: Hold
             holder_ok_branch(acc, request),
             holder_bad(acc, request))))))
 
-def holder_step(lines: List<String>, +branch: String, +target: String, +acc: HolderScan, +request: String) -> HolderScan:
+def holder_step(lines: List<String>, +branch: String, +target: String, acc: HolderScan, request: String) -> HolderScan:
   match lines:
     case Nil{}: holder_close(acc, request)
     case Con{h, rest}:
@@ -552,7 +552,7 @@ def holder_request_argv(request: HolderRequest) -> String:
   match request:
     case HolderRequest{destination, target, argv}: argv
 
-def holder_scan(lines: List<String>, +request: HolderRequest) -> HolderVerdict:
+def holder_scan(lines: List<String>, request: HolderRequest) -> HolderVerdict:
   +target = holder_request_target(request)
   holder_verdict(holder_step(lines, holder_branch_line(target), target, ScanState{NoBlock{}, None{}, 0, 0, 0}, holder_request_argv(request)), request)
 
@@ -582,7 +582,7 @@ def reread_of(g: T.GitOut, +ref: String) -> RereadObs:
     case T.GRun{code, out}: RereadRead{code, out, ref}
     case T.GBroken{detail}: RereadBroken{detail}
 
-def holder_state(+path: String) -> IO(HolderState):
+def holder_state(path: String) -> IO(HolderState):
   +p2 = path
   do IO<HolderState>:
     head : T.GitOut <- Git.runGit(p2, ["rev-parse", "HEAD"])
@@ -870,7 +870,7 @@ def wt_path(line: String) -> String:
 # One branch line that names the target: the first one records the path of the
 # block it appeared in, and any later one, or one that appeared before any
 # block, makes the listing unusable.
-def ld_hold_named(+cur: String, +found: String, +seen: U32) -> LdHoldScan:
+def ld_hold_named(cur: String, found: String, seen: U32) -> LdHoldScan:
   Bool.pick(LdHoldScan, String.is_empty(cur),
     HoldScan{cur, found, 2},
     Bool.pick(LdHoldScan, U32.is_eq(seen, 0),
@@ -879,7 +879,7 @@ def ld_hold_named(+cur: String, +found: String, +seen: U32) -> LdHoldScan:
 
 def ld_hold_line(+line: String, acc: LdHoldScan, want: String) -> LdHoldScan:
   match acc:
-    case HoldScan{+cur, +found, +seen}:
+    case HoldScan{+cur, found, seen}:
       Bool.pick(LdHoldScan, Tx.starts_with(line, "worktree "),
         HoldScan{wt_path(line), found, seen},
         Bool.pick(LdHoldScan, Tx.str_eq(line, want),
@@ -894,7 +894,7 @@ def ld_hold_scan(lines: List<String>, acc: LdHoldScan, +want: String) -> LdHoldS
 # The holder one report names, or the reason it names no usable one.
 def ld_hold_end(acc: LdHoldScan) -> LdHold:
   match acc:
-    case HoldScan{cur, found, +seen}:
+    case HoldScan{cur, found, seen}:
       Bool.pick(LdHold, U32.is_eq(seen, 0), HoldNone{},
         Bool.pick(LdHold, U32.is_eq(seen, 1), HoldPath{found},
           HoldBlocked{"the worktree listing names the target branch in more than one block, or outside a block"}))
@@ -1372,7 +1372,7 @@ def land_fast_forward(repo: String, workerBranch: String, target: String) -> IO(
 # and the pipeline starts after branch resolution, so no branch name is read
 # here. Stages 2 to 5, their outcome type and the CAS target update are the same
 # ones the branch entry uses.
-def land_fast_forward_at(repo: String, +workerCommit: String, target: String) -> IO(T.LandOutcome):
+def land_fast_forward_at(repo: String, workerCommit: String, target: String) -> IO(T.LandOutcome):
   +rp = repo
   +tg = target
   +wc = workerCommit
@@ -1859,7 +1859,7 @@ def ld_single_msg_read(worker: String, sha: String, tip: String, scratch: String
     ld_msg_pick(g, w2, s2, tip, sc, p2)
 
 # Git emits the tip first in topological order. The body lists oldest first.
-def ld_subjects_tail(rest: List<String>, +subject: String, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+def ld_subjects_tail(rest: List<String>, subject: String, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
   match rest:
     case Nil{}: ld_single_msg_read(worker, sha, tip, scratch, paths)
     case Con{h, tail}: ld_commit_now(subject ++ "\n\n" ++ Tx.join("\n", List.reverse(&1, String, Con{subject, Con{h, tail}})), worker, sha, tip, scratch, paths)
@@ -1879,7 +1879,7 @@ def ld_history_pick(g: T.GitOut, worker: String, sha: String, tip: String, scrat
     case T.GRun{code, out}: ld_history_ok(U32.is_eq(code, 0), out, worker, sha, tip, scratch, paths)
     case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
 
-def ld_history_base_ok(ok: Bool, base: String, +worker: String, +sha: String, +tip: String, +scratch: String, +paths: String) -> IO(Ld):
+def ld_history_base_ok(ok: Bool, base: String, +worker: String, +sha: String, +tip: String, scratch: String, paths: String) -> IO(Ld):
   match ok:
     case False{}: IO.pure(Ld, LdFail{T.FCmd{"land", "the worker and target merge-base could not be read: " ++ base}})
     case True{}: do IO<Ld>:

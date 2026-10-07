@@ -49,7 +49,7 @@ def hex_digit_go(n: U32, low: Bool) -> Char:
     case True{}: ch(U32.add(48, n))
     case False{}: ch(U32.add(87, n))
 
-def hex_digit(+n: U32) -> Char:
+def hex_digit(n: U32) -> Char:
   hex_digit_go(n, U32.is_lt(n, 10))
 
 def unicode_escape(+code: U32) -> String:
@@ -103,7 +103,7 @@ def escape_char(+c: Char) -> String:
 def escape(s: String) -> String:
   match s:
     case SNil{}: SNil{}
-    case SCon{+head, +tail}: escape_char(head) ++ escape(tail)
+    case SCon{+head, tail}: escape_char(head) ++ escape(tail)
 
 def string_literal(s: String) -> String:
   one(ch(34)) ++ escape(s) ++ one(ch(34))
@@ -116,42 +116,42 @@ def string_literal(s: String) -> String:
 def head_of(s: String) -> Char:
   match s:
     case SNil{}: ch(0)
-    case SCon{+head, +tail}: head
+    case SCon{+head, tail}: head
 
 def tail_of(s: String) -> String:
   match s:
     case SNil{}: SNil{}
-    case SCon{+head, +tail}: tail
+    case SCon{+head, tail}: tail
 
-def key_le(+a: String, +b: String) -> Bool:
+def key_le(a: String, b: String) -> Bool:
   match a:
     case SNil{}: True{}
-    case SCon{+ha, +ta}:
+    case SCon{+ha, ta}:
       Bool.pick(Bool, U32.is_lt(cp(ha), cp(head_of(b))), True{},
       Bool.pick(Bool, U32.is_lt(cp(head_of(b)), cp(ha)), False{},
         key_le(ta, tail_of(b))))
 
 def cell_le_b(akey: String, b: Json) -> Bool:
   match b:
-    case Jpair{+bkey, +bvalue, +brest}: key_le(akey, bkey)
+    case Jpair{+bkey, bvalue, brest}: key_le(akey, bkey)
     case Jnull{}: False{}
     case Jtrue{}: False{}
     case Jfalse{}: False{}
     case Jint{+value}: False{}
     case Jstr{+value}: False{}
-    case Jarr{+head, +tail}: False{}
+    case Jarr{+head, tail}: False{}
     case Jobj{+members}: False{}
     case Jnil{}: False{}
 
 def cell_le(a: Json, b: Json) -> Bool:
   match a:
-    case Jpair{+akey, +avalue, +arest}: cell_le_b(akey, b)
+    case Jpair{+akey, avalue, arest}: cell_le_b(akey, b)
     case Jnull{}: False{}
     case Jtrue{}: False{}
     case Jfalse{}: False{}
     case Jint{+value}: False{}
     case Jstr{+value}: False{}
-    case Jarr{+head, +tail}: False{}
+    case Jarr{+head, tail}: False{}
     case Jobj{+members}: False{}
     case Jnil{}: False{}
 
@@ -160,32 +160,32 @@ def cell_le(a: Json, b: Json) -> Bool:
 # this definition alone, because mutual recursion is refused.
 def key_of(cell: Json) -> String:
   match cell:
-    case Jpair{+key, +value, +rest}: key
+    case Jpair{+key, value, rest}: key
     case Jnull{}: SNil{}
     case Jtrue{}: SNil{}
     case Jfalse{}: SNil{}
     case Jint{+value}: SNil{}
     case Jstr{+value}: SNil{}
-    case Jarr{+head, +tail}: SNil{}
+    case Jarr{+head, tail}: SNil{}
     case Jobj{+members}: SNil{}
     case Jnil{}: SNil{}
 
 def value_of(cell: Json) -> Json:
   match cell:
-    case Jpair{+key, +value, +rest}: value
+    case Jpair{+key, value, rest}: value
     case Jnull{}: Jnil{}
     case Jtrue{}: Jnil{}
     case Jfalse{}: Jnil{}
     case Jint{+value}: Jnil{}
     case Jstr{+value}: Jnil{}
-    case Jarr{+head, +tail}: Jnil{}
+    case Jarr{+head, tail}: Jnil{}
     case Jobj{+members}: Jnil{}
     case Jnil{}: Jnil{}
 
-def insert_cell(+cell: Json, +chain: Json) -> Json:
+def insert_cell(cell: Json, chain: Json) -> Json:
   match chain:
     case Jnil{}: cell
-    case Jpair{+key, +value, +rest}:
+    case Jpair{+key, value, rest}:
       Bool.pick(Json, key_le(key_of(cell), key),
         Jpair{key_of(cell), value_of(cell), chain},
         Jpair{key, value, insert_cell(cell, rest)})
@@ -200,7 +200,7 @@ def insert_cell(+cell: Json, +chain: Json) -> Json:
 def sort_pairs(chain: Json) -> Json:
   match chain:
     case Jnil{}: Jnil{}
-    case Jpair{+key, +value, +rest}: insert_cell(Jpair{key, value, Jnil{}}, sort_pairs(rest))
+    case Jpair{+key, value, rest}: insert_cell(Jpair{key, value, Jnil{}}, sort_pairs(rest))
     case Jnull{}: Jnil{}
     case Jtrue{}: Jnil{}
     case Jfalse{}: Jnil{}
@@ -232,14 +232,14 @@ def mode_is_object(mode: Mode) -> Bool:
 # Normalisation sorts each object's member chain and otherwise rebuilds the tree, so the
 # walk below only ever visits an already-normalised tree and every recursive call passes a
 # strict subterm as its first argument (the checker verifies termination that way).
-def normalize(+j: Json) -> Json:
+def normalize(j: Json) -> Json:
   match j:
     case Jnull{}: Jnull{}
     case Jtrue{}: Jtrue{}
     case Jfalse{}: Jfalse{}
     case Jint{+value}: Jint{value}
     case Jstr{+value}: Jstr{value}
-    case Jarr{+head, +tail}: Jarr{normalize(head), normalize(tail)}
+    case Jarr{+head, tail}: Jarr{normalize(head), normalize(tail)}
     case Jobj{+members}: Jobj{sort_pairs(normalize(members))}
     case Jpair{+key, +value, +rest}: Jpair{key, normalize(value), normalize(rest)}
     case Jnil{}: Jnil{}
@@ -255,14 +255,14 @@ def cat_list(xs: List<String>, ys: List<String>) -> List<String>:
 # first argument is always a strict subterm of the parameter; the mode and the position are
 # read by helpers and value-level picks, because a nested match may only take a field bound
 # by the enclosing pattern.
-def emit(+j: Json, +mode: Mode, first: Bool) -> List<String>:
+def emit(j: Json, mode: Mode, first: Bool) -> List<String>:
   match j:
     case Jnull{}: ["null"]
     case Jtrue{}: ["true"]
     case Jfalse{}: ["false"]
     case Jint{+value}: [U32.show(value)]
     case Jstr{+value}: [string_literal(value)]
-    case Jarr{+head, +tail}:
+    case Jarr{+head, tail}:
       pick_list(mode_is_value(mode),
         cat_list([one(ch(91))], cat_list(emit(head, MValue{}, True{}), cat_list(emit(tail, MArray{}, False{}), [one(ch(93))]))),
         cat_list(separator(first), cat_list(emit(head, MValue{}, True{}), emit(tail, MArray{}, False{}))))
@@ -298,7 +298,7 @@ def utf8_class(code: U32, ascii: Bool, two: Bool) -> List<U32>:
     case True{}: [code]
     case False{}: utf8_wide(code, two)
 
-def utf8_char(+c: Char) -> List<U32>:
+def utf8_char(c: Char) -> List<U32>:
   utf8_class(cp(c), U32.is_lt(cp(c), 128), U32.is_lt(cp(c), 2048))
 
 def cat_bytes(xs: List<U32>, ys: List<U32>) -> List<U32>:
@@ -309,7 +309,7 @@ def cat_bytes(xs: List<U32>, ys: List<U32>) -> List<U32>:
 def utf8(s: String) -> List<U32>:
   match s:
     case SNil{}: Nil{}
-    case SCon{+head, +tail}: cat_bytes(utf8_char(head), utf8(tail))
+    case SCon{+head, tail}: cat_bytes(utf8_char(head), utf8(tail))
 
 def hex_byte(+b: U32) -> String:
   one(hex_digit(U32.shrn(b, 4n))) ++ one(hex_digit(U32.and(b, 15)))

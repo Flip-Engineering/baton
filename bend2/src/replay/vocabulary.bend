@@ -60,7 +60,7 @@ def field_of(m: Maybe<&2, String>) -> String:
 def field(fs: List<&2, String>, n: Nat) -> String:
   field_of(List.head(&2, String, List.drop(&2, String, fs, n)))
 
-def case_fields(+fs: List<&2, String>) -> CaseRow:
+def case_fields(fs: List<&2, String>) -> CaseRow:
   CaseRow{
     field(fs, 1n),
     field(fs, 2n),
@@ -85,7 +85,7 @@ def tag_of_on(is_forged: Bool, is_missing: Bool, is_driver: Bool) -> Tag:
             case False{}:
               Full{}
 
-def tag_of(+mutation: String) -> Tag:
+def tag_of(mutation: String) -> Tag:
   tag_of_on(String.eq(mutation, "forged_kind"), String.eq(mutation, "missing_field"), String.eq(mutation, "driver_row"))
 
 def row13(tag: Tag) -> Row:
@@ -309,7 +309,7 @@ def rerun_word_on(is_twice: Bool) -> String:
 def rerun_word(replays: String) -> String:
   rerun_word_on(String.eq(replays, "twice"))
 
-def line(name: String, +tag: Tag, rer: String) -> String:
+def line(name: String, tag: Tag, rer: String) -> String:
   String.concat([
     "RESULT|", name,
     "|rows=30", "|admitted=", num(admitted(tag)),
