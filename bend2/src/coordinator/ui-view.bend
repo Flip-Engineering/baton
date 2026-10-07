@@ -61,7 +61,7 @@ def resolve_choice(installed: Result<&1,&1,U32 & String,String>, source: Result<
     case Done{+path}: IO.pure(String,path)
     case Fail{error}: resolve_source(source)
 
-def resolve_server(executable: String) -> IO(String):
+def resolve_server(+executable: String) -> IO(String):
   do IO<String>:
     installed_path : String <- IO.pure(String,installed_candidate(directory_of(executable)))
     source_path : String <- IO.pure(String,source_candidate(directory_of(executable)))
@@ -129,7 +129,7 @@ def run_body(db: String, subject: String, reader: String, port: String, canonica
   do IO<Unit>:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     node : String <- IO.try(String,Host.Control.command("node"))
-    server : String <- resolve_server(server_candidates(executable))
+    server : String <- resolve_server(executable)
     spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([node,server,"--database",canonical,"--reader",reader,"--subject",subject,"--host","127.0.0.1","--port",port]),".",canonical ++ ".view.stderr")
     run_started(canonical,reader,"http://127.0.0.1:" ++ port ++ "/",spawned)
 
