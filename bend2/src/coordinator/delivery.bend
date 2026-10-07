@@ -51,7 +51,7 @@ def handoff(db: String, +id: String, next: String -> IO(Result<&1,&1,U32 & Strin
     +notification : String <- IO.pure(String,Tx.trim_nl(selected))
     handoff_selected(id,notification,next,String.is_empty(notification))
 
-def stopped_delivery(db: String, id: String, next: String -> IO(Result<&1,&1,U32 & String,String>), retained: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def stopped_delivery(db: String, id: String, next: String -> IO(Result<&1,&1,U32 & String,String>), +retained: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match retained:
     case True{}: handoff(db,id,next)
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Session is terminally stopped; the retained input will not execute. Inspect its session and inbox.")})
