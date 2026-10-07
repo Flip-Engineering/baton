@@ -180,9 +180,9 @@ def Landing.mutated(handle: U32, request: LandingRequest, candidate: String, bas
   +argv = Tx.enc_argv(Con{"git", Con{"update-ref", Con{qualified_target(intent_target(landingreq_intent(req))), Con{cand, Con{mutation_old_value(landingreq_old_target(req)), Nil{}}}}}})
   do IO<Landing>:
     observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(argv, landingreq_repository(req), h, landingreq_guard(req), landingreq_artifact(req))
-    Landing.release(h, req, cand, base, pub, observed)
+    Landing.release(h, req, cand, base, pub, T.captured_raw_of(observed))
 
-def Landing.release(handle: U32, request: LandingRequest, candidate: String, basis: String, published: String, mutation: Result<&1,&1,U32 & String,String & String>) -> IO(Landing):
+def Landing.release(handle: U32, request: LandingRequest, candidate: String, basis: String, published: String, mutation: T.CapturedRaw) -> IO(Landing):
   +h = handle
   +req = request
   +cand = candidate
