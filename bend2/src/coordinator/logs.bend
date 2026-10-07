@@ -753,7 +753,7 @@ def listed_segments(+log: String, +keep: U32, pending: String) -> IO(String):
 def log_rows_sql() -> String:
   "SELECT lf.session,lf.log,coalesce((SELECT level FROM log_policies WHERE session=lf.session)," ++ C.q(default_level()) ++ "),coalesce((SELECT budget_bytes FROM log_policies WHERE session=lf.session)," ++ default_budget() ++ "),coalesce((SELECT keep_segments FROM log_policies WHERE session=lf.session)," ++ default_segments() ++ "),(SELECT count(*) FROM messages WHERE recipient=lf.session AND receipt IS NULL) FROM log_files lf ORDER BY lf.session,lf.log;"
 
-def log_json(session: String, +log: String, level: String, budget: String, keep: String, pending: String, size: U32, stderr: U32, stderr_full: U32, stderr_meta: U32, stderr_error: U32, checkpoint: U32, rotated: String) -> String:
+def log_json(session: String, +log: String, level: String, budget: String, keep: String, pending: String, size: U32, stderr: U32, stderr_full: U32, stderr_meta: U32, stderr_error: U32, +checkpoint: U32, rotated: String) -> String:
   "{\"session\":" ++ J.string_literal(session)
   ++ ",\"path\":" ++ J.string_literal(log)
   ++ ",\"attempt\":" ++ J.string_literal(attempt_of(log))
