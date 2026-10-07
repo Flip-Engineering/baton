@@ -58,7 +58,7 @@ def executable_directory(path: String) -> String:
   dirname_step(path, SNil{}, SNil{})
 
 def installed_provider_path(executable: String) -> String:
-  executable_directory(executable) ++ "/../libexec/baton2/context-provider.mjs"
+  executable_directory(executable) ++ "../libexec/baton2/context-provider.mjs"
 
 def inventory_argv(+runtime_path: String, +executable: String) -> String:
   Process.argv([runtime_path, "--experimental-strip-types",
