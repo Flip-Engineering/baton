@@ -777,7 +777,7 @@ def attempt_cleanup_result(name: String, size: U32, result: Result<&1,&1,U32 & S
     case Fail{(code,text)}: "{\"file\":" ++ J.string_literal(name) ++ ",\"removed\":false,\"error\":" ++ J.string_literal(U32.show(code) ++ ": " ++ text) ++ "}"
     case Done{state}: "{\"file\":" ++ J.string_literal(name) ++ ",\"bytes\":" ++ U32.show(size) ++ ",\"removed\":" ++ Bool.pick(String,String.eq(state,"removed"),"true","false") ++ "}"
 
-def attempt_cleanup_file(db: String, directory: String, name: String) -> IO(String):
+def attempt_cleanup_file(db: String, +directory: String, +name: String) -> IO(String):
   do IO<String>:
     size : U32 <- IO.try(U32,F.Files.size(directory ++ "/" ++ name))
     result : Result<&1,&1,U32 & String,String> <- F.Files.remove_attempt_file(db,directory,name)
