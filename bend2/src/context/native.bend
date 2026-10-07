@@ -846,8 +846,87 @@ def managed_recovery_binding(+db: String, +bootstrap: ManagedQuery.Bootstrap,
           managed_recovery_admission(db, binding, bootstrap, admission),
         IO.pure(Bool, False{}))
 
-def managed_recovery_attach(+db: String, +executable: String,
-                            +runtime_path: String, +worktree: String,
+def managed_recovery_start_decision(+db: String, +binding: String,
+                                    +bootstrap: ManagedQuery.Bootstrap,
+                                    +worktree: String, +bootstrap_digest: String,
+                                    handle: U32,
+                                    decision: IO(ManagedQuery.StartDecision)) -> IO(Unit):
+  do IO<Unit>:
+    committed : ManagedQuery.StartDecision <- decision
+    launch = ManagedLaunch{bootstrap, SNil{},
+      ManagedQuery.bootstrap_executable_path(bootstrap),
+      ManagedQuery.bootstrap_runtime_path(bootstrap), worktree, bootstrap_digest}
+    managed_start_decision(db, binding, launch, handle, committed)
+
+def managed_recovery_readiness_decision(+db: String, +binding: String,
+                                        +bootstrap: ManagedQuery.Bootstrap,
+                                        +worktree: String, +bootstrap_digest: String,
+                                        handle: U32,
+                                        readiness: ManagedQuery.KeeperReadiness) -> IO(Unit):
+  match readiness:
+    case ManagedQuery.KeeperObserverUnavailable{reason}:
+      IO.die(Unit, 3, "managedRecoveryReadinessUnavailable:" ++ reason)
+    case ManagedQuery.KeeperObserverReady{query, owner, keeper_path, role, incarnation}:
+      managed_recovery_start_decision(db, binding, bootstrap, worktree,
+        bootstrap_digest, handle,
+        ManagedQuery.reconcile_recovery_admission(bootstrap, "starter", "0", db))
+
+def managed_recovery_readiness_loaded(+db: String, +binding: String,
+                                      +bootstrap: ManagedQuery.Bootstrap,
+                                      +worktree: String, +bootstrap_digest: String,
+                                      handle: U32, +host_json: String) -> IO(Unit):
+  do IO<Unit>:
+    readiness : ManagedQuery.KeeperReadiness <- decode_managed_recovery_readiness(
+      db, binding, bootstrap, host_json)
+    managed_recovery_readiness_decision(db, binding, bootstrap, worktree,
+      bootstrap_digest, handle, readiness)
+
+def managed_recovery_state_result(+db: String, +binding: String,
+                                  +bootstrap: ManagedQuery.Bootstrap,
+                                  +worktree: String, +bootstrap_digest: String,
+                                  handle: U32,
+                                  result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Fail{error}: IO.die(Unit, 3, "managedRecoveryStateUnavailable")
+    case Done{+host_json}: managed_recovery_readiness_loaded(db, binding,
+      bootstrap, worktree, bootstrap_digest, handle, host_json)
+
+def managed_recovery_attached_result(+db: String, +binding: String,
+                                     +bootstrap: ManagedQuery.Bootstrap,
+                                     +worktree: String, +bootstrap_digest: String,
+                                     attached: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+  match attached:
+    case Fail{error}: IO.die(Unit, 3, "managedRecoveryAttachUnavailable")
+    case Done{+handle}:
+      do IO<Unit>:
+        state : Result<&1,&1,U32 & String,String> <- Instance.state(handle)
+        managed_recovery_state_result(db, binding, bootstrap, worktree,
+          bootstrap_digest, handle, state)
+
+def managed_recovery_attach_binding(+db: String,
+                                    +worktree: String, +bootstrap_digest: String,
+                                    +bootstrap: ManagedQuery.Bootstrap,
+                                    binding_result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  do IO<Unit>:
+    binding_ok : Bool <- managed_recovery_binding(db, bootstrap, binding_result)
+    Bool.pick(IO(Unit), binding_ok,
+      do IO<Unit>:
+        attached : Result<&1,&1,U32 & String,U32> <- Instance.attach(db,
+          ManagedQuery.bootstrap_keeper_path(bootstrap))
+        managed_recovery_attached_result(db,
+          ManagedQuery.bootstrap_database_binding(bootstrap), bootstrap,
+          worktree, bootstrap_digest, attached),
+      IO.die(Unit, 3, "managedRecoveryBindingMismatch"))
+
+def managed_recovery_verified(+db: String, +worktree: String,
+                              +bootstrap: ManagedQuery.Bootstrap,
+                              +bootstrap_digest: String, verified: Bool) -> IO(Unit):
+  Bool.pick(IO(Unit), verified,
+    managed_recovery_attach_binding(db, worktree, bootstrap_digest, bootstrap,
+      DB.Sql.binding(db)),
+    IO.die(Unit, 3, "managedRecoveryInvocationMismatch"))
+
+def managed_recovery_attach(+db: String, +worktree: String,
                             +bootstrap: ManagedQuery.Bootstrap,
                             bootstrap_digest: String) -> IO(Unit):
   do IO<Unit>:
@@ -858,45 +937,8 @@ def managed_recovery_attach(+db: String, +executable: String,
       ManagedQuery.bootstrap_cwd(bootstrap),
       ManagedQuery.bootstrap_invocation_path(bootstrap),
       ManagedQuery.bootstrap_invocation_sha256(bootstrap))
-    Bool.pick(IO(Unit), verified,
-      do IO<Unit>:
-        binding_ok : Bool <- managed_recovery_binding(db, bootstrap,
-          DB.Sql.binding(db))
-        Bool.pick(IO(Unit), binding_ok,
-          do IO<Unit>:
-            attached : Result<&1,&1,U32 & String,U32> <- Instance.attach(db,
-              ManagedQuery.bootstrap_keeper_path(bootstrap))
-            match attached:
-              case Fail{error}: IO.die(Unit, 3, "managedRecoveryAttachUnavailable")
-              case Done{+handle}:
-                do IO<Unit>:
-                  state : Result<&1,&1,U32 & String,String> <- Instance.state(handle)
-                  match state:
-                    case Fail{error}: IO.die(Unit, 3, "managedRecoveryStateUnavailable")
-                    case Done{+host_json}:
-                      do IO<Unit>:
-                        readiness : ManagedQuery.KeeperReadiness <-
-                          decode_managed_recovery_readiness(db,
-                            ManagedQuery.bootstrap_database_binding(bootstrap),
-                            bootstrap, host_json)
-                        match readiness:
-                          case ManagedQuery.KeeperObserverUnavailable{reason}:
-                            IO.die(Unit, 3, "managedRecoveryReadinessUnavailable:" ++ reason)
-                          case ManagedQuery.KeeperObserverReady{query, owner,
-                              keeper_path, role, incarnation}:
-                            do IO<Unit>:
-                              launch = ManagedLaunch{bootstrap, SNil{},
-                                ManagedQuery.bootstrap_executable_path(bootstrap),
-                                ManagedQuery.bootstrap_runtime_path(bootstrap),
-                                worktree, bootstrap_digest}
-                              decision : ManagedQuery.StartDecision <-
-                                ManagedQuery.reconcile_recovery_admission(bootstrap,
-                                  "starter", "0", db)
-                              managed_start_decision(db,
-                                ManagedQuery.bootstrap_database_binding(bootstrap),
-                                launch, handle, decision),
-          IO.die(Unit, 3, "managedRecoveryBindingMismatch")),
-      IO.die(Unit, 3, "managedRecoveryInvocationMismatch"))
+    managed_recovery_verified(db, worktree, bootstrap, bootstrap_digest,
+      verified)
 
 def managed_recovery_bootstrap_decoded(+db: String, +owner: String, +query: String,
     +directory: String, +worktree: String, +bootstrap_file: String,
@@ -924,8 +966,7 @@ def managed_recovery_bootstrap_decoded(+db: String, +owner: String, +query: Stri
                 String.eq(ManagedQuery.bootstrap_recovery_argv(bootstrap),
                   Process.argv([executable, "--recover-context-query", db, owner,
                     query, directory, worktree, bootstrap_file])))))))))),
-        managed_recovery_attach(db, executable, runtime_path, worktree,
-          bootstrap, bootstrap_digest),
+        managed_recovery_attach(db, worktree, bootstrap, bootstrap_digest),
         IO.die(Unit, 3, "managedRecoveryBootstrapPathMismatch"))
 
 def managed_recovery_bootstrap_json(+db: String, +owner: String, +query: String,
@@ -951,6 +992,19 @@ def managed_recovery_bootstrap_json(+db: String, +owner: String, +query: String,
           bootstrap_digest, ManagedQuery.bootstrap_from_json(value, owner, query)),
         IO.die(Unit, 3, "managedRecoveryBootstrapEnvelope"))
 
+def managed_recovery_provider_answer(+db: String, +owner: String, +query: String,
+                                     +directory: String, +worktree: String,
+                                     +bootstrap_file: String, +executable: String,
+                                     +runtime_path: String,
+                                     answer: ProviderAnswer) -> IO(Unit):
+  match answer:
+    case ProviderOutput{+value, +status}:
+      Bool.pick(IO(Unit), String.eq(status, "exit 0"),
+        managed_recovery_bootstrap(db, owner, query, directory, worktree,
+          bootstrap_file, executable, runtime_path, project_policy_json_rows(value)),
+        IO.die(Unit, 3, "managedRecoveryBootstrapRead"))
+    case other: IO.die(Unit, 3, "managedRecoveryBootstrapRead")
+
 def managed_recovery_provider(+db: String, +owner: String, +query: String,
                               +directory: String, +worktree: String,
                               +bootstrap_file: String, +executable: String,
@@ -963,13 +1017,8 @@ def managed_recovery_provider(+db: String, +owner: String, +query: String,
             bootstrap_file), worktree, "/dev/null")
         answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
           worktree, SNil{}, spawned)
-        match answer:
-          case ProviderOutput{+value, +status}:
-            Bool.pick(IO(Unit), String.eq(status, "exit 0"),
-              managed_recovery_bootstrap(db, owner, query, directory, worktree,
-                bootstrap_file, executable, path, project_policy_json_rows(value)),
-              IO.die(Unit, 3, "managedRecoveryBootstrapRead"))
-          case other: IO.die(Unit, 3, "managedRecoveryBootstrapRead")
+        managed_recovery_provider_answer(db, owner, query, directory, worktree,
+          bootstrap_file, executable, path, answer)
     case other: IO.die(Unit, 3, "managedRecoveryNodeRuntime")
 
 def recover_managed_query(+db: String, +owner: String, +query: String,
@@ -1058,6 +1107,23 @@ def managed_prepare_owner(+db: String, +binding: String, +owner: String,
       result_schema, artifact_sha256, plan, guard_identity, physical_identity,
       lock, owner_witness, origin_attempt, budget)
 
+def managed_prepare_lock(+db: String, +binding: String, +owner: String,
+                         +query: String, +request: String, +cwd: String,
+                         +worktree: String, +source_identity: String,
+                         +artifact_path: String, +invocation_text: String,
+                         +executable: String, +runtime_path: String,
+                         +result_schema: String, +artifact_sha256: String,
+                         +plan: Sel.Plan, +guard_identity: String,
+                         +physical_identity: String, budget: U32,
+                         lock: Maybe<U32>) -> IO(Unit):
+  match lock:
+    case None{}: IO.die(Unit, 3, "managedRoleLockHeld")
+    case Some{+lock_handle}:
+      managed_prepare_owner(db, binding, owner, query, request, cwd,
+        worktree, source_identity, artifact_path, invocation_text,
+        executable, runtime_path, result_schema, artifact_sha256, plan,
+        guard_identity, physical_identity, lock_handle, budget)
+
 def managed_prepare_policy(+db: String, +binding: String, +owner: String,
                            +query: String, +request: String, +cwd: String,
                            +worktree: String, +source_identity: String,
@@ -1073,13 +1139,10 @@ def managed_prepare_policy(+db: String, +binding: String, +owner: String,
       do IO<Unit>:
         lock : Maybe<U32> <- IO.try(Maybe<U32>, Host.SessionLock.try_acquire(
           anchor, ContextIdentity.guard_lock_name(physical_role_key)))
-        match lock:
-          case None{}: IO.die(Unit, 3, "managedRoleLockHeld")
-          case Some{+lock_handle}:
-            managed_prepare_owner(db, binding, owner, query, request, cwd,
-              worktree, source_identity, artifact_path, invocation_text,
-              executable, runtime_path, result_schema, artifact_sha256, plan,
-              guard_identity, physical_identity, lock_handle, budget)
+        managed_prepare_lock(db, binding, owner, query, request, cwd,
+          worktree, source_identity, artifact_path, invocation_text,
+          executable, runtime_path, result_schema, artifact_sha256, plan,
+          guard_identity, physical_identity, budget, lock)
 
 def managed_prepare_anchor(+db: String, +binding: String, +owner: String,
                            +query: String, +request: String, +cwd: String,
@@ -1102,6 +1165,20 @@ def managed_prepare_anchor(+db: String, +binding: String, +owner: String,
       result_schema, artifact_sha256, plan, guard_identity, physical_identity,
       physical_role_key, anchor, policy)
 
+def managed_query_workspace(+plan: Sel.Plan, +result_schema: String,
+                            +db: String, +binding: String, +owner: String,
+                            +query: String, +request: String, +cwd: String,
+                            +source_identity: String, +artifact_path: String,
+                            +invocation_text: String, +executable: String,
+                            +runtime_path: String, +artifact_sha256: String,
+                            workspace: OwnerWorkspace) -> IO(Unit):
+  match workspace:
+    case OwnerWorkspaceRefused{reason}: IO.die(Unit, 3, reason)
+    case OwnerWorkspaceReady{+path}:
+      managed_prepare_anchor(db, binding, owner, query, request, cwd, path,
+        source_identity, artifact_path, invocation_text, executable,
+        runtime_path, result_schema, artifact_sha256, plan)
+
 def managed_query_verified(+plan: Sel.Plan, +result_schema: String,
                            +db: String, +binding: String, +owner: String,
                            +query: String, +request: String, +cwd: String,
@@ -1110,12 +1187,9 @@ def managed_query_verified(+plan: Sel.Plan, +result_schema: String,
                            +runtime_path: String, +artifact_sha256: String) -> IO(Unit):
   do IO<Unit>:
     workspace : OwnerWorkspace <- read_owner_workspace(db, binding, owner)
-    match workspace:
-      case OwnerWorkspaceRefused{reason}: IO.die(Unit, 3, reason)
-      case OwnerWorkspaceReady{+path}:
-        managed_prepare_anchor(db, binding, owner, query, request, cwd, path,
-          source_identity, artifact_path, invocation_text, executable,
-          runtime_path, result_schema, artifact_sha256, plan)
+    managed_query_workspace(plan, result_schema, db, binding, owner, query,
+      request, cwd, source_identity, artifact_path, invocation_text,
+      executable, runtime_path, artifact_sha256, workspace)
 
 def project_policy_runtime_answer(+executable: String, +cwd: String,
                                   +owner: String, +worktree: String,
