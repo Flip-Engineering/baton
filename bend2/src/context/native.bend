@@ -23,6 +23,25 @@ def invocation_frame(+invocation: Sel.Invocation) -> InvocationFrame:
           role, incarnation)},
         NativeFrameRefused{"invocationVersion"})
 
+def provider_wait(handle: U32, +value: String,
+                  waited: Result<&1,&1,U32 & String,String>) -> IO(ProviderAnswer):
+  match waited:
+    case Done{status}: IO.pure(ProviderAnswer,
+      Bool.pick(ProviderAnswer, String.eq(status, "exit 0"), ProviderOutput{value}, ProviderRefused{"providerExit"}))
+    case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"providerWait"})
+
+def provider_second(handle: U32, +value: String,
+                    second: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(ProviderAnswer):
+  match second:
+    case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"providerOutputRead"})
+    case Done{+line}:
+      match line:
+        case Some{value}: IO.pure(ProviderAnswer, ProviderRefused{"providerOutputSurplus"})
+        case None{}:
+          do IO<ProviderAnswer>:
+            waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
+            provider_wait(handle, value, waited)
+
 def dirname_step(+rest: String, +current: String, +last: String) -> String:
   match rest:
     case SNil{}: last
@@ -52,18 +71,7 @@ def provider_read(handle: U32, result: Result<&1,&1,U32 & String,Maybe<String>>)
         case Some{+value}:
           do IO<ProviderAnswer>:
             extra : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
-            match extra:
-              case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"providerOutputRead"})
-              case Done{+second}:
-                match second:
-                  case None{}:
-                    do IO<ProviderAnswer>:
-                      waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
-                      match waited:
-                        case Done{status}: IO.pure(ProviderAnswer,
-                          Bool.pick(ProviderAnswer, String.eq(status, "exit 0"), ProviderOutput{value}, ProviderRefused{"providerExit"}))
-                        case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"providerWait"})
-                  case Some{value}: IO.pure(ProviderAnswer, ProviderRefused{"providerOutputSurplus"})
+            provider_second(handle, value, extra)
 
 def provider_close(handle: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(ProviderAnswer):
   match result:
