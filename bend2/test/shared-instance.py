@@ -619,6 +619,20 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(self.subscription_line(third, 'notice:')['cursor'], baseline + 4)
         print('evidence subscription ready', ready, 'resuming', resuming, 'replaced', replaced)
 
+    def test_checkpoint_with_a_torn_custody_file_replays(self):
+        """A record whose custody cannot be read is unusable, not a transport
+        failure: the record binds the native birth, and a torn birth file cannot
+        validate it, so the observer replays from the beginning."""
+        directory, child = self.begin('a0', payload='one\n')
+        self.line(child, 'admitted')
+        self.hold(directory / 'checkpoint', 'BATONC03')
+        birth = directory / 'native.birth'
+        birth.write_bytes(birth.read_bytes()[:-4])
+        marker, text = self.replays_from_the_beginning(directory, child)
+        self.assertIn('unusable observation checkpoint', marker)
+        self.assertIn('echo:one', text)
+        print('evidence torn-custody', marker)
+
     def test_shutdown_releases_the_database_for_a_new_owner(self):
         directory, child = self.begin('a0')
         self.wait_run(child)

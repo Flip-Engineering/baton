@@ -281,6 +281,14 @@ typedef struct {
   BrBirth birth;
 } BrCheckpoint;
 #define BR_CHECKPOINT_STATE_MAX (1u<<20)
+/* A checkpoint whose facts cannot be validated against this attempt is unusable
+   and the observer replays from the beginning. A failure to perform the
+   validation at all (allocation, device I/O, a descriptor that is no longer
+   usable) is reported to the caller instead, because the record may be intact. */
+static int br_checkpoint_unusable(int error) {
+  return error==ENOENT || error==EINVAL || error==EOVERFLOW || error==ENOTDIR ||
+         error==EPIPE || error==ESTALE;
+}
 static int br_checkpoint_load(const char *directory,int spool_fd,uint32_t schema,
                               uint64_t *offset,char **state,size_t *length);
 static int br_checkpoint_store(const char *directory,int spool_fd,uint32_t schema,
@@ -777,7 +785,7 @@ static void baton_retained_call(BatonProcessCall *call) {
     uint64_t offset=0;char *state=NULL;size_t length=0;
     int error=retained->spool<0?0:br_checkpoint_load(retained->directory,retained->spool,
       (uint32_t)call->signal,&offset,&state,&length);
-    if(error==EINVAL || error==EOVERFLOW) {
+    if(br_checkpoint_unusable(error)) {
       br_file(retained->directory,"checkpoint-error",
         "unusable observation checkpoint; replaying from the beginning\n",62,1);
       free(state);state=NULL;length=0;offset=0;error=0;
