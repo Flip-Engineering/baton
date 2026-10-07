@@ -198,6 +198,36 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
   const reports = [];
   const dir = fixture.dir;
   const compCalls = [];
+
+  // D5 capture priming: the glue answers exactly the names the capture
+  // recorded, so the harness asserts the primed set itself. Every name the
+  // loader may ask for (each on-disk fixture, the base pin, the virtual
+  // module) must resolve present, and a name outside the primed set must
+  // resolve absent with reads refused — a mismatch then surfaces as
+  // unavailable and refuses the gate instead of being papered over.
+  reports.push(await runCase('capture-primed-set', async () => {
+    const { adapter } = adapterFor(fixture);
+    const started = adapter.beginQuery({ identity: join(dir, 'valid.bend') });
+    const owner = started.token;
+    const primedAnswers = [...ON_DISK.map((entry) => join(dir, entry)), join(dir, 'base.bend'), join(dir, VIRTUAL)]
+      .map((name) => ({ name, answer: adapter.sink.lookupSource(name, owner) }));
+    const outside = join(dir, 'unprimed.bend');
+    const absent = adapter.sink.lookupSource(outside, owner);
+    adapter.endQuery();
+    const report = reportOf('capture-primed-set', { status: 'checked', phasesRun: [], outcome: null, session: null }, adapter, {
+      primed: [...fixture.files.keys()],
+      sessionClosed: adapter.currentSession() === null,
+    });
+    for (const entry of primedAnswers) {
+      check(report, `primed name resolves present: ${entry.name}`, entry.answer.status === 'present', entry.answer);
+    }
+    check(report, 'an unprimed name resolves absent', absent.status === 'absent', absent);
+    check(report, 'the primed set covers fixtures, base pin and virtual module',
+      ON_DISK.every((entry) => fixture.files.has(join(dir, entry))) && fixture.files.has(join(dir, 'base.bend')) && fixture.files.has(join(dir, VIRTUAL)),
+      [...fixture.files.keys()]);
+    check(report, 'the session was closed', report.sessionClosed === true, report.sessionClosed);
+    return report;
+  }));
   const comp = {
     SYNTH: compModule.SYNTH,
     book_owned(book, checkSet) {
