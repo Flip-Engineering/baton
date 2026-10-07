@@ -39,28 +39,31 @@ def directory_of_a_bare_name_is_empty():
   {==}
 
 # Installed payload first, source checkout second, matching Control.identity.
-def server_candidates_in(dir: Maybe<String>) -> List<String>:
+# Bend binds names in order, so resolution is unrolled over the two candidates.
+def candidate_paths(dir: Maybe<String>) -> String & String:
   match dir:
-    case None{}: Nil{}
+    case None{}: ("","")
     case Some{+parent}:
-      [parent ++ "/../libexec/baton2/ui/server.mjs",parent ++ "/../../bend2/ui/orchestra/server.mjs"]
+      (parent ++ "/../libexec/baton2/ui/server.mjs",parent ++ "/../../bend2/ui/orchestra/server.mjs")
 
-def server_candidates(executable: String) -> List<String>:
-  server_candidates_in(directory_of(executable))
-
-def resolve_step(resolved: Result<&1,&1,U32 & String,String>, rest: List<String>) -> IO(String):
-  match resolved:
+def resolve_source(source: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match source:
     case Done{+path}: IO.pure(String,path)
-    case Fail{error}: resolve_server(rest)
-
-def resolve_server(candidates: List<String>) -> IO(String):
-  match candidates:
-    case Nil{}:
+    case Fail{error}:
       IO.die(String,2,"The Orchestra view server is not installed; expected libexec/baton2/ui/server.mjs beside the baton2 executable or bend2/ui/orchestra/server.mjs in a source checkout.")
-    case +candidate <> rest:
-      do IO<String>:
-        resolved : Result<&1,&1,U32 & String,String> <- Host.Control.command(candidate)
-        resolve_step(resolved,rest)
+
+def resolve_choice(installed: Result<&1,&1,U32 & String,String>, source: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match installed:
+    case Done{+path}: IO.pure(String,path)
+    case Fail{error}: resolve_source(source)
+
+def resolve_server(executable: String) -> IO(String):
+  do IO<String>:
+    paths : String & String <- IO.pure(String & String,candidate_paths(directory_of(executable)))
+    (installed_path,source_path) = paths
+    installed : Result<&1,&1,U32 & String,String> <- Host.Control.command(installed_path)
+    source : Result<&1,&1,U32 & String,String> <- Host.Control.command(source_path)
+    resolve_choice(installed,source)
 
 def error_text(error: U32 & String) -> String:
   (code,text) = error
