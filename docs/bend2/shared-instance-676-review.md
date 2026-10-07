@@ -137,16 +137,100 @@ acknowledge, keepers and Baton2 processes return to 0. A stop during a
 two-session run ended only its own session (`signal 15`) while the
 sibling exited 0.
 
+## Source pins reviewed (lead dc46904a, DS e79babdc)
+
+Lead adds `bend2/src/coordinator/instance.bend` (SQL `instance_owner`
+claim with heartbeat, `serve` loop forking `Receive.run` per session with
+unacknowledged input), `instance-laws.bend`, and
+`docs/bend2/shared-instance-676.md`. DS adds `bend2/src/host/instance.bend`
+effect surface, reworks `process-spawn.c` around a `BrOwner` custody
+process (`--instance-owner`, flock election, token, dev/ino socket,
+attempt generations), and adds `bend2/test/instance.bend`. Neither pin is
+wired into `main.bend`, `commands.bend`, or any executed gate yet.
+
+Correction to the DS physical-binding proposal (root-assigned, before
+implementation). The pin implements the proposed steps at
+`br_owner_bind`, `br_owner_socket_path`, `br_instance_connect`, and
+`br_instance_token`:
+
+1. Delete the `st_nlink != 1` refusal. Hard-link aliases of the same
+   physical database share `(st_dev, st_ino)` and must elect one owner,
+   not receive a user-facing refusal.
+2. Move election state out of `<database>.owner-lock`,
+   `<database>.owner-token`, and per-client `$TMPDIR`. Aliases compute
+   different lock/token paths and different clients compute different
+   socket paths, so elections split. Elect in one stable per-user IPC
+   directory keyed by physical identity, holding the lock file, the
+   token file, and the socket: aliases and clients then resolve the same
+   owner. Keep the dev/ino socket naming and the re-stat identity check.
+3. Read the expected owner token from that IPC directory, not from a
+   pathname beside the caller's database path. On `ESTALE`, re-resolve
+   and retry the handshake once before failing; retained input makes a
+   second failure safe for the next receive.
+4. Refuse before effects on admit: `br_instance_admit` creates the
+   attempt directory and manifest before `BI_ADMIT`. On admission
+   failure, remove the provisional directory and manifest when this
+   call created them and no keeper started (no `launch`, `released`,
+   `acknowledged`, or `stdout` markers).
+5. Bind the database file descriptor to the admitted file: open, fstat,
+   and compare `(st_dev, st_ino)` at bind and per admission, so a
+   replaced path refuses before effects. The Bend/SQLite open path needs
+   the same check where admission depends on it.
+6. Reconcile the two elections. The SQL `instance_owner` claim and the
+   flock/token/socket election decide independently and use different
+   lock files (`owner_path` names `<canonical>.owner`; DS locks
+   `<db>.owner-lock`). One election must own liveness. Proposed shape:
+   the custody owner holds liveness; the SQL row records the live owner
+   for status and crash recovery only.
+7. Fix the lead claim lapse. `claim_sql` refuses whenever any other row
+   exists; nothing deletes a dead owner's row, so a crashed `serve`
+   blocks the database with no owner and no recovery. Delete lapsed
+   heartbeat rows as part of the claim transaction and update the
+   pinning law `owner_claim_inserts_or_refreshes_then_names_the_holder`
+   and the design doc sentence that promises lapse behavior.
+8. Wire the DS Bend test and sync the proposal. `bend2/test/instance.bend`
+   is built and run by nothing (`check-native.sh` builds only the
+   `process`, `git`, and `land` entries); its owner-level guarantees
+   have no gate signal until wired. The proposal documents `BI_ATTACH`;
+   the code handles `BI_ENSURE`. Open lead item: `serve_loop` drains and
+   exits, and nothing re-invokes serve on later input until the
+   committed-change-cursor wake or the CLI/MCP routing lands.
+
+Verified good in the pins: owner-side token check with `ESTALE` on
+mismatch, admission-time re-stat with prefix check, single-native-child
+refusal per attempt, per-attempt error isolation in the owner loop,
+session-guard passing with release-time close, and the UI boundary (change
+notification stays in the UI backend postcommit path; attempt directory
+name is the only shared identifier).
+
+Fixture note: `bend2/test/shared-ownership.py` pins baseline topology
+(one keeper per attempt). After the shared owner lands, custody has no
+per-attempt keeper process, so this file must be updated in the landing
+composition; it is left strict on baseline until then. DS's new
+`bend2/test/shared-instance.py` (proposed, not yet written) and
+`bend2/test/instance.bend` do not collide with it.
+
 ## Open coordination items
 
-- Lead: confirm this fixture path and the attempt-directory protocol
-  stability assumption; publish the `instance.bend` admission contract
-  when ready.
-- DS: keep `process-spawn.c` keeper-protocol changes compatible with the
-  pinned attempt layout, or propose the layout change precisely for
-  root/lead composition.
-- UI backend: one native subscription boundary on the committed-change
-  cursor; no second event bus.
-- Root reviewer: baseline resident/private/physical memory, CPU, and
-  startup measurements before equivalent workloads, with virtual
-  reservation distinguished.
+- Lead: apply the claim-lapse fix with its law update; decide the serve
+  re-invocation route; compose the single election from the correction
+  above. This lane's fixture path is `bend2/test/shared-ownership.py`;
+  DS's `bend2/test/shared-instance.py` and `bend2/test/instance.bend`
+  do not collide with it.
+- DS: apply correction items 1-5 before implementation; sync the
+  proposal's `BI_ATTACH` with the code's `BI_ENSURE`; wire
+  `bend2/test/instance.bend` into an executed gate. Keep the attempt
+  directory layout stable or propose the change precisely.
+- 685: the 685 handoff in the DS proposal swaps `retain` for
+  `Instance.admit` plus `retire` after acknowledge; confirm the serve
+  seam and send the exact signature/SQL if a variant is needed. This
+  lane makes no edits in 685-owned files.
+- UI backend: the DS UI boundary section already keeps notification in
+  the postcommit path with the attempt directory name as the only
+  shared identifier; confirm, and state any owner-side readiness signal
+  needed as a typed effect.
+- Baselines: Luna's live measurement (five turn processes plus one
+  receive, six Baton runtimes on one database) stands beside the fixture
+  measurement (two Baton2 runtimes per active fixture session); the
+  root reviewer's resident/private/physical memory, CPU, and startup
+  figures are still owed.
