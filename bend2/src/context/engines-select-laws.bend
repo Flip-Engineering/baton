@@ -90,9 +90,12 @@ def fx_cat_two() -> Decl.Cat:
 def fx_request() -> Sel.RequestOperands:
   Sel.RequestOperands{"handler", Eng.ss_one("definition"), "", "sourceAnalysis"}
 
+def fx_policy_identity() -> Sel.ProjectPolicyIdentity:
+  Sel.ProjectPolicyMissing{"owner-1", "/work", "/work/.baton/context.json"}
+
 def fx_project() -> Sel.ProjectState:
   Sel.ProjectState{Eng.ss_one("src/handler.ts"), Eng.ss_empty(),
-                   Eng.ss_two("m1", "m2"), Eng.ss_empty(), Eng.ss_empty()}
+                   Eng.ss_two("m1", "m2"), Eng.ss_empty(), Eng.ss_empty(), fx_policy_identity()}
 
 def request_at(+subject: String, +explicit: String,
                +common: String) -> Sel.RequestOperands:
@@ -101,7 +104,7 @@ def request_at(+subject: String, +explicit: String,
 def project_at(+installed: Eng.SS, +disabled: Eng.SS,
                +preferred: Eng.SS) -> Sel.ProjectState:
   Sel.ProjectState{Eng.ss_one("src/handler.ts"), Eng.ss_empty(), installed,
-                   disabled, preferred}
+                   disabled, preferred, fx_policy_identity()}
 
 # The configured state: both modules installed, nothing disabled or preferred,
 # and no explicit selector unless a law says otherwise.
@@ -117,7 +120,7 @@ def inputs_at(+explicit: String, +common: String, +disabled: Eng.SS,
 def fx_cand(+module_id: String, +digest: String, +preferred: Bool,
             +available: Bool) -> Sel.Cand:
   Sel.Cand{module_id, digest, "definition", "sourceAnalysis", Eng.ss_empty(),
-           Decl.ExDirect{}, available, preferred}
+           Decl.ExDirect{}, available, preferred, fx_policy_identity()}
 
 law selection_auto_chooses_the_only_candidate:
   {Sel.select(fx_cat_one(), fx_inputs(), fx_inv()) == Sel.SelChosen{Eng.ss_one("m1"), fx_cand("m1", "d1", False{}, True{})} : Sel.SelOutcome}
@@ -219,7 +222,7 @@ def fx_step() -> Sel.Step:
 
 def fx_plan() -> Sel.Plan:
   Sel.Plan{fx_bind(), "sourceAnalysis", Sel.StepsCons{fx_step(), Sel.StepsNil{}},
-           Eng.ss_empty(), fx_captures(), True{}}
+           Eng.ss_empty(), fx_captures(), True{}, fx_policy_identity()}
 
 def fx_collision_root_op() -> Decl.Op:
   Decl.Op{"c", "sourceAnalysis", "sub", "opt",
@@ -285,7 +288,7 @@ def fx_collision_plan() -> Sel.Plan:
         Sel.Step{fx_collision_leaf_binding(), "sourceAnalysis", Eng.ss_empty(),
           Decl.ExDirect{}, Sel.StepRefsNil{}, "res"},
         Sel.StepsNil{}}},
-    Eng.ss_empty(), fx_captures(), True{}}
+    Eng.ss_empty(), fx_captures(), True{}, fx_policy_identity()}
 
 law selection_frozen_plan_names_the_binding_and_the_inputs:
   {Sel.freeze(fx_cat_one(), fx_cand("m1", "d1", False{}, True{}), fx_inv(), fx_captures()) == Sel.PlanFrozen{fx_plan()} : Sel.PlanOutcome}
@@ -296,7 +299,7 @@ def selection_frozen_plan_names_the_binding_and_the_inputs():
 # The plan is frozen even when the selected bytes are absent, and it records
 # that fact instead of selecting another implementation.
 law selection_frozen_plan_records_an_unavailable_binding:
-  {Sel.freeze(fx_cat_one(), fx_cand("m1", "d1", False{}, False{}), fx_inv(), fx_captures()) == Sel.PlanFrozen{Sel.Plan{fx_bind(), "sourceAnalysis", Sel.StepsCons{fx_step(), Sel.StepsNil{}}, Eng.ss_empty(), fx_captures(), False{}}} : Sel.PlanOutcome}
+  {Sel.freeze(fx_cat_one(), fx_cand("m1", "d1", False{}, False{}), fx_inv(), fx_captures()) == Sel.PlanFrozen{Sel.Plan{fx_bind(), "sourceAnalysis", Sel.StepsCons{fx_step(), Sel.StepsNil{}}, Eng.ss_empty(), fx_captures(), False{}, fx_policy_identity()}} : Sel.PlanOutcome}
 
 def selection_frozen_plan_records_an_unavailable_binding():
   {==}
@@ -310,7 +313,7 @@ def selection_freeze_refuses_a_changed_declaration():
   {==}
 
 law selection_freeze_refuses_a_missing_operation:
-  {Sel.freeze(fx_cat_one(), Sel.Cand{"m1", "d1", "absentOperation", "sourceAnalysis", Eng.ss_empty(), Decl.ExDirect{}, True{}, False{}}, fx_inv(), fx_captures()) == Sel.PlanRefused{Sel.PlanMissingOperation{"m1", "absentOperation"}} : Sel.PlanOutcome}
+  {Sel.freeze(fx_cat_one(), Sel.Cand{"m1", "d1", "absentOperation", "sourceAnalysis", Eng.ss_empty(), Decl.ExDirect{}, True{}, False{}, fx_policy_identity()}, fx_inv(), fx_captures()) == Sel.PlanRefused{Sel.PlanMissingOperation{"m1", "absentOperation"}} : Sel.PlanOutcome}
 
 def selection_freeze_refuses_a_missing_operation():
   {==}
@@ -328,7 +331,7 @@ def fx_bind_sql_plan() -> Sel.MBind:
             Decl.op_schema_set(fx_op_common("sqlPlan"))}
 
 law selection_plan_carries_the_common_operation_minimum:
-  {Sel.freeze(fx_cat_sql_plan(), fx_cand("m1", "d1", False{}, True{}), fx_inv(), fx_captures()) == Sel.PlanFrozen{Sel.Plan{fx_bind_sql_plan(), "sqlPlan", Sel.StepsCons{Sel.Step{fx_bind_sql_plan(), "sqlPlan", Eng.ss_empty(), Decl.ExDirect{}, Sel.StepRefsNil{}, "res"}, Sel.StepsNil{}}, Eng.ss_one("planTargetSql"), fx_captures(), True{}}} : Sel.PlanOutcome}
+  {Sel.freeze(fx_cat_sql_plan(), fx_cand("m1", "d1", False{}, True{}), fx_inv(), fx_captures()) == Sel.PlanFrozen{Sel.Plan{fx_bind_sql_plan(), "sqlPlan", Sel.StepsCons{Sel.Step{fx_bind_sql_plan(), "sqlPlan", Eng.ss_empty(), Decl.ExDirect{}, Sel.StepRefsNil{}, "res"}, Sel.StepsNil{}}, Eng.ss_one("planTargetSql"), fx_captures(), True{}, fx_policy_identity()}} : Sel.PlanOutcome}
 
 def selection_plan_carries_the_common_operation_minimum():
   {==}
@@ -350,7 +353,7 @@ def fx_decl_with_effects(+module_id: String, +artifact_digest: String,
 
 # A declared addition beyond the minimum is carried beside it.
 law selection_plan_unions_a_declared_addition:
-  {Sel.freeze(Decl.CatCons{fx_decl_with_effects("m1", "aa", "sqlPlan", Eng.ss_one("executeTarget")), Decl.CatNil{}}, fx_cand("m1", "d1", False{}, True{}), fx_inv(), fx_captures()) == Sel.PlanFrozen{Sel.Plan{Sel.MBind{"m1", "rev1", "d1", "2", "definition", Decl.ArtsCons{Decl.Art{"/pkg/m1.bin", "aa", "entry"}, Decl.ArtsNil{}}, Decl.op_schema_set(fx_decl_with_effects_op("sqlPlan", Eng.ss_one("executeTarget")))}, "sqlPlan", Sel.StepsCons{Sel.Step{Sel.MBind{"m1", "rev1", "d1", "2", "definition", Decl.ArtsCons{Decl.Art{"/pkg/m1.bin", "aa", "entry"}, Decl.ArtsNil{}}, Decl.op_schema_set(fx_decl_with_effects_op("sqlPlan", Eng.ss_one("executeTarget")))}, "sqlPlan", Eng.ss_one("executeTarget"), Decl.ExDirect{}, Sel.StepRefsNil{}, "res"}, Sel.StepsNil{}}, Eng.ss_two("planTargetSql", "executeTarget"), fx_captures(), True{}}} : Sel.PlanOutcome}
+  {Sel.freeze(Decl.CatCons{fx_decl_with_effects("m1", "aa", "sqlPlan", Eng.ss_one("executeTarget")), Decl.CatNil{}}, fx_cand("m1", "d1", False{}, True{}), fx_inv(), fx_captures()) == Sel.PlanFrozen{Sel.Plan{Sel.MBind{"m1", "rev1", "d1", "2", "definition", Decl.ArtsCons{Decl.Art{"/pkg/m1.bin", "aa", "entry"}, Decl.ArtsNil{}}, Decl.op_schema_set(fx_decl_with_effects_op("sqlPlan", Eng.ss_one("executeTarget")))}, "sqlPlan", Sel.StepsCons{Sel.Step{Sel.MBind{"m1", "rev1", "d1", "2", "definition", Decl.ArtsCons{Decl.Art{"/pkg/m1.bin", "aa", "entry"}, Decl.ArtsNil{}}, Decl.op_schema_set(fx_decl_with_effects_op("sqlPlan", Eng.ss_one("executeTarget")))}, "sqlPlan", Eng.ss_one("executeTarget"), Decl.ExDirect{}, Sel.StepRefsNil{}, "res"}, Sel.StepsNil{}}, Eng.ss_two("planTargetSql", "executeTarget"), fx_captures(), True{}, fx_policy_identity()}} : Sel.PlanOutcome}
 
 def selection_plan_unions_a_declared_addition():
   {==}
@@ -385,7 +388,7 @@ def selection_plan_admits_slash_identifiers():
 # The old joined keys were identical although this dependency names a different
 # module and operation.
 law selection_plan_keeps_distinct_slash_pairs:
-  {Sel.freeze(fx_collision_cat(), Sel.Cand{"a/b", "root-declaration", "c", "sourceAnalysis", Eng.ss_empty(), Decl.ExDirect{}, True{}, False{}}, fx_collision_inv(), fx_captures()) == Sel.PlanFrozen{fx_collision_plan()} : Sel.PlanOutcome}
+  {Sel.freeze(fx_collision_cat(), Sel.Cand{"a/b", "root-declaration", "c", "sourceAnalysis", Eng.ss_empty(), Decl.ExDirect{}, True{}, False{}, fx_policy_identity()}, fx_collision_inv(), fx_captures()) == Sel.PlanFrozen{fx_collision_plan()} : Sel.PlanOutcome}
 
 def selection_plan_keeps_distinct_slash_pairs():
   {==}
@@ -429,7 +432,7 @@ def fx_plan_chain() -> Sel.Plan:
   Sel.Plan{fx_bind(), "sourceAnalysis",
            Sel.StepsCons{fx_step_m1(),
                          Sel.StepsCons{fx_step_m2(), Sel.StepsNil{}}},
-           Eng.ss_empty(), fx_captures(), True{}}
+           Eng.ss_empty(), fx_captures(), True{}, fx_policy_identity()}
 
 law selection_plan_holds_the_primary_and_the_dependency_step:
   {Sel.freeze(fx_cat_chain(), fx_cand("m1", "d1", False{}, True{}), fx_inv(), fx_captures()) == Sel.PlanFrozen{fx_plan_chain()} : Sel.PlanOutcome}
@@ -674,7 +677,7 @@ def fx_plan_both() -> Sel.Plan:
   Sel.Plan{fx_bind(), "sourceAnalysis",
            Sel.StepsCons{fx_step_m1(),
                          Sel.StepsCons{fx_step_m2(), Sel.StepsNil{}}},
-           Eng.ss_empty(), fx_captures_both(), True{}}
+           Eng.ss_empty(), fx_captures_both(), True{}, fx_policy_identity()}
 
 # The catalog step's declared edge delivers the TypeScript record under the
 # TypeScript producer, not the catalog step's own record.

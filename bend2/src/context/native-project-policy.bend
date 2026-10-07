@@ -1,0 +1,125 @@
+# Decode the owner-worktree module policy after its bytes and path were read by
+# the authenticated project reader. The adapter validates policy shape and
+# derives a stable identity from the observed read or observed absence.
+import Base
+import ../json/canonical.bend as J
+import ./request.bend as Req
+import ./engines.bend as Eng
+import ./engines-select.bend as Sel
+import ./snapshot.bend as Snap
+
+type ProjectPolicy is Data:
+  ProjectPolicy{disabled: Eng.SS, preferred: Eng.SS}
+
+type PolicyDecode is Data:
+  PolicyDecoded{policy: ProjectPolicy}
+  PolicyRefused{condition: String}
+
+type PolicyObservation is Data:
+  PolicyPresent{owner: String, worktree: String, path: String,
+                sha256: String, bytes: String}
+  PolicyAbsent{owner: String, worktree: String, path: String}
+
+type PolicyObservationIdentity is Data:
+  PolicyReadIdentity{value: String}
+  PolicyMissingIdentity{value: String}
+  PolicyIdentityRefused{condition: String}
+
+type PolicySelectionIdentity is Data:
+  PolicySelectionRead{value: Sel.ProjectPolicyIdentity}
+  PolicySelectionMissing{value: Sel.ProjectPolicyIdentity}
+  PolicySelectionRefused{condition: String}
+
+def member(+object: J.Json, +key: String) -> J.Json:
+  match object:
+    case J.Jobj{+members}:
+      match Req.member_lookup(key, members):
+        case None{}: J.Jnil{}
+        case Some{+value}: value
+    case other: J.Jnil{}
+
+def members(+object: J.Json) -> J.Json:
+  match object:
+    case J.Jobj{+members}: members
+    case other: J.Jnil{}
+
+def required_member(value: J.Json, +key: String) -> Bool:
+  match value:
+    case J.Jobj{+members}:
+      match Req.member_lookup(key, members):
+        case None{}: False{}
+        case Some{value}: True{}
+    case other: False{}
+
+def text_array_tail(+items: J.Json) -> List<String>:
+  match items:
+    case J.Jarr{+head, +tail}: Req.text_of(head) <> text_array_tail(tail)
+    case other: Nil{}
+
+def text_array(+items: J.Json) -> Eng.SS:
+  Eng.ss_of_list(text_array_tail(items))
+
+def text_array_values(+items: J.Json) -> Bool:
+  match items:
+    case J.Jarr{J.Jnil{}, J.Jnil{}}: True{}
+    case J.Jarr{+head, +tail}:
+      Bool.and(Req.is_jstr(head), Bool.and(Bool.not(String.is_empty(Req.text_of(head))), text_array_values(tail)))
+    case other: False{}
+
+def text_list_unique(xs: List<String>) -> Bool:
+  match xs:
+    case Nil{}: True{}
+    case +head <> +tail:
+      Bool.pick(Bool, Eng.ss_member(Eng.ss_of_list(tail), head), False{}, text_list_unique(tail))
+
+def text_array_valid(+items: J.Json) -> Bool:
+  Bool.and(text_array_values(items), text_list_unique(text_array_tail(items)))
+
+def policy_fields_valid(+value: J.Json) -> Bool:
+  Bool.and(Req.is_jobj(value),
+  Bool.and(Req.keys_allowed(Req.words_from(["schema", "disabled", "preferred"]), members(value)),
+  Bool.and(required_member(value, "schema"),
+  Bool.and(required_member(value, "disabled"),
+  Bool.and(required_member(value, "preferred"),
+  Bool.and(String.eq(Req.text_of(member(value, "schema")), "baton2-context-project-v1"),
+  Bool.and(text_array_valid(member(value, "disabled")),
+           text_array_valid(member(value, "preferred")))))))))
+
+def decode(+value: J.Json) -> PolicyDecode:
+  Bool.pick(PolicyDecode, policy_fields_valid(value),
+    PolicyDecoded{ProjectPolicy{text_array(member(value, "disabled")),
+                                 text_array(member(value, "preferred"))}},
+    PolicyRefused{"projectPolicyMalformed"})
+
+def observation_identity(+observation: PolicyObservation) -> PolicyObservationIdentity:
+  match observation:
+    case PolicyPresent{owner, worktree, path, sha256, bytes}:
+      Bool.pick(PolicyObservationIdentity,
+        Bool.and(Bool.and(Bool.not(String.is_empty(owner)), Bool.not(String.is_empty(worktree))),
+        Bool.and(Bool.not(String.is_empty(path)), Bool.not(String.is_empty(sha256)))),
+        PolicyReadIdentity{J.json_text(J.Jarr{J.Jstr{"baton2.context.project-policy.read.v1"},
+          J.Jarr{J.Jstr{owner}, J.Jarr{J.Jstr{worktree}, J.Jarr{J.Jstr{path},
+          J.Jarr{J.Jstr{sha256}, J.Jnil{}}}}}})},
+        PolicyIdentityRefused{"projectPolicyObservationMalformed"})
+
+def selection_identity(+observation: PolicyObservation) -> PolicySelectionIdentity:
+  match observation:
+    case PolicyPresent{owner, worktree, path, sha256, bytes}:
+      Bool.pick(PolicySelectionIdentity,
+        Bool.and(Bool.and(Bool.not(String.is_empty(owner)), Bool.not(String.is_empty(worktree))),
+        Bool.and(Bool.not(String.is_empty(path)), Bool.not(String.is_empty(sha256)))),
+        PolicySelectionRead{Sel.ProjectPolicyRead{owner, worktree, path, sha256}},
+        PolicySelectionRefused{"projectPolicyObservationMalformed"})
+    case PolicyAbsent{owner, worktree, path}:
+      Bool.pick(PolicySelectionIdentity,
+        Bool.and(Bool.and(Bool.not(String.is_empty(owner)), Bool.not(String.is_empty(worktree))),
+                 Bool.not(String.is_empty(path))),
+        PolicySelectionMissing{Sel.ProjectPolicyMissing{owner, worktree, path}},
+        PolicySelectionRefused{"projectPolicyObservationMalformed"})
+
+def snapshot_identity(+identity: Sel.ProjectPolicyIdentity) -> Snap.Fp:
+  match identity:
+    case Sel.ProjectPolicyRead{owner, worktree, path, sha256}:
+      Snap.FpProjectPolicy{owner, worktree, path, sha256}
+    case Sel.ProjectPolicyMissing{owner, worktree, path}:
+      Snap.FpProjectPolicyAbsent{owner, worktree, path}

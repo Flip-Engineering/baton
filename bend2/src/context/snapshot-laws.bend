@@ -271,3 +271,46 @@ law context_snapshot_a_join_across_catalog_snapshots_refuses:
 
 def context_snapshot_a_join_across_catalog_snapshots_refuses():
   {==}
+
+# --- owner-bound project policy identity ------------------------------------
+law context_snapshot_project_policy_identity_binds_present_bytes:
+  {Bool.not(Snap.identity_text("bend2", "1", [], Snap.fps_of_list([
+    Snap.FpProjectPolicy{"q1", "/work", "/work/.baton/context.json", "aa"}])) ==
+   Snap.identity_text("bend2", "1", [], Snap.fps_of_list([
+    Snap.FpProjectPolicy{"q1", "/work", "/work/.baton/context.json", "bb"}]))) : Bool}
+
+def context_snapshot_project_policy_identity_binds_present_bytes():
+  {==}
+
+law context_snapshot_project_policy_identity_binds_owner_and_worktree:
+  {Bool.not(Snap.identity_text("bend2", "1", [], Snap.fps_of_list([
+    Snap.FpProjectPolicy{"q1", "/work", "/work/.baton/context.json", "aa"}])) ==
+   Snap.identity_text("bend2", "1", [], Snap.fps_of_list([
+    Snap.FpProjectPolicy{"q2", "/work", "/work/.baton/context.json", "aa"}]))) : Bool}
+
+def context_snapshot_project_policy_identity_binds_owner_and_worktree():
+  {==}
+
+law context_snapshot_project_policy_absence_changes_when_created:
+  {Snap.applies(Snap.fps_of_list([Snap.FpProjectPolicyAbsent{"q1", "/work", "/work/.baton/context.json"}]),
+    Snap.RvOk{Snap.fps_of_list([Snap.FpProjectPolicy{"q1", "/work", "/work/.baton/context.json", "aa"}])}) ==
+      Snap.AStale{Eng.ss_one("/work/.baton/context.json")} : Snap.Applies}
+
+def context_snapshot_project_policy_absence_changes_when_created():
+  {==}
+
+law context_snapshot_project_policy_present_bytes_change_is_stale:
+  {Snap.applies(Snap.fps_of_list([Snap.FpProjectPolicy{"q1", "/work", "/work/.baton/context.json", "aa"}]),
+    Snap.RvOk{Snap.fps_of_list([Snap.FpProjectPolicy{"q1", "/work", "/work/.baton/context.json", "bb"}])}) ==
+      Snap.AStale{Eng.ss_one("/work/.baton/context.json")} : Snap.Applies}
+
+def context_snapshot_project_policy_present_bytes_change_is_stale():
+  {==}
+
+law context_snapshot_project_policy_identity_refuses_foreign_worktree:
+  {Snap.applies(Snap.fps_of_list([Snap.FpProjectPolicyAbsent{"q1", "/work-a", "/work-a/.baton/context.json"}]),
+    Snap.RvOk{Snap.fps_of_list([Snap.FpProjectPolicyAbsent{"q1", "/work-b", "/work-b/.baton/context.json"}])}) ==
+      Snap.AStale{Eng.ss_one("/work-a/.baton/context.json")} : Snap.Applies}
+
+def context_snapshot_project_policy_identity_refuses_foreign_worktree():
+  {==}

@@ -29,6 +29,12 @@ def fx_step() -> Sel.Step:
                             Sel.StepRefsNil{}},
            "res"}
 
+def fx_policy_identity() -> Sel.ProjectPolicyIdentity:
+  Sel.ProjectPolicyMissing{"owner-1", "/work", "/work/.baton/context.json"}
+
+def fx_policy_read_identity() -> Sel.ProjectPolicyIdentity:
+  Sel.ProjectPolicyRead{"owner-1", "/work", "/work/.baton/context.json", "aabb"}
+
 def fx_capture() -> Sel.Capture:
   Sel.Capture{"file", "source", "/work/a.ts", "aa", "capturedSourceText", "utf8",
               "m1", "d1", "definition"}
@@ -96,10 +102,10 @@ def wire_capture_renders_all_nine_members():
 def fx_plan() -> Sel.Plan:
   Sel.Plan{fx_bind(), "sourceAnalysis",
            Sel.StepsCons{fx_step(), Sel.StepsNil{}},
-           Eng.ss_one("executeTarget"), Sel.CapNil{}, True{}}
+           Eng.ss_one("executeTarget"), Sel.CapNil{}, True{}, fx_policy_identity()}
 
 law wire_plan_identity_renders_the_frozen_members:
-  {Wire.plan_identity_json(fx_plan()) == J.Jobj{Wire.wire_obj("primary", Wire.bind_json(fx_bind()), Wire.wire_obj("common", J.Jstr{"sourceAnalysis"}, Wire.wire_obj("steps", Wire.steps_json(Sel.StepsCons{fx_step(), Sel.StepsNil{}}), Wire.wire_obj("effectiveEffects", Wire.ss_json(Eng.ss_one("executeTarget")), J.Jnil{}))))} : J.Json}
+  {Wire.plan_identity_json(fx_plan()) == J.Jobj{Wire.wire_obj("primary", Wire.bind_json(fx_bind()), Wire.wire_obj("common", J.Jstr{"sourceAnalysis"}, Wire.wire_obj("steps", Wire.steps_json(Sel.StepsCons{fx_step(), Sel.StepsNil{}}), Wire.wire_obj("effectiveEffects", Wire.ss_json(Eng.ss_one("executeTarget")), Wire.wire_obj("projectPolicy", Wire.project_policy_json(fx_policy_identity()), J.Jnil{})))))} : J.Json}
 
 def wire_plan_identity_renders_the_frozen_members():
   {==}
@@ -107,7 +113,7 @@ def wire_plan_identity_renders_the_frozen_members():
 # The identity does not consult availability or the captured records, so two
 # plans differing only in those still share one identity.
 law wire_plan_identity_ignores_availability_and_captures:
-  {Wire.plan_identity_json(fx_plan()) == Wire.plan_identity_json(Sel.Plan{fx_bind(), "sourceAnalysis", Sel.StepsCons{fx_step(), Sel.StepsNil{}}, Eng.ss_one("executeTarget"), Sel.CapCons{Sel.Capture{"file", "source", "/work/a.ts", "aa", "text", "utf8", "m1", "d1", "definition"}, Sel.CapNil{}}, False{}}) : J.Json}
+  {Wire.plan_identity_json(fx_plan()) == Wire.plan_identity_json(Sel.Plan{fx_bind(), "sourceAnalysis", Sel.StepsCons{fx_step(), Sel.StepsNil{}}, Eng.ss_one("executeTarget"), Sel.CapCons{Sel.Capture{"file", "source", "/work/a.ts", "aa", "text", "utf8", "m1", "d1", "definition"}, Sel.CapNil{}}, False{}, fx_policy_identity()}) : J.Json}
 
 def wire_plan_identity_ignores_availability_and_captures():
   {==}
@@ -116,7 +122,15 @@ def wire_plan_identity_ignores_availability_and_captures():
 # The complete rendering carries the captured records and the observed
 # availability, which the identity over the deciding members deliberately omits.
 law wire_plan_value_renders_the_captures_and_availability:
-  {Wire.plan_value_json(fx_plan()) == J.Jobj{Wire.wire_obj("primary", Wire.bind_json(fx_bind()), Wire.wire_obj("common", J.Jstr{"sourceAnalysis"}, Wire.wire_obj("steps", Wire.steps_json(Sel.StepsCons{fx_step(), Sel.StepsNil{}}), Wire.wire_obj("effectiveEffects", Wire.ss_json(Eng.ss_one("executeTarget")), Wire.wire_obj("inputs", Wire.captures_json(Sel.CapNil{}), Wire.wire_obj("available", J.Jtrue{}, J.Jnil{}))))))} : J.Json}
+  {Wire.plan_value_json(fx_plan()) == J.Jobj{Wire.wire_obj("primary", Wire.bind_json(fx_bind()), Wire.wire_obj("common", J.Jstr{"sourceAnalysis"}, Wire.wire_obj("steps", Wire.steps_json(Sel.StepsCons{fx_step(), Sel.StepsNil{}}), Wire.wire_obj("effectiveEffects", Wire.ss_json(Eng.ss_one("executeTarget")), Wire.wire_obj("projectPolicy", Wire.project_policy_json(fx_policy_identity()), Wire.wire_obj("inputs", Wire.captures_json(Sel.CapNil{}), Wire.wire_obj("available", J.Jtrue{}, J.Jnil{})))))))} : J.Json}
+
+law wire_plan_identity_changes_when_project_policy_changes:
+  {Bool.not(Wire.plan_identity(fx_plan()) == Wire.plan_identity(Sel.Plan{fx_bind(), "sourceAnalysis",
+    Sel.StepsCons{fx_step(), Sel.StepsNil{}}, Eng.ss_one("executeTarget"), Sel.CapNil{}, True{},
+    fx_policy_read_identity()})) : Bool}
+
+def wire_plan_identity_changes_when_project_policy_changes():
+  {==}
 
 def wire_plan_value_renders_the_captures_and_availability():
   {==}

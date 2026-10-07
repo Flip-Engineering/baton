@@ -21,6 +21,11 @@ def member(+object: J.Json, +key: String) -> J.Json:
     case J.Jobj{+members}: member_value(Req.member_lookup(key, members))
     case other: J.Jnil{}
 
+def object_members(+object: J.Json) -> J.Json:
+  match object:
+    case J.Jobj{+members}: members
+    case other: J.Jnil{}
+
 def text_field(+object: J.Json, +key: String) -> String:
   Req.text_of(member(object, key))
 
@@ -112,7 +117,9 @@ def rules_tail(+items: J.Json) -> Decl.Rules:
         Decl.RulesCons{Decl.RManifest{text_field(head, "value")}, rules_tail(tail)},
       Bool.pick(Decl.Rules, String.eq(text_field(head, "kind"), "subject"),
         Decl.RulesCons{Decl.RSubject{text_field(head, "value")}, rules_tail(tail)},
-        Decl.RulesCons{Decl.RProjection{text_field(head, "value")}, rules_tail(tail)})))
+      Bool.pick(Decl.Rules, String.eq(text_field(head, "kind"), "pathSuffix"),
+        Decl.RulesCons{Decl.RPathSuffix{text_field(head, "value")}, rules_tail(tail)},
+        Decl.RulesCons{Decl.RProjection{text_field(head, "value")}, rules_tail(tail)}))))
     case other: Decl.RulesNil{}
 
 def decl_artifact(+entry: J.Json, +artifacts: Decl.Arts) -> Decl.Art:
@@ -162,6 +169,31 @@ def operation_fields_valid(+items: J.Json) -> Bool:
     case J.Jarr{+head, +tail}: Bool.and(operation_field_valid(head), operation_fields_rest(tail))
     case other: False{}
 
+def applicability_rule_valid(+rule: J.Json) -> Bool:
+  Bool.and(Req.is_jobj(rule),
+  Bool.and(Req.keys_allowed(Req.words_from(["kind", "value"]), object_members(rule)),
+  Bool.and(Bool.not(String.is_empty(text_field(rule, "value"))),
+  Bool.or(String.eq(text_field(rule, "kind"), "path"),
+  Bool.or(String.eq(text_field(rule, "kind"), "pathSuffix"),
+  Bool.or(String.eq(text_field(rule, "kind"), "manifest"),
+  Bool.or(String.eq(text_field(rule, "kind"), "subject"),
+           String.eq(text_field(rule, "kind"), "projection"))))))))
+
+def applicability_rules_rest(+items: J.Json) -> Bool:
+  match items:
+    case J.Jnil{}: True{}
+    case J.Jarr{J.Jnil{}, J.Jnil{}}: True{}
+    case J.Jarr{+head, +tail}:
+      Bool.and(applicability_rule_valid(head), applicability_rules_rest(tail))
+    case other: False{}
+
+def applicability_rules_valid(+items: J.Json) -> Bool:
+  match items:
+    case J.Jarr{J.Jnil{}, J.Jnil{}}: True{}
+    case J.Jarr{+head, +tail}:
+      Bool.and(applicability_rule_valid(head), applicability_rules_rest(tail))
+    case other: False{}
+
 def declaration_fields_valid(+value: J.Json) -> Bool:
   Bool.and(String.eq(Req.text_of(member(value, "schema")), "baton2-native-module-declaration-v1"),
   Bool.and(Bool.not(String.is_empty(text_field(value, "moduleId"))),
@@ -175,7 +207,7 @@ def declaration_fields_valid(+value: J.Json) -> Bool:
   Bool.and(is_array(member(value, "schemaIdentities")),
   Bool.and(is_array(member(value, "operations")),
   Bool.and(operation_fields_valid(member(value, "operations")),
-  Bool.and(is_array(member(value, "applicability")),
+  Bool.and(applicability_rules_valid(member(value, "applicability")),
   Bool.and(Bool.not(String.is_empty(text_field(member(value, "entry"), "artifact"))),
   Bool.and(is_array(member(member(value, "entry"), "argv")),
     string_array_valid(member(member(value, "entry"), "argv")))))))))))))))))

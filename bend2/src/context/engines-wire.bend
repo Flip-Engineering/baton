@@ -164,6 +164,20 @@ def captures_json(+xs: Sel.Captures) -> J.Json:
 def captures_text(+xs: Sel.Captures) -> String:
   J.json_text(captures_json(xs))
 
+def project_policy_json(+identity: Sel.ProjectPolicyIdentity) -> J.Json:
+  match identity:
+    case Sel.ProjectPolicyRead{owner, worktree, path, sha256}:
+      J.Jobj{wire_obj("kind", J.Jstr{"present"},
+        wire_obj("owner", J.Jstr{owner},
+        wire_obj("worktree", J.Jstr{worktree},
+        wire_obj("path", J.Jstr{path},
+        wire_obj("sha256", J.Jstr{sha256}, J.Jnil{})))))}
+    case Sel.ProjectPolicyMissing{owner, worktree, path}:
+      J.Jobj{wire_obj("kind", J.Jstr{"absent"},
+        wire_obj("owner", J.Jstr{owner},
+        wire_obj("worktree", J.Jstr{worktree},
+        wire_obj("path", J.Jstr{path}, J.Jnil{}))))}
+
 # --- the invocation frame's composite members --------------------------------
 # The members Codec's invocation_frame takes: the canonical request value, the
 # binding, the captured records and the operation plan, each already rendered.
@@ -178,7 +192,8 @@ def event_members_json(+producer: Sel.MBind) -> J.Json:
 
 # --- the plan identity a caller carries ---------------------------------------
 # The frozen members of one plan rendered as one canonical value: the primary
-# binding, the common operation, the ordered steps and the effective requirement.
+# binding, the common operation, the ordered steps, the effective requirement and
+# the exact project-policy observation.
 # Availability is observed state rather than plan identity, and the captured
 # records travel with the invocation, so neither is part of this value.
 #
@@ -192,16 +207,17 @@ def event_members_json(+producer: Sel.MBind) -> J.Json:
 #
 # The identity covers the primary binding, the common operation, the steps and the
 # effective requirement only. Because it excludes the frozen captured input
-# identities and the observed availability, an owner that carries this identity
+# provider-captured input identities and the observed availability, an owner that carries this identity
 # alone must retain those input identities separately, through plan_value or its
 # own record: equality over this rendering does not carry them.
 def plan_identity_json(+p: Sel.Plan) -> J.Json:
   match p:
-    case Sel.Plan{+primary, +common, +steps, effective_effects, inputs, available}:
+    case Sel.Plan{+primary, +common, +steps, effective_effects, inputs, available, +policy_identity}:
       J.Jobj{wire_obj("primary", bind_json(primary),
              wire_obj("common", J.Jstr{common},
              wire_obj("steps", steps_json(steps),
              wire_obj("effectiveEffects", ss_json(effective_effects),
+             wire_obj("projectPolicy", project_policy_json(policy_identity),
                       J.Jnil{}))))}
 
 def plan_identity(+p: Sel.Plan) -> String:
@@ -224,14 +240,15 @@ def bool_json(+b: Bool) -> J.Json:
 
 def plan_value_json(+p: Sel.Plan) -> J.Json:
   match p:
-    case Sel.Plan{+primary, +common, +steps, effective_effects, +inputs, +available}:
+    case Sel.Plan{+primary, +common, +steps, effective_effects, +inputs, +available, +policy_identity}:
       J.Jobj{wire_obj("primary", bind_json(primary),
              wire_obj("common", J.Jstr{common},
              wire_obj("steps", steps_json(steps),
              wire_obj("effectiveEffects", ss_json(effective_effects),
+             wire_obj("projectPolicy", project_policy_json(policy_identity),
              wire_obj("inputs", captures_json(inputs),
              wire_obj("available", bool_json(available),
-                      J.Jnil{}))))))}
+                      J.Jnil{})))))))}
 
 def plan_value(+p: Sel.Plan) -> String:
   J.json_text(plan_value_json(p))

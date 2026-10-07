@@ -35,13 +35,17 @@ import ./engines-decl.bend as Decl
 import ./snapshot.bend as Snap
 
 # --- candidates --------------------------------------------------------------
+type ProjectPolicyIdentity is Data:
+  ProjectPolicyRead{owner: String, worktree: String, path: String, sha256: String}
+  ProjectPolicyMissing{owner: String, worktree: String, path: String}
+
 # One declared operation of one admitted module, with the configured state
 # already resolved against it. `available` records whether the selected bytes
 # and their verified closure are present; it is not a filter.
 type Cand is Data:
   Cand{module_id: String, declaration_digest: String, operation: String,
        common: String, declared_effects: Eng.SS, execution: Decl.Exec,
-       available: Bool, preferred: Bool}
+       available: Bool, preferred: Bool, policy_identity: ProjectPolicyIdentity}
 
 type Cands is Data:
   CandsNil{}
@@ -50,32 +54,38 @@ type Cands is Data:
 def cand_module(+cand: Cand) -> String:
   match cand:
     case Cand{module_id, declaration_digest, operation, common,
-              declared_effects, execution, available, preferred}:
+              declared_effects, execution, available, preferred, policy_identity}:
       module_id
 
 def cand_digest(+cand: Cand) -> String:
   match cand:
     case Cand{module_id, declaration_digest, operation, common,
-              declared_effects, execution, available, preferred}:
+              declared_effects, execution, available, preferred, policy_identity}:
       declaration_digest
 
 def cand_operation(+cand: Cand) -> String:
   match cand:
     case Cand{module_id, declaration_digest, operation, common,
-              declared_effects, execution, available, preferred}:
+              declared_effects, execution, available, preferred, policy_identity}:
       operation
 
 def cand_common(+cand: Cand) -> String:
   match cand:
     case Cand{module_id, declaration_digest, operation, common,
-              declared_effects, execution, available, preferred}:
+              declared_effects, execution, available, preferred, policy_identity}:
       common
 
 def cand_available(+cand: Cand) -> Bool:
   match cand:
     case Cand{module_id, declaration_digest, operation, common,
-              declared_effects, execution, available, preferred}:
+              declared_effects, execution, available, preferred, policy_identity}:
       available
+
+def cand_policy_identity(+cand: Cand) -> ProjectPolicyIdentity:
+  match cand:
+    case Cand{module_id, declaration_digest, operation, common,
+              declared_effects, execution, available, preferred, policy_identity}:
+      policy_identity
 
 def cands_append(+xs: Cands, +add: Cands) -> Cands:
   match xs:
@@ -140,7 +150,7 @@ type RequestOperands is Data:
 
 type ProjectState is Data:
   ProjectState{paths: Eng.SS, manifests: Eng.SS, installed: Eng.SS, disabled: Eng.SS,
-               preferred: Eng.SS}
+               preferred: Eng.SS, policy_identity: ProjectPolicyIdentity}
 
 def req_subject(+r: RequestOperands) -> String:
   match r:
@@ -160,27 +170,32 @@ def req_common(+r: RequestOperands) -> String:
 
 def proj_paths(+p: ProjectState) -> Eng.SS:
   match p:
-    case ProjectState{paths, manifests, installed, disabled, preferred}: paths
+    case ProjectState{paths, manifests, installed, disabled, preferred, policy_identity}: paths
 
 def proj_manifests(+p: ProjectState) -> Eng.SS:
   match p:
-    case ProjectState{paths, manifests, installed, disabled, preferred}:
+    case ProjectState{paths, manifests, installed, disabled, preferred, policy_identity}:
       manifests
 
 def proj_installed(+p: ProjectState) -> Eng.SS:
   match p:
-    case ProjectState{paths, manifests, installed, disabled, preferred}:
+    case ProjectState{paths, manifests, installed, disabled, preferred, policy_identity}:
       installed
 
 def proj_disabled(+p: ProjectState) -> Eng.SS:
   match p:
-    case ProjectState{paths, manifests, installed, disabled, preferred}:
+    case ProjectState{paths, manifests, installed, disabled, preferred, policy_identity}:
       disabled
 
 def proj_preferred(+p: ProjectState) -> Eng.SS:
   match p:
-    case ProjectState{paths, manifests, installed, disabled, preferred}:
+    case ProjectState{paths, manifests, installed, disabled, preferred, policy_identity}:
       preferred
+
+def proj_policy_identity(+p: ProjectState) -> ProjectPolicyIdentity:
+  match p:
+    case ProjectState{paths, manifests, installed, disabled, preferred, policy_identity}:
+      policy_identity
 
 # The assembled selection inputs. A caller reaches this only through sel_inputs,
 # which takes the two separated operands.
@@ -236,26 +251,28 @@ def digest_at(+inv: Decl.Inv, +module_id: String) -> String:
 
 # --- candidate derivation ----------------------------------------------------
 def cand_of(+decl: Decl.Decl, +op: Decl.Op, +digest: String, +available: Bool,
-            +preferred: Bool) -> Cand:
+            +preferred: Bool, +policy_identity: ProjectPolicyIdentity) -> Cand:
   Cand{Decl.decl_module_id(decl), digest, Decl.op_operation(op),
        Decl.op_common(op), Decl.op_effects(op), Decl.op_execution(op),
-       available, preferred}
+       available, preferred, policy_identity}
 
 def cand_of_op(+decl: Decl.Decl, +op: Decl.Op, +digest: String,
-               +available: Bool, +preferred: Bool, +common: String) -> Cands:
+               +available: Bool, +preferred: Bool, +policy_identity: ProjectPolicyIdentity,
+               +common: String) -> Cands:
   Bool.pick(Cands, String.eq(Decl.op_common(op), common),
-            CandsCons{cand_of(decl, op, digest, available, preferred),
+            CandsCons{cand_of(decl, op, digest, available, preferred, policy_identity),
                       CandsNil{}},
             CandsNil{})
 
 def cands_of_ops(+decl: Decl.Decl, +ops: Decl.Ops, +digest: String,
-                 +available: Bool, +preferred: Bool, +common: String) -> Cands:
+                 +available: Bool, +preferred: Bool, +policy_identity: ProjectPolicyIdentity,
+                 +common: String) -> Cands:
   match ops:
     case Decl.OpsNil{}: CandsNil{}
     case Decl.OpsCons{head, rest}:
       cands_append(
-        cand_of_op(decl, head, digest, available, preferred, common),
-        cands_of_ops(decl, rest, digest, available, preferred, common))
+        cand_of_op(decl, head, digest, available, preferred, policy_identity, common),
+        cands_of_ops(decl, rest, digest, available, preferred, policy_identity, common))
 
 # A declaration contributes to the pass its configured preference names, and the
 # candidate it produces carries that same preference.
@@ -271,7 +288,8 @@ def cands_of_decl(+decl: Decl.Decl, +inputs: SelInputs, +inv: Decl.Inv,
         cands_of_ops(decl, Decl.decl_operations(decl),
                      digest_at(inv, Decl.decl_module_id(decl)),
                      decl_installed(decl, inputs),
-                     decl_preferred(decl, inputs), common),
+                     decl_preferred(decl, inputs),
+                     proj_policy_identity(inputs_project(inputs)), common),
         CandsNil{}),
       CandsNil{}),
     CandsNil{})
@@ -312,7 +330,8 @@ def ex_present_of(+decl: Decl.Decl, +ops: Decl.Ops, +inputs: SelInputs,
                 ExPresent{cand_of(decl, head,
                                   digest_at(inv, Decl.decl_module_id(decl)),
                                   decl_installed(decl, inputs),
-                                  decl_preferred(decl, inputs))},
+                                  decl_preferred(decl, inputs),
+                                  proj_policy_identity(inputs_project(inputs)))},
                 ex_present_of(decl, rest, inputs, inv, common))
 
 def ex_found(+decl: Decl.Decl, +inputs: SelInputs, +inv: Decl.Inv,
@@ -555,7 +574,7 @@ def captures_nonempty(xs: Captures) -> Bool:
 
 type Plan is Data:
   Plan{primary: MBind, common: String, steps: Steps, effective_effects: Eng.SS,
-       inputs: Captures, available: Bool}
+       inputs: Captures, available: Bool, policy_identity: ProjectPolicyIdentity}
 
 type PlanReason is Data:
   PlanStaleSelection{module_id: String}
@@ -868,7 +887,7 @@ def plan_drain(+pending: Pendings, +cat: Decl.Cat, +inv: Decl.Inv,
 
 # --- freezing one selected binding ------------------------------------------
 def plan_finish(+w: Walk, +primary: MBind, +common: String, +available: Bool,
-                +captures: Captures) -> PlanOutcome:
+                +captures: Captures, +policy_identity: ProjectPolicyIdentity) -> PlanOutcome:
   match w:
     case Walk{steps, commons, declared, failure}:
       match failure:
@@ -877,7 +896,7 @@ def plan_finish(+w: Walk, +primary: MBind, +common: String, +available: Bool,
           PlanFrozen{Plan{primary, common, steps,
                                 Eng.union_add(declared,
                                               Eng.effects_union(commons)),
-                                captures, available}}
+                                captures, available, policy_identity}}
 
 def freeze_primary(+decl: Decl.Decl, +op: Decl.Op, +cand: Cand, +cat: Decl.Cat,
                    +inv: Decl.Inv, +captures: Captures) -> PlanOutcome:
@@ -886,7 +905,7 @@ def freeze_primary(+decl: Decl.Decl, +op: Decl.Op, +cand: Cand, +cat: Decl.Cat,
                          PendsNil{}},
                cat, inv, walk_none()),
     binding_of(decl, op, cand_digest(cand)), Decl.op_common(op),
-    cand_available(cand), captures)
+    cand_available(cand), captures, cand_policy_identity(cand))
 
 def freeze_op(+decl: Decl.Decl, +ost: OpState, +cand: Cand, +cat: Decl.Cat,
               +inv: Decl.Inv, +captures: Captures) -> PlanOutcome:
@@ -930,7 +949,7 @@ type Invocation is Data:
 def invocation_of(+p: Plan, +query: String, +owner: String, +request: String,
                   +role: String, +incarnation: String) -> Invocation:
   match p:
-    case Plan{primary, common, steps, effective_effects, inputs, available}:
+    case Plan{primary, common, steps, effective_effects, inputs, available, policy_identity}:
       Invocation{"2", query, owner, primary, request, steps, inputs, role,
                  incarnation}
 
@@ -1023,7 +1042,7 @@ def steps_lookup(+steps: Steps, +module_id: String, +digest: String,
 def step_lookup(+p: Plan, +module_id: String, +digest: String,
                 +want: String) -> StepState:
   match p:
-    case Plan{primary, common, steps, effective_effects, inputs, available}:
+    case Plan{primary, common, steps, effective_effects, inputs, available, policy_identity}:
       steps_lookup(steps, module_id, digest, want)
 
 # The invocation of one selected step: the step's own binding beside the plan's
@@ -1033,7 +1052,7 @@ def invocation_from_step(+step: Step, +p: Plan, +query: String, +owner: String,
                          +request: String, +role: String,
                          +incarnation: String) -> Invocation:
   match p:
-    case Plan{primary, common, steps, effective_effects, inputs, available}:
+    case Plan{primary, common, steps, effective_effects, inputs, available, policy_identity}:
       Invocation{"2", query, owner, step_binding(step), request, steps, inputs,
                  role, incarnation}
 
@@ -1162,7 +1181,7 @@ def schema_of_step(+st: StepState) -> String:
 # The result schema of the plan's primary step.
 def plan_primary_schema(+p: Plan) -> String:
   match p:
-    case Plan{+primary, common, steps, effective_effects, inputs, available}:
+    case Plan{+primary, common, steps, effective_effects, inputs, available, policy_identity}:
       schema_of_step(step_lookup(p, bind_module(primary), bind_digest(primary),
                                  bind_operation(primary)))
 
@@ -1299,7 +1318,7 @@ def step_effects(+step: Step) -> Eng.SS:
 
 def plan_inputs(+p: Plan) -> Captures:
   match p:
-    case Plan{primary, common, steps, effective_effects, inputs, available}:
+    case Plan{primary, common, steps, effective_effects, inputs, available, policy_identity}:
       inputs
 
 def transfer_of(+step: Step, +inputs: Captures) -> StepTransfer:

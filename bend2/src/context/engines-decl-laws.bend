@@ -299,6 +299,20 @@ law decl_path_rule_reads_the_admitted_paths:
 def decl_path_rule_reads_the_admitted_paths():
   {==}
 
+law decl_path_suffix_rule_matches_an_examined_path:
+  {Decl.rules_hold(Decl.RulesCons{Decl.RPathSuffix{".bend"}, Decl.RulesNil{}},
+    Eng.ss_two("src/main.bend", "docs/guide.md"), Eng.ss_empty(), "symbol", Eng.ss_empty()) == True{} : Bool}
+
+def decl_path_suffix_rule_matches_an_examined_path():
+  {==}
+
+law decl_path_suffix_rule_refuses_a_different_suffix_case:
+  {Decl.rules_hold(Decl.RulesCons{Decl.RPathSuffix{".bend"}, Decl.RulesNil{}},
+    Eng.ss_two("src/main.BEND", "src/main.rs"), Eng.ss_empty(), "symbol", Eng.ss_empty()) == False{} : Bool}
+
+def decl_path_suffix_rule_refuses_a_different_suffix_case():
+  {==}
+
 law decl_projection_rule_reads_the_requested_projections:
   {Decl.rules_hold(Decl.RulesCons{Decl.RProjection{"authorization"}, Decl.RulesNil{}}, Eng.ss_empty(), Eng.ss_empty(), "handler", Eng.ss_one("definition")) == False{} : Bool}
 

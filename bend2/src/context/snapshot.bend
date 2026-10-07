@@ -34,6 +34,8 @@ type Fp is Data:
   FpDir{role: String, path: String, sha256: String}
   FpLink{role: String, path: String, target: String}
   FpConfig{role: String, path: String, sha256: String}
+  FpProjectPolicy{owner: String, worktree: String, path: String, sha256: String}
+  FpProjectPolicyAbsent{owner: String, worktree: String, path: String}
 
 type Fps is Data:
   FpsNil{}
@@ -46,6 +48,8 @@ def fp_role(f: Fp) -> String:
     case FpDir{role, path, sha256}: role
     case FpLink{role, path, target}: role
     case FpConfig{role, path, sha256}: role
+    case FpProjectPolicy{owner, worktree, path, sha256}: "projectPolicy"
+    case FpProjectPolicyAbsent{owner, worktree, path}: "projectPolicy"
 
 def fp_path(f: Fp) -> String:
   match f:
@@ -54,6 +58,8 @@ def fp_path(f: Fp) -> String:
     case FpDir{role, path, sha256}: path
     case FpLink{role, path, target}: path
     case FpConfig{role, path, sha256}: path
+    case FpProjectPolicy{owner, worktree, path, sha256}: path
+    case FpProjectPolicyAbsent{owner, worktree, path}: path
 
 # The digest-bearing component: the file digest, the resolved target, the
 # directory digest, the configuration digest, or the absent marker.
@@ -64,6 +70,13 @@ def fp_marker(f: Fp) -> String:
     case FpDir{role, path, sha256}: sha256
     case FpLink{role, path, target}: target
     case FpConfig{role, path, sha256}: sha256
+    case FpProjectPolicy{owner, worktree, path, sha256}:
+      J.json_text(J.Jarr{J.Jstr{"baton2.context.project-policy.v1"},
+        J.Jarr{J.Jstr{owner}, J.Jarr{J.Jstr{worktree},
+        J.Jarr{J.Jstr{sha256}, J.Jnil{}}}}})
+    case FpProjectPolicyAbsent{owner, worktree, path}:
+      J.json_text(J.Jarr{J.Jstr{"baton2.context.project-policy.absent.v1"},
+        J.Jarr{J.Jstr{owner}, J.Jarr{J.Jstr{worktree}, J.Jnil{}}}})
 
 def fps_of_list(xs: List<Fp>) -> Fps:
   match xs:

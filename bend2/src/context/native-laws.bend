@@ -8,6 +8,7 @@ import ./native-request.bend as NativeRequest
 import ./native-declaration.bend as NativeDeclaration
 import ./native-runtime-laws.bend as NativeRuntimeLaws
 import ./native-declaration-laws.bend as NativeDeclarationLaws
+import ./native-project-policy-laws.bend as NativeProjectPolicyLaws
 import ./engines.bend as Eng
 import ../json/canonical.bend as J
 import ../host/process.bend as Process
@@ -68,7 +69,7 @@ def declaration_artifact_object() -> J.Json:
   NativeDeclarationLaws.obj_pair("sha256", J.Jstr{"aa"},
   NativeDeclarationLaws.obj_pair("role", J.Jstr{"provider"}, J.Jnil{}))))
 
-def declaration_object() -> J.Json:
+def declaration_object_with_applicability(+applicability: J.Json) -> J.Json:
   NativeDeclarationLaws.obj(NativeDeclarationLaws.obj_pair("schema", J.Jstr{"baton2-native-module-declaration-v1"},
   NativeDeclarationLaws.obj_pair("moduleId", J.Jstr{"m1"},
   NativeDeclarationLaws.obj_pair("revision", J.Jstr{"r1"},
@@ -79,8 +80,43 @@ def declaration_object() -> J.Json:
   NativeDeclarationLaws.obj_pair("artifactIdentities", J.Jarr{declaration_artifact_object(), J.Jnil{}},
   NativeDeclarationLaws.obj_pair("dependencies", NativeDeclarationLaws.empty_array(),
   NativeDeclarationLaws.obj_pair("schemaIdentities", J.Jarr{J.Jstr{"sub"}, J.Jarr{J.Jstr{"opt"}, J.Jarr{J.Jstr{"res"}, J.Jarr{J.Jstr{"ref"}, J.Jarr{J.Jstr{"evt"}, J.Jnil{}}}}}},
-  NativeDeclarationLaws.obj_pair("applicability", NativeDeclarationLaws.empty_array(),
+  NativeDeclarationLaws.obj_pair("applicability", applicability,
   NativeDeclarationLaws.obj_pair("operations", J.Jarr{declaration_operation_object(), J.Jnil{}}, J.Jnil{}))))))))))))
+
+def declaration_object() -> J.Json:
+  declaration_object_with_applicability(NativeDeclarationLaws.empty_array())
+
+def bend_suffix_rule() -> J.Json:
+  NativeDeclarationLaws.obj(NativeDeclarationLaws.obj_pair("kind", J.Jstr{"pathSuffix"},
+    NativeDeclarationLaws.obj_pair("value", J.Jstr{".bend"}, J.Jnil{})))
+
+def expected_bend_suffix_declaration() -> Decl.Decl:
+  Decl.Decl{"1", "m1", "r1", "2", "pkg-m1",
+    Decl.EProcess{Decl.Art{"native-provider.mjs", "aa", "entry"}, Eng.ss_one("--experimental-strip-types")},
+    Decl.ArtsNil{},
+    Decl.OpsCons{Decl.Op{"sourceAnalysis", "sourceAnalysis", "sub", "opt",
+      Eng.ss_one("definition"), Eng.ss_empty(), Decl.ExManaged{}, "res", "ref", "evt", "", Decl.ModRefsNil{}},
+      Decl.OpsNil{}},
+    Decl.RulesCons{Decl.RPathSuffix{".bend"}, Decl.RulesNil{}}}
+
+law installed_declaration_adapter_decodes_generic_path_suffix_rule:
+  {NativeDeclaration.decode(declaration_object_with_applicability(
+      J.Jarr{bend_suffix_rule(), J.Jnil{}}), "d1") == NativeDeclaration.DeclarationDecoded{
+    expected_bend_suffix_declaration(), Decl.Inv{Decl.ArtsCons{Decl.Art{"native-provider.mjs", "aa", "provider"}, Decl.ArtsNil{}},
+      Eng.ss_of_list(["sub", "opt", "res", "ref", "evt"]),
+      Decl.DigsCons{Decl.Dg{"m1", "d1"}, Decl.DigsNil{}}}} : NativeDeclaration.DeclarationDecode}
+
+def installed_declaration_adapter_decodes_generic_path_suffix_rule():
+  {==}
+
+law installed_declaration_adapter_refuses_an_empty_path_suffix:
+  {NativeDeclaration.decode(declaration_object_with_applicability(
+      J.Jarr{NativeDeclarationLaws.obj(NativeDeclarationLaws.obj_pair("kind", J.Jstr{"pathSuffix"},
+        NativeDeclarationLaws.obj_pair("value", J.Jstr{""}, J.Jnil{}})), J.Jnil{}}), "d1") ==
+      NativeDeclaration.DeclarationRefused{"nativeModuleDeclaration"} : NativeDeclaration.DeclarationDecode}
+
+def installed_declaration_adapter_refuses_an_empty_path_suffix():
+  {==}
 
 def expected_declaration() -> Decl.Decl:
   Decl.Decl{"1", "m1", "r1", "2", "pkg-m1",

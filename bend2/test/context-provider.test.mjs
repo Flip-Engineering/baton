@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
+import { copyFileSync } from 'node:fs';
 
 import { installedModuleInventory, moduleDirectoryName, resolveSelectedPackageRoot } from '../scripts/context-provider.mjs';
 
@@ -81,6 +83,37 @@ test('installed module inventory reports malformed and symlinked module entries'
         { directory: 'm-zz', reason: 'selectedModuleDirectoryNameInvalid' },
       ],
     });
+  } finally {
+    rmSync(prefix, { recursive: true, force: true });
+  }
+});
+
+test('generic project policy entry runs from Core assets with no selected module installed', () => {
+  const prefix = mkdtempSync(join(tmpdir(), 'baton2-project-policy-core-'));
+  try {
+    const worktree = join(prefix, 'checkout');
+    const wrapperDir = join(prefix, 'libexec/baton2');
+    mkdirSync(wrapperDir, { recursive: true });
+    mkdirSync(worktree);
+    for (const name of ['context-provider.mjs', 'context-project-policy.mjs', 'context-worktree-capture.mjs']) {
+      copyFileSync(new URL(`../scripts/${name}`, import.meta.url), join(wrapperDir, name));
+    }
+    const wrapper = join(wrapperDir, 'context-provider.mjs');
+    const run = (owner) => spawnSync(process.execPath, [wrapper, '--project-policy'], {
+      input: JSON.stringify({ owner, worktree }), encoding: 'utf8',
+    });
+    const absent = run('query-absent');
+    assert.equal(absent.status, 0, absent.stderr);
+    assert.equal(JSON.parse(absent.stdout).status, 'absent');
+    assert.deepEqual(JSON.parse(absent.stdout).disabled, []);
+
+    mkdirSync(join(worktree, '.baton'));
+    writeFileSync(join(worktree, '.baton/context.json'),
+      '{"schema":"baton2-context-project-v1","disabled":["example.disabled"],"preferred":[]}');
+    const present = run('query-present');
+    assert.equal(present.status, 0, present.stderr);
+    assert.equal(JSON.parse(present.stdout).status, 'present');
+    assert.deepEqual(JSON.parse(present.stdout).disabled, ['example.disabled']);
   } finally {
     rmSync(prefix, { recursive: true, force: true });
   }

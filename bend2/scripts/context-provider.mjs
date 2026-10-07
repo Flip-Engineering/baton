@@ -197,6 +197,19 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
     const result = installedModuleInventory();
     process.stdout.write(`${JSON.stringify(result)}\n`);
     if (result.status === 'refused') process.exitCode = 2;
+  } else if (process.argv[2] === '--project-policy') {
+    const { observeProjectPolicy } = await import('./context-project-policy.mjs');
+    let input = '';
+    for await (const chunk of process.stdin) input += chunk;
+    try {
+      const authority = JSON.parse(input);
+      const result = observeProjectPolicy({ owner: authority.owner, worktree: authority.worktree });
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      if (result.status === 'refused') process.exitCode = 2;
+    } catch (error) {
+      process.stdout.write(`${JSON.stringify(refused('projectPolicyAuthorityMalformed', error.message))}\n`);
+      process.exitCode = 2;
+    }
   } else {
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
