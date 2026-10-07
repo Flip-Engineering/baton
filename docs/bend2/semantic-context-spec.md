@@ -1612,6 +1612,12 @@ The binding records canonical path, identity scheme/version, physical tuple and
 VFS, plus a logical database token if supplied by the schema. Physical identity
 uses device/file ID and a qualified incarnation discriminator. Size, mtime and
 ctime change during ordinary writes and cannot serve as the discriminator.
+The native binding reads Darwin birth time from the file status. On Linux it
+requests creation time, inode, and file type through [`statx`](https://man7.org/linux/man-pages/man2/statx.2.html).
+It requires the returned field mask, a regular file, and the same device and
+inode as the preceding status observation. A positive creation timestamp must
+fit the binding's nanosecond integer representation. A missing or inconsistent
+observation leaves the binding unavailable.
 The platform discriminator and its reuse limits still require qualification;
 an unavailable scheme returns binding unavailable before caller SQL. A logical
 token supplements the tuple and cannot distinguish a copied file. In-place

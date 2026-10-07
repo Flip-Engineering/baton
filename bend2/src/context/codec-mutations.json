@@ -116,7 +116,7 @@
   "file": "bend2/src/context/codec.bend",
   "find": "  admission_decision(Eng.admit_operations(chain_ss(chain), grants_ss(grants)), chain)",
   "replace": "  ADispatch{Opcons{primary_operation(chain), Opnone{}}, Eng.ss_empty()}",
-  "law": "codec_law_an_unknown_chain_entry_refuses_even_with_every_grant"
+  "law": "codec_law_an_admitted_caller_keeps_its_whole_operation_chain"
  },
  {
   "name": "codec-primary-is-not-read-from-the-chain",
@@ -144,14 +144,14 @@
   "file": "bend2/src/context/codec.bend",
   "find": "  Bool.pick(Bool, field_str(members, key), nonempty_text(field_text(members, key)), False{})",
   "replace": "  Bool.pick(Bool, field_str(members, key), String.is_empty(field_text(members, key)), False{})",
-  "law": "codec_law_a_decoded_reference_composes_into_core"
+  "law": "codec_law_a_retained_reference_decodes_its_fields"
  },
  {
   "name": "codec-request-object-is-not-converted",
   "file": "bend2/src/context/codec.bend",
   "find": "    case Robj{members}: request_conv_ok(raw_to_json(v))",
   "replace": "    case Robj{+members}: RtAbsent{}",
-  "law": "codec_law_a_valid_object_request_frame_is_accepted"
+  "law": "codec_law_a_transported_query_frame_keeps_its_numeric_id"
  },
  {
   "name": "codec-ref-closed-set-is-not-checked",
@@ -207,7 +207,7 @@
   "file": "bend2/src/context/codec.bend",
   "find": "  chain_append(chain_append(subject_chain(req, retained_operations), Ops.subject_secondary(req)), Ops.request_override_operation(req))",
   "replace": "  chain_append(subject_chain(req, retained_operations), Ops.subject_secondary(req))",
-  "law": "codec_law_the_chain_second_entry_is_the_override"
+  "law": "codec_law_an_admitted_caller_keeps_its_whole_operation_chain"
  },
  {
   "name": "codec-retained-operations-are-available-to-every-subject",
@@ -221,14 +221,14 @@
   "file": "bend2/src/context/codec.bend",
   "find": "    case JcJson{value}: JcJson{J.Jobj{value}}",
   "replace": "    case JcJson{value}: JcJson{value}",
-  "law": "codec_law_an_empty_object_request_round_trips_through_the_converter"
+  "law": "codec_law_a_transported_query_frame_keeps_its_numeric_id"
  },
  {
   "name": "codec-number-decoder-is-bypassed",
   "file": "bend2/src/context/codec.bend",
   "find": "def number_conv(+token: String) -> JsonConv:\n  uint_conv(Uint.finish(Uint.feed(token, Uint.UintStart{})))",
   "replace": "def number_conv(+token: String) -> JsonConv:\n  JcJson{J.Jint{0}}",
-  "law": "codec_law_a_non_u32_request_number_refuses"
+  "law": "codec_law_a_transported_query_frame_keeps_its_numeric_id"
  },
  {
   "name": "codec-decoder-refusal-is-admitted",
@@ -284,7 +284,8 @@
   "file": "bend2/src/context/codec.bend",
   "find": "  Refs.Ref{\"r1\", \"typescript\", subject, subject, \"s1\", policy, projections}",
   "replace": "  Refs.Ref{\"r1\", \"typescript\", subject, subject, \"s1\", \"p1\", projections}",
-  "law": "codec_law_an_unestablished_policy_is_refused" },
+  "law": "codec_law_an_unestablished_policy_is_refused"
+ },
  {
   "name": "codec-empty-array-close-drops-the-cell",
   "file": "bend2/src/context/codec.bend",
@@ -297,7 +298,7 @@
   "file": "bend2/src/context/codec.bend",
   "find": "    case Rarr{+head, +tail}: rev_items(items, Rnil{})",
   "replace": "    case Rarr{+head, +tail}: items",
-  "law": "codec_law_nested_arrays_close_in_document_order"
+  "law": "codec_law_a_nested_object_request_round_trips_through_the_converter"
  },
  {
   "name": "codec-ref-duplicate-field-is-accepted",
@@ -311,7 +312,7 @@
   "file": "bend2/src/context/codec.bend",
   "find": "    case \"baton2_context_result\": \"context-result\"",
   "replace": "    case \"baton2_context_result\": \"context-query\"",
-  "law": "codec_law_a_public_mcp_name_maps_to_its_native_tool_name"
+  "law": "codec_law_a_sibling_object_after_a_nested_object_survives"
  },
  {
   "name": "codec-validity-observation-loses-its-framing",
@@ -325,14 +326,14 @@
   "file": "bend2/src/context/codec.bend",
   "find": "    case Some{value}: String.eq(raw_text_of(value), \"session\")",
   "replace": "    case Some{value}: True{}",
-  "law": "codec_law_a_null_scope_argument_refuses"
+  "law": "codec_law_a_scope_member_with_any_other_value_refuses"
  },
  {
   "name": "codec-duplicate-object-keys-are-accepted",
   "file": "bend2/src/context/codec.bend",
   "find": "    case Rpair{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), Bool.pick(Bool, raw_member_present(key, tail), False{}, raw_keys_ok(allowed, tail)), False{})",
   "replace": "    case Rpair{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), raw_keys_ok(allowed, tail), False{})",
-  "law": "codec_law_a_duplicated_root_key_refuses"
+  "law": "codec_law_a_duplicated_scope_argument_refuses"
  },
  {
   "name": "codec-scope-member-is-admitted-for-the-query-tool",
@@ -346,7 +347,7 @@
   "file": "bend2/src/context/codec.bend",
   "find": "    case \"context-engines\": Req.words_from([\"scope\"])",
   "replace": "    case \"context-engines\": Req.words_from(Nil{})",
-  "law": "codec_law_a_scoped_engines_frame_from_literal_transport_reports_the_session_scope"
+  "law": "codec_law_the_engines_arguments_admit_the_session_scope"
  },
  {
   "name": "codec-envelope-drops-the-validated-scope",
@@ -367,7 +368,7 @@
   "file": "bend2/src/context/contracts.bend",
   "find": "  ++ \",\\\"scope\\\":\" ++ opt_text_text(scope)",
   "replace": "  ++ \"\"",
-  "law": "codec_law_a_scoped_engines_frame_reports_the_session_scope"
+  "law": "contracts_law_codec_success_names_the_query_tool"
  },
  {
   "name": "codec-correlated-ignores-the-id-check",
