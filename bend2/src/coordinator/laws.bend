@@ -367,6 +367,15 @@ law m8_one_native_owner_refuses_a_second_turn:
 def m8_one_native_owner_refuses_a_second_turn(db, player, id, cmd, model, effort, cwd, task, log, session, missing):
   {==}
 
+# The Orchestra command answers through the role surfaces builder. This law
+# pins the dispatch step; the builder assembly has its own law, and the
+# players surface content is pinned through the Players command law.
+law orchestra_dispatch_answers_the_role_surfaces:
+  {C.sql(C.Orchestra{}) == C.orchestra_sql() : String}
+
+def orchestra_dispatch_answers_the_role_surfaces():
+  {==}
+
 law m14_missing_adapter_refuses_with_its_rule:
   {Turn.supported_harness(False{}) == IO.die(Unit,2,"No turn adapter for the player's recorded harness.") : IO(Unit)}
 
