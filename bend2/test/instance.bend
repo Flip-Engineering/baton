@@ -152,7 +152,7 @@ def attempted_started(start: P.RetainedStart, payload: String, cycle: Bool) -> I
     case True{}: cycle_started(start,payload)
     case False{}: hold_started(start,payload)
 
-def attempted_locked(database: String, directory: String, cwd: String, payload: String, program: List<String>, lock: Maybe<U32>, cycle: Bool) -> IO(Unit):
+def attempted_locked(+directory: String, database: String, cwd: String, payload: String, program: List<String>, lock: Maybe<U32>, cycle: Bool) -> IO(Unit):
   do IO<Unit>:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr","",1,lock,P.argv([executable,"recover-retained",database,directory])))
@@ -162,7 +162,7 @@ def attempted_locked(database: String, directory: String, cwd: String, payload: 
 def admit_cli(args: List<String>, cycle: Bool) -> IO(Unit):
   match args:
     case database <> session <> directory <> cwd <> payload <> program:
-      Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => attempted_locked(canonical,directory,cwd,payload,program,lock,cycle))
+      Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => attempted_locked(directory,canonical,cwd,payload,program,lock,cycle))
     case _: IO.die(Unit,2,"admit DATABASE SESSION ATTEMPT CWD PAYLOAD PROGRAM ARGS...")
 
 def write_cli(args: List<String>) -> IO(Unit):
