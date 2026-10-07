@@ -1,6 +1,7 @@
 """Log policy, rotation, storage inspection and cleanup checks."""
 import json
 import pathlib
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -268,6 +269,52 @@ assert sys.stdin.read()==''
         self.assertEqual(sorted(p.name for p in self.cwd.glob('second.jsonl.*')), second_rotated)
         self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['removed'], [])
         self.assertEqual(self.refusal('logs-clean', 'absent-session')['error'], 'unknown-session')
+
+    def test_cleanup_removes_only_reported_settled_attempt_diagnostics(self):
+        self.stream([self.terminal()])
+        with sqlite3.connect(self.db) as connection:
+            session, attempt, phase, directory = connection.execute(
+                'SELECT session,id,phase,directory FROM executions WHERE session=?',
+                ('omp-worker',)).fetchone()
+        self.assertEqual(phase, 'exited')
+        attempt_dir = pathlib.Path(directory)
+        self.assertTrue(attempt_dir.is_dir())
+        for name in ('stdout', 'native.stderr', 'observer.log', 'keeper.log'):
+            (attempt_dir / name).write_text('diagnostic data for ' + name)
+        protected = ('manifest', 'status', 'released', 'acknowledged')
+        for name in protected:
+            self.assertTrue((attempt_dir / name).is_file(), name)
+        preview = json.loads(self.call('logs-storage'))['attempts']
+        row = next(item for item in preview if item['attempt'] == attempt)
+        self.assertTrue(row['released'])
+        self.assertTrue(row['acknowledged'])
+        self.assertTrue(row['reported'])
+        self.assertTrue(row['cleanupEligible'], row)
+        answer = json.loads(self.call('logs-clean', 'omp-worker'))
+        self.assertEqual({item['file'] for item in answer['attemptFiles'] if item['removed']},
+                         {'stdout', 'native.stderr', 'observer.log', 'keeper.log'})
+        for name in protected:
+            self.assertTrue((attempt_dir / name).is_file(), name)
+        self.assertEqual(json.loads(self.call('delivery', 'turn-1'))['body'], 'Complete answer λ')
+
+    def test_attempt_without_durable_turn_record_is_retained(self):
+        self.stream([self.terminal()])
+        with sqlite3.connect(self.db) as connection:
+            attempt, directory = connection.execute(
+                'SELECT id,directory FROM executions WHERE session=?', ('omp-worker',)).fetchone()
+            connection.execute('DELETE FROM turns WHERE id=?', (attempt,))
+            for report_id in (attempt, attempt + ':exit', attempt + ':observation'):
+                connection.execute('DELETE FROM messages WHERE id=? AND kind=?', (report_id, 'report'))
+        attempt_dir = pathlib.Path(directory)
+        evidence = attempt_dir / 'observer.log'
+        evidence.write_text('observer evidence')
+        row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
+                   if item['attempt'] == attempt)
+        self.assertFalse(row['reported'])
+        self.assertEqual(row['cleanupReason'], 'observation-unreported')
+        answer = json.loads(self.call('logs-clean', 'omp-worker'))
+        self.assertEqual(answer['attemptFiles'], [])
+        self.assertEqual(evidence.read_text(), 'observer evidence')
 
     def test_cleanup_during_a_live_turn_keeps_the_live_log(self):
         self.call('logs', 'omp-worker', 'default', '65536', '1')
