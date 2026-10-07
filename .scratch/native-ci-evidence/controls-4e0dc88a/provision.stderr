@@ -1,0 +1,18 @@
+Cloning into 'target'...
+Warning: you are leaving 5 commits behind, not connected to
+any of your branches:
+
+  4e0dc88a Preserve conversation output after account read failures
+  59c09e9c Send the MCP channel readiness request once
+  41703354 Expose configured OMP account usage observations
+  f892249b Consume existing process capture for provider usage
+  c16fd7bc Observe MCP attachment completion before announcing readiness
+
+If you want to keep them by creating a new branch, this may be a good time
+to do so with:
+
+ git branch <new-branch-name> 4e0dc88a
+
+HEAD is now at d688c80f Remove withdrawn report-file command
+Cloning into 'candidate'...
+HEAD is now at 4e0dc88a Preserve conversation output after account read failures

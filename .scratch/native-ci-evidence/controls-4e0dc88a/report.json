@@ -1,0 +1,208 @@
+{
+  "job": "controls-4e0dc88a",
+  "started": "2026-10-07T16:28:37.261234+00:00",
+  "stages": [
+    {
+      "stage": "target-build-native",
+      "argv": [
+        "/bin/sh",
+        "bend2/scripts/build-native.sh"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/controls-4e0dc88a/target",
+      "exit_code": 1,
+      "started": "2026-10-07T16:28:37.507354+00:00",
+      "ended": "2026-10-07T16:28:39.640513+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "9b5492d6de78afe69e54f4832e815cf0c9d8f1e05e898d9706497dcf66881398",
+      "stdout_bytes": 0,
+      "stderr_bytes": 230
+    },
+    {
+      "stage": "target-observed-usage",
+      "argv": [
+        "/usr/bin/python3.12",
+        "bend2/test/observed-usage.py"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/controls-4e0dc88a/target",
+      "exit_code": 0,
+      "started": "2026-10-07T16:28:39.641147+00:00",
+      "ended": "2026-10-07T16:28:39.741908+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "63877197ccfc547121019364bd5f97e9472262c112716725f662f99e4052dca2",
+      "stdout_bytes": 0,
+      "stderr_bytes": 134
+    },
+    {
+      "stage": "target-mcp-root",
+      "argv": [
+        "/usr/bin/python3.12",
+        "bend2/test/mcp-root.py"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/controls-4e0dc88a/target",
+      "exit_code": 0,
+      "started": "2026-10-07T16:28:39.742805+00:00",
+      "ended": "2026-10-07T16:28:39.836850+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "bdb2bf6655167f93578e6055ee34d3294093a82171f69694ac48fae364801a7a",
+      "stdout_bytes": 0,
+      "stderr_bytes": 123
+    },
+    {
+      "stage": "target-mcp-contract",
+      "argv": [
+        "/usr/bin/python3.12",
+        "bend2/test/mcp-contract.py"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/controls-4e0dc88a/target",
+      "exit_code": 0,
+      "started": "2026-10-07T16:28:39.837633+00:00",
+      "ended": "2026-10-07T16:28:39.930031+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "4a7a28d4725d702e3c485ca9254b28df4e014f7b5f88282297841208f20b6265",
+      "stdout_bytes": 0,
+      "stderr_bytes": 115
+    },
+    {
+      "stage": "target-receiver-route-mcp",
+      "argv": [
+        "/usr/bin/python3.12",
+        "bend2/test/receiver-route-mcp.py"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/controls-4e0dc88a/target",
+      "exit_code": 0,
+      "started": "2026-10-07T16:28:39.930846+00:00",
+      "ended": "2026-10-07T16:28:41.241890+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "64f9e5f5db54208a10baa76f5b29d22305a8e5380bab216e96bc4295d3618a95",
+      "stdout_bytes": 0,
+      "stderr_bytes": 103
+    },
+    {
+      "stage": "candidate-build-native",
+      "argv": [
+        "/bin/sh",
+        "bend2/scripts/build-native.sh"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/controls-4e0dc88a/candidate",
+      "exit_code": 1,
+      "started": "2026-10-07T16:28:41.245383+00:00",
+      "ended": "2026-10-07T16:28:43.352344+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "9b5492d6de78afe69e54f4832e815cf0c9d8f1e05e898d9706497dcf66881398",
+      "stdout_bytes": 0,
+      "stderr_bytes": 230
+    },
+    {
+      "stage": "candidate-observed-usage",
+      "argv": [
+        "/usr/bin/python3.12",
+        "bend2/test/observed-usage.py"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/controls-4e0dc88a/candidate",
+      "exit_code": 0,
+      "started": "2026-10-07T16:28:43.353172+00:00",
+      "ended": "2026-10-07T16:28:43.453312+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "2d5d754ae640e73997ecd2c574ad20af679e25b0d480425f931d88d7b3aed124",
+      "stdout_bytes": 0,
+      "stderr_bytes": 147
+    },
+    {
+      "stage": "candidate-mcp-attachment",
+      "argv": [
+        "/usr/bin/python3.12",
+        "bend2/test/mcp-attachment.py"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/controls-4e0dc88a/candidate",
+      "exit_code": 0,
+      "started": "2026-10-07T16:28:43.454091+00:00",
+      "ended": "2026-10-07T16:28:44.498651+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "f947df5faae7aa8f87b6ba19e99c7ffca557445347a585db0dc6adfc6b96e258",
+      "stdout_bytes": 0,
+      "stderr_bytes": 102
+    },
+    {
+      "stage": "candidate-mcp-root",
+      "argv": [
+        "/usr/bin/python3.12",
+        "bend2/test/mcp-root.py"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/controls-4e0dc88a/candidate",
+      "exit_code": 0,
+      "started": "2026-10-07T16:28:44.499412+00:00",
+      "ended": "2026-10-07T16:28:44.600626+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "bdb2bf6655167f93578e6055ee34d3294093a82171f69694ac48fae364801a7a",
+      "stdout_bytes": 0,
+      "stderr_bytes": 123
+    },
+    {
+      "stage": "candidate-mcp-contract",
+      "argv": [
+        "/usr/bin/python3.12",
+        "bend2/test/mcp-contract.py"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/controls-4e0dc88a/candidate",
+      "exit_code": 0,
+      "started": "2026-10-07T16:28:44.601198+00:00",
+      "ended": "2026-10-07T16:28:44.693756+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "4a7a28d4725d702e3c485ca9254b28df4e014f7b5f88282297841208f20b6265",
+      "stdout_bytes": 0,
+      "stderr_bytes": 115
+    },
+    {
+      "stage": "candidate-receiver-route-mcp",
+      "argv": [
+        "/usr/bin/python3.12",
+        "bend2/test/receiver-route-mcp.py"
+      ],
+      "cwd": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/controls-4e0dc88a/candidate",
+      "exit_code": 0,
+      "started": "2026-10-07T16:28:44.694483+00:00",
+      "ended": "2026-10-07T16:28:45.997298+00:00",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "ebb222df150a9f2802c58159b040c854fdb56f6a6eee9f39837537b2f9c7cc62",
+      "stdout_bytes": 0,
+      "stderr_bytes": 103
+    }
+  ],
+  "absent": [
+    {
+      "source": "target",
+      "suite": "bend2/test/mcp-attachment.py"
+    }
+  ],
+  "tool_identity": {
+    "bend": {
+      "path": "/home/atari2036/baton-logging-686/toolchain-home/bin/bend",
+      "sha256": "d9c0dad1f77be6a13dd8dcc16aef4f59047a956a2744f25d5c220cb8de384693"
+    },
+    "node": {
+      "path": "/home/atari2036/baton-integrate-recovered-20261006/node22",
+      "sha256": "fde6a4bf8d0562f7751d1a2d6cb9b417c4cfe107bbcb0aa3e9a24e125e348f48"
+    },
+    "clang": {
+      "path": "/usr/bin/clang-19",
+      "sha256": "f6d5286a52de10b1e3e8841457c9903a1ea28f222ac0f58cd616697d0dcd9db3"
+    },
+    "sqlite_ld_library_path": "/home/atari2036/baton-sqlite-3460100",
+    "sqlite_so_sha256": "6690c797d7150361ea37bafb95850361e7b4bc88c23ec9c531942d0db114d83e"
+  },
+  "uname": "Linux acp-compute-cluster-001 6.14.0-37-generic #37~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Thu Nov 20 10:25:38 UTC 2 x86_64 x86_64 x86_64 GNU/Linux",
+  "source_state": {
+    "target": {
+      "head": "d688c80f405abb626687a6cd3dd0b459230a76cc",
+      "expected": "d688c80f405abb626687a6cd3dd0b459230a76cc",
+      "match": true
+    },
+    "candidate": {
+      "head": "4e0dc88abc8538252b650113010f2b1de16336f9",
+      "expected": "4e0dc88abc8538252b650113010f2b1de16336f9",
+      "match": true
+    }
+  },
+  "error": null,
+  "ended": "2026-10-07T16:28:45.998036+00:00"
+}
