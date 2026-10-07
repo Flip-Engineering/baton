@@ -186,13 +186,9 @@ def Intent.read_back_compare(request: I.IntentInput, publication: String, path: 
     IO.pure(IntentPublish, IntentBytesPublished{req, pub, p, got}),
     IO.pure(IntentPublish, PublishContentMismatch{req, pub, want, got}))
 def Intent.read_back_seen(request: I.IntentInput, publication: String, path: String, content: String, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPublish):
-  +req = request
-  +pub = publication
-  +p = path
-  +want = content
   match observed:
-    case Fail{(code, detail)}: IO.pure(IntentPublish, PublishReadbackFailed{req, pub, p, (code, detail)})
-    case Done{found}: Intent.read_back_compare(req, pub, p, want, found)
+    case Fail{(code, detail)}: IO.pure(IntentPublish, PublishReadbackFailed{request, publication, path, (code, detail)})
+    case Done{found}: Intent.read_back_compare(request, publication, path, content, found)
 
 def Intent.read_back(request: I.IntentInput, publication: String, path: String, content: String) -> IO(IntentPublish):
   +req = request
@@ -239,12 +235,9 @@ def Intent.publish_classify(request: I.IntentInput, path: String, content: Strin
   Intent.publish_admit(req, p, want, r, kind)
 
 def Intent.published(request: I.IntentInput, path: String, content: String, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPublish):
-  +req = request
-  +p = path
-  +want = content
   match observed:
-    case Fail{error}: IO.pure(IntentPublish, PublishHostFailed{"publish", req, error})
-    case Done{raw}: Intent.publish_classify(req, p, want, raw)
+    case Fail{error}: IO.pure(IntentPublish, PublishHostFailed{"publish", request, error})
+    case Done{raw}: Intent.publish_classify(request, path, content, raw)
 
 def Intent.publish_now(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO(IntentPublish):
   +req = request
@@ -277,14 +270,9 @@ def Intent.ensure_admit(request: I.IntentInput, path: String, content: String, d
   Intent.ensure_next(req, p, want, dir, n, r, kind)
 
 def Intent.ensured(request: I.IntentInput, path: String, content: String, directory: String, name: String, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPublish):
-  +req = request
-  +p = path
-  +want = content
-  +dir = directory
-  +n = name
   match observed:
-    case Fail{error}: IO.pure(IntentPublish, PublishHostFailed{"ensure", req, error})
-    case Done{raw}: Intent.ensure_admit(req, p, want, dir, n, raw)
+    case Fail{error}: IO.pure(IntentPublish, PublishHostFailed{"ensure", request, error})
+    case Done{raw}: Intent.ensure_admit(request, path, content, directory, name, raw)
 
 def publish_directory(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO(IntentPublish):
   +req = request
