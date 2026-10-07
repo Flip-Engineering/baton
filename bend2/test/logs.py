@@ -703,6 +703,58 @@ while True: time.sleep(1)
                              [('invalid-legacy-level', 3)])
             self.assertEqual(connection.execute("SELECT count(*) FROM sqlite_master WHERE name='log_policies_legacy'").fetchone()[0], 0)
 
+    def test_storage_reports_attempt_generations_with_identity(self):
+        self.stream([self.terminal()])
+        generation = self.cwd / 'turn.jsonl.attempt-turn-1'
+        generation.write_text('{"type":"agent_end"}\n')
+        with sqlite3.connect(self.db) as connection:
+            connection.execute('INSERT OR IGNORE INTO log_files(session,log) VALUES(?,?)',
+                               ('omp-worker', str(generation)))
+        logs = json.loads(self.call('logs-storage'))['logs']
+        base = next(row for row in logs if row['path'] == str(self.log))
+        self.assertEqual(base['attempt'], '')
+        entry = next(row for row in logs if row['path'] == str(generation))
+        self.assertEqual(entry['attempt'], 'turn-1')
+        self.assertEqual(entry['bytes'], generation.stat().st_size)
+
+    def test_cleanup_removes_the_live_file_of_a_settled_attempt_generation(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        generation = self.cwd / ('turn.jsonl.attempt-' + attempt)
+        generation.write_text('derived generation view\n')
+        (self.cwd / (generation.name + '.pending')).write_text('')
+        (self.cwd / (generation.name + '.stderr')).write_text('native diagnostics stay\n')
+        for name in ('stdout', 'native.stderr', 'observer.log', 'keeper.log'):
+            (attempt_dir / name).write_text('diagnostic data for ' + name)
+        with sqlite3.connect(self.db) as connection:
+            connection.execute('INSERT OR IGNORE INTO log_files(session,log) VALUES(?,?)',
+                               ('omp-worker', str(generation)))
+        answer = json.loads(self.call('logs-clean', 'omp-worker'))
+        removed = [item for item in answer['attemptLogs'] if item.get('attempt') == attempt]
+        self.assertEqual(len(removed), 1, answer)
+        self.assertTrue(removed[0]['removed'], answer)
+        self.assertEqual(removed[0]['path'], str(generation))
+        self.assertFalse(generation.exists())
+        self.assertFalse((self.cwd / (generation.name + '.pending')).exists())
+        self.assertEqual((self.cwd / (generation.name + '.stderr')).read_text(), 'native diagnostics stay\n')
+        self.assertTrue(self.log.exists())
+
+    def test_cleanup_retains_the_generation_of_an_unreported_attempt(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        with sqlite3.connect(self.db) as connection:
+            connection.execute('DELETE FROM turns WHERE id=?', (attempt,))
+            for report_id in (attempt, attempt + ':exit', attempt + ':observation'):
+                connection.execute('DELETE FROM messages WHERE id=? AND kind=?', (report_id, 'report'))
+        generation = self.cwd / ('turn.jsonl.attempt-' + attempt)
+        generation.write_text('unreported generation view\n')
+        with sqlite3.connect(self.db) as connection:
+            connection.execute('INSERT OR IGNORE INTO log_files(session,log) VALUES(?,?)',
+                               ('omp-worker', str(generation)))
+        answer = json.loads(self.call('logs-clean', 'omp-worker'))
+        self.assertEqual(answer['attemptLogs'], [])
+        self.assertEqual(generation.read_text(), 'unreported generation view\n')
+
     def test_unwritable_log_reports_the_failure_and_keeps_the_report(self):
         unwritable = self.cwd / 'log-directory'
         unwritable.mkdir()

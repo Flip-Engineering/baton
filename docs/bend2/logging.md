@@ -10,6 +10,7 @@ space. `bend2/src/coordinator/logs.bend` implements the policy and
 | Path | Writer | Owner |
 | --- | --- | --- |
 | `OUTPUT_LOG` | the turn or receive supervisor, one JSON frame per line | Baton2 |
+| `OUTPUT_LOG.attempt-<turn>` | one attempt generation beside the base log, named by `Logs.attempt_log` | Baton2 |
 | `OUTPUT_LOG.pending` | atomic latest incomplete frames for a direct turn | Baton2 |
 | `OUTPUT_LOG.stderr` | the native process's stderr file | Baton2 |
 | `<database>.root.log` | each successful message delivery | Baton2 |
@@ -122,6 +123,23 @@ bytes were `tool_execution_update` snapshots. A session eligible for rotation re
 A single frame can exceed the remaining budget. Pending input protects its
 existing evidence and permits the public log to exceed that threshold.
 
+## Attempt generations
+
+`Logs.attempt_log(BASE, TURN)` names `<base>.attempt-<turn>`.
+`Logs.open_attempt` registers that path and reads the session policy. A new
+attempt starts a new file, so a resumed receiver stops appending into the
+previous attempt's live file; resuming one fixed path re-appends into the same
+bytes, which re-expands a compressed 740 MB codec log and a 592 MB structure
+log on readback. The suffix holds no bare number, so the segment scan skips
+generations and rotation bounds each generation file under the session budget.
+The Turn owner adopts this by rebinding the log path once per turn to
+`Logs.attempt_log(log, id)` before `Logs.open` in `Turn.started` and
+`Turn.retained_output`, and by using the rebound path for the checkpoint
+restore and the stderr sidecar. Root moved resumed receivers to fresh
+continuation paths (`<name>-continuation-<epoch>.jsonl`, receipt
+`/private/tmp/baton-cleanup-20261006/fresh-continuation-logs-20261007.json`);
+generations apply the same pattern at the log registry.
+
 ## Storage inspection and cleanup
 
 ```
@@ -132,8 +150,9 @@ baton2 DATABASE logs-clean SESSION
 `logs-storage` initializes or migrates the policy schema and inspects the
 registered artifact files. Its answer names the
 database and root-log sizes, the defaults, one entry per registered public log
-with its live size, its stderr size, its incomplete checkpoint path and size,
-and its numbered segments, and one entry
+with its live size, its attempt identity (the turn id for a generation path,
+empty for the base log), its stderr size, its incomplete checkpoint path and
+size, and its numbered segments, and one entry
 per attempt directory with the sizes of its `stdout`, `native.stderr`,
 `observer.log` and `keeper.log` sampled at inspection time, so a removed or
 never-written file reports 0 and the manifest's size is not counted in the
@@ -142,11 +161,16 @@ acknowledgement markers. A segment the session's `keep_segments` no longer
 covers is marked `"eligible": true`.
 
 `logs-clean SESSION` removes the segments marked eligible for that session and
-answers with each removed path, its index and its size. It reads the same
-eligibility rule `logs-storage` reports. The live log, `OUTPUT_LOG.stderr`,
-the incomplete checkpoint, attempt directories, pending messages and provider
-stores stay untouched. A live turn holds the session lock; cleanup reports
-`"skipped":"session-busy"` when that lock is held. A
+answers with each removed path, its index and its size. Its `attemptLogs`
+answer removes the live file of a generation whose attempt is cleanup-eligible
+under the same decision that releases retained attempt diagnostics: exited,
+released, acknowledged, reported, exit 0, no pending input, no diagnostic
+policy. An empty stale `.pending` sidecar leaves with its generation; a
+nonempty one stays, and the `.stderr` sidecar stays in all cases. It reads the
+same eligibility rule `logs-storage` reports. The base live log,
+`OUTPUT_LOG.stderr`, the incomplete checkpoint, attempt directories, pending
+messages and provider stores stay untouched. A live turn holds the session
+lock; cleanup reports `"skipped":"session-busy"` when that lock is held. A
 session with unacknowledged input removes nothing and its answer names
 `"skipped":"pending-input"` and the pending count. A session with no registered
 log answers with an empty removal list.
@@ -180,6 +204,12 @@ and a `raw` batch that fixes the retention semantics of frames that name
 [2026-10-06 measurement](measurements/2026-10-06-logging-policy.json) records
 26,164,652 retained bytes before the policy and 112 after it on the same
 `tool_execution_update` workload.
+
+A 6,710-byte native reader report (orchestra seq 15411) holds 5,342 bytes in
+restated turn-gate status lines: 13 "Verification turn closed" lines with 10
+"No completion claimed" and 10 cursor-tracking restatements. Those lines are
+report message prose, not frames the log policy classifies, so no log-policy
+rule addresses them. Fewer restatements per turn is turn-gate behavior.
 
 Native Codex traces show one start and one completion per command id, so no
 deduplication applies. One 1,311-line session holds 536 command ids with
