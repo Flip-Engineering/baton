@@ -1248,15 +1248,45 @@ def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String,
       case Fail{error}: shared_step_failed("reserve", error, h)
       case Done{record}:
         +r = record
-        Bool.pick(Bool, Tx.str_eq(r, Pb.production_record("created", shared_parent_path(pa, name), "0")),
+        +created_ok = Tx.str_eq(r, Pb.production_record("created", shared_parent_path(pa, name), "0"))
+        Bool.pick(Bool, created_ok,
           shared_reserved_continue(h, rp, tg, c, b, gd, shared_parent_path(pa, name)),
-          match Tx.str_eq(r, Pb.production_record("existing", shared_parent_path(pa, name), "0")):)
-              case False{}: shared_record_failed("reserve", r, h)
-              case True{}:
-                Bool.pick(Bool, U32.is_lt(n, 4294967295),
-                  +next = U32.add(n, 1)
-                    shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, next),
-                  shared_record_failed("reserve-counter-maximum", r, h))
+          shared_reserve_else(h, rp, tg, c, b, gd, pa, bs, n, r))
+
+# The remaining reserve outcomes: an exact collision advances the counter under the same held
+# claim, any other record is kept, and the U32 maximum is the only refusal.
+def shared_reserve_else(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, attempt: U32, record: String) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +gd = guard
+  +pa = parent
+  +bs = base
+  +n = attempt
+  +r = record
+  +existing_ok = Tx.str_eq(r, Pb.production_record("existing", shared_parent_path(pa, shared_attempt_name(bs, n)), "0"))
+  Bool.pick(IO(SharedLanding), existing_ok,
+    shared_reserve_advance(h, rp, tg, c, b, gd, pa, bs, n, r),
+    shared_record_failed("reserve", r, h))
+
+def shared_reserve_advance(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, attempt: U32, record: String) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +gd = guard
+  +pa = parent
+  +bs = base
+  +n = attempt
+  +r = record
+  +next = U32.add(n, 1)
+  Bool.pick(IO(SharedLanding), U32.is_lt(n, 4294967295),
+    shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, next),
+    shared_record_failed("reserve-counter-maximum", r, h))
+
 def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
