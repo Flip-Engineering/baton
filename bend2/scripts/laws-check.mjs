@@ -210,11 +210,11 @@ function awaitRead(fd, buffer, position) {
   return readSync(fd, buffer, 0, buffer.length, position);
 }
 
-function runCompiler(args, cwd, stdoutPath, stderrPath) {
+function runCompiler(args, cwd, stdoutPath, stderrPath, { bend = BEND, processSampler = PROCESS_SAMPLER } = {}) {
   return new Promise((resolveResult) => {
     const stdoutFd = openSync(stdoutPath, 'w');
     const stderrFd = openSync(stderrPath, 'w');
-    const child = spawn(BEND, args, { cwd, env: ENV, stdio: ['ignore', stdoutFd, stderrFd], detached: process.platform !== 'win32' });
+    const child = spawn(bend, args, { cwd, env: ENV, stdio: ['ignore', stdoutFd, stderrFd], detached: process.platform !== 'win32' });
     const processId = child.pid ?? null;
     let processGroup;
     let samplingError = null;
@@ -226,7 +226,7 @@ function runCompiler(args, cwd, stdoutPath, stderrPath) {
     let startupError = null;
     try {
       if (!processId) throw new Error('compiler process ID is unavailable');
-      processGroup = PROCESS_SAMPLER.track(processId);
+      processGroup = processSampler.track(processId);
     } catch (error) {
       samplingError = `${error.name}: ${error.message}`;
     }
@@ -437,7 +437,7 @@ function admittedConcurrency(memoryEstimateBytes, cpuDemandPerCompiler) {
   });
 }
 
-async function runControl(control, runRoot) {
+export async function runControl(control, runRoot, compilerOptions = {}) {
   const cwd = controlWorkspace(runRoot, control.id);
   const artifactRoot = join(runRoot, 'artifacts', hash(control.id));
   mkdirSync(artifactRoot, { recursive: true });
@@ -453,7 +453,7 @@ async function runControl(control, runRoot) {
   const startedAt = new Date().toISOString();
   const started = process.hrtime.bigint();
   const outcome = applied
-    ? await runCompiler([ENTRY, '--check-only'], cwd, stdoutPath, stderrPath)
+    ? await runCompiler([ENTRY, '--check-only'], cwd, stdoutPath, stderrPath, compilerOptions)
     : { exitCode: null, signal: null, startupError: null, maxRssBytes: 0 };
   const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
   let rejectedForExpectedReason = false;
@@ -478,6 +478,8 @@ async function runControl(control, runRoot) {
     applied,
     startedAt,
     elapsedMs,
+    processId: outcome.processId,
+    completedAt: outcome.completedAt,
     exitCode: outcome.exitCode,
     signal: outcome.signal,
     startupError: outcome.startupError,

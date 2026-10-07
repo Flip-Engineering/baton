@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applyMutation, cloneLinkedTree, concurrencyFor, createRunRoot, detachFile, laws, outputMatches, producerSet, removeProof, supportedNodeVersion, verifyResults } from './laws-check.mjs';
+import { applyMutation, cloneLinkedTree, concurrencyFor, createRunRoot, detachFile, laws, outputMatches, producerSet, removeProof, runControl, supportedNodeVersion, verifyResults } from './laws-check.mjs';
+import { createProcessGroupSampler } from './laws-check-resources.mjs';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 const rows = [
@@ -256,6 +257,33 @@ test('aggregation rejects a result without compiler process-tree resource eviden
     ? { ...result, peakRssBytes: 0, peakProcessCount: 0, peakCpuCores: 0, cpuSampleIntervalMs: 0 }
     : result);
   assert.ok((await verifyResults(dispatched, results)).some(({ reason }) => reason === 'compiler process-tree resource evidence is missing'));
+});
+
+test('runControl retains process identity, completion time, output receipts, and resources from a real child', async (t) => {
+  if (!['linux', 'darwin'].includes(process.platform)) return t.skip('process-group sampling is supported on Linux and Darwin');
+  const source = laws().find(({ file }) => file.startsWith(join(root, 'bend2', 'src')));
+  assert.ok(source, 'the source tree contains a law producer');
+  const control = { ...producerSet([source], [])[0], workToken: randomUUID() };
+  const fakeCompiler = join(workspaceRoot, 'controlled-compiler');
+  writeFileSync(fakeCompiler, `#!${process.execPath}\nprocess.stdout.write("Error: 1 TODO found.\\nThe code is incomplete, and not a valid proof yet.\\n"); setTimeout(() => { process.exitCode = 1; }, 1500);\n`);
+  chmodSync(fakeCompiler, 0o755);
+  const sampler = createProcessGroupSampler({ intervalMs: 50 });
+  try {
+    const result = await runControl(control, join(workspaceRoot, 'actual-child-run'), {
+      bend: fakeCompiler,
+      processSampler: sampler,
+    });
+    assert.ok(Number.isInteger(result.processId) && result.processId > 0);
+    assert.ok(Number.isFinite(Date.parse(result.completedAt)));
+    assert.equal(result.completed, true);
+    assert.equal(result.passed, true);
+    assert.ok(result.peakRssBytes > 0);
+    assert.ok(result.peakProcessCount > 0);
+    assert.equal(result.samplingError, null);
+    assert.equal((await verifyResults([control], [result])).length, 0);
+  } finally {
+    sampler.close();
+  }
 });
 
 test('aggregation rejects failed process sampling', async () => {
