@@ -2724,7 +2724,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
       io_str(e,call->unstarted?error:"",call->unstarted?strlen(error):0));
   }
 #endif
-#ifdef CID_INSTANCE_ADMIT_WITH_FILE
+#ifdef CID_INSTANCE_ADMIT_WITH_FILE_START
   if(call->kind==BP_INSTANCE_ADMIT_WITH_FILE && (!call->error || call->unstarted)) {
     const char *error=call->detail?call->detail:strerror(call->error);
     value=io_tup(e,call->unstarted?term_pak(CID_NONE,0):io_box(e,CID_SOME,(Term)call->handle),
@@ -2930,8 +2930,8 @@ BP_EFFECT(baton_instance_job,CID_INSTANCE_JOB,BP_INSTANCE_JOB)
 #ifdef CID_PROCESSCHILD_RETAIN_WITH_FILE
 BP_EFFECT(baton_process_retain_with_file,CID_PROCESSCHILD_RETAIN_WITH_FILE,BP_RETAIN_WITH_FILE)
 #endif
-#ifdef CID_INSTANCE_ADMIT_WITH_FILE
-BP_EFFECT(baton_instance_admit_with_file,CID_INSTANCE_ADMIT_WITH_FILE,BP_INSTANCE_ADMIT_WITH_FILE)
+#ifdef CID_INSTANCE_ADMIT_WITH_FILE_START
+BP_EFFECT(baton_instance_admit_with_file,CID_INSTANCE_ADMIT_WITH_FILE_START,BP_INSTANCE_ADMIT_WITH_FILE)
 #endif
 
 #undef BP_EFFECT
