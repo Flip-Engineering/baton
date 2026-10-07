@@ -102,8 +102,11 @@ class NativeObservation(RECEIVE.Receive):
         fake.write_text('#!' + sys.executable + '\nimport json\nframes=' + repr(frames) +
                         '\nfor frame in frames: print(json.dumps(frame), flush=True)\n')
         fake.chmod(0o755)
-        self.coord('turn', 'parent', 'muse-observation-turn', str(fake), 'parent', 'low',
-                   str(self.checkouts / 'parent'), str(task), str(log), '')
+        result = subprocess.run([str(RECEIVE.EXE), str(self.db), 'turn', 'parent',
+                                 'muse-observation-turn', str(fake), 'parent', 'low',
+                                 str(self.checkouts / 'parent'), str(task), str(log), ''],
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
         turns = self.coord('turns', 'parent')
         self.assertEqual([row['reportBody'] for row in turns], ['Primary completion.'])
