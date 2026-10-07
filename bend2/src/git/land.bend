@@ -266,6 +266,13 @@ def obs_class(+obs: PubObservation) -> String:
     case ObsNotAttempted{reason, destination, target, oid, basis}: "not-attempted"
     case ObsBroken{detail, destination, target, oid, basis}: "broken"
 
+def obs_refuse(code: U32, record: PubRecord, +post: String, +target: String, +oid: String) -> T.LandOutcome:
+  Bool.pick(T.LandOutcome, U32.is_eq(code, 0),
+    Bool.pick(T.LandOutcome, Tx.str_eq(post, "verified-object"),
+      T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " reached the post-state " ++ post ++ " but holder verification and custody do not exist yet; the observation stays pending and must not be treated as a completion"},
+      T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " is not qualified (post-state " ++ post ++ "); inspect the observation before any retry"}),
+    T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " did not complete; inspect the observation before any retry"})
+
 # No completion mapper exists. Every observation refuses and keeps its evidence,
 # including the disposition (applied or already) for the caller that will later own
 # the post-state and holder qualification.
@@ -274,21 +281,6 @@ def obs_refusal(+obs: PubObservation) -> T.LandOutcome:
     case ObsAttempted{code, out, record, destination, target, oid, basis, post, reread}: obs_refuse(code, record, post, target, oid)
     case ObsNotAttempted{reason, destination, target, oid, basis}: T.LBlocked{reason}
     case ObsBroken{detail, destination, target, oid, basis}: T.LBlocked{detail}
-
-def obs_refuse(code: U32, record: PubRecord, +post: String, +target: String, +oid: String) -> T.LandOutcome:
-  Bool.pick(T.LandOutcome, U32.is_eq(code, 0),
-    Bool.pick(T.LandOutcome, Tx.str_eq(post, "verified-object"),
-      T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " reached the post-state " ++ post ++ " but holder verification and custody do not exist yet; the observation stays pending and must not be treated as a completion"},
-      T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " is not qualified (post-state " ++ post ++ "); inspect the observation before any retry"}),
-    T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " did not complete; inspect the observation before any retry"})
-
-def verify_ref_pick(+obs: PubObservation, r: T.GitOut, +ref: String) -> PubObservation:
-  match obs:
-    case ObsAttempted{code, out, record, destination, target, oid, basis, post, reread}:
-      match r:
-        case T.GRun{rcode, rout}: obs_reread(code, out, record, destination, target, oid, basis, rcode, rout, ref)
-        case T.GBroken{detail}: obs_reread_broken(code, out, record, destination, target, oid, basis, detail, ref)
-    case other: other
 
 def obs_reread(code: U32, out: String, record: PubRecord, +destination: String, +target: String, +oid: String, +basis: String, rcode: U32, rout: String, +ref: String) -> PubObservation:
   Bool.pick(PubObservation, U32.is_eq(rcode, 0),
@@ -299,6 +291,14 @@ def obs_reread(code: U32, out: String, record: PubRecord, +destination: String, 
 
 def obs_reread_broken(code: U32, out: String, record: PubRecord, +destination: String, +target: String, +oid: String, +basis: String, +detail: String, +ref: String) -> PubObservation:
   ObsAttempted{code, out, record, destination, target, oid, basis, "unreadable-ref", RereadBroken{detail}}
+
+def verify_ref_pick(+obs: PubObservation, r: T.GitOut, +ref: String) -> PubObservation:
+  match obs:
+    case ObsAttempted{code, out, record, destination, target, oid, basis, post, reread}:
+      match r:
+        case T.GRun{rcode, rout}: obs_reread(code, out, record, destination, target, oid, basis, rcode, rout, ref)
+        case T.GBroken{detail}: obs_reread_broken(code, out, record, destination, target, oid, basis, detail, ref)
+    case other: other
 
 def verify_ref(+obs: PubObservation, +repo: String, +target: String, +ref: String) -> IO(PubObservation):
   +r2 = repo
@@ -379,18 +379,18 @@ type HolderDiscovery is Data:
   DiscoverRead{request: HolderRequest, code: U32, out: String}
   DiscoverBroken{request: HolderRequest, detail: String}
 
-# The returned boundary: the retained observation with the derived interpretation, so a
-# caller keeps the raw result and the request identity alongside the verdict.
-type HolderObservation is Data:
-  HolderObserved{request: HolderRequest, code: U32, out: String, verdict: HolderVerdict}
-  HolderObservedBroken{request: HolderRequest, detail: String, verdict: HolderVerdict}
-
 type HolderVerdict is Data:
   VerdictFound{request: HolderRequest, path: String}
   VerdictNone{request: HolderRequest}
   VerdictUnreadable{request: HolderRequest, code: U32, out: String}
   VerdictBroken{request: HolderRequest, detail: String}
   VerdictAmbiguous{request: HolderRequest, detail: String}
+
+# The returned boundary: the retained observation with the derived interpretation, so a
+# caller keeps the raw result and the request identity alongside the verdict.
+type HolderObservation is Data:
+  HolderObserved{request: HolderRequest, code: U32, out: String, verdict: HolderVerdict}
+  HolderObservedBroken{request: HolderRequest, detail: String, verdict: HolderVerdict}
 
 def prefix_drop(line: String, prefix: String) -> Maybe<String>:
   match prefix:
@@ -438,14 +438,6 @@ def holder_close(acc: HolderScan, +request: String) -> HolderScan:
             ScanState{NoBlock{}, match, seen, U32.add(bad, 1), blocks})
         case NoBlock{}: ScanState{NoBlock{}, match, seen, bad, blocks}
 
-def holder_open(+path: Maybe<String>, +acc: HolderScan, +request: String) -> HolderScan:
-  match acc:
-    case ScanState{block, match, seen, bad, blocks}:
-      match block:
-        case InBlock{openpath, has_state, branches}:
-          ScanState{block, match, seen, U32.add(bad, 1), blocks}
-        case NoBlock{}: holder_open_fresh(path, acc, request)
-
 def holder_open_fresh(+path: Maybe<String>, +acc: HolderScan, +request: String) -> HolderScan:
   match acc:
     case ScanState{block, match, seen, bad, blocks}:
@@ -455,6 +447,14 @@ def holder_open_fresh(+path: Maybe<String>, +acc: HolderScan, +request: String) 
             ScanState{InBlock{value, False{}, 0}, match, seen, bad, blocks},
             ScanState{NoBlock{}, match, seen, U32.add(bad, 1), blocks})
         case None{}: ScanState{NoBlock{}, match, seen, U32.add(bad, 1), blocks}
+
+def holder_open(+path: Maybe<String>, +acc: HolderScan, +request: String) -> HolderScan:
+  match acc:
+    case ScanState{block, match, seen, bad, blocks}:
+      match block:
+        case InBlock{openpath, has_state, branches}:
+          ScanState{block, match, seen, U32.add(bad, 1), blocks}
+        case NoBlock{}: holder_open_fresh(path, acc, request)
 
 def holder_in_block(+acc: HolderScan, +request: String) -> Bool:
   match acc:
@@ -470,6 +470,13 @@ def holder_state_seen(+acc: HolderScan, +request: String) -> HolderScan:
         case InBlock{path, has_state, branches}: ScanState{InBlock{path, True{}, branches}, match, seen, bad, blocks}
         case NoBlock{}: ScanState{NoBlock{}, match, seen, U32.add(bad, 1), blocks}
 
+def holder_match_first(+path: String, has_state: Bool, branches: U32, +acc: HolderScan, match: Maybe<String>) -> HolderScan:
+  match acc:
+    case ScanState{block, prior, seen, bad, blocks}:
+      match prior:
+        case Some{value}: ScanState{InBlock{path, has_state, U32.add(branches, 1)}, Some{value}, U32.add(seen, 1), bad, blocks}
+        case None{}: ScanState{InBlock{path, has_state, U32.add(branches, 1)}, Some{path}, U32.add(seen, 1), bad, blocks}
+
 def holder_match_seen(+line: String, +target: String, +acc: HolderScan, +request: String) -> HolderScan:
   match acc:
     case ScanState{block, match, seen, bad, blocks}:
@@ -479,13 +486,6 @@ def holder_match_seen(+line: String, +target: String, +acc: HolderScan, +request
             ScanState{InBlock{path, has_state, branches}, match, seen, U32.add(bad, 1), blocks},
             holder_match_first(path, has_state, branches, acc, match))
         case NoBlock{}: ScanState{NoBlock{}, match, U32.add(seen, 1), U32.add(bad, 1), blocks}
-
-def holder_match_first(+path: String, has_state: Bool, branches: U32, +acc: HolderScan, match: Maybe<String>) -> HolderScan:
-  match acc:
-    case ScanState{block, prior, seen, bad, blocks}:
-      match prior:
-        case Some{value}: ScanState{InBlock{path, has_state, U32.add(branches, 1)}, Some{value}, U32.add(seen, 1), bad, blocks}
-        case None{}: ScanState{InBlock{path, has_state, U32.add(branches, 1)}, Some{path}, U32.add(seen, 1), bad, blocks}
 
 def holder_branch_ok(+acc: HolderScan, +request: String) -> HolderScan:
   match acc:
@@ -497,6 +497,11 @@ def holder_branch_ok(+acc: HolderScan, +request: String) -> HolderScan:
             ScanState{InBlock{path, has_state, U32.add(branches, 1)}, match, seen, bad, blocks})
         case NoBlock{}: ScanState{NoBlock{}, match, seen, U32.add(bad, 1), blocks}
 
+def holder_verdict_of(match: Maybe<String>, seen: U32, +request: HolderRequest) -> HolderVerdict:
+  match match:
+    case Some{value}: VerdictFound{request, value}
+    case None{}: Bool.pick(HolderVerdict, U32.is_eq(seen, 0), VerdictNone{request}, VerdictAmbiguous{request, "the target branch has no valid block"})
+
 def holder_verdict(+acc: HolderScan, +request: HolderRequest) -> HolderVerdict:
   match acc:
     case ScanState{block, match, seen, bad, blocks}:
@@ -504,11 +509,6 @@ def holder_verdict(+acc: HolderScan, +request: HolderRequest) -> HolderVerdict:
         Bool.pick(HolderVerdict, U32.is_lt(1, seen), VerdictAmbiguous{request, "the target branch is named more than once"},
           Bool.pick(HolderVerdict, U32.is_eq(blocks, 0), VerdictAmbiguous{request, "the worktree listing carries no complete block"},
             holder_verdict_of(match, seen, request))))
-
-def holder_verdict_of(match: Maybe<String>, seen: U32, +request: HolderRequest) -> HolderVerdict:
-  match match:
-    case Some{value}: VerdictFound{request, value}
-    case None{}: Bool.pick(HolderVerdict, U32.is_eq(seen, 0), VerdictNone{request}, VerdictAmbiguous{request, "the target branch has no valid block"})
 
 def holder_bad(+acc: HolderScan, +request: String) -> HolderScan:
   match acc:
@@ -540,10 +540,6 @@ def holder_step(lines: List<String>, +branch: String, +target: String, +acc: Hol
       Bool.pick(HolderScan, String.is_empty(h),
         holder_step(rest, branch, target, holder_close(acc, request), request),
         holder_step(rest, branch, target, holder_line_step(h, branch, target, acc, request), request))
-def holder_scan(lines: List<String>, +request: HolderRequest) -> HolderVerdict:
-  +target = holder_request_target(request)
-  holder_verdict(holder_step(lines, holder_branch_line(target), target, ScanState{NoBlock{}, None{}, 0, 0, 0}, holder_request_argv(request)), request)
-
 def holder_request_target(request: HolderRequest) -> String:
   match request:
     case HolderRequest{destination, target, argv}: target
@@ -551,6 +547,10 @@ def holder_request_target(request: HolderRequest) -> String:
 def holder_request_argv(request: HolderRequest) -> String:
   match request:
     case HolderRequest{destination, target, argv}: argv
+
+def holder_scan(lines: List<String>, +request: HolderRequest) -> HolderVerdict:
+  +target = holder_request_target(request)
+  holder_verdict(holder_step(lines, holder_branch_line(target), target, ScanState{NoBlock{}, None{}, 0, 0, 0}, holder_request_argv(request)), request)
 
 def holder_discover(request: HolderRequest, g: T.GitOut) -> HolderDiscovery:
   match g:
@@ -573,6 +573,11 @@ def holder_read(discovery: HolderDiscovery) -> HolderObservation:
     case DiscoverRead{request, code, out}: HolderObserved{request, code, out, holder_verdict_of_discovery(discovery)}
     case DiscoverBroken{request, detail}: HolderObservedBroken{request, detail, holder_verdict_of_discovery(discovery)}
 
+def reread_of(g: T.GitOut, +ref: String) -> RereadObs:
+  match g:
+    case T.GRun{code, out}: RereadRead{code, out, ref}
+    case T.GBroken{detail}: RereadBroken{detail}
+
 def holder_state(+path: String) -> IO(HolderState):
   +p2 = path
   do IO<HolderState>:
@@ -580,11 +585,6 @@ def holder_state(+path: String) -> IO(HolderState):
     index : T.GitOut <- Git.runGit(p2, ["diff", "--cached", "--name-status"])
     status : T.GitOut <- Git.runGit(p2, ["status", "--porcelain"])
     IO.pure(HolderState, HolderRead{p2, reread_of(head, p2), reread_of(index, p2), reread_of(status, p2)})
-
-def reread_of(g: T.GitOut, +ref: String) -> RereadObs:
-  match g:
-    case T.GRun{code, out}: RereadRead{code, out, ref}
-    case T.GBroken{detail}: RereadBroken{detail}
 
 def holder_path_same(+expected: String, +found: String) -> Bool:
   Tx.str_eq(expected, found)
@@ -624,19 +624,50 @@ def ff_stage5_blocked(detail: String) -> IO(FFLD):
   +d = detail
   IO.pure(FFLD, FFDone{T.LBlocked{d}})
 
-def ff_stage5_captured(target: String, candidate: String, artifact: String, repo: String, observed: Result<&1,&1,U32 & String,String & String>) -> IO(FFLD):
+def ff_stage5_postread_compared(target: String, candidate: String, artifact: String, evidence: String, head: String) -> IO(FFLD):
   +tg = target
   +cand = candidate
   +art = artifact
-  +rp = repo
-  match observed:
-    case Fail{error}:
-      match error:
-        case (code, detail): ff_stage5_blocked(Tx.str_cat("capture failed; stderr at ", Tx.str_cat(art, Tx.str_cat("; ", detail))))
-    case Done{pair}:
-      match pair:
-        case (framing, diagnostics): ff_stage5_framing(tg, cand, art, rp, framing, diagnostics)
+  +ev = evidence
+  +seen = head
+  match Tx.str_eq(seen, cand):
+    case True{}: ff_stage5_landed(tg, cand)
+    case False{}: ff_stage5_blocked(Tx.str_cat("post-state is not the candidate; ", ev))
 
+def ff_stage5_postread_seen(target: String, candidate: String, artifact: String, evidence: String, observed: T.GitOut) -> IO(FFLD):
+  +tg = target
+  +cand = candidate
+  +art = artifact
+  +ev = evidence
+  match observed:
+    case T.GBroken{detail}: ff_stage5_blocked(Tx.str_cat("post-state unreadable: ", detail))
+    case T.GRun{code, head}:
+      match U32.is_eq(code, 0):
+        case False{}: ff_stage5_blocked(Tx.str_cat("post-state read failed; ", ev))
+        case True{}: ff_stage5_postread_compared(tg, cand, art, ev, Tx.trim_nl(head))
+
+def ff_stage5_postread(target: String, candidate: String, repo: String, artifact: String, evidence: String) -> IO(FFLD):
+  +tg = target
+  +cand = candidate
+  +rp = repo
+  +art = artifact
+  +ev = evidence
+  do IO<FFLD>:
+    observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--verify", Con{"--end-of-options", Con{Tx.str_cat("refs/heads/", tg), Nil{}}}}})
+    ff_stage5_postread_seen(tg, cand, art, ev, observed)
+
+def ff_stage5_status(target: String, candidate: String, repo: String, artifact: String, evidence: String, status: T.Status) -> IO(FFLD):
+  +tg = target
+  +cand = candidate
+  +rp = repo
+  +art = artifact
+  +ev = evidence
+  match status:
+    case T.SSignal{num}: ff_stage5_blocked(Tx.str_cat("mutation signalled; ", ev))
+    case T.SExit{code}:
+      match U32.is_eq(code, 0):
+        case True{}: ff_stage5_postread(tg, cand, rp, art, ev)
+        case False{}: ff_stage5_blocked(Tx.str_cat("mutation exited nonzero; ", ev))
 def ff_stage5_framing(target: String, candidate: String, artifact: String, repo: String, framing: String, diagnostics: String) -> IO(FFLD):
   +tg = target
   +cand = candidate
@@ -651,49 +682,18 @@ def ff_stage5_framing(target: String, candidate: String, artifact: String, repo:
       +observed = Tx.str_cat("stdout bytes ", Tx.str_cat(out, Tx.str_cat("; ", held)))
       ff_stage5_status(tg, cand, rp, art, observed, status)
 
-def ff_stage5_status(target: String, candidate: String, repo: String, artifact: String, evidence: String, status: T.Status) -> IO(FFLD):
+def ff_stage5_captured(target: String, candidate: String, artifact: String, repo: String, observed: Result<&1,&1,U32 & String,String & String>) -> IO(FFLD):
   +tg = target
   +cand = candidate
+  +art = artifact
   +rp = repo
-  +art = artifact
-  +ev = evidence
-  match status:
-    case T.SSignal{num}: ff_stage5_blocked(Tx.str_cat("mutation signalled; ", ev))
-    case T.SExit{code}:
-      match U32.is_eq(code, 0):
-        case True{}: ff_stage5_postread(tg, cand, rp, art, ev)
-        case False{}: ff_stage5_blocked(Tx.str_cat("mutation exited nonzero; ", ev))
-def ff_stage5_postread(target: String, candidate: String, repo: String, artifact: String, evidence: String) -> IO(FFLD):
-  +tg = target
-  +cand = candidate
-  +rp = repo
-  +art = artifact
-  +ev = evidence
-  do IO<FFLD>:
-    observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--verify", Con{"--end-of-options", Con{Tx.str_cat("refs/heads/", tg), Nil{}}}}})
-    ff_stage5_postread_seen(tg, cand, art, ev, observed)
-
-def ff_stage5_postread_seen(target: String, candidate: String, artifact: String, evidence: String, observed: T.GitOut) -> IO(FFLD):
-  +tg = target
-  +cand = candidate
-  +art = artifact
-  +ev = evidence
   match observed:
-    case T.GBroken{detail}: ff_stage5_blocked(Tx.str_cat("post-state unreadable: ", detail))
-    case T.GRun{code, head}:
-      match U32.is_eq(code, 0):
-        case False{}: ff_stage5_blocked(Tx.str_cat("post-state read failed; ", ev))
-        case True{}: ff_stage5_postread_compared(tg, cand, art, ev, Tx.trim_nl(head))
-
-def ff_stage5_postread_compared(target: String, candidate: String, artifact: String, evidence: String, head: String) -> IO(FFLD):
-  +tg = target
-  +cand = candidate
-  +art = artifact
-  +ev = evidence
-  +seen = head
-  match Tx.str_eq(seen, cand):
-    case True{}: ff_stage5_landed(tg, cand)
-    case False{}: ff_stage5_blocked(Tx.str_cat("post-state is not the candidate; ", ev))
+    case Fail{error}:
+      match error:
+        case (code, detail): ff_stage5_blocked(Tx.str_cat("capture failed; stderr at ", Tx.str_cat(art, Tx.str_cat("; ", detail))))
+    case Done{pair}:
+      match pair:
+        case (framing, diagnostics): ff_stage5_framing(tg, cand, art, rp, framing, diagnostics)
 
 def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo: String, outcome: Lg.Landing) -> IO(FFLD):
   +tg = target
@@ -716,17 +716,6 @@ def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo:
     case Lg.LandingOldValueMismatch{expected, found, released}: ff_stage5_blocked("old target moved during landing; retry")
     case Lg.LandingPublishRefused{outcome, released}: ff_stage5_blocked("intent publication refused")
 
-def ff_stage5_guarded_now(candidate: String, old: String, repo: String, target: String, common: String, guard: String) -> IO(FFLD):
-  +cand = candidate
-  +tb = old
-  +rp = repo
-  +tg = target
-  +cm = common
-  +gd = guard
-  do IO<FFLD>:
-    token : Result<U32 & String, String> <- Rec.Receipt.attempt_token(tg)
-    ff_stage5_named(cand, tb, rp, tg, cm, gd, token)
-
 def ff_stage5_named(candidate: String, old: String, repo: String, target: String, common: String, guard: String, observed: Result<U32 & String, String>) -> IO(FFLD):
   +cand = candidate
   +tb = old
@@ -746,14 +735,37 @@ def ff_stage5_named(candidate: String, old: String, repo: String, target: String
       do IO<FFLD>:
         outcome : Lg.Landing <- Lg.Landing.run(request)
         ff_stage5_outcome(tg, cand, art, rp, outcome)
-def ff_stage5_guarded(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
-  +cand = wc
-  +old = tb
+def ff_stage5_guarded_now(candidate: String, old: String, repo: String, target: String, common: String, guard: String) -> IO(FFLD):
+  +cand = candidate
+  +tb = old
   +rp = repo
   +tg = target
+  +cm = common
+  +gd = guard
   do IO<FFLD>:
-    common_g : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
-    ff_stage5_common(cand, old, rp, tg, common_g)
+    token : Result<U32 & String, String> <- Rec.Receipt.attempt_token(tg)
+    ff_stage5_named(cand, tb, rp, tg, cm, gd, token)
+
+def ff_stage5_guard_observed(cand: String, old: String, repo: String, target: String, common: String, observed: Result<U32 & String, String>) -> IO(FFLD):
+  +candidate = cand
+  +tb = old
+  +rp = repo
+  +tg = target
+  +cm = common
+  match observed:
+    case Fail{error}: ff_stage5_blocked("cannot name the landing guard")
+    case Done{guard}: ff_stage5_guarded_now(candidate, tb, rp, tg, cm, guard)
+
+
+def ff_stage5_guardpath(cand: String, old: String, repo: String, target: String, common: String) -> IO(FFLD):
+  +candidate = cand
+  +tb = old
+  +rp = repo
+  +tg = target
+  +cm = common
+  do IO<FFLD>:
+    guard_g : Result<U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
+    ff_stage5_guard_observed(candidate, tb, rp, tg, cm, guard_g)
 
 def ff_stage5_common(cand: String, old: String, repo: String, target: String, observed: T.GitOut) -> IO(FFLD):
   +candidate = cand
@@ -767,26 +779,22 @@ def ff_stage5_common(cand: String, old: String, repo: String, target: String, ob
         case False{}: ff_stage5_blocked("cannot read the common directory for the landing guard")
         case True{}: ff_stage5_guardpath(candidate, tb, rp, tg, Tx.trim_nl(out))
 
-def ff_stage5_guardpath(cand: String, old: String, repo: String, target: String, common: String) -> IO(FFLD):
-  +candidate = cand
-  +tb = old
+def ff_stage5_guarded(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
+  +cand = wc
+  +old = tb
   +rp = repo
   +tg = target
-  +cm = common
   do IO<FFLD>:
-    guard_g : Result<U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
-    ff_stage5_guard_observed(candidate, tb, rp, tg, cm, guard_g)
+    common_g : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
+    ff_stage5_common(cand, old, rp, tg, common_g)
 
-def ff_stage5_guard_observed(cand: String, old: String, repo: String, target: String, common: String, observed: Result<U32 & String, String>) -> IO(FFLD):
-  +candidate = cand
-  +tb = old
-  +rp = repo
-  +tg = target
-  +cm = common
-  match observed:
-    case Fail{error}: ff_stage5_blocked("cannot name the landing guard")
-    case Done{guard}: ff_stage5_guarded_now(candidate, tb, rp, tg, cm, guard)
-
+type LAdv is Data:
+  AdvLanded{}
+  AdvMoved{}
+  AdvHeld{path: String}
+  AdvHolderChanged{path: String}
+  AdvRefused{}
+  AdvBroken{detail: String}
 
 # The fast-forward now advances through the same holder-aware path the checked landing uses,
 # so both reach one effect. Only a landed answer reports LLanded; a moved target, a held
@@ -799,6 +807,623 @@ def ff_stage5_adv_answer(a: LAdv, target: String, cand: String) -> FFLD:
     case AdvHolderChanged{path}: FFDone{T.LBlocked{Tx.str_cat("the holder changed: ", path)}}
     case AdvRefused{}: FFDone{T.LBlocked{"git update-ref failed; inspect the target and retry"}}
     case AdvBroken{detail}: FFDone{T.LBlocked{detail}}
+
+type LdAdvObs is Data:
+  LdAdvNoCapture{advance: LAdv}
+  LdAdvCaptured{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>}
+  LdAdvQualified{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>, readback: T.GitOut}
+
+# The public shared boundary. The canonical common directory is read once here, the target
+# claim is taken around the holder selection and the selected advance, and the release runs for
+# every returned advance outcome with its own Result preserved beside the advance observation.
+# A release failure is therefore visible to both adapters and can never read as a landing.
+type SharedLanding is Data:
+  SharedCommonUnreadable{observation: T.GitOut}
+  SharedClaimFailed{error: U32 & String}
+  SharedGuardBusy{target: String}
+  SharedStepFailed{step: String, error: U32 & String, released: Result<U32 & String, Unit>}
+  SharedStepRecordFailed{step: String, record: String, released: Result<U32 & String, Unit>}
+  SharedAdvanced{obs: LdAdvObs, released: Result<U32 & String, Unit>, guard: String, reserved: String}
+
+# Every step failure releases the acquired descriptor and keeps its own stage, its complete
+# error or raw record, and the actual release Result.
+def shared_step_failed(step: String, error: U32 & String, handle: U32) -> IO(SharedLanding):
+  +s = step
+  +e = error
+  +h = handle
+  do IO<SharedLanding>:
+    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
+    IO.pure(SharedLanding, SharedStepFailed{s, e, released})
+
+def shared_attempts_parent(common: String) -> String:
+  +c = common
+  Tx.str_cat(c, "/baton2-attempts")
+
+def shared_parent_path(directory: String, name: String) -> String:
+  +d = directory
+  +n = name
+  Tx.str_cat(d, Tx.str_cat("/", n))
+
+def shared_record_failed(step: String, record: String, handle: U32) -> IO(SharedLanding):
+  +s = step
+  +r = record
+  +h = handle
+  do IO<SharedLanding>:
+    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
+    IO.pure(SharedLanding, SharedStepRecordFailed{s, r, released})
+
+type LdAdvCtx is Data:
+  LdAdvContext{claim: U32, guard: String, artifact: String}
+
+# The target commit lookup used by the existing unheld compare-and-swap path.
+def ld_tip_argv(target: String) -> List<String>:
+  ["rev-parse", "--verify", Tx.str_cat(target, "^{commit}")]
+
+def ld_adv_wrap(advance: LAdv) -> LdAdvObs:
+  +a = advance
+  LdAdvNoCapture{a}
+
+# The worktree that holds the target: its path, none, or the reason the report
+# cannot be trusted to name exactly one.
+type LdHold is Data:
+  HoldNone{}
+  HoldPath{path: String}
+  HoldBlocked{detail: String}
+
+def ld_hold_ref(target: String) -> String:
+  Tx.str_cat("refs/heads/", target)
+
+# The branch line a worktree report carries when it holds the target.
+def ld_hold_branch(target: String) -> String:
+  Tx.str_cat("branch ", ld_hold_ref(target))
+# The holder's block in a `git worktree list --porcelain` report: each block is
+# one "worktree <path>" line and the state lines that follow it, and the block
+# whose branch line names the target branch is the worktree that holds it. The
+# path is taken from the line as Git writes it, so a path Git quoted is not a
+# path this module can enter and the advance never runs in one.
+type LdHoldScan is Data:
+  HoldScan{cur: String, found: String, seen: U32}
+
+# The path one worktree-list line names: the line with its label matched off,
+# or the empty string for a line that does not carry the label.
+def wt_path_go(line: String, label: String) -> String:
+  match line label:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{lc, lr}: ""
+    case SCon{c, rest} SNil{}: line
+    case SCon{c, rest} SCon{lc, lr}:
+      Bool.pick(String, Char.is_eq(c, lc), wt_path_go(rest, lr), "")
+
+def wt_path(line: String) -> String:
+  wt_path_go(line, "worktree ")
+
+# One branch line that names the target: the first one records the path of the
+# block it appeared in, and any later one, or one that appeared before any
+# block, makes the listing unusable.
+def ld_hold_named(+cur: String, +found: String, +seen: U32) -> LdHoldScan:
+  Bool.pick(LdHoldScan, String.is_empty(cur),
+    HoldScan{cur, found, 2},
+    Bool.pick(LdHoldScan, U32.is_eq(seen, 0),
+      HoldScan{cur, cur, 1},
+      HoldScan{cur, found, 2}))
+
+def ld_hold_line(+line: String, acc: LdHoldScan, want: String) -> LdHoldScan:
+  match acc:
+    case HoldScan{+cur, +found, +seen}:
+      Bool.pick(LdHoldScan, Tx.starts_with(line, "worktree "),
+        HoldScan{wt_path(line), found, seen},
+        Bool.pick(LdHoldScan, Tx.str_eq(line, want),
+          ld_hold_named(cur, found, seen),
+          HoldScan{cur, found, seen}))
+
+def ld_hold_scan(lines: List<String>, acc: LdHoldScan, +want: String) -> LdHoldScan:
+  match lines:
+    case Nil{}: acc
+    case Con{h, rest}: ld_hold_scan(rest, ld_hold_line(h, acc, want), want)
+
+# The holder one report names, or the reason it names no usable one.
+def ld_hold_end(acc: LdHoldScan) -> LdHold:
+  match acc:
+    case HoldScan{cur, found, +seen}:
+      Bool.pick(LdHold, U32.is_eq(seen, 0), HoldNone{},
+        Bool.pick(LdHold, U32.is_eq(seen, 1), HoldPath{found},
+          HoldBlocked{"the worktree listing names the target branch in more than one block, or outside a block"}))
+
+def ld_hold_of(out: String, target: String) -> LdHold:
+  ld_hold_end(ld_hold_scan(Tx.split_lines(out), HoldScan{"", "", 0}, ld_hold_branch(target)))
+
+# The holder of a listing that ran: the report's holder, or the reason the
+# listing itself cannot be read.
+def ld_hold_read(g: T.GitOut, target: String) -> LdHold:
+  match g:
+    case T.GRun{code, out}:
+      Bool.pick(LdHold, U32.is_eq(code, 0),
+        ld_hold_of(out, target),
+        HoldBlocked{"the worktree listing could not be read"})
+    case T.GBroken{detail}: HoldBlocked{detail}
+
+def ld_update_argv(target: String, cand: String, basis: String) -> List<String>:
+  ["update-ref", Tx.str_cat("refs/heads/", target), cand, basis]
+
+def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
+  +c = capture
+  match c:
+    case Fail{error}:
+      match error:
+        case (code, detail): T.GBroken{detail}
+    case Done{pair}:
+      match pair:
+        case (framing, diagnostics):
+          match Tx.run_res(Done{framing}):
+            case T.RRun{T.SExit{code}, out}: T.GRun{code, out}
+            case T.RRun{T.SSignal{num}, out}: T.GBroken{"the mutation signalled"}
+            case T.RSpawn{detail}: T.GBroken{detail}
+
+def ld_adv_with(advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>) -> LdAdvObs:
+  +a = advance
+  +c = capture
+  LdAdvCaptured{a, c}
+
+# The exact local target branch commit used to validate a held worktree.
+def ld_target_ref_argv(target: String) -> List<String>:
+  ["rev-parse", "--verify", Tx.str_cat(ld_hold_ref(target), "^{commit}")]
+
+# The update-ref argv: the target ref, the candidate and the basis it advanced
+# from, so the branch moves only while it still reads as that basis.
+def ld_adv_cas(g: T.GitOut) -> LAdv:
+  match g:
+    case T.GRun{code, out}: Bool.pick(LAdv, U32.is_eq(code, 0), AdvLanded{}, AdvRefused{})
+    case T.GBroken{detail}: AdvBroken{detail}
+
+def ld_adv_cas_compared(cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut, tip: String) -> IO(LdAdvObs):
+  +c2 = cand
+  +cp = capture
+  +obs = after
+  +seen = tip
+  match Tx.str_eq(seen, c2):
+    case True{}: IO.pure(LdAdvObs, LdAdvQualified{AdvLanded{}, cp, obs})
+    case False{}: IO.pure(LdAdvObs, LdAdvQualified{AdvMoved{}, cp, obs})
+
+def ld_adv_cas_readback(target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut) -> IO(LdAdvObs):
+  +c2 = cand
+  +cp = capture
+  +obs = after
+  match obs:
+    case T.GRun{code, out}:
+      +c0 = code
+      match U32.is_eq(c0, 0):
+        case False{}: IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{"the target could not be read back after the advance"}, cp, obs})
+        case True{}: ld_adv_cas_compared(c2, cp, obs, Tx.trim_nl(out))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{detail}, cp, obs})
+
+# The unheld advance is not landed on exit zero alone: while the target claim is still held the
+# target ref is read back and required to be the candidate. A moved target answers AdvMoved with
+# the capture retained; an unreadable readback answers AdvBroken with it.
+def ld_adv_cas_qualified(target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>, status: T.GitOut, repo: String) -> IO(LdAdvObs):
+  +t2 = target
+  +c2 = cand
+  +cp = capture
+  +st = status
+  +r2 = repo
+  match st:
+    case T.GRun{code, out}:
+      match U32.is_eq(code, 0):
+        case False{}: IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(st), cp))
+        case True{}:
+          do IO<LdAdvObs>:
+            after : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
+            ld_adv_cas_readback(t2, c2, cp, after)
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(st), cp))
+
+def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  +b2 = basis
+  +cx = ctx
+  do IO<LdAdvObs>:
+    captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", ld_update_argv(t2, c2, b2)}), r2, cx.claim, cx.guard, cx.artifact)
+    +capture = captured
+    ld_adv_cas_qualified(t2, c2, capture, ld_adv_status(capture), r2)
+# The attached branch name of a worktree, or a nonzero result when detached.
+def ld_head_argv() -> List<String>:
+  ["symbolic-ref", "--quiet", "HEAD"]
+
+def ld_adv_refused_same(same: Bool, path: String) -> LAdv:
+  match same:
+    case True{}: AdvHeld{path}
+    case False{}: AdvMoved{}
+
+def ld_adv_refused_pick(g: T.GitOut, path: String, basis: String) -> LAdv:
+  match g:
+    case T.GRun{code, out}:
+      Bool.pick(LAdv, U32.is_eq(code, 0),
+        ld_adv_refused_same(Tx.str_eq(Tx.trim_nl(out), basis), path),
+        AdvBroken{"the target commit could not be read after a refused fast-forward"})
+    case T.GBroken{detail}: AdvBroken{detail}
+
+def ld_adv_wt_refused(path: String, repo: String, target: String, basis: String, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
+  +p2 = path
+  +r2 = repo
+  +b2 = basis
+  +cp = capture
+  do IO<LdAdvObs>:
+    g : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(target))
+    IO.pure(LdAdvObs, ld_adv_with(ld_adv_refused_pick(g, p2, b2), cp))
+def ld_adv_wt_observed(target_matches: Bool, holder_matches: Bool, path: String) -> LAdv:
+  match target_matches:
+    case False{}: AdvMoved{}
+    case True{}:
+      match holder_matches:
+        case True{}: AdvLanded{}
+        case False{}: AdvHolderChanged{path}
+
+def ld_adv_wt_observed_holder_pick(g: T.GitOut, path: String, target: String) -> IO(LAdv):
+  match g:
+    case T.GRun{code, out}:
+      +status_ok = U32.is_eq(code, 0)
+      +same = Bool.pick(Bool, status_ok,
+        Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)), False{})
+      IO.pure(LAdv, ld_adv_wt_observed(True{}, same, path))
+    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
+
+def ld_adv_wt_observed_target_same(same: Bool, path: String, target: String) -> IO(LAdv):
+  match same:
+    case False{}: IO.pure(LAdv, AdvMoved{})
+    case True{}:
+      +p2 = path
+      +t2 = target
+      do IO<LAdv>:
+        holder : T.GitOut <- Git.runGit(p2, ld_head_argv())
+        ld_adv_wt_observed_holder_pick(holder, p2, t2)
+
+def ld_adv_wt_observed_target_pick(g: T.GitOut, path: String, target: String, cand: String) -> IO(LAdv):
+  match g:
+    case T.GRun{code, out}:
+      +status_ok = U32.is_eq(code, 0)
+      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})
+      ld_adv_wt_observed_target_same(same, path, target)
+    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
+
+# Git provides no atomic CLI operation that pins symbolic HEAD across the final identity check
+# and the merge, so a switch in that interval can still direct the merge to another branch. The
+# target claim coordinates participating landings; it does not lock an independent Git process.
+def ld_adv_wt_observe(path: String, repo: String, target: String, cand: String) -> IO(LAdv):
+  +p2 = path
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  do IO<LAdv>:
+    target_tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
+    ld_adv_wt_observed_target_pick(target_tip, p2, t2, c2)
+
+def ld_adv_wt_observe_wrapped(path: String, repo: String, target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
+  +cp = capture
+  do IO<LdAdvObs>:
+    inner : LAdv <- ld_adv_wt_observe(path, repo, target, cand)
+    IO.pure(LdAdvObs, ld_adv_with(inner, cp))
+
+def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
+  +cx = ctx
+  +cp = capture
+  match g:
+    case T.GRun{code, out}:
+      +p2 = path
+      +r2 = repo
+      +t2 = target
+      +c2 = cand
+      +b2 = basis
+      Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
+        ld_adv_wt_observe_wrapped(p2, r2, t2, c2, cp),
+        ld_adv_wt_refused(p2, r2, t2, b2, cp))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(AdvBroken{detail}, cp))
+def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
+  match same:
+    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvHolderChanged{path}))
+    case True{}:
+      +p2 = path
+      +r2 = repo
+      +t2 = target
+      +c2 = cand
+      +b2 = basis
+      do IO<LdAdvObs>:
+        captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"merge", Con{"--ff-only", Con{c2, Nil{}}}}}), p2, cx.claim, cx.guard, cx.artifact)
+        +capture = captured
+        ld_adv_wt_pick(ld_adv_status(capture), p2, r2, t2, c2, b2, cx, capture)
+def ld_adv_wt_head_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
+  match g:
+    case T.GRun{code, out}:
+      +t2 = target
+      +status_ok = U32.is_eq(code, 0)
+      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(t2)), False{})
+      ld_adv_wt_head_same(same, path, repo, t2, cand, basis, cx)
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
+def ld_adv_wt_target_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
+  match same:
+    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvMoved{}))
+    case True{}:
+      +p2 = path
+      +r2 = repo
+      +t2 = target
+      +c2 = cand
+      +b2 = basis
+      do IO<LdAdvObs>:
+        holder : T.GitOut <- Git.runGit(p2, ld_head_argv())
+        ld_adv_wt_head_pick(holder, p2, r2, t2, c2, b2, cx)
+def ld_adv_wt_target_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
+  match g:
+    case T.GRun{code, out}:
+      +b2 = basis
+      +status_ok = U32.is_eq(code, 0)
+      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), b2), False{})
+      ld_adv_wt_target_same(same, path, repo, target, cand, b2, cx)
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
+# The compare-and-swap where no worktree holds the target.
+def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +p2 = path
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  +b2 = basis
+  +cx = ctx
+  do IO<LdAdvObs>:
+    target_tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
+    ld_adv_wt_target_pick(target_tip, p2, r2, t2, c2, b2, cx)
+def ld_adv_holder(hold: LdHold, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
+  match hold:
+    case HoldNone{}: ld_adv_cas_run(repo, target, cand, basis, cx)
+    case HoldPath{path}: ld_adv_wt(path, repo, target, cand, basis, cx)
+    case HoldBlocked{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
+def ld_adv_same(same: Bool, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
+  match same:
+    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvMoved{}))
+    case True{}:
+      +r2 = repo
+      +t2 = target
+      do IO<LdAdvObs>:
+        gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
+        ld_adv_holder(ld_hold_read(gl, t2), r2, t2, cand, basis, cx)
+# The holder is read only for a target that still reads as the basis, so a
+# moved target answers the movement before any worktree is touched.
+def ld_adv_pick(g: T.GitOut, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
+  match g:
+    case T.GRun{code, out}:
+      +b2 = basis
+      Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
+        ld_adv_same(Tx.str_eq(Tx.trim_nl(out), b2), repo, target, cand, b2, cx),
+        IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{"the target commit could not be read before publication"})))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
+def ld_adv_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  +b2 = basis
+  +cx = ctx
+  do IO<LdAdvObs>:
+    g : T.GitOut <- Git.runGit(r2, ld_tip_argv(t2))
+    ld_adv_pick(g, r2, t2, c2, b2, cx)
+# Admission runs the advance for the reserved directory and releases, carrying the guard and
+# the reserved path forward for the capture sites.
+def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, reserved: String) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +gd = guard
+  +rv = reserved
+  +cx = LdAdvContext{h, gd, shared_parent_path(rv, "stderr")}
+  do IO<SharedLanding>:
+    o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
+    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
+    IO.pure(SharedLanding, SharedAdvanced{o, released, gd, rv})
+
+# The attempt name: the bare base for the first attempt, then the base extended with the
+# counter rendered by U32.show. The only refusal past a collision is the U32 maximum, checked
+# before the increment; there is no chosen suffix-length limit.
+def shared_attempt_name(base: String, attempt: U32) -> String:
+  +b = base
+  +n = attempt
+  match U32.is_eq(n, 1):
+    case True{}: b
+    case False{}: Tx.str_cat(b, Tx.str_cat("-", U32.show(n)))
+
+# One self-recursive reservation body. The returned Result, the exact created/existing records
+# and the retry branching all happen here; only nonrecursive helpers produce final outcomes.
+def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, attempt: U32) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +gd = guard
+  +pa = parent
+  +bs = base
+  +n = attempt
+  +name = shared_attempt_name(bs, n)
+  do IO<SharedLanding>:
+    observed : Result<U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, name)
+    match observed:
+      case Fail{error}: shared_step_failed("reserve", error, h)
+      case Done{record}:
+        +r = record
+        match Tx.str_eq(r, Pb.production_record("created", shared_parent_path(pa, name), "0")):
+          case True{}: shared_reserved_continue(h, rp, tg, c, b, gd, shared_parent_path(pa, name))
+          case False{}:
+            match Tx.str_eq(r, Pb.production_record("existing", shared_parent_path(pa, name), "0")):
+              case False{}: shared_record_failed("reserve", r, h)
+              case True{}:
+                match U32.is_lt(n, 4294967295):
+                  case True{}:
+                    +next = U32.add(n, 1)
+                    shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, next)
+                  case False{}: shared_record_failed("reserve-counter-maximum", r, h)
+
+def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +gd = guard
+  +pa = parent
+  +bs = base
+  +r = record
+  match Tx.str_eq(r, Pb.production_record("present", pa, "0")):
+    case True{}: shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1)
+    case False{}: shared_record_failed("ensure", r, h)
+
+def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +gd = guard
+  +pa = parent
+  +bs = base
+  +r = record
+  match Tx.str_eq(r, Pb.production_record("created", pa, "0")):
+    case True{}: shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1)
+    case False{}: shared_parent_present(h, rp, tg, c, b, gd, pa, bs, r)
+
+def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +gd = guard
+  +pa = parent
+  +bs = base
+  match observed:
+    case Fail{error}: shared_step_failed("ensure", error, h)
+    case Done{record}: shared_parent_classified(h, rp, tg, c, b, gd, pa, bs, record)
+
+def shared_token_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, guard: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +cm = common
+  +gd = guard
+  match observed:
+    case Fail{error}: shared_step_failed("token", error, h)
+    case Done{token}:
+      +parent = shared_attempts_parent(cm)
+      +base = Tx.str_cat(token, Tx.str_cat("-", Tx.str_cat(c, Tx.str_cat("-", b))))
+      do IO<SharedLanding>:
+        ensured : Result<U32 & String, String> <- Rec.Receipt.ensure(parent)
+        shared_parent_ensured(h, rp, tg, c, b, gd, parent, base, ensured)
+
+def shared_guard_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +cm = common
+  match observed:
+    case Fail{error}: shared_step_failed("guard", error, h)
+    case Done{guard}:
+      do IO<SharedLanding>:
+        token : Result<U32 & String, String> <- Rec.Receipt.attempt_token(tg)
+        shared_token_named(h, rp, tg, c, b, cm, guard, token)
+
+def shared_guarded(handle: U32, repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +cm = common
+  do IO<SharedLanding>:
+    observed : Result<U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
+    shared_guard_named(h, rp, tg, c, b, cm, observed)
+
+def shared_claim_decided(repo: String, target: String, cand: String, basis: String, common: String, claimed: Result<U32 & String, Maybe<U32>>) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +cm = common
+  match claimed:
+    case Fail{error}: IO.pure(SharedLanding, SharedClaimFailed{error})
+    case Done{held}:
+      match held:
+        case None{}: IO.pure(SharedLanding, SharedGuardBusy{tg})
+        case Some{handle}: shared_guarded(handle, rp, tg, c, b, cm)
+
+def shared_claimed(repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +cm = common
+  do IO<SharedLanding>:
+    claimed : Result<U32 & String, Maybe<U32>> <- Rec.Receipt.claim(cm, tg)
+    shared_claim_decided(rp, tg, c, b, cm, claimed)
+
+def shared_common_read(repo: String, target: String, cand: String, basis: String, observed: T.GitOut) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +obs = observed
+  match obs:
+    case T.GRun{code, out}:
+      +c0 = code
+      match U32.is_eq(c0, 0):
+        case True{}: shared_claimed(rp, tg, c, b, Tx.trim_nl(out))
+        case False{}: IO.pure(SharedLanding, SharedCommonUnreadable{obs})
+    case T.GBroken{detail}: IO.pure(SharedLanding, SharedCommonUnreadable{obs})
+
+def shared_landing_run(repo: String, target: String, cand: String, basis: String) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  do IO<SharedLanding>:
+    observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
+    shared_common_read(rp, tg, c, b, observed)
+
+# Read the exact target ref after the held fast-forward and require its tip to
+# remain the source candidate before checking which branch the holder has now.
+def ld_adv_of(obs: LdAdvObs) -> LAdv:
+  +o = obs
+  match o:
+    case LdAdvNoCapture{advance}: advance
+    case LdAdvCaptured{advance, capture}: advance
+    case LdAdvQualified{advance, capture, readback}: advance
+
+def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String) -> FFLD:
+  +s = shared
+  +tg = target
+  +c = cand
+  match s:
+    case SharedCommonUnreadable{observation}: FFDone{T.LBlocked{"the common directory could not be read for the landing claim"}}
+    case SharedClaimFailed{error}:
+      match error:
+        case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the landing claim failed: ", detail)}}
+    case SharedGuardBusy{target}: FFDone{T.LBlocked{"another landing holds the target"}}
+    case SharedStepFailed{step, error, released}:
+      match error:
+        case (code, detail): FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " failed: "), detail)}}
+    case SharedStepRecordFailed{step, record, released}: FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " refused: "), record)}}
+    case SharedAdvanced{obs, released, guard, reserved}:
+      match released:
+        case Fail{error}:
+          match error:
+            case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", detail)}}
+        case Done{unit}: ff_stage5_adv_answer(ld_adv_of(obs), tg, c)
 
 def ff_stage5_shared(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
   +cand = wc
@@ -1106,9 +1731,6 @@ def ld_unmerged(scratch: String, why: String) -> IO(Ld):
     g : T.GitOut <- Git.runGit(sc, ["diff", "--name-only", "--diff-filter=U"])
     IO.pure(Ld, ld_unmerged_pick(g, sc, w2))
 
-def ld_update_argv(target: String, cand: String, basis: String) -> List<String>:
-  ["update-ref", Tx.str_cat("refs/heads/", target), cand, basis]
-
 # How the target branch advanced, or why it did not.
 def ld_adv_update(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
   +r2 = repo
@@ -1119,385 +1741,9 @@ def ld_adv_update(repo: String, target: String, cand: String, basis: String) -> 
     g : T.GitOut <- Git.runGit(r2, ld_update_argv(t2, c2, b2))
     IO.pure(Ld, ld_update_pick(g, t2, c2))
 
-type LAdv is Data:
-  AdvLanded{}
-  AdvMoved{}
-  AdvHeld{path: String}
-  AdvHolderChanged{path: String}
-  AdvRefused{}
-  AdvBroken{detail: String}
-
-type LdAdvCtx is Data:
-  LdAdvContext{claim: U32, guard: String, artifact: String}
-
-type LdAdvObs is Data:
-  LdAdvNoCapture{advance: LAdv}
-  LdAdvCaptured{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>}
-  LdAdvQualified{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>, readback: T.GitOut}
-
-def ld_adv_wrap(advance: LAdv) -> LdAdvObs:
-  +a = advance
-  LdAdvNoCapture{a}
-
-def ld_adv_with(advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>) -> LdAdvObs:
-  +a = advance
-  +c = capture
-  LdAdvCaptured{a, c}
-
-def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
-  +c = capture
-  match c:
-    case Fail{error}:
-      match error:
-        case (code, detail): T.GBroken{detail}
-    case Done{pair}:
-      match pair:
-        case (framing, diagnostics):
-          match Tx.run_res(Done{framing}):
-            case T.RRun{T.SExit{code}, out}: T.GRun{code, out}
-            case T.RRun{T.SSignal{num}, out}: T.GBroken{"the mutation signalled"}
-            case T.RSpawn{detail}: T.GBroken{detail}
-
-def ld_adv_same(same: Bool, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
-  +cx = ctx
-  match same:
-    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvMoved{}))
-    case True{}:
-      +r2 = repo
-      +t2 = target
-      do IO<LdAdvObs>:
-        gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
-        ld_adv_holder(ld_hold_read(gl, t2), r2, t2, cand, basis, cx)
-def ld_hold_ref(target: String) -> String:
-  Tx.str_cat("refs/heads/", target)
-
-# The branch line a worktree report carries when it holds the target.
-def ld_hold_branch(target: String) -> String:
-  Tx.str_cat("branch ", ld_hold_ref(target))
-# The holder's block in a `git worktree list --porcelain` report: each block is
-# one "worktree <path>" line and the state lines that follow it, and the block
-# whose branch line names the target branch is the worktree that holds it. The
-# path is taken from the line as Git writes it, so a path Git quoted is not a
-# path this module can enter and the advance never runs in one.
-type LdHoldScan is Data:
-  HoldScan{cur: String, found: String, seen: U32}
-
-# The path one worktree-list line names: the line with its label matched off,
-# or the empty string for a line that does not carry the label.
-def wt_path_go(line: String, label: String) -> String:
-  match line label:
-    case SNil{} SNil{}: ""
-    case SNil{} SCon{lc, lr}: ""
-    case SCon{c, rest} SNil{}: line
-    case SCon{c, rest} SCon{lc, lr}:
-      Bool.pick(String, Char.is_eq(c, lc), wt_path_go(rest, lr), "")
-
-def wt_path(line: String) -> String:
-  wt_path_go(line, "worktree ")
-
-# One branch line that names the target: the first one records the path of the
-# block it appeared in, and any later one, or one that appeared before any
-# block, makes the listing unusable.
-def ld_hold_named(+cur: String, +found: String, +seen: U32) -> LdHoldScan:
-  Bool.pick(LdHoldScan, String.is_empty(cur),
-    HoldScan{cur, found, 2},
-    Bool.pick(LdHoldScan, U32.is_eq(seen, 0),
-      HoldScan{cur, cur, 1},
-      HoldScan{cur, found, 2}))
-
-def ld_hold_line(+line: String, acc: LdHoldScan, want: String) -> LdHoldScan:
-  match acc:
-    case HoldScan{+cur, +found, +seen}:
-      Bool.pick(LdHoldScan, Tx.starts_with(line, "worktree "),
-        HoldScan{wt_path(line), found, seen},
-        Bool.pick(LdHoldScan, Tx.str_eq(line, want),
-          ld_hold_named(cur, found, seen),
-          HoldScan{cur, found, seen}))
-
-def ld_hold_scan(lines: List<String>, acc: LdHoldScan, +want: String) -> LdHoldScan:
-  match lines:
-    case Nil{}: acc
-    case Con{h, rest}: ld_hold_scan(rest, ld_hold_line(h, acc, want), want)
-
-# The worktree that holds the target: its path, none, or the reason the report
-# cannot be trusted to name exactly one.
-type LdHold is Data:
-  HoldNone{}
-  HoldPath{path: String}
-  HoldBlocked{detail: String}
-
-# The holder one report names, or the reason it names no usable one.
-def ld_hold_end(acc: LdHoldScan) -> LdHold:
-  match acc:
-    case HoldScan{cur, found, +seen}:
-      Bool.pick(LdHold, U32.is_eq(seen, 0), HoldNone{},
-        Bool.pick(LdHold, U32.is_eq(seen, 1), HoldPath{found},
-          HoldBlocked{"the worktree listing names the target branch in more than one block, or outside a block"}))
-
-def ld_hold_of(out: String, target: String) -> LdHold:
-  ld_hold_end(ld_hold_scan(Tx.split_lines(out), HoldScan{"", "", 0}, ld_hold_branch(target)))
-
-# The holder of a listing that ran: the report's holder, or the reason the
-# listing itself cannot be read.
-def ld_hold_read(g: T.GitOut, target: String) -> LdHold:
-  match g:
-    case T.GRun{code, out}:
-      Bool.pick(LdHold, U32.is_eq(code, 0),
-        ld_hold_of(out, target),
-        HoldBlocked{"the worktree listing could not be read"})
-    case T.GBroken{detail}: HoldBlocked{detail}
-
-# The target commit lookup used by the existing unheld compare-and-swap path.
-def ld_tip_argv(target: String) -> List<String>:
-  ["rev-parse", "--verify", Tx.str_cat(target, "^{commit}")]
-
-# The exact local target branch commit used to validate a held worktree.
-def ld_target_ref_argv(target: String) -> List<String>:
-  ["rev-parse", "--verify", Tx.str_cat(ld_hold_ref(target), "^{commit}")]
-
-# The attached branch name of a worktree, or a nonzero result when detached.
-def ld_head_argv() -> List<String>:
-  ["symbolic-ref", "--quiet", "HEAD"]
-
-# The update-ref argv: the target ref, the candidate and the basis it advanced
-# from, so the branch moves only while it still reads as that basis.
-def ld_adv_cas(g: T.GitOut) -> LAdv:
-  match g:
-    case T.GRun{code, out}: Bool.pick(LAdv, U32.is_eq(code, 0), AdvLanded{}, AdvRefused{})
-    case T.GBroken{detail}: AdvBroken{detail}
-
-def ld_adv_cas_compared(cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut, tip: String) -> IO(LdAdvObs):
-  +c2 = cand
-  +cp = capture
-  +obs = after
-  +seen = tip
-  match Tx.str_eq(seen, c2):
-    case True{}: IO.pure(LdAdvObs, LdAdvQualified{AdvLanded{}, cp, obs})
-    case False{}: IO.pure(LdAdvObs, LdAdvQualified{AdvMoved{}, cp, obs})
-
-def ld_adv_cas_readback(target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut) -> IO(LdAdvObs):
-  +c2 = cand
-  +cp = capture
-  +obs = after
-  match obs:
-    case T.GRun{code, out}:
-      +c0 = code
-      match U32.is_eq(c0, 0):
-        case False{}: IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{"the target could not be read back after the advance"}, cp, obs})
-        case True{}: ld_adv_cas_compared(c2, cp, obs, Tx.trim_nl(out))
-    case T.GBroken{detail}: IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{detail}, cp, obs})
-
-# The unheld advance is not landed on exit zero alone: while the target claim is still held the
-# target ref is read back and required to be the candidate. A moved target answers AdvMoved with
-# the capture retained; an unreadable readback answers AdvBroken with it.
-def ld_adv_cas_qualified(target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>, status: T.GitOut, repo: String) -> IO(LdAdvObs):
-  +t2 = target
-  +c2 = cand
-  +cp = capture
-  +st = status
-  +r2 = repo
-  match st:
-    case T.GRun{code, out}:
-      match U32.is_eq(code, 0):
-        case False{}: IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(st), cp))
-        case True{}:
-          do IO<LdAdvObs>:
-            after : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
-            ld_adv_cas_readback(t2, c2, cp, after)
-    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(st), cp))
-
-def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
-  +r2 = repo
-  +t2 = target
-  +c2 = cand
-  +b2 = basis
-  +cx = ctx
-  do IO<LdAdvObs>:
-    captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", ld_update_argv(t2, c2, b2)}), r2, cx.claim, cx.guard, cx.artifact)
-    +capture = captured
-    ld_adv_cas_qualified(t2, c2, capture, ld_adv_status(capture), r2)
-def ld_adv_refused_same(same: Bool, path: String) -> LAdv:
-  match same:
-    case True{}: AdvHeld{path}
-    case False{}: AdvMoved{}
-
-def ld_adv_refused_pick(g: T.GitOut, path: String, basis: String) -> LAdv:
-  match g:
-    case T.GRun{code, out}:
-      Bool.pick(LAdv, U32.is_eq(code, 0),
-        ld_adv_refused_same(Tx.str_eq(Tx.trim_nl(out), basis), path),
-        AdvBroken{"the target commit could not be read after a refused fast-forward"})
-    case T.GBroken{detail}: AdvBroken{detail}
-
-def ld_adv_wt_refused(path: String, repo: String, target: String, basis: String, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
-  +p2 = path
-  +r2 = repo
-  +b2 = basis
-  +cp = capture
-  do IO<LdAdvObs>:
-    g : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(target))
-    IO.pure(LdAdvObs, ld_adv_with(ld_adv_refused_pick(g, p2, b2), cp))
-def ld_adv_wt_observed(target_matches: Bool, holder_matches: Bool, path: String) -> LAdv:
-  match target_matches:
-    case False{}: AdvMoved{}
-    case True{}:
-      match holder_matches:
-        case True{}: AdvLanded{}
-        case False{}: AdvHolderChanged{path}
-
-def ld_adv_wt_observed_holder_pick(g: T.GitOut, path: String, target: String) -> IO(LAdv):
-  match g:
-    case T.GRun{code, out}:
-      +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(Bool, status_ok,
-        Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)), False{})
-      IO.pure(LAdv, ld_adv_wt_observed(True{}, same, path))
-    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
-
-def ld_adv_wt_observed_target_same(same: Bool, path: String, target: String) -> IO(LAdv):
-  match same:
-    case False{}: IO.pure(LAdv, AdvMoved{})
-    case True{}:
-      +p2 = path
-      +t2 = target
-      do IO<LAdv>:
-        holder : T.GitOut <- Git.runGit(p2, ld_head_argv())
-        ld_adv_wt_observed_holder_pick(holder, p2, t2)
-
-def ld_adv_wt_observed_target_pick(g: T.GitOut, path: String, target: String, cand: String) -> IO(LAdv):
-  match g:
-    case T.GRun{code, out}:
-      +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})
-      ld_adv_wt_observed_target_same(same, path, target)
-    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
-
-# Read the exact target ref after the held fast-forward and require its tip to
-# remain the source candidate before checking which branch the holder has now.
-def ld_adv_of(obs: LdAdvObs) -> LAdv:
-  +o = obs
-  match o:
-    case LdAdvNoCapture{advance}: advance
-    case LdAdvCaptured{advance, capture}: advance
-    case LdAdvQualified{advance, capture, readback}: advance
-
-# Git provides no atomic CLI operation that pins symbolic HEAD across the final identity check
-# and the merge, so a switch in that interval can still direct the merge to another branch. The
-# target claim coordinates participating landings; it does not lock an independent Git process.
-def ld_adv_wt_observe(path: String, repo: String, target: String, cand: String) -> IO(LAdv):
-  +p2 = path
-  +r2 = repo
-  +t2 = target
-  +c2 = cand
-  do IO<LAdv>:
-    target_tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
-    ld_adv_wt_observed_target_pick(target_tip, p2, t2, c2)
-
-def ld_adv_wt_observe_wrapped(path: String, repo: String, target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
-  +cp = capture
-  do IO<LdAdvObs>:
-    inner : LAdv <- ld_adv_wt_observe(path, repo, target, cand)
-    IO.pure(LdAdvObs, ld_adv_with(inner, cp))
-
-def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
-  +cx = ctx
-  +cp = capture
-  match g:
-    case T.GRun{code, out}:
-      +p2 = path
-      +r2 = repo
-      +t2 = target
-      +c2 = cand
-      +b2 = basis
-      Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
-        ld_adv_wt_observe_wrapped(p2, r2, t2, c2, cp),
-        ld_adv_wt_refused(p2, r2, t2, b2, cp))
-    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(AdvBroken{detail}, cp))
-def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
-  +cx = ctx
-  match same:
-    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvHolderChanged{path}))
-    case True{}:
-      +p2 = path
-      +r2 = repo
-      +t2 = target
-      +c2 = cand
-      +b2 = basis
-      do IO<LdAdvObs>:
-        captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"merge", Con{"--ff-only", Con{c2, Nil{}}}}}), p2, cx.claim, cx.guard, cx.artifact)
-        +capture = captured
-        ld_adv_wt_pick(ld_adv_status(capture), p2, r2, t2, c2, b2, cx, capture)
-def ld_adv_wt_head_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
-  +cx = ctx
-  match g:
-    case T.GRun{code, out}:
-      +t2 = target
-      +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(t2)), False{})
-      ld_adv_wt_head_same(same, path, repo, t2, cand, basis, cx)
-    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
-def ld_adv_wt_target_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
-  +cx = ctx
-  match same:
-    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvMoved{}))
-    case True{}:
-      +p2 = path
-      +r2 = repo
-      +t2 = target
-      +c2 = cand
-      +b2 = basis
-      do IO<LdAdvObs>:
-        holder : T.GitOut <- Git.runGit(p2, ld_head_argv())
-        ld_adv_wt_head_pick(holder, p2, r2, t2, c2, b2, cx)
-def ld_adv_wt_target_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
-  +cx = ctx
-  match g:
-    case T.GRun{code, out}:
-      +b2 = basis
-      +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), b2), False{})
-      ld_adv_wt_target_same(same, path, repo, target, cand, b2, cx)
-    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
-# The compare-and-swap where no worktree holds the target.
-def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
-  +p2 = path
-  +r2 = repo
-  +t2 = target
-  +c2 = cand
-  +b2 = basis
-  +cx = ctx
-  do IO<LdAdvObs>:
-    target_tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
-    ld_adv_wt_target_pick(target_tip, p2, r2, t2, c2, b2, cx)
-def ld_adv_holder(hold: LdHold, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
-  +cx = ctx
-  match hold:
-    case HoldNone{}: ld_adv_cas_run(repo, target, cand, basis, cx)
-    case HoldPath{path}: ld_adv_wt(path, repo, target, cand, basis, cx)
-    case HoldBlocked{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
 def ld_adv_holder_changed_text(target: String, path: String) -> String:
   "the worktree at " ++ path ++ " changed away from target branch " ++ target ++ " during landing; inspect the target and worktree before retrying"
 
-# The holder is read only for a target that still reads as the basis, so a
-# moved target answers the movement before any worktree is touched.
-def ld_adv_pick(g: T.GitOut, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
-  +cx = ctx
-  match g:
-    case T.GRun{code, out}:
-      +b2 = basis
-      Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
-        ld_adv_same(Tx.str_eq(Tx.trim_nl(out), b2), repo, target, cand, b2, cx),
-        IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{"the target commit could not be read before publication"})))
-    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
-def ld_adv_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
-  +r2 = repo
-  +t2 = target
-  +c2 = cand
-  +b2 = basis
-  +cx = ctx
-  do IO<LdAdvObs>:
-    g : T.GitOut <- Git.runGit(r2, ld_tip_argv(t2))
-    ld_adv_pick(g, r2, t2, c2, b2, cx)
 def ld_adv_held_text(target: String, path: String) -> String:
   "the target branch " ++ target ++ " is checked out at " ++ path ++ "; the fast-forward into that worktree was refused (git's own message is in the coordinator log); commit or stash that worktree's changes, or repair the worktree, and "
 
@@ -1515,15 +1761,26 @@ def ld_adv_answer(a: LAdv, target: String, cand: String) -> Ld:
 # Advance the checked candidate from its checked basis. A changed target
 # returns an explicit retry result; the next invocation prepares both trees.
 
-def shared_landing_run(repo: String, target: String, cand: String, basis: String) -> IO(SharedLanding):
-  +rp = repo
+def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String) -> Ld:
+  +s = shared
   +tg = target
   +c = cand
-  +b = basis
-  do IO<SharedLanding>:
-    observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
-    shared_common_read(rp, tg, c, b, observed)
-
+  match s:
+    case SharedCommonUnreadable{observation}: LdFail{T.FCmd{"land", "the common directory could not be read for the landing claim"}}
+    case SharedClaimFailed{error}:
+      match error:
+        case (code, detail): LdFail{T.FCmd{"land", detail}}
+    case SharedGuardBusy{target}: LdFail{T.FCmd{"land", "another landing holds the target; rerun land-checked to prepare and check against the current target"}}
+    case SharedStepFailed{step, error, released}:
+      match error:
+        case (code, detail): LdFail{T.FCmd{"land", detail}}
+    case SharedStepRecordFailed{step, record, released}: LdFail{T.FCmd{"land", record}}
+    case SharedAdvanced{obs, released, guard, reserved}:
+      match released:
+        case Fail{error}:
+          match error:
+            case (code, detail): LdFail{T.FCmd{"land", detail}}
+        case Done{unit}: ld_adv_answer(ld_adv_of(obs), tg, c)
 def ld_advance(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
   +t2 = target
   +c2 = cand
@@ -2140,260 +2397,3 @@ law prepared_holder_discovery_rejects_a_quoted_or_relative_path:
 def prepared_holder_discovery_rejects_a_quoted_or_relative_path():
   {==}
 
-# The public shared boundary. The canonical common directory is read once here, the target
-# claim is taken around the holder selection and the selected advance, and the release runs for
-# every returned advance outcome with its own Result preserved beside the advance observation.
-# A release failure is therefore visible to both adapters and can never read as a landing.
-type SharedLanding is Data:
-  SharedCommonUnreadable{observation: T.GitOut}
-  SharedClaimFailed{error: U32 & String}
-  SharedGuardBusy{target: String}
-  SharedStepFailed{step: String, error: U32 & String, released: Result<U32 & String, Unit>}
-  SharedStepRecordFailed{step: String, record: String, released: Result<U32 & String, Unit>}
-  SharedAdvanced{obs: LdAdvObs, released: Result<U32 & String, Unit>, guard: String, reserved: String}
-
-def shared_parent_path(directory: String, name: String) -> String:
-  +d = directory
-  +n = name
-  Tx.str_cat(d, Tx.str_cat("/", n))
-
-def shared_attempts_parent(common: String) -> String:
-  +c = common
-  Tx.str_cat(c, "/baton2-attempts")
-
-# Every step failure releases the acquired descriptor and keeps its own stage, its complete
-# error or raw record, and the actual release Result.
-def shared_step_failed(step: String, error: U32 & String, handle: U32) -> IO(SharedLanding):
-  +s = step
-  +e = error
-  +h = handle
-  do IO<SharedLanding>:
-    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
-    IO.pure(SharedLanding, SharedStepFailed{s, e, released})
-
-def shared_record_failed(step: String, record: String, handle: U32) -> IO(SharedLanding):
-  +s = step
-  +r = record
-  +h = handle
-  do IO<SharedLanding>:
-    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
-    IO.pure(SharedLanding, SharedStepRecordFailed{s, r, released})
-
-# Admission runs the advance for the reserved directory and releases, carrying the guard and
-# the reserved path forward for the capture sites.
-def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, reserved: String) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +rv = reserved
-  +cx = LdAdvContext{h, gd, shared_parent_path(rv, "stderr")}
-  do IO<SharedLanding>:
-    o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
-    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
-    IO.pure(SharedLanding, SharedAdvanced{o, released, gd, rv})
-
-# The attempt name: the bare base for the first attempt, then the base extended with the
-# counter rendered by U32.show. The only refusal past a collision is the U32 maximum, checked
-# before the increment; there is no chosen suffix-length limit.
-def shared_attempt_name(base: String, attempt: U32) -> String:
-  +b = base
-  +n = attempt
-  match U32.is_eq(n, 1):
-    case True{}: b
-    case False{}: Tx.str_cat(b, Tx.str_cat("-", U32.show(n)))
-
-# One self-recursive reservation body. The returned Result, the exact created/existing records
-# and the retry branching all happen here; only nonrecursive helpers produce final outcomes.
-def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, attempt: U32) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  +n = attempt
-  +name = shared_attempt_name(bs, n)
-  do IO<SharedLanding>:
-    observed : Result<U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, name)
-    match observed:
-      case Fail{error}: shared_step_failed("reserve", error, h)
-      case Done{record}:
-        +r = record
-        match Tx.str_eq(r, Pb.production_record("created", shared_parent_path(pa, name), "0")):
-          case True{}: shared_reserved_continue(h, rp, tg, c, b, gd, shared_parent_path(pa, name))
-          case False{}:
-            match Tx.str_eq(r, Pb.production_record("existing", shared_parent_path(pa, name), "0")):
-              case False{}: shared_record_failed("reserve", r, h)
-              case True{}:
-                match U32.is_lt(n, 4294967295):
-                  case True{}:
-                    +next = U32.add(n, 1)
-                    shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, next)
-                  case False{}: shared_record_failed("reserve-counter-maximum", r, h)
-
-def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  +r = record
-  match Tx.str_eq(r, Pb.production_record("present", pa, "0")):
-    case True{}: shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1)
-    case False{}: shared_record_failed("ensure", r, h)
-
-def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  +r = record
-  match Tx.str_eq(r, Pb.production_record("created", pa, "0")):
-    case True{}: shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1)
-    case False{}: shared_parent_present(h, rp, tg, c, b, gd, pa, bs, r)
-
-def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  match observed:
-    case Fail{error}: shared_step_failed("ensure", error, h)
-    case Done{record}: shared_parent_classified(h, rp, tg, c, b, gd, pa, bs, record)
-
-def shared_token_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, guard: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +cm = common
-  +gd = guard
-  match observed:
-    case Fail{error}: shared_step_failed("token", error, h)
-    case Done{token}:
-      +parent = shared_attempts_parent(cm)
-      +base = Tx.str_cat(token, Tx.str_cat("-", Tx.str_cat(c, Tx.str_cat("-", b))))
-      do IO<SharedLanding>:
-        ensured : Result<U32 & String, String> <- Rec.Receipt.ensure(parent)
-        shared_parent_ensured(h, rp, tg, c, b, gd, parent, base, ensured)
-
-def shared_guard_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +cm = common
-  match observed:
-    case Fail{error}: shared_step_failed("guard", error, h)
-    case Done{guard}:
-      do IO<SharedLanding>:
-        token : Result<U32 & String, String> <- Rec.Receipt.attempt_token(tg)
-        shared_token_named(h, rp, tg, c, b, cm, guard, token)
-
-def shared_guarded(handle: U32, repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +cm = common
-  do IO<SharedLanding>:
-    observed : Result<U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
-    shared_guard_named(h, rp, tg, c, b, cm, observed)
-
-def shared_claim_decided(repo: String, target: String, cand: String, basis: String, common: String, claimed: Result<U32 & String, Maybe<U32>>) -> IO(SharedLanding):
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +cm = common
-  match claimed:
-    case Fail{error}: IO.pure(SharedLanding, SharedClaimFailed{error})
-    case Done{held}:
-      match held:
-        case None{}: IO.pure(SharedLanding, SharedGuardBusy{tg})
-        case Some{handle}: shared_guarded(handle, rp, tg, c, b, cm)
-
-def shared_claimed(repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +cm = common
-  do IO<SharedLanding>:
-    claimed : Result<U32 & String, Maybe<U32>> <- Rec.Receipt.claim(cm, tg)
-    shared_claim_decided(rp, tg, c, b, cm, claimed)
-
-def shared_common_read(repo: String, target: String, cand: String, basis: String, observed: T.GitOut) -> IO(SharedLanding):
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +obs = observed
-  match obs:
-    case T.GRun{code, out}:
-      +c0 = code
-      match U32.is_eq(c0, 0):
-        case True{}: shared_claimed(rp, tg, c, b, Tx.trim_nl(out))
-        case False{}: IO.pure(SharedLanding, SharedCommonUnreadable{obs})
-    case T.GBroken{detail}: IO.pure(SharedLanding, SharedCommonUnreadable{obs})
-
-def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String) -> FFLD:
-  +s = shared
-  +tg = target
-  +c = cand
-  match s:
-    case SharedCommonUnreadable{observation}: FFDone{T.LBlocked{"the common directory could not be read for the landing claim"}}
-    case SharedClaimFailed{error}:
-      match error:
-        case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the landing claim failed: ", detail)}}
-    case SharedGuardBusy{target}: FFDone{T.LBlocked{"another landing holds the target"}}
-    case SharedStepFailed{step, error, released}:
-      match error:
-        case (code, detail): FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " failed: "), detail)}}
-    case SharedStepRecordFailed{step, record, released}: FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " refused: "), record)}}
-    case SharedAdvanced{obs, released, guard, reserved}:
-      match released:
-        case Fail{error}:
-          match error:
-            case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", detail)}}
-        case Done{unit}: ff_stage5_adv_answer(ld_adv_of(obs), tg, c)
-
-def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String) -> Ld:
-  +s = shared
-  +tg = target
-  +c = cand
-  match s:
-    case SharedCommonUnreadable{observation}: LdFail{T.FCmd{"land", "the common directory could not be read for the landing claim"}}
-    case SharedClaimFailed{error}:
-      match error:
-        case (code, detail): LdFail{T.FCmd{"land", detail}}
-    case SharedGuardBusy{target}: LdFail{T.FCmd{"land", "another landing holds the target; rerun land-checked to prepare and check against the current target"}}
-    case SharedStepFailed{step, error, released}:
-      match error:
-        case (code, detail): LdFail{T.FCmd{"land", detail}}
-    case SharedStepRecordFailed{step, record, released}: LdFail{T.FCmd{"land", record}}
-    case SharedAdvanced{obs, released, guard, reserved}:
-      match released:
-        case Fail{error}:
-          match error:
-            case (code, detail): LdFail{T.FCmd{"land", detail}}
-        case Done{unit}: ld_adv_answer(ld_adv_of(obs), tg, c)
