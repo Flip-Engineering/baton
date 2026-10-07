@@ -64,7 +64,7 @@ try {
   mkdirSync(join(installedPrefix, 'libexec/baton2'), { recursive: true });
   mkdirSync(installedModule, { recursive: true });
   cpSync(packageRoot, installedModule, { recursive: true });
-  writeFileSync(installedWrapper, readFileSync(resolve(packageRoot, '../../scripts/context-provider.mjs')));
+  writeFileSync(installedWrapper, readFileSync(new URL('../../scripts/context-provider.mjs', import.meta.url)));
   const inventory = installedModuleInventory({ wrapperPath: installedWrapper });
   assert.equal(inventory.status, 'available');
   assert.deepEqual(inventory.refusals, []);
