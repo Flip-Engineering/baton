@@ -445,6 +445,16 @@ def query_artifact_json(+owner: String, +worktree: String, +query: String,
           BoundaryPathReady{boundary_text(value, "path")}),
         BoundaryPathRefused{"queryArtifactObservationMismatch"})
 
+def query_boundary_decoded(+owner: String, +worktree: String, +query: String,
+                           +source: Bool, decoded: ProjectPolicyJson) -> IO(BoundaryPath):
+  match decoded:
+    case ProjectPolicyJsonRefused{reason}:
+      IO.pure(BoundaryPath, BoundaryPathRefused{reason})
+    case ProjectPolicyJsonReady{+value}:
+      IO.pure(BoundaryPath, Bool.pick(BoundaryPath, source,
+        query_source_json(owner, worktree, ProjectPolicyJsonReady{value}),
+        query_artifact_json(owner, worktree, query, ProjectPolicyJsonReady{value})))
+
 def query_boundary_rows(+db: String, +binding: String, +owner: String,
                         +worktree: String, +query: String, +source: Bool,
                         result: Result<&1,&1,U32 & String,String>) -> IO(BoundaryPath):
@@ -453,13 +463,8 @@ def query_boundary_rows(+db: String, +binding: String, +owner: String,
       match error:
         case (code, detail): IO.pure(BoundaryPath, BoundaryPathRefused{"queryBoundaryDecodeRead"})
     case Done{+rows}:
-      match project_policy_json_rows(rows):
-        case ProjectPolicyJsonRefused{reason}:
-          IO.pure(BoundaryPath, BoundaryPathRefused{reason})
-        case ProjectPolicyJsonReady{+value}:
-          IO.pure(BoundaryPath, Bool.pick(BoundaryPath, source,
-            query_source_json(owner, worktree, ProjectPolicyJsonReady{value}),
-            query_artifact_json(owner, worktree, query, ProjectPolicyJsonReady{value})))
+      query_boundary_decoded(owner, worktree, query, source,
+        project_policy_json_rows(rows))
 
 def query_boundary_output(+db: String, +binding: String, +owner: String,
                          +worktree: String, +query: String,
