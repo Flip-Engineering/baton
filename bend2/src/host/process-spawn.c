@@ -3200,8 +3200,7 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
       call->cursor=io_cstr(e,f[1],&length);
       call->generation=io_cstr(e,f[2],&length);
     } else {call->text=io_cstr(e,f[1],&length);call->length=length;}
-  } else if(kind==BP_INSTANCE_ATTACH || kind==BP_INSTANCE_ATTACH_OWNED || kind==BP_INSTANCE_JOB ||
-            kind==BP_INSTANCE_NOTICE || kind==BP_INSTANCE_UNSUBSCRIBE) {
+  } else if(kind==BP_INSTANCE_ATTACH || kind==BP_INSTANCE_ATTACH_OWNED || kind==BP_INSTANCE_JOB) {
     u64 length=0;call->database=io_cstr(e,f[0],&length);
     call->directory=io_cstr(e,f[1],&length);
     if(strlen(call->directory)!=length)call->error=EINVAL;
