@@ -1309,7 +1309,8 @@ def attempt_cleanup_fields(+db: String, fields: List<String>) -> IO(String):
       bytes : U32 = U32.add(stdout,U32.add(stderr,U32.add(stderr_full,U32.add(stderr_meta,U32.add(error_bytes,U32.add(observer,keeper)))) ))
       eligible : Bool = attempt_decision_eligible(attempt_decision(health,phase,status,released,acknowledged,reported,pending,level,path,bytes))
       files : String <- Bool.pick(IO(String),eligible,attempt_cleanup_files(db,directory),IO.pure(String,""))
-      IO.pure(String,files)
+      stderr_runs : String <- Bool.pick(IO(String),eligible,clean_stderr_run_rows(db,session,attempt),IO.pure(String,""))
+      IO.pure(String,items_join(files,stderr_runs))
     case other: IO.pure(String,"")
 
 def attempt_cleanup_row(db: String, row: String) -> IO(String):

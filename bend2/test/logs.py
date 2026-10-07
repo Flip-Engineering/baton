@@ -537,6 +537,23 @@ sys.exit(%d)
         self.assertTrue((attempt_dir / 'stderr.full').is_file())
         self.assertEqual((attempt_dir / 'stderr.meta').read_text(), '{')
 
+    def test_cleanup_retains_a_run_with_malformed_stderr_metadata(self):
+        self.stream([self.terminal()])
+        with sqlite3.connect(self.db) as connection:
+            stderr_name, = connection.execute(
+                'SELECT stderr FROM log_stderr_runs WHERE session=? AND attempt=? ORDER BY run DESC LIMIT 1',
+                ('omp-worker', self.active_turn)).fetchone()
+        stderr = pathlib.Path(stderr_name)
+        stderr_meta = pathlib.Path(str(stderr) + '.meta')
+        stderr_meta.write_text('{')
+        row = next(item for item in json.loads(self.call('logs-storage'))['stderrRuns']
+                   if item['stderr'] == str(stderr))
+        self.assertEqual(row['health'], 'metadata-invalid')
+        self.call('logs-clean', 'omp-worker')
+        self.assertTrue(stderr.is_file())
+        self.assertTrue(pathlib.Path(str(stderr) + '.full').is_file())
+        self.assertEqual(stderr_meta.read_text(), '{')
+
 
     def test_attempt_cleanup_rejects_symlink_diagnostic_file(self):
         self.stream([self.terminal()])
