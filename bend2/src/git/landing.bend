@@ -246,7 +246,7 @@ def Landing.decided(request: LandingRequest, claimed: Result<&1, &1, U32 & Strin
     case Fail{error}: IO.pure(Landing, LandingClaimFailed{error})
     case Done{held}:
       match held:
-        case None{}: IO.pure(Landing, LandingGuardBusy{intent_target(req.intent)})
+        case None{}: IO.pure(Landing, LandingGuardBusy{intent_target(landingreq_intent(req))})
         case Some{handle}: Landing.claimed_associated(handle, request)
 
 # The guarded operands come from the caller and are checked here rather than assumed: an
