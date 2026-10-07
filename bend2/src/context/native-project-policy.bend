@@ -30,16 +30,21 @@ type PolicySelectionIdentity is Data:
   PolicySelectionMissing{value: Sel.ProjectPolicyIdentity}
   PolicySelectionRefused{condition: String}
 
+def member_result(found: Maybe<&2, J.Json>) -> J.Json:
+  match found:
+    case None{}: J.Jnil{}
+    case Some{+value}: value
+
+def member_exists(found: Maybe<&2, J.Json>) -> Bool:
+  match found:
+    case None{}: False{}
+    case Some{value}: True{}
+
 def member(+object: J.Json, +key: String) -> J.Json:
   match object:
     case J.Jobj{+members}:
       member_result(Req.member_lookup(key, members))
     case other: J.Jnil{}
-
-def member_result(found: Maybe<&2, J.Json>) -> J.Json:
-  match found:
-    case None{}: J.Jnil{}
-    case Some{+value}: value
 
 def members(+object: J.Json) -> J.Json:
   match object:
@@ -51,11 +56,6 @@ def required_member(value: J.Json, +key: String) -> Bool:
     case J.Jobj{+members}:
       member_exists(Req.member_lookup(key, members))
     case other: False{}
-
-def member_exists(found: Maybe<&2, J.Json>) -> Bool:
-  match found:
-    case None{}: False{}
-    case Some{value}: True{}
 
 def text_array_tail(+items: J.Json) -> List<String>:
   match items:
