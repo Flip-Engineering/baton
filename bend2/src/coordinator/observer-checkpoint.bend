@@ -90,7 +90,7 @@ def without_query_newline_reversed(+reversed: String, +raw: String) -> String:
 def without_query_newline(+raw: String) -> String:
   without_query_newline_reversed(Tx.str_rev(raw),raw)
 
-def decode_valid(db: String, +value: String) -> IO(State):
+def decode_valid(+db: String, +value: String) -> IO(State):
   do IO<State>:
     guidance_cursor : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"guidance_cursor")))
     last_message : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"last_message")))
