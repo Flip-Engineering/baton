@@ -38,6 +38,27 @@ type Landing is Data:
   LandingHeld{request: LandingRequest, candidate: String, basis: String, published: String,
               mutation: Result<&1,&1,U32 & String,String & String>, released: Result<U32 & String, Unit>}
 
+# The attempt scratch is derived from the canonical common directory and the attempt name:
+# the directory the publication writes into and the artifact the guarded capture retains both
+# come from these two, so neither is a free-standing caller string.
+def attempt_directory_for(common: String, attempt: String) -> String:
+  +c = common
+  +a = attempt
+  Tx.str_cat(c, Tx.str_cat("/baton2-attempts/", a))
+
+def attempt_artifact_for(common: String, attempt: String) -> String:
+  +c = common
+  +a = attempt
+  Tx.str_cat(attempt_directory_for(c, a), "/stderr")
+
+# The bytes the intent records are the resolved operands themselves, so the recorded intent
+# carries the immutable candidate, basis and qualified target rather than caller content.
+def intent_content(candidate: String, basis: String, target: String) -> String:
+  +c = candidate
+  +b = basis
+  +t = target
+  Tx.str_cat(c, Tx.str_cat("\n", Tx.str_cat(b, Tx.str_cat("\n", Tx.str_cat(qualified_target(t), "\n")))))
+
 def zero_oid() -> String:
   "0000000000000000000000000000000000000000"
 
@@ -202,7 +223,7 @@ def Landing.publish_now(handle: U32, request: LandingRequest, candidate: String,
   +base = basis
   +intent = req.intent
   do IO<Landing>:
-    written : P.IntentPublish <- P.Intent.publish_intent(intent, req.attempt_directory, req.name, req.content)
+    written : P.IntentPublish <- P.Intent.publish_intent(intent, req.attempt_directory, req.name, intent_content(cand, base, intent_target(intent)))
     Landing.published(h, req, written)
 
 def Landing.decided(request: LandingRequest, claimed: Result<U32 & String, Maybe<U32>>) -> IO(Landing):
