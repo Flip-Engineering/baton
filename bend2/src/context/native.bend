@@ -315,17 +315,20 @@ def query_catalog_rows(db: String, binding: String, value: String,
       Req.json_tree_sql(value))
     query_catalog_rows_result(db, binding, request, result)
 
+def query_catalog_admitted(catalog: NativeCatalog.CatalogDecode) -> IO(Unit):
+  match catalog:
+    case NativeCatalog.CatalogRefused{condition}:
+      IO.die(Unit, 3, "catalog:" ++ condition)
+    case NativeCatalog.CatalogDecoded{catalog, inventory, installed}:
+      IO.die(Unit, 3, "ownerBoundProjectCaptureRequired")
+
 def query_catalog_decoded(catalog: NativeCatalog.CatalogDecode,
                           request: NativeRequest.RequestDecode) -> IO(Unit):
   match request:
     case NativeRequest.RequestDecodeRefused{condition}:
       IO.die(Unit, 3, "request:" ++ condition)
     case NativeRequest.RequestDecoded{canonical, operands, operation_chain, cwd, source_path}:
-      match catalog:
-        case NativeCatalog.CatalogRefused{condition}:
-          IO.die(Unit, 3, "catalog:" ++ condition)
-        case NativeCatalog.CatalogDecoded{catalog, inventory, installed}:
-          IO.die(Unit, 3, "ownerBoundProjectCaptureRequired")
+      query_catalog_admitted(catalog)
 
 def query_request_result(db: String, binding: String, owner: String, query: String,
                          path: String, result: NativeRequest.RequestDecode) -> IO(Unit):
