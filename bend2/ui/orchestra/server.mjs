@@ -85,8 +85,8 @@ function playerSnapshot(db, session) {
            (SELECT m.id FROM messages m WHERE m.sender = s.id AND m.kind = 'report' ORDER BY m.seq DESC LIMIT 1) AS latestReportId,
            (SELECT count(*) FROM messages m WHERE m.recipient = s.id AND m.receipt IS NULL) AS unacknowledgedCount,
            (SELECT count(*) FROM messages m WHERE m.recipient = s.id AND m.receipt IS NULL
-             AND NOT (EXISTS(SELECT 1 FROM session_stops stop WHERE stop.session = s.id)
-               AND m.kind IN ('task', 'guidance', 'recovery'))) AS pendingCount,
+             AND m.kind IN ('task', 'guidance', 'recovery')
+             AND NOT EXISTS(SELECT 1 FROM session_stops stop WHERE stop.session = s.id)) AS pendingCount,
            (SELECT json_group_array(e.id) FROM ensembles e WHERE e.owner = s.id) AS ownedEnsemblesJson,
            (SELECT json_group_array(em.ensemble) FROM ensemble_members em WHERE em.session = s.id) AS memberEnsemblesJson,
            (s.endpoint <> '') AS endpointRegistered

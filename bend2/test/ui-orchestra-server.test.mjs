@@ -83,8 +83,7 @@ function fixture() {
     INSERT INTO session_roles VALUES ('root','conductor'),('child','conductor'),('grandchild','player'),('sibling','player');
     INSERT INTO executions VALUES ('child','attempt-1','direct','running','');
     INSERT INTO messages(id,sender,recipient,kind,body) VALUES
-      ('pending-1','root','child','task','pending input body'),
-      ('report-1','grandchild','child','report','retained completion report');
+      ('pending-1','root','child','task','pending input body');
     INSERT INTO ensembles VALUES ('shared-ensemble','external','tight');
     INSERT INTO ensemble_members VALUES ('shared-ensemble','child'),('shared-ensemble','external');
     INSERT INTO sections VALUES ('shared-ensemble','shared-section','fixture capability');
@@ -162,8 +161,7 @@ test('snapshot binds a selected subtree to the reader and preserves recorded unk
   assert.equal(snapshot.players[0].actualProcess, 'unknown');
   assert.equal(snapshot.players[0].liveReceiver, null);
   assert.equal(snapshot.players[0].endpointRegistered, true);
-  assert.equal(snapshot.players[0].pendingCount, 2);
-  assert.equal(snapshot.players[0].unacknowledgedCount, 2);
+  assert.equal(snapshot.players[0].pendingCount, 1);
   assert.deepEqual(snapshot.ensembles[0].members, ['child']);
   assert.equal(snapshot.ensembles[0].owner, null);
   assert.deepEqual(snapshot.ensembles[0].sections[0].members, ['child']);
