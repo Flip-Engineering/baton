@@ -290,7 +290,7 @@ test('runControl retains process identity, completion time, output receipts, and
   assert.ok(source, 'the source tree contains a law producer');
   const control = { ...producerSet([source], [])[0], workToken: randomUUID() };
   const fakeCompiler = join(workspaceRoot, 'controlled-compiler');
-  writeFileSync(fakeCompiler, `#!${process.execPath}\nprocess.stdout.write("Error: 1 TODO found.\\nThe code is incomplete, and not a valid proof yet.\\n"); setTimeout(() => { process.exitCode = 1; }, 1500);\n`);
+  writeFileSync(fakeCompiler, `#!${process.execPath}\nconst stopAt = Date.now() + 1500; let usage = 0; let value = 1; while (Date.now() < stopAt) { usage += Math.sqrt(value); value = (value * 1.0001) % 10000; } process.stdout.write("Error: 1 TODO found.\\nThe code is incomplete, and not a valid proof yet.\\n"); process.exitCode = usage > 0 ? 1 : 2;\n`);
   chmodSync(fakeCompiler, 0o755);
   const sampler = createProcessGroupSampler({ intervalMs: 50 });
   try {
@@ -304,6 +304,7 @@ test('runControl retains process identity, completion time, output receipts, and
     assert.equal(result.passed, true);
     assert.ok(result.peakRssBytes > 0);
     assert.ok(result.peakProcessCount > 0);
+    assert.ok(result.peakCpuCores > 0, JSON.stringify(result));
     assert.equal(result.samplingError, null);
     assert.deepEqual(await verifyResults([control], [result]), []);
   } finally {
