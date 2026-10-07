@@ -241,6 +241,14 @@ def stage_adapters(payload):
             name = harness + '-' + suffix + '.mjs'
             shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
+    ui = directory / 'ui'
+    ui.mkdir()
+    for name in ('server.mjs', 'index.html', 'styles.css', 'app.js'):
+        shutil.copyfile(ROOT / 'bend2/ui/orchestra' / name, ui / name)
+    fixtures = ui / 'fixtures'
+    fixtures.mkdir()
+    for name in ('fixture-small.json', 'fixture-dense.json', 'fixture-gap.json'):
+        shutil.copyfile(ROOT / 'bend2/ui/orchestra/fixtures' / name, fixtures / name)
 
 
 def stage_notices(payload, archive_notices, kind='development'):
