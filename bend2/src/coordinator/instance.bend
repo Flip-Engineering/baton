@@ -24,11 +24,6 @@ type Event is Data:
   Gap{}
   Closed{}
 
-# Loop state travels as one value so event handlers take a single affine
-# continuation back into the drive below.
-type Loop is Data:
-  LoopState{failed: Bool, flying: List<String>, refused: List<String>}
-
 # The fixed coordinator role tag: one constant 64-hex digest, independent of
 # the database path, the query subject and the owner epoch. The lock file also
 # names the physical device, file and birth tuple, so hard-link aliases of one
@@ -261,23 +256,23 @@ def refuse_each(pairs: List<(String & String)>, refused: List<String>) -> IO(Lis
       logged : Unit <- IO.write("serve-refused " ++ session ++ " " ++ harness ++ ": this loop serves Codex and OMP sessions through receive; serve " ++ harness ++ " sessions with dispatch-turn.\n")
       refuse_each(rest, Con{session, refused})
 
-def fork_split(+db: String, +chan: Chan(Event), split: List<(String & String)> & List<(String & String)>, flying: List<String>, refused: List<String>, failed: Bool) -> IO(Loop):
+def fork_split(+db: String, +chan: Chan(Event), split: List<(String & String)> & List<(String & String)>, flying: List<String>, refused: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match split:
-    case (fork, refuse): do IO<Loop>:
+    case (fork, refuse): do IO<Result<&1,&1,U32 & String,Unit>>:
       flying_now : List<String> <- fork_each(db, chan, fork, flying)
       refused_now : List<String> <- refuse_each(refuse, refused)
-      IO.pure(Loop, LoopState{failed, flying_now, refused_now})
+      again(failed, flying_now, refused_now)
 
-def fork_stripped2(+db: String, +chan: Chan(Event), stripped2: List<(String & String)> & List<String>, flying: List<String>, failed: Bool) -> IO(Loop):
+def fork_stripped2(+db: String, +chan: Chan(Event), stripped2: List<(String & String)> & List<String>, flying: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match stripped2:
-    case (fresh2, refused): fork_split(db, chan, partition(fresh2), flying, refused, failed)
+    case (fresh2, refused): fork_split(db, chan, partition(fresh2), flying, refused, failed, again)
 
-def fork_stripped(+db: String, +chan: Chan(Event), stripped1: List<(String & String)> & List<String>, refused: List<String>, failed: Bool) -> IO(Loop):
+def fork_stripped(+db: String, +chan: Chan(Event), stripped1: List<(String & String)> & List<String>, refused: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match stripped1:
-    case (fresh1, flying): fork_stripped2(db, chan, strip_known(fresh1, refused), flying, failed)
+    case (fresh1, flying): fork_stripped2(db, chan, strip_known(fresh1, refused), flying, failed, again)
 
-def fork_new(+db: String, +chan: Chan(Event), pairs: List<(String & String)>, flying: List<String>, refused: List<String>, failed: Bool) -> IO(Loop):
-  fork_stripped(db, chan, strip_known(pairs, flying), refused, failed)
+def fork_new(+db: String, +chan: Chan(Event), pairs: List<(String & String)>, flying: List<String>, refused: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  fork_stripped(db, chan, strip_known(pairs, flying), refused, failed, again)
 
 def kept(result: Result<&1,&1,U32 & String,Unit>, failed: Bool) -> IO(Bool):
   match result:
@@ -307,46 +302,40 @@ def close_guarded(handle: U32, guard: U32, failed: Bool) -> IO(Result<&1,&1,U32 
 # and replay the same full snapshot. Closed releases the coordinator role,
 # closes the subscription and exits carrying the swept status.
 @unsafe
-def on_event(+db: String, handle: U32, guard: U32, +chan: Chan(Event), event: Event, failed: Bool, flying: List<String>, refused: List<String>, again: Loop -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def on_event(+db: String, handle: U32, guard: U32, +chan: Chan(Event), event: Event, failed: Bool, flying: List<String>, refused: List<String>, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match event:
     case TaskDone{session, ok}: do IO<Result<&1,&1,U32 & String,Unit>>:
       failed_now : Bool <- note_task(failed, ok)
       fresh : List<(String & String)> <- snapshot(db)
-      next : Loop <- fork_new(db, chan, fresh, without_id(flying, session), refused, failed_now)
-      again(next)
+      fork_new(db, chan, fresh, without_id(flying, session), refused, failed_now, again)
     case Commit{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       waiter_task : Chan(Event) <- IO.fork(Event, waiter(db, handle, chan))
       dropped : Unit <- drop_chan(waiter_task)
       fresh : List<(String & String)> <- snapshot(db)
-      next : Loop <- fork_new(db, chan, fresh, flying, Nil{}, failed)
-      again(next)
+      fork_new(db, chan, fresh, flying, Nil{}, failed, again)
     case Gap{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       waiter_task : Chan(Event) <- IO.fork(Event, waiter(db, handle, chan))
       dropped : Unit <- drop_chan(waiter_task)
       fresh : List<(String & String)> <- snapshot(db)
-      next : Loop <- fork_new(db, chan, fresh, flying, Nil{}, failed)
-      again(next)
+      fork_new(db, chan, fresh, flying, Nil{}, failed, again)
     case Closed{}: close_guarded(handle, guard, failed)
 
-def open_state(+db: String, handle: U32, guard: U32, +chan: Chan(Event), event: Event, state: Loop, again: Loop -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match state:
-    case LoopState{failed, flying, refused}: on_event(db, handle, guard, chan, event, failed, flying, refused, again)
-
-def dispatch_maybe(db: String, handle: U32, guard: U32, chan: Chan(Event), state: Loop, event: Maybe<&1,Event>, again: Loop -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def dispatch_maybe(db: String, handle: U32, guard: U32, chan: Chan(Event), failed: Bool, flying: List<String>, refused: List<String>, event: Maybe<&1,Event>, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match event:
     case None{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       logged : Unit <- IO.write("The serve event channel closed; the serve exits.\n")
       close_guarded(handle, guard, True{})
-    case Some{ev}: open_state(db, handle, guard, chan, ev, state, again)
+    case Some{ev}: on_event(db, handle, guard, chan, ev, failed, flying, refused, again)
 
 # The main loop blocks only on the shared event channel. The drive itself is
 # the only self-recursive definition; every handler above is ordered before
-# its callers and takes the loop state back through one affine continuation.
+# its callers and the loop state travels as three separate values through one
+# affine continuation.
 @unsafe
-def drive(+db: String, +handle: U32, +guard: U32, +chan: Chan(Event), state: Loop) -> IO(Result<&1,&1,U32 & String,Unit>):
+def drive(+db: String, +handle: U32, +guard: U32, +chan: Chan(Event), failed: Bool, flying: List<String>, refused: List<String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     event : Maybe<&1,Event> <- Chan.recv(Event, chan)
-    dispatch_maybe(db, handle, guard, chan, state, event, next => drive(db, handle, guard, chan, next))
+    dispatch_maybe(db, handle, guard, chan, failed, flying, refused, event, failed_next => flying_next => refused_next => drive(db, handle, guard, chan, failed_next, flying_next, refused_next))
 
 def arm(db: String, handle: U32, chan: Chan(Event)) -> IO(Unit):
   do IO<Unit>:
@@ -356,8 +345,7 @@ def arm(db: String, handle: U32, chan: Chan(Event)) -> IO(Unit):
 def drive_new(+db: String, +handle: U32, guard: U32, +chan: Chan(Event), failed: Bool, pairs: List<(String & String)>) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     armed : Unit <- arm(db, handle, chan)
-    next : Loop <- fork_new(db, chan, pairs, Nil{}, Nil{}, failed)
-    drive(db, handle, guard, chan, next)
+    fork_new(db, chan, pairs, Nil{}, Nil{}, failed, failed_next => flying_next => refused_next => drive(db, handle, guard, chan, failed_next, flying_next, refused_next))
 
 def admitted(+db: String, guard: U32, subscribed: Result<&1,&1,U32 & String,U32 & String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match subscribed:
