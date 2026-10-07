@@ -12,29 +12,34 @@
 # failure, two failures both survive, and a release failure is never retagged as an effect
 # failure that would invite a replay of an effect that already ran.
 import Base
+import ./types.bend as T
 import ./process.bend as P
 import ../host/receipt.bend as R
 
 type AttemptCapture is Data:
-  AttemptClaimFailed{error: U32 & String}
+  AttemptClaimFailed{error: T.HostError}
   AttemptClaimBusy{target: String}
-  AttemptCaptured{observed: Result<&1,&1,U32 & String,String & String>, released: Result<&1, &1, U32 & String, Unit>}
+  AttemptCaptured{observed: T.CapturedRaw, released: T.ReleaseRaw}
 
 # The chain, leaf first. The release is attempted only where a handle exists.
 def Attempt.under_claim(handle: U32, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
   do IO<AttemptCapture>:
     observed : Result<&1,&1,U32 & String,String & String> <- P.Process.capture_holding(argv, cwd, handle, guard, artifact)
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(handle)
-    IO.pure(AttemptCapture, AttemptCaptured{observed, released})
+    IO.pure(AttemptCapture, AttemptCaptured{T.captured_raw_of(observed), T.release_raw_of(released)})
 
 def Attempt.held(held: Maybe<U32>, target: String, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
   match held:
     case None{}: IO.pure(AttemptCapture, AttemptClaimBusy{target})
     case Some{handle}: Attempt.under_claim(handle, guard, artifact, argv, cwd)
 
+def Attempt.claim_failed(error: U32 & String) -> IO(AttemptCapture):
+  match error:
+    case (code, detail): IO.pure(AttemptCapture, AttemptClaimFailed{T.HostError{code, detail}})
+
 def Attempt.claimed(claimed: Result<&1, &1, U32 & String, Maybe<U32>>, target: String, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
   match claimed:
-    case Fail{error}: IO.pure(AttemptCapture, AttemptClaimFailed{error})
+    case Fail{error}: Attempt.claim_failed(error)
     case Done{held}: Attempt.held(held, target, guard, artifact, argv, cwd)
 
 def Attempt.capture_guarded(common: String, target: String, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
@@ -46,15 +51,14 @@ def Attempt.capture_guarded(common: String, target: String, guard: String, artif
 # API form with the IO expression it stands for: they state which branch runs no effect at
 # all, and that the capture runs the release after the effect and keeps both results.
 law a_failed_claim_runs_no_capture:
-  for error: U32 & String
   for target: String
   for guard: String
   for artifact: String
   for argv: String
   for cwd: String
-  {Attempt.claimed(Fail{error}, target, guard, artifact, argv, cwd) == IO.pure(AttemptCapture, AttemptClaimFailed{error}) : IO(AttemptCapture)}
+  {Attempt.claimed(Fail{(13, "i/o error")}, target, guard, artifact, argv, cwd) == IO.pure(AttemptCapture, AttemptClaimFailed{T.HostError{13, "i/o error"}}) : IO(AttemptCapture)}
 
-def a_failed_claim_runs_no_capture(error,target,guard,artifact,argv,cwd):
+def a_failed_claim_runs_no_capture(target,guard,artifact,argv,cwd):
   {==}
 
 law a_busy_guard_runs_no_capture:
@@ -77,7 +81,7 @@ law the_capture_attempts_the_release_after_the_effect_and_keeps_both:
   {Attempt.under_claim(handle, guard, artifact, argv, cwd) == (do IO<AttemptCapture>:
     observed : Result<&1,&1,U32 & String,String & String> <- P.Process.capture_holding(argv, cwd, handle, guard, artifact)
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(handle)
-    IO.pure(AttemptCapture, AttemptCaptured{observed, released})) : IO(AttemptCapture)}
+    IO.pure(AttemptCapture, AttemptCaptured{T.captured_raw_of(observed), T.release_raw_of(released)})) : IO(AttemptCapture)}
 
 def the_capture_attempts_the_release_after_the_effect_and_keeps_both(handle,guard,artifact,argv,cwd):
   {==}

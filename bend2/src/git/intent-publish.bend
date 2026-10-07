@@ -432,7 +432,7 @@ def a_mismatched_read_back_is_reported_with_both_sides(request):
 
 law a_readback_failure_keeps_the_publication_observation:
   for request: I.IntentInput
-  {Intent.read_back_seen(request, "published\t/d/n\t0\t\t0\t", "/d/n", "wanted", Fail{(2, "no such file")}) == IO.pure(IntentPublish, PublishReadbackFailed{request, "published\t/d/n\t0\t\t0\t", "/d/n", (2, "no such file")}) : IO(IntentPublish)}
+  {Intent.read_back_seen(request, "published\t/d/n\t0\t\t0\t", "/d/n", "wanted", Fail{(2, "no such file")}) == IO.pure(IntentPublish, PublishReadbackFailed{request, "published\t/d/n\t0\t\t0\t", "/d/n", T.HostError{2, "no such file"}}) : IO(IntentPublish)}
 
 def a_readback_failure_keeps_the_publication_observation(request):
   {==}

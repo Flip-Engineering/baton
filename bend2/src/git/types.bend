@@ -25,7 +25,7 @@ type CapturedRaw is Data:
   CapturedFailed{code: U32, detail: String}
   CapturedDone{framing: String, diagnostics: String}
 
-def CapturedRaw.of(host: Result<&1, &1, U32 & String, String & String>) -> CapturedRaw:
+def captured_raw_of(host: Result<&1, &1, U32 & String, String & String>) -> CapturedRaw:
   match host:
     case Fail{error}:
       match error:
@@ -40,7 +40,7 @@ type ReleaseRaw is Data:
   ReleaseFailed{code: U32, detail: String}
   ReleaseDone{}
 
-def ReleaseRaw.of(host: Result<&1, &1, U32 & String, Unit>) -> ReleaseRaw:
+def release_raw_of(host: Result<&1, &1, U32 & String, Unit>) -> ReleaseRaw:
   match host:
     case Fail{error}:
       match error:
