@@ -239,6 +239,11 @@ Semantics:
 - A notice whose bytes are still in flight is replaced by the newer notice,
   because the payload is the cursor alone and the subscriber rereads to the
   cursor it is told.
+- An owner publishes its record after it binds its listener, so a client can
+  reach a new owner while it still reads the previous incarnation's record. Every
+  database-level request and the subscription repeat the record read and the
+  exchange while the answer reports a stale incarnation, and report `ESTALE` only
+  when the record stays stale across the bound.
 
 Bend boundary in `instance.bend`:
 
