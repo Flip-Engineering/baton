@@ -478,7 +478,12 @@ class SharedInstance(unittest.TestCase):
         self.assertNotEqual(second.returncode, 0,
                             'different work in the same attempt directory must be refused')
         self.assertIn('File exists', second.stderr.read())
-        print('evidence conflicting-reuse refused')
+        # A refusal must never remove the custody that already exists.
+        for name in ('manifest', 'stdout', 'native.birth', 'native.pid'):
+            self.assertTrue((directory / name).exists(),
+                            f'the refusal removed {name} from the existing attempt')
+        self.assertEqual((directory / 'stdout').read_text(errors='replace').count('"role": "native"'), 1)
+        print('evidence conflicting-reuse refused with custody preserved')
         child.kill()
         child.wait(timeout=10)
 
