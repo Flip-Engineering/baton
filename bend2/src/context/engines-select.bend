@@ -345,20 +345,20 @@ type SelOutcome is Data:
 def sel_explicit_state(+s: ExState, +explicit: String,
                        +common: String) -> SelOutcome:
   match s:
-    case ExAbsent{}: SelRefused{reason: SelExplicitUnknown{explicit}}
-    case ExDisabled{}: SelRefused{reason: SelExplicitDisabled{explicit}}
-    case ExIncompatible{}: SelRefused{reason: SelExplicitIncompatible{explicit}}
+    case ExAbsent{}: SelRefused{SelExplicitUnknown{explicit}}
+    case ExDisabled{}: SelRefused{SelExplicitDisabled{explicit}}
+    case ExIncompatible{}: SelRefused{SelExplicitIncompatible{explicit}}
     case ExWrongOperation{}:
-      SelRefused{reason: SelExplicitWrongOperation{explicit, common}}
+      SelRefused{SelExplicitWrongOperation{explicit, common}}
     case ExPresent{cand}:
-      SelChosen{candidates: Eng.ss_one(explicit), chosen: cand}
+      SelChosen{Eng.ss_one(explicit), cand}
 
 # A singular chain selects its only member; an empty chain refuses; anything
 # longer is the explicit ambiguity the specification requires.
 def sel_only(+cs: Cands, +subject: String) -> SelOutcome:
   match cs:
-    case CandsNil{}: SelRefused{reason: SelNoCandidate{subject}}
-    case CandsCons{h, r}: SelChosen{candidates: cand_ids(cs), chosen: h}
+    case CandsNil{}: SelRefused{SelNoCandidate{subject}}
+    case CandsCons{h, r}: SelChosen{cand_ids(cs), h}
 
 # A singular candidate chain selects its only member, an empty one refuses, and
 # anything longer is the explicit ambiguity the specification requires. The chain
@@ -369,8 +369,8 @@ def sel_ordinary(+cat: Decl.Cat, +inputs: SelInputs, +inv: Decl.Inv,
   +ord = ordinary_cands(cat, inputs, inv, common)
   Bool.pick(SelOutcome, cands_singular(ord), sel_only(ord, subject),
     Bool.pick(SelOutcome, cands_nonempty(ord),
-              SelRefused{reason: SelAmbiguous{candidates: cand_ids(ord)}},
-              SelRefused{reason: SelNoCandidate{subject}}))
+              SelRefused{SelAmbiguous{cand_ids(ord)}},
+              SelRefused{SelNoCandidate{subject}}))
 
 # The configured preference is applied first: a unique preferred candidate wins,
 # several preferred candidates are the ambiguity, and with none preferred the
@@ -380,7 +380,7 @@ def sel_preferred(+cat: Decl.Cat, +inputs: SelInputs, +inv: Decl.Inv,
   +pref = preferred_cands(cat, inputs, inv, common)
   Bool.pick(SelOutcome, cands_singular(pref), sel_only(pref, subject),
     Bool.pick(SelOutcome, cands_nonempty(pref),
-              SelRefused{reason: SelAmbiguous{candidates: cand_ids(pref)}},
+              SelRefused{SelAmbiguous{cand_ids(pref)}},
               sel_ordinary(cat, inputs, inv, subject, common)))
 
 def select_known(+known: Bool, +cat: Decl.Cat, +inputs: SelInputs,
@@ -392,7 +392,7 @@ def select_known(+known: Bool, +cat: Decl.Cat, +inputs: SelInputs,
               sel_explicit_state(
                 explicit_state(cat, inputs, inv, explicit, common), explicit,
                 common)),
-    SelRefused{reason: SelUnknownCommonOperation{common}})
+    SelRefused{SelUnknownCommonOperation{common}})
 
 # One entry point. A request names its common operation and, when a caller
 # selected one explicitly, the module; auto records the inputs and the
@@ -821,7 +821,7 @@ def plan_pending_next(+in_path: Bool, +head: Pending, +rest: Pendings,
 def plan_walk_next(+in_path: Bool, +head: Pending, +cat: Decl.Cat,
                    +inv: Decl.Inv, +w: Walk) -> Walk:
   Bool.pick(Walk, in_path,
-    walk_fail(w, PfAt{PlanCycle{module_id: pending_module(head)}}),
+    walk_fail(w, PfAt{PlanCycle{pending_module(head)}}),
     walk_fail(walk_add(w, head),
               resolved_failure_of(
                 resolve_edges(Decl.op_dependencies(pending_op(head)),
@@ -853,7 +853,7 @@ def plan_finish(+w: Walk, +primary: MBind, +common: String, +available: Bool,
       match failure:
         case PfAt{reason}: PlanRefused{reason}
         case PfNone{}:
-          PlanFrozen{plan: Plan{primary, common, steps,
+          PlanFrozen{Plan{primary, common, steps,
                                 Eng.union_add(declared,
                                               Eng.effects_union(commons)),
                                 captures, available}}
@@ -871,16 +871,16 @@ def freeze_op(+decl: Decl.Decl, +ost: OpState, +cand: Cand, +cat: Decl.Cat,
               +inv: Decl.Inv, +captures: Captures) -> PlanOutcome:
   match ost:
     case OpNone{}:
-      PlanRefused{reason: PlanMissingOperation{module_id: cand_module(cand),
-                                               operation: cand_operation(cand)}}
+      PlanRefused{PlanMissingOperation{cand_module(cand),
+                                       cand_operation(cand)}}
     case OpFound{op}:
       freeze_primary(decl, op, cand, cat, inv, captures)
 
 def freeze_state(+m: MatchState, +cand: Cand, +cat: Decl.Cat, +inv: Decl.Inv,
                  +captures: Captures) -> PlanOutcome:
   match m:
-    case MsNone{}: PlanRefused{reason: PlanStaleSelection{cand_module(cand)}}
-    case MsStale{}: PlanRefused{reason: PlanStaleSelection{cand_module(cand)}}
+    case MsNone{}: PlanRefused{PlanStaleSelection{cand_module(cand)}}
+    case MsStale{}: PlanRefused{PlanStaleSelection{cand_module(cand)}}
     case MsFound{+decl}:
       freeze_op(decl,
                 ops_lookup(Decl.decl_operations(decl), cand_operation(cand)),

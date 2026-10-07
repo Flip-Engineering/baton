@@ -252,7 +252,7 @@ def cat_conflict(+cat: Cat, +want_module: String, +want_package: String,
 def check_identifiers(+module_id: String, +package_identity: String,
                       +revision: String, +cat: Cat) -> Chk:
   then_chk(bool_chk(Bool.not(String.is_empty(module_id)),
-                    DrEmptyId{what: "module"}),
+                    DrEmptyId{"module"}),
            bool_chk(Bool.not(cat_conflict(cat, module_id, package_identity,
                                           revision)),
                     DrConflictingId{module_id, package_identity}))
@@ -268,9 +268,9 @@ def check_declaration_digest(+module_id: String, +inv: Inv) -> Chk:
 def check_artifact_digest(+module_id: String, +path: String, +want: String,
                           +saw: String) -> Chk:
   Bool.pick(Chk, String.is_empty(saw),
-    ChkFail{reason: DrMissingArtifact{module_id, path}},
+    ChkFail{DrMissingArtifact{module_id, path}},
     Bool.pick(Chk, String.eq(want, saw), ChkOk{},
-              ChkFail{reason: DrArtifactMismatch{module_id, path, want, saw}}))
+              ChkFail{DrArtifactMismatch{module_id, path, want, saw}}))
 
 def check_artifact(+module_id: String, +art: Art, +inv: Inv) -> Chk:
   match inv:
@@ -293,7 +293,7 @@ def check_entry(+module_id: String, +entry: Entry, +inv: Inv) -> Chk:
     case ENative{artifact, export_identity}:
       then_chk(check_artifact(module_id, artifact, inv),
                bool_chk(Bool.not(String.is_empty(export_identity)),
-                        DrEmptyId{what: "entry export identity"}))
+                        DrEmptyId{"entry export identity"}))
     case EProcess{artifact, argv}:
       then_chk(check_artifact(module_id, artifact, inv),
                bool_chk(Eng.ss_nonempty(argv), DrEmptyEntryVector{}))
@@ -302,7 +302,7 @@ def check_entry(+module_id: String, +entry: Entry, +inv: Inv) -> Chk:
 def check_schema(+module_id: String, +operation: String, +schema: String,
                  +schemas: SS) -> Chk:
   Bool.pick(Chk, Eng.ss_member(schemas, schema), ChkOk{},
-            ChkFail{reason: DrMissingSchema{module_id, operation, schema}})
+            ChkFail{DrMissingSchema{module_id, operation, schema}})
 
 def check_schemas(+module_id: String, +operation: String, +subject: String,
                   +options: String, +result: String, +reference: String,
@@ -353,7 +353,7 @@ def check_one_operation(+module_id: String, +op: Op, +remaining: Ops,
             projections, effects, execution, result_schema, reference_schema,
             event_schema, lifetime_profile, dependencies}:
       then_chk(bool_chk(Bool.not(String.is_empty(operation)),
-                        DrEmptyId{what: "operation"}),
+                        DrEmptyId{"operation"}),
       then_chk(bool_chk(Bool.not(operations_have(remaining, operation)),
                         DrDuplicateOperation{module_id, operation}),
       then_chk(bool_chk(Eng.operation_known(implements_operation),
@@ -376,9 +376,9 @@ def check_operations(+module_id: String, +ops: Ops, +inv: Inv) -> Chk:
 def check_edge_compare(+module_id: String, +operation: String,
                        +dependency: String, +want: String, +saw: String) -> Chk:
   Bool.pick(Chk, String.is_empty(saw),
-    ChkFail{reason: DrDependencyUnresolved{module_id, operation, dependency}},
+    ChkFail{DrDependencyUnresolved{module_id, operation, dependency}},
     Bool.pick(Chk, String.eq(want, saw), ChkOk{},
-      ChkFail{reason: DrDependencyDigestMismatch{module_id, dependency, want,
+      ChkFail{DrDependencyDigestMismatch{module_id, dependency, want,
                                                  saw}}))
 
 def check_edge_digest(+module_id: String, +operation: String,
@@ -394,7 +394,7 @@ def check_edge(+module_id: String, +operation: String, +edge: ModRef,
     case ModRef{+dependency_module, declaration_digest, dependency_operation}:
       then_chk(bool_chk(Bool.and(Bool.not(String.is_empty(dependency_module)),
                                  Bool.not(String.is_empty(dependency_operation))),
-                        DrEmptyId{what: "dependency"}),
+                        DrEmptyId{"dependency"}),
                check_edge_digest(module_id, operation, dependency_module,
                                  declaration_digest, inv))
 
@@ -613,7 +613,7 @@ def cat_record(+fail: CatFail, +o: DeclOutcome, +head: Decl) -> CatFail:
 def cat_finish(+fail: CatFail, +acc: Cat) -> CatOutcome:
   match fail:
     case CfAt{module_id, reason}: CatRefused{module_id, reason}
-    case CfNone{}: CatAdmitted{admitted: cat_rev(acc)}
+    case CfNone{}: CatAdmitted{cat_rev(acc)}
 
 def admit_catalog_walk(+remaining: Cat, +context: Cat, +inv: Inv, +acc: Cat,
                        +fail: CatFail) -> CatOutcome:
