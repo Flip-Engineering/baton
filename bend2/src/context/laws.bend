@@ -1317,7 +1317,7 @@ def an_absent_association_row_carrying_a_value_is_malformed():
   {==}
 
 law a_stored_association_row_with_odd_framing_is_malformed:
-  {ContextAdmit.association_decode("present\t706c61\t6964\t736368656d61\n") == ContextAdmit.AssociationMalformed{"framing","present\t706c61\t6964\t736368656d61\n"} : ContextAdmit.Association}
+  {ContextAdmit.association_decode("present\t706c6\t6964\t736368656d61\n") == ContextAdmit.AssociationMalformed{"framing","present\t706c6\t6964\t736368656d61\n"} : ContextAdmit.Association}
 
 def a_stored_association_row_with_odd_framing_is_malformed():
   {==}
