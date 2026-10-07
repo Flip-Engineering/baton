@@ -337,7 +337,7 @@ export async function verifyResults(expected, results) {
 }
 
 export function concurrencyFor({ cpuCapacity, cpuLoadAverage = 0, memoryAvailableBytes, memoryEstimateBytes, runnerCapacity }) {
-  const configuredCapacity = Number.isInteger(runnerCapacity) && runnerCapacity > 0 ? runnerCapacity : Infinity;
+  const configuredCapacity = Number.isInteger(runnerCapacity) && runnerCapacity > 0 ? runnerCapacity : cpuCapacity;
   const cpuAvailableCapacity = Math.max(1, Math.floor(cpuCapacity - Math.min(Math.max(0, cpuLoadAverage), Math.max(0, cpuCapacity - 1))));
   const memoryCapacity = Math.floor(memoryAvailableBytes / Math.max(memoryEstimateBytes, 1));
   return {
@@ -349,7 +349,8 @@ export function concurrencyFor({ cpuCapacity, cpuLoadAverage = 0, memoryAvailabl
     memoryEstimateBytes,
     memoryCapacity,
     totalMemoryBytes: totalmem(),
-    runnerCapacity: Number.isFinite(configuredCapacity) ? configuredCapacity : null,
+    runnerCapacity: configuredCapacity,
+    runnerCapacitySource: Number.isInteger(runnerCapacity) && runnerCapacity > 0 ? 'configured' : 'available CPU capacity',
   };
 }
 

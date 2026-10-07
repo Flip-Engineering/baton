@@ -171,10 +171,13 @@ test('admission uses CPU, available memory, and runner capacity', () => {
     memoryEstimateBytes: 1024,
     runnerCapacity: 20,
   }).admitted, 20);
-  assert.equal(concurrencyFor({
+  const loadLimited = concurrencyFor({
     cpuCapacity: 32,
     cpuLoadAverage: 4,
     memoryAvailableBytes: 64 * 1024,
     memoryEstimateBytes: 1024,
-  }).admitted, 28);
+  });
+  assert.equal(loadLimited.admitted, 28);
+  assert.equal(loadLimited.runnerCapacity, 32);
+  assert.equal(loadLimited.runnerCapacitySource, 'available CPU capacity');
 });
