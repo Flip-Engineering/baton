@@ -79,7 +79,7 @@ def declaration_object() -> J.Json:
   NativeDeclarationLaws.obj_pair("dependencies", NativeDeclarationLaws.empty_array(),
   NativeDeclarationLaws.obj_pair("schemaIdentities", J.Jarr{J.Jstr{"sub"}, J.Jarr{J.Jstr{"opt"}, J.Jarr{J.Jstr{"res"}, J.Jarr{J.Jstr{"ref"}, J.Jarr{J.Jstr{"evt"}, J.Jnil{}}}}}},
   NativeDeclarationLaws.obj_pair("applicability", NativeDeclarationLaws.empty_array(),
-  NativeDeclarationLaws.obj_pair("operations", J.Jarr{declaration_operation_object(), J.Jnil{}}, J.Jnil{}))))))))))
+  NativeDeclarationLaws.obj_pair("operations", J.Jarr{declaration_operation_object(), J.Jnil{}}, J.Jnil{}))))))))))))
 
 def expected_declaration() -> Decl.Decl:
   Decl.Decl{"1", "m1", "r1", "2", "pkg-m1",
