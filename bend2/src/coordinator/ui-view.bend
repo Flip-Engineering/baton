@@ -40,11 +40,15 @@ def directory_of_a_bare_name_is_empty():
 
 # Installed payload first, source checkout second, matching Control.identity.
 # Bend binds names in order, so resolution is unrolled over the two candidates.
-def candidate_paths(dir: Maybe<String>) -> String & String:
+def installed_candidate(dir: Maybe<String>) -> String:
   match dir:
-    case None{}: ("","")
-    case Some{+parent}:
-      (parent ++ "/../libexec/baton2/ui/server.mjs",parent ++ "/../../bend2/ui/orchestra/server.mjs")
+    case None{}: ""
+    case Some{+parent}: parent ++ "/../libexec/baton2/ui/server.mjs"
+
+def source_candidate(dir: Maybe<String>) -> String:
+  match dir:
+    case None{}: ""
+    case Some{+parent}: parent ++ "/../../bend2/ui/orchestra/server.mjs"
 
 def resolve_source(source: Result<&1,&1,U32 & String,String>) -> IO(String):
   match source:
@@ -59,8 +63,8 @@ def resolve_choice(installed: Result<&1,&1,U32 & String,String>, source: Result<
 
 def resolve_server(executable: String) -> IO(String):
   do IO<String>:
-    paths : String & String <- IO.pure(String & String,candidate_paths(directory_of(executable)))
-    (installed_path,source_path) = paths
+    installed_path : String <- IO.pure(String,installed_candidate(directory_of(executable)))
+    source_path : String <- IO.pure(String,source_candidate(directory_of(executable)))
     installed : Result<&1,&1,U32 & String,String> <- Host.Control.command(installed_path)
     source : Result<&1,&1,U32 & String,String> <- Host.Control.command(source_path)
     resolve_choice(installed,source)
