@@ -100,6 +100,7 @@ def operation(name: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit)
     case Done{unit}: IO.print(name ++ "-ok")
     case Fail{(code,text)}: IO.print(name ++ "-failed:" ++ U32.show(code) ++ ": " ++ text)
 
+@unsafe
 def recovery_complete_lines(+handle: U32, line: Maybe<String>) -> IO(Unit):
   match line:
     case None{}: do IO<Unit>:
