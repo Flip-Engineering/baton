@@ -19,7 +19,7 @@ type ReportOutcome is Data:
 # strict admission, retained for the shared handoff, or terminally stopped.
 type ReportRouting is Data:
   Accepted{}
-  Refused{}
+  Ineligible{}
   Retained{}
   Stopped{}
 
@@ -36,7 +36,7 @@ def report_routing(mode: String, kind: String, stop_state: String) -> ReportRout
 # invocation, exactly as the projection's kind-equals-report predicate does today.
 def report_routing_strict(kind: String, running: Bool) -> ReportRouting:
   match String.eq(kind,"report"):
-    case False{}: Refused{}
+    case False{}: Ineligible{}
     case True{}: report_routing_handoff(running)
 
 # An ordinary admission accepts every unstopped row, retains a stopped report or
@@ -409,7 +409,7 @@ def report_receipt(+db: String, +requested: String, +selected: String, mode: Str
 def report_pending(+db: String, +requested: String, +id: String, +recipient: String, +kind: String, +stop_state: String, state: String, +payload: String, mode: String) -> IO(ReportOutcome):
   match report_routing(mode,kind,stop_state):
     case Accepted{}: report_endpoint(db,requested,id,recipient,state,payload)
-    case Refused{}: report_selected_failed(requested,id,"","report-ineligible","The message is not an eligible retained report; its input is retained.")
+    case Ineligible{}: report_selected_failed(requested,id,"","report-ineligible","The message is not an eligible retained report; its input is retained.")
     case Retained{}: report_handoff_admit(db,requested,id)
     case Stopped{}: report_selected_failed(requested,id,recipient,"terminally-stopped","Session is terminally stopped; the retained input will not execute. Inspect its session and inbox.")
 

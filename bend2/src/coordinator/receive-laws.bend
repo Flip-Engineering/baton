@@ -723,7 +723,7 @@ def stopped_pending_malformed_endpoint_reaches_handoff(db,id):
 # stops a stopped row of every other kind, and it accepts every unstopped row.
 # Each family carries its own negative control, which asserts the rival route.
 law strict_routing_refuses_a_non_report_kind:
-  {Delivery.report_routing("strict","message","") == Delivery.Refused{} : Delivery.ReportRouting}
+  {Delivery.report_routing("strict","message","") == Delivery.Ineligible{} : Delivery.ReportRouting}
 
 def strict_routing_refuses_a_non_report_kind():
   {==}
@@ -747,7 +747,7 @@ def strict_routing_retains_a_stopped_report_for_any_kind():
   {==}
 
 law strict_routing_refuses_a_stopped_non_report_kind:
-  {Delivery.report_routing("strict","message","stopped") == Delivery.Refused{} : Delivery.ReportRouting}
+  {Delivery.report_routing("strict","message","stopped") == Delivery.Ineligible{} : Delivery.ReportRouting}
 
 def strict_routing_refuses_a_stopped_non_report_kind():
   {==}
