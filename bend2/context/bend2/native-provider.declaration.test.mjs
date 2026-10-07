@@ -270,6 +270,8 @@ function collectRefs(form, into) {
   }
 }
 
+export { checkDeclarationShape, checkOperationShape, checkArtifactRow, checkAsset, checkForm };
+
 function loadDeclaration() {
   return readJson(DECLARATION_PATH);
 }
