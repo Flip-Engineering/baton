@@ -7,11 +7,16 @@ import ./request.bend as Req
 import ./codec.bend as Codec
 import ./engines.bend as Eng
 import ./engines-decl.bend as Decl
+import ./engines-select.bend as Sel
 import ./native-declaration.bend as NativeDecl
 
 type CatalogDecode is Data:
   CatalogDecoded{catalog: Decl.Cat, inventory: Decl.Inv, installed: Eng.SS}
   CatalogRefused{condition: String}
+
+type CatalogSelection is Data:
+  CatalogSelected{verdict: Sel.Verdict}
+  CatalogSelectionRefused{condition: String}
 
 def member_value(found: Maybe<&2, J.Json>) -> J.Json:
   match found:
@@ -119,3 +124,18 @@ def inventory_convert(converted: Codec.JsonConv) -> CatalogDecode:
 
 def inventory_raw(+raw: Codec.RawValue) -> CatalogDecode:
   inventory_convert(Codec.raw_to_json(raw))
+
+def inventory_frame(frame: Codec.FrameRead) -> CatalogDecode:
+  match frame:
+    case Codec.FrRefused{condition}: CatalogRefused{"providerInventoryRows:" ++ condition}
+    case Codec.FrValue{+value}: inventory_raw(value)
+
+def inventory_rows(+rows: String) -> CatalogDecode:
+  inventory_frame(Codec.frame_read(Req.parse_rows(rows)))
+
+def select(+catalog: CatalogDecode, +operands: Sel.RequestOperands,
+           +project: Sel.ProjectState, +captures: Sel.Captures) -> CatalogSelection:
+  match catalog:
+    case CatalogRefused{condition}: CatalogSelectionRefused{condition}
+    case CatalogDecoded{catalog, inventory, installed}:
+      CatalogSelected{Sel.request_verdict(catalog, Sel.sel_inputs(operands, project), inventory, captures)}
