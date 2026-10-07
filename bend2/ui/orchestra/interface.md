@@ -145,9 +145,11 @@ The events endpoint takes `subject`, `since`, and `generation`
 `native-owner-subscription-unavailable`, as is a failed snapshot
 read (`snapshot-unavailable`).
 
-An endpoint refusal before the first `hello` follows bounded
-quadratic backoff (1s, 2s, 4s, up to 30s) without repeated
-snapshot requests. After a `hello`, a `gap` event or stream loss
+An endpoint refusal before the first `hello` retries only the
+events request with the current cursor and generation under
+bounded quadratic backoff (1s, 2s, 4s, up to 30s); it makes no
+repeated snapshot requests. The events notice clears on the
+first `hello`. After a `hello`, a `gap` event or stream loss
 re-reads the snapshot immediately with `since=<last cursor>`,
 renders it as authoritative current state, and reopens the
 stream at the snapshot cursor bound to the stored generation.
