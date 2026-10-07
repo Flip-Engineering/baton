@@ -63,6 +63,11 @@ def append_catalog(+catalog: Decl.Cat, +declaration: Decl.Decl) -> Decl.Cat:
     case Decl.CatNil{}: Decl.CatCons{declaration, Decl.CatNil{}}
     case Decl.CatCons{+head, +rest}: Decl.CatCons{head, append_catalog(rest, declaration)}
 
+def merge_catalog(+left: Decl.Cat, +right: Decl.Cat) -> Decl.Cat:
+  match left:
+    case Decl.CatNil{}: right
+    case Decl.CatCons{+head, +rest}: Decl.CatCons{head, merge_catalog(rest, right)}
+
 def decoded_declaration(+row: J.Json, decoded: NativeDecl.DeclarationDecode) -> CatalogDecode:
   match decoded:
     case NativeDecl.DeclarationRefused{field}: CatalogRefused{"moduleDeclaration:" ++ field}
@@ -81,10 +86,7 @@ def catalog_tail_join(catalog: Decl.Cat, +inventory: Decl.Inv, +installed: Eng.S
   match tail:
     case CatalogRefused{condition}: CatalogRefused{condition}
     case CatalogDecoded{next_catalog, next_inventory, next_installed}:
-      match catalog:
-        case Decl.CatCons{declaration, ignored}:
-          CatalogDecoded{append_catalog(next_catalog, declaration), merge_inv(inventory, next_inventory), merge_ss(installed, next_installed)}
-        case Decl.CatNil{}: CatalogRefused{"inventoryDeclarationMissing"}
+      CatalogDecoded{merge_catalog(catalog, next_catalog), merge_inv(inventory, next_inventory), merge_ss(installed, next_installed)}
 
 def catalog_tail_row(+tail: J.Json, row: CatalogDecode) -> CatalogDecode:
   match row:
