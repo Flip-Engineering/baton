@@ -90,10 +90,10 @@ def strip_cons(stripped: List<(String & String)> & List<String>, id: String) -> 
   match stripped:
     case (fresh, kept): (fresh, Con{id, kept})
 
-def strip_known(pairs: List<(String & String)>, known: List<String>) -> List<(String & String)> & List<String>:
+def strip_known(known: List<String>, pairs: List<(String & String)>) -> List<(String & String)> & List<String>:
   match known:
     case Nil{}: (pairs, Nil{})
-    case id <> rest: strip_cons(strip_known(without_session(pairs, id), rest), id)
+    case id <> rest: strip_cons(strip_known(rest, without_session(pairs, id)), id)
 
 def partition_cons_fork(one: String & String, done: List<(String & String)> & List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
   match done:
@@ -282,10 +282,10 @@ def fork_stripped2(+db: String, +chan: Chan(Event), stripped2: List<(String & St
 
 def fork_stripped(+db: String, +chan: Chan(Event), stripped1: List<(String & String)> & List<String>, refused: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match stripped1:
-    case (fresh1, flying): fork_stripped2(db, chan, strip_known(fresh1, refused), flying, failed, again)
+    case (fresh1, flying): fork_stripped2(db, chan, strip_known(refused, fresh1), flying, failed, again)
 
 def fork_new(+db: String, +chan: Chan(Event), pairs: List<(String & String)>, flying: List<String>, refused: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  fork_stripped(db, chan, strip_known(pairs, flying), refused, failed, again)
+  fork_stripped(db, chan, strip_known(flying, pairs), refused, failed, again)
 
 def kept(result: Result<&1,&1,U32 & String,Unit>, failed: Bool) -> IO(Bool):
   match result:
