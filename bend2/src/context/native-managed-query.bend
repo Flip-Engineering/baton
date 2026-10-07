@@ -111,7 +111,7 @@ def admission_identity_match(+expected_owner: String, +expected_request: String,
       Bool.and(String.eq(expected_cwd, cwd),
       Bool.and(String.eq(expected_attempt, attempt),
       Bool.and(String.eq(expected_artifact, artifactPath),
-      Bool.and(String.eq(decision, "accepted"), accepted_query_state(state)))))))
+      Bool.and(String.eq(decision, "accepted"), accepted_query_state(state))))))))
     case Admission.AdmissionRetained{+owner, +request, decision, state, attempt,
         +keeperPath, +cwd, +artifactPath}:
       Bool.and(String.eq(expected_owner, owner),
@@ -120,7 +120,7 @@ def admission_identity_match(+expected_owner: String, +expected_request: String,
       Bool.and(String.eq(expected_cwd, cwd),
       Bool.and(String.eq(expected_attempt, attempt),
       Bool.and(String.eq(expected_artifact, artifactPath),
-      Bool.and(String.eq(decision, "accepted"), accepted_query_state(state)))))))
+      Bool.and(String.eq(decision, "accepted"), accepted_query_state(state))))))))
     case _: False{}
 
 def admission_fields_match(bootstrap: Bootstrap, +admission: Admission.Admission) -> Bool:
