@@ -452,8 +452,13 @@ class SharedInstance(unittest.TestCase):
             self.fail(f'second recovery child did not exit; statuses={statuses}; preserved={saved}')
         while time.monotonic() < deadline and recovery_socket.exists():
             time.sleep(.05)
-        self.assertFalse(recovery_socket.exists(),
-                         'the attempt control socket remains until every recovery child is reaped')
+        if recovery_socket.exists():
+            saved = ROOT / '.scratch' / 'shared-instance-failures' / f'recovery-child-{os.getpid()}'
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(self.home, saved, dirs_exist_ok=True)
+            trace = (directory / 'recovery-pending.log').read_text(errors='replace') if (directory / 'recovery-pending.log').exists() else ''
+            self.fail(f'attempt socket remains after recovery children exit; statuses={statuses}; '
+                      f'trace={trace!r}; owner={self.owner_state()}; preserved={saved}')
         observer_log = (directory / 'observer.log').read_text(errors='replace') if (directory / 'observer.log').exists() else ''
         print('evidence recovery-child-retained', completed.stdout.replace('\n', '|'),
               'recovery-exits', statuses, 'observer-log', observer_log.replace('\n', '|'))
