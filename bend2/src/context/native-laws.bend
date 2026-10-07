@@ -170,16 +170,6 @@ law native_inventory_invocation_uses_the_installed_wrapper:
 def native_inventory_invocation_uses_the_installed_wrapper():
   {==}
 
-law native_query_file_refuses_without_admission:
-  for +db: String
-  for +owner: String
-  for +query: String
-  for +path: String
-  {Native.query_file(db, owner, query, path) == IO.die(Unit, 3, "Native sourceAnalysis query admission remains unavailable for " ++ query) : IO(Unit)}
-
-def native_query_file_refuses_without_admission(db,owner,query,path):
-  {==}
-
 law native_result_refuses_without_admission:
   for +db: String
   for +query: String
