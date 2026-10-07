@@ -261,6 +261,10 @@ static int br_checkpoint_load(const char *directory,int spool_fd,uint32_t schema
                               uint64_t *offset,char **state,size_t *length);
 static int br_checkpoint_store(const char *directory,int spool_fd,uint32_t schema,
                                uint64_t incarnation,uint64_t offset,const char *state,size_t length);
+static int br_checkpoint_verified_offset(const char *directory,int spool_fd,uint64_t *offset);
+static uint64_t br_attempt_identity(const char *directory);
+static int br_checkpoint_custody(const char *directory,int spool_fd,BrBirth *birth,
+                                 uint64_t *manifest,uint64_t *spool_device,uint64_t *spool_inode);
 static uint64_t br_manifest_digest(const BrManifestHeader *header,char *const *fields);
 static int br_manifest_digest_file(const char *directory,uint64_t *digest);
 typedef struct {
