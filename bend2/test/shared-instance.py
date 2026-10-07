@@ -96,7 +96,7 @@ class SharedInstance(unittest.TestCase):
             if self.election_held() and record.exists():
                 raw = record.read_bytes()
                 if len(raw) == 144:
-                    incumbent = struct.unpack_from('=i', raw, 36)[0]
+                    incumbent = struct.unpack_from('=i', raw, 32)[0]
                     try:
                         os.kill(incumbent, signal.SIGKILL)
                     except ProcessLookupError:
