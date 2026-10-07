@@ -185,6 +185,17 @@ law m11_muse_arguments_keep_the_task_one_element:
 def m11_muse_arguments_keep_the_task_one_element(cmd, model, effort, task):
   {==}
 
+law retained_muse_argv_names_the_admitted_file_and_session:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +prompt_file: String
+  for +session: String
+  {Muse.retained_arguments(cmd,model,effort,prompt_file,session) == Bool.pick(List<String>,String.is_empty(session),[cmd,"exec","--json","--prompt-file",prompt_file,"--model",model,"--reasoning-effort",effort,"--yolo"], [cmd,"exec","--json","--prompt-file",prompt_file,"--model",model,"--reasoning-effort",effort,"--yolo","--session-id",session]) : List<String>}
+
+def retained_muse_argv_names_the_admitted_file_and_session(cmd, model, effort, prompt_file, session):
+  {==}
+
 # ---------------------------------------------------------------------------
 # M-13: required progress notifications reach the agent interface. Each adapter
 # delivers the task through the child's own process interface: the input

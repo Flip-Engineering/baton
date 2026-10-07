@@ -31,6 +31,15 @@ class NativeObservation(RECEIVE.Receive):
             "        reply({'frame_written':True})\n"
             "        continue\n")
         self.assertIn(needle, fixture)
+        fixture = fixture.replace("omp='--mode' in args\n", "omp='--mode' in args\nmuse='--prompt-file' in args\n", 1)
+        fixture = fixture.replace(
+            "resume=args[args.index('--resume')+1] if '--resume' in args else (native_args[2] if native_args[:2]==['exec','resume'] else '')\n",
+            "resume=args[args.index('--resume')+1] if '--resume' in args else (args[args.index('--session-id')+1] if '--session-id' in args else (native_args[2] if native_args[:2]==['exec','resume'] else ''))\n",
+            1)
+        fixture = fixture.replace(
+            "if omp:\n    json.loads(sys.stdin.readline())\n",
+            "if muse:\n    prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()\n    native=resume or config.get('muse_native','native-'+model)\n    command=config.get('muse_command','muse-primary')\n    print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.model.configured','payload':{'kind':'run_model_configured','model_id':model}}),flush=True)\n    print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'turn.input.user','payload':{'kind':'turn_input_user','command_id':command}}),flush=True)\nelif omp:\n    json.loads(sys.stdin.readline())\n",
+            1)
         self.fixture.write_text(fixture.replace(needle, needle + addition, 1))
 
     def eventually_slow_case(self, observation, description):
@@ -187,6 +196,81 @@ class NativeObservation(RECEIVE.Receive):
         self.assertFalse(any('Native output observation failed' in row['body']
                              for row in self.coord('inbox', 'root')))
         self.eventually(lambda: not self.owned_processes(), 'reattached OMP fixture did not exit')
+
+    def test_muse_retained_prompt_file_and_primary_terminal_survive_observer_reattach(self):
+        self.player(harness='muse')
+        seed_player = self.directory / 'muse session seed'
+        seed_task = self.directory / 'seed task.txt'
+        seed_task.write_text('Create the retained Muse session.')
+        seed_player.write_text('#!' + sys.executable + '\n' + "import json\nsession='native-muse-retained'\nprint(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'run.model.configured','payload':{'kind':'run_model_configured','model_id':'parent'}}),flush=True)\nprint(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'turn.input.user','payload':{'kind':'turn_input_user','command_id':'seed-command'}}),flush=True)\nprint(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'run.terminal.completed','payload':{'kind':'run_terminal','terminal':'completed','command_id':'seed-command','text':'Session initialized.'}}),flush=True)\n")
+        seed_player.chmod(0o755)
+        seeded = subprocess.run([str(RECEIVE.EXE), str(self.db), 'turn', 'parent', 'muse-seed',
+                                 str(seed_player), 'parent', 'low', str(self.repo), str(seed_task),
+                                 str(self.directory / 'muse-seed.jsonl'), ''],
+                                text=True, capture_output=True)
+        self.assertEqual(seeded.returncode, 0, seeded.stderr)
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config.update(record_launches=True, muse_native='native-muse-retained',
+                      muse_command='muse-primary-command')
+        config_path.write_text(json.dumps(config))
+        prompt = 'Review the report λ with exact prepared bytes.\nSecond line.'
+        self.coord('message', 'muse-retained-task', 'root', 'parent', 'task', prompt)
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept('parent')
+        self.assertEqual(started['native'], 'native-muse-retained')
+        attempt, _ = self.eventually(lambda: self._retained_attempt(),
+                                     'retained Muse attempt was not admitted')
+        launches = self.directory / 'native-launches.jsonl'
+        self.eventually(lambda: launches.exists() and launches.read_text(),
+                        'retained Muse process launch was not recorded')
+        launch_rows = [json.loads(line) for line in launches.read_text().splitlines()]
+        self.assertEqual(len(launch_rows), 1)
+        args = launch_rows[0]['args']
+        prompt_path = pathlib.Path(args[args.index('--prompt-file') + 1])
+        self.assertTrue(prompt_path.is_absolute())
+        self.assertEqual(prompt_path.parent, attempt.resolve())
+        self.assertEqual(prompt_path.read_bytes(), prompt.encode())
+        self.assertEqual(args[args.index('--session-id') + 1], 'native-muse-retained')
+        self.eventually(lambda: (self.directory / 'parent.jsonl').exists() and
+                        'muse-primary-command' in (self.directory / 'parent.jsonl').read_text(),
+                        'Muse primary command input was not observed')
+        self.action(stream, native_frame={'id': 'muse-checkpoint-barrier',
+                                          'payload_type': 'run.model.configured',
+                                          'payload': {'kind': 'run_model_configured', 'model_id': 'parent'}})
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.eventually(lambda: 'muse-checkpoint-barrier' in
+                        (self.directory / 'parent.jsonl').read_text(),
+                        'Muse primary reducer state was not checkpointed before observer loss')
+
+        observer.kill()
+        observer.wait(timeout=5)
+        resumed = self.spawn(*self.receive_args('parent'))
+        self.action(stream, native_frame={
+            'id': 'unrelated-terminal', 'payload_type': 'run.terminal.completed',
+            'payload': {'kind': 'run_terminal', 'terminal': 'completed',
+                        'command_id': 'nested-command', 'text': 'Nested completion.'}})
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.action(stream, native_frame={
+            'id': 'primary-terminal', 'payload_type': 'run.terminal.completed',
+            'payload': {'kind': 'run_terminal', 'terminal': 'completed',
+                        'command_id': 'muse-primary-command', 'text': 'Muse retained report.'}})
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.action(stream, exit_fixture=True)
+        self.finish(resumed)
+
+        turns = self.coord('turns', 'parent')
+        self.assertEqual([row['reportBody'] for row in turns],
+                         ['Session initialized.', 'Muse retained report.'])
+        self.assertEqual(self.coord('player', 'parent')['native'], 'native-muse-retained')
+        self.assertEqual(len(launches.read_text().splitlines()), 1,
+                         'observer reattachment launched another native process')
+        raw = (self.directory / 'parent.jsonl').read_text()
+        self.assertIn('primary-terminal', raw)
+        self.assertIn('unrelated-terminal', raw)
+        reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
+        self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
+        self.eventually(lambda: not self.owned_processes(), 'reattached Muse fixture did not exit')
 
     def test_oversized_omp_checkpoint_failure_replays_without_losing_completion(self):
         self.player(harness='omp')
