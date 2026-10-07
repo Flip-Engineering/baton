@@ -39,7 +39,8 @@
    "ownedEnsembles": [],
    "memberEnsembles": [],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-c0",
@@ -73,7 +74,8 @@
    ],
    "memberEnsembles": [],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-c1",
@@ -107,7 +109,8 @@
    ],
    "memberEnsembles": [],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-c2",
@@ -141,7 +144,8 @@
    ],
    "memberEnsembles": [],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-c3",
@@ -175,7 +179,8 @@
    ],
    "memberEnsembles": [],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p00",
@@ -209,7 +214,8 @@
     "fixture-dense-ens0"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p01",
@@ -243,7 +249,8 @@
     "fixture-dense-ens1"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p02",
@@ -277,7 +284,8 @@
     "fixture-dense-ens2"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p03",
@@ -311,7 +319,8 @@
     "fixture-dense-ens3"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p04",
@@ -340,7 +349,8 @@
     "fixture-dense-ens0"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p05",
@@ -374,7 +384,8 @@
     "fixture-dense-ens1"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p06",
@@ -408,7 +419,8 @@
     "fixture-dense-ens2"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p07",
@@ -442,7 +454,8 @@
     "fixture-dense-ens3"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p08",
@@ -476,7 +489,8 @@
     "fixture-dense-ens0"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p09",
@@ -505,7 +519,8 @@
     "fixture-dense-ens1"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p10",
@@ -539,7 +554,8 @@
     "fixture-dense-ens2"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p11",
@@ -573,7 +589,8 @@
     "fixture-dense-ens3"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p12",
@@ -607,7 +624,8 @@
     "fixture-dense-ens0"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p13",
@@ -641,7 +659,8 @@
     "fixture-dense-ens1"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p14",
@@ -670,7 +689,8 @@
     "fixture-dense-ens2"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p15",
@@ -704,7 +724,8 @@
     "fixture-dense-ens3"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p16",
@@ -738,7 +759,8 @@
     "fixture-dense-ens0"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p17",
@@ -772,7 +794,8 @@
     "fixture-dense-ens1"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p18",
@@ -806,7 +829,8 @@
     "fixture-dense-ens2"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p19",
@@ -835,7 +859,8 @@
     "fixture-dense-ens3"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p20",
@@ -869,7 +894,8 @@
     "fixture-dense-ens0"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p21",
@@ -903,7 +929,8 @@
     "fixture-dense-ens1"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p22",
@@ -937,7 +964,8 @@
     "fixture-dense-ens2"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p23",
@@ -971,7 +999,8 @@
     "fixture-dense-ens3"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p24",
@@ -1000,7 +1029,8 @@
     "fixture-dense-ens0"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p25",
@@ -1034,7 +1064,8 @@
     "fixture-dense-ens1"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p26",
@@ -1068,7 +1099,8 @@
     "fixture-dense-ens2"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p27",
@@ -1102,7 +1134,8 @@
     "fixture-dense-ens3"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p28",
@@ -1136,7 +1169,8 @@
     "fixture-dense-ens0"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p29",
@@ -1165,7 +1199,8 @@
     "fixture-dense-ens1"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p30",
@@ -1199,7 +1234,8 @@
     "fixture-dense-ens2"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p31",
@@ -1233,7 +1269,8 @@
     "fixture-dense-ens3"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p32",
@@ -1267,7 +1304,8 @@
     "fixture-dense-ens0"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p33",
@@ -1301,7 +1339,8 @@
     "fixture-dense-ens1"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p34",
@@ -1330,7 +1369,8 @@
     "fixture-dense-ens2"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p35",
@@ -1364,7 +1404,8 @@
     "fixture-dense-ens3"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p36",
@@ -1398,7 +1439,8 @@
     "fixture-dense-ens0"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p37",
@@ -1432,7 +1474,8 @@
     "fixture-dense-ens1"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p38",
@@ -1466,7 +1509,8 @@
     "fixture-dense-ens2"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   },
   {
    "id": "fixture-dense-p39",
@@ -1495,7 +1539,8 @@
     "fixture-dense-ens3"
    ],
    "liveReceiver": false,
-   "stop": null
+   "stop": null,
+   "actualProcess": "unknown"
   }
  ],
  "ensembles": [

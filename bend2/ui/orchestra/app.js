@@ -8,7 +8,9 @@ const TRANSITION_LIMIT = 50;
 const state = {
   apiBase: "",
   fixtureName: "",
+  subject: "",
   cursor: "",
+  gapHeld: false,
   players: new Map(),
   ensembles: new Map(),
   transitions: [],
@@ -146,6 +148,25 @@ function setCursor(cursor) {
   state.cursor = cursor || "";
   el.cursorState.textContent = "";
   text(el.cursorState, state.cursor || "none");
+}
+
+function queryString() {
+  const parts = [];
+  if (state.subject) parts.push("subject=" + encodeURIComponent(state.subject));
+  if (state.cursor) parts.push("since=" + encodeURIComponent(state.cursor));
+  return parts.length ? "?" + parts.join("&") : "";
+}
+
+function holdGapNotice(message) {
+  state.gapHeld = true;
+  setNotice(message);
+}
+
+function clearGapNotice() {
+  if (state.gapHeld) {
+    state.gapHeld = false;
+    setNotice("");
+  }
 }
 
 function flashRow(id) {
@@ -316,10 +337,14 @@ function renderDetail() {
   td(dl, "provider", prov ? (prov.name || "unnamed") + " / " + (prov.status || "unknown") : null, true);
 
   if (p.execution) {
-    td(dl, "execution", [p.execution.attempt, p.execution.mode, p.execution.phase, p.execution.status].filter(Boolean).join(" / "), true);
+    td(dl, "recorded execution", [p.execution.attempt, p.execution.mode, p.execution.phase, p.execution.status].filter(Boolean).join(" / "), true);
   } else {
-    td(dl, "execution", null);
+    td(dl, "recorded execution", null);
   }
+  td(dl, "actual process", p.actualProcess || null, true);
+  td(dl, "receiver", p.liveReceiver === true ? "registered" : p.liveReceiver === false ? "none recorded" : null, true);
+  td(dl, "endpoint", p.endpointRegistered === true ? "registered" : p.endpointRegistered === false ? "none recorded" : null, true);
+  td(dl, "reference", p.reference === true ? "reference entry" : p.reference === false ? "not a reference" : null, true);
   if (p.stop) {
     td(dl, "stop", [p.stop.id, p.stop.status, p.stop.attempt, p.stop.reportId].filter(Boolean).join(" / "), true);
   } else {
@@ -414,7 +439,10 @@ function applySnapshot(data, label) {
   state.providers = data.providers || {};
   setCursor(data.cursor || "");
   el.snapshotLine.textContent = "";
-  text(el.snapshotLine, label + " at " + (data.capturedAt || "time unrecorded"));
+  text(el.snapshotLine, label + (state.subject ? " subject " + state.subject : "") + " at " + (data.capturedAt || "time unrecorded"));
+  if (data.selection && data.selection.gap === true) {
+    holdGapNotice("Snapshot reports an event history gap. Shown state is authoritative as of the cursor.");
+  }
   loadEnsembleOptions();
   if (state.selectionId && !state.players.has(state.selectionId)) state.selectionId = null;
   renderTree();
@@ -426,7 +454,7 @@ async function loadSnapshot() {
   const name = state.fixtureName;
   const url = name
     ? "fixtures/" + name + ".json"
-    : state.apiBase + "/orchestra/snapshot" + (state.cursor ? "?since=" + encodeURIComponent(state.cursor) : "");
+    : state.apiBase + "/orchestra/snapshot" + queryString();
   let res;
   try {
     res = await fetch(url);
@@ -444,7 +472,7 @@ function connectEvents() {
     return;
   }
   if (state.sse) state.sse.close();
-  const url = state.apiBase + "/orchestra/events" + (state.cursor ? "?since=" + encodeURIComponent(state.cursor) : "");
+  const url = state.apiBase + "/orchestra/events" + queryString();
   let es;
   try {
     es = new EventSource(url);
@@ -468,6 +496,20 @@ function connectEvents() {
     setConn("live");
   });
 
+  es.addEventListener("gap", (ev) => {
+    let g = {};
+    try { g = JSON.parse(ev.data); } catch (e) { g = {}; }
+    if (state.sse) state.sse.close();
+    state.sse = null;
+    setConn("gap");
+    if (g.reason === "reader-scope-changed") {
+      holdGapNotice("Reader scope changed. Re-reading current state.");
+    } else {
+      holdGapNotice("Event history was pruned. Re-reading current state.");
+    }
+    resnapshotThenResume();
+  });
+
   es.addEventListener("player", (ev) => {
     let p = null;
     try { p = JSON.parse(ev.data); } catch (e) { return; }
@@ -477,6 +519,7 @@ function connectEvents() {
     renderTree();
     if (state.selectionId === p.id) renderDetail();
     flashRow(p.id);
+    clearGapNotice();
   });
 
   es.addEventListener("ensemble", (ev) => {
@@ -488,6 +531,7 @@ function connectEvents() {
     loadEnsembleOptions();
     renderTree();
     if (state.selectionId) renderDetail();
+    clearGapNotice();
   });
 
   es.addEventListener("transition", (ev) => {
@@ -498,6 +542,7 @@ function connectEvents() {
     state.transitions = state.transitions.slice(0, TRANSITION_LIMIT);
     if (ev.lastEventId) setCursor(ev.lastEventId);
     renderTransitions();
+    clearGapNotice();
   });
 
   es.addEventListener("pending", (ev) => {
@@ -508,6 +553,9 @@ function connectEvents() {
     if (p) {
       if (typeof m.pendingCount === "number") p.pendingCount = m.pendingCount;
       if (typeof m.unacknowledgedCount === "number") p.unacknowledgedCount = m.unacknowledgedCount;
+      if (typeof m.lastTurnId === "string") p.lastTurnId = m.lastTurnId;
+      if (typeof m.latestReportId === "string") p.latestReportId = m.latestReportId;
+      if (Array.isArray(m.inputRead)) p.inputRead = m.inputRead;
       renderTree();
       if (state.selectionId === m.session) renderDetail();
       flashRow(m.session);
@@ -519,23 +567,28 @@ function connectEvents() {
     if (state.sse) state.sse.close();
     state.sse = null;
     setConn("reconnecting");
-    scheduleReconnect();
+    holdGapNotice("Stream lost. Re-reading current state.");
+    resnapshotThenResume();
   };
 }
 
-function scheduleReconnect() {
+async function resnapshotThenResume() {
+  try {
+    await loadSnapshot();
+  } catch (e) {
+    scheduleEndpointRetry(e);
+    return;
+  }
+  state.reconnectDelay = 1000;
+  connectEvents();
+}
+
+function scheduleEndpointRetry(cause) {
   const wait = state.reconnectDelay;
   state.reconnectDelay = Math.min(state.reconnectDelay * 2, 30000);
-  setNotice("Stream closed. Re-reading snapshot and resuming in " + Math.round(wait / 1000) + "s.");
-  setTimeout(async () => {
-    try {
-      await loadSnapshot();
-      setNotice("");
-    } catch (e) {
-      setNotice("Reconnect snapshot failed: " + (e && e.message ? e.message : e));
-    }
-    connectEvents();
-  }, wait);
+  setConn("retrying");
+  setNotice("Snapshot endpoint unreachable (" + (cause && cause.message ? cause.message : cause) + "). Retrying in " + Math.round(wait / 1000) + "s.");
+  setTimeout(resnapshotThenResume, wait);
 }
 
 function init() {
@@ -544,6 +597,7 @@ function init() {
   const meta = document.querySelector('meta[name="orchestra-api-base"]');
   if (!state.apiBase && meta) state.apiBase = meta.getAttribute("content") || "";
   state.fixtureName = query.get("fixture") || "";
+  state.subject = query.get("subject") || "";
 
   el.search.addEventListener("input", () => {
     state.search = el.search.value.trim();

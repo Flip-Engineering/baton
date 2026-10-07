@@ -1,7 +1,7 @@
 {
  "capturedAt": "2026-10-06 20:00:00 UTC",
  "contractVersion": 1,
- "cursor": "fixture-small-4",
+ "cursor": "fixture-small-4-gap",
  "ensembles": [
   {
    "coupling": "tight",
@@ -36,7 +36,7 @@
   }
  ],
  "fixture": true,
- "fixtureNote": "Synthetic DOM behavior fixture for the Orchestra live view. Not live coordinator state.",
+ "fixtureNote": "Synthetic DOM behavior fixture for the gap notice path. Not live coordinator state.",
  "players": [
   {
    "base": "fixture-base-0",
@@ -260,7 +260,8 @@
  },
  "selection": {
   "mode": "all",
-  "rule": "parent-owner-member-routes-v1"
+  "rule": "parent-owner-member-routes-v1",
+  "gap": true
  },
  "subject": null,
  "tasks": {
