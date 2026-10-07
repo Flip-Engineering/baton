@@ -526,14 +526,17 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
 
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
+def retained_from_fields(+db: String, +player: String, +id: String, +log: String, policy: Logs.Policy, +harness: String, attempt: String, handle: U32, sender: Chan(Result<&1,&1,U32 & String,Unit>), +restored: String & String & String & String & String & String & String & String, first: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  (cursor,last_message,primary,current,terminal,filter,codex_log,held)=restored
+  consume(db,player,id,log,policy,held,False{},handle,harness,cursor,last_message,primary,current,terminal,filter,codex_log,"",sender,attempt,False{},Nil{},first)
+
 def retained_output(+db: String, +player: String, id: String, +log: String, +harness: String, attempt: String, +handle: U32) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
     +policy : Logs.Policy <- Logs.open(db,player,log)
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     +restored : String & String & String & String & String & String & String & String <- Observer.restore_fields(db,handle)
-    (cursor,last_message,primary,current,terminal,filter,codex_log,held)=restored
     +first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-    consume(db,player,id,log,policy,held,False{},handle,harness,cursor,last_message,primary,current,terminal,filter,codex_log,"",sender,attempt,False{},Nil{},first)
+    retained_from_fields(db,player,id,log,policy,harness,attempt,handle,sender,restored,first)
 
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
