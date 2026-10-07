@@ -1395,6 +1395,11 @@ def ld_attest(+reserved: String, +evidence: AttemptEvidence) -> IO(Attestation):
 # association and intent evidence must be present and observed, the capture must be real, the release
 # must have succeeded, and all three stages must carry the exact expected bytes.
 
+def reserved_matches(reserved: String, evidence: AttemptEvidence) -> Bool:
+  match evidence:
+    case AttemptEvidence{reserved, repo, target, candidate, basis, guard, artifact, decision, capture, qualification, release, identity, association, intent}:
+      Tx.str_eq(reserved, reserved)
+
 def readback_matches(readback: StageResult, evidence: AttemptEvidence) -> Bool:
   match readback:
     case StageSucceeded{raw}: Tx.str_eq(raw, attempt_record(evidence))
@@ -1422,23 +1427,6 @@ def intent_observed(intent: IntentEvidence) -> Bool:
     case IntentMissing{}: False{}
     case IntentObserved{path, raw}: True{}
 
-def evidence_complete(evidence: AttemptEvidence) -> Bool:
-  match evidence:
-    case AttemptEvidence{reserved, repo, target, candidate, basis, guard, artifact, decision, capture, qualification, release, identity, association, intent}:
-      Bool.pick(Bool, decision_landed(decision),
-        Bool.pick(Bool, capture_landed(capture),
-          Bool.pick(Bool, qualification_landed(qualification),
-            Bool.pick(Bool, T.release_done(release),
-              Bool.pick(Bool, identity_bound(identity, target),
-                Bool.pick(Bool, association_bound(association, candidate, basis),
-                  Bool.pick(Bool, intent_bound(intent, reserved), True{}, False{}),
-                  False{}),
-                False{}),
-              False{}),
-            False{}),
-          False{}),
-        False{})
-
 def decision_landed(decision: LAdv) -> Bool:
   match decision:
     case AdvLanded{}: True{}
@@ -1448,21 +1436,26 @@ def decision_landed(decision: LAdv) -> Bool:
     case AdvRefused{}: False{}
     case AdvBroken{detail}: False{}
 
+def mutation_succeeded(framing: String) -> Bool:
+  match ld_adv_framed(framing):
+    case T.GRun{code, out}: U32.is_eq(code, 0)
+    case T.GBroken{detail}: False{}
+
 def capture_landed(capture: T.CapturedRaw) -> Bool:
   match capture:
-    case T.CapturedDone{framing, diagnostics}: True{}
+    case T.CapturedDone{framing, diagnostics}: mutation_succeeded(framing)
     case T.CapturedAbsent{}: False{}
     case T.CapturedFailed{code, detail}: False{}
-
-def read_observed(read: LdRead) -> Bool:
-  match read:
-    case ReadObserved{observation}: observation_succeeded(observation)
-    case ReadSkipped{}: False{}
 
 def observation_succeeded(observation: T.GitOut) -> Bool:
   match observation:
     case T.GRun{code, out}: U32.is_eq(code, 0)
     case T.GBroken{detail}: False{}
+
+def read_observed(read: LdRead) -> Bool:
+  match read:
+    case ReadObserved{observation}: observation_succeeded(observation)
+    case ReadSkipped{}: False{}
 
 def qualification_landed(qualification: LdQualified) -> Bool:
   match qualification:
@@ -1484,10 +1477,27 @@ def intent_bound(intent: IntentEvidence, reserved: String) -> Bool:
     case IntentObserved{path, raw}: Tx.non_empty(raw)
     case IntentMissing{}: False{}
 
+def evidence_complete(evidence: AttemptEvidence) -> Bool:
+  match evidence:
+    case AttemptEvidence{reserved, repo, target, candidate, basis, guard, artifact, decision, capture, qualification, release, identity, association, intent}:
+      Bool.pick(Bool, decision_landed(decision),
+        Bool.pick(Bool, capture_landed(capture),
+          Bool.pick(Bool, qualification_landed(qualification),
+            Bool.pick(Bool, T.release_done(release),
+              Bool.pick(Bool, identity_bound(identity, target),
+                Bool.pick(Bool, association_bound(association, candidate, basis),
+                  Bool.pick(Bool, intent_bound(intent, reserved), True{}, False{}),
+                  False{}),
+                False{}),
+              False{}),
+            False{}),
+          False{}),
+        False{})
 def admission_of(+attestation: Attestation) -> Admission:
   match attestation:
     case Attestation{reserved, evidence, publication, qualification, readback}:
-      Bool.pick(Admission, stage_publishes(publication, landing_record_path(reserved)),
+      Bool.pick(Admission, reserved_matches(reserved, evidence),
+       Bool.pick(Admission, stage_publishes(publication, landing_record_path(reserved)),
         Bool.pick(Admission, stage_qualifies(qualification, landing_record_path(reserved)),
           Bool.pick(Admission, readback_matches(readback, evidence),
             Bool.pick(Admission, evidence_complete(evidence),
