@@ -5,6 +5,10 @@ import Base
 import ./codec-wire.bend as Codec
 import ./engines-select.bend as Sel
 import ./engines-wire.bend as EnginesWire
+import ./native-request.bend as NativeRequest
+import ./native-catalog.bend as NativeCatalog
+import ./request.bend as Req
+import ../host/sqlite.bend as DB
 import ../host/process.bend as Process
 import ../host/session-lock.bend as Host
 import ../git/text.bend as Tx
@@ -261,17 +265,22 @@ def inventory_answer(answer: ProviderAnswer) -> IO(Unit):
     case ProviderRefused{reason}: IO.die(Unit, 3, reason)
     case ProviderRuntime{path, version}: IO.die(Unit, 3, "nodeRuntimeProbeMalformed")
 
-def inventory_with_runtime(+executable: String, +cwd: String,
-                           runtime: ProviderAnswer) -> IO(Unit):
+def inventory_runtime_answer(+executable: String, +cwd: String,
+                             runtime: ProviderAnswer) -> IO(ProviderAnswer):
   match runtime:
-    case ProviderRefused{reason}: IO.die(Unit, 3, reason)
-    case ProviderOutput{value, status}: IO.die(Unit, 3, "nodeRuntimeProbeMalformed")
+    case ProviderRefused{reason}: IO.pure(ProviderAnswer, ProviderRefused{reason})
+    case ProviderOutput{value, status}: IO.pure(ProviderAnswer, ProviderRefused{"nodeRuntimeProbeMalformed"})
     case ProviderRuntime{path, version}:
-      do IO<Unit>:
+      do IO<ProviderAnswer>:
         spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
           inventory_argv(path, executable), cwd, "/dev/null")
-        answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable), cwd, "{}", spawned)
-        inventory_answer(answer)
+        provider_spawn(installed_provider_path(executable), cwd, "{}", spawned)
+
+def inventory_with_runtime(+executable: String, +cwd: String,
+                           runtime: ProviderAnswer) -> IO(Unit):
+  do IO<Unit>:
+    answer : ProviderAnswer <- inventory_runtime_answer(executable, cwd, runtime)
+    inventory_answer(answer)
 
 def engines(db: String) -> IO(Unit):
   do IO<Unit>:
@@ -279,8 +288,67 @@ def engines(db: String) -> IO(Unit):
     runtime : ProviderAnswer <- resolve_node_runtime("/")
     inventory_with_runtime(executable, "/", runtime)
 
+def query_catalog_result(db: String, binding: String, answer: ProviderAnswer,
+                         request: NativeRequest.RequestDecode) -> IO(Unit):
+  match answer:
+    case ProviderRefused{reason}: IO.die(Unit, 3, "providerInventory:" ++ reason)
+    case ProviderRuntime{path, version}: IO.die(Unit, 3, "providerInventoryMalformed")
+    case ProviderOutput{value, status}:
+      Bool.pick(IO(Unit), String.eq(status, "exit 0"),
+        query_catalog_rows(db, binding, value, request),
+        IO.die(Unit, 3, "providerInventory:" ++ value))
+
+def query_catalog_rows(db: String, binding: String, value: String,
+                       request: NativeRequest.RequestDecode) -> IO(Unit):
+  do IO<Unit>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+      Req.json_tree_sql(value))
+    match result:
+      case Fail{error}:
+        match error:
+          case (code, detail): IO.die(Unit, 3, "providerInventoryDecodeRead")
+      case Done{+rows}:
+        query_catalog_decoded(NativeCatalog.inventory_rows(rows), request)
+
+def query_catalog_decoded(catalog: NativeCatalog.CatalogDecode,
+                          request: NativeRequest.RequestDecode) -> IO(Unit):
+  match request:
+    case NativeRequest.RequestDecodeRefused{condition}:
+      IO.die(Unit, 3, "request:" ++ condition)
+    case NativeRequest.RequestDecoded{canonical, operands, operation_chain, cwd, source_path}:
+      match catalog:
+        case NativeCatalog.CatalogRefused{condition}:
+          IO.die(Unit, 3, "catalog:" ++ condition)
+        case NativeCatalog.CatalogDecoded{catalog, inventory, installed}:
+          IO.die(Unit, 3, "ownerBoundProjectCaptureRequired")
+
+def query_request_result(db: String, binding: String, owner: String, query: String,
+                         path: String, result: NativeRequest.RequestDecode) -> IO(Unit):
+  match result:
+    case NativeRequest.RequestDecodeRefused{condition}:
+      IO.die(Unit, 3, "request:" ++ condition)
+    case NativeRequest.RequestDecoded{canonical, operands, operation_chain, cwd, source_path}:
+      do IO<Unit>:
+        executable : String <- IO.try(String, Host.SessionLock.executable())
+        runtime : ProviderAnswer <- resolve_node_runtime(cwd)
+        answer : ProviderAnswer <- inventory_runtime_answer(executable, cwd, runtime)
+        query_catalog_result(db, binding, answer, result)
+
+def query_binding_result(db: String, owner: String, query: String, path: String,
+                          binding_result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match binding_result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.die(Unit, 3, "databaseBindingUnavailable")
+    case Done{+binding}:
+      do IO<Unit>:
+        request : NativeRequest.RequestDecode <- NativeRequest.read_file(db, binding, path)
+        query_request_result(db, binding, owner, query, path, request)
+
 def query_file(db: String, owner: String, query: String, path: String) -> IO(Unit):
-  IO.die(Unit, 3, "Native sourceAnalysis query admission remains unavailable for " ++ query)
+  do IO<Unit>:
+    binding : Result<&1,&1,U32 & String,String> <- DB.Sql.binding(db)
+    query_binding_result(db, owner, query, path, binding)
 
 def result(db: String, query: String) -> IO(Unit):
   IO.die(Unit, 3, "Native result lookup remains unavailable for " ++ query)
