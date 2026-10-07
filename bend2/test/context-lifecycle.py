@@ -5,7 +5,7 @@ Builds bend2/tests/context-lifecycle.bend with the pinned Bend 2.0.25 compiler,
 creates a throwaway coordination database, its copy and a private log directory,
 runs the fixture and asserts every observation it prints. With
 CONTEXT_LIFECYCLE_MUTATIONS=1 it additionally removes one law's proof and applies
-two implementation mutations, requiring each compile to fail and to name the law
+seven implementation mutations, requiring each compile to fail and to name the law
 the change breaks.
 
 The fixture writes no production state: every path it touches lives under
@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -630,8 +631,8 @@ MUTATIONS = [
     # The admission answer stops distinguishing creation from retention.
     (
         "bend2/src/context/bound-admission.bend",
-        "SELECT CASE WHEN changes()=1 THEN 'created' ELSE 'retained' END",
-        "SELECT CASE WHEN changes()=1 THEN 'retained' ELSE 'created' END",
+        "CASE WHEN changes()=1 THEN 'created' ELSE 'retained' END",
+        "CASE WHEN changes()=1 THEN 'retained' ELSE 'created' END",
         "the_admission_answer_names_what_the_transaction_did",
     ),
     # A retained answer with a different request stops being a conflict.
@@ -655,6 +656,8 @@ def proof_removal_check():
     try:
         target.write_text(mutated)
         result = run([str(COMPILER), str(ENTRY), "--check-only"])
+        (WORK / "proof-removal.stdout").write_text(result.stdout)
+        (WORK / "proof-removal.stderr").write_text(result.stderr)
         if result.returncode == 0:
             FAILURES.append("proof removal: the entry still compiled without the law's proof")
         elif "a_committed_terminal_state_is_immutable" not in (result.stdout + result.stderr):
@@ -674,6 +677,8 @@ def mutation_checks():
             target.write_text(original.replace(before, after, 1))
             result = run([str(COMPILER), str(ENTRY), "--check-only"])
             output = result.stdout + result.stderr
+            (WORK / f"mutation-{index}.stdout").write_text(result.stdout)
+            (WORK / f"mutation-{index}.stderr").write_text(result.stderr)
             if result.returncode == 0:
                 FAILURES.append(f"mutation {index}: compilation succeeded but {law} should fail")
             elif law not in output:
