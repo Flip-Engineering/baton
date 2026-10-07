@@ -7,6 +7,7 @@ import ./engines-decl.bend as Decl
 import ./native-request.bend as NativeRequest
 import ./native-declaration.bend as NativeDeclaration
 import ./native-runtime-laws.bend as NativeRuntimeLaws
+import ./native-declaration-laws.bend as NativeDeclarationLaws
 import ./engines.bend as Eng
 import ../json/canonical.bend as J
 import ../host/process.bend as Process
