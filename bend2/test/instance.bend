@@ -89,7 +89,7 @@ def attached_locked(database: String, directory: String, lock: Maybe<U32>) -> IO
 
 def attach_owned_cli(args: List<String>) -> IO(Unit):
   match args:
-    case database <> directory <> Nil{}: Lock.SessionLock.acquire_session(Unit,database,"fixture",canonical => lock => attached_locked(database,directory,lock))
+    case database <> directory <> Nil{}: Lock.SessionLock.acquire_session(Unit,database,"fixture",canonical => lock => attached_locked(canonical,directory,lock))
     case _: IO.die(Unit,2,"attach-owned DATABASE ATTEMPT")
 
 # Prints the outcome of one attempt-level operation.
@@ -165,7 +165,7 @@ def admitted_locked(database: String, directory: String, cwd: String, payload: S
 def admit_cli(args: List<String>) -> IO(Unit):
   match args:
     case database <> session <> directory <> cwd <> payload <> mode <> program:
-      Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => admitted_locked(database,directory,cwd,payload,mode,program,lock))
+      Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => admitted_locked(canonical,directory,cwd,payload,mode,program,lock))
     case _: IO.die(Unit,2,"admit DATABASE SESSION ATTEMPT CWD PAYLOAD MODE PROGRAM ARGS...")
 
 def write_cli(args: List<String>) -> IO(Unit):
