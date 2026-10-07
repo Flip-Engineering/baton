@@ -112,14 +112,16 @@ class NativeObservation(RECEIVE.Receive):
         turns = self.coord('turns', 'parent')
         self.assertEqual([row['reportBody'] for row in turns], ['Primary completion.'])
         reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
-        self.assertEqual(sum(row['id'].endswith(':deferred') for row in reports), 1)
-        self.assertTrue(any('Later lifecycle completion' in row['body'] for row in reports))
-        self.assertTrue(any('Changed primary output' in row['body'] and
-                            'original report is preserved' in row['body'] for row in reports))
+        deferred = [row for row in reports if row['id'].endswith(':deferred')]
+        self.assertEqual(len(deferred), 1)
+        self.assertIn('later native terminal completed', deferred[0]['body'])
+        self.assertTrue(any('original report is preserved' in row['body'] for row in reports))
         self.assertFalse(any('Nested task completion' in row['body'] for row in reports))
         self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
         self.assertIn('primary-frame', log.read_text())
         self.assertIn('nested-frame', log.read_text())
+        self.assertIn('Changed primary output.', log.read_text())
+        self.assertIn('Later lifecycle completion.', log.read_text())
 
 
 if __name__ == '__main__':

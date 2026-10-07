@@ -188,7 +188,7 @@ def omp_message(db: String, +event: String, previous: String, enabled: Bool) -> 
 # object blocks on assistant messages in order and give non-array content an
 # empty extraction list. The raw native frame remains in the log.
 def omp_content_sql(+message: String) -> String:
-  "CASE WHEN json_extract(" ++ C.q(message) ++ ",'$.role')='assistant' THEN json_set(" ++ C.q(message) ++ ",'$.content',json(CASE WHEN json_type(" ++ C.q(message) ++ ",'$.content')='array' THEN coalesce((SELECT json_group_array(json(CASE WHEN json_type(" ++ C.q(message) ++ ",'$.content[' || content.key || ']')='object' THEN content.value ELSE '{}' END)) FROM (SELECT c.value AS value,c.key AS key FROM json_each(" ++ C.q(message) ++ ",'$.content') c WHERE json_type(" ++ C.q(message) ++ ",'$.content[' || c.key || ']')='object' ORDER BY c.key) content),'[]') ELSE '[]' END)) ELSE json(" ++ C.q(message) ++ ") END"
+  "CASE WHEN json_extract(" ++ message ++ ",'$.role')='assistant' THEN json_set(" ++ message ++ ",'$.content',json(CASE WHEN json_type(" ++ message ++ ",'$.content')='array' THEN coalesce((SELECT json_group_array(json(CASE WHEN json_type(" ++ message ++ ",'$.content[' || content.key || ']')='object' THEN content.value ELSE '{}' END)) FROM (SELECT c.value AS value,c.key AS key FROM json_each(" ++ message ++ ",'$.content') c WHERE json_type(" ++ message ++ ",'$.content[' || c.key || ']')='object' ORDER BY c.key) content),'[]') ELSE '[]' END)) ELSE json(" ++ message ++ ") END"
 
 # Normalize extraction input for agent_end while retaining all source frames in
 # the native log. JSON object messages and content blocks retain source order.
