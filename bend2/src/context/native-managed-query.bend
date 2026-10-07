@@ -156,7 +156,7 @@ def start_from_submission(+bootstrap: Bootstrap, readiness: KeeperReadiness,
                           +submission: ContextService.Submission) -> StartDecision:
   match readiness:
     case KeeperObserverUnavailable{reason}: StartHeld{"observerUnavailable:" ++ reason}
-    case KeeperObserverReady{query, owner, keeper_path, role, incarnation}:
+    case KeeperObserverReady{query, owner, keeper_path, +role, +incarnation}:
       Bool.pick(StartDecision,
         Bool.and(String.eq(query, bootstrap_query(bootstrap)),
         Bool.and(String.eq(owner, bootstrap_owner(bootstrap)),
