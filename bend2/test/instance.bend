@@ -118,13 +118,13 @@ def release_and_ack(+handle: U32, retire: Bool) -> IO(Unit):
     IO.pure(Unit,Unit{})
 
 # In hold mode the attempt stays alive while the driver kills this observer.
-def holding(mode: String) -> IO(Unit):
+def holding() -> IO(Unit):
   do IO<Unit>:
     gate : String <- IO.try(String,Text.Text.read("-"))
     IO.pure(Unit,Unit{})
 
-def held_step(+handle: U32, mode: String) -> IO(Unit):
-  Bool.pick(IO(Unit),String.eq(mode,"hold"),holding(mode),IO.pure(Unit,Unit{}))
+def held_step(mode: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(mode,"hold"),holding(),IO.pure(Unit,Unit{}))
 
 def closed_step(+handle: U32, mode: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(mode,"hold"),IO.pure(Unit,Unit{}),IO.try(Unit,P.ProcessChild.close_stdin(handle)))
@@ -141,7 +141,7 @@ def admitted_lines(+handle: U32, mode: String, line: Maybe<String>) -> IO(Unit):
       IO.print("attempt-complete")
     case Some{text}: do IO<Unit>:
       printed : Unit <- IO.print(text)
-      held : Unit <- held_step(handle,mode)
+      held : Unit <- held_step(mode)
       next : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       admitted_lines(handle,mode,next)
 
