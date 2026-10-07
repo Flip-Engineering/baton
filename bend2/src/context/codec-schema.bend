@@ -545,10 +545,70 @@ def field_form_or(field: SchemaForm, fallback: SchemaForm) -> SchemaForm:
     case SfOptionalField{name, form}: form
     case other: fallback
 
+# Members reordered into field-declaration order, keeping present members.
+# Duplicates are refused before sorting, so each name is looked up once.
+def build_sorted(+fields: SchemaForm, +members: Codec.RawValue) -> Codec.RawValue:
+  match fields:
+    case SfFieldsNil{}: Codec.Rnil{}
+    case SfFieldsCons{head, tail}:
+      match head:
+        case SfRequired{name, form}: Bool.pick(Codec.RawValue, member_seen(name, members), Codec.Rpair{name, schema_member_or(members, name, Codec.Rnil{}), build_sorted(tail, members)}, build_sorted(tail, members))
+        case SfOptionalField{name, form}: Bool.pick(Codec.RawValue, member_seen(name, members), Codec.Rpair{name, schema_member_or(members, name, Codec.Rnil{}), build_sorted(tail, members)}, build_sorted(tail, members))
+        case other: build_sorted(tail, members)
+    case other: Codec.Rnil{}
+
 def dict_keys_ok(keys: SchemaKeys, members: Codec.RawValue) -> Bool:
   match keys:
     case SkAnyScalarText{}: True{}
     case SkDeclared{+names}: members_declared(names, members)
+
+# A json member value is a leaf. Composite member values admit through the
+# modal walk below, which traverses nested objects and arrays directly.
+def json_leaf_ok(+value: Codec.RawValue) -> Bool:
+  match value:
+    case Codec.Rstr{text}: True{}
+    case Codec.Rnum{token}: True{}
+    case Codec.Rtrue{}: True{}
+    case Codec.Rfalse{}: True{}
+    case Codec.Rnull{}: True{}
+    case other: False{}
+
+# An object member spine admits when every member value admits. The modal walk
+# below handles member values, so this spine check stays flat.
+def json_member_admit(+members: Codec.RawValue) -> SchemaVerdict:
+  match members:
+    case Codec.Rnil{}: SvOk{}
+    case Codec.Rpair{+key, +value, +tail}:
+      Bool.pick(SchemaVerdict, json_leaf_ok(value),
+        json_member_admit(tail),
+        SvRefused{"wrongKind"})
+    case other: SvRefused{"wrongKind"}
+
+# An object admits when its keys are unique and its members admit. The modal
+# walk checks keys itself and traverses members directly; this helper keeps the
+# duplicate-key mutation anchor.
+def json_robj_helper(+members: Codec.RawValue) -> SchemaVerdict:
+  Bool.pick(SchemaVerdict, keys_unique(members), json_member_admit(members), SvRefused{"duplicateKey"})
+
+# One self-recursive walk over a value and a mode, so it needs no forward
+# reference. The mode names the position: a value admits a json value whole,
+# members admits an object member spine, and items admits an array tail. An
+# object admits when its keys are unique and its member spine admits in members
+# mode, so nested objects and arrays traverse to their leaves. Every self-call
+# passes a subterm of the matched value and a mode literal.
+def json_walk(value: Codec.RawValue, +mode: String) -> SchemaVerdict:
+  match value:
+    case Codec.Rnull{}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), SvOk{}, SvRefused{"wrongKind"})
+    case Codec.Rtrue{}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), SvOk{}, SvRefused{"wrongKind"})
+    case Codec.Rfalse{}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), SvOk{}, SvRefused{"wrongKind"})
+    case Codec.Rstr{text}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), SvOk{}, SvRefused{"wrongKind"})
+    case Codec.Rnum{token}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), SvOk{}, SvRefused{"wrongKind"})
+    case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: SvOk{}
+    case Codec.Rarr{+head, +tail}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), verdict_first(json_walk(head, "value"), json_walk(tail, "items")), Bool.pick(SchemaVerdict, String.eq(mode, "items"), verdict_first(json_walk(head, "value"), json_walk(tail, "items")), SvRefused{"wrongKind"}))
+    case Codec.Robj{+members}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), Bool.pick(SchemaVerdict, keys_unique(members), json_walk(members, "members"), SvRefused{"duplicateKey"}), SvRefused{"wrongKind"})
+    case Codec.Rnil{}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), SvRefused{"wrongKind"}, SvOk{})
+    case Codec.Rpair{key, val, tail}: Bool.pick(SchemaVerdict, String.eq(mode, "members"), verdict_first(json_walk(val, "value"), json_walk(tail, "members")), SvRefused{"wrongKind"})
+    case other: SvRefused{"wrongKind"}
 
 # A leaf form admits a leaf value. Composite values refuse here; the main walk
 # admits them. Scalar and enum checks reuse the shared kind checks.
@@ -572,38 +632,50 @@ def leaf_admit(+form: SchemaForm, +value: Codec.RawValue) -> SchemaVerdict:
 # the head member: equal names admit the value and advance both spines, and a
 # name mismatch refuses. An empty member spine admits exactly when no required
 # field remains, which the covered check decides.
-def fields_admit(defs: SchemaDefs, +fields: SchemaForm, +members: Codec.RawValue) -> SchemaVerdict:
+# A sorted member spine admits against the field spine in order. A present
+# member admits its value and both spines advance; an absent optional field
+# skips its field. A required field with no member refuses.
+def sorted_loop(+defs: SchemaDefs, +fields: SchemaForm, +sorted: Codec.RawValue) -> SchemaVerdict:
   match fields:
     case SfFieldsCons{SfRequired{name, fform}, ftail}:
-      match members:
+      match sorted:
         case Codec.Rnil{}:
-          Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+          Bool.pick(SchemaVerdict, fields_covered(ftail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
         case Codec.Rpair{k, v, t}:
           Bool.pick(SchemaVerdict, String.eq(name, k),
-            verdict_first(leaf_admit(fform, v), fields_admit(defs, ftail, t)),
-            SvRefused{"orderMismatch"})
+            verdict_first(leaf_admit(fform, v), sorted_loop(defs, ftail, t)),
+            SvRefused{"missingField"})
         case other: SvRefused{"wrongKind"}
     case SfFieldsCons{SfOptionalField{name, fform}, ftail}:
-      match members:
+      match sorted:
         case Codec.Rnil{}:
-          Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+          Bool.pick(SchemaVerdict, fields_covered(ftail, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
         case Codec.Rpair{k, v, t}:
           Bool.pick(SchemaVerdict, String.eq(name, k),
-            verdict_first(leaf_admit(fform, v), fields_admit(defs, ftail, t)),
-            SvRefused{"orderMismatch"})
+            verdict_first(leaf_admit(fform, v), sorted_loop(defs, ftail, t)),
+            sorted_loop(defs, ftail, sorted))
         case other: SvRefused{"wrongKind"}
     case SfFieldsNil{}:
-      match members:
-        case Codec.Rnil{}:
-          Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+      match sorted:
+        case Codec.Rnil{}: SvOk{}
         case Codec.Rpair{k, v, t}: SvRefused{"undeclaredField"}
         case other: SvRefused{"wrongKind"}
     case other:
-      match members:
+      match sorted:
         case Codec.Rnil{}:
           Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
         case Codec.Rpair{k, v, t}: SvRefused{"declarationRefused"}
         case other: SvRefused{"wrongKind"}
+
+# A record spine admits an object member spine in field-declaration order. The
+# members sort first, so declaration order never refuses a closed object.
+def fields_admit(defs: SchemaDefs, +fields: SchemaForm, +members: Codec.RawValue) -> SchemaVerdict:
+  match members:
+    case Codec.Rnil{}:
+      Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
+    case Codec.Rpair{k, v, t}:
+      sorted_loop(defs, fields, build_sorted(fields, members))
+    case other: SvRefused{"wrongKind"}
 
 # A record value admits through the member checks and the field spine. The
 # declared check stays outside the field walk, so dropping it admits more.
@@ -616,30 +688,6 @@ def record_enter_helper(+defs: SchemaDefs, +fields: SchemaForm, +input: Codec.Ra
     case Codec.Rnil{}:
       Bool.pick(SchemaVerdict, fields_covered(fields, Codec.Rnil{}), SvOk{}, SvRefused{"missingField"})
     case other: SvRefused{"wrongKind"}
-
-# A json member value is a leaf. Composite member values refuse here.
-def json_leaf_ok(+value: Codec.RawValue) -> Bool:
-  match value:
-    case Codec.Rstr{text}: True{}
-    case Codec.Rnum{token}: True{}
-    case Codec.Rtrue{}: True{}
-    case Codec.Rfalse{}: True{}
-    case Codec.Rnull{}: True{}
-    case other: False{}
-
-# An object member spine admits when every member value is a leaf.
-def json_member_admit(+members: Codec.RawValue) -> SchemaVerdict:
-  match members:
-    case Codec.Rnil{}: SvOk{}
-    case Codec.Rpair{+key, +value, +tail}:
-      Bool.pick(SchemaVerdict, json_leaf_ok(value),
-        json_member_admit(tail),
-        SvRefused{"wrongKind"})
-    case other: SvRefused{"wrongKind"}
-
-# An object admits when its keys are unique and its members admit.
-def json_robj_helper(+members: Codec.RawValue) -> SchemaVerdict:
-  Bool.pick(SchemaVerdict, keys_unique(members), json_member_admit(members), SvRefused{"duplicateKey"})
 
 # An array tail admits element by element: the previous head admits, then the
 # rest continues with its own head. The rest shrinks on every self-call, so the
@@ -672,24 +720,6 @@ def dict_member_admit(+value: SchemaForm, +members: Codec.RawValue) -> SchemaVer
     case Codec.Rnil{}: SvOk{}
     case Codec.Rpair{+key, +found, +tail}:
       verdict_first(leaf_admit(value, found), dict_member_admit(value, tail))
-    case other: SvRefused{"wrongKind"}
-
-# One self-recursive walk over a value and a mode, so it needs no forward
-# reference. The mode names the position: a value admits a json value whole,
-# members admits an object member spine, and items admits an array tail. Every
-# self-call passes a subterm of the matched value and a mode literal.
-def json_walk(value: Codec.RawValue, +mode: String) -> SchemaVerdict:
-  match value:
-    case Codec.Rnull{}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), SvOk{}, SvRefused{"wrongKind"})
-    case Codec.Rtrue{}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), SvOk{}, SvRefused{"wrongKind"})
-    case Codec.Rfalse{}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), SvOk{}, SvRefused{"wrongKind"})
-    case Codec.Rstr{text}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), SvOk{}, SvRefused{"wrongKind"})
-    case Codec.Rnum{token}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), SvOk{}, SvRefused{"wrongKind"})
-    case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: SvOk{}
-    case Codec.Rarr{+head, +tail}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), verdict_first(json_walk(head, "value"), json_walk(tail, "items")), Bool.pick(SchemaVerdict, String.eq(mode, "items"), verdict_first(json_walk(head, "value"), json_walk(tail, "items")), SvRefused{"wrongKind"}))
-    case Codec.Robj{+members}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), json_robj_helper(members), SvRefused{"wrongKind"})
-    case Codec.Rnil{}: Bool.pick(SchemaVerdict, String.eq(mode, "value"), SvRefused{"wrongKind"}, SvOk{})
-    case Codec.Rpair{key, val, tail}: Bool.pick(SchemaVerdict, String.eq(mode, "members"), verdict_first(json_walk(val, "value"), json_walk(tail, "members")), SvRefused{"wrongKind"})
     case other: SvRefused{"wrongKind"}
 
 def json_admit(value: Codec.RawValue) -> SchemaVerdict:
@@ -1100,4 +1130,60 @@ law schema_law_a_deep_guarded_union_chain_refuses_an_unknown_tag:
   {schema_admit_value(DefsCons{SchemaDef{"node", SfUnion{SfCasesCons{SchemaCase{"c", SfRef{"node"}}, SfCasesCons{SchemaCase{"z", SfScalar{SsText{}}}, SfCasesNil{}}}}}, DefsNil{}}, SfRef{"node"}, Codec.Robj{Codec.Rpair{"c", Codec.Robj{Codec.Rpair{"c", Codec.Robj{Codec.Rpair{"q", Codec.Rstr{"x"}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}) == SvRefused{"unknownTag"} : SchemaVerdict}
 
 def schema_law_a_deep_guarded_union_chain_refuses_an_unknown_tag():
+  {==}
+
+# A nested json object traverses to its leaves.
+law schema_law_a_nested_json_object_admits:
+  {json_admit(Codec.Robj{Codec.Rpair{"a", Codec.Robj{Codec.Rpair{"b", Codec.Rnum{"1"}, Codec.Rnil{}}}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
+
+def schema_law_a_nested_json_object_admits():
+  {==}
+
+# A nested json array traverses to its leaves.
+law schema_law_a_nested_json_array_admits:
+  {json_admit(Codec.Robj{Codec.Rpair{"a", Codec.Rarr{Codec.Rnum{"1"}, Codec.Rnil{}}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
+
+def schema_law_a_nested_json_array_admits():
+  {==}
+
+# Proof control: a duplicate key inside a nested object still refuses.
+law schema_law_a_nested_json_duplicate_key_refuses:
+  {json_admit(Codec.Robj{Codec.Rpair{"a", Codec.Robj{Codec.Rpair{"k", Codec.Rstr{"x"}, Codec.Rpair{"k", Codec.Rstr{"y"}, Codec.Rnil{}}}}, Codec.Rnil{}}}) == SvRefused{"duplicateKey"} : SchemaVerdict}
+
+def schema_law_a_nested_json_duplicate_key_refuses():
+  {==}
+
+# Proof control: a member spine is not a json value.
+law schema_law_a_bare_member_spine_is_not_a_json_value:
+  {json_admit(Codec.Rpair{"k", Codec.Rstr{"v"}, Codec.Rnil{}}) == SvRefused{"wrongKind"} : SchemaVerdict}
+
+def schema_law_a_bare_member_spine_is_not_a_json_value():
+  {==}
+
+# Reordered required fields admit by name.
+law schema_law_reordered_required_fields_admit:
+  {schema_admit_value(DefsNil{}, SfRecord{SfFieldsCons{SfRequired{"a", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"b", SfScalar{SsText{}}}, SfFieldsNil{}}}}, Codec.Robj{Codec.Rpair{"b", Codec.Rstr{"y"}, Codec.Rpair{"a", Codec.Rstr{"x"}, Codec.Rnil{}}}}) == SvOk{} : SchemaVerdict}
+
+def schema_law_reordered_required_fields_admit():
+  {==}
+
+# Proof control: a reordered duplicate still refuses.
+law schema_law_a_reordered_duplicate_key_refuses:
+  {schema_admit_value(DefsNil{}, SfRecord{SfFieldsCons{SfRequired{"a", SfScalar{SsText{}}}, SfFieldsNil{}}}, Codec.Robj{Codec.Rpair{"a", Codec.Rstr{"x"}, Codec.Rpair{"a", Codec.Rstr{"y"}, Codec.Rnil{}}}}) == SvRefused{"duplicateKey"} : SchemaVerdict}
+
+def schema_law_a_reordered_duplicate_key_refuses():
+  {==}
+
+# A trailing optional field may be absent after a required one.
+law schema_law_a_trailing_optional_field_may_be_absent:
+  {schema_admit_value(DefsNil{}, SfRecord{SfFieldsCons{SfRequired{"a", SfScalar{SsText{}}}, SfFieldsCons{SfOptionalField{"b", SfScalar{SsText{}}}, SfFieldsNil{}}}}, Codec.Robj{Codec.Rpair{"a", Codec.Rstr{"x"}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
+
+def schema_law_a_trailing_optional_field_may_be_absent():
+  {==}
+
+# Proof control: a missing required field refuses when a later one is present.
+law schema_law_a_missing_first_required_field_refuses:
+  {schema_admit_value(DefsNil{}, SfRecord{SfFieldsCons{SfRequired{"a", SfScalar{SsText{}}}, SfFieldsCons{SfRequired{"b", SfScalar{SsText{}}}, SfFieldsNil{}}}}, Codec.Robj{Codec.Rpair{"b", Codec.Rstr{"y"}, Codec.Rnil{}}}) == SvRefused{"missingField"} : SchemaVerdict}
+
+def schema_law_a_missing_first_required_field_refuses():
   {==}
