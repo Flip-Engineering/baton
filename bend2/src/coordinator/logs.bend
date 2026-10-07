@@ -47,6 +47,10 @@ def default_segments() -> String:
 def schema() -> String:
   Schema.tables()
 
+# The exact terminal frame bytes receive a SHA-256 when the coordinator observes them.
+def event_sha256(event: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./log-digest.c"
+
 type Policy is Data:
   Policy{level: String, budget: U32, segments: U32, pending: Bool, db: String, session: String}
 
@@ -656,6 +660,20 @@ def open_attempt_named(empty: Bool, +db: String, +session: String, +base: String
 
 def open_attempt(+db: String, +session: String, +base: String, +attempt: String) -> IO(Policy):
   open_attempt_named(String.is_empty(attempt),db,session,base,attempt)
+
+# The complete native event stays in turns.event. This row stores a bounded
+# reader projection and references to the event, generation log and native
+# provider session observed at the same terminal frame.
+def terminal_projection_sql(+session: String, +id: String, +digest: String, +event: String, +generation: String) -> String:
+  "WITH source(value) AS (VALUES(" ++ C.q(event) ++ ")),roles(role,chars) AS (SELECT json_extract(m.value,'$.role'),sum(length(json_extract(c.value,'$.text'))) FROM source,json_each(source.value,'$.messages') m,json_each(m.value,'$.content') c WHERE json_extract(c.value,'$.type')='text' GROUP BY json_extract(m.value,'$.role'))"
+  ++ " INSERT OR IGNORE INTO log_terminal_observations(session,turn_id,event_sha256,projection,artifact_refs) SELECT " ++ C.q(session) ++ "," ++ C.q(id) ++ "," ++ C.q(digest) ++ ",json_object('eventType',json_extract(source.value,'$.type'),'eventCharacters',length(source.value),'messageCount',coalesce(json_array_length(source.value,'$.messages'),0),'roleCharacters',coalesce((SELECT json_group_object(role,chars) FROM roles),'{}'),'lastMessageCharacters',coalesce((SELECT sum(length(json_extract(c.value,'$.text'))) FROM json_each(source.value,'$.messages') m,json_each(m.value,'$.content') c WHERE CAST(m.key AS INTEGER)=(SELECT max(CAST(last.key AS INTEGER)) FROM json_each(source.value,'$.messages') last WHERE json_type(last.value)='object') AND json_extract(c.value,'$.type')='text'),0)),json_object('event','turns.event','outputLog'," ++ C.q(generation) ++ ",'providerSession',coalesce((SELECT native FROM sessions WHERE id=" ++ C.q(session) ++ "),'')) FROM source;"
+
+def record_terminal_projection(+db: String, +session: String, +id: String, +event: String, +generation: String) -> IO(Unit):
+  do IO<Unit>:
+    ensured : Unit <- Schema.ensure(db)
+    digest : String <- IO.try(String,event_sha256(event))
+    saved : String <- IO.try(String,DB.Sql.query(db,schema() ++ generations_schema() ++ terminal_projection_sql(session,id,digest,event,generation)))
+    IO.pure(Unit,Unit{})
 
 # The file name without its directories, so a marker in a parent directory
 # never resolves as the generation identity.

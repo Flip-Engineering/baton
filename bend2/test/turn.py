@@ -1,7 +1,9 @@
 """Integration checks with a controlled native-process protocol fixture."""
 import json
+import hashlib
 import os
 import pathlib
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -58,8 +60,11 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.assertEqual(p.returncode,0,p.stderr)
         return p.stdout
 
-    def run_turn(self,cmd=None):
-        return self.call('turn','worker','turn-1',str(cmd or self.player),'model','high',str(self.cwd),str(self.task),str(self.log),'')
+    def generation(self,turn_id):
+        return self.cwd / (self.log.name + '.attempt-' + turn_id)
+
+    def run_turn(self,cmd=None,turn_id='turn-1'):
+        return self.call('turn','worker',turn_id,str(cmd or self.player),'model','high',str(self.cwd),str(self.task),str(self.log),'')
 
     def test_native_process_output_becomes_parent_report(self):
         self.run_turn()
@@ -67,15 +72,32 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.assertEqual([m['body'] for m in inbox],['Task recorded.'])
         self.assertEqual((self.cwd/'received.txt').read_text(),self.task.read_text())
         self.assertEqual(json.loads(self.call('player','worker'))['native'],'native-fixture')
-        self.assertEqual(len(self.log.read_text().splitlines()),3)
+        self.assertEqual(len(self.generation('turn-1').read_text().splitlines()),3)
 
     def test_completed_turn_retry_does_not_start_another_process(self):
         self.run_turn()
-        before=self.log.read_text()
+        before=self.generation('turn-1').read_text()
         self.player.unlink()
         self.run_turn()
-        self.assertEqual(self.log.read_text(),before)
+        self.assertEqual(self.generation('turn-1').read_text(),before)
         self.assertEqual(len(json.loads(self.call('inbox','root'))),1)
+
+    def test_two_real_turns_keep_generations_for_one_output_log(self):
+        self.run_turn(turn_id='generation-one')
+        first = self.generation('generation-one')
+        first_bytes = first.read_bytes()
+        self.run_turn(turn_id='generation-two')
+        second = self.generation('generation-two')
+        self.assertTrue(first.is_file())
+        self.assertEqual(first.read_bytes(), first_bytes)
+        self.assertIn(b'Task recorded.', first_bytes)
+        self.assertIn(b'Task recorded.', second.read_bytes())
+        with sqlite3.connect(self.db) as connection:
+            rows = connection.execute('SELECT attempt,log,base FROM log_generations ORDER BY attempt').fetchall()
+        self.assertEqual(rows, [
+            ('generation-one', str(first), str(self.log)),
+            ('generation-two', str(second), str(self.log)),
+        ])
 
     def test_turn_id_owned_by_another_player_does_not_replay_its_report(self):
         self.register('other','root','claude-code','model','high',str(self.cwd),'other-branch','base')
@@ -103,8 +125,8 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         inbox=json.loads(self.call('inbox','root'))
         self.assertTrue(any('without a native result' in m['body'] for m in inbox))
         self.assertTrue(any('exit 7' in m['body'] for m in inbox))
-        self.assertEqual(self.log.read_text(),'unframed startup failure\n')
-        self.assertEqual(pathlib.Path(str(self.log)+'.stderr').read_text(),'diagnosis')
+        self.assertEqual(self.generation('turn-1').read_text(),'unframed startup failure\n')
+        self.assertEqual(pathlib.Path(str(self.generation('turn-1'))+'.stderr').read_text(),'diagnosis')
 
     def test_omp_prompt_session_route_and_terminal_report(self):
         self.register('omp-worker','root','omp','requested-model','high',str(self.cwd),'omp-branch','base')
@@ -132,10 +154,24 @@ assert sys.stdin.read()==''
         self.assertEqual(session['native'],'omp-native')
         self.assertEqual(session['observedModel'],'provider/actual-model')
         self.assertEqual(session['model'],'requested-model')
-        frames=[json.loads(line) for line in self.log.read_text().splitlines()]
+        event_lines=self.generation('omp-turn').read_text().splitlines()
+        frames=[json.loads(line) for line in event_lines]
         self.assertEqual([f for f in frames if f.get('type')=='message_update'], [])
         self.assertEqual([f['partialResult']['content'][0]['text'] for f in frames if f.get('type')=='tool_execution_update'], [self.task.read_text()])
         self.assertEqual([f['type'] for f in frames], ['response','message_end','agent_end','agent_end','tool_execution_update','baton_event_filter'])
+        terminal_line=next(line for line in event_lines if json.loads(line).get('type')=='agent_end' and json.loads(line).get('isTerminal'))
+        with sqlite3.connect(self.db) as connection:
+            projection=connection.execute('SELECT event_sha256,projection,artifact_refs FROM log_terminal_observations WHERE session=? AND turn_id=?',('omp-worker','omp-turn')).fetchone()
+        self.assertIsNotNone(projection)
+        digest,projection_json,artifact_json=projection
+        self.assertEqual(digest,hashlib.sha256(terminal_line.encode()).hexdigest())
+        summary=json.loads(projection_json)
+        self.assertEqual(summary['messageCount'],2)
+        self.assertEqual(summary['roleCharacters']['assistant'],len('First answerFull final answer λ'))
+        self.assertEqual(summary['lastMessageCharacters'],len('Full final answer λ'))
+        artifacts=json.loads(artifact_json)
+        self.assertEqual(artifacts['outputLog'],str(self.generation('omp-turn')))
+        self.assertEqual(artifacts['providerSession'],'omp-native')
         args=json.loads((self.cwd/'argv.json').read_text())
         self.assertEqual(args[args.index('--mode')+1],'rpc')
         self.assertEqual(args[args.index('--session-dir')+1],str(self.db)+'.sessions')
