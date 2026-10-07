@@ -196,6 +196,7 @@ function runCompiler(args, cwd, stdoutPath, stderrPath) {
     const stdoutFd = openSync(stdoutPath, 'w');
     const stderrFd = openSync(stderrPath, 'w');
     const child = spawn(BEND, args, { cwd, env: ENV, stdio: ['ignore', stdoutFd, stderrFd] });
+    const processId = child.pid ?? null;
     let maxRssBytes = 0;
     let startupError = null;
     const sample = setInterval(() => { maxRssBytes = Math.max(maxRssBytes, peakRss(child.pid)); }, 100);
@@ -207,7 +208,7 @@ function runCompiler(args, cwd, stdoutPath, stderrPath) {
       fsyncSync(stderrFd);
       closeSync(stdoutFd);
       closeSync(stderrFd);
-      resolveResult({ exitCode: code, signal, startupError, maxRssBytes });
+      resolveResult({ processId, completedAt: new Date().toISOString(), exitCode: code, signal, startupError, maxRssBytes });
     });
   });
 }
@@ -286,6 +287,9 @@ export async function verifyResults(expected, results) {
     if (!descriptor.workToken || result.workToken !== descriptor.workToken) failures.push({ id: result.id, reason: 'execution token mismatch' });
     if (result.completed !== true) failures.push({ id: result.id, reason: 'producer did not complete' });
     if (result.applied !== true) failures.push({ id: result.id, reason: 'producer change was not applied' });
+    if (!Number.isInteger(result.processId) || result.processId < 1 || !Number.isFinite(Date.parse(result.completedAt ?? ''))) {
+      failures.push({ id: result.id, reason: 'compiler process identity or completion time is missing' });
+    }
     if (!Number.isInteger(result.exitCode) || result.signal !== null || result.startupError !== null) {
       failures.push({ id: result.id, reason: 'compiler process did not report an ordinary completed exit' });
     } else if (result.exitCode === 0) {
@@ -428,6 +432,8 @@ async function runPool(controls, concurrency, runRoot) {
         passed: row.passed,
         completed: row.completed,
         applied: row.applied,
+        processId: row.processId,
+        completedAt: row.completedAt,
         exitCode: row.exitCode,
         signal: row.signal,
         startupError: row.startupError,

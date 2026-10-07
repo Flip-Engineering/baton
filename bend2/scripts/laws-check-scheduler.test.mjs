@@ -36,6 +36,8 @@ const complete = dispatched.map((control, index) => {
     completed: true,
     applied: true,
     passed: true,
+    processId: 10000 + index,
+    completedAt: new Date(0).toISOString(),
     exitCode: 1,
     signal: null,
     startupError: null,
@@ -99,6 +101,13 @@ test('aggregation rejects startup failure and a successful compiler exit', async
   assert.ok((await verifyResults(dispatched, startup)).some(({ reason }) => reason === 'compiler process did not report an ordinary completed exit'));
   const accepted = complete.map((result, index) => index === 0 ? { ...result, exitCode: 0 } : result);
   assert.ok((await verifyResults(dispatched, accepted)).some(({ reason }) => reason === 'compiler accepted the control'));
+});
+
+test('aggregation rejects a result without actual process completion evidence', async () => {
+  const results = complete.map((result, index) => index === 0
+    ? { ...result, processId: null, completedAt: null }
+    : result);
+  assert.ok((await verifyResults(dispatched, results)).some(({ reason }) => reason === 'compiler process identity or completion time is missing'));
 });
 
 test('aggregation rejects compiler artifacts changed after completion', async () => {
