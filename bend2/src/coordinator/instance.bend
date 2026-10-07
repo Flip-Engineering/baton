@@ -19,7 +19,7 @@ import ../git/text.bend as Tx
 # IDs replay after any restart. The owner publishes the high-water; this loop
 # only reads rows and never publishes.
 type Event is Data:
-  TaskDone{session: String, done: Result<&1,&1,U32 & String,Unit>}
+  TaskDone{session: String, ok: Bool}
   Commit{}
   Gap{}
   Closed{}
@@ -183,14 +183,19 @@ def send_or_die(chan: Chan(Event), event: Event) -> IO(Event):
     sent : Bool <- Chan.send(Event, chan, event)
     report_send(sent)
 
-# Each relay joins only its own native task, then queues one TaskDone. The
-# returned event is never observed: no task joins a relay, so the relay result
-# only satisfies the fork type.
+# Each relay joins only its own native task, then queues one TaskDone carrying
+# whether the task succeeded. The returned event is never observed: no task
+# joins a relay, so the relay result only satisfies the fork type.
+def relay_done(+session: String, +chan: Chan(Event), done: Result<&1,&1,U32 & String,Unit>) -> IO(Event):
+  match done:
+    case Done{unit}: send_or_die(chan, TaskDone{session, True{}})
+    case Fail{error}: send_or_die(chan, TaskDone{session, False{}})
+
 @unsafe
-def relay(task: Chan(Result<&1,&1,U32 & String,Unit>), session: String, chan: Chan(Event)) -> IO(Event):
+def relay(task: Chan(Result<&1,&1,U32 & String,Unit>), +session: String, +chan: Chan(Event)) -> IO(Event):
   do IO<Event>:
     done : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>, task)
-    send_or_die(chan, TaskDone{session, done})
+    relay_done(session, chan, done)
 
 def kind_commit(commit: Bool) -> IO(Event):
   match commit:
@@ -226,10 +231,10 @@ def waiter(db: String, handle: U32, chan: Chan(Event)) -> IO(Event):
 # snapshot can fail a task whose input the stop retained; the next serve
 # excludes that stopped input, so the exit stays truthful while the input
 # stays pending.
-def note_task(failed: Bool, done: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
-  match done:
-    case Done{unit}: IO.pure(Bool, failed)
-    case Fail{error}: IO.pure(Bool, True{})
+def note_task(failed: Bool, ok: Bool) -> IO(Bool):
+  match ok:
+    case True{}: IO.pure(Bool, failed)
+    case False{}: IO.pure(Bool, True{})
 
 def drop_chan(chan: Chan(Event)) -> IO(Unit):
   IO.pure(Unit, Unit{})
@@ -304,8 +309,8 @@ def close_guarded(handle: U32, guard: U32, failed: Bool) -> IO(Result<&1,&1,U32 
 @unsafe
 def on_event(+db: String, handle: U32, guard: U32, +chan: Chan(Event), event: Event, failed: Bool, flying: List<String>, refused: List<String>, again: Loop -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match event:
-    case TaskDone{session, done}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      failed_now : Bool <- note_task(failed, done)
+    case TaskDone{session, ok}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      failed_now : Bool <- note_task(failed, ok)
       fresh : List<(String & String)> <- snapshot(db)
       next : Loop <- fork_new(db, chan, fresh, without_id(flying, session), refused, failed_now)
       again(next)
