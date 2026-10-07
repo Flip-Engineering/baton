@@ -362,10 +362,11 @@ test('every asset is vocabulary-exact SchemaDef and every ref resolves', () => {
   for (const identity of identities) {
     collectRefs(loadAsset(identity).SchemaDef.form, refs);
   }
+  // The only cross-asset reference is the event envelope carrying the
+  // result payload: the result payload itself carries no subject or
+  // reference members in the native producer shapes.
   assert.deepEqual([...new Set(refs)].sort(), [
-    'baton2.context.bend2.source-analysis.reference.v1',
     'baton2.context.bend2.source-analysis.result.v1',
-    'baton2.context.bend2.source-analysis.subject.v1',
   ]);
   for (const target of refs) {
     assert.ok(identities.has(target), `unresolved schema ref ${target}`);
