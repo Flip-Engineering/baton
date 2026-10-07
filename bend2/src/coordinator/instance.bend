@@ -382,7 +382,7 @@ def admitted(+db: String, guard: U32, subscribed: Result<&1,&1,U32 & String,U32 
     case Done{(handle, readiness)}: do IO<Result<&1,&1,U32 & String,Unit>>:
       ready : Unit <- IO.write(readiness ++ "\n")
       chan : Chan(Event) <- Chan.new(Event, 1024)
-      fresh : List<(String & String)> <- snapshot(db)
+      fresh : List<(String & String)> & List<(String & String)> <- snapshot(db)
       drive_new(db, handle, guard, chan, False{}, fresh)
 
 def enter(+db: String, guarded: Result<&1,&1,U32 & String,U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
