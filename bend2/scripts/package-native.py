@@ -284,7 +284,7 @@ def stage_selected_context_payload(payload):
         destination = module_root.joinpath(*relative.parts)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
-        staged_files.append({'path': destination.relative_to(payload).as_posix(), **file_info(destination)})
+        staged_files.append({'path': destination.relative_to(module_root).as_posix(), **file_info(destination)})
 
     provider_path = module_root / 'native-provider.declaration.json'
     require(provider_path.is_file(), 'The selected Bend2 provider declaration is not staged')
@@ -312,6 +312,31 @@ def stage_selected_context_payload(payload):
         require(PurePosixPath(artifact['packagePath']).as_posix() == artifact['packagePath']
                 and staged.is_file() and sha256(staged) == artifact['sha256'],
                 'The selected Bend2 provider artifact identity differs from staged bytes')
+    upstream = {
+        'bend.ts': '93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85',
+        'main.ts': '92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e',
+        'comp.ts': 'ad8b82137e5decf588d507d008cb8ccf24bd0b94043de8bd6e048d0faedcf959',
+        'base.bend': 'e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798',
+        'LICENSE': COMPILER_LICENSE_SHA256,
+    }
+    for name, expected in upstream.items():
+        path = module_root / 'upstream' / name
+        require(path.is_file() and not path.is_symlink() and sha256(path) == expected,
+                'Selected Bend2 frontend input differs from the pinned source: ' + name)
+        require(name != 'LICENSE' or expected == COMPILER_LICENSE_SHA256,
+                'Selected Bend2 source license differs from the pinned reference license')
+    source_manifest = json.loads(declaration_path.read_text())
+    require(source_manifest.get('upstreamPin') == 'a49524265bdfa5753a4bf38e25f0574a705dd868'
+            and source_manifest.get('providerArtifacts') == artifact_identities,
+            'Selected Bend2 source manifest provenance does not match the provider declaration')
+    expected_source_files = {entry['path']: {'path': entry['path'], 'bytes': entry['bytes'], 'sha256': entry['sha256']}
+                             for entry in declaration['files']}
+    require(source_manifest.get('files') == [expected_source_files[name] for name in sorted(expected_source_files)],
+            'Selected Bend2 source manifest file inventory differs from its package declaration')
+    for name, expected in upstream.items():
+        path = 'upstream/' + name
+        require(expected_source_files.get(path, {}).get('sha256') == expected,
+                'Selected Bend2 source manifest omits a pinned frontend file: ' + name)
     schemas = provider.get('schemaIdentities')
     require(isinstance(schemas, list) and schemas
             and all(isinstance(schema, str) for schema in schemas),
