@@ -159,11 +159,11 @@ logs for acceptance and completion.
 The native terminal result is recorded in `turns PRINCIPAL --pretty` and sent
 to the operator inbox. Acknowledge each reviewed report with `ack`.
 
-Recruit subordinate Players with `recruit`. Configure Codex and OMP receivers
+Recruit subordinate Players with `recruit`. Configure Codex, OMP and Muse receivers
 with `receiver SESSION HARNESS_COMMAND OUTPUT_LOG`, then use
 `dispatch-file ID SENDER RECIPIENT task TASK_FILE` for independent work.
 `dispatch-turn PLAYER TURN_ID HARNESS_COMMAND OUTPUT_LOG TASK_FILE` starts a
-Muse or Claude Player using its recorded model, effort, workspace and native ID.
+Claude Player using its recorded model, effort, workspace and native ID.
 
 An existing model Git registry at `~/.config/baton/github-apps/series.json` is
 applied to native receiver and detached turn launches. `BATON2_GIT_REGISTRY`

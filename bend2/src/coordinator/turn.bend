@@ -557,13 +557,39 @@ def retained_output(+db: String, +player: String, id: String, +log: String, +har
     held : String <- IO.pure(String,Observer.held(checkpoint_state))
     consume(db,player,id,log,policy,held,False{},handle,harness,cursor,last_message,primary,current,terminal,filter,codex_log,"",sender,attempt,checkpoint_state,False{},Nil{},first)
 
+# Muse reads its task from the file named by `--prompt-file`. A retained Muse
+# attempt writes the composed input at the task path beside its attempt before
+# the native starts, and the child's input closes immediately. The host creates
+# the attempt directory itself, so the task file takes the sibling name.
+def retained_task(directory: String) -> String:
+  directory ++ ".prompt.txt"
+
+def retained_arguments(muse: Bool, omp: Bool, cmd: String, model: String, effort: String, task: String, sessions: String, native: String) -> String:
+  Bool.pick(String,muse,
+    Muse.argv(cmd,model,effort,task,native,String.is_empty(native)),
+  Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
+
+def retained_input(muse: Bool, omp: Bool, prompt: String) -> String:
+  Bool.pick(String,muse,"",Bool.pick(String,omp,Omp.prompt(prompt),prompt))
+
+# The Muse task file closes the child's input; OMP keeps it open for steer frames.
+def retained_keep_stdin(muse: Bool, omp: Bool) -> U32:
+  Bool.pick(U32,muse,0,Bool.pick(U32,omp,1,0))
+
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
     alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
-    args : String <- IO.pure(String,Bool.pick(String,String.eq(harness,"omp\n"),Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
-    input : String <- IO.pure(String,Bool.pick(String,String.eq(harness,"omp\n"),Omp.prompt(prompt),prompt))
-    P.ProcessChild.retain(directory,args,cwd,directory ++ "/native.stderr",input,Bool.pick(U32,String.eq(harness,"omp\n"),1,0),lock,recovery)
+    +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
+    +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
+    +task : String <- IO.pure(String,retained_task(directory))
+    written : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),muse,T.Text.append(task,prompt),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
+    match written:
+      case Fail{error}: IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Fail{error})
+      case Done{unit}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
+        args : String <- IO.pure(String,retained_arguments(muse,omp,cmd,model,effort,task,sessions,native))
+        input : String <- IO.pure(String,retained_input(muse,omp,prompt))
+        P.ProcessChild.retain(directory,args,cwd,directory ++ "/native.stderr",input,retained_keep_stdin(muse,omp),lock,recovery)
 
 def claude_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:

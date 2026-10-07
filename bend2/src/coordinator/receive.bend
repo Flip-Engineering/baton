@@ -189,7 +189,7 @@ def selected(+db: String, +session: String, +cmd: String, +model: String, +effor
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +executable : String <- IO.try(String,Lock.SessionLock.executable())
       +harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-      supported : Unit <- Turn.supported_harness(Bool.or(String.eq(harness,"omp\n"),String.eq(harness,"codex\n")))
+      supported : Unit <- Turn.supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),String.eq(harness,"muse\n"))))
       +native : String <- field(db,session,"native","")
       +route : String <- field(db,session,"model",model)
       +thinking : String <- field(db,session,"effort",effort)

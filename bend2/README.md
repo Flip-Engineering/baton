@@ -411,7 +411,7 @@ DB="$STATE/state.db"
 `start` configures a native receiver and dispatches the task. It preserves a
 compatible existing Principal's saved conversation and pending input.
 `receiver SESSION HARNESS_COMMAND OUTPUT_LOG` generates the endpoint for an
-existing Codex or OMP session and preserves its saved native ID. It resolves
+existing Codex, OMP or Muse session and preserves its saved native ID. It resolves
 executable and log paths and selects the recorded model, effort and workspace.
 The configured model Git registry applies to each launched session through the
 installed Node helper; see [series Git identities](../docs/bend2/git-series-identities.md).
@@ -487,6 +487,16 @@ Codex retains conversations in its configured storage. Native OMP receive uses
 for sessions with a parent. The Node OMP adapter uses `DATABASE.root-sessions`
 for logical ID `root` and `DATABASE.session-HEX_ID` for other IDs. Each directory
 stores conversations by their native identity; the path does not assign a role.
+
+For Muse, register harness `muse` and use its executable, model and effort in the
+same endpoint. Muse reads its task from `exec --json --prompt-file`, so a Muse
+receive attempt writes the composed pending input at `ATTEMPT.prompt.txt` beside
+the attempt directory and passes that path to the adapter, adding
+`--session-id` for the session's recorded conversation. The attempt closes the
+child's input immediately and reads the child's `--json` stream. A Muse
+Conductor with no recorded conversation starts one and records its identity from
+the session envelope; later messages resume it. The principal `start` command
+accepts `muse` as well as `codex` and `omp`.
 
 Retained OMP children send native input, selection, confirmation and editor
 questions to their registered parent. The question names its request ID and
@@ -675,7 +685,7 @@ native executable or launch wrapper an absolute path:
 ```
 
 The sequence starts real Players on all four routes, interrupts and resumes their
-native sessions, guides a running OMP Player, triggers native Codex and OMP Conductors
+native sessions, guides a running OMP Player, triggers native Codex, OMP and Muse Conductors
 from Player reports, delivers a Claude channel notification, and recovers all
 three Conductors. The Git stage lands reviewed Player commits, exercises a moving
 target and conflict resolution, and pushes to a scratch bare remote whose ref

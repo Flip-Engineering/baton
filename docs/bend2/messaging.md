@@ -110,8 +110,8 @@ acceptance is recorded.
 
 The OMP Player turn path accepts guidance during a native turn at response,
 completed-message and tool-event boundaries. Guidance during a silent operation
-waits for the next such event. Codex and OMP retained receive can start the next
-turn from pending input. Other Player harnesses use an explicitly started native
+waits for the next such event. Codex, OMP and Muse retained receive can start the next
+turn from pending input. A Claude Player uses an explicitly started native
 turn. Claude Conductor delivery uses Channels. The [architecture](architecture.md)
 describes their protocol and recovery boundaries.
 

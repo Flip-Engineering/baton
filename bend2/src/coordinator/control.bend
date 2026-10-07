@@ -99,11 +99,11 @@ def configured_endpoint(+db: String, session: String, +cmd: String, log: String,
     IO.pure(String,identity_endpoint(executable,database,session,native,output,model,checked))
 
 def receiver_admitted(+session: String, endpoint: String) -> String:
-  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")"
+  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")"
 
 def receiver_update_sql(+session: String, +endpoint: String, +admitted: String) -> String:
   "UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
-  ++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered, active Codex or OMP session and valid text argv.','next','Inspect the session and retained inbox. Use turn for Muse or Claude Players; recruit a new session after a terminal stop.') WHERE NOT " ++ admitted ++ ";"
+  ++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered, active Codex, OMP or Muse session and valid text argv.','next','Inspect the session and retained inbox. Attach an interactive Claude Conductor through its channel adapter; recruit a new session after a terminal stop.') WHERE NOT " ++ admitted ++ ";"
   ++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ ")) WHERE " ++ admitted ++ ";"
 
 def receiver_sql(+session: String, +endpoint: String) -> String:
@@ -127,7 +127,7 @@ def principal_matches(+session: String, +harness: String, +model: String, +effor
   "(id=" ++ C.q(session) ++ " AND parent IS NULL AND harness=" ++ C.q(harness) ++ " AND (model='' OR model=" ++ C.q(model) ++ ") AND (effort='' OR effort=" ++ C.q(effort) ++ ") AND (workspace='' OR workspace=" ++ C.q(cwd) ++ ") AND " ++ C.assigned_role("sessions.id") ++ "<>'operator' AND NOT " ++ C.stopped_session_sql("sessions.id") ++ ")"
 
 def start_admission(+session: String, +harness: String, model: String, effort: String, cwd: String) -> String:
-  "(" ++ C.q(session) ++ "<>'operator' AND " ++ C.q(session) ++ "<>'' AND " ++ C.q(harness) ++ " IN ('codex','omp') AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ") OR EXISTS(SELECT 1 FROM sessions WHERE " ++ principal_matches(session,harness,model,effort,cwd) ++ ")) AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id='operator') OR EXISTS(SELECT 1 FROM sessions WHERE id='operator' AND parent IS NULL AND ((harness='operator' AND NOT EXISTS(SELECT 1 FROM session_roles WHERE session='operator')) OR " ++ C.assigned_role("sessions.id") ++ "='operator'))))"
+  "(" ++ C.q(session) ++ "<>'operator' AND " ++ C.q(session) ++ "<>'' AND " ++ C.q(harness) ++ " IN ('codex','omp','muse') AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ") OR EXISTS(SELECT 1 FROM sessions WHERE " ++ principal_matches(session,harness,model,effort,cwd) ++ ")) AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id='operator') OR EXISTS(SELECT 1 FROM sessions WHERE id='operator' AND parent IS NULL AND ((harness='operator' AND NOT EXISTS(SELECT 1 FROM session_roles WHERE session='operator')) OR " ++ C.assigned_role("sessions.id") ++ "='operator'))))"
 
 def principal_assignment_sql(+session: String, +harness: String, +model: String, +effort: String, +cwd: String, +endpoint: String, +admitted: String) -> String:
   "INSERT INTO sessions(id,harness,model,effort,workspace) SELECT " ++ C.q(session) ++ "," ++ C.q(harness) ++ "," ++ C.q(model) ++ "," ++ C.q(effort) ++ "," ++ C.q(cwd) ++ " WHERE " ++ admitted ++ " ON CONFLICT(id) DO NOTHING;"
@@ -136,7 +136,7 @@ def principal_assignment_sql(+session: String, +harness: String, +model: String,
   ++ "INSERT INTO session_roles(session,role) SELECT 'operator','operator' WHERE " ++ admitted ++ " ON CONFLICT(session) DO NOTHING;"
   ++ "INSERT INTO session_roles(session,role) SELECT " ++ C.q(session) ++ ",'conductor' WHERE " ++ admitted ++ " ON CONFLICT(session) DO UPDATE SET role=excluded.role;"
   ++ "UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
-  ++ "SELECT CASE WHEN " ++ admitted ++ " THEN '' ELSE json_object('error','principal-assignment-conflict','session'," ++ C.q(session) ++ ",'condition','Principal startup requires a compatible parentless Codex or OMP session and the operator role.','next','Inspect the existing session, role and pending input. Retain its work and use the recorded assignment or a new session ID.') END;"
+  ++ "SELECT CASE WHEN " ++ admitted ++ " THEN '' ELSE json_object('error','principal-assignment-conflict','session'," ++ C.q(session) ++ ",'condition','Principal startup requires a compatible parentless Codex, OMP or Muse session and the operator role.','next','Inspect the existing session, role and pending input. Retain its work and use the recorded assignment or a new session ID.') END;"
 
 def start_sql(+session: String, +harness: String, +model: String, +effort: String, +cwd: String, +endpoint: String) -> String:
   principal_assignment_sql(session,harness,model,effort,cwd,endpoint,"(" ++ start_admission(session,harness,model,effort,cwd) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")")
