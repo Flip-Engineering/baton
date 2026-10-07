@@ -67,6 +67,24 @@ law a_changed_artifact_path_invalidates_the_committed_start:
 def a_changed_artifact_path_invalidates_the_committed_start():
   {==}
 
+law a_different_owner_workspace_invalidates_the_committed_start:
+  {Managed.accepted_admission(managed_bootstrap(), "starter", "0",
+    Admission.AdmissionCreated{"owner-1", "{}", "accepted", "accepted", "0",
+      "/logs/keeper-q", "/foreign-worktree", "/work/.baton/context-artifacts/q"},
+    "[]", "result-v1") == Managed.StartHeld{"committedAdmissionMismatch"} : Managed.StartDecision}
+
+def a_different_owner_workspace_invalidates_the_committed_start():
+  {==}
+
+law a_different_origin_attempt_invalidates_the_committed_start:
+  {Managed.accepted_admission(managed_bootstrap(), "starter", "0",
+    Admission.AdmissionCreated{"owner-1", "{}", "accepted", "accepted", "1",
+      "/logs/keeper-q", "/work", "/work/.baton/context-artifacts/q"},
+    "[]", "result-v1") == Managed.StartHeld{"committedAdmissionMismatch"} : Managed.StartDecision}
+
+def a_different_origin_attempt_invalidates_the_committed_start():
+  {==}
+
 law rejected_admission_cancels_only_after_exact_retained_identity_readback:
   {Managed.cancel_rejected(managed_bootstrap(), ready_keeper(),
     Admission.AdmissionRetained{"owner-1", "{}", "rejected", "refused", "0",
