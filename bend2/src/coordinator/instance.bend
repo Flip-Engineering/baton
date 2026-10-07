@@ -93,7 +93,7 @@ def strip_cons(stripped: List<(String & String)> & List<String>, id: String) -> 
 def strip_known(known: List<String>, pairs: List<(String & String)>) -> List<(String & String)> & List<String>:
   match known:
     case Nil{}: (pairs, Nil{})
-    case id <> rest: strip_cons(strip_known(rest, without_session(pairs, id)), id)
+    case +id <> rest: strip_cons(strip_known(rest, without_session(pairs, id)), id)
 
 def partition_cons_fork(one: String & String, done: List<(String & String)> & List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
   match done:
