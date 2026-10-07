@@ -39,7 +39,7 @@ def owner_try_cli(args: List<String>) -> IO(Unit):
       IO.pure(Unit,Unit{})
     case _: IO.die(Unit,2,"owner-try DATABASE")
 
-# Prints each retained line, then the actual exit status. The observer exits
+# Prints each retained line, then the actual exit status. This observer exits
 # without releasing the attempt, so the owner keeps the native work.
 @unsafe
 def attached_lines(+handle: U32, line: Maybe<String>) -> IO(Unit):
@@ -98,75 +98,72 @@ def operation(name: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit)
     case Done{unit}: IO.print(name ++ "-ok")
     case Fail{(code,text)}: IO.print(name ++ "-failed:" ++ U32.show(code) ++ ": " ++ text)
 
-def retired_step(+handle: U32, retire: Bool) -> IO(Unit):
-  match retire:
-    case False{}: IO.pure(Unit,Unit{})
-    case True{}: do IO<Unit>:
-      retire_result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.retire(handle)
-      outcome : Unit <- operation("retire",retire_result)
-      stale_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,"after retire")
-      stale : Unit <- operation("stale-write",stale_result)
-      IO.pure(Unit,Unit{})
-
-def release_and_ack(+handle: U32, retire: Bool) -> IO(Unit):
+# The completion cycle. Release and acknowledgment end custody; retirement
+# releases the capability, and a later write through it must be refused.
+def release_and_ack(+handle: U32) -> IO(Unit):
   do IO<Unit>:
     release_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.release(handle)
     released : Unit <- operation("release",release_result)
     ack_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.acknowledge(handle)
     acknowledged : Unit <- operation("acknowledge",ack_result)
-    retired : Unit <- retired_step(handle,retire)
+    retire_result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.retire(handle)
+    retired : Unit <- operation("retire",retire_result)
+    stale_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,"after retire")
+    stale : Unit <- operation("stale-write",stale_result)
     IO.pure(Unit,Unit{})
 
-# In hold mode the attempt stays alive while the driver kills this observer.
-def holding() -> IO(Unit):
-  do IO<Unit>:
-    gate : String <- IO.try(String,Text.Text.read("-"))
-    IO.pure(Unit,Unit{})
-
-def held_step(mode: String) -> IO(Unit):
-  Bool.pick(IO(Unit),String.eq(mode,"hold"),holding(),IO.pure(Unit,Unit{}))
-
-def closed_step(+handle: U32, mode: String) -> IO(Unit):
-  Bool.pick(IO(Unit),String.eq(mode,"hold"),IO.pure(Unit,Unit{}),IO.try(Unit,P.ProcessChild.close_stdin(handle)))
-
-# An admitted attempt: the caller sees admitted, then the native output, then
-# the actual exit status and the release and acknowledgment results.
 @unsafe
-def admitted_lines(+handle: U32, mode: String, line: Maybe<String>) -> IO(Unit):
+def cycle_lines(+handle: U32, line: Maybe<String>) -> IO(Unit):
   match line:
     case None{}: do IO<Unit>:
       status : String <- IO.try(String,P.ProcessChild.wait(handle))
       printed : Unit <- IO.print("native-" ++ status)
-      settled : Unit <- release_and_ack(handle,String.eq(mode,"cycle"))
+      settled : Unit <- release_and_ack(handle)
       IO.print("attempt-complete")
     case Some{text}: do IO<Unit>:
       printed : Unit <- IO.print(text)
-      held : Unit <- held_step(mode)
       next : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
-      admitted_lines(handle,mode,next)
+      cycle_lines(handle,next)
 
-def admitted_started(start: P.RetainedStart, payload: String, mode: String) -> IO(Unit):
+def cycle_started(start: P.RetainedStart, payload: String) -> IO(Unit):
   match start:
     case P.Unstarted{error}: IO.die(Unit,1,error)
     case P.Retained{handle}: do IO<Unit>:
       printed : Unit <- IO.print("admitted")
       written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,payload))
-      closed : Unit <- closed_step(handle,mode)
+      closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
       line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
-      admitted_lines(handle,mode,line)
+      cycle_lines(handle,line)
 
-def admitted_locked(database: String, directory: String, cwd: String, payload: String, mode: String, program: List<String>, lock: Maybe<U32>) -> IO(Unit):
+# The held attempt: the observer writes the payload and then stops reading, so
+# its owner keeps the native work and the spool. The driver kills this process
+# and reads the attempt's retained output through the owner's recovery observer.
+def hold_started(start: P.RetainedStart, payload: String) -> IO(Unit):
+  match start:
+    case P.Unstarted{error}: IO.die(Unit,1,error)
+    case P.Retained{handle}: do IO<Unit>:
+      printed : Unit <- IO.print("admitted")
+      written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,payload))
+      gate : String <- IO.try(String,Text.Text.read("-"))
+      IO.print("hold-released")
+
+def attempted_locked(database: String, directory: String, cwd: String, payload: String, program: List<String>, lock: Maybe<U32>, cycle: Bool) -> IO(Unit):
   do IO<Unit>:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
-    start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr",payload,1,lock,P.argv([executable,"recover-retained",database,directory])))
-    admitted : Unit <- admitted_started(start,payload,mode)
+    start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr","",1,lock,P.argv([executable,"recover-retained",database,directory])))
+    run : Unit <- attempted_started(start,payload,cycle)
     IO.pure(Unit,Unit{})
 
-def admit_cli(args: List<String>) -> IO(Unit):
+def attempted_started(start: P.RetainedStart, payload: String, cycle: Bool) -> IO(Unit):
+  match cycle:
+    case True{}: cycle_started(start,payload)
+    case False{}: hold_started(start,payload)
+
+def admit_cli(args: List<String>, cycle: Bool) -> IO(Unit):
   match args:
-    case database <> session <> directory <> cwd <> payload <> mode <> program:
-      Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => admitted_locked(canonical,directory,cwd,payload,mode,program,lock))
-    case _: IO.die(Unit,2,"admit DATABASE SESSION ATTEMPT CWD PAYLOAD MODE PROGRAM ARGS...")
+    case database <> session <> directory <> cwd <> payload <> program:
+      Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => attempted_locked(canonical,directory,cwd,payload,program,lock,cycle))
+    case _: IO.die(Unit,2,"admit DATABASE SESSION ATTEMPT CWD PAYLOAD PROGRAM ARGS...")
 
 def write_cli(args: List<String>) -> IO(Unit):
   match args:
@@ -204,27 +201,29 @@ def lock_cli(args: List<String>) -> IO(Unit):
 def mode_number(+mode: String) -> U32:
   Bool.pick(U32,Bool.or(String.eq(mode,"--instance-owner"),String.eq(mode,"owner")),1,
   Bool.pick(U32,String.eq(mode,"admit"),2,
-  Bool.pick(U32,String.eq(mode,"attach"),3,
-  Bool.pick(U32,String.eq(mode,"attach-owned"),4,
-  Bool.pick(U32,String.eq(mode,"control-write"),5,
-  Bool.pick(U32,String.eq(mode,"control-signal"),6,
-  Bool.pick(U32,String.eq(mode,"shutdown"),7,
-  Bool.pick(U32,String.eq(mode,"lock-try"),8,
-  Bool.pick(U32,String.eq(mode,"owner-try"),9,
-  Bool.pick(U32,String.eq(mode,"recover-retained"),10,0))))))))))
+  Bool.pick(U32,String.eq(mode,"hold"),3,
+  Bool.pick(U32,String.eq(mode,"attach"),4,
+  Bool.pick(U32,String.eq(mode,"attach-owned"),5,
+  Bool.pick(U32,String.eq(mode,"control-write"),6,
+  Bool.pick(U32,String.eq(mode,"control-signal"),7,
+  Bool.pick(U32,String.eq(mode,"shutdown"),8,
+  Bool.pick(U32,String.eq(mode,"lock-try"),9,
+  Bool.pick(U32,String.eq(mode,"owner-try"),10,
+  Bool.pick(U32,String.eq(mode,"recover-retained"),11,0)))))))))))
 
 def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
   match mode:
     case 1: owner_cli(rest)
-    case 2: admit_cli(rest)
-    case 3: attach_cli(rest)
-    case 4: attach_owned_cli(rest)
-    case 5: write_cli(rest)
-    case 6: signal_cli(rest)
-    case 7: shutdown_cli(rest)
-    case 8: lock_cli(rest)
-    case 9: owner_try_cli(rest)
-    case 10: recover_cli(rest)
+    case 2: admit_cli(rest,True{})
+    case 3: admit_cli(rest,False{})
+    case 4: attach_cli(rest)
+    case 5: attach_owned_cli(rest)
+    case 6: write_cli(rest)
+    case 7: signal_cli(rest)
+    case 8: shutdown_cli(rest)
+    case 9: lock_cli(rest)
+    case 10: owner_try_cli(rest)
+    case 11: recover_cli(rest)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):

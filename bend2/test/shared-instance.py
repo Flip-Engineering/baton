@@ -98,10 +98,10 @@ class SharedInstance(unittest.TestCase):
         return subprocess.run([str(EXE), *map(str, args)], capture_output=True,
                               text=True, timeout=30)
 
-    def begin(self, label, session=None, mode='close', payload='hello\n'):
+    def begin(self, label, session=None, mode='admit', payload='hello\n'):
         directory = pathlib.Path(f'{self.db}.attempt-{label}')
-        child = self.spawn('admit', self.db, session or label, directory, self.home,
-                           payload, mode, sys.executable, self.fixture)
+        child = self.spawn(mode, self.db, session or label, directory, self.home,
+                           payload, sys.executable, self.fixture)
         return directory, child
 
     def native(self, output):
@@ -174,8 +174,10 @@ class SharedInstance(unittest.TestCase):
 
     def test_observer_loss_keeps_native_work_and_retained_output(self):
         directory, child = self.begin('held', mode='hold', payload='one\n')
-        self.line(child, 'echo:one')
-        summary = self.native(''.join(child.output))
+        self.line(child, 'admitted')
+        spool = directory / 'stdout'
+        self.hold(spool, 'echo:one')
+        summary = self.native(spool.read_text(errors='replace'))
         child.kill()
         child.wait(timeout=10)
         os.kill(summary['pid'], 0)
@@ -188,7 +190,7 @@ class SharedInstance(unittest.TestCase):
         self.hold(log, 'native-exit 0')
 
     def test_retired_capability_refuses_the_old_generation(self):
-        directory, child = self.begin('cycle', mode='cycle')
+        directory, child = self.begin('cycle')
         output = self.wait_run(child)
         self.assertIn('retire-ok', output)
         self.assertIn('stale-write-failed:', output)
