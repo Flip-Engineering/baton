@@ -153,7 +153,7 @@ def base_schema() -> String:
   ++ messaging_schema()
 
 def schema() -> String:
-  base_schema() ++ native_change_schema()
+  base_schema()
 
 def stopped_session_sql(session: String) -> String:
   "EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ session ++ ")"
