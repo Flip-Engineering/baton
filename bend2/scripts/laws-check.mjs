@@ -1079,14 +1079,14 @@ MUTATIONS.push(
     file: join('bend2', 'src', 'git', 'land.bend'),
     find: '+same = Bool.pick(Bool, status_ok,\n        Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)), False{})\n      IO.pure(LAdv, ld_adv_wt_observed(True{}, same, path))',
     replace: 'IO.pure(LAdv, ld_adv_wt_observed(True{}, True{}, path))',
-    law: 'm3a_held_holder_observation_requires_the_target_branch',
+    law: 'm3a_held_holder_different_branch_refuses',
   },
   {
     name: 'held-success-arm-accepts-a-different-target-tip',
     file: join('bend2', 'src', 'git', 'land.bend'),
     find: '+same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})\n      ld_adv_wt_observed_target_same(same, path, target)',
     replace: '+same = True{}\n      ld_adv_wt_observed_target_same(same, path, target)',
-    law: 'm3a_held_target_observation_requires_the_candidate_tip',
+    law: 'm3a_held_target_tip_mismatch_refuses',
   },
 );
 

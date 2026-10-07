@@ -1153,50 +1153,45 @@ law m3a_held_success_observation_reads_the_target_ref:
 def m3a_held_success_observation_reads_the_target_ref(path, repo, target, cand):
   {==}
 
-def held_target_observation_same(same: Bool, path: String, target: String) -> IO(L.LAdv):
-  match same:
-    case False{}: IO.pure(L.LAdv, L.AdvMoved{})
-    case True{}:
-      +p2 = path
-      +t2 = target
-      do IO<L.LAdv>:
-        holder : T.GitOut <- P.runGit(p2, L.ld_head_argv())
-        L.ld_adv_wt_observed_holder_pick(holder, p2, t2)
+def held_candidate_tip_reads_holder(path: String, target: String) -> IO(L.LAdv):
+  +p2 = path
+  +t2 = target
+  do IO<L.LAdv>:
+    holder : T.GitOut <- P.runGit(p2, L.ld_head_argv())
+    L.ld_adv_wt_observed_holder_pick(holder, p2, t2)
 
-def held_target_observation(g: T.GitOut, path: String, target: String, cand: String) -> IO(L.LAdv):
-  match g:
-    case T.GRun{code, out}:
-      +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})
-      held_target_observation_same(same, path, target)
-    case T.GBroken{detail}: IO.pure(L.LAdv, L.AdvBroken{detail})
-
-law m3a_held_target_observation_requires_the_candidate_tip:
-  for +g: T.GitOut
+law m3a_held_candidate_tip_reads_the_holder:
   for path: String
   for target: String
   for cand: String
-  {L.ld_adv_wt_observed_target_pick(g, path, target, cand) == held_target_observation(g, path, target, cand) : IO(L.LAdv)}
+  {L.ld_adv_wt_observed_target_pick(T.GRun{0, cand}, path, target, cand) == held_candidate_tip_reads_holder(path, target) : IO(L.LAdv)}
 
-def m3a_held_target_observation_requires_the_candidate_tip(g, path, target, cand):
+def m3a_held_candidate_tip_reads_the_holder(path, target, cand):
   {==}
 
-def held_holder_observation(g: T.GitOut, path: String, target: String) -> IO(L.LAdv):
-  match g:
-    case T.GRun{code, out}:
-      +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(Bool, status_ok,
-        Tx.str_eq(Tx.trim_nl(out), L.ld_hold_ref(target)), False{})
-      IO.pure(L.LAdv, L.ld_adv_wt_observed(True{}, same, path))
-    case T.GBroken{detail}: IO.pure(L.LAdv, L.AdvBroken{detail})
-
-law m3a_held_holder_observation_requires_the_target_branch:
-  for +g: T.GitOut
+law m3a_held_target_tip_mismatch_refuses:
   for path: String
   for target: String
-  {L.ld_adv_wt_observed_holder_pick(g, path, target) == held_holder_observation(g, path, target) : IO(L.LAdv)}
+  for cand: String
+  {L.ld_adv_wt_observed_target_pick(T.GRun{0, Tx.str_cat(cand, "x")}, path, target, cand) == IO.pure(L.LAdv, L.AdvMoved{}) : IO(L.LAdv)}
 
-def m3a_held_holder_observation_requires_the_target_branch(g, path, target):
+def m3a_held_target_tip_mismatch_refuses(path, target, cand):
+  {==}
+
+law m3a_held_holder_exact_target_allows_success:
+  for path: String
+  for target: String
+  {L.ld_adv_wt_observed_holder_pick(T.GRun{0, L.ld_hold_ref(target)}, path, target) == IO.pure(L.LAdv, L.AdvLanded{}) : IO(L.LAdv)}
+
+def m3a_held_holder_exact_target_allows_success(path, target):
+  {==}
+
+law m3a_held_holder_different_branch_refuses:
+  for path: String
+  for target: String
+  {L.ld_adv_wt_observed_holder_pick(T.GRun{0, Tx.str_cat(L.ld_hold_ref(target), "-other")}, path, target) == IO.pure(L.LAdv, L.AdvHolderChanged{path}) : IO(L.LAdv)}
+
+def m3a_held_holder_different_branch_refuses(path, target):
   {==}
 
 law m3a_held_tip_read_names_the_local_branch:
