@@ -44,6 +44,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createFrontendAdapter } from './frontend-adapter.mjs';
+import { createRetainedAcquisition } from './acquisition.mjs';
 import { UPSTREAM_INPUTS, UPSTREAM_PIN, HOOK_OPERATIONS, applyHookOperations, deriveHookedSource, verifyHookAnchors } from './frontend-hooks.mjs';
 import { runFrontendInvocation } from './frontend-invocation.mjs';
 
@@ -138,13 +139,35 @@ function closureReader(files, options = {}) {
   return { reads, read, resolve };
 }
 
-function adapterFor(fixture, options = {}) {
-  const reader = closureReader(fixture.files, options);
+// The harness proves the retained-acquisition path, not an inline closure:
+// the operand is built by createRetainedAcquisition over a capture-host view
+// of the primed fixture catalog, so existence, identity and bytes come from
+// the retained set and the base is located by the pinned digest. The reads
+// log wraps the operand's read answers (one entry per acquisition the
+// adapter performs), matching the closure reader's lazy logging —
+// construction-time retention reads stay invisible to the assertions.
+function adapterFor(fixture) {
+  const digests = new Map();
+  for (const [path, bytes] of fixture.files) digests.set(path, sha256(bytes));
+  const capture = {
+    descriptors: () => [...fixture.files.keys()].map((path) => ({ kind: 'file', path, real: path, sha256: digests.get(path) })),
+    readBytes: (path) => fixture.files.get(path),
+  };
+  const operand = createRetainedAcquisition({ capture, basePin: UPSTREAM_INPUTS.base });
+  if (operand.status === 'refused') refuse('acquisitionRefused', operand);
+  const reads = [];
   const adapter = createFrontendAdapter({
     captureOnly: true,
-    acquisition: { read: reader.read, resolve: reader.resolve, baseBend: fixture.basePath },
+    acquisition: {
+      resolve: (identity) => operand.resolve(identity),
+      read: (identity) => {
+        reads.push(identity);
+        return operand.read(identity);
+      },
+      baseBend: operand.baseBend,
+    },
   });
-  return { adapter, reads: reader.reads };
+  return { adapter, reads };
 }
 
 function reportOf(name, result, adapter, extra) {
@@ -221,7 +244,10 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     for (const entry of primedAnswers) {
       check(report, `primed name resolves present: ${entry.name}`, entry.answer.status === 'present', entry.answer);
     }
-    check(report, 'an unprimed name resolves absent', absent.status === 'absent', absent);
+    // No absence is inferred from a missing row: the glue answers nothing for
+    // an unrecorded name, so the lookup reports unknown rather than absent.
+    // Only a recorded absence row would answer absent.
+    check(report, 'an unprimed name resolves unknown, never absent', absent.status === 'unknown', absent);
     check(report, 'the primed set covers fixtures, base pin and virtual module',
       ON_DISK.every((entry) => fixture.files.has(join(dir, entry))) && fixture.files.has(join(dir, 'base.bend')) && fixture.files.has(join(dir, VIRTUAL)),
       [...fixture.files.keys()]);
