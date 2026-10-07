@@ -848,7 +848,11 @@ assert sys.stdin.read()==''
         generation = self.log
         generation.write_text('derived generation view\n')
         (self.cwd / (generation.name + '.pending')).write_text('')
-        stderr = self.cwd / (generation.name + '.stderr')
+        with sqlite3.connect(self.db) as connection:
+            stderr_name, = connection.execute(
+                'SELECT stderr FROM log_stderr_runs WHERE session=? AND attempt=? ORDER BY run DESC LIMIT 1',
+                ('omp-worker', attempt)).fetchone()
+        stderr = pathlib.Path(stderr_name)
         stderr.write_text('bounded native diagnostics\n')
         pathlib.Path(str(stderr) + '.full').write_bytes(b'complete native diagnostics\n')
         pathlib.Path(str(stderr) + '.meta').write_text(json.dumps({
@@ -939,7 +943,8 @@ assert sys.stdin.read()==''
                 connection.execute("INSERT OR IGNORE INTO log_files(session,log) VALUES(?,?)", ("omp-worker", str(path)))
                 connection.execute("INSERT OR IGNORE INTO log_generations(session,attempt,log,base) VALUES(?,?,?,?)", ("omp-worker", turn, str(path), str(self.log)))
         answer = json.loads(self.call("logs-clean", "omp-worker"))
-        removed = [item for item in answer["attemptLogs"] if item.get("attempt") == "a/b"]
+        removed = [item for item in answer["attemptLogs"]
+                   if item.get("attempt") == "a/b" and item.get("path") == str(first)]
         self.assertEqual(len(removed), 1, answer)
         self.assertTrue(removed[0]["removed"], answer)
         self.assertFalse(first.exists())
@@ -1026,7 +1031,8 @@ assert sys.stdin.read()==''
                 connection.execute("INSERT OR IGNORE INTO log_files(session,log) VALUES(?,?)", ("omp-worker", str(path)))
                 connection.execute("INSERT OR IGNORE INTO log_generations(session,attempt,log,base) VALUES(?,?,?,?)", ("omp-worker", turn, str(path), str(self.log)))
         answer = json.loads(self.call("logs-clean", "omp-worker"))
-        removed = [item for item in answer["attemptLogs"] if item.get("attempt") == "turn-1"]
+        removed = [item for item in answer["attemptLogs"]
+                   if item.get("attempt") == "turn-1" and item.get("path") == str(first)]
         self.assertEqual(len(removed), 1, answer)
         self.assertTrue(removed[0]["removed"], answer)
         self.assertFalse(first.exists())
