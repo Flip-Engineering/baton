@@ -11,6 +11,7 @@ import ./native-declaration-laws.bend as NativeDeclarationLaws
 import ./engines.bend as Eng
 import ../json/canonical.bend as J
 import ../host/process.bend as Process
+import ../git/types.bend as G
 
 def fixture_invocation() -> Sel.Invocation:
   Sel.Invocation{"2", "query-1", "owner-1",
@@ -160,6 +161,36 @@ law native_installed_provider_path_uses_the_executable_install_prefix:
   {Native.installed_provider_path("/opt/baton2/bin/baton2") == "/opt/baton2/bin/../libexec/baton2/context-provider.mjs" : String}
 
 def native_installed_provider_path_uses_the_executable_install_prefix():
+  {==}
+
+law native_owner_workspace_sql_is_scoped_to_the_recorded_session:
+  {Native.owner_workspace_sql("owner-1") == "SELECT workspace FROM sessions WHERE id='owner-1';" : String}
+
+def native_owner_workspace_sql_is_scoped_to_the_recorded_session():
+  {==}
+
+law native_owner_workspace_parser_accepts_one_recorded_path:
+  {Native.owner_workspace_lines(["/work/project"]) == Native.OwnerWorkspaceReady{"/work/project"} : Native.OwnerWorkspace}
+
+def native_owner_workspace_parser_accepts_one_recorded_path():
+  {==}
+
+law native_owner_workspace_parser_refuses_surplus_session_fields:
+  {Native.owner_workspace_fields(["/work/project", "other"]) == Native.OwnerWorkspaceRefused{"sessionWorkspaceShape"} : Native.OwnerWorkspace}
+
+def native_owner_workspace_parser_refuses_surplus_session_fields():
+  {==}
+
+law native_request_cwd_must_resolve_to_the_owner_worktree_root:
+  {Native.owner_root_matches("/work/project", G.GRun{0, "/work/project\n"}) == True{} : Bool}
+
+def native_request_cwd_must_resolve_to_the_owner_worktree_root():
+  {==}
+
+law native_request_cwd_refuses_a_different_worktree_root:
+  {Native.owner_root_matches("/work/project", G.GRun{0, "/other/project\n"}) == False{} : Bool}
+
+def native_request_cwd_refuses_a_different_worktree_root():
   {==}
 
 law native_inventory_invocation_uses_the_installed_wrapper:

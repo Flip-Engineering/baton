@@ -386,17 +386,21 @@ def query_request_environment(db: String, binding: String, owner: String, query:
         answer : ProviderAnswer <- inventory_runtime_answer(executable, cwd, runtime)
         query_catalog_result(db, binding, answer, request)
 
+def owner_root_matches(+workspace: String, root: G.GitOut) -> Bool:
+  match root:
+    case G.GBroken{detail}: False{}
+    case G.GRun{code, out}:
+      Bool.and(U32.is_eq(code, 0), String.eq(Tx.trim_nl(out), workspace))
+
 def request_cwd_root(+db: String, +binding: String, +owner: String, +query: String,
                      +cwd: String, +request: NativeRequest.RequestDecode,
                      +workspace: String, root: G.GitOut) -> IO(Unit):
   match root:
     case G.GBroken{detail}: IO.die(Unit, 3, "ownerWorktreeRootUnavailable")
     case G.GRun{code, +out}:
-      Bool.pick(IO(Unit), U32.is_eq(code, 0),
-        Bool.pick(IO(Unit), String.eq(Tx.trim_nl(out), workspace),
-          query_request_environment(db, binding, owner, query, cwd, request),
-          IO.die(Unit, 3, "requestCwdOutsideOwnerWorktree")),
-        IO.die(Unit, 3, "requestCwdWorktreeUnavailable"))
+      Bool.pick(IO(Unit), owner_root_matches(workspace, G.GRun{code, out}),
+        query_request_environment(db, binding, owner, query, cwd, request),
+        IO.die(Unit, 3, "requestCwdOutsideOwnerWorktree"))
 
 def owner_workspace_root(+db: String, +binding: String, +owner: String, +query: String,
                          +cwd: String, +request: NativeRequest.RequestDecode,
