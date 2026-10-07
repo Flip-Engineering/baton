@@ -1333,3 +1333,38 @@ law schema_law_a_nested_dict_of_records_admits:
 
 def schema_law_a_nested_dict_of_records_admits():
   {==}
+
+# A guarded branching union admits its end branch without expanding siblings.
+law schema_law_a_branching_union_end_branch_admits:
+  {schema_admit_value(DefsCons{SchemaDef{"node", SfUnion{SfCasesCons{SchemaCase{"end", SfScalar{SsNull{}}}, SfCasesCons{SchemaCase{"left", SfRef{"node"}}, SfCasesCons{SchemaCase{"right", SfRef{"node"}}, SfCasesNil{}}}}}}, DefsNil{}}, SfRef{"node"}, Codec.Robj{Codec.Rpair{"end", Codec.Rnull{}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
+
+def schema_law_a_branching_union_end_branch_admits():
+  {==}
+
+# The left branch unfolds only along the taken path.
+law schema_law_a_branching_union_left_path_admits:
+  {schema_admit_value(DefsCons{SchemaDef{"node", SfUnion{SfCasesCons{SchemaCase{"end", SfScalar{SsNull{}}}, SfCasesCons{SchemaCase{"left", SfRef{"node"}}, SfCasesCons{SchemaCase{"right", SfRef{"node"}}, SfCasesNil{}}}}}}, DefsNil{}}, SfRef{"node"}, Codec.Robj{Codec.Rpair{"left", Codec.Robj{Codec.Rpair{"end", Codec.Rnull{}, Codec.Rnil{}}}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
+
+def schema_law_a_branching_union_left_path_admits():
+  {==}
+
+# The right branch unfolds only along the taken path.
+law schema_law_a_branching_union_right_path_admits:
+  {schema_admit_value(DefsCons{SchemaDef{"node", SfUnion{SfCasesCons{SchemaCase{"end", SfScalar{SsNull{}}}, SfCasesCons{SchemaCase{"left", SfRef{"node"}}, SfCasesCons{SchemaCase{"right", SfRef{"node"}}, SfCasesNil{}}}}}}, DefsNil{}}, SfRef{"node"}, Codec.Robj{Codec.Rpair{"right", Codec.Robj{Codec.Rpair{"end", Codec.Rnull{}, Codec.Rnil{}}}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
+
+def schema_law_a_branching_union_right_path_admits():
+  {==}
+
+# Proof control: a wrong-typed leaf under a taken branch refuses.
+law schema_law_a_branching_union_wrong_leaf_refuses:
+  {schema_admit_value(DefsCons{SchemaDef{"node", SfUnion{SfCasesCons{SchemaCase{"end", SfScalar{SsNull{}}}, SfCasesCons{SchemaCase{"left", SfRef{"node"}}, SfCasesCons{SchemaCase{"right", SfRef{"node"}}, SfCasesNil{}}}}}}, DefsNil{}}, SfRef{"node"}, Codec.Robj{Codec.Rpair{"left", Codec.Robj{Codec.Rpair{"end", Codec.Rnum{"1"}, Codec.Rnil{}}}, Codec.Rnil{}}}) == SvRefused{"wrongKind"} : SchemaVerdict}
+
+def schema_law_a_branching_union_wrong_leaf_refuses():
+  {==}
+
+# Proof control: a tag outside a branching union refuses.
+law schema_law_a_branching_union_unknown_tag_refuses:
+  {schema_admit_value(DefsCons{SchemaDef{"node", SfUnion{SfCasesCons{SchemaCase{"end", SfScalar{SsNull{}}}, SfCasesCons{SchemaCase{"left", SfRef{"node"}}, SfCasesCons{SchemaCase{"right", SfRef{"node"}}, SfCasesNil{}}}}}}, DefsNil{}}, SfRef{"node"}, Codec.Robj{Codec.Rpair{"bogus", Codec.Rnull{}, Codec.Rnil{}}}) == SvRefused{"unknownTag"} : SchemaVerdict}
+
+def schema_law_a_branching_union_unknown_tag_refuses():
+  {==}
