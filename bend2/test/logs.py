@@ -235,6 +235,26 @@ sys.exit(%d)
         self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
         self.assertFalse((self.cwd / 'turn.jsonl.2').exists())
 
+    def test_sustained_update_stream_stays_within_retention_bound(self):
+        budget, keep = 65536, 2
+        self.call('logs', 'omp-worker', 'default', str(budget), str(keep))
+        updates = [json.dumps({'type': 'tool_execution_update', 'toolCallId': 'tool-9',
+                               'toolName': 'bash', 'seq': i,
+                               'partialResult': {'content': [{'type': 'text', 'text': 'x' * 2000}]}})
+                   for i in range(60)]
+        end = json.dumps({'type': 'tool_execution_end', 'toolCallId': 'tool-9', 'toolName': 'bash',
+                          'result': {'content': [{'type': 'text', 'text': 'done'}]}, 'isError': False})
+        self.stream(updates + [end, self.terminal()])
+        self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
+        retained = self.rotated_frames()
+        kinds = [json.loads(line).get('type') for line in retained]
+        self.assertEqual(kinds.count('tool_execution_update'), 1)
+        self.assertIn('"seq": 59', '\n'.join(retained))
+        self.assertIn(self.terminal(), retained)
+        total = sum(p.stat().st_size for p in [self.log, self.cwd / 'turn.jsonl.1',
+                                               self.cwd / 'turn.jsonl.2'] if p.exists())
+        self.assertLessEqual(total, (keep + 1) * (budget + 4096))
+
     def test_storage_previews_rotated_segments_without_writing(self):
         self.call('logs', 'omp-worker', 'default', '65536', '4')
         frames = [json.dumps({'type': 'response', 'id': 'r%d' % i, 'command': 'probe', 'pad': 'y' * 20000}) for i in range(16)]

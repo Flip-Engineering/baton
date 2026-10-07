@@ -57,9 +57,9 @@ snapshot per open identity:
 | `agent_end`, `result`, `turn_end` | written complete |
 | unclassified `type` | written complete |
 
-Final payloads stay inline: the terminal frames carry the full result text,
-so a reader needs no second store to see what a tool returned. The policy
-removes repetition, not payloads. A measured OMP seat wrote 47 KB per
+Final payloads stay inline. Terminal frames carry the full result text.
+The default writes each complete frame once and holds one newest snapshot
+per open identity. A measured OMP seat wrote 47 KB per
 retained frame with 95.8% of a 773 MB log in cumulative
 `tool_execution_update` snapshots; the 2026-10-06 workload retains 26,164,652
 bytes before the policy and 112 after it on the same `tool_execution_update`
