@@ -9,7 +9,7 @@ def Instance.owner(database: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 
 # Starts a native attempt under the database owner and joins it as its observer.
 # The result carries the attempt handle, or the reason no native child started.
-def Instance.admit_start(database: String, directory: String, argv: String, cwd: String, stderr: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
+def Instance.admit_start(database: String, directory: String, argv: String, cwd: String, stderr: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32> & String>):
   import "./process-spawn.c"
 
 # Joins an existing attempt as its observer.
@@ -31,11 +31,12 @@ def Instance.shutdown(database: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 def Instance.retire(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
-def Instance.started(value: U32 & String) -> Result<&1,&1,U32 & String,P.RetainedStart>:
-  match value:
-    case (handle, error):
+def Instance.started(result: Result<&1,&1,U32 & String,Maybe<U32> & String>) -> Result<&1,&1,U32 & String,P.RetainedStart>:
+  match result:
+    case Fail{error}: Fail{error}
+    case Done{(handle,error)}:
       match handle:
-        case Some{value_handle}: Done{P.Retained{value_handle}}
+        case Some{value}: Done{P.Retained{value}}
         case None{}: Done{P.Unstarted{error}}
 
 # Starts a native attempt under the database owner. No lock means the caller
@@ -43,8 +44,8 @@ def Instance.started(value: U32 & String) -> Result<&1,&1,U32 & String,P.Retaine
 def Instance.admit(database: String, directory: String, argv: String, cwd: String, stderr: String, initial: String, keep_stdin: U32, lock: Maybe<U32>, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   match lock:
     case None{}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
-      value : U32 & String <- IO.try(U32 & String,Instance.admit_start(database,directory,argv,cwd,stderr,initial,keep_stdin,0,recovery_argv))
-      IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Instance.started(value))
+      result : Result<&1,&1,U32 & String,Maybe<U32> & String> <- Instance.admit_start(database,directory,argv,cwd,stderr,initial,keep_stdin,0,recovery_argv)
+      IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Instance.started(result))
     case Some{value_lock}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
-      value : U32 & String <- IO.try(U32 & String,Instance.admit_start(database,directory,argv,cwd,stderr,initial,keep_stdin,value_lock,recovery_argv))
-      IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Instance.started(value))
+      result : Result<&1,&1,U32 & String,Maybe<U32> & String> <- Instance.admit_start(database,directory,argv,cwd,stderr,initial,keep_stdin,value_lock,recovery_argv)
+      IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Instance.started(result))
