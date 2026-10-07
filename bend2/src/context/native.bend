@@ -439,9 +439,9 @@ def project_policy_bytes_result(+db: String, +binding: String,
 def project_policy_observation_decoded(+db: String, +binding: String,
                                        observation: NativePolicy.PolicyObservation) -> IO(ProjectPolicyAnswer):
   match observation:
-    case NativePolicy.PolicyAbsent{owner, worktree, path}:
+    case NativePolicy.PolicyAbsent{+owner, +worktree, +path}:
       IO.pure(ProjectPolicyAnswer, project_policy_identity(observation))
-    case NativePolicy.PolicyPresent{owner, worktree, path, sha256, bytes}:
+    case NativePolicy.PolicyPresent{+owner, +worktree, +path, +sha256, +bytes}:
       do IO<ProjectPolicyAnswer>:
         result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
           Req.json_tree_sql(bytes))
