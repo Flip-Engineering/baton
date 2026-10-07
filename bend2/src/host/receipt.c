@@ -558,3 +558,28 @@ static Term baton_receipt_guard_path_run(Env e,Term *f,IoWork *w) {
 }
 static void __attribute__((constructor)) baton_receipt_guard_path_use(void) {io_eff(CID_RECEIPT_GUARD_PATH,baton_receipt_guard_path_run,0);}
 #endif
+
+#ifdef CID_RECEIPT_ATTEMPT_TOKEN
+/* The same encoded form of a target ref the guard path uses, exposed as the safe token an
+   attempt scratch name can carry. Two distinct targets can never share it, and it is
+   confined to the internal alphabet, so a slash-bearing branch name cannot alter the
+   directory structure of an attempt. */
+static Term baton_receipt_attempt_token_run(Env e,Term *f,IoWork *w) {
+  BatonReceipt *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  u64 tn=0;
+  call->target=io_cstr(e,f[0],&tn);
+  if(tn==0 || strlen(call->target)!=tn) {
+    receipt_free(call);return io_fail(e,EINVAL,"target is empty or truncated at NUL");
+  }
+  size_t span=strlen(call->target)*3+2;
+  char *token=malloc(span);
+  if(!token) {receipt_free(call);return io_fail(e,ENOMEM,NULL);}
+  receipt_encode_ref(call->target,token,span);
+  receipt_free(call);
+  Term value=io_str(e,token,strlen(token));
+  free(token);
+  return io_done(e,value);
+}
+static void __attribute__((constructor)) baton_receipt_attempt_token_use(void) {io_eff(CID_RECEIPT_ATTEMPT_TOKEN,baton_receipt_attempt_token_run,0);}
+#endif

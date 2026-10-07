@@ -41,3 +41,9 @@ def Receipt.release(handle: U32) -> IO(Result<&1, &1, U32 & String, Unit>):
 # effect admission.
 def Receipt.guard_path(common: String, target: String) -> IO(Result<&1, &1, U32 & String, String>):
   import "./receipt.c"
+
+# The encoded target token an attempt scratch name can carry, from the same encoding the
+# guard path uses, so a slash-bearing branch name cannot alter an attempt's directory
+# structure and two distinct targets never share a token.
+def Receipt.attempt_token(target: String) -> IO(Result<&1, &1, U32 & String, String>):
+  import "./receipt.c"
