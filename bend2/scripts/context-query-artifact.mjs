@@ -134,6 +134,7 @@ export function persistQueryOutcome({ owner, worktree, query, bootstrapSha256,
   }
 
   let eventSha256 = null;
+  let outputSha256 = null;
   if (exitStatus === 0) {
     let event;
     try {
@@ -151,7 +152,10 @@ export function persistQueryOutcome({ owner, worktree, query, bootstrapSha256,
     if (savedEvent.status !== 'written' && savedEvent.status !== 'replayed') return savedEvent;
     eventSha256 = savedEvent.sha256;
   } else if (eventFrame !== '') {
-    return refusal('queryOutcomeUnexpectedEvent');
+    const savedOutput = immutableWrite(join(prepared.path, 'stdout.txt'),
+      Buffer.from(eventFrame + '\n'));
+    if (savedOutput.status !== 'written' && savedOutput.status !== 'replayed') return savedOutput;
+    outputSha256 = savedOutput.sha256;
   }
 
   const completion = Buffer.from(JSON.stringify({
@@ -161,11 +165,13 @@ export function persistQueryOutcome({ owner, worktree, query, bootstrapSha256,
     bootstrapSha256,
     exitStatus,
     eventSha256,
+    outputSha256,
   }) + '\n');
   const savedCompletion = immutableWrite(join(prepared.path, 'completion.json'), completion);
   if (savedCompletion.status !== 'written' && savedCompletion.status !== 'replayed') return savedCompletion;
   return Object.freeze({ status: 'persisted', query, owner, exitStatus,
     event: eventSha256 === null ? null : { path: join(prepared.path, 'event.json'), sha256: eventSha256, pointer: '' },
+    output: outputSha256 === null ? null : { path: join(prepared.path, 'stdout.txt'), sha256: outputSha256, pointer: '' },
     completion: { path: savedCompletion.path, sha256: savedCompletion.sha256, pointer: '' },
     replay: savedCompletion.status === 'replayed' });
 }

@@ -145,10 +145,19 @@ test('retains an observed nonzero child status without claiming an event result'
   const root = worktree(t);
   const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
   const bootstrap = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
-  const outcome = persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256, exitStatus: 23 });
+  const refusalFrame = JSON.stringify({ status: 'refused', reason: 'adapterUnavailable' });
+  const outcome = persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
+    exitStatus: 23, eventFrame: refusalFrame });
   assert.equal(outcome.status, 'persisted');
   assert.equal(outcome.exitStatus, 23);
   assert.equal(outcome.event, null);
+  assert.equal(outcome.output.sha256.length, 64);
+  assert.equal(readFileSync(outcome.output.path, 'utf8'), refusalFrame + '\n');
+  assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
+    exitStatus: 23, eventFrame: refusalFrame }).replay, true);
+  assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
+    exitStatus: 23, eventFrame: JSON.stringify({ status: 'refused', reason: 'changed' }) }).reason,
+  'queryArtifactReplayMismatch');
   assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: 'b'.repeat(64),
     exitStatus: 23 }).reason, 'queryOutcomeBootstrapMismatch');
 });
