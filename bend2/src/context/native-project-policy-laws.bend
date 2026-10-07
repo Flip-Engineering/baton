@@ -43,7 +43,7 @@ def project_policy_refuses_unknown_fields():
 
 law project_policy_refuses_wrong_schema:
   {Policy.decode(J.Jobj{pair("schema", J.Jstr{"other"},
-    pair("disabled", empty_array(), pair("preferred", empty_array(), J.Jnil{}))}) ==
+    pair("disabled", empty_array(), pair("preferred", empty_array(), J.Jnil{})))}) ==
       Policy.PolicyRefused{"projectPolicyMalformed"} : Policy.PolicyDecode}
 
 def project_policy_refuses_wrong_schema():
