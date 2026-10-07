@@ -3,10 +3,14 @@
 # installed package from the executable prefix.
 import Base
 import ./codec-wire.bend as Codec
+import ./codec.bend as CoreCodec
+import ./engines.bend as Eng
 import ./engines-select.bend as Sel
 import ./engines-wire.bend as EnginesWire
 import ./native-request.bend as NativeRequest
 import ./native-catalog.bend as NativeCatalog
+import ./native-project-policy.bend as NativePolicy
+import ../json/canonical.bend as J
 import ./request.bend as Req
 import ../coordinator/commands.bend as C
 import ../host/sqlite.bend as DB
@@ -67,6 +71,14 @@ def inventory_argv(+runtime_path: String, +executable: String) -> String:
   Process.argv([runtime_path, "--experimental-strip-types",
     installed_provider_path(executable), "--inventory"])
 
+def project_policy_argv(+runtime_path: String, +executable: String) -> String:
+  Process.argv([runtime_path, "--experimental-strip-types",
+    installed_provider_path(executable), "--project-policy"])
+
+def project_policy_request(+owner: String, +worktree: String) -> String:
+  J.json_text(J.Jobj{J.Jpair{"owner", J.Jstr{owner},
+    J.Jpair{"worktree", J.Jstr{worktree}, J.Jnil{}}}})
+
 type ProviderAnswer is Data:
   ProviderOutput{value: String, status: String}
   ProviderRefused{reason: String}
@@ -75,6 +87,15 @@ type ProviderAnswer is Data:
 type OwnerWorkspace is Data:
   OwnerWorkspaceReady{path: String}
   OwnerWorkspaceRefused{reason: String}
+
+type ProjectPolicyAnswer is Data:
+  ProjectPolicyReady{policy: NativePolicy.ProjectPolicy,
+                     identity: Sel.ProjectPolicyIdentity}
+  ProjectPolicyRefused{reason: String}
+
+type ProjectPolicyJson is Data:
+  ProjectPolicyJsonReady{value: J.Json}
+  ProjectPolicyJsonRefused{reason: String}
 
 def owner_workspace_sql(owner: String) -> String:
   "SELECT workspace FROM sessions WHERE id=" ++ C.q(owner) ++ ";"
@@ -272,6 +293,19 @@ def provider_spawn(+path: String, +cwd: String, +frame: String, result: Result<&
         written : Result<&1,&1,U32 & String,Unit> <- Process.ProcessChild.write(handle, frame ++ "\n")
         provider_write(handle, written)
 
+def project_policy_runtime_answer(+executable: String, +cwd: String,
+                                  +owner: String, +worktree: String,
+                                  runtime: ProviderAnswer) -> IO(ProviderAnswer):
+  match runtime:
+    case ProviderRefused{reason}: IO.pure(ProviderAnswer, ProviderRefused{reason})
+    case ProviderOutput{value, status}: IO.pure(ProviderAnswer, ProviderRefused{"nodeRuntimeProbeMalformed"})
+    case ProviderRuntime{path, version}:
+      do IO<ProviderAnswer>:
+        spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
+          project_policy_argv(path, executable), cwd, "/dev/null")
+        provider_spawn(installed_provider_path(executable), cwd,
+          project_policy_request(owner, worktree), spawned)
+
 def invoke_frame(+executable: String, +runtime_path: String, +cwd: String,
                  frame: InvocationFrame) -> IO(ProviderAnswer):
   match frame:
@@ -329,6 +363,104 @@ def engines(db: String) -> IO(Unit):
     executable : String <- IO.try(String, Host.SessionLock.executable())
     runtime : ProviderAnswer <- resolve_node_runtime("/")
     inventory_with_runtime(executable, "/", runtime)
+
+def project_policy_json_rows(+rows: String) -> ProjectPolicyJson:
+  match NativeRequest.raw_rows(rows):
+    case NativeRequest.RawDecodeRefused{condition}: ProjectPolicyJsonRefused{"projectPolicyJson:" ++ condition}
+    case NativeRequest.RawDecoded{value}:
+      match CoreCodec.raw_to_json(value):
+        case CoreCodec.JcRefused{condition}: ProjectPolicyJsonRefused{"projectPolicyJson:" ++ condition}
+        case CoreCodec.JcJson{+value}: ProjectPolicyJsonReady{value}
+
+def project_policy_identity(+observation: NativePolicy.PolicyObservation) -> ProjectPolicyAnswer:
+  match NativePolicy.selection_identity(observation):
+    case NativePolicy.PolicySelectionRefused{condition}: ProjectPolicyRefused{condition}
+    case NativePolicy.PolicySelectionRead{value}:
+      match observation:
+        case NativePolicy.PolicyPresent{owner, worktree, path, sha256, bytes}:
+          ProjectPolicyReady{NativePolicy.ProjectPolicy{Eng.ss_empty(), Eng.ss_empty()}, value}
+        case other: ProjectPolicyRefused{"projectPolicyObservationMismatch"}
+    case NativePolicy.PolicySelectionMissing{value}:
+      match observation:
+        case NativePolicy.PolicyAbsent{owner, worktree, path}:
+          ProjectPolicyReady{NativePolicy.ProjectPolicy{Eng.ss_empty(), Eng.ss_empty()}, value}
+        case other: ProjectPolicyRefused{"projectPolicyObservationMismatch"}
+
+def project_policy_document(+observation: NativePolicy.PolicyObservation,
+                            value: J.Json) -> ProjectPolicyAnswer:
+  match NativePolicy.decode(value):
+    case NativePolicy.PolicyRefused{condition}: ProjectPolicyRefused{condition}
+    case NativePolicy.PolicyDecoded{+policy}:
+      match NativePolicy.selection_identity(observation):
+        case NativePolicy.PolicySelectionRead{identity}: ProjectPolicyReady{policy, identity}
+        case other: ProjectPolicyRefused{"projectPolicyIdentityUnavailable"}
+
+def project_policy_bytes_result(+db: String, +binding: String,
+                                +observation: NativePolicy.PolicyObservation,
+                                result: Result<&1,&1,U32 & String,String>) -> IO(ProjectPolicyAnswer):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{"projectPolicyDocumentRead"})
+    case Done{+rows}:
+      match project_policy_json_rows(rows):
+        case ProjectPolicyJsonRefused{reason}: IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{reason})
+        case ProjectPolicyJsonReady{value}:
+          IO.pure(ProjectPolicyAnswer, project_policy_document(observation, value))
+
+def project_policy_observation_decoded(+db: String, +binding: String,
+                                       observation: NativePolicy.PolicyObservation) -> IO(ProjectPolicyAnswer):
+  match observation:
+    case NativePolicy.PolicyAbsent{owner, worktree, path}:
+      IO.pure(ProjectPolicyAnswer, project_policy_identity(observation))
+    case NativePolicy.PolicyPresent{owner, worktree, path, sha256, bytes}:
+      do IO<ProjectPolicyAnswer>:
+        result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+          Req.json_tree_sql(bytes))
+        project_policy_bytes_result(db, binding, observation, result)
+
+def project_policy_observation_value(+db: String, +binding: String,
+                                     +owner: String, +worktree: String,
+                                     value: J.Json) -> IO(ProjectPolicyAnswer):
+  match NativePolicy.decode_observation(value, owner, worktree):
+    case NativePolicy.PolicyObservationRefused{condition}:
+      IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{condition})
+    case NativePolicy.PolicyObservationDecoded{+observation}:
+      project_policy_observation_decoded(db, binding, observation)
+
+def project_policy_output_rows(+db: String, +binding: String, +owner: String,
+                               +worktree: String, +value: String,
+                               result: Result<&1,&1,U32 & String,String>) -> IO(ProjectPolicyAnswer):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{"projectPolicyObservationRead"})
+    case Done{+rows}:
+      match project_policy_json_rows(rows):
+        case ProjectPolicyJsonRefused{reason}: IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{reason})
+        case ProjectPolicyJsonReady{+value}:
+          project_policy_observation_value(db, binding, owner, worktree, value)
+
+def project_policy_output(+db: String, +binding: String, +owner: String,
+                          +worktree: String, answer: ProviderAnswer) -> IO(ProjectPolicyAnswer):
+  match answer:
+    case ProviderRefused{reason}: IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{reason})
+    case ProviderRuntime{path, version}: IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{"projectPolicyRuntimeMalformed"})
+    case ProviderOutput{+value, +status}:
+      Bool.pick(IO(ProjectPolicyAnswer), String.eq(status, "exit 0"),
+        do IO<ProjectPolicyAnswer>:
+          result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+            Req.json_tree_sql(value))
+          project_policy_output_rows(db, binding, owner, worktree, value, result),
+        IO.pure(ProjectPolicyAnswer, ProjectPolicyRefused{"projectPolicyProcessRefused"}))
+
+def observe_project_policy(+db: String, +binding: String, +executable: String,
+                           +cwd: String, +owner: String, +worktree: String,
+                           runtime: ProviderAnswer) -> IO(ProjectPolicyAnswer):
+  do IO<ProjectPolicyAnswer>:
+    answer : ProviderAnswer <- project_policy_runtime_answer(executable, cwd,
+      owner, worktree, runtime)
+    project_policy_output(db, binding, owner, worktree, answer)
 
 def query_catalog_admitted(catalog: NativeCatalog.CatalogDecode) -> IO(Unit):
   match catalog:
