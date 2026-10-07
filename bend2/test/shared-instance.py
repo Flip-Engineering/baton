@@ -577,40 +577,46 @@ class SharedInstance(unittest.TestCase):
         first = self.spawn('subscribe', self.db, '0', '0')
         ready = self.subscription_line(first, 'ready:')
         # An unknown incarnation cannot be served continuously, so the first
-        # subscription takes a snapshot; it still receives every later commit.
+        # subscription takes a snapshot at the cursor the owner recorded. Publish
+        # values are derived from that cursor: the owner record is keyed by the
+        # physical database, and a temporary file can reuse an earlier file's key.
         self.assertTrue(ready['gap'], ready)
-        self.assertEqual(ready['cursor'], 0, ready)
-        published = self.command('publish', self.db, '5')
-        self.assertEqual(published.returncode, 0, published.stderr)
-        self.assertIn('published', published.stdout)
+        baseline = ready['cursor']
+        self.command('publish', self.db, str(baseline + 1))
         notice = self.subscription_line(first, 'notice:')
-        self.assertEqual((notice['kind'], notice['cursor']), ('commit', 5), notice)
-        self.command('publish', self.db, '7')
-        self.assertEqual(self.subscription_line(first, 'notice:')['cursor'], 7)
-        # A cursor that does not advance the high-water publishes nothing.
-        self.command('publish', self.db, '3')
+        self.assertEqual((notice['kind'], notice['cursor']), ('commit', baseline + 1), notice)
+        self.command('publish', self.db, str(baseline + 2))
+        self.assertEqual(self.subscription_line(first, 'notice:')['cursor'], baseline + 2)
+        # A repeated cursor changes nothing.
+        self.command('publish', self.db, str(baseline + 2))
         with self.assertRaises(queue.Empty):
             first.lines.get(timeout=1.5)
-        # A subscription that names the incumbent incarnation and the cursor it
-        # already consumed resumes without a snapshot.
-        second = self.spawn('subscribe', self.db, '7', str(ready['generation']))
+        # A subscription of the incumbent incarnation with a consumed cursor
+        # resumes without a snapshot.
+        second = self.spawn('subscribe', self.db, str(baseline + 2), str(ready['generation']))
         resuming = self.subscription_line(second, 'ready:')
         self.assertFalse(resuming['gap'], resuming)
-        self.assertEqual(resuming['cursor'], 7, resuming)
-        self.command('publish', self.db, '9')
-        self.assertEqual(self.subscription_line(second, 'notice:')['cursor'], 9)
-        self.assertEqual(self.subscription_line(first, 'notice:')['cursor'], 9)
+        self.assertEqual(resuming['cursor'], baseline + 2, resuming)
+        self.command('publish', self.db, str(baseline + 3))
+        self.assertEqual(self.subscription_line(second, 'notice:')['cursor'], baseline + 3)
+        self.assertEqual(self.subscription_line(first, 'notice:')['cursor'], baseline + 3)
+        # A cursor below the record belongs to a different sequence: the publisher
+        # is the authority there, and subscribers are told to snapshot rather than
+        # wait for a value the database already passed.
+        self.command('publish', self.db, str(baseline + 1))
+        reset = self.subscription_line(first, 'notice:')
+        self.assertEqual((reset['kind'], reset['cursor']), ('gap', baseline + 1), reset)
         # The cursor is durable across the owner incarnation, and a replaced
         # incarnation reports the gap that forces a snapshot.
         owners = self.owner_processes()
         self.assertEqual(len(owners), 1, owners)
         os.kill(int(owners[0].split()[0]), signal.SIGKILL)
-        third = self.spawn('subscribe', self.db, '9', str(ready['generation']))
+        third = self.spawn('subscribe', self.db, str(baseline + 1), str(ready['generation']))
         replaced = self.subscription_line(third, 'ready:')
         self.assertTrue(replaced['gap'], replaced)
-        self.assertEqual(replaced['cursor'], 9, replaced)
-        self.command('publish', self.db, '11')
-        self.assertEqual(self.subscription_line(third, 'notice:')['cursor'], 11)
+        self.assertEqual(replaced['cursor'], baseline + 1, replaced)
+        self.command('publish', self.db, str(baseline + 4))
+        self.assertEqual(self.subscription_line(third, 'notice:')['cursor'], baseline + 4)
         print('evidence subscription ready', ready, 'resuming', resuming, 'replaced', replaced)
 
     def test_shutdown_releases_the_database_for_a_new_owner(self):

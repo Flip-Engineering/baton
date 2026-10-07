@@ -1729,15 +1729,15 @@ static void br_owner_cursor_store(BrOwner *owner) {
 }
 /* Sends one notice per subscriber whose cursor the publication advanced. The
    notice payload is the cursor alone, so a notice still in flight is replaced by
-   the newer cursor instead of queued: the subscriber rereads rows up to the
-   cursor it is told, and a notice is never lost to a busy socket. */
-static void br_owner_notify(BrOwner *owner) {
-  BrInstanceNotice notice={.cursor=owner->cursor,.kind=BN_COMMIT};
+   the newer one instead of queued: the subscriber rereads rows up to the cursor
+   it is told, and a notice is never lost to a busy socket. */
+static void br_owner_notify(BrOwner *owner,int kind) {
+  BrInstanceNotice notice={.cursor=owner->cursor,.kind=(uint32_t)kind};
   BrInstanceFrame frame={.op=BI_NOTICE,.owner=owner->token,.epoch=owner->epoch,
     .length=sizeof(notice)};
   for(BrOwnerControl *subscriber=owner->controls;subscriber;subscriber=subscriber->next) {
     if(!subscriber->subscribe || subscriber->socket<0)continue;
-    if(subscriber->after_cursor>=owner->cursor)continue;
+    if(subscriber->after_cursor==owner->cursor)continue;
     subscriber->after_cursor=owner->cursor;
     if(subscriber->sent<subscriber->reply_length) {
       BrInstanceFrame pending;
@@ -1829,11 +1829,20 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
     BrInstanceCommit commit;
     memcpy(&commit,payload,sizeof(commit));
     /* A commit that does not advance the high-water publishes nothing: a
-       rolled-back transaction publishes nothing because it never calls here. */
+       rolled-back transaction publishes nothing because it never calls here.
+       A commit below the recorded high-water means the record belongs to a
+       different sequence than this database, which the physical key cannot
+       distinguish when a file reuses an inode; the publisher's cursor is then
+       the authority, and subscribers are told to take a fresh snapshot instead
+       of waiting for a value the database has already passed. */
     if(commit.cursor>owner->cursor) {
       owner->cursor=commit.cursor;
       br_owner_cursor_store(owner);
-      br_owner_notify(owner);
+      br_owner_notify(owner,BN_COMMIT);
+    } else if(commit.cursor<owner->cursor) {
+      owner->cursor=commit.cursor;
+      br_owner_cursor_store(owner);
+      br_owner_notify(owner,BN_GAP);
     }
     BrInstanceReady ready={.generation=owner->epoch,.cursor=owner->cursor};
     return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
