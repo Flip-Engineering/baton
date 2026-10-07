@@ -222,7 +222,7 @@ def fx_plan() -> Sel.Plan:
            Eng.ss_empty(), fx_captures(), True{}}
 
 def fx_collision_root_op() -> Decl.Op:
-  Decl.Op{"definition", "sourceAnalysis", "sub", "opt",
+  Decl.Op{"c", "sourceAnalysis", "sub", "opt",
           Eng.ss_one("definition"), Eng.ss_empty(), Decl.ExDirect{}, "res",
           "ref", "evt", "",
           Decl.ModRefsCons{Decl.ModRef{"a", "leaf-declaration", "b/c"},
@@ -263,7 +263,7 @@ def fx_collision_inv() -> Decl.Inv:
       Decl.DigsCons{Decl.Dg{"a", "leaf-declaration"}, Decl.DigsNil{}}}}
 
 def fx_collision_root_binding() -> Sel.MBind:
-  Sel.MBind{"a/b", "rev-root", "root-declaration", "2", "definition",
+  Sel.MBind{"a/b", "rev-root", "root-declaration", "2", "c",
             Decl.ArtsCons{Decl.Art{"/pkg/root.bin", "root-artifact", "entry"},
                           Decl.ArtsNil{}},
             Decl.op_schema_set(fx_collision_root_op())}
@@ -385,7 +385,7 @@ def selection_plan_admits_slash_identifiers():
 # The old joined keys were identical although this dependency names a different
 # module and operation.
 law selection_plan_keeps_distinct_slash_pairs:
-  {Sel.freeze(fx_collision_cat(), fx_cand("a/b", "root-declaration", False{}, True{}), fx_collision_inv(), fx_captures()) == Sel.PlanFrozen{fx_collision_plan()} : Sel.PlanOutcome}
+  {Sel.freeze(fx_collision_cat(), Sel.Cand{"a/b", "root-declaration", "c", "sourceAnalysis", Eng.ss_empty(), Decl.ExDirect{}, True{}, False{}}, fx_collision_inv(), fx_captures()) == Sel.PlanFrozen{fx_collision_plan()} : Sel.PlanOutcome}
 
 def selection_plan_keeps_distinct_slash_pairs():
   {==}
