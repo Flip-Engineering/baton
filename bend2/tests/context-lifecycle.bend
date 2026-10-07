@@ -13,6 +13,7 @@
 #   clang -O1 -pthread .scratch/context-lifecycle/fixture.c -lsqlite3 -lm -o .scratch/context-lifecycle/fixture
 #   ./.scratch/context-lifecycle/fixture DB COPY LOG_DIR
 import Base
+import ../src/json/canonical.bend as J
 import ../src/context/contracts.bend as Context
 import ../src/context/identity.bend as ContextRole
 import ../src/context/progress.bend as ContextProgress
@@ -62,7 +63,7 @@ def progress_surfaces() -> IO(Unit):
     waiting : List<ContextProgress.Waiting> <- IO.pure(List<ContextProgress.Waiting>, Con{ContextProgress.WaitingProviderResponse{}, Nil{}})
     obs("progress.empty", ContextProgress.progress_json(True{}, ContextProgress.PhaseRunning{}, Nil{}, ContextProgress.ControlUnobserved{}, ContextProgress.CleanupNotRequested{}))
     obs("progress.waiting", ContextProgress.progress_document(ContextProgress.PhaseWaiting{}, waiting, ContextProgress.ControlAvailable{}, ContextProgress.CleanupPending{}))
-    obs("progress.diagnostics", ContextProgress.waiting_json(Con{ContextProgress.WaitingDiagnostics{"file:///a.c", 3}, Nil{}}))
+    obs("progress.diagnostics", J.json_text(ContextProgress.waiting_json(Con{ContextProgress.WaitingDiagnostics{"file:///a.c", 3}, Nil{}})))
     obs("progress.noroles", ContextProgress.progress_json(False{}, ContextProgress.PhaseRunning{}, Nil{}, ContextProgress.ControlUnobserved{}, ContextProgress.CleanupNotRequested{}))
     obs("cleanup.intentless", ContextProgress.cleanup_text(ContextProgress.cleanup_of(False{}, 0, 0)))
     obs("cleanup.unreconciled", ContextProgress.cleanup_text(ContextProgress.cleanup_of(True{}, 1, 1)))
