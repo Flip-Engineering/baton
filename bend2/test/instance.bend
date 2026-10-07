@@ -283,7 +283,7 @@ def prepared_action(+handle: U32, payload: String, bootstrap: String, decision: 
       prepared_cancelled(handle,bootstrap,decision,result),
   do IO<Unit>:
     result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision)
-    prepared_finished(handle,result)))))
+    prepared_finished(handle,result))))))
 
 def prepared_result(result: Result<&1,&1,U32 & String,U32 & String & String>, payload: String, bootstrap: String, decision: String, action: String) -> IO(Unit):
   match result:
