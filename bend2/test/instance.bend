@@ -14,7 +14,7 @@ def owner_cli(args: List<String>) -> IO(Unit):
 def answer(result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match result:
     case Done{unit}: IO.print("shutdown-ok")
-    case Fail{error}: IO.print("shutdown-failed:" ++ error)
+    case Fail{(code,text)}: IO.print("shutdown-failed:" ++ U32.show(code) ++ ": " ++ text)
 
 def shutdown_cli(args: List<String>) -> IO(Unit):
   match args:
@@ -29,7 +29,7 @@ def shutdown_cli(args: List<String>) -> IO(Unit):
 def owner_answer(result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match result:
     case Done{unit}: IO.print("owner-ok")
-    case Fail{error}: IO.print("owner-refused:" ++ error)
+    case Fail{(code,text)}: IO.print("owner-refused:" ++ U32.show(code) ++ ": " ++ text)
 
 def owner_try_cli(args: List<String>) -> IO(Unit):
   match args:
@@ -96,7 +96,7 @@ def attach_owned_cli(args: List<String>) -> IO(Unit):
 def operation(name: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match result:
     case Done{unit}: IO.print(name ++ "-ok")
-    case Fail{error}: IO.print(name ++ "-failed:" ++ error)
+    case Fail{(code,text)}: IO.print(name ++ "-failed:" ++ U32.show(code) ++ ": " ++ text)
 
 def retired_step(+handle: U32, retire: Bool) -> IO<Unit>:
   match retire:
