@@ -86,7 +86,13 @@ class SharedOwner(unittest.TestCase):
                 with child.lock:
                     child.lines.append(line.rstrip('\n'))
 
+        def read_errors():
+            for line in child.stderr:
+                with child.lock:
+                    child.lines.append('ERR:' + line.rstrip('\n'))
+
         threading.Thread(target=read, daemon=True).start()
+        threading.Thread(target=read_errors, daemon=True).start()
         return child
 
     def command(self, *args):
@@ -118,7 +124,8 @@ class SharedOwner(unittest.TestCase):
                     except ValueError:
                         pass
             time.sleep(.1)
-        self.fail(f'no tick above {minimum} observed')
+        tail = self.snapshot(child)[-8:]
+        self.fail(f'no tick above {minimum} observed; exit={child.poll()} tail={tail!r}')
 
     def owner_pids(self):
         result = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True,
