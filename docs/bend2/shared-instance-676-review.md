@@ -182,19 +182,23 @@ implementation). The pin implements the proposed steps at
    `<db>.owner-lock`). One election must own liveness. Proposed shape:
    the custody owner holds liveness; the SQL row records the live owner
    for status and crash recovery only.
-7. Fix the lead claim lapse. `claim_sql` refuses whenever any other row
-   exists; nothing deletes a dead owner's row, so a crashed `serve`
-   blocks the database with no owner and no recovery. Delete lapsed
-   heartbeat rows as part of the claim transaction and update the
-   pinning law `owner_claim_inserts_or_refreshes_then_names_the_holder`
-   and the design doc sentence that promises lapse behavior.
-8. Wire the DS Bend test and sync the proposal. `bend2/test/instance.bend`
-   is built and run by nothing (`check-native.sh` builds only the
-   `process`, `git`, and `land` entries); its owner-level guarantees
-   have no gate signal until wired. The proposal documents `BI_ATTACH`;
-   the code handles `BI_ENSURE`. Open lead item: `serve_loop` drains and
-   exits, and nothing re-invokes serve on later input until the
-   committed-change-cursor wake or the CLI/MCP routing lands.
+7. WITHDRAWN by root ruling: heartbeat age (including the 300s lapse)
+   is not proof of owner death. Never delete or preempt a live claim on
+   elapsed time; a live owner blocked in a job or paused by the OS can
+   hold an old heartbeat. OS lock, socket, and native-epoch custody are
+   authoritative; the SQL row is provenance only and must not authorize
+   dispatch, delete a claim, or park work. The real gap stands: a
+   crashed `serve` needs recovery by actual custody-loss proof and the
+   admission lock, not a lease timer. Generation must bind to a host
+   epoch, owner incarnation, or persistent monotonic counter, never to
+   claim-table max-after-deletion (which resets to 1).
+8. DS `bend2/test/instance.bend` is now build-wired into
+   `check-native.sh` (the `*.py` loop also picks up
+   `bend2/test/shared-instance.py`). The proposal still documents
+   `BI_ATTACH` while the code handles `BI_ENSURE`; sync them. Open
+   lead items at `2049be95`: the 300s claim, one-pass serve, and
+   generation reset remain, and no ordinary CLI/MCP owner routing
+   exists yet.
 
 Verified good in the pins: owner-side token check with `ESTALE` on
 mismatch, admission-time re-stat with prefix check, single-native-child
@@ -203,24 +207,57 @@ session-guard passing with release-time close, and the UI boundary (change
 notification stays in the UI backend postcommit path; attempt directory
 name is the only shared identifier).
 
-Fixture note: `bend2/test/shared-ownership.py` pins baseline topology
-(one keeper per attempt). After the shared owner lands, custody has no
-per-attempt keeper process, so this file must be updated in the landing
-composition; it is left strict on baseline until then. DS's new
-`bend2/test/shared-instance.py` (proposed, not yet written) and
-`bend2/test/instance.bend` do not collide with it.
+## Owner-death findings at DS tip 5cf90d7a
+
+`br_keeper_start` always spawns a new native child and writes
+`native.pid`/`native.birth` exclusive; it never adopts a surviving
+child. After a true owner death, a new owner's admit for the same
+attempt directory fails closed on the exclusive files, and the
+client-side orphan path follows the spool without restoring the old
+attempt identity or generation. A test named as an owner restart that
+only patches the checkpoint incarnation without killing the owner
+process is not an owner restart. The committed-offset resume has no
+consumer yet: attach replays from the spool start, and lead has no
+CLI/MCP routing into the owner. Duplicate admission fails
+client-side at exclusive directory preparation, so the owner-side
+same-identity reuse path is unreachable through the current CLI.
+
+## Fixture inventory
+
+- `bend2/test/shared-ownership.py` pins baseline topology (one keeper
+  per attempt; gated 5/5 on `e7c5ac1b`). After the shared owner lands,
+  custody has no per-attempt keeper process, so this file must be
+  updated in the landing composition; it is left strict on baseline
+  until then.
+- `bend2/test/shared-owner.py` (new, this lane) drives the owner entry
+  blackbox with real SIGKILL re-election: native-child and spool
+  survival with birth preservation, re-admission with no second
+  native, conflicting-manifest refusal, exact payload bytes, and
+  full-stream delivery after a torn checkpoint. Identity-restoration
+  assertions are WIP red controls for D1; the file is not gate
+  selectable until they pass. It does not duplicate DS's
+  `bend2/test/shared-instance.py` (custody-level scenarios without
+  owner death) or 685's pending-input tests.
+- Prepared file input (`control-write` pathname) carries filesystem
+  authority only; the fixture keeps payload files inside its temp
+  directory. Prompt bytes are asserted byte-exact end to end.
+- Not covered here for lack of source: multi-client CLI/MCP routing,
+  the `baton2_owner` tool, UI subscriber hints, and the observer
+  checkpoint/reattach work owned by root observer joint DS. No claim
+  is made about them.
 
 ## Open coordination items
 
-- Lead: apply the claim-lapse fix with its law update; decide the serve
-  re-invocation route; compose the single election from the correction
-  above. This lane's fixture path is `bend2/test/shared-ownership.py`;
-  DS's `bend2/test/shared-instance.py` and `bend2/test/instance.bend`
-  do not collide with it.
-- DS: apply correction items 1-5 before implementation; sync the
-  proposal's `BI_ATTACH` with the code's `BI_ENSURE`; wire
-  `bend2/test/instance.bend` into an executed gate. Keep the attempt
-  directory layout stable or propose the change precisely.
+- Lead: decide the serve re-invocation route and the CLI/MCP owner
+  routing; compose the single election with custody-loss proof instead
+  of the withdrawn lease. New fixture path from this lane is
+  `bend2/test/shared-owner.py` (owner-death blackbox); the baseline
+  `bend2/test/shared-ownership.py` stays until landing composition.
+- DS: correction items 1-6 stand; item 7 is withdrawn above. Fix D1
+  orphan identity restore, D2 torn/oversize replay classification, and
+  D3 duplicate-admit handle reuse; note a restart test must kill the
+  owner process. Keep the attempt directory layout stable or propose
+  the change precisely.
 - 685: the 685 handoff in the DS proposal swaps `retain` for
   `Instance.admit` plus `retire` after acknowledge; confirm the serve
   seam and send the exact signature/SQL if a variant is needed. This
