@@ -25,6 +25,9 @@ GATES = (
     ('laws-check', ['node', 'bend2/scripts/laws-check.mjs']),
     ('check-native', ['sh', 'bend2/scripts/check-native.sh']),
 )
+# The parallel gate set is derived from GATES: one isolated job per gate, then
+# assembly binds the complete set. No separate count, list, or ceiling is kept.
+GATE_NAMES = tuple(name for name, _ in GATES)
 
 
 def require(condition, message):
@@ -233,6 +236,188 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
     return destination, summary
 
 
+def producer_identity():
+    return {'workflow': os.environ.get('GITHUB_WORKFLOW') or None,
+            'run_id': os.environ.get('GITHUB_RUN_ID') or None,
+            'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT') or None,
+            'job': os.environ.get('GITHUB_JOB') or None,
+            'sha': os.environ.get('GITHUB_SHA') or None}
+
+
+def producer_run_binding(producer):
+    producer = producer or {}
+    return {key: producer.get(key) for key in ('workflow', 'run_id', 'run_attempt', 'sha')}
+
+
+def check_compiler_version(compiler):
+    version = subprocess.check_output([str(compiler), 'version'], cwd=ROOT,
+                                      stdin=subprocess.DEVNULL, text=True).strip()
+    require(version == 'bend 2.0.25', 'The artifact requires Bend 2.0.25')
+
+
+def run_one_gate(gate_name, compiler, env, output, initial):
+    """Run a single gate exactly as run_gates runs it and record a receipt.
+
+    The workflow runs one isolated job per gate, each calling this entry point
+    with the same exact source and pinned compiler. The receipt binds the gate
+    command, the exact-source snapshots, the compiler bytes, the runner source
+    bytes, the producer run identity, and the complete log bytes.
+    """
+    names = dict(GATES)
+    require(gate_name in names, 'Unknown gate: ' + gate_name)
+    argv = names[gate_name]
+    output = output.resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    check_compiler_version(compiler)
+    generated = ROOT / '.scratch/bend2/baton2.c'
+    receipt = {'gate': gate_name, 'status': 'running', 'worktree': str(ROOT),
+               'output': str(output), 'log': gate_name + '.log',
+               'before': snapshot(),
+               'environment': {'BEND': str(compiler), 'BEND_NO_TELEMETRY': '1',
+                               'CC': env.get('CC', 'clang')},
+               'compiler_sha256': sha256(compiler),
+               'runner_sha256': sha256(Path(__file__)),
+               'producer': producer_identity()}
+    same_source(receipt['before'], initial)
+    stage = {'name': gate_name, 'argv': argv, 'status': 'running',
+             'before': receipt['before'], 'log': receipt['log']}
+    write_json(output / 'summary.json', receipt)
+    print(json.dumps({'gate': gate_name, 'status': 'running',
+                      'log': str(output / receipt['log'])}), flush=True)
+    started = time.monotonic()
+    with (output / receipt['log']).open('wb') as log:
+        result = subprocess.run(argv, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
+                                stdout=log, stderr=subprocess.STDOUT)
+    stage.update(exit_code=result.returncode, elapsed_seconds=time.monotonic() - started,
+                 status='passed' if result.returncode == 0 else 'failed', after=snapshot())
+    stage['log_sha256'] = sha256(output / stage['log'])
+    receipt['stage'] = stage
+    binary = ROOT / '.scratch/bend2/baton2'
+    receipt['binary_sha256'] = sha256(binary) if binary.is_file() else None
+    receipt['generated_sha256'] = sha256(generated) if generated.is_file() else None
+    write_json(output / 'summary.json', receipt)
+    require(result.returncode == 0, gate_name + ' failed; full output is retained at ' +
+            str(output / stage['log']))
+    same_source(stage['after'], initial)
+    digest = sha256(output / 'summary.json')
+    print(json.dumps({'gate': gate_name, 'status': 'passed',
+                      'receipt': str(output / 'summary.json'), 'sha256': digest}), flush=True)
+    return output / 'summary.json', receipt
+
+
+def gate_evidence(gate_name, log_text):
+    """Recompute a gate's success evidence from its complete log bytes.
+
+    Omitted, duplicated, altered, or unfinished producer work cannot pass: the
+    laws gate must carry its complete green summary line, the native gate must
+    show executed suites, and the build gate must have produced its binary.
+    """
+    if gate_name == 'laws-check':
+        match = re.search(r'^laws-check: green - (\d+) laws, (\d+) mutations, (\d+) compiles, 0 failures$',
+                          log_text, re.MULTILINE)
+        require(match is not None, 'The complete laws-check success summary is missing')
+        return {'laws': dict(zip(('laws', 'mutations', 'compiles'), map(int, match.groups())))}
+    if gate_name == 'check-native':
+        suites = re.findall(r'Ran (\d+) tests? in [^\n]+', log_text)
+        require(suites, 'The check-native log shows no executed test suites')
+        return {'native': {'python_tests': sum(map(int, suites)), 'python_suites': len(suites)}}
+    require(gate_name == 'build-native', 'Unknown gate: ' + gate_name)
+    return {'build': True}
+
+
+def verify_gate_receipt(directory, initial, compiler):
+    """Verify one parallel gate receipt against exact source and toolchain.
+
+    A matching source hash alone does not establish producer authenticity: the
+    receipt must also bind the runner source bytes, the complete log bytes with
+    recomputed success evidence, and the exact gate identity.
+    """
+    summary_path = directory / 'summary.json'
+    require(summary_path.is_file(), 'Missing gate receipt: ' + str(summary_path))
+    summary = json.loads(summary_path.read_text())
+    require(summary.get('gate') == directory.name,
+            'Gate receipt misfiled: ' + str(summary_path))
+    require(summary.get('runner_sha256') == sha256(Path(__file__)),
+            'Gate receipt runner source differs from this runner source')
+    require(summary.get('compiler_sha256') == sha256(compiler),
+            'Gate receipt compiler differs from the selected compiler')
+    require(summary.get('environment', {}).get('BEND') == str(compiler) and
+            summary.get('environment', {}).get('BEND_NO_TELEMETRY') == '1',
+            'Gate receipt must select this compiler with telemetry disabled')
+    stage = summary.get('stage', {})
+    require([(stage.get('name'), stage.get('argv'))] ==
+            [(summary['gate'], dict(GATES)[summary['gate']])],
+            'Gate receipt must contain its exact gate command')
+    require(stage.get('status') == 'passed' and stage.get('exit_code') == 0,
+            'A supplied gate did not pass')
+    same_source(stage.get('before', {}), initial)
+    same_source(stage.get('after', {}), initial)
+    require(stage.get('log') == summary['gate'] + '.log', 'Unexpected gate log path')
+    log_path = directory / stage['log']
+    require(sha256(log_path) == stage.get('log_sha256'), 'Supplied gate log bytes changed')
+    log_text = log_path.read_text(errors='replace')
+    evidence = gate_evidence(summary['gate'], log_text)
+    if summary['gate'] == 'build-native':
+        require(summary.get('binary_sha256') is not None, 'The build gate produced no binary')
+    return summary, evidence
+
+
+def assemble_gate_receipts(receipts_dir, build_outputs, compiler, env, logs, initial, before_inputs):
+    """Assemble the complete parallel gate set into one gate summary.
+
+    The receipts directory must contain exactly one subdirectory per gate in
+    GATES, named for its gate. Each receipt ran on its own isolated runner, so
+    build directories legitimately differ; authenticity comes from the shared
+    producer run identity plus exact source, toolchain, runner source, and
+    complete log bytes, not from matching worktree paths.
+    """
+    receipts_dir = receipts_dir.resolve()
+    found = sorted(p for p in receipts_dir.iterdir() if p.is_dir())
+    require([p.name for p in found] == sorted(GATE_NAMES),
+            'Gate receipts must contain exactly the complete gate set')
+    verified, producers = {}, []
+    for directory in found:
+        summary, _ = verify_gate_receipt(directory, initial, compiler)
+        verified[summary['gate']] = summary
+        producers.append(summary.get('producer'))
+    bindings = [producer_run_binding(producer) for producer in producers]
+    require(all(binding == bindings[0] for binding in bindings),
+            'Gate receipts carry different producers')
+    current = producer_run_binding(producer_identity())
+    if current.get('run_id') is not None:
+        require(bindings[0] == current, 'Gate receipts belong to another run')
+        require(len({(producer or {}).get('job') for producer in producers}) == len(GATE_NAMES),
+                'Gate receipts must come from one isolated job per gate')
+    build = verified['build-native']
+    binary = Path(build_outputs).resolve() / 'baton2'
+    generated = Path(build_outputs).resolve() / 'baton2.c'
+    require(binary.is_file() and generated.is_file(), 'The gated build outputs are required')
+    require(sha256(binary) == build['binary_sha256'], 'The supplied binary differs from its gate receipt')
+    require(sha256(generated) == build['generated_sha256'], 'The supplied generated C differs from its gate receipt')
+    scratch = ROOT / '.scratch/bend2'
+    scratch.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(binary, scratch / 'baton2')
+    shutil.copyfile(generated, scratch / 'baton2.c')
+    for name in GATE_NAMES:
+        shutil.copyfile(receipts_dir / name / (name + '.log'), logs / (name + '.log'))
+    summary = {'status': 'passed', 'worktree': str(ROOT), 'output': str(logs),
+               'before': initial, 'environment': {'BEND': str(compiler), 'BEND_NO_TELEMETRY': '1',
+                                                'CC': env.get('CC', 'clang')},
+               'compiler_sha256': sha256(compiler), 'runner_sha256': sha256(Path(__file__)),
+               'producer': producers[0], 'inputs_before': before_inputs,
+               'stages': [verified[name]['stage'] for name in GATE_NAMES],
+               'assembled_from': {name: sha256(receipts_dir / name / 'summary.json')
+                                  for name in GATE_NAMES}}
+    path = logs / 'summary.json'
+    write_json(path, summary)
+    summary['validation'] = validation(logs)
+    summary['after'] = snapshot()
+    require(summary['after']['binary_sha256'] == build['binary_sha256'],
+            'The staged native executable differs from its gate receipt')
+    write_json(path, summary)
+    return path, summary
+
+
 def stage_adapters(payload):
     directory = payload / 'libexec/baton2'
     directory.mkdir(parents=True)
@@ -328,6 +513,12 @@ def package(args):
             if 'inputs_after' in summary:
                 require(summary['inputs_after'] == before_inputs, 'The receipt toolchain or host inputs differ from current inputs')
             input_boundary = 'Compiler libraries, CC and host captured after the supplied gates and checked again during packaging.'
+        elif args.assemble_gates:
+            receipt, summary = assemble_gate_receipts(
+                args.assemble_gates, args.build_outputs, compiler, env, logs, initial, before_inputs)
+            input_boundary = ('Each gate ran on its own isolated runner; the assembler captured compiler '
+                              'libraries, CC and host, and every receipt binds identical exact source, '
+                              'toolchain, runner source, run identity, and complete logs.')
         else:
             receipt, summary = run_gates(compiler, env, logs, initial, before_inputs)
             input_boundary = 'Compiler libraries, CC and host captured before and after the three gates.'
@@ -378,7 +569,8 @@ def package(args):
                       'generated_c': {'path': str(generated), **file_info(generated)},
                       'linked_libraries': libraries},
             'gates': {'receipt': 'logs/summary.json', **file_info(receipt),
-                      'validation': summary['validation'], 'reused': bool(args.gate_receipt)},
+                      'validation': summary['validation'], 'reused': bool(args.gate_receipt),
+                      'assembled': bool(args.assemble_gates)},
             'terms': terms,
         }
         write_json(payload / 'manifest.json', manifest)
@@ -401,16 +593,42 @@ def package(args):
         raise
 
 
+def run_gate(args):
+    initial = snapshot()
+    compiler = args.bend.resolve()
+    env = dict(os.environ, BEND=str(compiler), BEND_NO_TELEMETRY='1')
+    run_one_gate(args.run_gate, compiler, env, args.gate_output, initial)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', required=True, type=Path, help='new owned output directory, retained on failure')
-    parser.add_argument('--bend', required=True, type=Path)
-    parser.add_argument('--compiler-archive', required=True, type=Path, help='preserved official Darwin arm64 Bend 2.0.25 archive')
+    parser.add_argument('--output', type=Path, help='new owned output directory, retained on failure')
+    parser.add_argument('--bend', type=Path)
+    parser.add_argument('--compiler-archive', type=Path, help='preserved official Darwin arm64 Bend 2.0.25 archive')
     parser.add_argument('--release-version', help='version identifier for a release archive; requires the project root LICENSE')
     parser.add_argument('--gate-receipt', type=Path, help='reuse a completed exact-source three-gate summary')
     parser.add_argument('--gate-receipt-sha256', help='required SHA256 pin when reusing a gate receipt')
+    parser.add_argument('--run-gate', choices=GATE_NAMES,
+                        help='run one gate on this exact source and record its receipt')
+    parser.add_argument('--gate-output', type=Path, help='new owned receipt directory for --run-gate')
+    parser.add_argument('--assemble-gates', type=Path,
+                        help='assemble one receipt subdirectory per gate into a complete gate summary')
+    parser.add_argument('--build-outputs', type=Path,
+                        help='directory holding the build gate baton2 and baton2.c for --assemble-gates')
     args = parser.parse_args()
     require(bool(args.gate_receipt) == bool(args.gate_receipt_sha256), 'Gate receipt and SHA256 must be supplied together')
+    if args.run_gate:
+        require(args.gate_output is not None and args.output is None and args.gate_receipt is None
+                and args.assemble_gates is None and args.build_outputs is None and args.compiler_archive is None,
+                'Gate mode runs one gate with --bend and --gate-output only')
+        require(args.bend is not None, 'Gate mode requires --bend')
+        run_gate(args)
+        return
+    require(args.output is not None and args.bend is not None and args.compiler_archive is not None,
+            'Packaging requires --output, --bend, and --compiler-archive')
+    require(bool(args.assemble_gates) == bool(args.build_outputs),
+            'Gate assembly and build outputs must be supplied together')
+    require(not (args.gate_receipt and args.assemble_gates), 'Supply at most one gate source')
     package(args)
 
 
