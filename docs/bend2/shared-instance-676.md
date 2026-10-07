@@ -114,6 +114,15 @@ concurrent Codex, OMP and Muse sessions, mid-task guidance, stop, and
 client, coordinator and keeper loss. Virtual address reservations are
 reported on their own lines, apart from resident and private figures.
 
+Scoped short-lived invocation figures on atari-homelab (Bend 2.0.25,
+clang-19, three reps, `/usr/bin/time` peak resident set): `pending`
+0.00 s at about 5.9 MB; `owner-status` 0.00 s at about 5.3 MB;
+`subscribe` 0.00 s at about 5.4 MB; `serve` over empty work 0.07 to
+0.10 s at about 5.4 MB. The routing binary is 91 KB larger on disk than
+the base (`text` plus 48 KB). No long-lived owner process exists before
+the wake transport lands, so persistent resident figures follow at
+composition with the concurrent workload.
+
 ## Contracts and shared hunks
 
 - `native685-muse-conductor-20261006` (owns `receive.bend`, `wake.bend`,
