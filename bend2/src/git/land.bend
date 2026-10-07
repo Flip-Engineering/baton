@@ -1246,13 +1246,23 @@ def ld_adv_cas_qualified(target: String, cand: String, capture: Result<&1,&1,U32
 def ld_adv_cas_readback(target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut) -> IO(LdAdvObs):
   +c2 = cand
   +cp = capture
-  match after:
+  +obs = after
+  match obs:
     case T.GRun{code, out}:
-      +ok = Bool.pick(Bool, U32.is_eq(code, 0), Tx.str_eq(Tx.trim_nl(out), c2), False{})
-      match ok:
-        case True{}: IO.pure(LdAdvObs, ld_adv_with(AdvLanded{}, cp))
-        case False{}: IO.pure(LdAdvObs, ld_adv_with(AdvMoved{}, cp))
-    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(AdvBroken{detail}, cp))
+      +c0 = code
+      match U32.is_eq(c0, 0):
+        case False{}: IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{"the target could not be read back after the advance"}, cp, obs})
+        case True{}: ld_adv_cas_compared(c2, cp, obs, Tx.trim_nl(out))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{detail}, cp, obs})
+
+def ld_adv_cas_compared(cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut, tip: String) -> IO(LdAdvObs):
+  +c2 = cand
+  +cp = capture
+  +obs = after
+  +seen = tip
+  match Tx.str_eq(seen, c2):
+    case True{}: IO.pure(LdAdvObs, LdAdvQualified{AdvLanded{}, cp, obs})
+    case False{}: IO.pure(LdAdvObs, LdAdvQualified{AdvMoved{}, cp, obs})
 
 def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +r2 = repo
@@ -1327,6 +1337,7 @@ def ld_adv_of(obs: LdAdvObs) -> LAdv:
   match o:
     case LdAdvNoCapture{advance}: advance
     case LdAdvCaptured{advance, capture}: advance
+    case LdAdvQualified{advance, capture, readback}: advance
 
 # Git provides no atomic CLI operation that pins symbolic HEAD across the final identity check
 # and the merge, so a switch in that interval can still direct the merge to another branch. The
@@ -1450,6 +1461,7 @@ type LdAdvCtx is Data:
 type LdAdvObs is Data:
   LdAdvNoCapture{advance: LAdv}
   LdAdvCaptured{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>}
+  LdAdvQualified{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>, readback: T.GitOut}
 
 def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
   +c = capture
