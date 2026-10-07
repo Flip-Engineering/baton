@@ -30,13 +30,13 @@ type LandingRequest is Data:
                    guard: String, artifact: String, attempt_directory: String, repository: String}
 
 type Landing is Data:
-  LandingClaimFailed{error: U32 & String}
+  LandingClaimFailed{error: T.HostError}
   LandingGuardBusy{target: String}
-  LandingAssociationRefused{step: String, observation: T.GitOut, released: Result<&1, &1, U32 & String, Unit>}
-  LandingOldValueMismatch{expected: String, found: String, released: Result<&1, &1, U32 & String, Unit>}
-  LandingPublishRefused{outcome: P.IntentPublish, released: Result<&1, &1, U32 & String, Unit>}
+  LandingAssociationRefused{step: String, observation: T.GitOut, released: T.ReleaseRaw}
+  LandingOldValueMismatch{expected: String, found: String, released: T.ReleaseRaw}
+  LandingPublishRefused{outcome: P.IntentPublish, released: T.ReleaseRaw}
   LandingHeld{request: LandingRequest, candidate: String, basis: String, published: String,
-              mutation: Result<&1,&1,U32 & String,String & String>, released: Result<&1, &1, U32 & String, Unit>}
+              mutation: T.CapturedRaw, released: T.ReleaseRaw}
 
 # The attempt scratch is derived from the canonical common directory and the attempt name:
 # the directory the publication writes into and the artifact the guarded capture retains both
@@ -127,14 +127,14 @@ def intent_common(intent: I.IntentInput) -> String:
       common
 
 # The release happens on every exit, and its own observation is kept beside the refusal.
-def Landing.released(request: LandingRequest, handle: U32, outcome: Landing, release: Result<&1, &1, U32 & String, Unit>) -> IO(Landing):
+def Landing.released(request: LandingRequest, handle: U32, outcome: Landing, release: T.ReleaseRaw) -> IO(Landing):
   +req = request
   +h = handle
   +prior = outcome
   +observed = release
   IO.pure(Landing, replace_release(prior, observed))
 
-def replace_release(outcome: Landing, release: Result<&1, &1, U32 & String, Unit>) -> Landing:
+def replace_release(outcome: Landing, release: T.ReleaseRaw) -> Landing:
   match outcome:
     case LandingAssociationRefused{step, observation, released}: LandingAssociationRefused{step, observation, release}
     case LandingOldValueMismatch{expected, found, released}: LandingOldValueMismatch{expected, found, release}
@@ -149,14 +149,14 @@ def Landing.stopped(request: LandingRequest, handle: U32, outcome: Landing) -> I
   +prior = outcome
   do IO<Landing>:
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(h)
-    Landing.released(req, h, prior, released)
+    Landing.released(req, h, prior, T.release_raw_of(released))
 
-def Landing.associations(request: LandingRequest, handle: U32, published: String, observation: A.Association) -> IO(Landing):
+def Landing.associations(landing_request: LandingRequest, handle: U32, published: String, observation: A.Association) -> IO(Landing):
   match observation:
     case A.AssociationRefused{step, observation}:
-      Landing.stopped(request, handle, LandingAssociationRefused{step, observation, Done{Unit{}}})
+      Landing.stopped(landing_request, handle, LandingAssociationRefused{step, observation, T.ReleaseUnperformed{}})
     case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
-      Landing.old_value_checked(handle, request, published, candidate_oid, basis_oid, target_head)
+      Landing.old_value_checked(handle, landing_request, published, candidate_oid, basis_oid, target_head)
 
 def Landing.old_value_checked(handle: U32, request: LandingRequest, published: String, candidate: String, basis: String, head: String) -> IO(Landing):
   +h = handle
@@ -168,7 +168,7 @@ def Landing.old_value_checked(handle: U32, request: LandingRequest, published: S
   +expected = expected_head(landingreq_old_target(req))
   Bool.pick(IO(Landing), Tx.str_eq(found, expected),
     Landing.mutated(h, req, cand, base, pub),
-    Landing.stopped(req, h, LandingOldValueMismatch{expected, found, Done{Unit{}}}))
+    Landing.stopped(req, h, LandingOldValueMismatch{expected, found, T.ReleaseUnperformed{}}))
 # The mutation runs through the guarded capture with the live claim descriptor, so the child
 # inherits the lock and the artifact retains the diagnostics and the terminal outcome.
 def Landing.mutated(handle: U32, request: LandingRequest, candidate: String, basis: String, published: String) -> IO(Landing):
@@ -191,19 +191,19 @@ def Landing.release(handle: U32, request: LandingRequest, candidate: String, bas
   +m = mutation
   do IO<Landing>:
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(h)
-    IO.pure(Landing, LandingHeld{req, cand, base, pub, m, released})
+    IO.pure(Landing, LandingHeld{req, cand, base, pub, m, T.release_raw_of(released)})
 
 # The publication goes into the attempt directory after the association, and the content is
 # derived from the associated operands rather than taken from the caller.
-def Landing.published(handle: U32, request: LandingRequest, outcome: P.IntentPublish) -> IO(Landing):
+def Landing.published(handle: U32, landing_request: LandingRequest, outcome: P.IntentPublish) -> IO(Landing):
   match outcome:
     case P.IntentBytesPublished{request, raw, path, content}:
-      Landing.associate_now(handle, request, raw)
-    case P.PublishRefused{request, step, name, raw}: Landing.stopped(request, handle, LandingPublishRefused{outcome, Done{Unit{}}})
-    case P.PublishExistingPending{request, raw, path}: Landing.stopped(request, handle, LandingPublishRefused{outcome, Done{Unit{}}})
-    case P.PublishContentMismatch{request, raw, expected, found}: Landing.stopped(request, handle, LandingPublishRefused{outcome, Done{Unit{}}})
-    case P.PublishReadbackFailed{request, publication, path, error}: Landing.stopped(request, handle, LandingPublishRefused{outcome, Done{Unit{}}})
-    case P.PublishHostFailed{step, request, error}: Landing.stopped(request, handle, LandingPublishRefused{outcome, Done{Unit{}}})
+      Landing.associate_now(handle, landing_request, raw)
+    case P.PublishRefused{request, step, name, raw}: Landing.stopped(landing_request, handle, LandingPublishRefused{outcome, T.ReleaseUnperformed{}})
+    case P.PublishExistingPending{request, raw, path}: Landing.stopped(landing_request, handle, LandingPublishRefused{outcome, T.ReleaseUnperformed{}})
+    case P.PublishContentMismatch{request, raw, expected, found}: Landing.stopped(landing_request, handle, LandingPublishRefused{outcome, T.ReleaseUnperformed{}})
+    case P.PublishReadbackFailed{request, publication, path, error}: Landing.stopped(landing_request, handle, LandingPublishRefused{outcome, T.ReleaseUnperformed{}})
+    case P.PublishHostFailed{step, request, error}: Landing.stopped(landing_request, handle, LandingPublishRefused{outcome, T.ReleaseUnperformed{}})
 
 def Landing.associate_now(handle: U32, request: LandingRequest, published: String) -> IO(Landing):
   +h = handle
@@ -227,7 +227,7 @@ def Landing.claimed_associated(handle: U32, request: LandingRequest) -> IO(Landi
 def Landing.association_before_publish(handle: U32, request: LandingRequest, observation: A.Association) -> IO(Landing):
   match observation:
     case A.AssociationRefused{step, observation}:
-      Landing.stopped(request, handle, LandingAssociationRefused{step, observation, Done{Unit{}}})
+      Landing.stopped(landing_request, handle, LandingAssociationRefused{step, observation, T.ReleaseUnperformed{}})
     case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
       Landing.publish_now(handle, request, candidate_oid, basis_oid)
 
@@ -312,7 +312,7 @@ law an_absent_old_target_consumes_an_absent_head:
   {Landing.old_value_checked(1, LandingRequested{intent, name, "", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "") == (do IO<Landing>:
     observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"update-ref", Con{qualified_target(intent_target(intent)), Con{"0123456789abcdef0123456789abcdef01234567", Con{mutation_old_value(""), Nil{}}}}}}), repository, 1, guard, artifact)
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(1)
-    IO.pure(Landing, LandingHeld{LandingRequested{intent, name, "", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "published", observed, released})) : IO(Landing)}
+    IO.pure(Landing, LandingHeld{LandingRequested{intent, name, "", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "published", T.captured_raw_of(observed), T.release_raw_of(released)})) : IO(Landing)}
 
 def an_absent_old_target_consumes_an_absent_head(intent,name,content,guard,artifact,attempt_directory,repository):
   {==}
@@ -328,7 +328,7 @@ law a_present_old_target_matching_the_head_consumes_it:
   {Landing.old_value_checked(1, LandingRequested{intent, name, "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222") == (do IO<Landing>:
     observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"update-ref", Con{qualified_target(intent_target(intent)), Con{"0123456789abcdef0123456789abcdef01234567", Con{mutation_old_value("2222222222222222222222222222222222222222"), Nil{}}}}}}), repository, 1, guard, artifact)
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(1)
-    IO.pure(Landing, LandingHeld{LandingRequested{intent, name, "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "published", observed, released})) : IO(Landing)}
+    IO.pure(Landing, LandingHeld{LandingRequested{intent, name, "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "published", T.captured_raw_of(observed), T.release_raw_of(released)})) : IO(Landing)}
 
 def a_present_old_target_matching_the_head_consumes_it(intent,name,content,guard,artifact,attempt_directory,repository):
   {==}
@@ -343,7 +343,7 @@ law a_present_old_target_differing_from_the_head_is_refused:
   for repository: String
   {Landing.old_value_checked(1, LandingRequested{intent, name, "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "3333333333333333333333333333333333333333") == (do IO<Landing>:
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(1)
-    IO.pure(Landing, LandingOldValueMismatch{"2222222222222222222222222222222222222222", "3333333333333333333333333333333333333333", released})) : IO(Landing)}
+    IO.pure(Landing, LandingOldValueMismatch{"2222222222222222222222222222222222222222", "3333333333333333333333333333333333333333", T.release_raw_of(released)})) : IO(Landing)}
 
 def a_present_old_target_differing_from_the_head_is_refused(intent,name,content,guard,artifact,attempt_directory,repository):
   {==}
@@ -357,7 +357,7 @@ def a_busy_guard_refuses_before_any_effect(request):
 
 law a_release_failure_keeps_the_earlier_refusal:
   for request: LandingRequest
-  {replace_release(LandingOldValueMismatch{"a", "b", Done{Unit{}}}, Fail{(13, "release failed")}) == LandingOldValueMismatch{"a", "b", Fail{(13, "release failed")}} : Landing}
+  {replace_release(LandingOldValueMismatch{"a", "b", T.ReleaseUnperformed{}}, Fail{(13, "release failed")}) == LandingOldValueMismatch{"a", "b", Fail{(13, "release failed")}} : Landing}
 
 def a_release_failure_keeps_the_earlier_refusal(request):
   {==}

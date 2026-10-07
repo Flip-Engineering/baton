@@ -37,6 +37,7 @@ def captured_raw_of(host: Result<&1, &1, U32 & String, String & String>) -> Capt
 # A release outcome kept as data: only the release's own success and failure, with
 # absence handled by the enclosing observation.
 type ReleaseRaw is Data:
+  ReleaseUnperformed{}
   ReleaseFailed{code: U32, detail: String}
   ReleaseDone{}
 
@@ -104,3 +105,34 @@ def fail_text(f: GitFail) -> String:
     case FUnknownBase{base}: str_cat2("unknown base: ", base)
     case FTargetBusy{branch}: str_cat2("target busy: ", branch)
     case FCmd{op, detail}: str_cat3(op, ": ", detail)
+
+# The conversions, stated for every payload rather than for one sample.
+law a_capture_success_keeps_both_raw_strings:
+  for framing: String
+  for diagnostics: String
+  {captured_raw_of(Done{(framing, diagnostics)}) == CapturedDone{framing, diagnostics} : CapturedRaw}
+
+def a_capture_success_keeps_both_raw_strings(framing,diagnostics):
+  {==}
+
+law a_capture_failure_keeps_its_code_and_detail:
+  for code: U32
+  for detail: String
+  {captured_raw_of(Fail{(code, detail)}) == CapturedFailed{code, detail} : CapturedRaw}
+
+def a_capture_failure_keeps_its_code_and_detail(code,detail):
+  {==}
+
+law a_release_failure_keeps_its_code_and_detail:
+  for code: U32
+  for detail: String
+  {release_raw_of(Fail{(code, detail)}) == ReleaseFailed{code, detail} : ReleaseRaw}
+
+def a_release_failure_keeps_its_code_and_detail(code,detail):
+  {==}
+
+law a_release_success_is_its_own_success:
+  {release_raw_of(Done{Unit{}}) == ReleaseDone{} : ReleaseRaw}
+
+def a_release_success_is_its_own_success():
+  {==}

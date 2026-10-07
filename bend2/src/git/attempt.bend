@@ -22,7 +22,7 @@ type AttemptCapture is Data:
   AttemptCaptured{observed: T.CapturedRaw, released: T.ReleaseRaw}
 
 # The chain, leaf first. The release is attempted only where a handle exists.
-def Attempt.under_claim(handle: U32, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
+def Attempt.under_claim(+handle: U32, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
   do IO<AttemptCapture>:
     observed : Result<&1,&1,U32 & String,String & String> <- P.Process.capture_holding(argv, cwd, handle, guard, artifact)
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(handle)
@@ -51,14 +51,16 @@ def Attempt.capture_guarded(common: String, target: String, guard: String, artif
 # API form with the IO expression it stands for: they state which branch runs no effect at
 # all, and that the capture runs the release after the effect and keeps both results.
 law a_failed_claim_runs_no_capture:
+  for code: U32
+  for detail: String
   for target: String
   for guard: String
   for artifact: String
   for argv: String
   for cwd: String
-  {Attempt.claimed(Fail{(13, "i/o error")}, target, guard, artifact, argv, cwd) == IO.pure(AttemptCapture, AttemptClaimFailed{T.HostError{13, "i/o error"}}) : IO(AttemptCapture)}
+  {Attempt.claimed(Fail{(code, detail)}, target, guard, artifact, argv, cwd) == IO.pure(AttemptCapture, AttemptClaimFailed{T.HostError{code, detail}}) : IO(AttemptCapture)}
 
-def a_failed_claim_runs_no_capture(target,guard,artifact,argv,cwd):
+def a_failed_claim_runs_no_capture(code,detail,target,guard,artifact,argv,cwd):
   {==}
 
 law a_busy_guard_runs_no_capture:
