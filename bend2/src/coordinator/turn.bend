@@ -50,6 +50,19 @@ def diagnostic(db: String, player: String, id: String, text: String, empty: Bool
     case True{}: IO.pure(Unit,Unit{})
     case False{}: report(db,player,id ++ ":observation","Native output observation failed: " ++ text)
 
+def checkpoint_write_failed(result: Result<&1,&1,U32 & String,Unit>) -> Bool:
+  match result:
+    case Fail{error}: True{}
+    case Done{unit}: False{}
+
+def checkpoint_failure_notice(db: String, player: String, id: String, attempt: String, enabled: Bool, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match enabled:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}:
+      match result:
+        case Fail{error}: report(db,player,id ++ ":checkpoint","Native observer checkpoint commit failed for attempt " ++ attempt ++ ": " ++ error_text(error) ++ ". Raw output remains replayable from the last validated checkpoint.")
+        case Done{unit}: IO.pure(Unit,Unit{})
+
 def result_missing(db: String, player: String, id: String, log: String, stderr: String, status: String, found: Bool) -> IO(Unit):
   match found:
     case True{}: IO.pure(Unit,Unit{})
@@ -502,8 +515,9 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
           +question_text : String <- IO.pure(String,question_error)
           checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(checkpoint_blocked),Bool.and(Bool.not(failed),Bool.and(String.is_empty(question_text),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due(checkpoint_state,next_checkpoint))))))
           +checkpointed : Result<&1,&1,U32 & String,Unit> <- Observer.after_observation(db,handle,next_checkpoint,checkpoint_enabled,observed)
-          +next_error : String <- IO.pure(String,remember_write(remember(remember_write(Bool.pick(String,String.is_empty(first_error),question_text,first_error),written),observed),checkpointed))
-          +checkpoint_failed : Bool <- IO.pure(Bool,Bool.or(checkpoint_blocked,Bool.not(String.is_empty(next_error))))
+          checkpoint_notice : Unit <- checkpoint_failure_notice(db,player,id,attempt,Bool.and(checkpoint_enabled,Bool.not(checkpoint_blocked)),checkpointed)
+          +next_error : String <- IO.pure(String,remember(remember_write(Bool.pick(String,String.is_empty(first_error),question_text,first_error),written),observed))
+          +checkpoint_failed : Bool <- IO.pure(Bool,Bool.or(checkpoint_blocked,Bool.or(Bool.not(String.is_empty(next_error)),checkpoint_write_failed(checkpointed))))
           next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
           consume(db,player,id,log,current_policy,next_held,failed,handle,harness,next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_error,sender,attempt,next_checkpoint,checkpoint_failed,wakes,next))
 

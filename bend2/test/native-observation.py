@@ -130,6 +130,10 @@ class NativeObservation(RECEIVE.Receive):
 
     def test_omp_fallback_message_survives_observer_reattach_at_saved_cursor(self):
         self.player(harness='omp')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
         self.coord('message', 'checkpoint-task', 'root', 'parent', 'task', 'Retain the assistant message before the terminal.')
         observer = self.spawn(*self.receive_args('parent'))
         stream, started = self.accept('parent')
@@ -158,19 +162,84 @@ class NativeObservation(RECEIVE.Receive):
         self.action(stream, exit_fixture=True)
         self.finish(resumed)
 
-        self.assertEqual([row['reportBody'] for row in self.coord('turns', 'parent')],
+        turns = self.eventually(lambda: self.coord('turns', 'parent'),
+                                'reattached observer did not store its terminal report')
+        self.assertEqual([row['reportBody'] for row in turns],
                          ['Recovered from the saved assistant message.'])
         log = (self.directory / 'parent.jsonl').read_text()
         self.assertEqual(log.count('checkpoint-assistant'), 1)
         self.assertIn('agent_end', log)
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
+        launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
+        self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
         self.assertFalse(any('Native output observation failed' in row['body']
                              for row in self.coord('inbox', 'root')))
         self.eventually(lambda: not self.owned_processes(), 'reattached OMP fixture did not exit')
+
+    def test_oversized_omp_checkpoint_failure_replays_without_losing_completion(self):
+        self.player(harness='omp')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
+        self.coord('message', 'oversized-checkpoint-task', 'root', 'parent', 'task', 'Retain this complete large response.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept('parent')
+        attempt, turn_id = self.eventually(lambda: self._retained_attempt(), 'retained attempt was not admitted')
+        text = 'R' * (1024 * 1024 + 128 * 1024)
+        assistant = {'type': 'message_end', 'message': {
+            'id': 'oversized-checkpoint-assistant', 'role': 'assistant', 'provider': 'fixture',
+            'content': [{'type': 'text', 'text': text}]}}
+        self.action(stream, native_frame=assistant)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.eventually(lambda: (self.directory / 'parent.jsonl').exists() and
+                        'oversized-checkpoint-assistant' in (self.directory / 'parent.jsonl').read_text(),
+                        'the complete oversized assistant frame was not logged')
+        checkpoint_diagnostic = self.eventually(
+            lambda: next((row for row in self.coord('inbox', 'root')
+                          if row['id'] == turn_id + ':checkpoint'), None),
+            'oversized checkpoint failure did not produce its bounded diagnostic')
+        self.assertIn(attempt, checkpoint_diagnostic['body'])
+        self.assertLess(len(checkpoint_diagnostic['body']), 512)
+        self.action(stream, native_frame={'type': 'checkpoint-barrier'})
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.eventually(lambda: 'checkpoint-barrier' in (self.directory / 'parent.jsonl').read_text(),
+                        'observer did not consume the oversized-frame barrier')
+
+        observer.kill()
+        observer.wait(timeout=5)
+        resumed = self.spawn(*self.receive_args('parent'))
+        terminal = {'type': 'agent_end', 'isTerminal': True, 'is_error': False, 'messages': []}
+        self.action(stream, native_frame=terminal)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.action(stream, exit_fixture=True)
+        self.finish(resumed)
+
+        turns = self.eventually(lambda: self.coord('turns', 'parent'),
+                                'reattached observer did not preserve the oversized completion')
+        self.assertEqual([row['reportBody'] for row in turns], [text])
+        self.assertEqual(len(turns), 1)
+        reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
+        checkpoint_reports = [row for row in reports if row['id'] == turn_id + ':checkpoint']
+        self.assertEqual(len(checkpoint_reports), 1)
+        self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
+        log = (self.directory / 'parent.jsonl').read_text()
+        self.assertEqual(log.count('oversized-checkpoint-assistant'), 1)
+        self.assertEqual(log.count('checkpoint-barrier'), 1)
+        self.assertIn(text, turns[0]['reportBody'])
+        launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
+        self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
+        self.eventually(lambda: not self.owned_processes(), 'oversized OMP fixture did not exit')
+
+    def _retained_attempt(self):
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            row = database.execute("SELECT directory,id FROM executions WHERE session='parent' AND mode='retained'").fetchone()
+        return (row[0], row[1]) if row else None
 
 if __name__ == '__main__':
     unittest.main(defaultTest=[
         'NativeObservation.test_mixed_agent_end_members_preserve_completion_and_raw_frame',
         'NativeObservation.test_muse_uses_admitted_turn_terminal_and_keeps_later_lifecycle_separate',
         'NativeObservation.test_omp_fallback_message_survives_observer_reattach_at_saved_cursor',
+        'NativeObservation.test_oversized_omp_checkpoint_failure_replays_without_losing_completion',
     ])
