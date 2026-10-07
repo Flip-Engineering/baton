@@ -325,7 +325,7 @@ def observe_projection(saved: Result<&1,&1,U32 & String,String>, +db: String, +p
           recorded : Unit <- Logs.record_terminal_projection(db,player,id,line,log)
           IO.pure(Result<&1,&1,U32 & String,String>,Done{value})
 
-def observe_event(db: String, player: String, id: String, line: String, log: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def observe_event(db: String, player: String, +id: String, +line: String, log: String, relevant: Bool, +sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
     case True{}: do IO<Result<&1,&1,U32 & String,String>>:
       saved : Result<&1,&1,U32 & String,String> <- Store.commit(db,C.Observe{id,player,line,sealed})
