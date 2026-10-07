@@ -706,13 +706,14 @@ static void baton_retained_call(BatonProcessCall *call) {
        committed after its own durable store and reducer effects for that frame.
        It is bound to this attempt's manifest, native process and spool file. */
     if(retained->spool<0) {call->error=EBADF;return;}
-    /* A state too large to checkpoint is a degraded checkpoint, not a task
-       failure: the previous checkpoint stands, the diagnostic is recorded, and
-       the native result and its source bytes are untouched, so the observer
-       replays with its own deduplication. Nothing is truncated. */
+    /* A state too large to checkpoint keeps the previous checkpoint and records
+       the diagnostic, and reports a typed degradation so the observation owner
+       latches advancement off explicitly. Nothing is truncated, and the native
+       result and its source bytes are untouched. */
     if(call->length>BR_CHECKPOINT_STATE_MAX) {
       br_file(retained->directory,"checkpoint-error",
         "state exceeds the checkpoint bound; the previous checkpoint stands\n",67,1);
+      call->error=EOVERFLOW;
       return;
     }
     pthread_mutex_lock(&retained->reader);
@@ -2299,10 +2300,11 @@ static int br_instance_admit(BatonProcessCall *call) {
       call->lock?(int)call->lock:-1,&reply);
     if(!error && reply.attempt)call->unstarted=0;
     if(error==EINVAL || error==ESTALE || error==ENOENT || error==ENOMEM) {
-      /* Only custody this call created and that never reached a native child is
-         discarded. A reused attempt keeps its manifest, control socket, spool
-         and birth, whatever the owner refused. */
-      if(call->fresh)br_attempt_discard(directory,address);
+      /* Only an attempt this call created, that never reached custody, is
+         discarded: the owner writes `launch` as its first custody step, so its
+         absence proves no child started. A reused attempt and every uncertain
+         attempt keep their manifest, control socket, spool and birth. */
+      if(call->fresh && !br_exists(directory,"launch"))br_attempt_discard(directory,address);
       free(address);free(directory);
       return error;
     }
@@ -2346,27 +2348,25 @@ static int br_instance_job(BatonProcessCall *call) {
   BrOwnerRecord record;
   BrInstanceFrame reply={0};
   BrOwnerState state={0};
-  int owner_known=0,socket_fd=-1;
+  int owner_known=0,socket_fd=-1,absent=0;
   int error=br_instance_connect(call->database,0,&record,&socket_fd);
-  if(!error) {
+  if(error==ENOENT || error==ECONNREFUSED || error==EINVAL) {absent=1;error=0;}
+  if(!error && !absent) {
     BrInstanceFrame frame={.op=BI_ATTACH,.owner=record.token,.epoch=record.epoch,
       .length=strlen(directory)+1};
     error=br_instance_exchange(socket_fd,frame,directory,-1,&reply);
-    if(!error && !reply.error && reply.length==sizeof(state)) {
-      error=br_read_all(socket_fd,&state,sizeof(state));
-      owner_known=!error;
-    } else if(!error) {
-      /* The owner answered with a refusal: a transport or owner-generation
-         failure is reported, an absent attempt is a fact to report. */
-      if(reply.error!=ENOENT)error=reply.error;
+    if(!error) {
+      /* An answering owner must answer with its own incarnation and a complete
+         payload; anything else is a typed error, never silently unknown facts. */
+      if(reply.owner!=record.token || reply.epoch!=record.epoch)error=ESTALE;
+      else if(reply.error) {if(reply.error!=ENOENT)error=reply.error;}
+      else if(reply.length!=sizeof(state))error=EPROTO;
+      else if((error=br_read_all(socket_fd,&state,sizeof(state)))) {}
+      else owner_known=1;
     }
-    close(socket_fd);
-  } else if(error!=ENOENT && error!=ECONNREFUSED && error!=EINVAL) {
-    /* A transport failure is a typed error, never a silently empty reference. */
-    free(directory);
-    return error;
   }
-  error=0;
+  if(socket_fd>=0)close(socket_fd);
+  if(error) {free(directory);return error;}
   uint64_t spool_bytes=0,checkpoint_offset=0;
   int checkpoint_verified=0;
   int status=0,status_known=0;
