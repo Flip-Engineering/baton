@@ -1409,6 +1409,22 @@ def ld_adv_with(advance: LAdv, capture: Result<&1,&1,U32 & String,String & Strin
   +c = capture
   LdAdvCaptured{a, c}
 
+type LdAdvCtx is Data:
+  LdAdvContext{claim: U32, guard: String, artifact: String}
+
+type LdAdvObs is Data:
+  LdAdvNoCapture{advance: LAdv}
+  LdAdvCaptured{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>}
+
+def ld_adv_wrap(advance: LAdv) -> LdAdvObs:
+  +a = advance
+  LdAdvNoCapture{a}
+
+def ld_adv_with(advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>) -> LdAdvObs:
+  +a = advance
+  +c = capture
+  LdAdvCaptured{a, c}
+
 def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
   +c = capture
   match c:
