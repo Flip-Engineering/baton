@@ -1152,12 +1152,6 @@ def clean_stderr_run_file(+db: String, +attempt: String, +stderr_path: String) -
       meta : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(stderr_path ++ ".meta")
       IO.pure(String,items_join(clean_attempt_log_json(stderr_path,attempt,stderr_size,stderr),items_join(clean_attempt_log_json(stderr_path ++ ".full",attempt,spool_size,spool),clean_attempt_log_json(stderr_path ++ ".meta",attempt,meta_size,meta)))),IO.pure(String,""))
 
-def clean_stderr_run_rows(+db: String, +session: String, +attempt: String) -> IO(String):
-  do IO<String>:
-    rows : String <- IO.try(String,DB.Sql.query(db,"SELECT stderr FROM log_stderr_runs WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " ORDER BY run;"))
-    cleaned : String <- clean_stderr_run_items(db,attempt,Tx.split_lines(rows),"")
-    IO.pure(String,cleaned)
-
 def clean_stderr_run_items(+db: String, +attempt: String, rows: List<String>, acc: String) -> IO(String):
   match rows:
     case Nil{}: IO.pure(String,acc)
@@ -1165,6 +1159,12 @@ def clean_stderr_run_items(+db: String, +attempt: String, rows: List<String>, ac
       cleaned : String <- clean_stderr_run_file(db,attempt,Tx.trim_nl(head))
       rest : String <- clean_stderr_run_items(db,attempt,tail,items_join(acc,cleaned))
       IO.pure(String,rest)
+
+def clean_stderr_run_rows(+db: String, +session: String, +attempt: String) -> IO(String):
+  do IO<String>:
+    rows : String <- IO.try(String,DB.Sql.query(db,"SELECT stderr FROM log_stderr_runs WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " ORDER BY run;"))
+    cleaned : String <- clean_stderr_run_items(db,attempt,Tx.split_lines(rows),"")
+    IO.pure(String,cleaned)
 
 def clean_attempt_settled_fields(+db: String, +session: String, fields: List<String>, +log: String, +attempt: String, +size: U32) -> IO(String):
   match fields:
