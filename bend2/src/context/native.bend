@@ -746,9 +746,22 @@ def recovery_file_verified(+db: String, +binding: String, +executable: String,
       cwd, SNil{}, spawned)
     recovery_file_provider_answer(db, binding, expected_digest, answer)
 
+def managed_recovery_association_row_matches(+bootstrap: ManagedQuery.Bootstrap,
+                                             association: ContextAdmit.ManagedAssociation) -> Bool:
+  match association:
+    case ContextAdmit.ManagedAssociationStored{planValue, planIdentity,
+        resultSchema, artifactSha256, bootstrapText}:
+      Bool.and(String.eq(planValue, ManagedQuery.bootstrap_plan_value(bootstrap)),
+      Bool.and(String.eq(planIdentity, ManagedQuery.bootstrap_plan_identity(bootstrap)),
+      Bool.and(String.eq(resultSchema, ManagedQuery.bootstrap_result_schema(bootstrap)),
+      Bool.and(String.eq(artifactSha256,
+        ManagedQuery.bootstrap_artifact_sha256(bootstrap)),
+      String.eq(bootstrapText, ManagedQuery.bootstrap_text(bootstrap))))))
+    case other: False{}
+
 def managed_recovery_association_ok(+bootstrap: ManagedQuery.Bootstrap,
                                    +admission: ContextAdmit.Admission,
-                                   association: ContextAdmit.ManagedAssociation) -> Bool:
+                                   +association: ContextAdmit.ManagedAssociation) -> Bool:
   Bool.and(Bool.or(ManagedQuery.recovery_admission_fields_match(bootstrap, admission),
     ManagedQuery.rejection_identity_match(
       ManagedQuery.bootstrap_owner(bootstrap),
@@ -757,16 +770,7 @@ def managed_recovery_association_ok(+bootstrap: ManagedQuery.Bootstrap,
       ManagedQuery.bootstrap_cwd(bootstrap),
       ManagedQuery.bootstrap_attempt(bootstrap),
       ManagedQuery.bootstrap_artifact_path(bootstrap), admission)),
-    match association:
-      case ContextAdmit.ManagedAssociationStored{planValue, planIdentity,
-          resultSchema, artifactSha256, bootstrapText}:
-        Bool.and(String.eq(planValue, ManagedQuery.bootstrap_plan_value(bootstrap)),
-        Bool.and(String.eq(planIdentity, ManagedQuery.bootstrap_plan_identity(bootstrap)),
-        Bool.and(String.eq(resultSchema, ManagedQuery.bootstrap_result_schema(bootstrap)),
-        Bool.and(String.eq(artifactSha256,
-          ManagedQuery.bootstrap_artifact_sha256(bootstrap)),
-        String.eq(bootstrapText, ManagedQuery.bootstrap_text(bootstrap))))))
-      case other: False{})
+    managed_recovery_association_row_matches(bootstrap, association))
 
 def managed_recovery_association(+db: String, +binding: String,
                                  +bootstrap: ManagedQuery.Bootstrap,
