@@ -1432,6 +1432,11 @@ def attestation_evidence(attestation: Attestation) -> AttemptEvidence:
   match attestation:
     case Attestation{reserved, evidence, publication, qualification, readback}: evidence
 
+def reserved_matches(expect: String, evidence: AttemptEvidence) -> Bool:
+  match evidence:
+    case AttemptEvidence{reserved, repo, target, candidate, basis, guard, artifact, decision, capture, qualification, release, identity, association, intent}:
+      Tx.str_eq(reserved, expect)
+
 def attestation_bound(attestation: Attestation, target: String, candidate: String) -> Bool:
   match attestation:
     case Attestation{reserved, evidence, publication, qualification, readback}:
@@ -1439,11 +1444,6 @@ def attestation_bound(attestation: Attestation, target: String, candidate: Strin
         Bool.pick(Bool, Tx.str_eq(evidence_target(evidence), target),
           Tx.str_eq(evidence_candidate(evidence), candidate), False{}),
         False{})
-
-def reserved_matches(expect: String, evidence: AttemptEvidence) -> Bool:
-  match evidence:
-    case AttemptEvidence{reserved, repo, target, candidate, basis, guard, artifact, decision, capture, qualification, release, identity, association, intent}:
-      Tx.str_eq(reserved, expect)
 
 def readback_matches(readback: StageResult, evidence: AttemptEvidence) -> Bool:
   match readback:
