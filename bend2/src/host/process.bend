@@ -5,6 +5,11 @@ import Base
 def ProcessChild.spawn(argv: String, cwd: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./process-spawn.c"
 
+# Retains full producer stderr in spool. After wait, stderr contains at most the
+# configured limit and meta records exact observed/retained bytes and truncation.
+def ProcessChild.spawn_with_file_bounded(argv: String, cwd: String, stderr: String, stderr_limit: U32, spool: String, meta: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  import "./process-spawn.c"
+
 type RetainedStart is Data:
   Retained{handle: U32}
   Unstarted{error: String}
