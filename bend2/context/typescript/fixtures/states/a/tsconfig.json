@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "strict": false,
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "node10",
+    "noEmit": true,
+    "types": [],
+    "typeRoots": []
+  },
+  "include": ["src/**/*.ts"]
+}

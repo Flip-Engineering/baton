@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "node10",
+    "noEmit": true,
+    "types": [],
+    "typeRoots": [],
+    "baseUrl": ".",
+    "allowUnreachableCode": false
+  },
+  "include": ["src/**/*.ts"]
+}
