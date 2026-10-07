@@ -6,7 +6,6 @@ import { DatabaseSync } from 'node:sqlite';
 
 const CONTRACT_VERSION = 1;
 const TRANSITION_LIMIT = 50;
-const STREAM_SCAN_MS = 250;
 const CONTENT_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
   ['.html', 'text/html; charset=utf-8'],
@@ -135,13 +134,15 @@ function ensembleSnapshot(db, id, scope) {
       'id', e.id, 'owner', CASE WHEN e.owner IN (SELECT value FROM json_each(?)) THEN e.owner ELSE NULL END,
       'coupling', e.coupling,
       'members', json((SELECT json_group_array(session) FROM
-        (SELECT session FROM ensemble_members WHERE ensemble = e.id
-          AND session IN (SELECT value FROM json_each(?)) ORDER BY session))),
+        (SELECT em.session AS session FROM ensemble_members em WHERE em.ensemble = e.id
+          AND em.session IN (SELECT value FROM json_each(?))
+          AND EXISTS(SELECT 1 FROM sessions WHERE sessions.id = em.session) ORDER BY em.session))),
       'sections', json((SELECT json_group_array(json(item)) FROM (
         SELECT json_object('ensemble', s.ensemble, 'id', s.id, 'capability', s.capability,
           'members', json((SELECT json_group_array(session) FROM
-            (SELECT session FROM section_members WHERE ensemble = s.ensemble AND section = s.id
-              AND session IN (SELECT value FROM json_each(?)) ORDER BY session)))) AS item
+            (SELECT sm.session AS session FROM section_members sm WHERE sm.ensemble = s.ensemble AND sm.section = s.id
+              AND sm.session IN (SELECT value FROM json_each(?))
+              AND EXISTS(SELECT 1 FROM sessions WHERE sessions.id = sm.session) ORDER BY sm.session)))) AS item
         FROM sections s WHERE s.ensemble = e.id ORDER BY s.id)))) AS value
       FROM ensembles e WHERE e.id = ?`, scopeJson, scopeJson, scopeJson, id)?.value;
 }
@@ -164,8 +165,8 @@ function snapshot(db, reader, subject, since) {
     const ensembles = [...ensembleIds].sort().map((id) => JSON.parse(ensembleSnapshot(db, id, scope)));
     const placeholders = scope.map(() => '?').join(',') || "''";
     const transitions = rows(db, `
-      SELECT change_id AS seq, committed_at AS at, session_id AS session,
-             event_kind AS kind, summary
+      SELECT change_id AS seq, recorded_at AS at, session_id AS session,
+             kind, summary
         FROM native_changes WHERE session_id IN (${placeholders})
        ORDER BY change_id DESC LIMIT ?`, ...scope, TRANSITION_LIMIT)
       .map((row) => ({ seq: row.seq, at: row.at, session: row.session, kind: row.kind, summary: row.summary }));
@@ -197,14 +198,36 @@ function writeEvent(response, event, id, data) {
 
 function eventRows(db, cursor, limit = 100) {
   return rows(db, `
-    SELECT change_id AS id, committed_at AS at, session_id AS session,
-           entity, entity_id AS entityId, operation, event_kind AS kind, summary
+    SELECT change_id AS id, recorded_at AS at, session_id AS session,
+           entity, entity_id AS entityId, operation, kind, summary
       FROM native_changes WHERE change_id > ? ORDER BY change_id LIMIT ?`, cursor, limit);
 }
 
-function streamEvents(response, db, reader, subject, initialCursor) {
+async function streamEvents(response, db, databasePath, reader, subject, initialCursor,
+    expectedGeneration, subscribeCommittedChanges) {
+  let subscription = null;
+  const earlyNotices = [];
+  let onNotice = () => {};
+  try {
+    subscription = await subscribeCommittedChanges({
+      databasePath,
+      reader,
+      subject,
+      onNotice: (notice) => subscription ? onNotice(notice) : earlyNotices.push(notice),
+    });
+  } catch {
+    return json(response, 503, { error: 'native-owner-subscription-unavailable' });
+  }
+  if (!subscription || typeof subscription.generation !== 'string'
+      || typeof subscription.close !== 'function') {
+    return json(response, 503, { error: 'native-owner-subscription-unavailable' });
+  }
   let cursor = initialCursor;
   let closed = false;
+  let subscriptionClosed = false;
+  let pumping = false;
+  let pumpAgain = false;
+  let admittedScope = null;
   response.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache, no-store',
@@ -213,62 +236,109 @@ function streamEvents(response, db, reader, subject, initialCursor) {
     'x-content-type-options': 'nosniff',
   });
   response.flushHeaders?.();
-  writeEvent(response, 'hello', String(cursor), { contractVersion: CONTRACT_VERSION, cursor: String(cursor) });
-
-  response.on('close', () => { closed = true; });
+  const closeSubscription = () => {
+    if (subscriptionClosed) return;
+    subscriptionClosed = true;
+    subscription.close();
+  };
+  const endWithGap = (reason) => {
+    if (closed) return;
+    writeEvent(response, 'gap', String(cursor), { reason, generation: subscription.generation });
+    closed = true;
+    response.end();
+    closeSubscription();
+  };
   const pump = () => {
     if (closed) return;
+    if (pumping) {
+      pumpAgain = true;
+      return;
+    }
+    pumping = true;
     try {
-      const batch = inTransaction(db, () => {
-        const scope = visibleScope(db, reader, subject);
-        if (!scope) return { refused: true, gap: false, rows: [] };
-        const bounds = one(db, 'SELECT min(change_id) AS first, max(change_id) AS last FROM native_changes');
-        const high = Number(bounds.last ?? 0);
-        const first = Number(bounds.first ?? (high + 1));
-        const gap = cursor > high || (cursor > 0 && cursor < first - 1);
-        return { refused: false, gap, rows: gap ? [] : eventRows(db, cursor) };
-      });
-      if (batch.refused) {
-        writeEvent(response, 'gap', String(cursor), { reason: 'reader-scope-changed' });
-        response.end();
-        return;
-      }
-      if (batch.gap) {
-        writeEvent(response, 'gap', String(cursor), { reason: 'cursor-gap' });
-        response.end();
-        return;
-      }
-      const scope = new Set(visibleScope(db, reader, subject) || []);
-      for (const change of batch.rows) {
-        cursor = Number(change.id);
-        if (!scope.has(change.session)) continue;
-        if (change.entity === 'player') {
-          const player = inTransaction(db, () => playerSnapshot(db, change.entityId));
-          if (player) writeEvent(response, 'player', String(cursor), player);
-          if (player) writeEvent(response, 'pending', String(cursor), {
-            session: player.id,
-            pendingCount: player.pendingCount,
-            unacknowledgedCount: player.unacknowledgedCount,
+      do {
+        pumpAgain = false;
+        const batch = inTransaction(db, () => {
+          const scope = visibleScope(db, reader, subject);
+          if (!scope) return { refused: true, gap: false, rows: [] };
+          const bounds = one(db, 'SELECT min(change_id) AS first, max(change_id) AS last FROM native_changes');
+          const high = Number(bounds.last ?? 0);
+          const first = Number(bounds.first ?? (high + 1));
+          const gap = cursor > high || (cursor > 0 && cursor < first - 1);
+          const changes = gap ? [] : eventRows(db, cursor);
+          const visible = new Set(scope);
+          const frames = changes.map((change) => {
+            const id = Number(change.id);
+            if (!visible.has(change.session)) return { id, type: 'cursor', data: {} };
+            if (['ensemble', 'membership', 'section', 'section-membership'].includes(change.entity)) {
+              const value = ensembleSnapshot(db, change.entityId.split('/')[0], scope);
+              return { id, type: 'ensemble', data: value ? JSON.parse(value) : null,
+                transition: change };
+            }
+            const player = playerSnapshot(db, change.session);
+            return { id, type: 'player', data: player, transition: change,
+              pending: player && (change.kind.startsWith('message:')
+                || ['receipt', 'report', 'stop', 'execution', 'role'].includes(change.kind))
+                ? { session: player.id, pendingCount: player.pendingCount,
+                  unacknowledgedCount: player.unacknowledgedCount } : null };
           });
-        } else if (change.entity === 'ensemble') {
-          const ensemble = ensembleSnapshot(db, change.entityId, [...scope]);
-          if (ensemble) writeEvent(response, 'ensemble', String(cursor), JSON.parse(ensemble));
-        }
-        writeEvent(response, 'transition', String(cursor), {
-          seq: cursor,
-          at: change.at,
-          session: change.session,
-          kind: change.kind,
-          summary: change.summary,
+          return { refused: false, gap, scope, rows: frames };
         });
-      }
-      if (batch.rows.length === 0) response.write(': keep-alive\n\n');
-      if (!closed) setTimeout(pump, STREAM_SCAN_MS).unref?.();
+        if (batch.refused) return endWithGap('reader-scope-changed');
+        if (batch.gap) return endWithGap('cursor-gap');
+        const scope = new Set(batch.scope);
+        if (admittedScope && (admittedScope.size !== scope.size
+            || [...admittedScope].some((session) => !scope.has(session)))) {
+          return endWithGap('reader-scope-changed');
+        }
+        admittedScope = scope;
+        for (const frame of batch.rows) {
+          cursor = frame.id;
+          if (frame.type === 'cursor') {
+            writeEvent(response, 'cursor', String(cursor), {});
+            continue;
+          }
+          if (frame.data) writeEvent(response, frame.type, String(cursor), frame.data);
+          if (frame.pending) writeEvent(response, 'pending', String(cursor), frame.pending);
+          const change = frame.transition;
+          writeEvent(response, 'transition', String(cursor), {
+            seq: cursor,
+            at: change.at,
+            session: change.session,
+            kind: change.kind,
+            summary: change.summary,
+          });
+        }
+        if (batch.rows.length === 100) pumpAgain = true;
+      } while (pumpAgain && !closed);
     } catch (error) {
-      writeEvent(response, 'gap', String(cursor), { reason: 'event-read-failed' });
-      response.end();
+      endWithGap('event-read-failed');
+    } finally {
+      pumping = false;
     }
   };
+  onNotice = (notice) => {
+    if (closed || !notice) return;
+    if (notice.kind === 'generation' && notice.generation !== subscription.generation) {
+      return endWithGap('owner-generation-changed');
+    }
+    if (notice.kind === 'commit') pump();
+    if (notice.kind === 'lost' || notice.kind === 'unavailable') endWithGap('owner-notification-lost');
+  };
+  response.on('close', () => {
+    closed = true;
+    closeSubscription();
+  });
+  if (expectedGeneration && expectedGeneration !== subscription.generation) {
+    endWithGap('owner-generation-changed');
+    return;
+  }
+  writeEvent(response, 'hello', String(cursor), {
+    contractVersion: CONTRACT_VERSION,
+    cursor: String(cursor),
+    generation: subscription.generation,
+  });
+  for (const notice of earlyNotices) onNotice(notice);
   pump();
 }
 
@@ -292,7 +362,9 @@ function serveAsset(response, assetRoot, pathname) {
   createReadStream(file).pipe(response);
 }
 
-export function createOrchestraServer({ databasePath, reader, assetRoot = fileURLToPath(new URL('.', import.meta.url)), host = '127.0.0.1', port = 0 }) {
+export function createOrchestraServer({ databasePath, reader, subject = reader,
+  subscribeCommittedChanges, assetRoot = fileURLToPath(new URL('.', import.meta.url)),
+  host = '127.0.0.1', port = 0 }) {
   if (host !== '127.0.0.1' && host !== '::1' && host !== 'localhost') {
     throw new Error('The read-only Orchestra UI binds to loopback only.');
   }
@@ -301,11 +373,11 @@ export function createOrchestraServer({ databasePath, reader, assetRoot = fileUR
     const url = new URL(request.url, 'http://127.0.0.1');
     if (request.method !== 'GET') return json(response, 405, { error: 'method-not-allowed' });
     if (url.pathname === '/orchestra/snapshot') {
-      const subject = url.searchParams.get('subject') || reader;
+      const selected = url.searchParams.get('subject') || subject;
       const since = parseCursor(url.searchParams.get('since'));
       if (since === null) return json(response, 400, { error: 'invalid-cursor' });
       try {
-        const value = snapshot(db, reader, subject, since);
+        const value = snapshot(db, reader, selected, since);
         if (value.refused) return json(response, 403, { error: 'reader-scope-denied' });
         return json(response, 200, value);
       } catch (error) {
@@ -314,16 +386,22 @@ export function createOrchestraServer({ databasePath, reader, assetRoot = fileUR
     }
     if (url.pathname === '/orchestra/events') {
       const since = parseCursor(url.searchParams.get('since'));
-      const subject = url.searchParams.get('subject') || reader;
+      const selected = url.searchParams.get('subject') || subject;
       if (since === null) return json(response, 400, { error: 'invalid-cursor' });
-      if (!visibleScope(db, reader, subject)) return json(response, 403, { error: 'reader-scope-denied' });
-      return streamEvents(response, db, reader, subject, since);
+      if (!visibleScope(db, reader, selected)) return json(response, 403, { error: 'reader-scope-denied' });
+      if (typeof subscribeCommittedChanges !== 'function') {
+        return json(response, 503, { error: 'native-owner-subscription-unavailable' });
+      }
+      void streamEvents(response, db, databasePath, reader, selected, since,
+        url.searchParams.get('generation') || '', subscribeCommittedChanges)
+        .catch(() => json(response, 503, { error: 'native-owner-subscription-unavailable' }));
+      return;
     }
     if (url.pathname.startsWith('/orchestra/')) return json(response, 404, { error: 'not-found' });
     if (url.pathname === '/' && !url.searchParams.has('api') && !url.searchParams.has('fixture')) {
       const address = server.address();
       const apiBase = `http://127.0.0.1:${address.port}`;
-      response.writeHead(302, { location: `/?api=${encodeURIComponent(apiBase)}`, 'cache-control': 'no-store' });
+      response.writeHead(302, { location: `/?api=${encodeURIComponent(apiBase)}&subject=${encodeURIComponent(subject)}`, 'cache-control': 'no-store' });
       response.end();
       return;
     }
@@ -343,6 +421,7 @@ function cli(args) {
   return {
     databasePath: values.get('--database'),
     reader: values.get('--reader'),
+    subject: values.get('--subject') || values.get('--reader'),
     host: values.get('--host') || '127.0.0.1',
     port: Number(values.get('--port') || 0),
   };

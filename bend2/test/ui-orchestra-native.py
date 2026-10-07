@@ -25,6 +25,12 @@ class OrchestraProjection(unittest.TestCase):
             subprocess.run(['git', '-C', str(self.repo), *args], check=True,
                            capture_output=True, text=True)
         self.call('attach', 'root', 'fixture', 'root-native', '')
+        with sqlite3.connect(self.db) as db:
+            projected = {row[0] for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN "
+                "('native_changes_sessions_insert','native_changes_messages_update')")}
+            self.assertEqual(projected, {
+                'native_changes_sessions_insert', 'native_changes_messages_update'})
         self.call('role', 'root', 'principal-conductor')
         self.player('lead', 'root')
         self.call('role', 'lead', 'associate-conductor')
