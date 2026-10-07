@@ -222,13 +222,13 @@ def native_owner_workspace_parser_refuses_surplus_session_fields():
   {==}
 
 law native_request_cwd_must_resolve_to_the_owner_worktree_root:
-  {Native.owner_root_matches("/work/project", G.GRun{0, "/work/project\n"}) == True{} : Bool}
+  {Native.request_worktree_matches("/work/project", G.GRun{0, "/work/project\n"}) == True{} : Bool}
 
 def native_request_cwd_must_resolve_to_the_owner_worktree_root():
   {==}
 
 law native_request_cwd_refuses_a_different_worktree_root:
-  {Native.owner_root_matches("/work/project", G.GRun{0, "/other/project\n"}) == False{} : Bool}
+  {Native.request_worktree_matches("/work/project", G.GRun{0, "/other/project\n"}) == False{} : Bool}
 
 def native_request_cwd_refuses_a_different_worktree_root():
   {==}

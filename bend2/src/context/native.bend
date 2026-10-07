@@ -392,15 +392,30 @@ def owner_root_matches(+workspace: String, root: G.GitOut) -> Bool:
     case G.GRun{code, out}:
       Bool.and(U32.is_eq(code, 0), String.eq(Tx.trim_nl(out), workspace))
 
+def request_worktree_matches(+workspace: String, root: G.GitOut) -> Bool:
+  owner_root_matches(workspace, root)
+
+def request_cwd_root_result(+db: String, +binding: String, +owner: String, +query: String,
+                            +cwd: String, +request: NativeRequest.RequestDecode,
+                            +workspace: String, root: G.GitOut) -> IO(Unit):
+  match root:
+    case G.GBroken{detail}: IO.die(Unit, 3, "requestCwdWorktreeUnavailable")
+    case G.GRun{code, +out}:
+      Bool.pick(IO(Unit), request_worktree_matches(workspace, G.GRun{code, out}),
+        query_request_environment(db, binding, owner, query, cwd, request),
+        IO.die(Unit, 3, "requestCwdOutsideOwnerWorktree"))
+
 def request_cwd_root(+db: String, +binding: String, +owner: String, +query: String,
                      +cwd: String, +request: NativeRequest.RequestDecode,
                      +workspace: String, root: G.GitOut) -> IO(Unit):
   match root:
     case G.GBroken{detail}: IO.die(Unit, 3, "ownerWorktreeRootUnavailable")
     case G.GRun{code, +out}:
-      Bool.pick(IO(Unit), owner_root_matches(workspace, G.GRun{code, out}),
-        query_request_environment(db, binding, owner, query, cwd, request),
-        IO.die(Unit, 3, "requestCwdOutsideOwnerWorktree"))
+      Bool.pick(IO(Unit), request_worktree_matches(workspace, G.GRun{code, out}),
+        do IO<Unit>:
+          cwd_root : G.GitOut <- Git.runGit(cwd, ["rev-parse", "--show-toplevel"])
+          request_cwd_root_result(db, binding, owner, query, cwd, request, workspace, cwd_root),
+        IO.die(Unit, 3, "ownerWorktreeRootMismatch"))
 
 def owner_workspace_root(+db: String, +binding: String, +owner: String, +query: String,
                          +cwd: String, +request: NativeRequest.RequestDecode,
