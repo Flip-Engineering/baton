@@ -645,6 +645,18 @@ def project_selection(+db: String, +binding: String, +owner: String, +query: Str
     Sel.sel_inputs(operands, Sel.ProjectState{Eng.ss_one(source_path), Eng.ss_empty(),
       installed, disabled, preferred, identity}), inventory, Sel.CapNil{}))
 
+def project_selection_policy(+db: String, +binding: String, +owner: String,
+                             +query: String, +canonical: String, +cwd: String,
+                             +catalog: Decl.Cat, +inventory: Decl.Inv,
+                             +operands: Sel.RequestOperands, +installed: Eng.SS,
+                             +identity: Sel.ProjectPolicyIdentity,
+                             +source_path: String,
+                             project_policy: NativePolicy.ProjectPolicy) -> IO(Unit):
+  match project_policy:
+    case NativePolicy.ProjectPolicy{disabled, preferred}:
+      project_selection(db, binding, owner, query, canonical, cwd, catalog,
+        inventory, operands, installed, disabled, preferred, identity, source_path)
+
 def query_catalog_admitted(+db: String, +binding: String, +owner: String, +query: String,
                            catalog: NativeCatalog.CatalogDecode,
                            +canonical: String, +cwd: String,
@@ -661,11 +673,9 @@ def query_catalog_admitted(+db: String, +binding: String, +owner: String, +query
           match source:
             case BoundaryPathRefused{reason}: IO.die(Unit, 3, reason)
             case BoundaryPathReady{+verified_path}:
-              project_selection(db, binding, owner, query, canonical, cwd,
-                catalog, inventory, operands, installed,
-                NativePolicy.project_policy_disabled(project_policy),
-                NativePolicy.project_policy_preferred(project_policy), identity,
-                verified_path)
+              project_selection_policy(db, binding, owner, query, canonical,
+                cwd, catalog, inventory, operands, installed, identity,
+                verified_path, project_policy)
 
 def query_catalog_decoded(+db: String, +binding: String, +owner: String, +query: String,
                           catalog: NativeCatalog.CatalogDecode,
