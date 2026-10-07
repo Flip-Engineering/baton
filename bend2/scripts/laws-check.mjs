@@ -31,10 +31,9 @@ export function supportedNodeVersion(version) {
   const match = /^v(\d+)\.(\d+)\.(\d+)$/.exec(version);
   if (!match) return false;
   const actual = match.slice(1).map(Number);
-  for (let index = 0; index < MINIMUM_NODE_VERSION.length; index++) {
-    if (actual[index] !== MINIMUM_NODE_VERSION[index]) return actual[index] > MINIMUM_NODE_VERSION[index];
-  }
-  return true;
+  return actual[0] === MINIMUM_NODE_VERSION[0] &&
+    (actual[1] > MINIMUM_NODE_VERSION[1] ||
+      (actual[1] === MINIMUM_NODE_VERSION[1] && actual[2] >= MINIMUM_NODE_VERSION[2]));
 }
 
 function resolveBend() {

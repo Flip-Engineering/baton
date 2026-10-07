@@ -86,7 +86,7 @@ test('Node support follows the published minimum and preserves exact runtime ide
   assert.equal(supportedNodeVersion('v22.14.9'), false);
   assert.equal(supportedNodeVersion('v22.15.0'), true);
   assert.equal(supportedNodeVersion('v22.23.3'), true);
-  assert.equal(supportedNodeVersion('v23.0.0'), true);
+  assert.equal(supportedNodeVersion('v23.0.0'), false);
   assert.equal(supportedNodeVersion('v22'), false);
 });
 
@@ -189,7 +189,7 @@ test('aggregation rejects startup failure and a successful compiler exit', async
     : result);
   assert.ok((await verifyResults(dispatched, startup)).some(({ reason }) => reason === 'compiler process did not report an ordinary completed exit'));
   const accepted = complete.map((result, index) => index === 0 ? { ...result, exitCode: 0 } : result);
-  assert.ok((await verifyResults(dispatched, accepted)).some(({ reason }) => reason === 'compiler accepted the control'));
+  assert.ok((await verifyResults(dispatched, accepted)).some(({ reason }) => reason === 'compiler did not return the expected rejection exit code'));
 });
 
 test('aggregation rejects a result without actual process completion evidence', async () => {
