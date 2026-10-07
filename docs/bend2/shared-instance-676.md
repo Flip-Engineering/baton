@@ -82,6 +82,12 @@ One `serve` invocation holds each canonical Orchestra database:
   fresh with the workspace state note through the existing receive path.
   Two `serve` invocations for one database cannot both hold the claim, so
   the same native conversation never resumes twice.
+- Join window: the owner writes its heartbeat on every discovery iteration
+  but not while blocked joining forked session tasks. A second claimant
+  during that window reads a lapsed row and forks tasks that the
+  per-session locks refuse with `queued`, so no session executes twice.
+  The flock-gated admission at composition closes the window; the SQL row
+  stays a status and recovery record.
 - Custody: provider children stay under the assigned host custody effect.
   When loss evidence requires a process outside the owner, that process
   count is fixed per Orchestra and recorded here before implementation.
@@ -120,7 +126,12 @@ reported on their own lines, apart from resident and private figures.
   database physical identity, the request content hash, and the claimant.
   A repeated identity re-attaches the retained execution and its
   completion; a conflicting reuse fails admission. Field names follow at
-  composition.
+  composition. The actual retained result reference is the DS-owned
+  `Instance.job(database, directory)` path at pin `5cf90d7a` on
+  `codex/shared676-deepseek-impl-20261006`, which reports attempt,
+  generation, spool bytes, checkpoint offset, status and observation
+  ownership for any number of readers; a duplicate admission takes that
+  reference, not a second child.
 - CLI wiring for composition (unapplied in this lane; `commands.bend`
   keeps its current `Command` type unchanged). Add the import and the
   `route_or_store` arm in `bend2/src/coordinator/main.bend`:
