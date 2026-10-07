@@ -93,7 +93,7 @@ def run(db: String, subject: String, reader: String, port: String) -> IO(Unit):
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     node : String <- IO.try(String,Host.Control.command("node"))
     server : String <- resolve_server(server_candidates(executable))
-    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([node,server,"--database",canonical,"--reader",reader,"--host","127.0.0.1","--port",port]),".",canonical ++ ".view.stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([node,server,"--database",canonical,"--reader",reader,"--subject",subject,"--host","127.0.0.1","--port",port]),".",canonical ++ ".view.stderr")
     match spawned:
       case Fail{+error}:
         IO.die(Unit,2,"The view server could not start: " ++ error_text(error))
@@ -114,7 +114,7 @@ law view_run_serves_the_canonical_database_under_the_declared_reader:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     node : String <- IO.try(String,Host.Control.command("node"))
     server : String <- resolve_server(server_candidates(executable))
-    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([node,server,"--database",canonical,"--reader",reader,"--host","127.0.0.1","--port",port]),".",canonical ++ ".view.stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([node,server,"--database",canonical,"--reader",reader,"--subject",subject,"--host","127.0.0.1","--port",port]),".",canonical ++ ".view.stderr")
     match spawned:
       case Fail{+error}:
         IO.die(Unit,2,"The view server could not start: " ++ error_text(error))
