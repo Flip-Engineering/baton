@@ -38,6 +38,9 @@
 # that worker's next attempt drops them.
 
 import Base
+import ./landing.bend as Lg
+import ./intent.bend as It
+import ../host/receipt.bend as Rec
 import ./types.bend as T
 import ./text.bend as Tx
 import ./process.bend as Git
@@ -605,10 +608,122 @@ def ff_stage5(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
     r : T.GitOut <- Git.runGit(rp, Con{"update-ref", Con{Tx.str_cat("refs/heads/", tg), Con{wc2, Con{tb2, Nil{}}}}})
     IO.pure(FFLD, ff_stage5_pick(r, wc2, tg))
 
+# The guarded fast-forward mutation. The compare-and-swap operands are the ones this chain
+# already carries: wc is the candidate and tb is the old target read by stage 3. The guard
+# path comes from Receipt.guard_path, the attempt scratch and artifact are derived, and the
+# chain retains the capture pair and the release result. Only a completed capture with a
+# zero exit and a completed release reports LLanded; a refusal, a mismatch, a capture that
+# did not complete, or a release failure reports LBlocked and names the artifact that holds
+# the raw evidence, so a post-state or release failure can never read as an ordinary landing.
+def ff_stage5_landed(target: String, candidate: String) -> IO(FFLD):
+  +tg = target
+  +cand = candidate
+  IO.pure(FFLD, FFDone{T.LLanded{tg, cand}})
+
+def ff_stage5_blocked(detail: String) -> IO(FFLD):
+  +d = detail
+  IO.pure(FFLD, FFDone{T.LBlocked{d}}}
+
+def ff_stage5_captured(target: String, candidate: String, artifact: String, observed: Result<&1,&1,U32 & String,String & String>) -> IO(FFLD):
+  +tg = target
+  +cand = candidate
+  +art = artifact
+  match observed:
+    case Fail{error}:
+      match error:
+        case (code, detail): ff_stage5_blocked(Tx.str_cat("capture failed: ", detail))
+    case Done{pair}:
+      match pair:
+        case (framing, diagnostics):
+          ff_stage5_framing(tg, cand, art, framing)
+
+def ff_stage5_framing(target: String, candidate: String, artifact: String, framing: String) -> IO(FFLD):
+  +tg = target
+  +cand = candidate
+  +art = artifact
+  +framed = framing
+  match Tx.run_res(framed):
+    case T.RRun{T.SExit{code}, out}:
+      match U32.is_eq(code, 0):
+        case True{}: ff_stage5_landed(tg, cand)
+        case False{}: ff_stage5_blocked(Tx.str_cat("mutation exited nonzero; evidence at ", art))
+    case T.RRun{T.SSignal{signal}, out}: ff_stage5_blocked(Tx.str_cat("mutation signalled; evidence at ", art))
+
+def ff_stage5_outcome(target: String, candidate: String, artifact: String, outcome: Lg.Landing) -> IO(FFLD):
+  +tg = target
+  +cand = candidate
+  +art = artifact
+  +out = outcome
+  match out:
+    case Lg.LandingHeld{request, candidate, basis, published, mutation, released}:
+      match released:
+        case Fail{error}: ff_stage5_blocked(Tx.str_cat("release failed; evidence at ", art))
+        case Done{unit}: ff_stage5_captured(tg, cand, art, mutation)
+    case Lg.LandingClaimFailed{error}: ff_stage5_blocked("claim failed")
+    case Lg.LandingGuardBusy{target}: ff_stage5_blocked("guard busy")
+    case Lg.LandingAssociationRefused{step, observation, released}: ff_stage5_blocked(Tx.str_cat("association refused at ", step))
+    case Lg.LandingOldValueMismatch{expected, found, released}: ff_stage5_blocked("old target moved during landing; retry")
+    case Lg.LandingPublishRefused{outcome, released}: ff_stage5_blocked("intent publication refused")
+
+def ff_stage5_guarded_now(candidate: String, old: String, repo: String, target: String, common: String, guard: String) -> IO(FFLD):
+  +cand = candidate
+  +tb = old
+  +rp = repo
+  +tg = target
+  +cm = common
+  +gd = guard
+  +art = Lg.attempt_artifact_for(cm, Tx.str_cat("ff-", Tx.str_cat(tg, Tx.str_cat("-", tb))))
+  +intent = It.IntentRequested{Tx.str_cat("ff-", Tx.str_cat(tg, Tx.str_cat("-", tb))), cm, tg, rp, cand, tb, cm, rp, tb}
+  +request = Lg.LandingRequested{intent, "intent", tb, "", gd, art, Lg.attempt_directory_for(cm, Tx.str_cat("ff-", Tx.str_cat(tg, Tx.str_cat("-", tb)))), rp}
+  do IO<FFLD>:
+    outcome : Lg.Landing <- Lg.Landing.run(request)
+    ff_stage5_outcome(tg, cand, art, outcome)
+
+def ff_stage5_guarded(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
+  +cand = wc
+  +old = tb
+  +rp = repo
+  +tg = target
+  do IO<FFLD>:
+    common_g : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
+    ff_stage5_common(cand, old, rp, tg, common_g)
+
+def ff_stage5_common(cand: String, old: String, repo: String, target: String, observed: T.GitOut) -> IO(FFLD):
+  +candidate = cand
+  +tb = old
+  +rp = repo
+  +tg = target
+  match observed:
+    case T.GBroken{detail}: ff_stage5_blocked(detail)
+    case T.GRun{code, out}:
+      match U32.is_eq(code, 0):
+        case False{}: ff_stage5_blocked("cannot read the common directory for the landing guard")
+        case True{}: ff_stage5_guardpath(candidate, tb, rp, tg, Tx.trim_nl(out))
+
+def ff_stage5_guardpath(cand: String, old: String, repo: String, target: String, common: String) -> IO(FFLD):
+  +candidate = cand
+  +tb = old
+  +rp = repo
+  +tg = target
+  +cm = common
+  do IO<FFLD>:
+    guard_g : Result<U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
+    ff_stage5_guard_observed(candidate, tb, rp, tg, cm, guard_g)
+
+def ff_stage5_guard_observed(cand: String, old: String, repo: String, target: String, common: String, observed: Result<U32 & String, String>) -> IO<FFLD>:
+  +candidate = cand
+  +tb = old
+  +rp = repo
+  +tg = target
+  +cm = common
+  match observed:
+    case Fail{error}: ff_stage5_blocked("cannot name the landing guard")
+    case Done{guard}: ff_stage5_guarded_now(candidate, tb, rp, tg, cm, guard)
+
 def ff_go5(r: FFLD, repo: String, target: String) -> IO(FFLD):
   match r:
     case FFDone{outcome}: IO.pure(FFLD, FFDone{outcome})
-    case FFNext{wc, tb}: ff_stage5(wc, tb, repo, target)
+    case FFNext{wc, tb}: ff_stage5_guarded(wc, tb, repo, target)
 
 def land_fast_forward(repo: String, workerBranch: String, target: String) -> IO(T.LandOutcome):
   +rp = repo

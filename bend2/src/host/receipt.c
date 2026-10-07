@@ -546,11 +546,12 @@ static Term baton_receipt_guard_path_run(Env e,Term *f,IoWork *w) {
   }
   int problem=0;
   char *root=receipt_guard_root(call->common,&problem);
-  receipt_free(call);
-  if(!root) return io_fail(e,problem,NULL);
-  char *path=receipt_guard_path(root,call->target,&problem);
+  /* the path is built while call->target is still owned; both allocations are released
+     once on every exit, and nothing reads call after receipt_free */
+  char *path=root?receipt_guard_path(root,call->target,&problem):NULL;
   free(root);
-  if(!path) return io_fail(e,problem,NULL);
+  receipt_free(call);
+  if(!path) return io_fail(e,problem?problem:ENOMEM,NULL);
   Term value=io_str(e,path,strlen(path));
   free(path);
   return io_done(e,value);
