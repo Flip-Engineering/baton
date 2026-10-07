@@ -22,6 +22,7 @@
 # The name is validated before any effect, including the empty name and the separator.
 # Directory containment is not asserted from concatenating a path; only that the name
 # cannot carry the separator. Content may contain tabs.
+import ./types.bend as T
 import Base
 import ./text.bend as Tx
 import ./intent.bend as I
@@ -29,11 +30,11 @@ import ../host/receipt.bend as R
 import ../host/text.bend as Text
 
 type IntentPublish is Data:
-  PublishHostFailed{step: String, request: I.IntentInput, error: U32 & String}
+  PublishHostFailed{step: String, request: I.IntentInput, error: T.HostError}
   PublishRefused{request: I.IntentInput, step: String, name: String, raw: String}
   PublishExistingPending{request: I.IntentInput, raw: String, path: String}
   PublishContentMismatch{request: I.IntentInput, raw: String, expected: String, found: String}
-  PublishReadbackFailed{request: I.IntentInput, publication: String, path: String, error: U32 & String}
+  PublishReadbackFailed{request: I.IntentInput, publication: String, path: String, error: T.HostError}
   IntentBytesPublished{request: I.IntentInput, raw: String, path: String, content: String}
 
 def intent_path(directory: String, name: String) -> String:
@@ -185,9 +186,13 @@ def Intent.read_back_compare(request: I.IntentInput, publication: String, path: 
   Bool.pick(IO(IntentPublish), Tx.str_eq(got, want),
     IO.pure(IntentPublish, IntentBytesPublished{req, pub, p, got}),
     IO.pure(IntentPublish, PublishContentMismatch{req, pub, want, got}))
+def Intent.host_failed(step: String, request: I.IntentInput, error: U32 & String) -> IO(IntentPublish):
+  match error:
+    case (code, detail): IO.pure(IntentPublish, PublishHostFailed{step, request, T.HostError{code, detail}})
+
 def Intent.read_back_seen(request: I.IntentInput, publication: String, path: String, content: String, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPublish):
   match observed:
-    case Fail{(code, detail)}: IO.pure(IntentPublish, PublishReadbackFailed{request, publication, path, (code, detail)})
+    case Fail{(code, detail)}: IO.pure(IntentPublish, PublishReadbackFailed{request, publication, path, T.HostError{code, detail}})
     case Done{found}: Intent.read_back_compare(request, publication, path, content, found)
 
 def Intent.read_back(request: I.IntentInput, publication: String, path: String, content: String) -> IO(IntentPublish):
@@ -236,7 +241,7 @@ def Intent.publish_classify(request: I.IntentInput, path: String, content: Strin
 
 def Intent.published(request: I.IntentInput, path: String, content: String, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPublish):
   match observed:
-    case Fail{error}: IO.pure(IntentPublish, PublishHostFailed{"publish", request, error})
+    case Fail{error}: Intent.host_failed("publish", request, error)
     case Done{raw}: Intent.publish_classify(request, path, content, raw)
 
 def Intent.publish_now(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO(IntentPublish):
@@ -271,7 +276,7 @@ def Intent.ensure_admit(request: I.IntentInput, path: String, content: String, d
 
 def Intent.ensured(request: I.IntentInput, path: String, content: String, directory: String, name: String, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPublish):
   match observed:
-    case Fail{error}: IO.pure(IntentPublish, PublishHostFailed{"ensure", request, error})
+    case Fail{error}: Intent.host_failed("ensure", request, error)
     case Done{raw}: Intent.ensure_admit(request, path, content, directory, name, raw)
 
 def publish_directory(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO(IntentPublish):

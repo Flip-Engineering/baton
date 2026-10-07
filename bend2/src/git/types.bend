@@ -19,6 +19,34 @@ type GitOut is Data:
   GRun{code: U32, out: String}
   GBroken{detail: String}
 
+# A capture outcome kept as data: the affine host Result is consumed once and every
+# code and byte is preserved, with host failure and observed success kept distinct.
+type CapturedRaw is Data:
+  CapturedFailed{code: U32, detail: String}
+  CapturedDone{framing: String, diagnostics: String}
+
+def CapturedRaw.of(host: Result<&1, &1, U32 & String, String & String>) -> CapturedRaw:
+  match host:
+    case Fail{error}:
+      match error:
+        case (code, detail): CapturedFailed{code, detail}
+    case Done{framing}:
+      match framing:
+        case (frame, details): CapturedDone{frame, details}
+
+# A release outcome kept as data: only the release's own success and failure, with
+# absence handled by the enclosing observation.
+type ReleaseRaw is Data:
+  ReleaseFailed{code: U32, detail: String}
+  ReleaseDone{}
+
+def ReleaseRaw.of(host: Result<&1, &1, U32 & String, Unit>) -> ReleaseRaw:
+  match host:
+    case Fail{error}:
+      match error:
+        case (code, detail): ReleaseFailed{code, detail}
+    case Done{unit}: ReleaseDone{}
+
 # The failure payload of a host Result: the code the host answered and the detail
 # it wrote. A Data record, because a bare product is a Type and cannot be stored.
 type HostError is Data:

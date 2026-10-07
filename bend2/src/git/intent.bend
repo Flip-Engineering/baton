@@ -266,7 +266,7 @@ def a_requested_path_with_a_separator_reaches_unready_for_the_separator():
 
 law a_host_failure_keeps_the_request_the_step_and_the_exact_error:
   for request: IntentInput
-  {Intent.record_observed(request, Fail{(13, "i/o error")}) == IO.pure(IntentPrepared, IntentHostFailed{"record", request, T.HostError(13, "i/o error")}) : IO(IntentPrepared)}
+  {Intent.record_observed(request, Fail{(13, "i/o error")}) == IO.pure(IntentPrepared, IntentHostFailed{"record", request, T.HostError{13, "i/o error"}}) : IO(IntentPrepared)}
 
 def a_host_failure_keeps_the_request_the_step_and_the_exact_error(request):
   {==}
