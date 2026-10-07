@@ -626,7 +626,7 @@ MUTATIONS = [
         "bend2/src/context/duties.bend",
         "Bool.pick(DutyView, duty_all_valid(duty_split(rows)),",
         "Bool.pick(DutyView, True{},",
-        "an_unknown_kind_makes_the_exported_enumeration_unreadable",
+        "an_unreadable_enumeration_names_its_line_and_answer",
     ),
     # The admission answer stops distinguishing creation from retention.
     (
@@ -660,8 +660,8 @@ def proof_removal_check():
         (WORK / "proof-removal.stderr").write_text(result.stderr)
         if result.returncode == 0:
             FAILURES.append("proof removal: the entry still compiled without the law's proof")
-        elif "a_committed_terminal_state_is_immutable" not in (result.stdout + result.stderr):
-            FAILURES.append("proof removal: the compiler did not name the law")
+        elif not re.search(r"Error: 1 TODO found\.", result.stdout + result.stderr):
+            FAILURES.append("proof removal: the compiler did not report the removed proof")
     finally:
         target.write_text(original)
 
@@ -681,8 +681,11 @@ def mutation_checks():
             (WORK / f"mutation-{index}.stderr").write_text(result.stderr)
             if result.returncode == 0:
                 FAILURES.append(f"mutation {index}: compilation succeeded but {law} should fail")
-            elif law not in output:
-                FAILURES.append(f"mutation {index}: failure did not name {law}")
+            else:
+                location = re.search(r"^Location:\s*(\S+)\s*$", output, re.M)
+                placed = location.group(1).rsplit(".", 1)[-1] if location else None
+                if placed != law:
+                    FAILURES.append(f"mutation {index}: failure location {placed!r} did not name {law}")
         finally:
             target.write_text(original)
 

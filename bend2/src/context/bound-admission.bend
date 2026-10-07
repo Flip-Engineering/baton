@@ -115,8 +115,17 @@ def admit_column(+id: String, expression: String) -> String:
 # recorded owner, canonical request, admission decision, state, origin attempt and
 # the exact preparation (prepared keeper path, cwd, artifact path). `changes()` still
 # refers to the insert because the read is a SELECT.
+def admit_mark_sql() -> String:
+  "CASE WHEN changes()=1 THEN 'created' ELSE 'retained' END"
+
+law the_admission_answer_names_what_the_transaction_did:
+  {admit_mark_sql() == "CASE WHEN changes()=1 THEN 'created' ELSE 'retained' END" : String}
+
+def the_admission_answer_names_what_the_transaction_did():
+  {==}
+
 def admit_row_sql(+id: String) -> String:
-  "SELECT CASE WHEN " ++ admit_present(id) ++ " THEN 'present' ELSE 'absent' END," ++ admit_column(id, "CASE WHEN changes()=1 THEN 'created' ELSE 'retained' END") ++ "," ++ admit_column(id, "coalesce((SELECT owner FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ "," ++ admit_column(id, "coalesce((SELECT request_json FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ "," ++ admit_column(id, "coalesce((SELECT admission_decision FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ "," ++ admit_column(id, "coalesce((SELECT state FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ "," ++ admit_column(id, "coalesce((SELECT origin_attempt FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ "," ++ admit_column(id, "coalesce((SELECT prepared_keeper_path FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ "," ++ admit_column(id, "coalesce((SELECT cwd FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ "," ++ admit_column(id, "coalesce((SELECT artifact_path FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ ";"
+  "SELECT CASE WHEN " ++ admit_present(id) ++ " THEN 'present' ELSE 'absent' END," ++ admit_column(id, admit_mark_sql()) ++ "," ++ admit_column(id, "coalesce((SELECT owner FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ "," ++ admit_column(id, "coalesce((SELECT request_json FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ "," ++ admit_column(id, "coalesce((SELECT admission_decision FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ "," ++ admit_column(id, "coalesce((SELECT state FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ "," ++ admit_column(id, "coalesce((SELECT origin_attempt FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ "," ++ admit_column(id, "coalesce((SELECT prepared_keeper_path FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ "," ++ admit_column(id, "coalesce((SELECT cwd FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ "," ++ admit_column(id, "coalesce((SELECT artifact_path FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'')") ++ ";"
 
 # The whole admission: schema, the insert that runs only while the identity is
 # absent, the retained row's read-back, and the commit. The transaction holds the
