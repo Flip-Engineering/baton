@@ -4,7 +4,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, wri
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { invokeSourceAnalysis } from './native-provider.mjs';
-import { moduleDirectoryName, runSelectedInvocation } from '../../scripts/context-provider.mjs';
+import { installedModuleInventory, moduleDirectoryName, runSelectedInvocation } from '../../scripts/context-provider.mjs';
 
 const [packageArgument, worktreeArgument, targetArgument] = process.argv.slice(2);
 assert.ok(packageArgument && worktreeArgument && targetArgument, 'usage: node native-provider.integration.mjs MODULE_ROOT WORKTREE TARGET');
@@ -64,6 +64,12 @@ try {
   mkdirSync(installedModule, { recursive: true });
   cpSync(packageRoot, installedModule, { recursive: true });
   writeFileSync(installedWrapper, '// executable-relative provider locator\n');
+  const inventory = installedModuleInventory({ wrapperPath: installedWrapper });
+  assert.equal(inventory.status, 'available');
+  assert.deepEqual(inventory.refusals, []);
+  assert.equal(inventory.modules.length, 1);
+  assert.equal(inventory.modules[0].moduleId, declaration.moduleId);
+  assert.equal(inventory.modules[0].declarationDigest, declarationDigest);
   const installed = await runSelectedInvocation(invocation(), { wrapperPath: installedWrapper });
   assert.equal(installed.type, 'event');
   assert.equal(installed.query, 'integration-query-1');
@@ -81,6 +87,9 @@ try {
   writeFileSync(join(installedModule, 'native-provider.mjs'), 'throw new Error("must not import altered package");\n');
   const tamperedPackage = await runSelectedInvocation(invocation(), { wrapperPath: installedWrapper });
   assert.deepEqual(tamperedPackage, { status: 'refused', reason: 'selectedPackageDoesNotMatchFrozenBinding', detail: null });
+  const tamperedInventory = installedModuleInventory({ wrapperPath: installedWrapper });
+  assert.deepEqual(tamperedInventory.modules, []);
+  assert.deepEqual(tamperedInventory.refusals, [{ moduleId: declaration.moduleId, reason: 'selectedPackageIdentityMismatch' }]);
 } finally {
   rmSync(installedPrefix, { recursive: true, force: true });
 }
@@ -111,6 +120,6 @@ try {
 
 process.stdout.write(JSON.stringify({ status: 'passed', checks: [
   'real-frontend-invocation', 'frozen-owner-and-binding-preserved', 'retained-source-identity',
-  'installed-executable-relative-package-resolution', 'frozen-declaration-digest-required',
+  'installed-executable-relative-package-resolution', 'installed-module-inventory-authenticates-package-bytes', 'frozen-declaration-digest-required',
   'changed-module-metadata-refused', 'outside-source-refused', 'changed-package-payload-refused',
 ] }) + '\n');

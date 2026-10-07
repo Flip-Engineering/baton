@@ -38,6 +38,10 @@ def executable_directory(path: String) -> String:
 def installed_provider_path(executable: String) -> String:
   executable_directory(executable) ++ "/../libexec/baton2/context-provider.mjs"
 
+def inventory_argv(+runtime_path: String, +executable: String) -> String:
+  Process.argv([runtime_path, "--experimental-strip-types",
+    installed_provider_path(executable), "--inventory"])
+
 type ProviderAnswer is Data:
   ProviderOutput{value: String, status: String}
   ProviderRefused{reason: String}
@@ -228,14 +232,33 @@ def invoke(+invocation: Sel.Invocation, +cwd: String) -> IO(ProviderAnswer):
     runtime : ProviderAnswer <- resolve_node_runtime(cwd)
     invoke_runtime(executable, cwd, invocation, runtime)
 
-def unavailable(command: String) -> IO(Unit):
-  IO.die(Unit, 3, "Native Bend2 context provider is unavailable for " ++ command ++ "; no query was admitted.")
+def inventory_answer(answer: ProviderAnswer) -> IO(Unit):
+  match answer:
+    case ProviderOutput{value, status}:
+      Bool.pick(IO(Unit), String.eq(status, "exit 0"), IO.write(value), IO.die(Unit, 2, value))
+    case ProviderRefused{reason}: IO.die(Unit, 3, reason)
+    case ProviderRuntime{path, version}: IO.die(Unit, 3, "nodeRuntimeProbeMalformed")
+
+def inventory_with_runtime(+executable: String, +cwd: String,
+                           runtime: ProviderAnswer) -> IO(Unit):
+  match runtime:
+    case ProviderRefused{reason}: IO.die(Unit, 3, reason)
+    case ProviderOutput{value, status}: IO.die(Unit, 3, "nodeRuntimeProbeMalformed")
+    case ProviderRuntime{path, version}:
+      do IO<Unit>:
+        spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
+          inventory_argv(path, executable), cwd, "/dev/null")
+        answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable), cwd, "{}", spawned)
+        inventory_answer(answer)
 
 def engines(db: String) -> IO(Unit):
-  unavailable("context-engines")
+  do IO<Unit>:
+    executable : String <- IO.try(String, Host.SessionLock.executable())
+    runtime : ProviderAnswer <- resolve_node_runtime("/")
+    inventory_with_runtime(executable, "/", runtime)
 
 def query_file(db: String, owner: String, query: String, path: String) -> IO(Unit):
-  unavailable("context-query-file")
+  IO.die(Unit, 3, "Native sourceAnalysis query admission remains unavailable for " ++ query)
 
 def result(db: String, query: String) -> IO(Unit):
-  unavailable("context-result")
+  IO.die(Unit, 3, "Native result lookup remains unavailable for " ++ query)

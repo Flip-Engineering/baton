@@ -1,7 +1,7 @@
 // Resolve the selected package from the installed Baton prefix containing this file.
 // The native coordinator supplies the frozen invocation over stdin. The module identity
 // chooses one manifest-scoped package directory below this installation's lib tree.
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -100,6 +100,58 @@ export function resolveSelectedPackageRoot(wrapperPath, moduleId) {
   }
 }
 
+function moduleIdFromDirectory(name) {
+  if (!/^m-(?:[0-9a-f]{2})+$/.test(name)) return null;
+  const id = Buffer.from(name.slice(2), 'hex').toString('utf8');
+  return moduleDirectoryName(id) === name ? id : null;
+}
+
+export function installedModuleInventory({ wrapperPath = fileURLToPath(import.meta.url) } = {}) {
+  try {
+    const wrapper = realpathSync(wrapperPath);
+    const prefix = realpathSync(join(dirname(wrapper), '..', '..'));
+    const modulesRoot = join(prefix, 'lib', 'context', 'modules');
+    const modules = [];
+    const refusals = [];
+    for (const entry of readdirSync(modulesRoot, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!entry.isDirectory()) continue;
+      const moduleId = moduleIdFromDirectory(entry.name);
+      if (moduleId === null) {
+        refusals.push(Object.freeze({ directory: entry.name, reason: 'selectedModuleDirectoryNameInvalid' }));
+        continue;
+      }
+      const selected = resolveSelectedPackageRoot(wrapper, moduleId);
+      if (selected.status !== 'resolved') {
+        refusals.push(Object.freeze({ moduleId, reason: selected.reason }));
+        continue;
+      }
+      try {
+        const declarationBytes = readFileSync(join(selected.root, 'native-provider.declaration.json'));
+        const declaration = JSON.parse(declarationBytes.toString('utf8'));
+        const binding = {
+          id: moduleId,
+          revision: declaration.revision,
+          declarationDigest: sha256(declarationBytes),
+          protocolVersion: declaration.protocolVersion,
+          operation: '',
+          artifactIdentities: declaration.artifactIdentities,
+          schemaIdentities: declaration.schemaIdentities,
+        };
+        if (!packageMatchesInvocation(selected.root, selected.manifest, { moduleBinding: binding })) {
+          refusals.push(Object.freeze({ moduleId, reason: 'selectedPackageIdentityMismatch' }));
+          continue;
+        }
+        modules.push(Object.freeze({ moduleId, declarationDigest: binding.declarationDigest, declaration }));
+      } catch (error) {
+        refusals.push(Object.freeze({ moduleId, reason: 'selectedPackageUnavailable', detail: error.message }));
+      }
+    }
+    return Object.freeze({ status: 'available', modules: Object.freeze(modules), refusals: Object.freeze(refusals) });
+  } catch (error) {
+    return refused('selectedModuleInventoryUnavailable', error.message);
+  }
+}
+
 export async function runSelectedInvocation(invocation, { wrapperPath = fileURLToPath(import.meta.url) } = {}) {
   const nodeVersion = process.versions.node.split('.').map((part) => Number(part));
   if (nodeVersion[0] < 22 || (nodeVersion[0] === 22 && nodeVersion[1] < 15)) {
@@ -124,6 +176,11 @@ export async function runSelectedInvocation(invocation, { wrapperPath = fileURLT
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  if (process.argv[2] === '--inventory') {
+    const result = installedModuleInventory();
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    if (result.status === 'refused') process.exitCode = 2;
+  } else {
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
   try {
@@ -133,5 +190,6 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
   } catch (error) {
     process.stdout.write(`${JSON.stringify(refused('invocationExecutionFailed', error.message))}\n`);
     process.exitCode = 3;
+  }
   }
 }

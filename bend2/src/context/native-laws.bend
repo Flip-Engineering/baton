@@ -9,6 +9,7 @@ import ./native-declaration.bend as NativeDeclaration
 import ./native-runtime-laws.bend as NativeRuntimeLaws
 import ./engines.bend as Eng
 import ../json/canonical.bend as J
+import ../host/process.bend as Process
 
 def fixture_invocation() -> Sel.Invocation:
   Sel.Invocation{"2", "query-1", "owner-1",
@@ -113,11 +114,12 @@ law native_installed_provider_path_uses_the_executable_install_prefix:
 def native_installed_provider_path_uses_the_executable_install_prefix():
   {==}
 
-law native_engines_refuses_without_admission:
-  for +db: String
-  {Native.engines(db) == Native.unavailable("context-engines") : IO(Unit)}
+law native_inventory_invocation_uses_the_installed_wrapper:
+  {Native.inventory_argv("/opt/node/bin/node", "/opt/baton2/bin/baton2") ==
+    Process.argv(["/opt/node/bin/node", "--experimental-strip-types",
+      "/opt/baton2/bin/../libexec/baton2/context-provider.mjs", "--inventory"]) : String}
 
-def native_engines_refuses_without_admission(db):
+def native_inventory_invocation_uses_the_installed_wrapper():
   {==}
 
 law native_query_file_refuses_without_admission:
@@ -125,7 +127,7 @@ law native_query_file_refuses_without_admission:
   for +owner: String
   for +query: String
   for +path: String
-  {Native.query_file(db, owner, query, path) == Native.unavailable("context-query-file") : IO(Unit)}
+  {Native.query_file(db, owner, query, path) == IO.die(Unit, 3, "Native sourceAnalysis query admission remains unavailable for " ++ query) : IO(Unit)}
 
 def native_query_file_refuses_without_admission(db,owner,query,path):
   {==}
@@ -133,7 +135,7 @@ def native_query_file_refuses_without_admission(db,owner,query,path):
 law native_result_refuses_without_admission:
   for +db: String
   for +query: String
-  {Native.result(db, query) == Native.unavailable("context-result") : IO(Unit)}
+  {Native.result(db, query) == IO.die(Unit, 3, "Native result lookup remains unavailable for " ++ query) : IO(Unit)}
 
 def native_result_refuses_without_admission(db,query):
   {==}
