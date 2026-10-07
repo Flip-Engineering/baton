@@ -644,9 +644,6 @@ def ops_lookup(+ops: Decl.Ops, +want: String) -> OpState:
 # One pending step carries the operation it expands and the ancestor path of the
 # branch that reached it, so a repeated step is a cycle while a diamond is
 # ordinary reuse.
-type Pending is Data:
-  Pending{decl: Decl.Decl, op: Decl.Op, digest: String, path: StepPath}
-
 # A dependency path records module and operation as separate fields. Both
 # identifiers may contain any admitted string, so joining them cannot define
 # their identity without an escaping or length protocol.
@@ -656,6 +653,9 @@ type StepIdentity is Data:
 type StepPath is Data:
   StepPathNil{}
   StepPathCons{head: StepIdentity, rest: StepPath}
+
+type Pending is Data:
+  Pending{decl: Decl.Decl, op: Decl.Op, digest: String, path: StepPath}
 
 def pending_identity(+p: Pending) -> StepIdentity:
   match p:
