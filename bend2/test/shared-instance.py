@@ -871,15 +871,16 @@ class SharedInstance(unittest.TestCase):
         path = directory / 'admission'
         raw = path.read_bytes()
         layout = struct.Struct('=8sIIQQQQQQQQ')
-        (magic, schema, reserved, database_device, database, guard_device, guard,
-         attempt_device, attempt, path_length) = layout.unpack_from(raw, 0)
+        values = list(layout.unpack_from(raw, 0))
+        # magic, schema, reserved, database device, database inode, guard device,
+        # guard inode, attempt device, attempt inode, path length, check.
         if database_inode is not None:
-            database = database_inode
+            values[4] = database_inode
         if guard_inode is not None:
-            guard = guard_inode
-        head = layout.pack(magic, schema, reserved, database_device, database,
-                           guard_device, guard, attempt_device, attempt, path_length)
-        body = raw[layout.size + 8:]
+            values[6] = guard_inode
+        values[10] = 0
+        head = layout.pack(*values)[:layout.size - 8]
+        body = raw[layout.size:]
         digest = 0xcbf29ce484222325
         for byte in head + body:
             digest ^= byte
