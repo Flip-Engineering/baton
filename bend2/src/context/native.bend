@@ -555,6 +555,21 @@ def query_catalog_result(db: String, binding: String, policy: ProjectPolicyAnswe
     case ProviderRuntime{path, version}: IO.die(Unit, 3, "providerInventoryMalformed")
     case ProviderOutput{value, status}: query_catalog_output(db, binding, request, policy, status, value)
 
+def query_environment_runtime(+db: String, +binding: String, +owner: String,
+                              +query: String, +cwd: String, +worktree: String,
+                              +request: NativeRequest.RequestDecode,
+                              +executable: String, runtime: ProviderAnswer) -> IO(Unit):
+  match runtime:
+    case ProviderRefused{reason}: IO.die(Unit, 3, reason)
+    case ProviderOutput{value, status}: IO.die(Unit, 3, "nodeRuntimeProbeMalformed")
+    case ProviderRuntime{+path, +version}:
+      do IO<Unit>:
+        answer : ProviderAnswer <- inventory_runtime_answer(executable, cwd,
+          ProviderRuntime{path, version})
+        policy : ProjectPolicyAnswer <- observe_project_policy(db, binding,
+          executable, cwd, owner, worktree, ProviderRuntime{path, version})
+        query_catalog_result(db, binding, policy, answer, request)
+
 def query_request_environment(db: String, binding: String, owner: String, query: String,
                               cwd: String, worktree: String,
                               request: NativeRequest.RequestDecode) -> IO(Unit):
@@ -565,10 +580,8 @@ def query_request_environment(db: String, binding: String, owner: String, query:
       do IO<Unit>:
         executable : String <- IO.try(String, Host.SessionLock.executable())
         runtime : ProviderAnswer <- resolve_node_runtime(cwd)
-        answer : ProviderAnswer <- inventory_runtime_answer(executable, cwd, runtime)
-        policy : ProjectPolicyAnswer <- observe_project_policy(db, binding,
-          executable, cwd, owner, worktree, runtime)
-        query_catalog_result(db, binding, policy, answer, request)
+        query_environment_runtime(db, binding, owner, query, cwd, worktree,
+          request, executable, runtime)
 
 def owner_root_matches(+workspace: String, root: G.GitOut) -> Bool:
   match root:
