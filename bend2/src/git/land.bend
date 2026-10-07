@@ -771,10 +771,19 @@ def ff_stage5_adv_answer(+a: LAdv, target: String, cand: String) -> FFLD:
     case AdvRefused{}: FFDone{T.LBlocked{"git update-ref failed; inspect the target and retry"}}
     case AdvBroken{detail}: FFDone{T.LBlocked{detail}}
 
+# One read of the qualification, kept as performed or explicitly not performed.
+type LdRead is Data:
+  ReadSkipped{}
+  ReadObserved{observation: T.GitOut}
+
+# The reads the held qualification actually performed, beside the advance decision it made.
+type LdQualified is Data:
+  QualDecided{target_ref: LdRead, head_ref: LdRead}
+
 type LdAdvObs is Data:
   LdAdvNoCapture{advance: LAdv}
   LdAdvCaptured{advance: LAdv, capture: T.CapturedRaw}
-  LdAdvQualified{advance: LAdv, capture: T.CapturedRaw, readback: T.GitOut}
+  LdAdvQualified{advance: LAdv, capture: T.CapturedRaw, qualification: LdQualified}
 
 # The public shared boundary. The canonical common directory is read once here, the target
 # claim is taken around the holder selection and the selected advance, and the release runs for
@@ -960,16 +969,16 @@ def ld_adv_cas_compared(cand: String, +capture: T.CapturedRaw, after: T.GitOut, 
   +obs = after
   +seen = tip
   Bool.pick(IO(LdAdvObs), Tx.str_eq(seen, c2),
-    IO.pure(LdAdvObs, LdAdvQualified{AdvLanded{}, cp, obs}),
-    IO.pure(LdAdvObs, LdAdvQualified{AdvMoved{}, cp, obs}))
+    IO.pure(LdAdvObs, ld_adv_qualified_with(AdvLanded{}, cp, QualDecided{ld_adv_read(obs), ReadSkipped{}})),
+    IO.pure(LdAdvObs, ld_adv_qualified_with(AdvMoved{}, cp, QualDecided{ld_adv_read(obs), ReadSkipped{}})))
 def ld_adv_cas_readback(target: String, cand: String, +capture: T.CapturedRaw, +after: T.GitOut) -> IO(LdAdvObs):
   match after:
     case T.GRun{code, out}:
       +c0 = code
       Bool.pick(IO(LdAdvObs), U32.is_eq(c0, 0),
         ld_adv_cas_compared(cand, capture, after, Tx.trim_nl(out)),
-        IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{"the target could not be read back after the advance"}, capture, after}))
-    case T.GBroken{detail}: IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{detail}, capture, after})
+        IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"the target could not be read back after the advance"}, capture, QualDecided{ld_adv_read(after), ReadSkipped{}})))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{detail}, capture, QualDecided{ld_adv_read(after), ReadSkipped{}}))
 
 # The unheld advance is not landed on exit zero alone: while the target claim is still held the
 # target ref is read back and required to be the candidate. A moved target answers AdvMoved with
@@ -1017,66 +1026,63 @@ def ld_adv_refused_pick(g: T.GitOut, path: String, basis: String) -> LAdv:
         AdvBroken{"the target commit could not be read after a refused fast-forward"})
     case T.GBroken{detail}: AdvBroken{detail}
 
+def ld_adv_read(observation: T.GitOut) -> LdRead:
+  ReadObserved{observation}
+
+def ld_adv_qualified_with(advance: LAdv, +capture: T.CapturedRaw, qualification: LdQualified) -> LdAdvObs:
+  LdAdvQualified{advance, capture, qualification}
+
+# A refused mutation still records the target read it performed; HEAD was never reached.
+def ld_adv_wt_refused_decided(advance: LAdv, +read: T.GitOut, +capture: T.CapturedRaw) -> IO(LdAdvObs):
+  IO.pure(LdAdvObs, ld_adv_qualified_with(advance, capture, QualDecided{ld_adv_read(read), ReadSkipped{}}))
+
 def ld_adv_wt_refused(path: String, repo: String, target: String, basis: String, +capture: T.CapturedRaw) -> IO(LdAdvObs):
   +p2 = path
   +r2 = repo
+  +t2 = target
   +b2 = basis
-  +cp = capture
   do IO<LdAdvObs>:
-    g : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(target))
-    IO.pure(LdAdvObs, ld_adv_with(ld_adv_refused_pick(g, p2, b2), cp))
-def ld_adv_wt_observed(target_matches: Bool, holder_matches: Bool, path: String) -> LAdv:
-  match target_matches:
-    case False{}: AdvMoved{}
-    case True{}:
-      match holder_matches:
-        case True{}: AdvLanded{}
-        case False{}: AdvHolderChanged{path}
+    +g : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
+    ld_adv_wt_refused_decided(ld_adv_refused_pick(g, p2, b2), g, capture)
 
-def ld_adv_wt_observed_holder_pick(g: T.GitOut, path: String, target: String) -> IO(LAdv):
-  match g:
+# The target read decides movement and failure; only a successful matching tip goes on to HEAD.
+def ld_adv_wt_target_decided(path: String, repo: String, target: String, cand: String, +capture: T.CapturedRaw, +tip: T.GitOut) -> IO(LdAdvObs):
+  match tip:
+    case T.GBroken{detail}:
+      IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{detail}, capture, QualDecided{ld_adv_read(tip), ReadSkipped{}}))
     case T.GRun{code, out}:
-      +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(IO(LAdv), status_ok,
-        Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)), False{})
-      IO.pure(LAdv, ld_adv_wt_observed(True{}, same, path))
-    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
+      Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
+        Bool.pick(IO(LdAdvObs), Tx.str_eq(Tx.trim_nl(out), cand),
+          ld_adv_wt_head_read(path, repo, target, capture, tip),
+          IO.pure(LdAdvObs, ld_adv_qualified_with(AdvMoved{}, capture, QualDecided{ld_adv_read(tip), ReadSkipped{}}))),
+        IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{out}, capture, QualDecided{ld_adv_read(tip), ReadSkipped{}})))
 
-def ld_adv_wt_observed_target_same(same: Bool, path: String, target: String) -> IO(LAdv):
-  match same:
-    case False{}: IO.pure(LAdv, AdvMoved{})
-    case True{}:
-      +p2 = path
-      +t2 = target
-      do IO<LAdv>:
-        holder : T.GitOut <- Git.runGit(p2, ld_head_argv())
-        ld_adv_wt_observed_holder_pick(holder, p2, t2)
-
-def ld_adv_wt_observed_target_pick(g: T.GitOut, path: String, target: String, cand: String) -> IO(LAdv):
-  match g:
-    case T.GRun{code, out}:
-      +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(IO(LAdv), status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})
-      ld_adv_wt_observed_target_same(same, path, target)
-    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
-
-# Git provides no atomic CLI operation that pins symbolic HEAD across the final identity check
-# and the merge, so a switch in that interval can still direct the merge to another branch. The
-# target claim coordinates participating landings; it does not lock an independent Git process.
-def ld_adv_wt_observe(path: String, repo: String, target: String, cand: String) -> IO(LAdv):
+def ld_adv_wt_target_read(path: String, repo: String, target: String, cand: String, +capture: T.CapturedRaw) -> IO(LdAdvObs):
   +p2 = path
   +r2 = repo
   +t2 = target
   +c2 = cand
-  do IO<LAdv>:
-    target_tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
-    ld_adv_wt_observed_target_pick(target_tip, p2, t2, c2)
-
-def ld_adv_wt_observe_wrapped(path: String, repo: String, target: String, cand: String, +capture: T.CapturedRaw) -> IO(LdAdvObs):
-  +cp = capture
   do IO<LdAdvObs>:
-    inner : LAdv <- ld_adv_wt_observe(path, repo, target, cand)
-    IO.pure(LdAdvObs, ld_adv_with(inner, cp))
+    +tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
+    ld_adv_wt_target_decided(p2, r2, t2, c2, capture, tip)
+
+# The symbolic HEAD read decides holder change and failure; the target read is carried through.
+def ld_adv_wt_head_decided(path: String, target: String, +capture: T.CapturedRaw, +tip: T.GitOut, +head: T.GitOut) -> IO(LdAdvObs):
+  match head:
+    case T.GBroken{detail}:
+      IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{detail}, capture, QualDecided{ld_adv_read(tip), ld_adv_read(head)}))
+    case T.GRun{code, out}:
+      Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
+        Bool.pick(IO(LdAdvObs), Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)),
+          IO.pure(LdAdvObs, ld_adv_qualified_with(AdvLanded{}, capture, QualDecided{ld_adv_read(tip), ld_adv_read(head)})),
+          IO.pure(LdAdvObs, ld_adv_qualified_with(AdvHolderChanged{path}, capture, QualDecided{ld_adv_read(tip), ld_adv_read(head)}))),
+        IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{out}, capture, QualDecided{ld_adv_read(tip), ld_adv_read(head)})))
+
+def ld_adv_wt_head_read(path: String, repo: String, target: String, +capture: T.CapturedRaw, +tip: T.GitOut) -> IO(LdAdvObs):
+  +p2 = path
+  do IO<LdAdvObs>:
+    +head : T.GitOut <- Git.runGit(p2, ld_head_argv())
+    ld_adv_wt_head_decided(p2, target, capture, tip, head)
 
 def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, +capture: T.CapturedRaw) -> IO(LdAdvObs):
   match g:
@@ -1087,7 +1093,7 @@ def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand
       +c2 = cand
       +b2 = basis
       Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
-        ld_adv_wt_observe_wrapped(p2, r2, t2, c2, capture),
+        ld_adv_wt_target_read(p2, r2, t2, c2, capture),
         ld_adv_wt_refused(p2, r2, t2, b2, capture))
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(AdvBroken{detail}, capture))
 def ld_adv_wt_reuse(path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, +capture: T.CapturedRaw) -> IO(LdAdvObs):
@@ -1338,7 +1344,7 @@ def ld_adv_of(obs: LdAdvObs) -> LAdv:
   match obs:
     case LdAdvNoCapture{advance}: advance
     case LdAdvCaptured{advance, capture}: advance
-    case LdAdvQualified{advance, capture, readback}: advance
+    case LdAdvQualified{advance, capture, qualification}: advance
 
 def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String) -> FFLD:
   match shared:
@@ -2363,4 +2369,42 @@ law a_failed_release_refuses_the_advance:
   {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseFailed{13, "release failed"}, "g", "r"}, "t", "c") == LdFail{T.FCmd{"land", Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : Ld}
 
 def a_failed_release_refuses_the_advance():
+  {==}
+
+# The qualification decisions, stated over supplied observations. The capture and the earlier
+# reads are carried through every one of them.
+law an_unreadable_target_read_is_failure_evidence:
+  {ld_adv_wt_target_decided("/p", "/r", "tgt", "cand", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GBroken{"target unreadable"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"target unreadable"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GBroken{"target unreadable"}), ReadSkipped{}})) : IO(LdAdvObs)}
+
+def an_unreadable_target_read_is_failure_evidence():
+  {==}
+
+law a_successful_unequal_target_read_is_movement:
+  {ld_adv_wt_target_decided("/p", "/r", "tgt", "cand", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "other\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvMoved{}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "other\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
+
+def a_successful_unequal_target_read_is_movement():
+  {==}
+
+law a_successful_matching_target_and_holder_lands:
+  {ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "tip\n"}, T.GRun{0, Tx.str_cat(ld_hold_ref("tgt"), "\n")}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvLanded{}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GRun{0, Tx.str_cat(ld_hold_ref("tgt"), "\n")})})) : IO(LdAdvObs)}
+
+def a_successful_matching_target_and_holder_lands():
+  {==}
+
+law a_successful_holder_mismatch_is_holder_change:
+  {ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "tip\n"}, T.GRun{0, "refs/heads/other\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvHolderChanged{"/p"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GRun{0, "refs/heads/other\n"})})) : IO(LdAdvObs)}
+
+def a_successful_holder_mismatch_is_holder_change():
+  {==}
+
+law an_unreadable_holder_read_is_failure_evidence:
+  {ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "tip\n"}, T.GBroken{"head unreadable"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"head unreadable"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GBroken{"head unreadable"})})) : IO(LdAdvObs)}
+
+def an_unreadable_holder_read_is_failure_evidence():
+  {==}
+
+law a_refused_mutation_retains_its_target_read:
+  {ld_adv_wt_refused_decided(AdvRefused{}, T.GRun{0, "tip\n"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvRefused{}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
+
+def a_refused_mutation_retains_its_target_read():
   {==}
