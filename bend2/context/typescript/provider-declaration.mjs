@@ -30,11 +30,13 @@
 //                         provider's own frame vocabulary names (lib/protocol.mjs EFFECTS).
 //   subject kinds         Core `source_kind`: "position", "symbol", "diagnostic" (engines.bend:463-465).
 //   projections           the provider's own discovery line (lib/resolve.mjs:132-144).
-//   execution             "managed": the operation is served by a child process the caller launches and
-//                         reaps (provider.mjs:6-15). Core admits "direct" and "managed" and requires a
-//                         lifetime profile only for runtime execution (engines-decl.bend:327-336); this
-//                         operation retains no keeper, so its profile is empty and the lifecycle detail
-//                         states the per-query process.
+//   execution             "managed" as a provisional token: the observed lifecycle is one child process
+//                         per query, launched and reaped by the caller (provider.mjs:1-15). Core admits
+//                         "direct" and "managed" and requires a lifetime profile only for runtime
+//                         (engines-decl.bend:327-336), and a process launch alone does not settle which
+//                         token matches the lifecycle the caller implements, so the token stays
+//                         provisional and its confirmation is a named hole owned by the invocation owner
+//                         together with the code-lane conductor.
 //   package identity      the staged context package `baton2-context` (bend2/scripts/package-native.py:27-28).
 //   artifact rows         derived from the staging rule that copies `bend2/context/**` to
 //                         `libexec/baton2/context/**` verbatim (package-native.py:380-394). The digests
@@ -77,6 +79,12 @@ export const IMPLEMENTS_OPERATION = Object.freeze({
 
 export const EXECUTIONS = Object.freeze(['pure', 'direct', 'managed', 'runtime']);
 export const EXECUTION = 'managed';
+// Core admits both direct and managed for a non-runtime operation, so the token must describe the
+// lifecycle the invocation owner actually implements. The provider's own contract shows one process
+// per query; whether the caller's management of that process makes the operation managed or direct is
+// the invocation owner's statement to make, so the token stays provisional until that owner confirms
+// it and the completeness check refuses the record meanwhile.
+export const EXECUTION_STATUS = 'provisional';
 
 // The lifecycle the provider actually has: one child process per query, no retained keeper. Core
 // requires a profile only for runtime execution, so an empty profile here is the truthful value.
@@ -118,6 +126,11 @@ export const ADMISSION_HOLES = Object.freeze([
     code: 'transportVersionUnadmitted',
     authority: 'the lane that authors the bridge or the version migration',
     detail: 'this module writes version-1 provider frames and Core admits transport "2" (engines-decl.bend:203-209, engines-select.bend:904-913)',
+  }),
+  Object.freeze({
+    code: 'executionTokenUnconfirmed',
+    authority: 'the caller that owns the launch contract (native), decided with the code-lane conductor',
+    detail: 'Core admits direct and managed for a non-runtime operation (engines-decl.bend:327-336); a process launch alone does not settle which token matches the lifecycle the caller implements',
   }),
   Object.freeze({
     code: 'invocationVectorUnadmitted',
@@ -197,6 +210,7 @@ export const PROVIDER_DECLARATION = Object.freeze({
     status: 'unadmitted',
     detail: 'the launch vector belongs to the caller that owns the launch contract; this record holds none',
   }),
+  executionStatus: EXECUTION_STATUS,
   lifecycle: LIFECYCLE,
   artifacts: Object.freeze(PROVIDER_CLOSURE.map(artifactFor)),
   operations: OPERATIONS,
@@ -235,6 +249,12 @@ export function checkProviderDeclaration(declaration) {
     reasons.push(reject(
       'transportVersionUnadmitted',
       `the record declares transport ${String(declaration.protocolVersion)} while Core admits ${ADMITTED_TRANSPORT_VERSION}`,
+    ));
+  }
+  if (declaration.executionStatus !== 'confirmed') {
+    reasons.push(reject(
+      'executionTokenUnconfirmed',
+      `the execution token ${String(EXECUTION)} awaits the invocation owner's statement that it matches the implemented lifecycle`,
     ));
   }
 
@@ -364,6 +384,11 @@ export function admissionRequirements(declaration = PROVIDER_DECLARATION) {
     declaredTransportVersion: declaration.protocolVersion,
     admittedTransportVersion: ADMITTED_TRANSPORT_VERSION,
     transportStatus: declaration.protocolVersion === ADMITTED_TRANSPORT_VERSION ? 'admitted' : 'unadmitted',
+    execution: {
+      token: EXECUTION,
+      profile: declaration.lifecycle?.profile ?? '',
+      status: declaration.executionStatus === 'confirmed' ? 'confirmed' : 'provisional',
+    },
     invocation: {
       artifact: activation.artifact ?? null,
       argv: Array.isArray(activation.argv) && activation.argv.length > 0 ? [...activation.argv] : null,

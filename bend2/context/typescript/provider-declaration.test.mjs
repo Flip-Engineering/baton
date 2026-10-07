@@ -23,6 +23,7 @@ import {
   DECLARED_TRANSPORT_VERSION,
   ENGINE_EFFECTS,
   EXECUTION,
+  EXECUTION_STATUS,
   IMPLEMENTS_OPERATION,
   LIFECYCLE,
   MODULE_ID,
@@ -50,6 +51,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 function filledRecord() {
   const copy = structuredClone(PROVIDER_DECLARATION);
   copy.protocolVersion = ADMITTED_TRANSPORT_VERSION;
+  copy.executionStatus = 'confirmed';
   copy.activation.argv = ['node', 'provider.mjs'];
   copy.activation.sha256 = 'a'.repeat(64);
   copy.activation.status = 'admitted';
@@ -119,6 +121,8 @@ test('filling each hole back is refused by the reason that names it', () => {
   const filled = filledRecord();
   assert.ok(reasonsOf(mutated((copy) => { copy.protocolVersion = DECLARED_TRANSPORT_VERSION; }, filled))
     .includes('transportVersionUnadmitted'));
+  assert.ok(reasonsOf(mutated((copy) => { copy.executionStatus = 'provisional'; }, filled))
+    .includes('executionTokenUnconfirmed'));
   assert.ok(reasonsOf(mutated((copy) => { copy.activation.argv = null; }, filled))
     .includes('invocationVectorUnadmitted'));
   assert.ok(reasonsOf(mutated((copy) => { copy.activation.argv = []; }, filled))
@@ -184,6 +188,12 @@ test('the per-operation effects meet the engine set Core admits', () => {
 
 test('the lifecycle states the process the provider actually runs', () => {
   assert.equal(EXECUTION, 'managed');
+  assert.equal(EXECUTION_STATUS, 'provisional', 'the token awaits the invocation owner, who observes the lifecycle');
+  assert.equal(PROVIDER_DECLARATION.executionStatus, EXECUTION_STATUS);
+  const executionHole = ADMISSION_HOLES.find((hole) => hole.code === 'executionTokenUnconfirmed');
+  assert.ok(executionHole, 'the execution token is carried as a hole');
+  assert.match(executionHole.detail, /process launch alone does not settle/);
+  assert.match(executionHole.authority, /launch contract/);
   assert.equal(LIFECYCLE.profile, '', 'Core requires a lifetime profile only for runtime execution');
   assert.match(LIFECYCLE.detail, /one child process per query/);
   assert.match(LIFECYCLE.detail, /no keeper is retained/);
@@ -209,6 +219,9 @@ test('admission lists what the packager must supply, item by item', () => {
   assert.equal(requirements.declaredTransportVersion, DECLARED_TRANSPORT_VERSION);
   assert.equal(requirements.admittedTransportVersion, ADMITTED_TRANSPORT_VERSION);
   assert.equal(requirements.transportStatus, 'unadmitted');
+  assert.equal(requirements.execution.token, EXECUTION);
+  assert.equal(requirements.execution.profile, '');
+  assert.equal(requirements.execution.status, 'provisional');
   assert.equal(requirements.invocation.argv, null);
   assert.equal(requirements.invocation.status, 'unadmitted');
   assert.equal(requirements.invocation.artifact, PROVIDER_ENTRY);
@@ -227,6 +240,7 @@ test('admission lists what the packager must supply, item by item', () => {
   }
   const filled = admissionRequirements(filledRecord());
   assert.equal(filled.transportStatus, 'admitted');
+  assert.equal(filled.execution.status, 'confirmed');
   assert.equal(filled.invocation.status, 'admitted');
   assert.ok(filled.artifacts.every((artifact) => artifact.status === 'admitted'));
   assert.ok(filled.schemas.every((schema) => schema.status === 'admitted'));
