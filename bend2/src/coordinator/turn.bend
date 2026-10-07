@@ -276,7 +276,7 @@ def completion_conflict_note(+db: String, player: String, +id: String, +event: S
       saved : Unit <- report(db,player,Tx.trim_nl(note_id),"A native terminal produced output for report ID " ++ id ++ " after a different report already used that ID. The original report is preserved; this terminal event remains in the native log.")
       IO.pure(Unit,Unit{})
 
-def observe_sealed(+db: String, id: String, player: String, +event: String, +primary: String, sealed: Bool, muse: Bool) -> IO(Bool):
+def observe_sealed(+db: String, id: String, player: String, +event: String, +primary: String, sealed: Bool, +muse: Bool) -> IO(Bool):
   do IO<Bool>:
       terminal_text : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN " ++ C.terminal(event) ++ " ELSE 0 END;"))
       +terminal : Bool <- IO.pure(Bool,String.eq(Tx.trim_nl(terminal_text),"1"))
