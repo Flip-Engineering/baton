@@ -218,7 +218,7 @@ def plan_identity_json(+p: Sel.Plan) -> J.Json:
              wire_obj("steps", steps_json(steps),
              wire_obj("effectiveEffects", ss_json(effective_effects),
              wire_obj("projectPolicy", project_policy_json(policy_identity),
-                      J.Jnil{}))))}
+                      J.Jnil{}))))) }
 
 def plan_identity(+p: Sel.Plan) -> String:
   J.json_text(plan_identity_json(p))

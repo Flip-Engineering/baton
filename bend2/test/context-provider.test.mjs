@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { copyFileSync } from 'node:fs';
 
 import { installedModuleInventory, moduleDirectoryName, resolveSelectedPackageRoot } from '../scripts/context-provider.mjs';
 
@@ -95,6 +95,7 @@ test('generic project policy entry runs from Core assets with no selected module
     const wrapperDir = join(prefix, 'libexec/baton2');
     mkdirSync(wrapperDir, { recursive: true });
     mkdirSync(worktree);
+    execFileSync('git', ['init', '--quiet', worktree]);
     for (const name of ['context-provider.mjs', 'context-project-policy.mjs', 'context-worktree-capture.mjs']) {
       copyFileSync(new URL(`../scripts/${name}`, import.meta.url), join(wrapperDir, name));
     }
