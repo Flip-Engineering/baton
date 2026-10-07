@@ -141,6 +141,20 @@ test('every configured implementation mutation has one exact producer source mat
   assert.deepEqual(invalid, [], `mutation producer source matches must be unique: ${JSON.stringify(invalid)}`);
 });
 
+test('scoped mutations match their named implementation function', () => {
+  const invalid = [];
+  for (const mutation of MUTATIONS.filter(({ scope }) => scope)) {
+    const source = readFileSync(join(root, mutation.file), 'utf8');
+    const start = source.indexOf(`def ${mutation.scope}(`);
+    const next = source.indexOf('\ndef ', start + 1);
+    const body = start < 0 ? '' : source.slice(start, next < 0 ? source.length : next);
+    if (start < 0 || body.indexOf(mutation.find) < 0 || body.indexOf(mutation.find) !== body.lastIndexOf(mutation.find)) {
+      invalid.push({ name: mutation.name, scope: mutation.scope });
+    }
+  }
+  assert.deepEqual(invalid, [], `mutation producer must be inside its named implementation function: ${JSON.stringify(invalid)}`);
+});
+
 test('implementation mutations detach linked source before writing', () => {
   const source = join(workspaceRoot, 'mutation-source');
   const workspace = join(workspaceRoot, 'mutation-workspace');
