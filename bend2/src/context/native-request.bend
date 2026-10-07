@@ -81,7 +81,7 @@ def request_json_value(raw: CoreCodec.RawValue, converted: CoreCodec.JsonConv) -
     case CoreCodec.JcJson{+value}: request_validation(value)
 
 def request_json(+raw: CoreCodec.RawValue) -> RequestDecode:
-  request_json_schema(raw, Schema.schema_admit_value(Nil{}, Schema.SfJson{}, raw))
+  request_json_schema(raw, Schema.schema_admit_value(Schema.DefsNil{}, Schema.SfJson{}, raw))
 
 def request_rows(+rows: String) -> RequestDecode:
   match raw_rows(rows):
