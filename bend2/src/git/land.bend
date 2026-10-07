@@ -814,7 +814,7 @@ def release_fields(release: T.ReleaseRaw, rest: List<String>) -> List<String>:
 def observation_fields(observation: T.GitOut, rest: List<String>) -> List<String>:
   match observation:
     case T.GRun{code, out}: Con{"run", Con{U32.show(code), Con{out, rest}}}
-    case T.GBroken{detail}: Con{"broken", rest}
+    case T.GBroken{detail}: Con{"broken", Con{detail, rest}}
 
 def read_fields(read: LdRead, rest: List<String>) -> List<String>:
   match read:
@@ -1267,7 +1267,16 @@ def ld_adv_run(repo: String, target: String, cand: String, basis: String, ctx: L
 
 # The complete attempt evidence is published once, after the release, and admitted only when the
 # record was freshly created, is durable, and reads back byte for byte.
-def ld_attest_bytes(evidence: AttemptEvidence, path: String, seen: Result<&1, &1, U32 & String, String>) -> IO(Admission):
+# The producer contract: a successful publication record is exactly the tag, the expected path, a
+# zero errno, an empty phase, a zero pending and an empty detail. Whole-record comparison against the
+# same builder the producer uses avoids splitting the record and any nested decision.
+def receipt_published(raw: String, expected: String) -> Bool:
+  Tx.str_eq(raw, Pb.production_record("published", expected, "0"))
+
+def receipt_qualified(raw: String, expected: String) -> Bool:
+  Tx.str_eq(raw, Pb.production_record("qualified", expected, "0"))
+
+def ld_attest_bytes(+evidence: AttemptEvidence, path: String, seen: Result<&1, &1, U32 & String, String>) -> IO(Admission):
   match seen:
     case Fail{error}: IO.pure(Admission, AdmissionMissing{"the attempt record could not be read back"})
     case Done{raw}:
@@ -1275,7 +1284,7 @@ def ld_attest_bytes(evidence: AttemptEvidence, path: String, seen: Result<&1, &1
         IO.pure(Admission, AdmissionAdmitted{attempt_record(evidence), path}),
         IO.pure(Admission, AdmissionMissing{"the attempt record does not read back as published"}))
 
-def ld_attest_read(evidence: AttemptEvidence, path: String) -> IO(Admission):
+def ld_attest_read(evidence: AttemptEvidence, +path: String) -> IO(Admission):
   do IO<Admission>:
     seen : Result<&1, &1, U32 & String, String> <- Text.Text.read(path)
     ld_attest_bytes(evidence, path, seen)
@@ -1288,7 +1297,7 @@ def ld_attest_qualified(reserved: String, evidence: AttemptEvidence, path: Strin
         ld_attest_read(evidence, path),
         IO.pure(Admission, AdmissionMissing{"the attempt record is not durable"}))
 
-def ld_attest_durable(reserved: String, evidence: AttemptEvidence, path: String) -> IO(Admission):
+def ld_attest_durable(reserved: String, evidence: AttemptEvidence, +path: String) -> IO(Admission):
   do IO<Admission>:
     qualified : Result<&1, &1, U32 & String, String> <- Rec.Receipt.qualify(path)
     ld_attest_qualified(reserved, evidence, path, qualified)
@@ -1301,56 +1310,27 @@ def ld_attest_path(reserved: String, evidence: AttemptEvidence, parts: List<Stri
         case Nil{}: IO.pure(Admission, AdmissionMissing{"the publication record carried no path"})
         case Con{path, more}: ld_attest_durable(reserved, evidence, path)
 
-# The receipt record carries exactly tag, path, errno, phase, pending and detail. Publication of the
-# landing record is admitted only for a complete, successful record bound to the expected path.
-def receipt_published(raw: String, expected: String) -> Bool:
-  match Tx.split_tabs(raw):
-    case Con{tag, Con{path, Con{errno, Con{phase, Con{pending, Con{detail, Nil{}}}}}}}:
-      Bool.pick(Bool, Tx.str_eq(tag, "published"),
-        Bool.pick(Bool, Tx.str_eq(path, expected),
-          Bool.pick(Bool, Tx.str_eq(errno, "0"),
-            Bool.pick(Bool, Tx.str_eq(detail, ""), Bool.pick(Bool, Tx.str_eq(pending, ""), True{}, False{}), False{})),
-          False{}),
-        False{})
-    case Nil{}: False{}
-    case Con{head, tail}: False{}
-
-def receipt_qualified(raw: String, expected: String) -> Bool:
-  match Tx.split_tabs(raw):
-    case Con{tag, Con{path, Con{errno, Con{phase, Con{pending, Con{detail, Nil{}}}}}}}:
-      Bool.pick(Bool, Tx.str_eq(tag, "qualified"),
-        Bool.pick(Bool, Tx.str_eq(path, expected),
-          Bool.pick(Bool, Tx.str_eq(errno, "0"),
-            Bool.pick(Bool, Tx.str_eq(detail, ""), Bool.pick(Bool, Tx.str_eq(pending, ""), True{}, False{}), False{})),
-          False{}),
-        False{})
-    case Nil{}: False{}
-    case Con{head, tail}: False{}
-
-def ld_attest_seen(reserved: String, evidence: AttemptEvidence, published: Result<&1, &1, U32 & String, String>) -> IO(Admission):
+def ld_attest_seen(+reserved: String, evidence: AttemptEvidence, published: Result<&1, &1, U32 & String, String>) -> IO(Admission):
   match published:
     case Fail{error}: IO.pure(Admission, AdmissionMissing{"the attempt record could not be published"})
     case Done{raw}:
       Bool.pick(IO(Admission), receipt_published(raw, Tx.str_cat(reserved, "/landing-record")),
         ld_attest_path(reserved, evidence, Tx.split_tabs(raw)),
-        IO.pure(Admission, AdmissionMissing{"the attempt record was not freshly created"}))
+        IO.pure(Admission, AdmissionMissing{"the attempt record was not published"}))
 
-def ld_attest(reserved: String, evidence: AttemptEvidence) -> IO(Admission):
+def ld_attest(+reserved: String, +evidence: AttemptEvidence) -> IO(Admission):
   do IO<Admission>:
     published : Result<&1, &1, U32 & String, String> <- Rec.Receipt.publish(reserved, "landing-record", attempt_record(evidence))
     ld_attest_seen(reserved, evidence, published)
 
-def shared_reserved_attested(repo: String, target: String, cand: String, basis: String, guard: String, reserved: String, obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>) -> IO(SharedLanding):
+def ld_attest_admit(reserved: String, evidence: AttemptEvidence, obs: LdAdvObs, +release: T.ReleaseRaw, +guard: String) -> IO(SharedLanding):
+  do IO<SharedLanding>:
+    admitted : Admission <- ld_attest(reserved, evidence)
+    IO.pure(SharedLanding, SharedAdvanced{obs, release, guard, reserved, admitted})
+
+def shared_reserved_attested(repo: String, target: String, cand: String, basis: String, guard: String, +reserved: String, +obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>) -> IO(SharedLanding):
   +rel = T.release_raw_of(released)
   ld_attest_admit(reserved, AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_capture(obs), ld_adv_qualification(obs), rel}, obs, rel, guard)
-
-def ld_attest_admit(reserved: String, evidence: AttemptEvidence, obs: LdAdvObs, +release: T.ReleaseRaw, +guard: String) -> IO(SharedLanding):
-  +rv = reserved
-  +ev = evidence
-  +o = obs
-  do IO<SharedLanding>:
-    admitted : Admission <- ld_attest(rv, ev)
-    IO.pure(SharedLanding, SharedAdvanced{o, release, guard, rv, admitted})
 
 def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, reserved: String) -> IO(SharedLanding):
   +h = handle
@@ -2622,4 +2602,72 @@ law an_admitted_landed_advance_answers_the_landed_commit:
   {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionAdmitted{"record bytes", "/attempt/landing-record"}}, "t", "c") == LdDone{T.LLanded{"t", "c"}} : Ld}
 
 def an_admitted_landed_advance_answers_the_landed_commit():
+  {==}
+
+# The receipt contract, derived from receipt.c: a success record is tag, path, zero errno, empty
+# phase, zero pending and empty detail. Each law consumes the validator with a supplied record.
+law a_published_success_record_is_admitted:
+  {receipt_published(Pb.production_record("published", "/r/landing-record", "0"), "/r/landing-record") == True{} : Bool}
+
+def a_published_success_record_is_admitted():
+  {==}
+
+law a_qualified_success_record_is_admitted:
+  {receipt_qualified(Pb.production_record("qualified", "/r/landing-record", "0"), "/r/landing-record") == True{} : Bool}
+
+def a_qualified_success_record_is_admitted():
+  {==}
+
+law an_empty_pending_record_is_refused:
+  {receipt_published(Pb.production_record("published", "/r/landing-record", ""), "/r/landing-record") == False{} : Bool}
+
+def an_empty_pending_record_is_refused():
+  {==}
+
+law a_pending_one_record_is_refused:
+  {receipt_published(Pb.production_record("published", "/r/landing-record", "1"), "/r/landing-record") == False{} : Bool}
+
+def a_pending_one_record_is_refused():
+  {==}
+
+law a_wrong_path_record_is_refused:
+  {receipt_published(Pb.production_record("published", "/other/landing-record", "0"), "/r/landing-record") == False{} : Bool}
+
+def a_wrong_path_record_is_refused():
+  {==}
+
+law a_wrong_tag_record_is_refused:
+  {receipt_published(Pb.production_record("created", "/r/landing-record", "0"), "/r/landing-record") == False{} : Bool}
+
+def a_wrong_tag_record_is_refused():
+  {==}
+
+law a_truncated_record_is_refused:
+  {receipt_published("published\t/r/landing-record\t0\t\t", "/r/landing-record") == False{} : Bool}
+
+def a_truncated_record_is_refused():
+  {==}
+
+law a_nonzero_errno_record_is_refused:
+  {receipt_qualified("qualified\t/r/landing-record\t13\t\t0\t", "/r/landing-record") == False{} : Bool}
+
+def a_nonzero_errno_record_is_refused():
+  {==}
+
+law a_nonempty_phase_record_is_refused:
+  {receipt_qualified("qualified\t/r/landing-record\t0\tpub\t0\t", "/r/landing-record") == False{} : Bool}
+
+def a_nonempty_phase_record_is_refused():
+  {==}
+
+law a_nonempty_detail_record_is_refused:
+  {receipt_qualified("qualified\t/r/landing-record\t0\t\t0\tdetail", "/r/landing-record") == False{} : Bool}
+
+def a_nonempty_detail_record_is_refused():
+  {==}
+
+law a_trailing_byte_record_is_refused:
+  {receipt_published(Pb.production_record("published", "/r/landing-record", "0") ++ "x", "/r/landing-record") == False{} : Bool}
+
+def a_trailing_byte_record_is_refused():
   {==}
