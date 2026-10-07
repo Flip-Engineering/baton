@@ -1,6 +1,6 @@
 import Base
 import ./control.bend as Control
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./delivery.bend as Delivery
 import ./recruit.bend as Recruit

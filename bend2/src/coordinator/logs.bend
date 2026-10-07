@@ -1,5 +1,5 @@
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./log-schema.bend as Schema
 import ../host/sqlite.bend as DB
 import ../host/text.bend as T

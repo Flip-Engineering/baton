@@ -14,7 +14,7 @@ import ./knowledge.bend as Knowledge
 import ./usage.bend as Usage
 import ./logs.bend as Logs
 import ../context/native.bend as ContextNative
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./control.bend as Control
 import ./control-laws.bend as ControlLaws
 import ../host/text.bend as T
