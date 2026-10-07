@@ -85,6 +85,7 @@ def Instance.attach_owned(database: String, directory: String, lock: U32)
   -> IO(Result<&1,&1,U32 & String,U32>)
 def Instance.shutdown(database: String) -> IO(Result<&1,&1,U32 & String,Unit>)
 def Instance.retire(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>)
+def Instance.commit(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>)
 ```
 
 The module is `src/host/instance.bend`. A caller imports the file with any alias
@@ -136,14 +137,39 @@ handshake, so the client's observer protocol is the one it already uses.
 ## Observation checkpoint
 
 `<attempt>/cursor` holds `BrCursor{ char magic[8]; uint64_t offset; uint64_t check; }`
-and records the byte offset an observer has consumed from the attempt's stdout
-spool. It is replaced by rename, without a device flush, because it is a resume
-hint: a lost update means an observer reads a little more of the stream again.
-An attaching observer resumes at the recorded offset, and the checkpoint
-advances after every consumed frame, so recovery reads the unread extent instead
-of parsing frames the previous observer already reported. A short, oversized or
-checksum-mismatched record is a typed refusal and writes `<attempt>/cursor-error`;
-a corrupted checkpoint never silently replays a stream.
+and records the byte offset an observer has **durably observed** from the
+attempt's stdout spool. It is replaced by rename, without a device flush, because
+it is a resume hint: a lost update means an observer reads a little more of the
+stream again.
+
+Reading bytes is not a durable observation. The reader does not move the
+checkpoint; `Instance.commit(handle)` records the offset the observer has
+consumed so far, and the observation owner calls it only after its own durable
+commit (its store transaction, its terminal report write). A crash between a read
+and that commit therefore leaves the checkpoint at the previous commit and the
+recovery observer reports the uncommitted frames again. Replay is bounded by the
+frames since the last commit, and no frame is skipped.
+
+An attaching observer resumes at the recorded offset. A short, oversized or
+checksum-mismatched checkpoint is not fatal: recovery starts again at offset 0 so
+every byte is preserved, and records the reason in `<attempt>/cursor-error`. A
+damaged resume hint costs replay and never loses output.
+
+## Admission identity
+
+The admission identity of an attempt is a digest of the manifest fields that
+describe the native work (argv, cwd, stderr log, initial input, recovery argv and
+the `keep_stdin` flag). It excludes the attempt's control socket pathname, which
+differs on every preparation.
+
+- A repeated admission with the same identity resolves the attempt that already
+  holds the work: the owner answers with that attempt's id and generation, starts
+  no second native child, and reports the reply's `state` as existing. The client
+  then joins that attempt; while another observer holds it, the join is refused
+  and the custody is untouched.
+- A repeated admission with a different identity in the same directory is
+  conflicting reuse and is refused with `EEXIST`. The client detects this before
+  the owner is asked, by comparing the digest of the existing manifest.
 
 ## Capability lifetime
 
@@ -187,10 +213,16 @@ is not reused.
   recovery observer the owner launches reads the attempt's retained output from
   the beginning of its spool and continues to report new output and the exit
   status.
-- An observer that consumed part of the stream leaves a checkpoint, and the
+- An observer that committed part of the stream leaves a checkpoint, and the
   recovery observer resumes there: it does not report output the checkpoint
   already covered.
-- A corrupted checkpoint is refused and recorded, and the stream is not replayed.
+- An observer killed between a read and its commit leaves no checkpoint advance,
+  and the recovery observer reports that frame again, so no frame is skipped.
+- A damaged checkpoint is recovered from the beginning: every frame is reported
+  again and `<attempt>/cursor-error` records the reason.
+- A repeated admission with the same identity starts no second native child and
+  leaves the existing attempt's custody and stream intact; the same directory
+  with different work is refused with `EEXIST`.
 - A write through a retired capability is refused.
 - `Instance.shutdown` ends the owner, and a later attempt starts a new one.
 
