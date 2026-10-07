@@ -40,7 +40,8 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_WAIT, BP_SIGNAL, BP_PID,
        BP_RETAIN, BP_ATTACH, BP_RELEASE, BP_ACK, BP_KEEPER, BP_INPUT_CLOSED,
        BP_CONTROL_WRITE, BP_CONTROL_SIGNAL, BP_ATTACH_OWNED, BP_RECOVERY,
        BP_INSTANCE_OWNER, BP_INSTANCE_ADMIT, BP_INSTANCE_ATTACH,
-       BP_INSTANCE_ATTACH_OWNED, BP_INSTANCE_SHUTDOWN, BP_INSTANCE_RETIRE };
+       BP_INSTANCE_ATTACH_OWNED, BP_INSTANCE_SHUTDOWN, BP_INSTANCE_RETIRE,
+       BP_INSTANCE_COMMIT };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -192,6 +193,7 @@ typedef struct BatonRetained {
 typedef struct BrKeeper {
   struct BrKeeper *next;
   uint32_t id;
+  uint64_t identity;
   int listener,client,input,lock,watch,wake[2],spool,finishing,change_queued;
   uint64_t generation;
   pid_t native_pid,recovery_pid;
@@ -211,6 +213,7 @@ typedef struct BrKeeper {
 typedef struct {
   uint32_t op; int32_t error;
   uint64_t owner,epoch,attempt,generation,length;
+  uint32_t state,reserved;
 } BrInstanceFrame;
 enum { BI_ENSURE=1, BI_ADMIT, BI_SHUTDOWN, BI_STATE, BI_HELLO, BI_REPLY };
 typedef struct BrOwnerControl {
@@ -564,9 +567,13 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
   if(!retained->directory)error=ENOMEM;
   if(!error) {
     uint64_t offset=0;
-    if((error=br_cursor_load(directory,&offset))==0) {
-      retained->offset=(off_t)offset;retained->offset_stored=offset;
-    } else br_file(directory,"cursor-error","unreadable observation checkpoint\n",34,1);
+    /* A damaged checkpoint is a damaged resume hint. Recovery falls back to the
+       beginning so every byte is preserved, and records the reason. */
+    if((error=br_cursor_load(directory,&offset))) {
+      br_file(directory,"cursor-error","unreadable observation checkpoint\n",34,1);
+      error=0;offset=0;
+    }
+    retained->offset=(off_t)offset;retained->offset_stored=offset;
   }
   if(!error && hello.value==2) {
     BrFrame ready={.op=BR_READY};error=br_write_all(socket,&ready,sizeof(ready));
@@ -591,9 +598,11 @@ static int br_attach_orphan(BatonChild *child,const char *directory,int guard) {
   pthread_mutex_init(&retained->reader,NULL);pthread_cond_init(&retained->changed,NULL);
   if(!error) {
     uint64_t offset=0;
-    if((error=br_cursor_load(directory,&offset))==0) {
-      retained->offset=(off_t)offset;retained->offset_stored=offset;
-    } else br_file(directory,"cursor-error","unreadable observation checkpoint\n",34,1);
+    if((error=br_cursor_load(directory,&offset))) {
+      br_file(directory,"cursor-error","unreadable observation checkpoint\n",34,1);
+      error=0;offset=0;
+    }
+    retained->offset=(off_t)offset;retained->offset_stored=offset;
   }
   if(!error)error=br_orphan(retained);
   if(!error)error=pthread_create(&retained->receiver,NULL,br_follow,retained);
@@ -654,19 +663,7 @@ static void br_read_line(BatonProcessCall *call) {
       }
       memcpy(call->text+call->length,chunk,count);call->length+=count;
       call->text[call->length]=0;retained->offset+=(off_t)count;
-      if(newline) {
-        /* The checkpoint advances per consumed frame, so a recovering observer
-           resumes after the last frame this one observed instead of re-reading
-           the stream. */
-        call->length--;
-        if(!br_cursor_store(retained->directory,(uint64_t)retained->offset))
-          retained->offset_stored=(uint64_t)retained->offset;
-        break;
-      }
-      if(retained->offset_stored+32768<=(uint64_t)retained->offset) {
-        if(!br_cursor_store(retained->directory,(uint64_t)retained->offset))
-          retained->offset_stored=(uint64_t)retained->offset;
-      }
+      if(newline) {call->length--;break;}
       continue;
     }
     pthread_mutex_lock(&retained->state);
@@ -677,10 +674,6 @@ static void br_read_line(BatonProcessCall *call) {
         pthread_cond_wait(&retained->changed,&retained->state);
     }
     pthread_mutex_unlock(&retained->state);
-    if(exited && !call->error && (uint64_t)retained->offset!=retained->offset_stored) {
-      if(!br_cursor_store(retained->directory,(uint64_t)retained->offset))
-        retained->offset_stored=(uint64_t)retained->offset;
-    }
     if(call->error || exited) break;
   }
   pthread_mutex_unlock(&retained->reader);
@@ -688,6 +681,19 @@ static void br_read_line(BatonProcessCall *call) {
 static void baton_retained_call(BatonProcessCall *call) {
   BatonRetained *retained=call->child->retained;
   if(call->kind==BP_READ) {br_read_line(call);return;}
+  if(call->kind==BP_INSTANCE_COMMIT) {
+    /* Reading bytes is not a durable observation. This records the offset the
+       observer has consumed only when its own durable commit has happened, so a
+       crash in between replays the uncommitted frames instead of skipping
+       them. */
+    pthread_mutex_lock(&retained->reader);
+    uint64_t offset=(uint64_t)retained->offset;
+    int error=br_cursor_store(retained->directory,offset);
+    if(!error)retained->offset_stored=offset;
+    pthread_mutex_unlock(&retained->reader);
+    call->error=error;
+    return;
+  }
   if(call->kind==BP_INPUT_CLOSED) {
     pthread_mutex_lock(&retained->state);
     call->error=retained->error;call->signal=(u32)(retained->input_closed || retained->exited);
@@ -1048,6 +1054,7 @@ static void br_keeper_stop(BrKeeper *keeper) {
 static int br_keeper_start(BrKeeper *keeper,const char *directory,int lock) {
   int error=br_manifest_read(directory,&keeper->manifest);
   if(error)return error;
+  keeper->identity=br_manifest_digest(&keeper->manifest.header,keeper->manifest.field);
   if(lock>=0)fcntl(lock,F_SETFD,FD_CLOEXEC);
   if((error=br_file(directory,"launch","launch\n",7,1)))return error;
   struct sockaddr_un address;
@@ -1279,6 +1286,34 @@ static int br_cursor_load(const char *directory,uint64_t *offset) {
   if(!error)*offset=cursor.offset;
   return error;
 }
+/* The admission identity of an attempt: a digest of the manifest fields that
+   describe the native work. It excludes the attempt's control socket pathname,
+   which changes on every preparation, so a repeated admission of the same work
+   resolves the attempt that already exists and a repeated admission of different
+   work is refused. */
+static uint64_t br_digest_mix(uint64_t digest,const void *data,size_t length) {
+  const unsigned char *bytes=data;
+  for(size_t i=0;i<length;i++) {digest^=bytes[i];digest*=0x100000001b3ULL;}
+  return digest;
+}
+static uint64_t br_manifest_digest(const BrManifestHeader *header,char *const *fields) {
+  uint64_t digest=0xcbf29ce484222325ULL;
+  for(int i=0;i<6;i++) {
+    if(i==5)continue;
+    uint64_t length=header->lengths[i];
+    digest=br_digest_mix(digest,&length,sizeof(length));
+    digest=br_digest_mix(digest,fields[i],(size_t)length);
+  }
+  uint32_t keep=header->keep_stdin;
+  return br_digest_mix(digest,&keep,sizeof(keep));
+}
+static int br_manifest_digest_file(const char *directory,uint64_t *digest) {
+  BrManifest manifest={0};
+  int error=br_manifest_read(directory,&manifest);
+  if(!error)*digest=br_manifest_digest(&manifest.header,manifest.field);
+  br_manifest_free(&manifest);
+  return error;
+}
 static BrKeeper *br_owner_find(BrOwner *owner,const char *directory) {
   for(BrKeeper *keeper=owner->attempts;keeper;keeper=keeper->next)
     if(!strcmp(keeper->directory,directory))return keeper;
@@ -1295,9 +1330,11 @@ static uint64_t br_owner_attempts(BrOwner *owner) {
    live in the database's own directory, so an alias pathname works and an
    unrelated directory does not. An existing attempt record refuses a second
    native child for the same attempt. */
-static int br_owner_admit(BrOwner *owner,const char *directory,int lock) {
+static int br_owner_admit(BrOwner *owner,const char *directory,int lock,int *existing) {
   int error=0;
+  char *resolved=NULL;
   struct stat info;
+  *existing=0;
   if(fstat(owner->database_fd,&info))error=errno;
   else if((uint64_t)info.st_dev!=owner->device || (uint64_t)info.st_ino!=owner->inode)error=ESTALE;
   else if(stat(owner->database,&info))error=errno;
@@ -1318,19 +1355,33 @@ static int br_owner_admit(BrOwner *owner,const char *directory,int lock) {
     }
   }
   if(!error) {
+    resolved=realpath(directory,NULL);
+    if(!resolved)error=errno;
+  }
+  if(!error) {
+    BrKeeper *held=br_owner_find(owner,resolved);
+    if(held) {
+      /* The same admission identity resolves the attempt that already owns the
+         work; a different identity for the same directory is conflicting reuse
+         and is refused. Either way no second native child starts. */
+      uint64_t identity=0;
+      error=br_manifest_digest_file(resolved,&identity);
+      if(!error && identity!=held->identity)error=EEXIST;
+      else *existing=1;
+    }
+  }
+  if(!error && !*existing) {
     BrKeeper *keeper=calloc(1,sizeof(*keeper));
     if(!keeper)error=ENOMEM;
     else {
       *keeper=(BrKeeper){.listener=-1,.client=-1,.input=-1,.lock=lock,.watch=-1,
         .wake={-1,-1},.spool=-1,.generation=1,.id=++owner->next_id};
-      keeper->directory=realpath(directory,NULL);
-      if(!keeper->directory)error=errno;
-      else if(br_owner_find(owner,keeper->directory)) {error=EBUSY;}
-      else if((error=br_keeper_start(keeper,directory,lock))) {keeper->next=NULL;}
-      if(error) {if(!keeper->directory){free(keeper);keeper=NULL;}else{lock=-1;br_keeper_stop(keeper);}}
+      keeper->directory=resolved;resolved=NULL;
+      if((error=br_keeper_start(keeper,directory,lock))) {lock=-1;br_keeper_stop(keeper);}
       else {keeper->next=owner->attempts;owner->attempts=keeper;return 0;}
     }
   }
+  free(resolved);
   if(lock>=0)close(lock);
   return error;
 }
@@ -1382,7 +1433,8 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
   if(frame.op==BI_ADMIT) {
     if(frame.length<2 || payload[frame.length-1])
       return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.error=EINVAL},NULL);
-    int error=br_owner_admit(owner,payload,control->rights);
+    int existing=0;
+    int error=br_owner_admit(owner,payload,control->rights,&existing);
     control->rights=-1;
     if(error)return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
       .epoch=owner->epoch,.error=error},NULL);
@@ -1390,7 +1442,8 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
     BrOwnerState state={owner->token,owner->epoch,br_owner_attempts(owner)};
     return br_owner_reply(control,(BrInstanceFrame){.op=BI_HELLO,.owner=owner->token,
       .epoch=owner->epoch,.attempt=keeper?keeper->id:0,
-      .generation=keeper?keeper->generation:0,.length=sizeof(state)},&state);
+      .generation=keeper?keeper->generation:0,.state=(uint32_t)(existing?1:0),
+      .length=sizeof(state)},&state);
   }
   return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.error=EINVAL},NULL);
 }
@@ -1669,10 +1722,34 @@ static int br_manifest_store(const char *directory,const char *manifest_path,BrM
 }
 /* Creates the exclusive attempt directory, its control socket directory and
    the manifest that admits the attempt. */
-static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char **address_out) {
+static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char **address_out,int idempotent) {
   if(!call->length || call->args[call->length-1] || !call->args[0] || !call->recovery_length ||
      call->recovery[call->recovery_length-1] || !call->recovery[0])return EINVAL;
-  if(mkdir(call->directory,0700))return errno;
+  if(mkdir(call->directory,0700)) {
+    int error=errno;
+    if(error!=EEXIST || !idempotent)return error;
+    /* The directory exists. The same admission identity reuses it, so a repeated
+       admission is idempotent; a different identity is conflicting reuse. */
+    char *existing=realpath(call->directory,NULL);
+    if(!existing)return errno;
+    BrManifestHeader header={.magic={'B','A','T','O','N','R','P','1'},.keep_stdin=call->keep_stdin};
+    char *fields[6]={call->args,call->cwd,call->log,call->initial,call->recovery,NULL};
+    size_t lengths[6]={call->length,strlen(call->cwd),strlen(call->log),call->initial_length,call->recovery_length,0};
+    for(int i=0;i<6;i++)header.lengths[i]=lengths[i];
+    uint64_t requested=br_manifest_digest(&header,fields);
+    uint64_t found=0;
+    error=br_manifest_digest_file(existing,&found);
+    if(!error && found!=requested)error=EEXIST;
+    BrManifest manifest={0};
+    if(!error)error=br_manifest_read(existing,&manifest);
+    char *address=error?NULL:strdup(manifest.field[5]);
+    br_manifest_free(&manifest);
+    if(!error && !address)error=ENOMEM;
+    if(error){free(address);free(existing);return error;}
+    call->unstarted=1;
+    *directory_out=existing;*address_out=address;
+    return 0;
+  }
   call->unstarted=1;
   char *directory=realpath(call->directory,NULL);
   if(!directory)return errno;
@@ -1694,7 +1771,7 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
 }
 static int br_retain(BatonProcessCall *call) {
   char *directory=NULL,*address=NULL;
-  int error=br_attempt_prepare(call,&directory,&address);
+  int error=br_attempt_prepare(call,&directory,&address,0);
   int sockets[2]={-1,-1},null=-1,log=-1;
   char *self=NULL,*log_path=NULL;
   if(!error && socketpair(AF_UNIX,SOCK_STREAM,0,sockets))error=errno;
@@ -1960,7 +2037,7 @@ static void br_attempt_discard(char *directory,char *address) {
    owner refuses a second native child for an attempt that already launched. */
 static int br_instance_admit(BatonProcessCall *call) {
   char *directory=NULL,*address=NULL;
-  int error=br_attempt_prepare(call,&directory,&address);
+  int error=br_attempt_prepare(call,&directory,&address,1);
   if(!error) {
     BrInstanceFrame reply;
     error=br_instance_request(call->database,
@@ -2121,7 +2198,7 @@ static void baton_process_call(IoWork *w) {
     baton_retained_begin_call(call);return;
   }
   if(child->retained) { baton_retained_call(call);return; }
-  if(call->kind==BP_RELEASE || call->kind==BP_ACK) { call->error=EINVAL;return; }
+  if(call->kind==BP_RELEASE || call->kind==BP_ACK || call->kind==BP_INSTANCE_COMMIT) { call->error=EINVAL;return; }
   if(call->kind==BP_INPUT_CLOSED) {call->signal=(u32)(child->input<0 || child->reaped);return;}
   if(call->kind==BP_WRITE) {
     size_t offset=0;
@@ -2343,6 +2420,9 @@ BP_EFFECT(baton_instance_shutdown,CID_INSTANCE_SHUTDOWN,BP_INSTANCE_SHUTDOWN)
 #endif
 #ifdef CID_INSTANCE_RETIRE
 BP_EFFECT(baton_instance_retire,CID_INSTANCE_RETIRE,BP_INSTANCE_RETIRE)
+#endif
+#ifdef CID_INSTANCE_COMMIT
+BP_EFFECT(baton_instance_commit,CID_INSTANCE_COMMIT,BP_INSTANCE_COMMIT)
 #endif
 
 #undef BP_EFFECT
