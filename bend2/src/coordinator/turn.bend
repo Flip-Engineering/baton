@@ -192,9 +192,15 @@ def omp_content_sql(+message: String) -> String:
 
 # Normalize extraction input for agent_end while retaining all source frames in
 # the native log. JSON object messages and content blocks retain source order.
+def omp_terminal_objects_sql(+event: String) -> String:
+  "(SELECT count(*) FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object')"
+
+def omp_terminal_kept_sql(+event: String) -> String:
+  "coalesce((SELECT json_group_array(json(message.value)) FROM (SELECT " ++ omp_content_sql("m.value") ++ " AS value,m.key AS key FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object' ORDER BY m.key) message),'[]')"
+
 def omp_terminal_messages_sql(+event: String, +message: String) -> String:
-  +objects = "(SELECT count(*) FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object')"
-  +kept = "coalesce((SELECT json_group_array(json(message.value)) FROM (SELECT " ++ omp_content_sql("m.value") ++ " AS value,m.key AS key FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object' ORDER BY m.key) message),'[]')"
+  +objects = omp_terminal_objects_sql(event)
+  +kept = omp_terminal_kept_sql(event)
   "CASE WHEN " ++ objects ++ "=0 AND json_valid(" ++ C.q(message) ++ ") THEN json_array(json(" ++ C.q(message) ++ ")) ELSE " ++ kept ++ " END"
 
 # OMP may return valid terminal envelopes whose messages array contains a

@@ -14,7 +14,7 @@ law muse_terminal_requires_the_admitted_command:
 law omp_terminal_normalizes_message_and_content_members:
   for +event: String
   for +message: String
-  {Turn.omp_terminal_messages_sql(event,message) == "CASE WHEN (SELECT count(*) FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object')=0 AND json_valid(" ++ C.q(message) ++ ") THEN json_array(json(" ++ C.q(message) ++ ")) ELSE coalesce((SELECT json_group_array(json(message.value)) FROM (SELECT " ++ Turn.omp_content_sql("m.value") ++ " AS value,m.key AS key FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object' ORDER BY m.key) message),'[]') END" : String}
+  {Turn.omp_terminal_messages_sql(event,message) == "CASE WHEN " ++ Turn.omp_terminal_objects_sql(event) ++ "=0 AND json_valid(" ++ C.q(message) ++ ") THEN json_array(json(" ++ C.q(message) ++ ")) ELSE " ++ Turn.omp_terminal_kept_sql(event) ++ " END" : String}
 
 law omp_terminal_assistant_content_contains_only_object_blocks:
   for +message: String
