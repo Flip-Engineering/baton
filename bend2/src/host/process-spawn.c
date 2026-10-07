@@ -20,8 +20,8 @@ typedef struct {
   size_t length;
   u32 handle, signal, index;
   int kind, error, eof, unstarted, fresh;
-  char *directory, *initial, *recovery, *detail, *database;
-  size_t initial_length, recovery_length;
+  char *directory, *initial, *recovery, *detail, *database, *artifact_name, *artifact;
+  size_t initial_length, recovery_length, artifact_name_length, artifact_length;
   u32 keep_stdin, lock;
 } BatonProcessCall;
 
@@ -42,7 +42,7 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_WAIT, BP_SIGNAL, BP_PID,
        BP_INSTANCE_OWNER, BP_INSTANCE_ADMIT, BP_INSTANCE_ATTACH,
        BP_INSTANCE_ATTACH_OWNED, BP_INSTANCE_SHUTDOWN, BP_INSTANCE_RETIRE,
        BP_INSTANCE_COMMIT, BP_INSTANCE_RESTORE, BP_INSTANCE_REPLAY,
-       BP_INSTANCE_JOB };
+       BP_INSTANCE_JOB, BP_RETAIN_WITH_FILE, BP_INSTANCE_ADMIT_WITH_FILE };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -164,9 +164,12 @@ enum { BR_HELLO=1, BR_CHANGE, BR_EXIT, BR_REPLY, BR_WRITE, BR_CLOSE,
 typedef struct { uint32_t op; int32_t error; uint64_t serial,length; int64_t value; } BrFrame;
 typedef struct { int32_t pid,exited,status,released,input_closed; } BrState;
 typedef struct {
-  char magic[8]; uint64_t lengths[6]; uint32_t keep_stdin,reserved;
+  char magic[8]; uint64_t lengths[8]; uint32_t keep_stdin,reserved;
 } BrManifestHeader;
-typedef struct { BrManifestHeader header; char *field[6]; } BrManifest;
+/* `count` is the manifest version's field count: 6 for BATONRP1, 8 for BATONRP2,
+   whose two further fields carry the prepared artifact's name and the digest of
+   its bytes. */
+typedef struct { BrManifestHeader header; char *field[8]; int count; } BrManifest;
 typedef struct BrBuffer {
   struct BrBuffer *next; char *data; size_t length,offset;
   uint64_t serial,generation; int close_input,change,rights;
@@ -321,32 +324,45 @@ static void br_note(BrKeeper *keeper,const char *name,int error) {
   br_file(keeper->directory,name,text,(size_t)n,0);
 }
 static void br_manifest_free(BrManifest *manifest) {
-  for(int i=0;i<6;i++) free(manifest->field[i]);
+  for(int i=0;i<8;i++) free(manifest->field[i]);
 }
 static int br_manifest_read(const char *directory,BrManifest *manifest) {
   char *path=br_path(directory,"manifest");
   if(!path) return ENOMEM;
   int fd=open(path,O_RDONLY|O_CLOEXEC);free(path);
   if(fd<0) return errno;
-  int error=br_read_all(fd,&manifest->header,sizeof(manifest->header));
-  if(!error && memcmp(manifest->header.magic,"BATONRP1",8)) error=EINVAL;
-  struct stat status;
-  uint64_t total=sizeof(manifest->header);
-  for(int i=0;i<6 && !error;i++) {
+  int error=br_read_all(fd,manifest->header.magic,8);
+  int count=0;
+  if(!error) {
+    if(!memcmp(manifest->header.magic,"BATONRP1",8)) count=6;
+    else if(!memcmp(manifest->header.magic,"BATONRP2",8)) count=8;
+    else error=EINVAL;
+  }
+  uint64_t total=8+8*(uint64_t)count+8;
+  for(int i=0;i<count && !error;i++) {
+    error=br_read_all(fd,&manifest->header.lengths[i],sizeof(uint64_t));
+    if(error) break;
+    if(manifest->header.lengths[i]>SIZE_MAX-1 ||
+       total>UINT64_MAX-manifest->header.lengths[i]) {error=EOVERFLOW;break;}
+    total+=manifest->header.lengths[i];
+  }
+  if(!error) error=br_read_all(fd,&manifest->header.keep_stdin,sizeof(uint32_t));
+  if(!error) error=br_read_all(fd,&manifest->header.reserved,sizeof(uint32_t));
+  for(int i=0;i<count && !error;i++) {
     uint64_t length=manifest->header.lengths[i];
-    if(length>SIZE_MAX-1 || total>UINT64_MAX-length) {error=EOVERFLOW;break;}
-    total+=length;
     manifest->field[i]=calloc((size_t)length+1,1);
     if(!manifest->field[i]) {error=ENOMEM;break;}
     error=br_read_all(fd,manifest->field[i],(size_t)length);
   }
+  manifest->count=count;
+  struct stat status;
   if(!error && (fstat(fd,&status) || (uint64_t)status.st_size!=total)) error=EINVAL;
   close(fd);
   if(!error) {
-    for(int i=0;i<6;i++) {
+    for(int i=0;i<count;i++) {
       size_t n=(size_t)manifest->header.lengths[i];
       if(i==0 || i==4) {if(!n || manifest->field[i][n-1] || !manifest->field[i][0]) error=EINVAL;}
-      else if(i!=3 && strlen(manifest->field[i])!=n) error=EINVAL;
+      else if(i!=3 && i!=7 && strlen(manifest->field[i])!=n) error=EINVAL;
     }
   }
   return error;
@@ -1116,7 +1132,20 @@ static void br_keeper_stop(BrKeeper *keeper) {
 static int br_keeper_start(BrKeeper *keeper,const char *directory,int lock) {
   int error=br_manifest_read(directory,&keeper->manifest);
   if(error)return error;
-  keeper->identity=br_manifest_digest(&keeper->manifest.header,keeper->manifest.field);
+  if(keeper->manifest.count==8) {
+    /* A prepared artifact is verified against its manifest before any child
+       starts, so the file cannot be swapped between preparation and launch. */
+    const char *name=keeper->manifest.field[6];
+    size_t name_length=(size_t)keeper->manifest.header.lengths[6];
+    uint64_t recorded=0,held=0;
+    if(keeper->manifest.header.lengths[7]!=sizeof(uint64_t))error=EINVAL;
+    else memcpy(&recorded,keeper->manifest.field[7],sizeof(uint64_t));
+    if(!error)error=br_artifact_name_ok(name,name_length);
+    if(!error)error=br_artifact_digest(directory,name,name_length,&held);
+    if(!error && held!=recorded)error=EINVAL;
+    if(error)return error;
+  }
+  keeper->identity=br_manifest_digest(&keeper->manifest.header,keeper->manifest.field,keeper->manifest.count);
   if(lock>=0)fcntl(lock,F_SETFD,FD_CLOEXEC);
   if((error=br_file(directory,"launch","launch\n",7,1)))return error;
   struct sockaddr_un address;
@@ -1498,9 +1527,9 @@ static uint64_t br_digest_mix(uint64_t digest,const void *data,size_t length) {
   for(size_t i=0;i<length;i++) {digest^=bytes[i];digest*=0x100000001b3ULL;}
   return digest;
 }
-static uint64_t br_manifest_digest(const BrManifestHeader *header,char *const *fields) {
+static uint64_t br_manifest_digest(const BrManifestHeader *header,char *const *fields,int count) {
   uint64_t digest=0xcbf29ce484222325ULL;
-  for(int i=0;i<6;i++) {
+  for(int i=0;i<count;i++) {
     if(i==5)continue;
     uint64_t length=header->lengths[i];
     digest=br_digest_mix(digest,&length,sizeof(length));
@@ -1512,7 +1541,7 @@ static uint64_t br_manifest_digest(const BrManifestHeader *header,char *const *f
 static int br_manifest_digest_file(const char *directory,uint64_t *digest) {
   BrManifest manifest={0};
   int error=br_manifest_read(directory,&manifest);
-  if(!error)*digest=br_manifest_digest(&manifest.header,manifest.field);
+  if(!error)*digest=br_manifest_digest(&manifest.header,manifest.field,manifest.count);
   br_manifest_free(&manifest);
   return error;
 }
@@ -1957,11 +1986,65 @@ done:
   return 0;
 }
 /* Writes the attempt manifest that custody and recovery both read. */
-static int br_manifest_store(const char *directory,const char *manifest_path,BrManifestHeader *header,char **fields,size_t *lengths) {
+/* A prepared artifact name is one safe path component: non-empty, no separator,
+   no traversal, bounded length. */
+static int br_artifact_name_ok(const char *name,size_t length) {
+  if(!name || !length || length>255)return EINVAL;
+  if(name[0]=='.' && (!name[1] || (name[1]=='.' && !name[2])))return EINVAL;
+  if(strchr(name,'/') || strchr(name,'\\'))return EINVAL;
+  if(strlen(name)!=length)return EINVAL;
+  return 0;
+}
+static uint64_t br_digest_bytes(const char *bytes,size_t length) {
+  uint64_t digest=0xcbf29ce484222325ULL;
+  for(size_t i=0;i<length;i++) {digest^=(unsigned char)bytes[i];digest*=0x100000001b3ULL;}
+  return digest;
+}
+/* Writes the prepared artifact into private attempt custody: exclusive creation,
+   no symlink following, read-only mode, the file flushed and its directory
+   flushed, all before any child is spawned. */
+static int br_artifact_write(const char *directory,const char *name,const char *bytes,size_t length) {
+  if(br_artifact_name_ok(name,strlen(name)))return EINVAL;
+  char *path=br_path(directory,name);
+  if(!path)return ENOMEM;
+  int fd=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0400);
+  int error=fd<0?errno:0;
+  if(!error) {
+    error=br_write_all(fd,bytes,length);
+    if(!error && fsync(fd))error=errno;
+    close(fd);
+    if(error)unlink(path);
+  }
+  if(!error) {
+    int dirfd=open(directory,O_RDONLY|O_CLOEXEC);
+    if(dirfd>=0){if(fsync(dirfd))error=errno;close(dirfd);}
+  }
+  free(path);
+  return error;
+}
+static int br_artifact_digest(const char *directory,const char *name,size_t name_length,uint64_t *digest) {
+  if(br_artifact_name_ok(name,name_length))return EINVAL;
+  char *path=br_path(directory,name);
+  if(!path)return ENOMEM;
+  int fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
+  if(fd<0){int error=errno;free(path);return error;}
+  uint64_t value=0xcbf29ce484222325ULL;
+  char buffer[8192];ssize_t n;int error=0;
+  while((n=read(fd,buffer,sizeof(buffer)))>0)
+    for(ssize_t i=0;i<n;i++) {value^=(unsigned char)buffer[i];value*=0x100000001b3ULL;}
+  if(n<0)error=errno;
+  close(fd);free(path);
+  if(!error)*digest=value;
+  return error;
+}
+static int br_manifest_store(const char *directory,const char *manifest_path,BrManifestHeader *header,char **fields,size_t *lengths,int count) {
   int fd=open(manifest_path,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0600),error=0;
   if(fd<0)return errno;
-  error=br_write_all(fd,header,sizeof(*header));
-  for(int i=0;i<6 && !error;i++)error=br_write_all(fd,fields[i],lengths[i]);
+  error=br_write_all(fd,header->magic,8);
+  for(int i=0;i<count && !error;i++)error=br_write_all(fd,&header->lengths[i],sizeof(uint64_t));
+  if(!error)error=br_write_all(fd,&header->keep_stdin,sizeof(uint32_t));
+  if(!error)error=br_write_all(fd,&header->reserved,sizeof(uint32_t));
+  for(int i=0;i<count && !error;i++)error=br_write_all(fd,fields[i],lengths[i]);
   if(!error && fsync(fd))error=errno;
   if(!error && fchmod(fd,0400))error=errno;
   close(fd);
@@ -1982,13 +2065,32 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
        admission is idempotent; a different identity is conflicting reuse. */
     char *existing=realpath(call->directory,NULL);
     if(!existing)return errno;
-    BrManifestHeader header={.magic={'B','A','T','O','N','R','P','1'},.keep_stdin=call->keep_stdin};
-    char *fields[6]={call->args,call->cwd,call->log,call->initial,call->recovery,NULL};
-    size_t lengths[6]={call->length,strlen(call->cwd),strlen(call->log),call->initial_length,call->recovery_length,0};
-    for(int i=0;i<6;i++)header.lengths[i]=lengths[i];
-    uint64_t requested=br_manifest_digest(&header,fields);
+    BrManifestHeader header={.keep_stdin=call->keep_stdin};
+    char *fields[8]={call->args,call->cwd,call->log,call->initial,call->recovery,NULL,NULL,NULL};
+    size_t lengths[8]={call->length,strlen(call->cwd),strlen(call->log),call->initial_length,call->recovery_length,0,0,0};
+    int count=6;
+    char digest_text[sizeof(uint64_t)]={0};
+    if(call->artifact_name) {
+      error=br_artifact_name_ok(call->artifact_name,call->artifact_name_length);
+      if(!error) {
+        uint64_t requested_digest=br_digest_bytes(call->artifact,call->artifact_length);
+        uint64_t held_digest=0;
+        /* The artifact already in custody must be exactly the requested bytes,
+           or this is conflicting reuse of the same attempt. */
+        error=br_artifact_digest(existing,call->artifact_name,call->artifact_name_length,&held_digest);
+        if(!error && held_digest!=requested_digest)error=EEXIST;
+        if(!error) {
+          memcpy(digest_text,&requested_digest,sizeof(uint64_t));
+          count=8;memcpy(header.magic,"BATONRP2",8);
+          fields[6]=(char *)call->artifact_name;lengths[6]=call->artifact_name_length;
+          fields[7]=digest_text;lengths[7]=sizeof(uint64_t);
+        }
+      }
+    } else memcpy(header.magic,"BATONRP1",8);
+    for(int i=0;i<count;i++)header.lengths[i]=lengths[i];
+    uint64_t requested=error?0:br_manifest_digest(&header,fields,count);
     uint64_t found=0;
-    error=br_manifest_digest_file(existing,&found);
+    if(!error)error=br_manifest_digest_file(existing,&found);
     if(!error && found!=requested)error=EEXIST;
     BrManifest manifest={0};
     if(!error)error=br_manifest_read(existing,&manifest);
@@ -2012,11 +2114,27 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
   char *address=br_path(temporary,"control"),*manifest_path=br_path(directory,"manifest");
   int error=!address || !manifest_path?ENOMEM:0;
   if(!error) {
-    BrManifestHeader header={.magic={'B','A','T','O','N','R','P','1'},.keep_stdin=call->keep_stdin};
-    char *fields[6]={call->args,call->cwd,call->log,call->initial,call->recovery,address};
-    size_t lengths[6]={call->length,strlen(call->cwd),strlen(call->log),call->initial_length,call->recovery_length,strlen(address)};
-    for(int i=0;i<6;i++)header.lengths[i]=lengths[i];
-    error=br_manifest_store(directory,manifest_path,&header,fields,lengths);
+    BrManifestHeader header={.keep_stdin=call->keep_stdin};
+    char *fields[8]={call->args,call->cwd,call->log,call->initial,call->recovery,address,NULL,NULL};
+    size_t lengths[8]={call->length,strlen(call->cwd),strlen(call->log),call->initial_length,call->recovery_length,strlen(address),0,0};
+    int count=6;
+    char digest_text[sizeof(uint64_t)]={0};
+    if(call->artifact_name) {
+      error=br_artifact_name_ok(call->artifact_name,call->artifact_name_length);
+      /* The prepared artifact is written, flushed and made read-only inside
+         private attempt custody before anything is spawned, and its bytes are
+         bound into the admission identity below. */
+      if(!error)error=br_artifact_write(directory,call->artifact_name,call->artifact,call->artifact_length);
+      if(!error) {
+        uint64_t digest=br_digest_bytes(call->artifact,call->artifact_length);
+        memcpy(digest_text,&digest,sizeof(uint64_t));
+        count=8;memcpy(header.magic,"BATONRP2",8);
+        fields[6]=(char *)call->artifact_name;lengths[6]=call->artifact_name_length;
+        fields[7]=digest_text;lengths[7]=sizeof(uint64_t);
+      }
+    } else memcpy(header.magic,"BATONRP1",8);
+    for(int i=0;i<count;i++)header.lengths[i]=lengths[i];
+    if(!error)error=br_manifest_store(directory,manifest_path,&header,fields,lengths,count);
   }
   free(manifest_path);
   if(error){free(address);free(directory);return error;}
@@ -2463,8 +2581,10 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
   if(call->kind==BP_RECOVERY)call->error=br_recovery(call);
   else if(call->kind==BP_KEEPER) call->error=br_keeper(call->directory,(int)call->lock);
   else if(call->kind==BP_RETAIN) call->error=br_retain(call);
+  else if(call->kind==BP_RETAIN_WITH_FILE) call->error=br_retain(call);
   else if(call->kind==BP_INSTANCE_OWNER) call->error=br_owner_serve(call->database);
   else if(call->kind==BP_INSTANCE_ADMIT) call->error=br_instance_admit(call);
+  else if(call->kind==BP_INSTANCE_ADMIT_WITH_FILE) call->error=br_instance_admit(call);
   else if(call->kind==BP_INSTANCE_ATTACH) call->error=br_instance_attach(call);
   else if(call->kind==BP_INSTANCE_ATTACH_OWNED) call->error=br_instance_attach_owned(call);
   else if(call->kind==BP_INSTANCE_SHUTDOWN) call->error=br_instance_shutdown(call);
@@ -2523,7 +2643,8 @@ static void baton_process_call(IoWork *w) {
   if(call->kind==BP_SPAWN) { baton_child_spawn(call);return; }
   if(call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED || call->kind==BP_RECOVERY || call->kind==BP_KEEPER || call->kind==BP_CONTROL_WRITE || call->kind==BP_CONTROL_SIGNAL ||
      call->kind==BP_INSTANCE_OWNER || call->kind==BP_INSTANCE_ADMIT || call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED ||
-     call->kind==BP_INSTANCE_SHUTDOWN || call->kind==BP_INSTANCE_RETIRE) {
+     call->kind==BP_INSTANCE_SHUTDOWN || call->kind==BP_INSTANCE_RETIRE ||
+     call->kind==BP_RETAIN_WITH_FILE || call->kind==BP_INSTANCE_ADMIT_WITH_FILE) {
     baton_retained_begin_call(call);return;
   }
   if(child->retained) { baton_retained_call(call);return; }
@@ -2591,6 +2712,20 @@ static Term baton_process_pack(Env e, IoWork *w) {
       : io_box(e,CID_SOME,io_str(e,call->text,call->length));
 #endif
   }
+#ifdef CID_PROCESSCHILD_RETAIN_WITH_FILE
+  if(call->kind==BP_RETAIN_WITH_FILE && (!call->error || call->unstarted)) {
+    const char *error=call->detail?call->detail:strerror(call->error);
+    value=io_tup(e,call->unstarted?term_pak(CID_NONE,0):io_box(e,CID_SOME,(Term)call->handle),
+      io_str(e,call->unstarted?error:"",call->unstarted?strlen(error):0));
+  }
+#endif
+#ifdef CID_INSTANCE_ADMIT_WITH_FILE
+  if(call->kind==BP_INSTANCE_ADMIT_WITH_FILE && (!call->error || call->unstarted)) {
+    const char *error=call->detail?call->detail:strerror(call->error);
+    value=io_tup(e,call->unstarted?term_pak(CID_NONE,0):io_box(e,CID_SOME,(Term)call->handle),
+      io_str(e,call->unstarted?error:"",call->unstarted?strlen(error):0));
+  }
+#endif
 #ifdef CID_PROCESSCHILD_RETAIN_START
   if(call->kind==BP_RETAIN && (!call->error || call->unstarted)) {
     const char *error=call->detail?call->detail:strerror(call->error);
@@ -2607,11 +2742,13 @@ static Term baton_process_pack(Env e, IoWork *w) {
 #endif
   Term result=call->error && !call->unstarted ? io_fail(e,call->error,call->detail) : io_done(e,value);
   if((call->kind==BP_SPAWN || call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
-      call->kind==BP_INSTANCE_ADMIT || call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED) && call->error) {
+      call->kind==BP_INSTANCE_ADMIT || call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED ||
+      call->kind==BP_RETAIN_WITH_FILE || call->kind==BP_INSTANCE_ADMIT_WITH_FILE) && call->error) {
     baton_children[call->index]=NULL;free(call->child);call->child=NULL;
   }
   free(call->args);free(call->cwd);free(call->log);free(call->text);
-  free(call->directory);free(call->initial);free(call->recovery);free(call->detail);free(call->database);free(call);
+  free(call->directory);free(call->initial);free(call->recovery);free(call->detail);free(call->database);
+  free(call->artifact_name);free(call->artifact);free(call);
   w->data=NULL;
   return result;
 }
@@ -2620,13 +2757,28 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
   BatonProcessCall *call=calloc(1,sizeof(*call));
   if(!call) return io_fail(e,ENOMEM,NULL);
   int acquire=kind==BP_SPAWN || kind==BP_RETAIN || kind==BP_ATTACH || kind==BP_ATTACH_OWNED ||
-              kind==BP_INSTANCE_ADMIT || kind==BP_INSTANCE_ATTACH || kind==BP_INSTANCE_ATTACH_OWNED;
+              kind==BP_INSTANCE_ADMIT || kind==BP_INSTANCE_ATTACH || kind==BP_INSTANCE_ATTACH_OWNED ||
+              kind==BP_RETAIN_WITH_FILE || kind==BP_INSTANCE_ADMIT_WITH_FILE;
   call->kind=kind;
   if(acquire) {
     int error=baton_child_allocate(call);
     if(error) {free(call);return io_fail(e,(u32)error,NULL);}
   }
-  if(kind==BP_SPAWN || kind==BP_RETAIN || kind==BP_INSTANCE_ADMIT) {
+  if(kind==BP_RETAIN_WITH_FILE || kind==BP_INSTANCE_ADMIT_WITH_FILE) {
+    int base=kind==BP_RETAIN_WITH_FILE?0:1;
+    u64 length=0,cwd_length=0,log_length=0;
+    if(base)call->database=io_cstr(e,f[0],&length);
+    call->directory=io_cstr(e,f[base],&length);
+    call->args=io_cstr(e,f[base+1],&length);call->length=length;
+    call->cwd=io_cstr(e,f[base+2],&cwd_length);
+    call->log=io_cstr(e,f[base+3],&log_length);
+    call->artifact_name=io_cstr(e,f[base+4],&length);call->artifact_name_length=length;
+    call->artifact=io_cstr(e,f[base+5],&length);call->artifact_length=length;
+    call->initial=io_cstr(e,f[base+6],&length);call->initial_length=length;
+    call->keep_stdin=(u32)f[base+7];call->lock=(u32)f[base+8];
+    call->recovery=io_cstr(e,f[base+9],&length);call->recovery_length=length;
+    if(strlen(call->cwd)!=cwd_length || strlen(call->log)!=log_length) call->error=EINVAL;
+  } else if(kind==BP_SPAWN || kind==BP_RETAIN || kind==BP_INSTANCE_ADMIT) {
     int offset=kind==BP_SPAWN?0:(kind==BP_RETAIN?1:2);
     u64 length=0,cwd_length=0,log_length=0;
     if(kind==BP_INSTANCE_ADMIT)call->database=io_cstr(e,f[0],&length);
@@ -2769,6 +2921,12 @@ BP_EFFECT(baton_instance_replay,CID_INSTANCE_REPLAY,BP_INSTANCE_REPLAY)
 #endif
 #ifdef CID_INSTANCE_JOB
 BP_EFFECT(baton_instance_job,CID_INSTANCE_JOB,BP_INSTANCE_JOB)
+#endif
+#ifdef CID_PROCESSCHILD_RETAIN_WITH_FILE
+BP_EFFECT(baton_process_retain_with_file,CID_PROCESSCHILD_RETAIN_WITH_FILE,BP_RETAIN_WITH_FILE)
+#endif
+#ifdef CID_INSTANCE_ADMIT_WITH_FILE
+BP_EFFECT(baton_instance_admit_with_file,CID_INSTANCE_ADMIT_WITH_FILE,BP_INSTANCE_ADMIT_WITH_FILE)
 #endif
 
 #undef BP_EFFECT
