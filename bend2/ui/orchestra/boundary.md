@@ -25,7 +25,13 @@ The command-line event route returns
 `native-owner-subscription-unavailable` until startup supplies the canonical
 shared-owner client through this option. Snapshot requests remain available.
 
+The CLI accepts `--reader` and `--subject`; the reader remains bound for the
+server lifetime and the selected subject is checked against that reader for each
+request. On startup, stdout receives the listening JSON record followed by the
+actual loopback URL. Stdin EOF closes the listener and its active streams.
+
 Recorded execution phase, configured model, and observed model remain separate
 fields. Actual process state is `unknown` unless a native observation establishes
 it. Receiver and reference values are null when the database has no recorded
-value. Provider limits appear when authoritative provider data supplies them.
+value. Provider state remains unknown unless authoritative session-associated
+data is recorded.

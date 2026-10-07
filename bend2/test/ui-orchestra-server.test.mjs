@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { createOrchestraServer } from '../ui/orchestra/server.mjs';
 
@@ -81,7 +83,8 @@ function fixture() {
     INSERT INTO session_roles VALUES ('root','conductor'),('child','conductor'),('grandchild','player'),('sibling','player');
     INSERT INTO executions VALUES ('child','attempt-1','direct','running','');
     INSERT INTO messages(id,sender,recipient,kind,body) VALUES
-      ('pending-1','root','child','task','pending input body');
+      ('pending-1','root','child','task','pending input body'),
+      ('report-1','grandchild','child','report','retained completion report');
     INSERT INTO ensembles VALUES ('shared-ensemble','external','tight');
     INSERT INTO ensemble_members VALUES ('shared-ensemble','child'),('shared-ensemble','external');
     INSERT INTO sections VALUES ('shared-ensemble','shared-section','fixture capability');
@@ -159,7 +162,8 @@ test('snapshot binds a selected subtree to the reader and preserves recorded unk
   assert.equal(snapshot.players[0].actualProcess, 'unknown');
   assert.equal(snapshot.players[0].liveReceiver, null);
   assert.equal(snapshot.players[0].endpointRegistered, true);
-  assert.equal(snapshot.players[0].pendingCount, 1);
+  assert.equal(snapshot.players[0].pendingCount, 2);
+  assert.equal(snapshot.players[0].unacknowledgedCount, 2);
   assert.deepEqual(snapshot.ensembles[0].members, ['child']);
   assert.equal(snapshot.ensembles[0].owner, null);
   assert.deepEqual(snapshot.ensembles[0].sections[0].members, ['child']);
@@ -176,6 +180,38 @@ test('event endpoint stays unavailable when the canonical owner has no subscript
   const response = await fetch(`${base}/orchestra/events?subject=root&since=0`);
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), { error: 'native-owner-subscription-unavailable' });
+});
+
+test('CLI reports its actual URL and exits cleanly when stdin reaches EOF', async (t) => {
+  const f = fixture();
+  const entry = fileURLToPath(new URL('../ui/orchestra/server.mjs', import.meta.url));
+  const child = spawn(process.execPath, [entry, '--database', f.databasePath,
+    '--reader', 'root', '--subject', 'child', '--port', '0'],
+  { stdio: ['pipe', 'pipe', 'pipe'] });
+  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  const errors = [];
+  child.stderr.on('data', (chunk) => errors.push(String(chunk)));
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+    if (child.exitCode === null && child.signalCode === null) {
+      await new Promise((resolve) => child.once('close', resolve));
+    }
+    rmSync(f.directory, { recursive: true, force: true });
+  });
+
+  const machine = await lines.next();
+  assert.equal(machine.done, false, errors.join(''));
+  const binding = JSON.parse(machine.value);
+  const reportedUrl = await lines.next();
+  assert.equal(reportedUrl.done, false, errors.join(''));
+  assert.equal(reportedUrl.value, `http://127.0.0.1:${binding.port}/`);
+  const page = await fetch(reportedUrl.value, { redirect: 'manual' });
+  assert.equal(page.status, 302);
+  assert.match(page.headers.get('location'), /subject=child/);
+
+  child.stdin.end();
+  const exit = await new Promise((resolve) => child.once('close', (code) => resolve(code)));
+  assert.equal(exit, 0, errors.join(''));
 });
 
 test('scoped readers receive updates to outside-owned ensembles they can see through membership', async (t) => {
