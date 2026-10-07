@@ -5,8 +5,8 @@ Builds bend2/tests/context-lifecycle.bend with the pinned Bend 2.0.25 compiler,
 creates a throwaway coordination database, its copy and a private log directory,
 runs the fixture and asserts every observation it prints. With
 CONTEXT_LIFECYCLE_MUTATIONS=1 it additionally removes one law's proof and applies
-seven implementation mutations, requiring each compile to fail and to name the law
-the change breaks.
+seven implementation mutations. Proof removal must produce the compiler
+missing-proof diagnostic; each implementation mutation must fail at its recorded law.
 
 The fixture writes no production state: every path it touches lives under
 .scratch/context-lifecycle/.
