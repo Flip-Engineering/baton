@@ -33,10 +33,13 @@ type PolicySelectionIdentity is Data:
 def member(+object: J.Json, +key: String) -> J.Json:
   match object:
     case J.Jobj{+members}:
-      match Req.member_lookup(key, members):
-        case None{}: J.Jnil{}
-        case Some{+value}: value
+      member_result(Req.member_lookup(key, members))
     case other: J.Jnil{}
+
+def member_result(found: Maybe<&2, J.Json>) -> J.Json:
+  match found:
+    case None{}: J.Jnil{}
+    case Some{+value}: value
 
 def members(+object: J.Json) -> J.Json:
   match object:

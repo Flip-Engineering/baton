@@ -125,9 +125,9 @@ law wire_plan_value_renders_the_captures_and_availability:
   {Wire.plan_value_json(fx_plan()) == J.Jobj{Wire.wire_obj("primary", Wire.bind_json(fx_bind()), Wire.wire_obj("common", J.Jstr{"sourceAnalysis"}, Wire.wire_obj("steps", Wire.steps_json(Sel.StepsCons{fx_step(), Sel.StepsNil{}}), Wire.wire_obj("effectiveEffects", Wire.ss_json(Eng.ss_one("executeTarget")), Wire.wire_obj("projectPolicy", Wire.project_policy_json(fx_policy_identity()), Wire.wire_obj("inputs", Wire.captures_json(Sel.CapNil{}), Wire.wire_obj("available", J.Jtrue{}, J.Jnil{})))))))} : J.Json}
 
 law wire_plan_identity_changes_when_project_policy_changes:
-  {Bool.not(Wire.plan_identity(fx_plan()) == Wire.plan_identity(Sel.Plan{fx_bind(), "sourceAnalysis",
+  {Bool.not(String.eq(Wire.plan_identity(fx_plan()), Wire.plan_identity(Sel.Plan{fx_bind(), "sourceAnalysis",
     Sel.StepsCons{fx_step(), Sel.StepsNil{}}, Eng.ss_one("executeTarget"), Sel.CapNil{}, True{},
-    fx_policy_read_identity()})) : Bool}
+    fx_policy_read_identity()}))) : Bool}
 
 def wire_plan_identity_changes_when_project_policy_changes():
   {==}

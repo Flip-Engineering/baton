@@ -277,7 +277,7 @@ law context_snapshot_project_policy_identity_binds_present_bytes:
   {Bool.not(String.eq(Snap.identity_text("bend2", "1", [], Snap.fps_of_list([
     Snap.FpProjectPolicy{"q1", "/work", "/work/.baton/context.json", "aa"}])),
    Snap.identity_text("bend2", "1", [], Snap.fps_of_list([
-    Snap.FpProjectPolicy{"q1", "/work", "/work/.baton/context.json", "bb"}])))) : Bool}
+    Snap.FpProjectPolicy{"q1", "/work", "/work/.baton/context.json", "bb"}])))) == True{} : Bool}
 
 def context_snapshot_project_policy_identity_binds_present_bytes():
   {==}
@@ -286,7 +286,7 @@ law context_snapshot_project_policy_identity_binds_owner_and_worktree:
   {Bool.not(String.eq(Snap.identity_text("bend2", "1", [], Snap.fps_of_list([
     Snap.FpProjectPolicy{"q1", "/work", "/work/.baton/context.json", "aa"}])),
    Snap.identity_text("bend2", "1", [], Snap.fps_of_list([
-    Snap.FpProjectPolicy{"q2", "/work", "/work/.baton/context.json", "aa"}])))) : Bool}
+    Snap.FpProjectPolicy{"q2", "/work", "/work/.baton/context.json", "aa"}])))) == True{} : Bool}
 
 def context_snapshot_project_policy_identity_binds_owner_and_worktree():
   {==}
