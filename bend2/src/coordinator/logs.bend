@@ -819,7 +819,7 @@ def attempt_cleanup_rows(+db: String, rows: List<String>, acc: String) -> IO(Str
       deeper : String <- attempt_cleanup_rows(db,tail,items_join(acc,item))
       IO.pure(String,deeper)
 
-def clean_attempts(db: String, session: String) -> IO(String):
+def clean_attempts(+db: String, session: String) -> IO(String):
   do IO<String>:
     rows : String <- IO.try(String,DB.Sql.query(db,attempt_rows_sql(db,session)))
     removed : String <- attempt_cleanup_rows(db,Tx.split_lines(rows),"")
