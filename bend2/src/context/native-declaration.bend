@@ -142,7 +142,7 @@ def operation_fields_valid(+items: J.Json) -> Bool:
       Bool.and(Bool.not(String.is_empty(text_field(head, "referenceSchema"))),
       Bool.and(Bool.not(String.is_empty(text_field(head, "resultSchema"))),
       Bool.and(Bool.not(String.is_empty(text_field(head, "eventSchema"))),
-        operation_fields_valid(tail))))))))))))
+        operation_fields_valid(tail)))))))))))))
     case J.Jnil{}: False{}
     case other: False{}
 
@@ -162,7 +162,7 @@ def declaration_fields_valid(+value: J.Json) -> Bool:
   Bool.and(is_array(member(value, "applicability")),
   Bool.and(Bool.not(String.is_empty(text_field(member(value, "entry"), "artifact"))),
   Bool.and(is_array(member(member(value, "entry"), "argv")),
-    string_array_valid(member(member(value, "entry"), "argv"))))))))))))))
+    string_array_valid(member(member(value, "entry"), "argv")))))))))))))))))
 
 def decode(+value: J.Json, +verified_digest: String) -> DeclarationDecode:
   Bool.pick(DeclarationDecode,
