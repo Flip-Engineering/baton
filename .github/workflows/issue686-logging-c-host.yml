@@ -20,7 +20,7 @@ jobs:
       - name: Check out immutable logging source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: bff54b4f316e466651883e7f3074c69fbd1ae48e
+          ref: 8ab99f2f57dc51fb4c260f2be154483d3cafb8e5
           path: candidate
       - name: Prepare evidence directory
         shell: bash
@@ -37,8 +37,8 @@ jobs:
           set -euo pipefail
           git -C candidate rev-parse HEAD | tee "$ISSUE686_RUN/evidence/source-commit.txt"
           git -C candidate rev-parse HEAD^{tree} | tee "$ISSUE686_RUN/evidence/source-tree.txt"
-          test "$(cat "$ISSUE686_RUN/evidence/source-commit.txt")" = bff54b4f316e466651883e7f3074c69fbd1ae48e
-          test "$(cat "$ISSUE686_RUN/evidence/source-tree.txt")" = 4b5158e45c2f1baf71292a4821a709c40bcc0261
+          test "$(cat "$ISSUE686_RUN/evidence/source-commit.txt")" = 8ab99f2f57dc51fb4c260f2be154483d3cafb8e5
+          test "$(cat "$ISSUE686_RUN/evidence/source-tree.txt")" = 41bb7c129a865677c4c18384fed7e1df4c6c2332
           git -C candidate status --short --branch > "$ISSUE686_RUN/evidence/source-status.txt"
           shasum -a 256 \
             candidate/bend2/src/host/process-spawn.c \
