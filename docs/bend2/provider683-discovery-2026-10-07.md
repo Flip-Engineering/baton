@@ -38,10 +38,17 @@ catalog listing, so its read is model-scoped and its `metadata.absent` names
 `catalog`. `claude-code` is recorded `refused`, which is an explicit observed
 state rather than an absent row.
 
-Reported identifiers are stored exactly as the provider stated them. A candidate
-matches only its own harness's reported identifier, by exact string equality, so a
-bare id is not matched against another provider's selector. `proposal.basis` names
-the admission (`listed-exact-selector` or `configured-registry-alias`).
+An identifier is stored as the provider stated it: a catalog read groups the
+identifiers the catalog states by the `provider` field that catalog carries, and a
+model-scoped read lists only the identifier that read echoed in its own output. The
+caller's MODEL is recorded beside it as `requestedModel`; where the output echoes no
+identifier, `provenance` is `caller-stated`, `models` is null, and `absent` names
+`model-identifier`, so a caller's string is never presented as provider output.
+`provenance` is `provider-catalog`, `provider-echoed` or `caller-stated`. A
+candidate matches only its own harness's reported identifier, by exact string
+equality, so a bare id is not matched against another provider's selector;
+`proposal.basis` names the admission (`listed-exact-selector` or
+`configured-registry-alias`).
 
 ## Storage
 
@@ -107,6 +114,27 @@ each with a mutation control in `bend2/scripts/laws-check.mjs`:
 - `m5_a_probe_leaves_the_inbox_in_sequence`
 - `m8_codex_query_reads_its_own_catalog`, `m8_codex_access_read_is_the_redacted_report`,
   `m8_omp_query_reads_its_own_catalog`, `m8_muse_query_reads_one_named_model`
+- `m8_a_model_scoped_read_lists_only_the_echoed_identifier` (finding F1)
+- `m12_a_continuation_refusal_names_a_harness` (finding F2)
+- `m8_a_catalog_metadata_groups_the_provider_scopes` (#694)
+
+## Provider scope and freshness (#694)
+
+A harness may serve several providers, and two routes can share a model name. The
+`models` document keeps them apart:
+
+- `providers[].metadata.providers` groups the reported identifiers by the
+  `provider` field the catalog itself states, as
+  `{"provider": <as reported>, "models": [...]}`. The omp catalog states
+  `deepseek`, `google-antigravity`, `kimi-code`, `opencode-go` and `zai`; the codex
+  catalog states none, so its single scope carries an empty provider.
+- `providers[].capacity.scope` names the harness whose observation the capacity row
+  came from, so `opencode-go/gpt-6-luna` under the omp scope is a different row from
+  `gpt-6-luna` under the codex scope and a reader does not assume they share limits.
+- `providers[].probe.at` and `providers[].probe.ageSeconds` date the observation;
+  `capacity.state` is `known` only for a component the provider stated, so a
+  successful read establishes observed usability at that time and never a remaining
+  amount.
 
 ## Unobserved
 

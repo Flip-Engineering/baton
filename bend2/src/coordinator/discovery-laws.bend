@@ -26,7 +26,7 @@ def m12b_served_follows_observation(registry, present):
 # carries a null model list, never an empty array, so discovery failure cannot read as
 # an empty catalog.
 law m12b_failed_discovery_is_not_an_empty_catalog:
-  {Probes.no_metadata() == "json_object('models',NULL,'absent',json('[]'))" : String}
+  {Probes.no_metadata() == "json_object('models',NULL,'provenance',NULL,'absent',json('[]'))" : String}
 
 def m12b_failed_discovery_is_not_an_empty_catalog():
   {==}
@@ -87,4 +87,34 @@ law m5_a_probe_leaves_the_inbox_in_sequence:
   {Probes.record_sql(harness, executable, outcome, cause, reported, metadata, capacity) == "BEGIN IMMEDIATE;" ++ C.schema() ++ Probes.probe_insert(harness, executable, outcome, cause, reported, metadata, capacity) ++ "COMMIT;" : String}
 
 def m5_a_probe_leaves_the_inbox_in_sequence(harness, executable, outcome, cause, reported, metadata, capacity):
+  {==}
+
+# M-8 (finding F1): a model-scoped read lists only the identifier its own output
+# echoed. The caller's string is recorded as the requested model, and an output
+# with no echoed identifier states a caller-stated provenance with no listing, so a
+# caller's name is never presented as provider output.
+law m8_a_model_scoped_read_lists_only_the_echoed_identifier:
+  for model: String
+  for +reported: String
+  {Probes.scoped_metadata(model, reported) == "json_object('models',CASE WHEN " ++ Probes.echoed_identifier(C.q(reported)) ++ " IS NULL THEN NULL ELSE json_array(" ++ Probes.echoed_identifier(C.q(reported)) ++ ") END,'requestedModel'," ++ C.q(model) ++ ",'provenance',CASE WHEN " ++ Probes.echoed_identifier(C.q(reported)) ++ " IS NULL THEN 'caller-stated' ELSE 'provider-echoed' END,'absent',json(CASE WHEN " ++ Probes.echoed_identifier(C.q(reported)) ++ " IS NULL THEN '[\"catalog\",\"model-identifier\"]' ELSE '[\"catalog\"]' END))" : String}
+
+def m8_a_model_scoped_read_lists_only_the_echoed_identifier(model, reported):
+  {==}
+
+# M-12 (finding F2): the refusal guidance names a harness. With no recorded route
+# it falls back to the seat's own recorded harness, so the entry is never null.
+law m12_a_continuation_refusal_names_a_harness:
+  {Continuation.first_harness() == "(SELECT coalesce((SELECT harness FROM candidates ORDER BY " ++ Continuation.order_expr() ++ " LIMIT 1),(SELECT harness FROM seat LIMIT 1)))" : String}
+
+def m12_a_continuation_refusal_names_a_harness():
+  {==}
+
+# M-8 (#694): a catalog read groups its identifiers by the provider field the
+# catalog itself states, so one provider's scope stays comparable with another's
+# and two routes that share a model name remain distinguishable.
+law m8_a_catalog_metadata_groups_the_provider_scopes:
+  for +reported: String
+  {Probes.catalog_providers(reported) == "(SELECT coalesce(json_group_array(json_object('provider',g.provider,'models',json(g.models))),json('[]')) FROM (SELECT coalesce(json_extract(v.value,'$.provider'),'') AS provider,json_group_array(coalesce(json_extract(v.value,'$.selector'),json_extract(v.value,'$.slug'),json_extract(v.value,'$.id'),json_quote(v.value))) AS models FROM json_each(json(" ++ C.q(reported) ++ "),'$.models') v GROUP BY coalesce(json_extract(v.value,'$.provider'),'') ORDER BY provider) g)" : String}
+
+def m8_a_catalog_metadata_groups_the_provider_scopes(reported):
   {==}

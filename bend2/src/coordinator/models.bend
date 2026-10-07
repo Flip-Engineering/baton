@@ -39,7 +39,7 @@ def executable_expr(+h: String) -> String:
   "coalesce((SELECT json_extract(s.endpoint,'$[0]') FROM sessions s WHERE s.harness=" ++ h ++ " AND s.endpoint<>'' AND json_valid(s.endpoint) AND json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ORDER BY s.rowid DESC LIMIT 1),'')"
 
 def provider_item() -> String:
-  "json_object('harness',h.harness,'executable'," ++ executable_expr("h.harness") ++ ",'seats',(SELECT count(*) FROM sessions s WHERE s.harness=h.harness),'metadata'," ++ Probes.metadata_object("p") ++ ",'capacity'," ++ Probes.capacity_object("p") ++ ",'probe'," ++ Probes.probe_object("p") ++ ")"
+  "json_object('harness',h.harness,'executable'," ++ executable_expr("h.harness") ++ ",'seats',(SELECT count(*) FROM sessions s WHERE s.harness=h.harness),'metadata'," ++ Probes.metadata_object("p") ++ ",'capacity'," ++ Probes.capacity_object("p","h.harness") ++ ",'probe'," ++ Probes.probe_object("p") ++ ")"
 
 def providers_array() -> String:
   "json((SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ provider_item() ++ " AS item FROM seen h LEFT JOIN latest p ON p.harness=h.harness ORDER BY h.harness)))"

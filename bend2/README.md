@@ -309,9 +309,19 @@ series registry:
 - `observed` is provider-derived: the model each seat's recorded events reported,
   with the harness and effort marked as declared at bind.
 - `providers` carries one row per harness with its recorded executable, seat
-  count, the latest probe's parsed catalog and capacity, the probe's identity and
-  observation time, and the access report where the adapter states one.
+  count, the latest probe's parsed catalog and capacity, the probe's identity,
+  observation time and age, and the access report where the adapter states one. A
+  catalog read groups its identifiers by the provider the catalog states, so a
+  harness that serves several providers keeps each provider scope separate; and
+  `capacity.scope` names the harness the observation came from, so two routes that
+  share a model name stay distinguishable.
 - `continuation` is present for a named `SESSION`.
+
+An identifier is provider output. A catalog read stores the identifiers the catalog
+states; a model-scoped read stores only the identifier that read echoed, records the
+caller's MODEL as `requestedModel`, and states `provenance` as `provider-catalog`,
+`provider-echoed` or `caller-stated`. Where no identifier is echoed, `models` is null
+and `absent` names `model-identifier`.
 
 Capacity is a provider-stated value. A probe that stated no limit, usage,
 remaining or reset time leaves capacity `unknown` and names those components in

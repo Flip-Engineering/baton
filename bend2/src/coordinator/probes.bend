@@ -84,7 +84,7 @@ def access_of(+p: String) -> String:
   "json(coalesce(json_extract(" ++ p ++ ".metadata,'$.access'),'null'))"
 
 def metadata_object(+p: String) -> String:
-  "CASE WHEN " ++ p ++ ".harness IS NULL THEN json_object('state','unknown','models',NULL,'absent',json('[]'),'cause',NULL,'access',json('null')) WHEN " ++ p ++ ".outcome='ok' THEN json_object('state','known','models',coalesce(json(json_extract(" ++ p ++ ".metadata,'$.models')),json('null')),'absent',json(coalesce(json_extract(" ++ p ++ ".metadata,'$.absent'),'[]')),'cause',NULL,'access'," ++ access_of(p) ++ ") ELSE json_object('state','error','models',NULL,'absent',json('[]'),'cause',nullif(" ++ p ++ ".cause,''),'access'," ++ access_of(p) ++ ") END"
+  "CASE WHEN " ++ p ++ ".harness IS NULL THEN json_object('state','unknown','models',NULL,'provenance',NULL,'providers',NULL,'requestedModel',NULL,'absent',json('[]'),'cause',NULL,'access',json('null')) WHEN " ++ p ++ ".outcome='ok' THEN json_object('state','known','models',coalesce(json(json_extract(" ++ p ++ ".metadata,'$.models')),json('null')),'provenance',json_extract(" ++ p ++ ".metadata,'$.provenance'),'providers',json(coalesce(json_extract(" ++ p ++ ".metadata,'$.providers'),'null')),'requestedModel',json_extract(" ++ p ++ ".metadata,'$.requestedModel'),'absent',json(coalesce(json_extract(" ++ p ++ ".metadata,'$.absent'),'[]')),'cause',NULL,'access'," ++ access_of(p) ++ ") ELSE json_object('state','error','models',NULL,'provenance',NULL,'providers',NULL,'requestedModel',NULL,'absent',json('[]'),'cause',nullif(" ++ p ++ ".cause,''),'access'," ++ access_of(p) ++ ") END"
 
 # The absent list names each component the provider did not state, following the
 # observed-usage idiom; a component stated as zero stays zero.
@@ -95,9 +95,9 @@ def absent_columns(+limit: String, +used: String, +remaining: String, +reset: St
   ++ " UNION ALL SELECT 'remaining' WHERE " ++ remaining ++ " IS NULL"
   ++ " UNION ALL SELECT 'resetAt' WHERE " ++ reset ++ " IS NULL))))"
 
-def capacity_object(+p: String) -> String:
+def capacity_object(+p: String, +scope: String) -> String:
   absent_columns(component(p,"limit"),component(p,"used"),component(p,"remaining"),component(p,"resetAt"),
-    "json_object('state'," ++ capacity_state(p)
+    "json_object('scope'," ++ scope ++ ",'state'," ++ capacity_state(p)
     ++ ",'limit'," ++ component(p,"limit")
     ++ ",'used'," ++ component(p,"used")
     ++ ",'remaining'," ++ component(p,"remaining")
@@ -105,18 +105,34 @@ def capacity_object(+p: String) -> String:
     ++ ",'reported',NULL")
 
 def probe_object(+p: String) -> String:
-  "CASE WHEN " ++ p ++ ".harness IS NULL THEN NULL ELSE json_object('id'," ++ p ++ ".id,'at'," ++ p ++ ".at,'outcome'," ++ p ++ ".outcome,'cause',nullif(" ++ p ++ ".cause,''),'reportedBytes',length(" ++ p ++ ".reported)) END"
+  "CASE WHEN " ++ p ++ ".harness IS NULL THEN NULL ELSE json_object('id'," ++ p ++ ".id,'at'," ++ p ++ ".at,'ageSeconds',CASE WHEN " ++ p ++ ".at IS NULL THEN NULL ELSE cast(strftime('%s','now') as integer)-cast(strftime('%s'," ++ p ++ ".at) as integer) END,'outcome'," ++ p ++ ".outcome,'cause',nullif(" ++ p ++ ".cause,''),'reportedBytes',length(" ++ p ++ ".reported)) END"
 
 # --- the written row ---------------------------------------------------------
 
 def no_metadata() -> String:
-  "json_object('models',NULL,'absent',json('[]'))"
+  "json_object('models',NULL,'provenance',NULL,'absent',json('[]'))"
 
-def catalog_metadata(reported: String) -> String:
-  "json_object('models',(SELECT json_group_array(coalesce(json_extract(v.value,'$.selector'),json_extract(v.value,'$.slug'),json_extract(v.value,'$.id'),json_quote(v.value))) FROM json_each(json(" ++ C.q(reported) ++ "),'$.models') v),'absent',json('[]'))"
+# The catalog's own provider field groups the identifiers, so a harness that serves
+# several providers states each provider scope separately and a reader can compare
+# one provider's models with another's.
+def catalog_providers(+reported: String) -> String:
+  "(SELECT coalesce(json_group_array(json_object('provider',g.provider,'models',json(g.models))),json('[]')) FROM (SELECT coalesce(json_extract(v.value,'$.provider'),'') AS provider,json_group_array(coalesce(json_extract(v.value,'$.selector'),json_extract(v.value,'$.slug'),json_extract(v.value,'$.id'),json_quote(v.value))) AS models FROM json_each(json(" ++ C.q(reported) ++ "),'$.models') v GROUP BY coalesce(json_extract(v.value,'$.provider'),'') ORDER BY provider) g)"
 
-def scoped_metadata(model: String) -> String:
-  "json_object('models',json_array(" ++ C.q(model) ++ "),'absent',json('[\"catalog\"]'))"
+def catalog_metadata(+reported: String) -> String:
+  "json_object('models',(SELECT json_group_array(coalesce(json_extract(v.value,'$.selector'),json_extract(v.value,'$.slug'),json_extract(v.value,'$.id'),json_quote(v.value))) FROM json_each(json(" ++ C.q(reported) ++ "),'$.models') v),'provenance','provider-catalog','providers'," ++ catalog_providers(reported) ++ ",'absent',json('[]'))"
+
+# The identifier a model-scoped read echoes in its own output. Muse states the
+# resolved model as `model: <id>`; an output without that field carries no
+# identifier the provider itself stated.
+def echoed_identifier(+text: String) -> String:
+  "CASE WHEN instr(" ++ text ++ ",'model:')>0 THEN nullif(trim(CASE WHEN instr(substr(" ++ text ++ ",instr(" ++ text ++ ",'model:')+6),char(10))>0 THEN substr(substr(" ++ text ++ ",instr(" ++ text ++ ",'model:')+6),1,instr(substr(" ++ text ++ ",instr(" ++ text ++ ",'model:')+6),char(10))-1) ELSE substr(" ++ text ++ ",instr(" ++ text ++ ",'model:')+6) END),'') END"
+
+# A model-scoped read lists only the identifier its own output echoed. The caller's
+# string is recorded beside it as the requested model, and an output with no echoed
+# identifier states a caller-stated provenance with the identifier absent, so a
+# caller's name is never presented as provider output.
+def scoped_metadata(model: String, +reported: String) -> String:
+  "json_object('models',CASE WHEN " ++ echoed_identifier(C.q(reported)) ++ " IS NULL THEN NULL ELSE json_array(" ++ echoed_identifier(C.q(reported)) ++ ") END,'requestedModel'," ++ C.q(model) ++ ",'provenance',CASE WHEN " ++ echoed_identifier(C.q(reported)) ++ " IS NULL THEN 'caller-stated' ELSE 'provider-echoed' END,'absent',json(CASE WHEN " ++ echoed_identifier(C.q(reported)) ++ " IS NULL THEN '[\"catalog\",\"model-identifier\"]' ELSE '[\"catalog\"]' END))"
 
 def access_field(+text: String, +path: String) -> String:
   "CASE WHEN json_valid(json(" ++ text ++ ")) THEN json_extract(json(" ++ text ++ ")," ++ path ++ ") END"
@@ -160,9 +176,9 @@ def access_document(+text: String) -> String:
 def access_object(+harness: String, +text: String) -> String:
   Bool.pick(String,has_access(harness),access_document(text),"json('null')")
 
-def base_metadata(+harness: String, model: String, reported: String, +ok: Bool) -> String:
+def base_metadata(+harness: String, model: String, +reported: String, +ok: Bool) -> String:
   Bool.pick(String,Bool.and(ok,catalog_read(harness)),catalog_metadata(reported),
-  Bool.pick(String,Bool.and(ok,needs_model(harness)),scoped_metadata(model),no_metadata()))
+  Bool.pick(String,Bool.and(ok,needs_model(harness)),scoped_metadata(model,reported),no_metadata()))
 
 # Metadata is the provider's parsed catalog when a catalog read succeeded, the
 # named model when a model-scoped read succeeded, and null otherwise.

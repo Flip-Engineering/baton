@@ -31,6 +31,10 @@ class Models(unittest.TestCase):
         self.db = self.directory / 'state.db'
         self.env = {'HOME': str(self.home), 'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
                     'TMPDIR': os.environ.get('TMPDIR', '/tmp')}
+        # A host that provides a newer SQLite through LD_LIBRARY_PATH keeps it, so the
+        # pretty read is exercised where the host has json_pretty.
+        if os.environ.get('LD_LIBRARY_PATH'):
+            self.env['LD_LIBRARY_PATH'] = os.environ['LD_LIBRARY_PATH']
         self.registry = self.directory / 'series.json'
         self.write_registry({'deepseek/deepseek-flash': 'deepseek'},
                             {'deepseek': self.series_directory('deepseek', 'DeepSeek')})
@@ -280,6 +284,44 @@ class Models(unittest.TestCase):
         self.assertEqual(observed[0]['routeProvenance'], 'recorded-configuration')
         self.assertEqual(observed[0]['declaredHarnessAtBind'], ['omp'])
         self.assertEqual(observed[0]['seats'], ['seat'])
+
+    def test_model_scoped_read_lists_the_echoed_identifier(self):
+        profile = self.harness('muse-echo', 'echo "model:  muse-spark-1.3"\necho "effort: high"\n')
+        recorded = self.probe('muse', profile, 'muse-spark-1.3')
+        self.assertEqual(recorded['outcome'], 'ok')
+        self.assertEqual(recorded['metadata']['models'], ['muse-spark-1.3'])
+        self.assertEqual(recorded['metadata']['provenance'], 'provider-echoed')
+        self.assertEqual(recorded['metadata']['requestedModel'], 'muse-spark-1.3')
+        self.assertEqual(recorded['metadata']['absent'], ['catalog'])
+
+    def test_model_scoped_read_without_an_echo_marks_the_caller_string(self):
+        profile = self.harness('muse-generic', 'echo "effort: none"\necho "default_reasoning_effort   high"\n')
+        recorded = self.probe('muse', profile, 'no-such-model-xyz')
+        self.assertEqual(recorded['outcome'], 'ok')
+        self.assertIsNone(recorded['metadata']['models'])
+        self.assertEqual(recorded['metadata']['provenance'], 'caller-stated')
+        self.assertEqual(recorded['metadata']['requestedModel'], 'no-such-model-xyz')
+        self.assertEqual(sorted(recorded['metadata']['absent']), ['catalog', 'model-identifier'])
+
+    def test_refusal_names_a_harness_when_no_route_is_recorded(self):
+        self.session('seat', 'omp', '')
+        self.message('owed', 'seat')
+        continuation = self.read('seat')['continuation']
+        self.assertEqual(continuation['candidates'], [])
+        self.assertEqual(continuation['refusal']['error'], 'continuation-capacity-unknown')
+        self.assertEqual(continuation['refusal']['next'][0], 'provider-probe')
+        self.assertEqual(continuation['refusal']['next'][1], 'omp')
+
+    def test_catalog_read_groups_provider_scopes_and_dates_the_observation(self):
+        catalog = self.harness('scoped', 'echo \'{"models":[{"provider":"opencode-go","selector":"opencode-go/gpt-6-luna"},'
+                                          '{"provider":"zai","selector":"zai/glm-5.3"}]}\'\n')
+        recorded = self.probe('omp', catalog)
+        self.assertEqual(recorded['metadata']['provenance'], 'provider-catalog')
+        self.assertEqual({row['provider']: row['models'] for row in recorded['metadata']['providers']},
+                         {'opencode-go': ['opencode-go/gpt-6-luna'], 'zai': ['zai/glm-5.3']})
+        row = self.provider(self.read(), 'omp')
+        self.assertEqual(row['capacity']['scope'], 'omp')
+        self.assertGreaterEqual(row['probe']['ageSeconds'], 0)
 
     def test_pretty_read_prints_the_same_document(self):
         plain = self.read()

@@ -73,8 +73,10 @@ def proposal_expr() -> String:
 def unknown_array() -> String:
   "json((SELECT coalesce(json_group_array(json_object('harness',harness,'model',model,'effort',effort)),json('[]')) FROM candidates ORDER BY harness,model,effort))"
 
+# The guidance names a harness the operator can probe. With no recorded route the
+# seat's own harness is the one that serves it, so the entry is never null.
 def first_harness() -> String:
-  "(SELECT harness FROM candidates ORDER BY " ++ order_expr() ++ " LIMIT 1)"
+  "(SELECT coalesce((SELECT harness FROM candidates ORDER BY " ++ order_expr() ++ " LIMIT 1),(SELECT harness FROM seat LIMIT 1)))"
 
 def first_executable() -> String:
   "(SELECT json_extract(s.endpoint,'$[0]') FROM sessions s WHERE s.harness=" ++ first_harness() ++ " AND s.endpoint<>'' AND json_valid(s.endpoint) AND json_type(s.endpoint)='array' ORDER BY s.rowid DESC LIMIT 1)"
