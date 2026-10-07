@@ -39,10 +39,10 @@ law native_declaration_operation_with_json_array_terminator_is_accepted:
   {operation_list_well_formed() == True{} : Bool}
 
 def native_declaration_operation_with_json_array_terminator_is_accepted():
-  operation_list_well_formed()
+  {==}
 
 law native_declaration_empty_operation_array_is_refused:
   {empty_operation_list_refused() == True{} : Bool}
 
 def native_declaration_empty_operation_array_is_refused():
-  empty_operation_list_refused()
+  {==}
