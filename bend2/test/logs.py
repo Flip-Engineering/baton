@@ -78,7 +78,9 @@ sys.exit(%d)
         return result
 
     def generation(self, base, turn):
-        return pathlib.Path(str(base) + '.attempt-' + turn)
+        code = ''.join(c if c.isascii() and (c.isalnum() or c in '-_') else '%%%02x' % ord(c)
+                       for c in turn)
+        return pathlib.Path(str(base) + '.attempt-' + code)
 
     def segment(self, index, log=None):
         return pathlib.Path(str(log or self.log) + '.%d' % index)
@@ -223,7 +225,7 @@ sys.exit(%d)
 
     def test_rotation_stops_when_a_shift_step_fails(self):
         self.call('logs', 'omp-worker', 'default', '65536', '2')
-        blocker = self.segment(2)
+        blocker = self.segment(2, self.generation(self.base_log, 'turn-1'))
         blocker.mkdir()
         frames = [json.dumps({'type': 'response', 'id': 'r%d' % i, 'command': 'probe', 'pad': 'y' * 20000}) for i in range(10)]
         self.stream(frames + [self.terminal()])
@@ -721,13 +723,9 @@ while True: time.sleep(1)
 
     def test_storage_reports_attempt_generations_with_identity(self):
         self.stream([self.terminal()])
-        generation = self.cwd / 'turn.jsonl.attempt-turn-1'
-        generation.write_text('{"type":"agent_end"}\n')
-        with sqlite3.connect(self.db) as connection:
-            connection.execute('INSERT OR IGNORE INTO log_files(session,log) VALUES(?,?)',
-                               ('omp-worker', str(generation)))
+        generation = self.log
         logs = json.loads(self.call('logs-storage'))['logs']
-        base = next(row for row in logs if row['path'] == str(self.log))
+        base = next(row for row in logs if row['path'] == str(self.base_log))
         self.assertEqual(base['attempt'], '')
         entry = next(row for row in logs if row['path'] == str(generation))
         self.assertEqual(entry['attempt'], 'turn-1')
@@ -736,15 +734,12 @@ while True: time.sleep(1)
     def test_cleanup_removes_the_live_file_of_a_settled_attempt_generation(self):
         self.stream([self.terminal()])
         attempt, attempt_dir = self.prepare_attempt_artifacts()
-        generation = self.cwd / ('turn.jsonl.attempt-' + attempt)
+        generation = self.log
         generation.write_text('derived generation view\n')
         (self.cwd / (generation.name + '.pending')).write_text('')
         (self.cwd / (generation.name + '.stderr')).write_text('native diagnostics stay\n')
         for name in ('stdout', 'native.stderr', 'observer.log', 'keeper.log'):
             (attempt_dir / name).write_text('diagnostic data for ' + name)
-        with sqlite3.connect(self.db) as connection:
-            connection.execute('INSERT OR IGNORE INTO log_files(session,log) VALUES(?,?)',
-                               ('omp-worker', str(generation)))
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
         removed = [item for item in answer['attemptLogs'] if item.get('attempt') == attempt]
         self.assertEqual(len(removed), 1, answer)
@@ -753,7 +748,7 @@ while True: time.sleep(1)
         self.assertFalse(generation.exists())
         self.assertFalse((self.cwd / (generation.name + '.pending')).exists())
         self.assertEqual((self.cwd / (generation.name + '.stderr')).read_text(), 'native diagnostics stay\n')
-        self.assertTrue(self.log.exists())
+        self.assertTrue(self.base_log.exists())
 
     def test_cleanup_retains_the_generation_of_an_unreported_attempt(self):
         self.stream([self.terminal()])
@@ -810,14 +805,14 @@ while True: time.sleep(1)
         self.stream([self.terminal()], turn="a/b")
         attempt, attempt_dir = self.prepare_attempt_artifacts()
         self.assertEqual(attempt, "a/b")
-        first = self.cwd / "turn.jsonl.attempt-a%2Fb"
+        first = self.log
         first.write_text("derived generation view" + chr(10))
         (self.cwd / (first.name + ".pending")).write_text("")
         (self.cwd / (first.name + ".stderr")).write_text("native diagnostics stay" + chr(10))
         for name in ("stdout", "native.stderr", "observer.log", "keeper.log"):
             (attempt_dir / name).write_text("diagnostic data for " + name)
         self.stream([self.terminal()], turn="turn-2")
-        second = self.cwd / "turn.jsonl.attempt-turn-2"
+        second = self.log
         second.write_text("newest generation view" + chr(10))
         with sqlite3.connect(self.db) as connection:
             connection.executescript("CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt));CREATE UNIQUE INDEX IF NOT EXISTS log_generations_log ON log_generations(log);")
@@ -834,11 +829,11 @@ while True: time.sleep(1)
     def test_dotted_identity_in_a_marker_parent_cleans_by_basename(self):
         parent = self.cwd / "archive.attempt-old"
         parent.mkdir()
+        self.base_log = parent / "turn.jsonl"
         self.stream([self.terminal()], turn="v1.2")
         attempt, attempt_dir = self.prepare_attempt_artifacts()
         self.assertEqual(attempt, "v1.2")
-        first = parent / "turn.jsonl.attempt-v1.2"
-        first.write_text("derived generation view" + chr(10))
+        first = self.log
         (parent / (first.name + ".pending")).write_text("")
         (parent / (first.name + ".stderr")).write_text("native diagnostics stay" + chr(10))
         for name in ("stdout", "native.stderr", "observer.log", "keeper.log"):
