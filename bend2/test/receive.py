@@ -1594,15 +1594,29 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.coord('inbox', 'parent'), [])
 
 
+    # Canonical claim-table definition, kept identical to
+    # Store.claim_schema_sql in bend2/src/coordinator/store.bend. Staging a
+    # claim ensures the table exactly as the product does; reading claims
+    # from a database that never held any returns no rows.
+    CLAIM_SCHEMA = ("CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL "
+                    "REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', "
+                    "owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);")
+
     def claims(self, session=None):
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
-            rows = database.execute('SELECT session, state FROM wake_claims ORDER BY session').fetchall()
+            try:
+                rows = database.execute('SELECT session, state FROM wake_claims ORDER BY session').fetchall()
+            except sqlite3.OperationalError:
+                return []
         return [row for row in rows if session is None or row[0] == session]
 
     def claim_rows(self, session=None):
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
-            rows = database.execute('SELECT session, state, owner, generation FROM wake_claims'
-                                    ' ORDER BY session').fetchall()
+            try:
+                rows = database.execute('SELECT session, state, owner, generation FROM wake_claims'
+                                        ' ORDER BY session').fetchall()
+            except sqlite3.OperationalError:
+                return []
         return [row for row in rows if session is None or row[0] == session]
 
     def execution(self, session):
@@ -1619,6 +1633,7 @@ class Receive(unittest.TestCase):
 
     def claim(self, session, state='claimed', owner='', generation=0):
         with sqlite3.connect(str(self.db)) as database:
+            database.execute(self.CLAIM_SCHEMA)
             database.execute('INSERT OR REPLACE INTO wake_claims(session, state, owner, generation)'
                              ' VALUES (?, ?, ?, ?)',
                              (session, state, owner, generation))

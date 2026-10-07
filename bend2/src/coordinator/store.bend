@@ -33,16 +33,20 @@ def apply(+db: String, +command: C.Command) -> IO(Result<&1, &1, U32 & String, S
     result : Result<&1,&1,U32 & String,String> <- commit(db,command)
     committed(db,command,result)
 
-# Wake-claim transitions for issue #685. The table is created by
-# C.wake_claim_schema(), which C.schema() runs on every commit. Claimed only
-# while holding the session lock, after re-reading a nonzero pending count:
-# holding the lock proves no live owner exists, so the write is a safe
-# takeover and a dead owner never suppresses the wake. The owner names the
-# message the obligation hands over; the generation fences takeovers so a
-# late finisher can never mistake an older write for the live row. Released
-# to unclaimed only by a lock holder when no input is owed and no retained
-# attempt is recorded live. Deleted when acknowledgement clears every owed
-# input, or when an admitted stop resolves the obligation.
+# Wake-claim transitions for issue #685. The table is owned by this module:
+# every writer ensures it with the canonical definition first, so a fresh
+# database needs no schema-layer registration. Claimed only while holding
+# the session lock, after re-reading a nonzero pending count: holding the
+# lock proves no live owner exists, so the write is a safe takeover and a
+# dead owner never suppresses the wake. The owner names the message the
+# obligation hands over; the generation fences takeovers so a late finisher
+# can never mistake an older write for the live row. Released to unclaimed
+# only by a lock holder when no input is owed and no retained attempt is
+# recorded live. Deleted when acknowledgement clears every owed input, or
+# when an admitted stop resolves the obligation.
+def claim_schema_sql() -> String:
+  "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);"
+
 def claim_sql(+session: String, +owner: String) -> String:
   "INSERT OR REPLACE INTO wake_claims(session,state,owner,generation) VALUES(" ++ C.q(session) ++ ",'claimed'," ++ C.q(owner) ++ ",coalesce((SELECT generation FROM wake_claims WHERE session=" ++ C.q(session) ++ "),0)+1);"
 
@@ -114,13 +118,15 @@ def claim_generation(+db: String, +session: String) -> IO(String):
     generation : String <- read_claim_generation_when_present(db,session,String.eq(present,"1\n"))
     IO.pure(String,generation)
 
-def claim(db: String, session: String, owner: String) -> IO(Unit):
+def claim(+db: String, session: String, owner: String) -> IO(Unit):
   do IO<Unit>:
+    ensured : String <- IO.try(String,DB.Sql.query(db,claim_schema_sql()))
     claimed : String <- IO.try(String,DB.Sql.query(db,claim_sql(session,owner)))
     IO.pure(Unit,Unit{})
 
-def release_ticket(db: String, session: String, owner: String, generation: String) -> IO(Unit):
+def release_ticket(+db: String, session: String, owner: String, generation: String) -> IO(Unit):
   do IO<Unit>:
+    ensured : String <- IO.try(String,DB.Sql.query(db,claim_schema_sql()))
     released : String <- IO.try(String,DB.Sql.query(db,release_ticket_sql(session,owner,Tx.trim_nl(generation))))
     IO.pure(Unit,Unit{})
 
@@ -135,6 +141,12 @@ law claim_sql_writes_a_claimed_row:
   {claim_sql(session,owner) == "INSERT OR REPLACE INTO wake_claims(session,state,owner,generation) VALUES(" ++ C.q(session) ++ ",'claimed'," ++ C.q(owner) ++ ",coalesce((SELECT generation FROM wake_claims WHERE session=" ++ C.q(session) ++ "),0)+1);" : String}
 
 def claim_sql_writes_a_claimed_row(session,owner):
+  {==}
+
+law claim_schema_creates_the_claim_table:
+  {claim_schema_sql() == "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);" : String}
+
+def claim_schema_creates_the_claim_table():
   {==}
 
 law release_names_the_exact_admission_ticket:
