@@ -1,0 +1,56 @@
+{
+  "schema": "baton2.context.bend2.source-analysis.result.v1",
+  "status": "completed",
+  "phasesRun": [
+    "parse",
+    "check",
+    "completion"
+  ],
+  "outcome": null,
+  "session": {
+    "token": "adapter-1-invocation-1",
+    "owner": "o1",
+    "identity": null,
+    "completeness": "complete",
+    "incompleteness": [],
+    "counterDelta": {},
+    "files": [],
+    "attempts": [],
+    "imports": [],
+    "aliases": [],
+    "declarations": [
+      {
+        "phase": "check",
+        "form": "declared",
+        "name": "f",
+        "qualified": "m.f",
+        "namespace": "m",
+        "file": "a.ts",
+        "unsafe": false,
+        "orderIndex": 0,
+        "span": {
+          "status": "unavailable",
+          "reason": "viewNotFinalized"
+        }
+      }
+    ],
+    "references": [],
+    "diagnostics": [],
+    "types": [],
+    "phases": [],
+    "limitations": [],
+    "acquisitions": []
+  },
+  "retainedReadSet": {
+    "status": "sealed",
+    "descriptors": [
+      {
+        "kind": "file",
+        "path": "a.ts",
+        "real": "/w/a.ts",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ],
+    "fileCount": 1
+  }
+}

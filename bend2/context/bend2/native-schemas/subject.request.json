@@ -2,169 +2,80 @@
   "SchemaDef": {
     "name": "baton2.context.bend2.source-analysis.subject.v1",
     "form": {
-      "SfUnion": {
-        "cases": [
+      "SfRecord": {
+        "fields": [
           {
-            "tag": "position",
-            "form": {
-              "SfRecord": {
-                "fields": [
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfEnum": {
-                          "literals": [
-                            "position"
-                          ]
-                        }
-                      },
-                      "name": "kind"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsText"
-                        }
-                      },
-                      "name": "path"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsU32Token"
-                        }
-                      },
-                      "name": "line"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsU32Token"
-                        }
-                      },
-                      "name": "column"
-                    }
-                  }
-                ]
-              }
+            "SfRequired": {
+              "form": {
+                "SfEnum": {
+                  "literals": [
+                    "position",
+                    "symbol",
+                    "diagnostic"
+                  ]
+                }
+              },
+              "name": "kind"
             }
           },
           {
-            "tag": "symbol",
-            "form": {
-              "SfRecord": {
-                "fields": [
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfEnum": {
-                          "literals": [
-                            "symbol"
-                          ]
-                        }
-                      },
-                      "name": "kind"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsText"
-                        }
-                      },
-                      "name": "path"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsText"
-                        }
-                      },
-                      "name": "name"
-                    }
-                  },
-                  {
-                    "SfOptionalField": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsText"
-                        }
-                      },
-                      "name": "container"
-                    }
-                  }
-                ]
-              }
+            "SfRequired": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "path"
             }
           },
           {
-            "tag": "diagnostic",
-            "form": {
-              "SfRecord": {
-                "fields": [
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfEnum": {
-                          "literals": [
-                            "diagnostic"
-                          ]
-                        }
-                      },
-                      "name": "kind"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsText"
-                        }
-                      },
-                      "name": "path"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsU32Token"
-                        }
-                      },
-                      "name": "line"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsU32Token"
-                        }
-                      },
-                      "name": "column"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsText"
-                        }
-                      },
-                      "name": "code"
-                    }
-                  }
-                ]
-              }
+            "SfOptionalField": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsU32Token"
+                }
+              },
+              "name": "line"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsU32Token"
+                }
+              },
+              "name": "column"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "name"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "container"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "code"
             }
           }
         ]

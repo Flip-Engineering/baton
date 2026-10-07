@@ -373,6 +373,30 @@ test('every asset is vocabulary-exact SchemaDef and every ref resolves', () => {
   }
 });
 
+test('assets are flat records with the canonical required members', () => {
+  // Payload variants share no tag wrapper: the flat record carries the
+  // members every shape has, and producer validation owns the rest.
+  const requiredTop = (identity) => {
+    const form = loadAsset(identity).SchemaDef.form;
+    assert.deepEqual(Object.keys(form), ['SfRecord']);
+    return form.SfRecord.fields
+      .filter((field) => isRecord(field.SfRequired))
+      .map((field) => field.SfRequired.name);
+  };
+  assert.deepEqual(requiredTop('baton2.context.bend2.source-analysis.subject.v1'),
+    ['kind', 'path']);
+  assert.deepEqual(requiredTop('baton2.context.bend2.source-analysis.options.v1'), []);
+  assert.deepEqual(requiredTop('baton2.context.bend2.source-analysis.result.v1'),
+    ['schema', 'status']);
+  assert.deepEqual(requiredTop('baton2.context.bend2.source-analysis.reference.v1'),
+    ['kind', 'path', 'real']);
+  assert.deepEqual(requiredTop('baton2.context.bend2.source-analysis.event.v1'),
+    ['version', 'query', 'owner', 'moduleBinding', 'sequence', 'type', 'payload']);
+  const subject = loadAsset('baton2.context.bend2.source-analysis.subject.v1');
+  const kind = subject.SchemaDef.form.SfRecord.fields[0].SfRequired.form;
+  assert.deepEqual(kind, { SfEnum: { literals: ['position', 'symbol', 'diagnostic'] } });
+});
+
 test('asset checker refuses non-vocabulary nodes', () => {
   const asset = loadAsset('baton2.context.bend2.source-analysis.event.v1');
   assert.equal(checkAsset(asset, 'event'), null);

@@ -1,0 +1,5 @@
+{
+  "schema": "baton2.context.bend2.source-analysis.result.v1",
+  "status": "completed",
+  "phasesRun": "parse"
+}

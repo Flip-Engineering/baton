@@ -2,139 +2,50 @@
   "SchemaDef": {
     "name": "baton2.context.bend2.source-analysis.reference.v1",
     "form": {
-      "SfUnion": {
-        "cases": [
+      "SfRecord": {
+        "fields": [
           {
-            "tag": "file",
-            "form": {
-              "SfRecord": {
-                "fields": [
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfEnum": {
-                          "literals": [
-                            "file"
-                          ]
-                        }
-                      },
-                      "name": "kind"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsText"
-                        }
-                      },
-                      "name": "path"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsText"
-                        }
-                      },
-                      "name": "real"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsText"
-                        }
-                      },
-                      "name": "sha256"
-                    }
-                  }
-                ]
-              }
+            "SfRequired": {
+              "form": {
+                "SfEnum": {
+                  "literals": [
+                    "file",
+                    "symlink",
+                    "absent"
+                  ]
+                }
+              },
+              "name": "kind"
             }
           },
           {
-            "tag": "symlink",
-            "form": {
-              "SfRecord": {
-                "fields": [
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfEnum": {
-                          "literals": [
-                            "symlink"
-                          ]
-                        }
-                      },
-                      "name": "kind"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsText"
-                        }
-                      },
-                      "name": "path"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsText"
-                        }
-                      },
-                      "name": "real"
-                    }
-                  }
-                ]
-              }
+            "SfRequired": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "path"
             }
           },
           {
-            "tag": "absent",
-            "form": {
-              "SfRecord": {
-                "fields": [
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfEnum": {
-                          "literals": [
-                            "absent"
-                          ]
-                        }
-                      },
-                      "name": "kind"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsText"
-                        }
-                      },
-                      "name": "path"
-                    }
-                  },
-                  {
-                    "SfRequired": {
-                      "form": {
-                        "SfScalar": {
-                          "kind": "SsText"
-                        }
-                      },
-                      "name": "real"
-                    }
-                  }
-                ]
-              }
+            "SfRequired": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "real"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "sha256"
             }
           }
         ]

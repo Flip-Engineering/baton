@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "query": "q1",
+  "owner": "o1",
+  "moduleBinding": {
+    "id": "bend2",
+    "revision": "development",
+    "declarationDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+    "protocolVersion": "2",
+    "operation": "sourceAnalysis",
+    "artifactIdentities": [
+      {
+        "packagePath": "native-provider.mjs",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "role": "entry"
+      }
+    ],
+    "schemaIdentities": [
+      "baton2.context.bend2.source-analysis.result.v1"
+    ]
+  },
+  "runtime": null,
+  "role": null,
+  "incarnation": null,
+  "sequence": "1",
+  "type": "event",
+  "payload": {
+    "schema": "baton2.context.bend2.source-analysis.result.v1",
+    "status": "completed"
+  }
+}
