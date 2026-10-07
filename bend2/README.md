@@ -370,11 +370,14 @@ count.
 For `omp`, `usage --json` answers provider usage limits per authenticated account:
 `providers[]` holds each provider's limit windows with their duration and remaining
 allowance, `limits[]` holds each provider's labelled limits with their window,
-reset instant, used and remaining amounts and status, and `disabledCredentials`
-holds the provider's own credential refusals with their cause. Account identifiers
-and endpoints are left out and named in `absent`; the verbatim report stays in the
-probe row. A report that parsed without windows answers `state` `unknown`, and one
-that did not parse answers `error` with the cause.
+reset instant, used and remaining amounts and status, `availability[]` holds each
+provider's state (`available`, `exhausted` or `unknown`) derived from the provider's
+own window status with the basis named, and `disabledCredentials` holds the
+provider's own credential refusals with their cause. Account identifiers and
+endpoints are left out and named in `absent`; the verbatim report stays in the probe
+row. A report that parsed without windows answers `state` `unknown`, and one that did
+not parse answers `error` with the cause, so an absent usage answer is never read as
+an available allowance.
 
 A registry key proves a configured identity exists, and a harness catalog proves
 the harness can serve a model. Neither proves that the account can use it now, so

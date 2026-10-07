@@ -127,3 +127,14 @@ law m8_a_usage_read_names_the_provider_windows:
 
 def m8_a_usage_read_names_the_provider_windows(text):
   {==}
+
+# M-12 (#694): availability follows the provider's own window status. A limit the
+# provider marks other than ok, or one whose used fraction reached one, is exhausted;
+# stated limits with none of those are available; a provider that stated no limit is
+# unknown, so an unqueried limit is never reported as an allowance.
+law m12_a_usage_availability_follows_the_provider_window:
+  for +text: String
+  {Probes.usage_availability(text) == "json(CASE WHEN json_valid(" ++ text ++ ") THEN (SELECT coalesce(json_group_array(json_object('provider',json_extract(rp.value,'$.provider'),'state',CASE WHEN (SELECT count(*) FROM json_each(rp.value,'$.limits'))=0 THEN 'unknown' WHEN (SELECT count(*) FROM json_each(rp.value,'$.limits') l WHERE coalesce(json_extract(l.value,'$.status'),'ok')<>'ok' OR coalesce(json_extract(l.value,'$.amount.usedFraction'),0)>=1 OR (json_extract(l.value,'$.amount.remainingFraction') IS NOT NULL AND json_extract(l.value,'$.amount.remainingFraction')<=0))>0 THEN 'exhausted' ELSE 'available' END,'basis','provider-reported-window','windows',(SELECT json_group_array(json_object('window',json_extract(l.value,'$.windowId'),'status',json_extract(l.value,'$.status'),'remainingFraction',json_extract(l.value,'$.amount.remainingFraction'))) FROM json_each(rp.value,'$.limits') l))),json('[]')) FROM json_each(json(" ++ text ++ "),'$.reports') rp) ELSE '[]' END)" : String}
+
+def m12_a_usage_availability_follows_the_provider_window(text):
+  {==}

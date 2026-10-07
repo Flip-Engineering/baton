@@ -360,6 +360,26 @@ class Models(unittest.TestCase):
         self.assertEqual(recorded['metadata']['usage']['state'], 'unknown')
         self.assertEqual(recorded['metadata']['usage']['providers'], [])
 
+    def test_usage_availability_follows_the_provider_window(self):
+        catalog = '{"models":[{"provider":"opencode-go","selector":"opencode-go/gpt-6-luna"}]}'
+        usage = ('{"generatedAt":1,"reports":['
+                 '{"provider":"available","limits":[{"windowId":"5h","status":"ok",'
+                 '"amount":{"usedFraction":0.51,"remainingFraction":0.49}}]},'
+                 '{"provider":"spent","limits":[{"windowId":"5h","status":"ok",'
+                 '"amount":{"usedFraction":1,"remainingFraction":0}}]},'
+                 '{"provider":"refused","limits":[{"windowId":"7d","status":"rate-limited",'
+                 '"amount":{"remainingFraction":0.2}}]},'
+                 '{"provider":"silent","limits":[]}],'
+                 '"capacity":{},"accountsWithoutUsage":[],"disabledCredentials":[]}')
+        recorded = self.probe('omp', self.omp_harness('omp-avail', catalog, usage))
+        availability = recorded['metadata']['usage']['availability']
+        self.assertEqual({row['provider']: row['state'] for row in availability},
+                         {'available': 'available', 'spent': 'exhausted',
+                          'refused': 'exhausted', 'silent': 'unknown'})
+        self.assertTrue(all(row['basis'] == 'provider-reported-window' for row in availability))
+        spent = next(row for row in availability if row['provider'] == 'spent')
+        self.assertEqual(spent['windows'][0]['remainingFraction'], 0)
+
     def test_pretty_read_prints_the_same_document(self):
         plain = self.read()
         result = self.call('models', '--pretty')

@@ -1081,6 +1081,7 @@ MUTATIONS.push(
   {"name": "discovery-catalog-groups-every-scope-under-one-provider", "file": "bend2/src/coordinator/probes.bend", "find": "'provider',g.provider", "replace": "'provider','omp'", "law": "m8_a_catalog_metadata_groups_the_provider_scopes"},
   {"name": "discovery-omp-usage-read-uses-the-catalog", "file": "bend2/src/harness/omp-player.bend", "find": "[cmd,\"usage\",\"--json\"]", "replace": "[cmd,\"models\",\"--json\"]", "law": "m8_omp_usage_read_names_the_account_usage_limits"},
   {"name": "discovery-usage-read-omits-the-provider-windows", "file": "bend2/src/coordinator/probes.bend", "find": "'provider',k.key", "replace": "'provider','omp'", "law": "m8_a_usage_read_names_the_provider_windows"},
+  {"name": "discovery-availability-ignores-an-unstated-limit", "file": "bend2/src/coordinator/probes.bend", "find": "'state',CASE WHEN (SELECT count(*) FROM json_each(rp.value,'$.limits'))=0 THEN 'unknown'", "replace": "'state',CASE WHEN 0 THEN 'unknown'", "law": "m12_a_usage_availability_follows_the_provider_window"},
 );
 
 for (const mutation of MUTATIONS) {
