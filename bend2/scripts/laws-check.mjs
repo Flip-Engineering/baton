@@ -94,6 +94,16 @@ function hashFile(path) {
   });
 }
 
+async function libraryIdentity(searchPath, names) {
+  for (const directory of (searchPath ?? '').split(':').filter(Boolean)) {
+    for (const name of names) {
+      const path = join(directory, name);
+      if (existsSync(path)) return { path, sha256: await hashFile(path) };
+    }
+  }
+  return null;
+}
+
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
   if (value && typeof value === 'object') {
@@ -1469,6 +1479,12 @@ async function runGate() {
     bend: BEND,
     bendSha256: compilerSha256,
     version,
+    node: process.version,
+    nodePath: process.execPath,
+    nodeSha256: await hashFile(process.execPath),
+    cc: ENV.CC ?? null,
+    ccSha256: ENV.CC && existsSync(ENV.CC) ? await hashFile(ENV.CC) : null,
+    sqlite: await libraryIdentity(ENV.LD_LIBRARY_PATH, ['libsqlite3.so.0', 'libsqlite3.dylib', 'libsqlite3.so']),
     versionExitCode: versionRun.status,
     versionSignal: versionRun.signal,
     versionError: versionRun.error ? `${versionRun.error.name}: ${versionRun.error.message}` : null,
@@ -1479,7 +1495,10 @@ async function runGate() {
     bendSha256: toolchain.bendSha256,
     version: toolchain.version,
     node: process.version,
-    cc: ENV.CC ?? null,
+    nodeSha256: toolchain.nodeSha256,
+    cc: toolchain.cc,
+    ccSha256: toolchain.ccSha256,
+    sqlite: toolchain.sqlite,
     ldLibraryPath: ENV.LD_LIBRARY_PATH ?? null,
   }));
   const metadata = {
