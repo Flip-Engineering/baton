@@ -86,6 +86,9 @@ def serve_step(+db: String, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, 
       task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,serve_session(db,id))
       recurse(id,Con{task,tasks})
 
+# The cursor advances through store input read back from the database, as in
+# the receive entry, so the loop carries the same marker.
+@unsafe
 def serve_loop(+db: String, cursor: String, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     next : String <- IO.try(String,DB.Sql.query(db,next_session_sql(cursor)))
