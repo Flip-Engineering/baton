@@ -1754,6 +1754,25 @@ class Receive(unittest.TestCase):
         self.assertEqual(taken[2:], ('owed', taken[3]))
         self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
 
+    def test_wake_behind_a_live_claim_and_attempt_stands_down_without_reclaiming(self):
+        """Two-driver launch handoff: with a live owner's claim row and a live
+        retained attempt, a second admission's wake reads both under the lock
+        and stands down, so the row keeps its owner and generation and no
+        second launch rewrites the obligation."""
+        self.player()
+        self.message('first', 'parent')
+        self.claim('parent', 'claimed', 'first', 4)
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute("INSERT INTO executions(session, id, mode, directory, phase, status)"
+                             " VALUES ('parent', 'live-1', 'direct', '/tmp', 'running', '')")
+        before = self.claim_rows('parent')
+        self.assertEqual(before, [('parent', 'claimed', 'first', 4)])
+        self.message('second', 'parent')
+        self.assert_no_start()
+        self.assertEqual(self.claim_rows('parent'), before)
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')],
+                         ['first', 'second'])
+
     def test_idle_arrival_starts_one_turn_and_leaves_no_duplicate(self):
         """A message admitted to an idle session with a recorded receiver starts one turn
         carrying that input, and the completed turn leaves no second turn behind."""

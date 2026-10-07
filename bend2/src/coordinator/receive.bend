@@ -184,12 +184,37 @@ def wake_decided(+db: String, +session: String, +cursor: String, launch: String 
       +found : String <- wake_found(db,session,cursor)
       wake_target(db,session,found,launch,lock,String.eq(found,""))
 
+# A live owner keeps the wake from launching or rewriting the row. Any other
+# admission proceeds to decide under the same held lock.
+def wake_stand(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, owned: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match owned:
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case False{}: wake_decided(db,session,cursor,launch,lock,True{})
+
+# Owner-fenced admission under the lock. A claimed obligation with a live
+# retained attempt belongs to its owner, so the wake stands down without
+# launching and without rewriting the row. Any other state — absent,
+# unclaimed, or a dead owner's stale row — proceeds to claim under the lock,
+# which fences the generation past the stale row before the lock is released
+# and the message launches.
+def wake_fenced(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, owed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match owed:
+    case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      state : String <- Store.claim_state(db,session)
+      live : String <- IO.try(String,DB.Sql.query(db,retained_attempt_live_sql(session)))
+      wake_stand(db,session,cursor,launch,lock,Bool.and(String.eq(Tx.trim_nl(state),"claimed"),String.eq(live,"1\n")))
+
 def wake_owned(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match lock:
     case None{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case Some{handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
       owed : Bool <- wake_owed(db,session,cursor)
-      wake_decided(db,session,cursor,launch,handle,owed)
+      wake_fenced(db,session,cursor,launch,handle,owed)
 
 def wake_locked(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), owed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match owed:

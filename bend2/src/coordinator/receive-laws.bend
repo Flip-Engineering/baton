@@ -763,6 +763,47 @@ law a_held_session_lock_never_launches_the_wake:
 def a_held_session_lock_never_launches_the_wake(db,session,cursor,launch):
   {==}
 
+def fenced_admission_reads_owner_and_liveness(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), +lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    state : String <- Store.claim_state(db,session)
+    live : String <- IO.try(String,DB.Sql.query(db,Receive.retained_attempt_live_sql(session)))
+    Receive.wake_stand(db,session,cursor,launch,lock,Bool.and(String.eq(Tx.trim_nl(state),"claimed"),String.eq(live,"1\n")))
+
+law the_wake_admits_only_past_a_live_owner:
+  for +db: String
+  for +session: String
+  for +cursor: String
+  for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for +lock: U32
+  {Receive.wake_fenced(db,session,cursor,launch,lock,True{}) == fenced_admission_reads_owner_and_liveness(db,session,cursor,launch,lock) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def the_wake_admits_only_past_a_live_owner(db,session,cursor,launch,lock):
+  {==}
+
+law a_live_owner_launches_nothing:
+  for +db: String
+  for +session: String
+  for +cursor: String
+  for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for lock: U32
+  {Receive.wake_stand(db,session,cursor,launch,lock,True{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+    released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def a_live_owner_launches_nothing(db,session,cursor,launch,lock):
+  {==}
+
+law a_dead_owner_proceeds_to_claim_and_launch:
+  for +db: String
+  for +session: String
+  for +cursor: String
+  for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for lock: U32
+  {Receive.wake_stand(db,session,cursor,launch,lock,False{}) == Receive.wake_decided(db,session,cursor,launch,lock,True{}) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def a_dead_owner_proceeds_to_claim_and_launch(db,session,cursor,launch,lock):
+  {==}
+
 law an_absent_wake_target_never_claims_the_obligation:
   for +db: String
   for +session: String

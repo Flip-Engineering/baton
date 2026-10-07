@@ -40,7 +40,7 @@ def apply(+db: String, +command: C.Command) -> IO(Result<&1, &1, U32 & String, S
 # takeover and a dead owner never suppresses the wake. The owner names the
 # message the obligation hands over; the generation fences takeovers so a
 # late finisher can never mistake an older write for the live row. Released
-# to unclaimed only by a lock holder when input is owed and no retained
+# to unclaimed only by a lock holder when no input is owed and no retained
 # attempt is recorded live. Deleted when acknowledgement clears every owed
 # input, or when an admitted stop resolves the obligation.
 def claim_sql(+session: String, +owner: String) -> String:
