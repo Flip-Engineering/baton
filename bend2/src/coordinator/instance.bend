@@ -13,14 +13,14 @@ import ../git/text.bend as Tx
 # committed input falls between the snapshot and the subscriber registration.
 # The main loop blocks only on one shared event channel. Every native task
 # carries a relay that joins only its own task and reports TaskDone; one
-# independent owner-notice waiter reports Commit, Gap or Closed and the loop
+# independent owner-notice waiter reports Committed, Gap or Closed and the loop
 # rearms it on consumption. Every event replays the full pending snapshot, so
 # a late commit starts while older tasks are still held, and older actionable
 # IDs replay after any restart. The owner publishes the high-water; this loop
 # only reads rows and never publishes.
 type Event is Data:
   TaskDone{session: String, ok: Bool}
-  Commit{}
+  Committed{}
   Gap{}
   Closed{}
 
@@ -178,7 +178,7 @@ def serve_task(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Un
 
 def report_send(sent: Bool) -> IO(Event):
   match sent:
-    case True{}: IO.pure(Event, Commit{})
+    case True{}: IO.pure(Event, Committed{})
     case False{}: do IO<Event>:
       logged : Unit <- IO.write("completion relay could not queue its event; the serve exits.\n")
       IO.die(Event, 1, "The event channel refused a completion.")
@@ -207,7 +207,7 @@ def relay(task: Chan(Result<&1,&1,U32 & String,Unit>), +session: String, +chan: 
 
 def kind_commit(commit: Bool) -> IO(Event):
   match commit:
-    case True{}: IO.pure(Event, Commit{})
+    case True{}: IO.pure(Event, Committed{})
     case False{}: IO.pure(Event, Gap{})
 
 # A notice carries only the cursor high-water, so every notice replays the
@@ -310,7 +310,7 @@ def close_guarded(handle: U32, guard: U32, failed: Bool) -> IO(Result<&1,&1,U32 
     close_subscription(handle, failed_now)
 
 # One event advances the loop. TaskDone drops the session from the in-flight
-# set and replays the snapshot without re-probing refusals. Commit and Gap
+# set and replays the snapshot without re-probing refusals. Committed and Gap
 # re-arm the notice waiter first, clear the refused set for a fresh probe,
 # and replay the same full snapshot. Closed releases the coordinator role,
 # closes the subscription and exits carrying the swept status.
@@ -321,7 +321,7 @@ def on_event(+db: String, handle: U32, guard: U32, +chan: Chan(Event), event: Ev
       failed_now : Bool <- note_task(failed, ok)
       fresh : List<(String & String)> <- snapshot(db)
       fork_new(db, chan, fresh, without_id(flying, session), refused, failed_now, again)
-    case Commit{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+    case Committed{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       waiter_task : Chan(Event) <- IO.fork(Event, waiter(db, handle, chan))
       dropped : Unit <- drop_chan(waiter_task)
       fresh : List<(String & String)> <- snapshot(db)
