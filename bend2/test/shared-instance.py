@@ -422,8 +422,13 @@ class SharedInstance(unittest.TestCase):
             fields.append(raw_manifest[cursor:cursor + length])
             cursor += length
         recovery_socket = pathlib.Path(fields[5].decode())
-        self.assertTrue(recovery_socket.exists(),
-                        'acknowledgment must retain the control socket while recovery children run')
+        if not recovery_socket.exists():
+            saved = ROOT / '.scratch' / 'shared-instance-failures' / f'recovery-child-{os.getpid()}'
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(self.home, saved, dirs_exist_ok=True)
+            trace = (directory / 'recovery-pending.log').read_text(errors='replace') if (directory / 'recovery-pending.log').exists() else ''
+            self.fail(f'acknowledgment removed the control socket while recovery children ran; '
+                      f'trace={trace!r}; owner={self.owner_state()}; preserved={saved}')
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline and (not finished.exists() or len(finished.read_text().splitlines()) < 1):
             time.sleep(.05)
