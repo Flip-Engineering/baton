@@ -346,7 +346,7 @@ def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
       J.Jpair{"recoveryArgv", J.Jstr{recovery_argv},
       J.Jpair{"request", J.Jstr{request},
       J.Jpair{"resultSchema", J.Jstr{result_schema},
-      J.Jpair{"sourceIdentity", J.Jstr{source_identity}, J.Jnil{}}}}}}}}}}}}}}}}}}}}}}
+      J.Jpair{"sourceIdentity", J.Jstr{source_identity}, J.Jnil{}}}}}}}}}}}}}}}}}}}}}
 
 def start_decision_json(decision: StartDecision) -> J.Json:
   match decision:
