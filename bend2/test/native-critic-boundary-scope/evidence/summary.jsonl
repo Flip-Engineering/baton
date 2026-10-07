@@ -1,0 +1,7 @@
+mode=die-23 exit=23 stdout=probe-ready||
+mode=die-41 exit=41 stdout=probe-ready||
+mode=try-24 exit=24 stdout=probe-ready||
+mode=try-19 exit=19 stdout=probe-ready||
+mode=stopped exit=2 stdout=probe-ready||
+mode=result-25 exit=0 stdout=probe-ready||25:probe-result||probe-survived||
+mode=done exit=0 stdout=probe-ready||done||probe-survived||

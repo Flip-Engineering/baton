@@ -266,8 +266,7 @@ I reproduced all four with my own probe,
 forks exactly one task, prints `probe-ready` before the fork and
 `probe-survived` after the join, so the stdout shows which boundary the process
 reached. The probe adds two control modes with my own codes (`die-41`,
-`try-19`) to show the status is the code argument rather than a constant that
-matches the cited numbers.
+`try-19`), which show the status equals the code argument handed to the helper.
 
 The probe ran on the Linux remote runner `atari-homelab`, in my own scratch
 directory `~/baton-critic-boundary-scope-20261007`. No compilation ran on the
