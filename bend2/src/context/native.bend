@@ -102,7 +102,10 @@ def provider_write(+handle: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(
     case Fail{error}:
       match error:
         case (code, detail): IO.pure(ProviderAnswer, ProviderRefused{"providerInputWrite"})
-    case Done{unit}: provider_close(handle, Process.ProcessChild.close_stdin(handle))
+    case Done{unit}:
+      do IO<ProviderAnswer>:
+        closed : Result<&1,&1,U32 & String,Unit> <- Process.ProcessChild.close_stdin(handle)
+        provider_close(handle, closed)
 
 def provider_spawn(+path: String, +cwd: String, +frame: String, result: Result<&1,&1,U32 & String,U32>) -> IO(ProviderAnswer):
   match result:
