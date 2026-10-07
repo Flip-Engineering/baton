@@ -262,10 +262,36 @@ class NativeObservation(RECEIVE.Receive):
             row = database.execute("SELECT directory,id FROM executions WHERE session='parent' AND mode='retained'").fetchone()
         return (row[0], row[1]) if row else None
 
+    def test_log_write_failure_remains_an_observation_failure(self):
+        self.player(harness='omp')
+        self.coord('message', 'log-failure-task', 'root', 'parent', 'task', 'Retain this output.')
+        args = self.receive_args('parent')
+        args[-2] = str(self.fixture / 'parent.jsonl')
+        observer = self.spawn(*args)
+        stream, _ = self.accept('parent')
+        _, turn_id = self.eventually(lambda: self._retained_attempt(), 'retained attempt was not admitted')
+        self.action(stream, native_frame={'type': 'message_end', 'message': {
+            'id': 'log-failure-assistant', 'role': 'assistant', 'provider': 'fixture',
+            'content': [{'type': 'text', 'text': 'This output must not be reported as successful.'}]}})
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.action(stream, native_frame={'type': 'agent_end', 'isTerminal': True,
+                                          'is_error': False, 'messages': []})
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+
+        reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
+        failures = [row for row in reports if 'Native output observation failed' in row['body']]
+        self.assertEqual(len(failures), 1)
+        self.assertNotIn('checkpoint', failures[0]['id'])
+        self.assertFalse(any(row['id'] == turn_id + ':checkpoint' for row in reports))
+        self.assertFalse(pathlib.Path(args[-2]).exists())
+
 if __name__ == '__main__':
     unittest.main(defaultTest=[
         'NativeObservation.test_mixed_agent_end_members_preserve_completion_and_raw_frame',
         'NativeObservation.test_muse_uses_admitted_turn_terminal_and_keeps_later_lifecycle_separate',
         'NativeObservation.test_omp_fallback_message_survives_observer_reattach_at_saved_cursor',
         'NativeObservation.test_oversized_omp_checkpoint_failure_replays_without_losing_completion',
+        'NativeObservation.test_log_write_failure_remains_an_observation_failure',
     ])
