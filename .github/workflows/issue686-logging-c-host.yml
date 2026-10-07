@@ -20,7 +20,7 @@ jobs:
       - name: Check out immutable logging source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: 84815e35d93e9c85c6d1b65dcf867c56f6c124d9
+          ref: 943e101077538d865fc3a4aecd5e15396916134a
           path: candidate
       - name: Prepare evidence directory
         shell: bash
@@ -37,8 +37,8 @@ jobs:
           set -euo pipefail
           git -C candidate rev-parse HEAD | tee "$ISSUE686_RUN/evidence/source-commit.txt"
           git -C candidate rev-parse HEAD^{tree} | tee "$ISSUE686_RUN/evidence/source-tree.txt"
-          test "$(cat "$ISSUE686_RUN/evidence/source-commit.txt")" = 84815e35d93e9c85c6d1b65dcf867c56f6c124d9
-          test "$(cat "$ISSUE686_RUN/evidence/source-tree.txt")" = b1aa1cd8f4e3541cde39e61b4a81c87101aa756e
+          test "$(cat "$ISSUE686_RUN/evidence/source-commit.txt")" = 943e101077538d865fc3a4aecd5e15396916134a
+          test "$(cat "$ISSUE686_RUN/evidence/source-tree.txt")" = d5121e5e0b9f3f3f9ad3455f272eb877ba36d6d3
           git -C candidate status --short --branch > "$ISSUE686_RUN/evidence/source-status.txt"
           shasum -a 256 \
             candidate/bend2/src/host/process-spawn.c \
@@ -46,6 +46,7 @@ jobs:
             candidate/bend2/src/host/native-entry.c \
             candidate/bend2/src/host/process.bend \
             candidate/bend2/src/coordinator/main.bend \
+            candidate/bend2/src/coordinator/logs.bend \
             candidate/bend2/test/logs.py \
             candidate/bend2/scripts/build-native.sh \
             > "$ISSUE686_RUN/evidence/source-files.sha256"
