@@ -9,10 +9,14 @@ import ./identity.bend as ContextIdentity
 
 type Bootstrap is Data:
   QueryBootstrap{query: String, owner: String, database_binding: String,
-    request: String, cwd: String, origin_attempt: String,
+    request: String, cwd: String, origin_attempt: String, source_identity: String,
     plan_value: String, plan_identity: String,
-    result_schema: String, artifact_path: String, keeper_path: String,
-    guard_identity: String, guard_key: String, recovery_argv: String}
+    result_schema: String, artifact_path: String, artifact_sha256: String,
+    keeper_path: String, guard_identity: String, guard_key: String,
+    physical_role_key: String, owner_witness: String, recovery_argv: String}
+
+type ArtifactEvidence is Data:
+  ArtifactEvidence{source_identity: String, artifact_sha256: String}
 
 type StartDecision is Data:
   StartGranted{query: String, owner: String, role: String, incarnation: String,
@@ -28,87 +32,123 @@ type KeeperReadiness is Data:
 
 def query_bootstrap(+database_binding: String, +query: String, +owner: String,
                     +request: String, +cwd: String, +origin_attempt: String,
+                    +artifact_evidence: ArtifactEvidence,
                     +plan_value: String, +plan_identity: String,
                     +result_schema: String, +artifact_path: String,
-                    +keeper_path: String, +guard_key: String,
+                    +keeper_path: String,
+                    +guard_key: String, +physical_role_key: String,
+                    +owner_witness: String,
                     +recovery_argv: String) -> Bootstrap:
-  QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
-    plan_identity, result_schema, artifact_path, keeper_path,
-    ContextIdentity.guard_identity(database_binding,
-      ContextIdentity.SubjectQuery{query}, ContextIdentity.RoleStarter{}, "0"),
-    guard_key, recovery_argv}
+  match artifact_evidence:
+    case ArtifactEvidence{source_identity, artifact_sha256}:
+      QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path,
+        ContextIdentity.guard_identity(database_binding,
+          ContextIdentity.SubjectQuery{query}, ContextIdentity.RoleStarter{}, "0"),
+        guard_key, physical_role_key, owner_witness, recovery_argv}
 
 def bootstrap_query(bootstrap: Bootstrap) -> String:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, guard_key, recovery_argv}: query
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: query
 
 def bootstrap_owner(bootstrap: Bootstrap) -> String:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, guard_key, recovery_argv}: owner
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: owner
 
 def bootstrap_request(bootstrap: Bootstrap) -> String:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, guard_key, recovery_argv}: request
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: request
 
 def bootstrap_cwd(bootstrap: Bootstrap) -> String:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, guard_key, recovery_argv}: cwd
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: cwd
 
 def bootstrap_attempt(bootstrap: Bootstrap) -> String:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, guard_key, recovery_argv}: origin_attempt
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: origin_attempt
 
 def bootstrap_keeper_path(bootstrap: Bootstrap) -> String:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, guard_key, recovery_argv}: keeper_path
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: keeper_path
 
 def bootstrap_artifact_path(bootstrap: Bootstrap) -> String:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, guard_key, recovery_argv}: artifact_path
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: artifact_path
+
+def bootstrap_artifact_sha256(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: artifact_sha256
+
+def bootstrap_physical_role_key(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: physical_role_key
+
+def bootstrap_owner_witness(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: owner_witness
 
 def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, guard_key, recovery_argv}:
-      J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-managed-context-bootstrap-v1"},
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}:
+      J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-managed-context-bootstrap-v2"},
       J.Jpair{"query", J.Jstr{query},
       J.Jpair{"owner", J.Jstr{owner},
       J.Jpair{"databaseBinding", J.Jstr{database_binding},
       J.Jpair{"request", J.Jstr{request},
       J.Jpair{"cwd", J.Jstr{cwd},
       J.Jpair{"originAttempt", J.Jstr{origin_attempt},
+      J.Jpair{"sourceIdentity", J.Jstr{source_identity},
       J.Jpair{"planValue", J.Jstr{plan_value},
       J.Jpair{"planIdentity", J.Jstr{plan_identity},
       J.Jpair{"resultSchema", J.Jstr{result_schema},
       J.Jpair{"artifactPath", J.Jstr{artifact_path},
+      J.Jpair{"artifactSha256", J.Jstr{artifact_sha256},
       J.Jpair{"keeperPath", J.Jstr{keeper_path},
       J.Jpair{"guardIdentity", J.Jstr{guard_identity},
       J.Jpair{"guardKey", J.Jstr{guard_key},
-      J.Jpair{"recoveryArgv", J.Jstr{recovery_argv}, J.Jnil{}}}}}}}}}}}}}}}}}
+      J.Jpair{"physicalRoleKey", J.Jstr{physical_role_key},
+      J.Jpair{"ownerWitness", J.Jstr{owner_witness},
+      J.Jpair{"recoveryArgv", J.Jstr{recovery_argv}, J.Jnil{}}}}}}}}}}}}}}}}}}}}}
 
 def bootstrap_text(+bootstrap: Bootstrap) -> String:
   J.json_text(bootstrap_json(bootstrap))
 
 def accepted_query_state(+state: String) -> Bool:
-  Bool.or(String.eq(state, "accepted"),
-  Bool.or(String.eq(state, "running"),
-  Bool.or(String.eq(state, "complete"),
-  Bool.or(String.eq(state, "failed"), String.eq(state, "interrupted")))))
+  Bool.or(String.eq(state, "accepted"), String.eq(state, "running"))
 
 def admission_identity_match(+expected_owner: String, +expected_request: String,
                              +expected_keeper: String, +expected_cwd: String,
@@ -137,9 +177,10 @@ def admission_identity_match(+expected_owner: String, +expected_request: String,
 
 def admission_fields_match(bootstrap: Bootstrap, +admission: Admission.Admission) -> Bool:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, guard_key, recovery_argv}:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}:
       admission_identity_match(owner, request, keeper_path, cwd, origin_attempt,
         artifact_path, admission)
 
@@ -147,15 +188,38 @@ def accepted_admission(+bootstrap: Bootstrap, +role: String, +incarnation: Strin
                        +admission: Admission.Admission, +stored_plan: String,
                        +stored_schema: String) -> StartDecision:
   match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, guard_key, recovery_argv}:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}:
       Bool.pick(StartDecision,
         Bool.and(admission_fields_match(bootstrap, admission),
         Bool.and(String.eq(plan_value, stored_plan), String.eq(result_schema, stored_schema))),
         StartGranted{query, owner, role, incarnation, request, keeper_path,
           artifact_path, stored_plan, stored_schema},
         StartHeld{"committedAdmissionMismatch"})
+
+def accepted_managed_admission(+bootstrap: Bootstrap, +role: String,
+                               +incarnation: String,
+                               +admission: Admission.Admission,
+                               +stored_plan: String, +stored_identity: String,
+                               +stored_schema: String, +artifact_sha: String,
+                               +stored_bootstrap: String) -> StartDecision:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}:
+      Bool.pick(StartDecision,
+        Bool.and(admission_fields_match(bootstrap, admission),
+        Bool.and(String.eq(plan_value, stored_plan),
+        Bool.and(String.eq(plan_identity, stored_identity),
+        Bool.and(String.eq(result_schema, stored_schema),
+        Bool.and(String.eq(artifact_sha256, artifact_sha),
+        String.eq(bootstrap_text(bootstrap), stored_bootstrap)))))),
+        StartGranted{query, owner, role, incarnation, request, keeper_path,
+          artifact_path, stored_plan, stored_schema},
+        StartHeld{"committedManagedAdmissionMismatch"})
 
 def rejection_identity_match(+expected_owner: String, +expected_request: String,
                              +expected_keeper: String, +expected_cwd: String,
@@ -190,6 +254,12 @@ def submission_decision(+bootstrap: Bootstrap, +role: String, +incarnation: Stri
       accepted_admission(bootstrap, role, incarnation, admission, planValue, resultSchema)
     case ContextService.SubmissionRetainedVerified{+admission, +planValue, resultSchema}:
       accepted_admission(bootstrap, role, incarnation, admission, planValue, resultSchema)
+    case ContextService.SubmissionManaged{+admission, +planValue, +planIdentity,
+        +resultSchema, +artifactSha256, +bootstrapText}:
+      accepted_managed_admission(bootstrap, role, incarnation, admission,
+        planValue, planIdentity, resultSchema, artifactSha256, bootstrapText)
+    case ContextService.SubmissionManagedUncertain{stage, answer}:
+      StartHeld{"managedAdmissionUncertain:" ++ stage}
     case ContextService.SubmissionRetainedUnverified{admission, planValue, resultSchema}:
       StartHeld{"retainedAdmissionUnverified"}
     case ContextService.SubmissionRetainedRejected{+admission, decision, state, owner, request}:
@@ -219,11 +289,13 @@ def start_from_submission(+bootstrap: Bootstrap, readiness: KeeperReadiness,
 def submit_associated_admission(+bootstrap: Bootstrap, +db: String) -> IO(ContextService.Submission):
   match bootstrap:
     case QueryBootstrap{query, owner, database_binding, request, cwd,
-        origin_attempt, plan_value, plan_identity, result_schema,
-        artifact_path, keeper_path, guard_identity, guard_key, recovery_argv}:
-      ContextService.admitted_associated(db, database_binding, query,
+        origin_attempt, source_identity, plan_value, plan_identity, result_schema,
+        artifact_path, artifact_sha256, keeper_path, guard_identity, guard_key,
+        physical_role_key, owner_witness, recovery_argv}:
+      ContextService.admitted_managed_associated(db, database_binding, query,
         owner, request, keeper_path, cwd, origin_attempt, artifact_path,
-        plan_value, plan_identity, result_schema)
+        plan_value, plan_identity, result_schema, artifact_sha256,
+        bootstrap_text(bootstrap))
 
 def submit_after_observer_ready(+bootstrap: Bootstrap, readiness: KeeperReadiness,
                                 +db: String) -> IO(StartDecision):

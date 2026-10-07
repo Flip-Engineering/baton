@@ -5,9 +5,12 @@ import ./bound-admission.bend as Admission
 import ./service.bend as Service
 
 def managed_bootstrap() -> Managed.Bootstrap:
-  Managed.query_bootstrap("db-binding", "q-1", "owner-1", "{}", "/work", "0", "[]",
-    "plan-identity", "result-v1", "/work/.baton/context-artifacts/q",
-    "/logs/keeper-q", "guard-key-64", "native-recover-argv")
+  Managed.query_bootstrap("db-binding", "q-1", "owner-1", "{}", "/work", "0",
+    Managed.ArtifactEvidence{"source-identity",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    "[]", "plan-identity", "result-v1", "/work/.baton/context-artifacts/q",
+    "/logs/keeper-q", "guard-key-64", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "owner-token:1", "native-recover-argv")
 
 def accepted_admission() -> Admission.Admission:
   Admission.AdmissionCreated{"owner-1", "{}", "accepted", "accepted", "0",
@@ -19,12 +22,10 @@ def accepted_submission() -> Service.Submission:
 def ready_keeper() -> Managed.KeeperReadiness:
   Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"}
 
-law bootstrap_contains_the_full_immutable_query_identity:
-  {Managed.bootstrap_text(managed_bootstrap()) ==
-    "{\"artifactPath\":\"/work/.baton/context-artifacts/q\",\"cwd\":\"/work\",\"databaseBinding\":\"db-binding\",\"guardIdentity\":\"[\\\"context-role\\\",\\\"db-binding\\\",\\\"query\\\",\\\"q-1\\\",\\\"starter\\\",\\\"0\\\"]\",\"guardKey\":\"guard-key-64\",\"keeperPath\":\"/logs/keeper-q\",\"originAttempt\":\"0\",\"owner\":\"owner-1\",\"planIdentity\":\"plan-identity\",\"planValue\":\"[]\",\"query\":\"q-1\",\"recoveryArgv\":\"native-recover-argv\",\"request\":\"{}\",\"resultSchema\":\"result-v1\",\"schema\":\"baton2-managed-context-bootstrap-v1\"}" : String}
-
-def bootstrap_contains_the_full_immutable_query_identity():
-  {==}
+def managed_submission() -> Service.Submission:
+  Service.SubmissionManaged{accepted_admission(), "[]", "plan-identity", "result-v1",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    Managed.bootstrap_text(managed_bootstrap())}
 
 law a_retained_observer_and_matching_committed_admission_are_required_for_start:
   {Managed.start_from_submission(managed_bootstrap(), ready_keeper(),
@@ -32,6 +33,23 @@ law a_retained_observer_and_matching_committed_admission_are_required_for_start:
       "{}", "/logs/keeper-q", "/work/.baton/context-artifacts/q", "[]", "result-v1"} : Managed.StartDecision}
 
 def a_retained_observer_and_matching_committed_admission_are_required_for_start():
+  {==}
+
+law managed_admission_requires_the_exact_artifact_digest_and_bootstrap:
+  {Managed.start_from_submission(managed_bootstrap(), ready_keeper(),
+    managed_submission()) == Managed.StartGranted{"q-1", "owner-1", "starter", "0",
+      "{}", "/logs/keeper-q", "/work/.baton/context-artifacts/q", "[]", "result-v1"} : Managed.StartDecision}
+
+def managed_admission_requires_the_exact_artifact_digest_and_bootstrap():
+  {==}
+
+law terminal_admission_does_not_grant_a_duplicate_native_start:
+  {Managed.accepted_admission(managed_bootstrap(), "starter", "0",
+    Admission.AdmissionRetained{"owner-1", "{}", "accepted", "complete", "0",
+      "/logs/keeper-q", "/work", "/work/.baton/context-artifacts/q"},
+    "[]", "result-v1") == Managed.StartHeld{"committedAdmissionMismatch"} : Managed.StartDecision}
+
+def terminal_admission_does_not_grant_a_duplicate_native_start():
   {==}
 
 law an_unavailable_original_observer_never_grants_a_start:

@@ -1,7 +1,7 @@
 // Resolve the selected package from the installed Baton prefix containing this file.
 // The native coordinator supplies the frozen invocation over stdin. The module identity
 // chooses one manifest-scoped package directory below this installation's lib tree.
-import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -197,6 +197,41 @@ export async function runSelectedInvocation(invocation, { wrapperPath = fileURLT
   }
 }
 
+export function verifyInvocationText(text, { wrapperPath = fileURLToPath(import.meta.url) } = {}) {
+  try {
+    if (text.includes('\n')) return refused('invocationArtifactFramingInvalid');
+    const invocation = JSON.parse(text);
+    if (JSON.stringify(invocation) !== text) return refused('invocationArtifactCanonicalMismatch');
+    const admitted = validateInvocation(invocation);
+    if (admitted.status !== 'accepted') return admitted;
+    const moduleId = invocation.moduleBinding.id;
+    const selected = resolveSelectedPackageRoot(wrapperPath, moduleId);
+    if (selected.status !== 'resolved') return selected;
+    if (!packageMatchesInvocation(selected.root, selected.manifest, invocation)) {
+      return refused('selectedPackageDoesNotMatchFrozenBinding');
+    }
+    return Object.freeze({ status: 'verified', query: invocation.query,
+      owner: invocation.owner, moduleId, declarationDigest: invocation.moduleBinding.declarationDigest,
+      artifactSha256: sha256(Buffer.from(text, 'utf8')), artifactBytes: Buffer.byteLength(text, 'utf8') });
+  } catch (error) {
+    return refused('invocationArtifactVerificationFailed', error.message);
+  }
+}
+
+export function verifyInvocationArtifact(path, options = {}) {
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o222) !== 0
+        || realpathSync(path) !== path) return refused('invocationArtifactFileInvalid');
+    const bytes = readFileSync(path);
+    const text = bytes.toString('utf8');
+    if (!Buffer.from(text, 'utf8').equals(bytes)) return refused('invocationArtifactFramingInvalid');
+    return verifyInvocationText(text, options);
+  } catch (error) {
+    return refused('invocationArtifactVerificationFailed', error.message);
+  }
+}
+
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (process.argv[2] === '--inventory') {
     const result = installedModuleInventory();
@@ -274,16 +309,50 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
       process.stdout.write(JSON.stringify(refused('queryOutcomeAuthorityMalformed', error.message)) + '\n');
       process.exitCode = 2;
     }
-  } else {
-  let input = '';
-  for await (const chunk of process.stdin) input += chunk;
-  try {
-    const result = await runSelectedInvocation(JSON.parse(input));
+  } else if (process.argv[2] === '--invoke-file') {
+    try {
+      if (process.argv.length !== 4) throw new Error('invocation artifact path is required');
+      const artifactPath = process.argv[3];
+      const stat = lstatSync(artifactPath);
+      if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o222) !== 0
+          || realpathSync(artifactPath) !== artifactPath) {
+        throw new Error('invocation artifact must be a read-only regular file');
+      }
+      const bytes = readFileSync(artifactPath);
+      const text = bytes.toString('utf8');
+      if (Buffer.from(text, 'utf8').compare(bytes) !== 0 || text.includes('\n')) {
+        throw new Error('invocation artifact framing is invalid');
+      }
+      const result = await runSelectedInvocation(JSON.parse(text));
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      if (result.status === 'refused') process.exitCode = 2;
+    } catch (error) {
+      process.stdout.write(`${JSON.stringify(refused('invocationArtifactExecutionFailed', error.message))}\n`);
+      process.exitCode = 3;
+    }
+  } else if (process.argv[2] === '--verify-invocation-file') {
+    const result = process.argv.length === 4
+      ? verifyInvocationArtifact(process.argv[3])
+      : refused('invocationArtifactPathMissing');
     process.stdout.write(`${JSON.stringify(result)}\n`);
-    if (result.status === 'refused') process.exitCode = 2;
-  } catch (error) {
-    process.stdout.write(`${JSON.stringify(refused('invocationExecutionFailed', error.message))}\n`);
-    process.exitCode = 3;
-  }
+    if (result.status !== 'verified') process.exitCode = 2;
+  } else if (process.argv[2] === '--verify-invocation') {
+    let input = '';
+    for await (const chunk of process.stdin) input += chunk;
+    const frame = input.endsWith('\n') ? input.slice(0, -1) : input;
+    const result = verifyInvocationText(frame);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    if (result.status !== 'verified') process.exitCode = 2;
+  } else {
+    let input = '';
+    for await (const chunk of process.stdin) input += chunk;
+    try {
+      const result = await runSelectedInvocation(JSON.parse(input));
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      if (result.status === 'refused') process.exitCode = 2;
+    } catch (error) {
+      process.stdout.write(`${JSON.stringify(refused('invocationExecutionFailed', error.message))}\n`);
+      process.exitCode = 3;
+    }
   }
 }
