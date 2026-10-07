@@ -219,7 +219,7 @@ def primary_command(db: String, +event: String, +previous: String, muse: Bool) -
       selected : String <- IO.pure(String,Tx.trim_nl(found))
       IO.pure(String,Bool.pick(String,String.is_empty(previous),selected,previous))
 
-def current_command(db: String, +event: String, previous: String, muse: Bool) -> IO(String):
+def current_command(db: String, +event: String, +previous: String, muse: Bool) -> IO(String):
   match muse:
     case False{}: IO.pure(String,previous)
     case True{}: do IO<String>:
@@ -259,7 +259,7 @@ def completion_state(db: String, +id: String, +player: String, +event: String) -
 def completion_state_event_sql(+id: String, +player: String, +event: String) -> String:
   "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.terminal(event) ++ " THEN " ++ completion_state_expr(id,player,event) ++ " ELSE '' END ELSE '' END;"
 
-def completion_state_event(db: String, id: String, player: String, +event: String, +primary: String, muse: Bool) -> IO(String):
+def completion_state_event(+db: String, +id: String, +player: String, +event: String, +primary: String, muse: Bool) -> IO(String):
   do IO<String>:
     accepted : Bool <- primary_terminal(db,event,primary,muse)
     selected : String <- Bool.pick(IO(String),accepted,IO.try(String,DB.Sql.query(db,completion_state_event_sql(id,player,event))),IO.pure(String,""))
@@ -268,7 +268,7 @@ def completion_state_event(db: String, id: String, player: String, +event: Strin
 def completion_note_id_sql(+id: String, +event: String) -> String:
   "SELECT " ++ C.q(id ++ ":observation-conflict:") ++ " || coalesce(json_extract(" ++ C.q(event) ++ ",'$.id'),json_extract(" ++ C.q(event) ++ ",'$.payload.command_id'),json_extract(" ++ C.q(event) ++ ",'$.command_id'),'unknown');"
 
-def completion_conflict_note(db: String, player: String, id: String, +event: String, conflict: Bool) -> IO(Unit):
+def completion_conflict_note(+db: String, player: String, +id: String, +event: String, conflict: Bool) -> IO(Unit):
   match conflict:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
@@ -276,7 +276,7 @@ def completion_conflict_note(db: String, player: String, id: String, +event: Str
       saved : Unit <- report(db,player,Tx.trim_nl(note_id),"A native terminal produced output for report ID " ++ id ++ " after a different report already used that ID. The original report is preserved; this terminal event remains in the native log.")
       IO.pure(Unit,Unit{})
 
-def observe_sealed(db: String, id: String, player: String, +event: String, +primary: String, sealed: Bool, muse: Bool) -> IO(Bool):
+def observe_sealed(+db: String, id: String, player: String, +event: String, +primary: String, sealed: Bool, muse: Bool) -> IO(Bool):
   do IO<Bool>:
       terminal_text : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN " ++ C.terminal(event) ++ " ELSE 0 END;"))
       +terminal : Bool <- IO.pure(Bool,String.eq(Tx.trim_nl(terminal_text),"1"))
