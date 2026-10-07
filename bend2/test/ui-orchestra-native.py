@@ -120,12 +120,16 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
         self.assertTrue(any(row[1] == 'worker' and row[5] == 'session'
                             for row in rows))
         with sqlite3.connect(self.db) as db:
-            pending_count = db.execute('''SELECT count(*) FROM messages
-                                           WHERE recipient='worker' AND receipt IS NULL
-                                             AND kind IN ('task', 'guidance', 'recovery')
-                                             AND NOT EXISTS (SELECT 1 FROM session_stops
-                                                              WHERE session='worker')''').fetchone()[0]
-            self.assertEqual(pending_count, 1)
+            pending_inputs = db.execute('''SELECT id, kind, sender, receipt FROM messages
+                                             WHERE recipient='worker' AND receipt IS NULL
+                                               AND kind IN ('task', 'guidance', 'recovery')
+                                               AND NOT EXISTS (SELECT 1 FROM session_stops
+                                                                WHERE session='worker')
+                                             ORDER BY seq''').fetchall()
+            self.assertEqual(len(pending_inputs), 3, pending_inputs)
+            self.assertIn(('task-worker', 'task', 'root', None), pending_inputs)
+            self.assertTrue(all(row[1] in ('task', 'guidance', 'recovery')
+                                and row[3] is None for row in pending_inputs), pending_inputs)
             events = {row[0]: json.loads(row[1]) for row in db.execute(
                 'SELECT id,event FROM turns WHERE worker IN (?,?)',
                 ('worker', 'failed-worker'))}

@@ -85,8 +85,8 @@ function playerSnapshot(db, session) {
            (SELECT m.id FROM messages m WHERE m.sender = s.id AND m.kind = 'report' ORDER BY m.seq DESC LIMIT 1) AS latestReportId,
            (SELECT count(*) FROM messages m WHERE m.recipient = s.id AND m.receipt IS NULL) AS unacknowledgedCount,
            (SELECT count(*) FROM messages m WHERE m.recipient = s.id AND m.receipt IS NULL
-             AND m.kind IN ('task', 'guidance', 'recovery')
-             AND NOT EXISTS(SELECT 1 FROM session_stops stop WHERE stop.session = s.id)) AS pendingCount,
+             AND NOT (EXISTS(SELECT 1 FROM session_stops stop WHERE stop.session = s.id)
+               AND m.kind IN ('task', 'guidance', 'recovery'))) AS pendingCount,
            (SELECT json_group_array(e.id) FROM ensembles e WHERE e.owner = s.id) AS ownedEnsemblesJson,
            (SELECT json_group_array(em.ensemble) FROM ensemble_members em WHERE em.session = s.id) AS memberEnsemblesJson,
            (s.endpoint <> '') AS endpointRegistered
@@ -435,7 +435,7 @@ function cli(args) {
   const values = new Map();
   for (let i = 0; i < args.length; i += 2) values.set(args[i], args[i + 1]);
   if (!values.get('--database') || !values.get('--reader')) {
-    throw new Error('usage: server.mjs --database PATH --reader SESSION [--host 127.0.0.1] [--port 0]');
+    throw new Error('usage: server.mjs --database PATH --reader SESSION [--subject SESSION] [--host 127.0.0.1] [--port 0]');
   }
   return {
     databasePath: values.get('--database'),
@@ -451,9 +451,19 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.
     const server = createOrchestraServer(cli(process.argv.slice(2)));
     server.on('listening', () => {
       const address = server.address();
+      const host = address.family === 'IPv6' ? `[${address.address}]` : address.address;
       process.stdout.write(JSON.stringify({ host: address.address, port: address.port, readOnly: true }) + '\n');
+      process.stdout.write(`http://${host}:${address.port}/\n`);
     });
-    const close = () => server.close(() => process.exit(0));
+    let closing = false;
+    const close = () => {
+      if (closing) return;
+      closing = true;
+      server.close(() => { process.exitCode = 0; });
+      server.closeAllConnections?.();
+    };
+    process.stdin.on('end', close);
+    process.stdin.resume();
     process.on('SIGINT', close);
     process.on('SIGTERM', close);
   } catch (error) {
