@@ -269,6 +269,17 @@ def run_one_gate(gate_name, compiler, env, output, initial):
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     check_compiler_version(compiler)
+    # Stable request identity for the gate producer, shared with the receipt
+    # below. A parallel scheduler inside the gate adopts BATON2_GATE_REQUEST as
+    # its request directory and BATON2_GATE_JOB as its producer directory
+    # instead of minting its own identity.
+    producer = producer_identity()
+    request = 'local'
+    if producer.get('run_id') is not None:
+        request = '/'.join((producer.get('workflow') or 'workflow', producer['run_id'],
+                            producer.get('run_attempt') or '1', producer.get('sha') or 'sha'))
+    env = dict(env, BATON2_GATE_REQUEST=request,
+               BATON2_GATE_JOB=producer.get('job') or gate_name)
     generated = ROOT / '.scratch/bend2/baton2.c'
     receipt = {'gate': gate_name, 'status': 'running', 'worktree': str(ROOT),
                'output': str(output), 'log': gate_name + '.log',
@@ -277,7 +288,7 @@ def run_one_gate(gate_name, compiler, env, output, initial):
                                'CC': env.get('CC', 'clang')},
                'compiler_sha256': sha256(compiler),
                'runner_sha256': sha256(Path(__file__)),
-               'producer': producer_identity()}
+               'producer': producer}
     same_source(receipt['before'], initial)
     stage = {'name': gate_name, 'argv': argv, 'status': 'running',
              'before': receipt['before'], 'log': receipt['log']}
