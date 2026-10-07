@@ -392,16 +392,13 @@ type HolderObservation is Data:
   HolderObserved{request: HolderRequest, code: U32, out: String, verdict: HolderVerdict}
   HolderObservedBroken{request: HolderRequest, detail: String, verdict: HolderVerdict}
 
-def prefix_drop_tail(line: String, head: String, rest: String) -> Maybe<String>:
-  match line:
-    case SNil{}: None{}
-    case SCon{got, gotrest}:
-      Bool.pick(Maybe<String>, Char.is_eq(head, got), prefix_drop_tail(gotrest, rest), None{})
-
 def prefix_drop(line: String, prefix: String) -> Maybe<String>:
-  match prefix:
-    case SNil{}: Some{line}
-    case SCon{head, rest}: prefix_drop_tail(line, head, rest)
+  match line prefix:
+    case SNil{} SNil{}: Some{line}
+    case SNil{} SCon{pc, pr}: None{}
+    case SCon{lc, lr} SNil{}: Some{line}
+    case SCon{lc, lr} SCon{pc, pr}:
+      Bool.pick(Maybe<String>, Char.is_eq(lc, pc), prefix_drop(lr, pr), None{})
 
 def holder_path_of(+line: String) -> Maybe<String>:
   prefix_drop(line, "worktree ")
@@ -1085,7 +1082,7 @@ def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand
         ld_adv_wt_observe_wrapped(p2, r2, t2, c2, capture),
         ld_adv_wt_refused(p2, r2, t2, b2, capture))
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(AdvBroken{detail}, capture))
-def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match same:
     case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvHolderChanged{path}))
     case True{}:
@@ -1095,14 +1092,14 @@ def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, 
       +c2 = cand
       +b2 = basis
       do IO<LdAdvObs>:
-        captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"merge", Con{"--ff-only", Con{c2, Nil{}}}}}), p2, cx.claim, cx.guard, cx.artifact)
+        captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"merge", Con{"--ff-only", Con{c2, Nil{}}}}}), p2, ctx.claim, ctx.guard, ctx.artifact)
         ld_adv_wt_pick(ld_adv_status(captured), p2, r2, t2, c2, b2, ctx, captured)
 def ld_adv_wt_head_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   match g:
     case T.GRun{code, out}:
       +t2 = target
       +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(IO(LdAdvObs), status_ok, Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(t2)), False{})
+      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(t2)), False{})
       ld_adv_wt_head_same(same, path, repo, t2, cand, basis, ctx)
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
 def ld_adv_wt_target_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
@@ -1122,7 +1119,7 @@ def ld_adv_wt_target_pick(g: T.GitOut, path: String, repo: String, target: Strin
     case T.GRun{code, out}:
       +b2 = basis
       +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(IO(LdAdvObs), status_ok, Tx.str_eq(Tx.trim_nl(out), b2), False{})
+      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), b2), False{})
       ld_adv_wt_target_same(same, path, repo, target, cand, b2, ctx)
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
 def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
@@ -1316,14 +1313,10 @@ def shared_common_read(repo: String, target: String, cand: String, basis: String
         IO.pure(SharedLanding, SharedCommonUnreadable{observed}))
     case T.GBroken{detail}: IO.pure(SharedLanding, SharedCommonUnreadable{observed})
 
-def shared_landing_run(repo: String, target: String, cand: String, basis: String) -> IO(SharedLanding):
-  +repo = repo
-  +tg = target
-  +c = cand
-  +b = basis
+def shared_landing_run(+repo: String, +target: String, +cand: String, +basis: String) -> IO(SharedLanding):
   do IO<SharedLanding>:
-    observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
-    shared_common_read(rp, tg, c, b, observed)
+    observed : T.GitOut <- Git.runGit(repo, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
+    shared_common_read(repo, target, cand, basis, observed)
 
 # Read the exact target ref after the held fast-forward and require its tip to
 # remain the source candidate before checking which branch the holder has now.
@@ -1349,7 +1342,7 @@ def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String)
         case Fail{error}:
           match error:
             case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", detail)}}
-        case Done{unit}: ff_stage5_adv_answer(ld_adv_of(obs), tg, c)
+        case Done{unit}: ff_stage5_adv_answer(ld_adv_of(obs), target, cand)
 
 def ff_stage5_shared(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
   +cand = wc
@@ -1503,7 +1496,7 @@ def block_ok_go(lines: List<String>, ok: Bool) -> Bool:
       +o2 = Bool.pick(Bool, ok, line_ok(l2), False{})
       block_ok_go(rest, o2)
 
-def block_ok(block: String) -> Bool:
+def block_ok(+block: String) -> Bool:
   block_ok_go(Tx.split_lines(block), Tx.non_empty(block))
 
 def block_has_go(lines: List<String>, want: String) -> Bool:
@@ -1522,7 +1515,7 @@ def exit_fail_ok(ok: Bool, +block: String, file: String) -> FV:
     case True{}: FV{file, VFail{block}}
     case False{}: FV{file, VNone{unjudged_why(block)}}
 
-def exit_fail(block: String, file: String) -> FV:
+def exit_fail(+block: String, +file: String) -> FV:
   exit_fail_ok(block_ok(block), block, file)
 
 def exit_verdict(ok: Bool, out: String, file: String) -> FV:
@@ -1701,7 +1694,7 @@ def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String
         case Fail{error}:
           match error:
             case (code, detail): LdFail{T.FCmd{"land", detail}}
-        case Done{unit}: ld_adv_answer(ld_adv_of(obs), tg, c)
+        case Done{unit}: ld_adv_answer(ld_adv_of(obs), target, cand)
 def ld_advance(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
   +t2 = target
   +c2 = cand

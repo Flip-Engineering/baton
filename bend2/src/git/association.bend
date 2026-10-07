@@ -34,63 +34,63 @@ def hex_chain_16(c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 102),
     True{},
     False{})
-def hex_chain_15(c: Char) -> Bool:
+def hex_chain_15(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 101),
     True{},
     hex_chain_16(c))
-def hex_chain_14(c: Char) -> Bool:
+def hex_chain_14(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 100),
     True{},
     hex_chain_15(c))
-def hex_chain_13(c: Char) -> Bool:
+def hex_chain_13(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 99),
     True{},
     hex_chain_14(c))
-def hex_chain_12(c: Char) -> Bool:
+def hex_chain_12(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 98),
     True{},
     hex_chain_13(c))
-def hex_chain_11(c: Char) -> Bool:
+def hex_chain_11(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 97),
     True{},
     hex_chain_12(c))
-def hex_chain_10(c: Char) -> Bool:
+def hex_chain_10(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 57),
     True{},
     hex_chain_11(c))
-def hex_chain_9(c: Char) -> Bool:
+def hex_chain_9(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 56),
     True{},
     hex_chain_10(c))
-def hex_chain_8(c: Char) -> Bool:
+def hex_chain_8(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 55),
     True{},
     hex_chain_9(c))
-def hex_chain_7(c: Char) -> Bool:
+def hex_chain_7(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 54),
     True{},
     hex_chain_8(c))
-def hex_chain_6(c: Char) -> Bool:
+def hex_chain_6(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 53),
     True{},
     hex_chain_7(c))
-def hex_chain_5(c: Char) -> Bool:
+def hex_chain_5(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 52),
     True{},
     hex_chain_6(c))
-def hex_chain_4(c: Char) -> Bool:
+def hex_chain_4(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 51),
     True{},
     hex_chain_5(c))
-def hex_chain_3(c: Char) -> Bool:
+def hex_chain_3(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 50),
     True{},
     hex_chain_4(c))
-def hex_chain_2(c: Char) -> Bool:
+def hex_chain_2(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 49),
     True{},
     hex_chain_3(c))
-def hex_chain_1(c: Char) -> Bool:
+def hex_chain_1(+c: Char) -> Bool:
   Bool.pick(Bool, hex_is(c, 48),
     True{},
     hex_chain_2(c))
