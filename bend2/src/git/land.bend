@@ -41,6 +41,7 @@ import Base
 import ./landing.bend as Lg
 import ./intent.bend as It
 import ../host/receipt.bend as Rec
+import ./intent-publish.bend as Pb
 import ./types.bend as T
 import ./text.bend as Tx
 import ./process.bend as Git
@@ -646,7 +647,7 @@ def ff_stage5_framing(target: String, candidate: String, artifact: String, frami
     case T.RRun{T.SExit{code}, out}:
       match U32.is_eq(code, 0):
         case True{}: ff_stage5_landed(tg, cand)
-        case False{}: ff_stage5_blocked(Tx.str_cat("mutation exited nonzero; stderr bytes ", Tx.str_cat(diag, Tx.str_cat("; artifact ", art)))
+        case False{}: ff_stage5_blocked(Tx.str_cat("mutation exited nonzero; stderr bytes ", Tx.str_cat(diag, Tx.str_cat("; artifact ", art))))
     case T.RRun{T.SSignal{signal}, out}: ff_stage5_blocked(Tx.str_cat("mutation signalled; stderr at ", art))
 
 def ff_stage5_outcome(target: String, candidate: String, artifact: String, outcome: Lg.Landing) -> IO(FFLD):
@@ -675,7 +676,7 @@ def ff_stage5_guarded_now(candidate: String, old: String, repo: String, target: 
   +name = Tx.str_cat(cand, Tx.str_cat("-", tb))
   +scratch = Lg.attempt_directory_for(cm, name)
   +art = Lg.attempt_artifact_for(cm, name)
-  +intent = It.IntentRequested{name, cm, tg, rp, cand, tb, Lg.intent_path(scratch, "intent"), rp, tb}
+  +intent = It.IntentRequested{name, cm, tg, rp, cand, tb, Pb.intent_path(scratch, "intent"), rp, tb}
   +request = Lg.LandingRequested{intent, "intent", tb, "", gd, art, scratch, rp}
   do IO<FFLD>:
     outcome : Lg.Landing <- Lg.Landing.run(request)
