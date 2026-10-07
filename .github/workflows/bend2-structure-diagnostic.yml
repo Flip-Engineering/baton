@@ -17,7 +17,7 @@ jobs:
       - name: Checkout the immutable product commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: 4a5b1df48e874f3d9363c48664cc52a069da5e4f
+          ref: db8d419665446128c6d67fb71b1ad489083f8c0a
           persist-credentials: false
 
       - name: Select Node 22
@@ -71,17 +71,40 @@ jobs:
         shell: bash
         run: |
           set -u
-          run="$DIAGNOSTIC_RUN"
-          bend="$run/toolchain-home/bin/bend"
-          for module in src/git/land.bend src/git/landing.bend src/git/association.bend src/git/intent.bend src/git/intent-publish.bend src/git/attempt.bend src/git/types.bend; do
-            name=$(printf '%s' "$module" | tr '/' '_')
-            ( cd "$GITHUB_WORKSPACE/bend2" && "$bend" "$module" --check-only ) \
-              > "$run/evidence/$name.stdout" 2> "$run/evidence/$name.stderr"
-            echo "$?" > "$run/evidence/$name.exit"
-            echo "== $module exit $(cat "$run/evidence/$name.exit")"
-            head -12 "$run/evidence/$name.stderr"
-          done
-          true
+          python3 - <<'PY'
+          import os, subprocess, sys, time
+          run = os.environ["DIAGNOSTIC_RUN"]
+          bend = run + "/toolchain-home/bin/bend"
+          workspace = os.environ["GITHUB_WORKSPACE"] + "/bend2"
+          evidence = run + "/evidence"
+          modules = ["src/git/land.bend", "src/git/landing.bend", "src/git/association.bend",
+                     "src/git/intent.bend", "src/git/intent-publish.bend", "src/git/attempt.bend",
+                     "src/git/types.bend"]
+          failures = []
+          for module in modules:
+            name = module.replace("/", "_")
+            argv = [bend, module, "--check-only"]
+            started = time.time()
+            try:
+              done = subprocess.run(argv, cwd=workspace, capture_output=True, timeout=900)
+              out, err, code, kind = done.stdout, done.stderr, done.returncode, "completed"
+            except subprocess.TimeoutExpired as expired:
+              out, err, code, kind = expired.stdout or b"", expired.stderr or b"", None, "deadline-expired"
+            except OSError as error:
+              out, err, code, kind = b"", str(error).encode(), None, "launch-failed"
+            open(os.path.join(evidence, name + ".stdout"), "wb").write(out)
+            open(os.path.join(evidence, name + ".stderr"), "wb").write(err)
+            open(os.path.join(evidence, name + ".meta"), "w").write(
+              "argv %s\ncwd %s\nexit %s\nclassification %s\nseconds %.1f\n" %
+              (" ".join(argv), workspace, code, kind, time.time() - started))
+            print("== %s exit=%s classification=%s" % (module, code, kind))
+            print((err or b"").decode("utf-8", "replace")[:600])
+            if kind != "completed" or code != 0:
+              failures.append(module)
+          print("SUMMARY modules=%d failures=%s" % (len(modules), failures or "none"))
+          sys.exit(1 if failures else 0)
+          PY
+
 
       - name: Retain the diagnostic evidence
         if: always()
