@@ -11,6 +11,14 @@ import ./snapshot.bend as Snap
 type ProjectPolicy is Data:
   ProjectPolicy{disabled: Eng.SS, preferred: Eng.SS}
 
+def project_policy_disabled(+policy: ProjectPolicy) -> Eng.SS:
+  match policy:
+    case ProjectPolicy{disabled, preferred}: disabled
+
+def project_policy_preferred(+policy: ProjectPolicy) -> Eng.SS:
+  match policy:
+    case ProjectPolicy{disabled, preferred}: preferred
+
 type PolicyDecode is Data:
   PolicyDecoded{policy: ProjectPolicy}
   PolicyRefused{condition: String}

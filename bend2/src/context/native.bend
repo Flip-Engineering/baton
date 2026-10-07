@@ -661,11 +661,11 @@ def query_catalog_admitted(+db: String, +binding: String, +owner: String, +query
           match source:
             case BoundaryPathRefused{reason}: IO.die(Unit, 3, reason)
             case BoundaryPathReady{+verified_path}:
-              match project_policy:
-                case NativePolicy.ProjectPolicy{disabled, preferred}:
-                  project_selection(db, binding, owner, query, canonical, cwd,
-                    catalog, inventory, operands, installed, disabled, preferred, identity,
-                    verified_path)
+              project_selection(db, binding, owner, query, canonical, cwd,
+                catalog, inventory, operands, installed,
+                NativePolicy.project_policy_disabled(project_policy),
+                NativePolicy.project_policy_preferred(project_policy), identity,
+                verified_path)
 
 def query_catalog_decoded(+db: String, +binding: String, +owner: String, +query: String,
                           catalog: NativeCatalog.CatalogDecode,
