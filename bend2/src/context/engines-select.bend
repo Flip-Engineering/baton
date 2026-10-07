@@ -40,7 +40,7 @@ import ./snapshot.bend as Snap
 # and their verified closure are present; it is not a filter.
 type Cand is Data:
   Cand{module_id: String, declaration_digest: String, operation: String,
-       common: String, declared_effects: SS, execution: Decl.Exec,
+       common: String, declared_effects: Eng.SS, execution: Decl.Exec,
        available: Bool, preferred: Bool}
 
 type Cands is Data:
@@ -102,13 +102,13 @@ def cands_singular(xs: Cands) -> Bool:
 # The module identifiers of a candidate chain, in chain order. The accumulator
 # appends each identifier after the ones already recorded, so a refusal reports
 # the candidates in the order the admitted catalog supplies them.
-def cand_ids_go(+xs: Cands, +acc: SS) -> SS:
+def cand_ids_go(+xs: Cands, +acc: Eng.SS) -> Eng.SS:
   match xs:
     case CandsNil{}: acc
     case CandsCons{h, r}:
       cand_ids_go(r, Eng.union_add(Eng.ss_one(cand_module(h)), acc))
 
-def cand_ids(xs: Cands) -> SS:
+def cand_ids(xs: Cands) -> Eng.SS:
   cand_ids_go(xs, Eng.ss_empty())
 
 # --- selection inputs --------------------------------------------------------
@@ -135,18 +135,18 @@ def cand_ids(xs: Cands) -> SS:
 # disabled state as its own, and `sel_inputs` is the one place that assembles
 # them.
 type RequestOperands is Data:
-  RequestOperands{subject: String, projections: SS, explicit: String,
+  RequestOperands{subject: String, projections: Eng.SS, explicit: String,
                   common: String}
 
 type ProjectState is Data:
-  ProjectState{paths: SS, manifests: SS, installed: SS, disabled: SS,
-               preferred: SS}
+  ProjectState{paths: Eng.SS, manifests: Eng.SS, installed: Eng.SS, disabled: Eng.SS,
+               preferred: Eng.SS}
 
 def req_subject(+r: RequestOperands) -> String:
   match r:
     case RequestOperands{subject, projections, explicit, common}: subject
 
-def req_projections(+r: RequestOperands) -> SS:
+def req_projections(+r: RequestOperands) -> Eng.SS:
   match r:
     case RequestOperands{subject, projections, explicit, common}: projections
 
@@ -158,26 +158,26 @@ def req_common(+r: RequestOperands) -> String:
   match r:
     case RequestOperands{subject, projections, explicit, common}: common
 
-def proj_paths(+p: ProjectState) -> SS:
+def proj_paths(+p: ProjectState) -> Eng.SS:
   match p:
     case ProjectState{paths, manifests, installed, disabled, preferred}: paths
 
-def proj_manifests(+p: ProjectState) -> SS:
+def proj_manifests(+p: ProjectState) -> Eng.SS:
   match p:
     case ProjectState{paths, manifests, installed, disabled, preferred}:
       manifests
 
-def proj_installed(+p: ProjectState) -> SS:
+def proj_installed(+p: ProjectState) -> Eng.SS:
   match p:
     case ProjectState{paths, manifests, installed, disabled, preferred}:
       installed
 
-def proj_disabled(+p: ProjectState) -> SS:
+def proj_disabled(+p: ProjectState) -> Eng.SS:
   match p:
     case ProjectState{paths, manifests, installed, disabled, preferred}:
       disabled
 
-def proj_preferred(+p: ProjectState) -> SS:
+def proj_preferred(+p: ProjectState) -> Eng.SS:
   match p:
     case ProjectState{paths, manifests, installed, disabled, preferred}:
       preferred
@@ -257,14 +257,22 @@ def cands_of_ops(+decl: Decl.Decl, +ops: Decl.Ops, +digest: String,
         cand_of_op(decl, head, digest, available, preferred, common),
         cands_of_ops(decl, rest, digest, available, preferred, common))
 
+# A declaration contributes to the pass its configured preference names, and the
+# candidate it produces carries that same preference.
+def decl_in_pass(+decl: Decl.Decl, +inputs: SelInputs, +preferred: Bool) -> Bool:
+  Bool.pick(Bool, decl_preferred(decl, inputs), preferred, Bool.not(preferred))
+
 # A declaration contributes candidates only when it is enabled and applicable.
 def cands_of_decl(+decl: Decl.Decl, +inputs: SelInputs, +inv: Decl.Inv,
                   +preferred: Bool, +common: String) -> Cands:
   Bool.pick(Cands, decl_enabled(decl, inputs),
     Bool.pick(Cands, decl_applicable(decl, inputs),
-      cands_of_ops(decl, Decl.decl_operations(decl),
-                   digest_at(inv, Decl.decl_module_id(decl)),
-                   decl_installed(decl, inputs), preferred, common),
+      Bool.pick(Cands, decl_in_pass(decl, inputs, preferred),
+        cands_of_ops(decl, Decl.decl_operations(decl),
+                     digest_at(inv, Decl.decl_module_id(decl)),
+                     decl_installed(decl, inputs),
+                     decl_preferred(decl, inputs), common),
+        CandsNil{}),
       CandsNil{}),
     CandsNil{})
 
@@ -335,30 +343,30 @@ type SelReason is Data:
   SelExplicitDisabled{module_id: String}
   SelExplicitIncompatible{module_id: String}
   SelExplicitWrongOperation{module_id: String, operation: String}
-  SelAmbiguous{candidates: SS}
+  SelAmbiguous{candidates: Eng.SS}
   SelNoCandidate{subject: String}
 
 type SelOutcome is Data:
-  SelChosen{candidates: SS, chosen: Cand}
+  SelChosen{candidates: Eng.SS, chosen: Cand}
   SelRefused{reason: SelReason}
 
 def sel_explicit_state(+s: ExState, +explicit: String,
                        +common: String) -> SelOutcome:
   match s:
-    case ExAbsent{}: SelRefused{reason: SelExplicitUnknown{explicit}}
-    case ExDisabled{}: SelRefused{reason: SelExplicitDisabled{explicit}}
-    case ExIncompatible{}: SelRefused{reason: SelExplicitIncompatible{explicit}}
+    case ExAbsent{}: SelRefused{SelExplicitUnknown{explicit}}
+    case ExDisabled{}: SelRefused{SelExplicitDisabled{explicit}}
+    case ExIncompatible{}: SelRefused{SelExplicitIncompatible{explicit}}
     case ExWrongOperation{}:
-      SelRefused{reason: SelExplicitWrongOperation{explicit, common}}
+      SelRefused{SelExplicitWrongOperation{explicit, common}}
     case ExPresent{cand}:
-      SelChosen{candidates: Eng.ss_one(explicit), chosen: cand}
+      SelChosen{Eng.ss_one(explicit), cand}
 
 # A singular chain selects its only member; an empty chain refuses; anything
 # longer is the explicit ambiguity the specification requires.
 def sel_only(+cs: Cands, +subject: String) -> SelOutcome:
   match cs:
-    case CandsNil{}: SelRefused{reason: SelNoCandidate{subject}}
-    case CandsCons{h, r}: SelChosen{candidates: cand_ids(cs), chosen: h}
+    case CandsNil{}: SelRefused{SelNoCandidate{subject}}
+    case CandsCons{h, r}: SelChosen{cand_ids(cs), h}
 
 # A singular candidate chain selects its only member, an empty one refuses, and
 # anything longer is the explicit ambiguity the specification requires. The chain
@@ -369,8 +377,8 @@ def sel_ordinary(+cat: Decl.Cat, +inputs: SelInputs, +inv: Decl.Inv,
   +ord = ordinary_cands(cat, inputs, inv, common)
   Bool.pick(SelOutcome, cands_singular(ord), sel_only(ord, subject),
     Bool.pick(SelOutcome, cands_nonempty(ord),
-              SelRefused{reason: SelAmbiguous{candidates: cand_ids(ord)}},
-              SelRefused{reason: SelNoCandidate{subject}}))
+              SelRefused{SelAmbiguous{cand_ids(ord)}},
+              SelRefused{SelNoCandidate{subject}}))
 
 # The configured preference is applied first: a unique preferred candidate wins,
 # several preferred candidates are the ambiguity, and with none preferred the
@@ -380,7 +388,7 @@ def sel_preferred(+cat: Decl.Cat, +inputs: SelInputs, +inv: Decl.Inv,
   +pref = preferred_cands(cat, inputs, inv, common)
   Bool.pick(SelOutcome, cands_singular(pref), sel_only(pref, subject),
     Bool.pick(SelOutcome, cands_nonempty(pref),
-              SelRefused{reason: SelAmbiguous{candidates: cand_ids(pref)}},
+              SelRefused{SelAmbiguous{cand_ids(pref)}},
               sel_ordinary(cat, inputs, inv, subject, common)))
 
 def select_known(+known: Bool, +cat: Decl.Cat, +inputs: SelInputs,
@@ -392,7 +400,7 @@ def select_known(+known: Bool, +cat: Decl.Cat, +inputs: SelInputs,
               sel_explicit_state(
                 explicit_state(cat, inputs, inv, explicit, common), explicit,
                 common)),
-    SelRefused{reason: SelUnknownCommonOperation{common}})
+    SelRefused{SelUnknownCommonOperation{common}})
 
 # One entry point. A request names its common operation and, when a caller
 # selected one explicitly, the module; auto records the inputs and the
@@ -408,7 +416,7 @@ def select(+cat: Decl.Cat, +inputs: SelInputs, +inv: Decl.Inv) -> SelOutcome:
 type MBind is Data:
   MBind{module_id: String, revision: String, declaration_digest: String,
         protocol_version: String, operation: String, artifacts: Decl.Arts,
-        schemas: SS}
+        schemas: Eng.SS}
 
 # A dependency edge of a frozen step, carrying its producer identity.
 type StepRef is Data:
@@ -419,7 +427,7 @@ type StepRefs is Data:
   StepRefsCons{head: StepRef, rest: StepRefs}
 
 type Step is Data:
-  Step{binding: MBind, common: String, declared_effects: SS,
+  Step{binding: MBind, common: String, declared_effects: Eng.SS,
        execution: Decl.Exec, dependencies: StepRefs, result_schema: String}
 
 type Steps is Data:
@@ -535,7 +543,7 @@ def capture_fp_kind(+kind: String, +c: Capture) -> FcState:
     FcMapped{Snap.FpLink{cap_role(c), cap_path(c), cap_marker(c)}},
   Bool.pick(FcState, String.eq(kind, "config"),
     FcMapped{Snap.FpConfig{cap_role(c), cap_path(c), cap_marker(c)}},
-    FcUnknownKind{kind}))))))
+    FcUnknownKind{kind})))))
 
 def capture_fp(+c: Capture) -> FcState:
   capture_fp_kind(cap_kind(c), c)
@@ -545,23 +553,8 @@ def captures_nonempty(xs: Captures) -> Bool:
     case CapNil{}: False{}
     case CapCons{head, rest}: True{}
 
-# The captures one step produced, in recorded order.
-def captures_of_step(+xs: Captures, +step: Step) -> Captures:
-  match xs:
-    case CapNil{}: CapNil{}
-    case CapCons{+head, +rest}:
-      Bool.pick(Captures,
-                capture_of_step(head, step),
-                CapCons{head, captures_of_step(rest, step)},
-                captures_of_step(rest, step))
-
-def capture_of_step(+c: Capture, +step: Step) -> Bool:
-  Bool.and(String.eq(cap_producer_module(c), bind_module(step_binding(step))),
-  Bool.and(String.eq(cap_producer_digest(c), bind_digest(step_binding(step))),
-           String.eq(cap_producer_operation(c), bind_operation(step_binding(step)))))
-
 type Plan is Data:
-  Plan{primary: MBind, common: String, steps: Steps, effective_effects: SS,
+  Plan{primary: MBind, common: String, steps: Steps, effective_effects: Eng.SS,
        inputs: Captures, available: Bool}
 
 type PlanReason is Data:
@@ -581,10 +574,10 @@ type PlanFail is Data:
   PfNone{}
   PfAt{reason: PlanReason}
 
-def plan_fail_first(+fail: PlanFail, +reason: PlanReason) -> PlanFail:
+def plan_fail_first(+fail: PlanFail, +candidate: PlanFail) -> PlanFail:
   match fail:
     case PfAt{r}: fail
-    case PfNone{}: PfAt{reason}
+    case PfNone{}: candidate
 
 def steps_append(+xs: Steps, +add: Steps) -> Steps:
   match xs:
@@ -652,7 +645,7 @@ def ops_lookup(+ops: Decl.Ops, +want: String) -> OpState:
 # branch that reached it, so a repeated step is a cycle while a diamond is
 # ordinary reuse.
 type Pending is Data:
-  Pending{decl: Decl.Decl, op: Decl.Op, digest: String, path: SS}
+  Pending{decl: Decl.Decl, op: Decl.Op, digest: String, path: Eng.SS}
 
 type Pendings is Data:
   PendsNil{}
@@ -670,7 +663,7 @@ def pending_digest(+p: Pending) -> String:
   match p:
     case Pending{decl, op, digest, path}: digest
 
-def pending_path(+p: Pending) -> SS:
+def pending_path(+p: Pending) -> Eng.SS:
   match p:
     case Pending{decl, op, digest, path}: path
 
@@ -707,7 +700,7 @@ def resolved_failure_of(+r: Resolved) -> PlanFail:
 # match scrutinee, so the two scans below answer the value and the reason
 # separately; both read the same admitted inputs and cannot disagree.
 def ops_pending(+decl: Decl.Decl, +ops: Decl.Ops, +want: String,
-                +digest: String, +path: SS) -> Pendings:
+                +digest: String, +path: Eng.SS) -> Pendings:
   match ops:
     case Decl.OpsNil{}: PendsNil{}
     case Decl.OpsCons{+head, rest}:
@@ -716,7 +709,7 @@ def ops_pending(+decl: Decl.Decl, +ops: Decl.Ops, +want: String,
                 ops_pending(decl, rest, want, digest, path))
 
 def decl_pending(+cat: Decl.Cat, +inv: Decl.Inv, +module_id: String,
-                 +want_digest: String, +want: String, +path: SS) -> Pendings:
+                 +want_digest: String, +want: String, +path: Eng.SS) -> Pendings:
   match cat:
     case Decl.CatNil{}: PendsNil{}
     case Decl.CatCons{+head, rest}:
@@ -726,13 +719,6 @@ def decl_pending(+cat: Decl.Cat, +inv: Decl.Inv, +module_id: String,
                               want_digest, path),
                   PendsNil{}),
         decl_pending(rest, inv, module_id, want_digest, want, path))
-
-def decl_known(+cat: Decl.Cat, +module_id: String) -> Bool:
-  match cat:
-    case Decl.CatNil{}: False{}
-    case Decl.CatCons{head, rest}:
-      Bool.pick(Bool, String.eq(Decl.decl_module_id(head), module_id), True{},
-                decl_known(rest, module_id))
 
 def ops_known(+ops: Decl.Ops, +want: String) -> Bool:
   match ops:
@@ -749,17 +735,21 @@ def decl_ops_known(+cat: Decl.Cat, +module_id: String, +want: String) -> Bool:
                 ops_known(Decl.decl_operations(head), want),
                 decl_ops_known(rest, module_id, want))
 
+# The inventory records the admitted declaration digest, so a dependency whose
+# module the inventory does not carry is unresolved and one whose recorded digest
+# differs from the recorded edge is a mismatch. Only where the digest agrees does
+# the admitted catalog have to hold the operation.
 def edge_failure(+cat: Decl.Cat, +inv: Decl.Inv, +module_id: String,
                  +want_digest: String, +want: String) -> PlanFail:
-  Bool.pick(PlanFail, decl_known(cat, module_id),
+  Bool.pick(PlanFail, String.is_empty(digest_at(inv, module_id)),
+    PfAt{PlanDependencyUnresolved{module_id, want}},
     Bool.pick(PlanFail, String.eq(digest_at(inv, module_id), want_digest),
       Bool.pick(PlanFail, decl_ops_known(cat, module_id, want), PfNone{},
                 PfAt{PlanDependencyUnresolved{module_id, want}}),
       PfAt{PlanDependencyDigestMismatch{module_id, want_digest,
-                                        digest_at(inv, module_id)}}),
-    PfAt{PlanDependencyUnresolved{module_id, want}})
+                                        digest_at(inv, module_id)}}))
 
-def resolve_edges(+edges: Decl.ModRefs, +path: SS, +cat: Decl.Cat,
+def resolve_edges(+edges: Decl.ModRefs, +path: Eng.SS, +cat: Decl.Cat,
                   +inv: Decl.Inv, +acc: Pendings, +fail: PlanFail) -> Resolved:
   match edges:
     case Decl.ModRefsNil{}: Resolved{acc, fail}
@@ -779,7 +769,7 @@ def resolve_edges(+edges: Decl.ModRefs, +path: SS, +cat: Decl.Cat,
 # The walk state: the steps gathered so far, the common operations and declared
 # effect additions of every step, and the first failure.
 type Walk is Data:
-  Walk{steps: Steps, commons: SS, declared: SS, failure: PlanFail}
+  Walk{steps: Steps, commons: Eng.SS, declared: Eng.SS, failure: PlanFail}
 
 def walk_none() -> Walk:
   Walk{StepsNil{}, Eng.ss_empty(), Eng.ss_empty(), PfNone{}}
@@ -821,7 +811,7 @@ def plan_pending_next(+in_path: Bool, +head: Pending, +rest: Pendings,
 def plan_walk_next(+in_path: Bool, +head: Pending, +cat: Decl.Cat,
                    +inv: Decl.Inv, +w: Walk) -> Walk:
   Bool.pick(Walk, in_path,
-    walk_fail(w, PfAt{PlanCycle{module_id: pending_module(head)}}),
+    walk_fail(w, PfAt{PlanCycle{pending_module(head)}}),
     walk_fail(walk_add(w, head),
               resolved_failure_of(
                 resolve_edges(Decl.op_dependencies(pending_op(head)),
@@ -832,6 +822,14 @@ def plan_walk_next(+in_path: Bool, +head: Pending, +cat: Decl.Cat,
 # One self-recursive walk: a step already on its own ancestor path is a cycle,
 # and every other step contributes its binding, its common operation and its
 # declared effect additions before its dependencies are drained.
+#
+# The walk consumes one pending per step and prepends the pendings that step's
+# dependencies resolve to, so the list it hands to the next step is built from
+# the matched list rather than taken from it, and the termination check cannot
+# see the descent. The walk terminates for every finite catalog: a pending whose
+# step key is already on its own path expands nothing, so each expansion chain is
+# a simple path over the finitely many step keys.
+@unsafe
 def plan_drain(+pending: Pendings, +cat: Decl.Cat, +inv: Decl.Inv,
                +w: Walk) -> Walk:
   match pending:
@@ -853,7 +851,7 @@ def plan_finish(+w: Walk, +primary: MBind, +common: String, +available: Bool,
       match failure:
         case PfAt{reason}: PlanRefused{reason}
         case PfNone{}:
-          PlanFrozen{plan: Plan{primary, common, steps,
+          PlanFrozen{Plan{primary, common, steps,
                                 Eng.union_add(declared,
                                               Eng.effects_union(commons)),
                                 captures, available}}
@@ -871,16 +869,16 @@ def freeze_op(+decl: Decl.Decl, +ost: OpState, +cand: Cand, +cat: Decl.Cat,
               +inv: Decl.Inv, +captures: Captures) -> PlanOutcome:
   match ost:
     case OpNone{}:
-      PlanRefused{reason: PlanMissingOperation{module_id: cand_module(cand),
-                                               operation: cand_operation(cand)}}
+      PlanRefused{PlanMissingOperation{cand_module(cand),
+                                       cand_operation(cand)}}
     case OpFound{op}:
       freeze_primary(decl, op, cand, cat, inv, captures)
 
 def freeze_state(+m: MatchState, +cand: Cand, +cat: Decl.Cat, +inv: Decl.Inv,
                  +captures: Captures) -> PlanOutcome:
   match m:
-    case MsNone{}: PlanRefused{reason: PlanStaleSelection{cand_module(cand)}}
-    case MsStale{}: PlanRefused{reason: PlanStaleSelection{cand_module(cand)}}
+    case MsNone{}: PlanRefused{PlanStaleSelection{cand_module(cand)}}
+    case MsStale{}: PlanRefused{PlanStaleSelection{cand_module(cand)}}
     case MsFound{+decl}:
       freeze_op(decl,
                 ops_lookup(Decl.decl_operations(decl), cand_operation(cand)),
@@ -953,6 +951,21 @@ def step_binding(+step: Step) -> MBind:
     case Step{binding, common, declared_effects, execution, dependencies,
               result_schema}:
       binding
+
+def capture_of_step(+c: Capture, +step: Step) -> Bool:
+  Bool.and(String.eq(cap_producer_module(c), bind_module(step_binding(step))),
+  Bool.and(String.eq(cap_producer_digest(c), bind_digest(step_binding(step))),
+           String.eq(cap_producer_operation(c), bind_operation(step_binding(step)))))
+
+# The captures one step produced, in recorded order.
+def captures_of_step(+xs: Captures, +step: Step) -> Captures:
+  match xs:
+    case CapNil{}: CapNil{}
+    case CapCons{+head, +rest}:
+      Bool.pick(Captures,
+                capture_of_step(head, step),
+                CapCons{head, captures_of_step(rest, step)},
+                captures_of_step(rest, step))
 
 def step_common(+step: Step) -> String:
   match step:
@@ -1046,7 +1059,7 @@ def bind_artifacts(+b: MBind) -> Decl.Arts:
                operation, artifacts, schemas}:
       artifacts
 
-def bind_schemas(+b: MBind) -> SS:
+def bind_schemas(+b: MBind) -> Eng.SS:
   match b:
     case MBind{module_id, revision, declaration_digest, protocol_version,
                operation, artifacts, schemas}:
@@ -1079,7 +1092,7 @@ def discovery_state(+o: Decl.DeclOutcome, +installed: Bool) -> DiscoveryState:
       Bool.pick(DiscoveryState, installed, DsAdmitted{digest},
                 DsUnavailable{digest})
 
-def discovery_entry(+cat: Decl.Cat, +inv: Decl.Inv, +installed: SS,
+def discovery_entry(+cat: Decl.Cat, +inv: Decl.Inv, +installed: Eng.SS,
                     +decl: Decl.Decl) -> Discovery:
   Discovery{Decl.decl_module_id(decl),
             discovery_state(Decl.admit_declaration(decl, cat, inv),
@@ -1087,7 +1100,7 @@ def discovery_entry(+cat: Decl.Cat, +inv: Decl.Inv, +installed: SS,
                                           Decl.decl_module_id(decl)))}
 
 def discovery_walk(+remaining: Decl.Cat, +context: Decl.Cat, +inv: Decl.Inv,
-                   +installed: SS) -> Discoveries:
+                   +installed: Eng.SS) -> Discoveries:
   match remaining:
     case Decl.CatNil{}: DscNil{}
     case Decl.CatCons{head, rest}:
@@ -1098,7 +1111,7 @@ def discovery_walk(+remaining: Decl.Cat, +context: Decl.Cat, +inv: Decl.Inv,
 # and `context` is the whole candidate set, so admission of one declaration sees
 # every other declaration of the same set; walking a shrinking list without the
 # context would let a later entry miss an earlier declaration's identity.
-def discovery(+cat: Decl.Cat, +inv: Decl.Inv, +installed: SS) -> Discoveries:
+def discovery(+cat: Decl.Cat, +inv: Decl.Inv, +installed: Eng.SS) -> Discoveries:
   discovery_walk(cat, cat, inv, installed)
 
 # --- the admission and preparation consumer ----------------------------------
@@ -1247,7 +1260,7 @@ def decision_of(+v: Verdict) -> AdmissionDecision:
 # carries the primary step's captures. This assembles values the plan already
 # holds; it is not a second interpreter and it wraps no other module.
 type StepTransfer is Data:
-  StepTransfer{binding: MBind, common: String, declared_effects: SS,
+  StepTransfer{binding: MBind, common: String, declared_effects: Eng.SS,
                result_schema: String, dependencies: StepRefs, inputs: Captures}
 
 type TransferOutcome is Data:
@@ -1255,7 +1268,7 @@ type TransferOutcome is Data:
   TransferMissing{module_id: String, declaration_digest: String,
                   operation: String}
 
-def step_effects(+step: Step) -> SS:
+def step_effects(+step: Step) -> Eng.SS:
   match step:
     case Step{binding, common, declared_effects, execution, dependencies,
               result_schema}:

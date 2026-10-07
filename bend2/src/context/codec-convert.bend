@@ -134,7 +134,14 @@ def wc_binding_body_ok(+members: Codec.RawValue) -> Bool:
           Bool.pick(Bool, wc_text_member_ok("protocolVersion", members),
             Bool.pick(Bool, wc_text_member_ok("operation", members),
               Bool.pick(Bool, wc_artifacts_ok(wc_value_member("artifactIdentities", members)),
-                wc_schemas_ok(wc_value_member("schemaIdentities", members)), False{}), False{}), False{}), False{}), False{}), False{})
+                wc_schemas_ok(wc_value_member("schemaIdentities", members)),
+                False{}),
+              False{}),
+            False{}),
+          False{}),
+        False{}),
+      False{}),
+    False{})
 
 def wc_binding_build(+members: Codec.RawValue) -> Sel.MBind:
   Sel.MBind{wc_text_member("id", members), wc_text_member("revision", members),
@@ -220,8 +227,13 @@ def wo_select_ok(+members: Codec.RawValue) -> Bool:
 def wo_engine_ok(+members: Codec.RawValue) -> Bool:
   Bool.pick(Bool, wc_name_present("engine", members), wc_text_kind(wc_value_member("engine", members)), True{})
 
+# The request contract reads an auto engine as the empty explicit selector.
+def wo_engine_selector(+text: String) -> String:
+  Bool.pick(String, String.eq(text, "auto"), SNil{}, text)
+
 def wo_engine_text(+members: Codec.RawValue) -> String:
-  Bool.pick(String, wo_engine_ok(members), wc_text_member("engine", members), SNil{})
+  Bool.pick(String, wo_engine_ok(members),
+            wo_engine_selector(wc_text_member("engine", members)), SNil{})
 
 def wo_subject_text(+members: Codec.RawValue) -> String:
   wc_text_member_for(wc_value_member("subject", members), "kind")
@@ -260,25 +272,25 @@ def wo_law_a_request_with_auto_reads_the_empty_explicit_selector():
   {==}
 
 law wo_law_an_omitted_engine_reads_the_empty_explicit_selector:
-  {wire_operands_read(Codec.Robj{Codec.Rpair{"subject", Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"json"}, Codec.Rnil{}}}, Codec.Rpair{"select", Codec.Rarr{Codec.Rstr{"a"}, Codec.Rnil{}}, Codec.Rnil{}}}, "core-1") == WoOk{Sel.RequestOperands{"json", Eng.SSCons{"a", Eng.SSNil{}}, "", "core-1"}} : WireOperands}
+  {wire_operands_read(Codec.Robj{Codec.Rpair{"subject", Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"json"}, Codec.Rnil{}}}, Codec.Rpair{"select", Codec.Rarr{Codec.Rstr{"a"}, Codec.Rnil{}}, Codec.Rnil{}}}}, "core-1") == WoOk{Sel.RequestOperands{"json", Eng.SSCons{"a", Eng.SSNil{}}, "", "core-1"}} : WireOperands}
 
 def wo_law_an_omitted_engine_reads_the_empty_explicit_selector():
   {==}
 
 law wo_law_a_named_engine_passes_through:
-  {wire_operands_read(Codec.Robj{Codec.Rpair{"subject", Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"clang"}, Codec.Rnil{}}}, Codec.Rpair{"select", Codec.Rarr{Codec.Rstr{"a"}, Codec.Rnil{}}, Codec.Rpair{"engine", Codec.Rstr{"selected"}, Codec.Rnil{}}}}, "c") == WoOk{Sel.RequestOperands{"clang", Eng.SSCons{"a", Eng.SSNil{}}, "selected", "c"}} : WireOperands}
+  {wire_operands_read(Codec.Robj{Codec.Rpair{"subject", Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"clang"}, Codec.Rnil{}}}, Codec.Rpair{"select", Codec.Rarr{Codec.Rstr{"a"}, Codec.Rnil{}}, Codec.Rpair{"engine", Codec.Rstr{"selected"}, Codec.Rnil{}}}}}, "c") == WoOk{Sel.RequestOperands{"clang", Eng.SSCons{"a", Eng.SSNil{}}, "selected", "c"}} : WireOperands}
 
 def wo_law_a_named_engine_passes_through():
   {==}
 
 law wo_law_an_empty_select_refuses:
-  {wire_operands_read(Codec.Robj{Codec.Rpair{"subject", Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"clang"}, Codec.Rnil{}}}, Codec.Rpair{"select", Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}, Codec.Rnil{}}}, "c") == WoRefused{"invalidRequestOperands"} : WireOperands}
+  {wire_operands_read(Codec.Robj{Codec.Rpair{"subject", Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"clang"}, Codec.Rnil{}}}, Codec.Rpair{"select", Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}, Codec.Rnil{}}}}, "c") == WoRefused{"invalidRequestOperands"} : WireOperands}
 
 def wo_law_an_empty_select_refuses():
   {==}
 
 law wo_law_a_subject_without_a_kind_refuses:
-  {wire_operands_read(Codec.Robj{Codec.Rpair{"subject", Codec.Robj{Codec.Rnil{}}, Codec.Rpair{"select", Codec.Rarr{Codec.Rstr{"a"}, Codec.Rnil{}}, Codec.Rnil{}}}, "c") == WoRefused{"invalidRequestOperands"} : WireOperands}
+  {wire_operands_read(Codec.Robj{Codec.Rpair{"subject", Codec.Robj{Codec.Rnil{}}, Codec.Rpair{"select", Codec.Rarr{Codec.Rstr{"a"}, Codec.Rnil{}}, Codec.Rnil{}}}}, "c") == WoRefused{"invalidRequestOperands"} : WireOperands}
 
 def wo_law_a_subject_without_a_kind_refuses():
   {==}
@@ -291,11 +303,22 @@ def wo_law_a_non_text_projection_refuses():
 
 def wc_binding_value() -> Codec.RawValue:
   Codec.Robj{
-    Codec.Rpair{"id", Codec.Rstr{"m"}, Codec.Rpair{"revision", Codec.Rstr{"r1"},
-      Codec.Rpair{"declarationDigest", Codec.Rstr{"d"}, Codec.Rpair{"protocolVersion", Codec.Rstr{"1"},
-        Codec.Rpair{"operation", Codec.Rstr{"op"}, Codec.Rpair{"artifactIdentities",
-          Codec.Rarr{Codec.Robj{Codec.Rpair{"packagePath", Codec.Rstr{"/p"}, Codec.Rpair{"sha256", Codec.Rstr{"aa"}, Codec.Rpair{"role", Codec.Rstr{"native"}, Codec.Rnil{}}}}, Codec.Rnil{}},
-            Codec.Rpair{"schemaIdentities", Codec.Rarr{Codec.Rstr{"s1"}, Codec.Rnil{}}, Codec.Rnil{}}}}}}}}}
+    Codec.Rpair{"id", Codec.Rstr{"m"},
+    Codec.Rpair{"revision", Codec.Rstr{"r1"},
+    Codec.Rpair{"declarationDigest", Codec.Rstr{"d"},
+    Codec.Rpair{"protocolVersion", Codec.Rstr{"1"},
+    Codec.Rpair{"operation", Codec.Rstr{"op"},
+    Codec.Rpair{"artifactIdentities",
+      Codec.Rarr{
+        Codec.Robj{
+          Codec.Rpair{"packagePath", Codec.Rstr{"/p"},
+          Codec.Rpair{"sha256", Codec.Rstr{"aa"},
+          Codec.Rpair{"role", Codec.Rstr{"native"},
+          Codec.Rnil{}}}}},
+        Codec.Rnil{}},
+      Codec.Rpair{"schemaIdentities",
+        Codec.Rarr{Codec.Rstr{"s1"}, Codec.Rnil{}},
+        Codec.Rnil{}}}}}}}}}
 
 law wc_law_a_binding_reads_into_the_typed_binding:
   {wire_binding_read(wc_binding_value()) == WbOk{Sel.MBind{"m", "r1", "d", "1", "op", Decl.ArtsCons{Decl.Art{"/p", "aa", "native"}, Decl.ArtsNil{}}, Eng.SSCons{"s1", Eng.SSNil{}}}} : WireBinding}
@@ -304,19 +327,19 @@ def wc_law_a_binding_reads_into_the_typed_binding():
   {==}
 
 law wc_law_a_binding_missing_a_member_refuses:
-  {wire_binding_read(Codec.Robj{Codec.Rpair{"id", Codec.Rstr{"m"}, Codec.Rnil{}}) == WbRefused{"invalidBinding"} : WireBinding}
+  {wire_binding_read(Codec.Robj{Codec.Rpair{"id", Codec.Rstr{"m"}, Codec.Rnil{}}}) == WbRefused{"invalidBinding"} : WireBinding}
 
 def wc_law_a_binding_missing_a_member_refuses():
   {==}
 
 law wc_law_a_binding_with_a_number_id_refuses:
-  {wire_binding_read(Codec.Robj{Codec.Rpair{"id", Codec.Rnum{"7"}, Codec.Rnil{}}) == WbRefused{"invalidBinding"} : WireBinding}
+  {wire_binding_read(Codec.Robj{Codec.Rpair{"id", Codec.Rnum{"7"}, Codec.Rnil{}}}) == WbRefused{"invalidBinding"} : WireBinding}
 
 def wc_law_a_binding_with_a_number_id_refuses():
   {==}
 
 law wc_law_an_artifact_without_all_three_members_refuses:
-  {wc_artifact_ok(Codec.Robj{Codec.Rpair{"packagePath", Codec.Rstr{"/p"}, Codec.Rnil{}}) == False{} : Bool}
+  {wc_artifact_ok(Codec.Robj{Codec.Rpair{"packagePath", Codec.Rstr{"/p"}, Codec.Rnil{}}}) == False{} : Bool}
 
 def wc_law_an_artifact_without_all_three_members_refuses():
   {==}

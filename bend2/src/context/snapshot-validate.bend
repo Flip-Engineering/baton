@@ -57,13 +57,13 @@ import ./engines-decl.bend as Decl
 import ./engines-select.bend as Sel
 
 # --- identity equality over binding members ----------------------------------
-def ss_nil(+xs: SS) -> Bool:
+def ss_nil(+xs: Eng.SS) -> Bool:
   match xs:
     case Eng.SSNil{}: True{}
     case Eng.SSCons{head, rest}: False{}
 
 # The comma-joined members of an identity set, for a mismatch report.
-def ss_text(+xs: SS) -> String:
+def ss_text(+xs: Eng.SS) -> String:
   match xs:
     case Eng.SSNil{}: ""
     case Eng.SSCons{head, Eng.SSNil{}}: head
@@ -105,14 +105,14 @@ def arts_equal(+a: Decl.Arts, +b: Decl.Arts) -> Bool:
         case Decl.ArtsCons{other_head, other_rest}:
           Bool.and(art_equal(head, other_head), arts_equal(rest, other_rest))
 
-def subset(+want: SS, +limit: SS) -> Bool:
+def subset(+want: Eng.SS, +limit: Eng.SS) -> Bool:
   match want:
     case Eng.SSNil{}: True{}
     case Eng.SSCons{head, rest}:
       Bool.pick(Bool, Eng.ss_member(limit, head), subset(rest, limit), False{})
 
 # Schema identities are a set: the same members in any order.
-def ss_same_members(+a: SS, +b: SS) -> Bool:
+def ss_same_members(+a: Eng.SS, +b: Eng.SS) -> Bool:
   Bool.and(subset(a, b), subset(b, a))
 
 # --- the operative binding comparison ----------------------------------------
@@ -362,9 +362,9 @@ def then_v(+a: VChk, +b: VChk) -> VChk:
 def v_binding_state(+fs: FieldState) -> VChk:
   match fs:
     case FsSame{}: VcOk{}
-    case FsDiffers{field, want, saw}: VcFail{reason: VrBinding{field, want, saw}}
-    case FsArtifacts{want, saw}: VcFail{reason: VrBindingArtifacts{want, saw}}
-    case FsSchemas{want, saw}: VcFail{reason: VrBindingSchemas{want, saw}}
+    case FsDiffers{field, want, saw}: VcFail{VrBinding{field, want, saw}}
+    case FsArtifacts{want, saw}: VcFail{VrBindingArtifacts{want, saw}}
+    case FsSchemas{want, saw}: VcFail{VrBindingSchemas{want, saw}}
 
 # --- canonical sequence text -------------------------------------------------
 # A sequence is canonical unsigned decimal text and carries no numeric domain
@@ -451,7 +451,7 @@ def check_type(+f: Frame, +e: Expect) -> VChk:
 # schema acceptance.
 def check_schema(+f: Frame, +e: Expect) -> VChk:
   Bool.pick(VChk, String.is_empty(expect_schema(e)),
-    VcFail{reason: VrSchemaInputMissing{expect_module(e), expect_operation(e)}},
+    VcFail{VrSchemaInputMissing{expect_module(e), expect_operation(e)}},
     then_v(v_chk(Eng.ss_member(Sel.bind_schemas(expect_producer(e)),
                                expect_schema(e)),
                  VrSchemaMissing{expect_module(e), expect_operation(e),
@@ -590,22 +590,24 @@ def ref_admit(+c: RefClaim, +e: RefExpect) -> RefOutcome:
   ref_decide(ref_format_ok(c, e), ref_legacy(c), c, e)
 
 # --- projection limits and effective requirements ---------------------------
-def projections_admissible(+requested: SS, +stored: SS, +current: SS) -> Bool:
+def projections_admissible(+requested: Eng.SS, +stored: Eng.SS, +current: Eng.SS) -> Bool:
   Bool.and(subset(requested, stored), subset(requested, current))
 
-def effective_requirements(+historical: SS, +common_minimum: SS,
-                           +declared: SS) -> SS:
-  Eng.union_add(historical,
+# The accumulator carries the earliest operand first, because a union appends the
+# members it is handed to the ones already there.
+def effective_requirements(+historical: Eng.SS, +common_minimum: Eng.SS,
+                           +declared: Eng.SS) -> Eng.SS:
+  Eng.union_add(declared,
                 Eng.union_add(common_minimum,
-                              Eng.union_add(declared, Eng.ss_empty())))
+                              Eng.union_add(historical, Eng.ss_empty())))
 
 # --- compatibility is evidence, never an effect-set comparison ---------------
 type CompatEvidence is Data:
   CompatEvidence{original_digest: String, current_digest: String,
-                 evidence_bindings: SS, basis: SS}
+                 evidence_bindings: Eng.SS, basis: Eng.SS}
 
 type CompatOutcome is Data:
-  CompatAdmitted{basis: SS}
+  CompatAdmitted{basis: Eng.SS}
   CompatRefused{reason: String}
 
 def compat_evidence_original(+e: CompatEvidence) -> String:
@@ -620,13 +622,13 @@ def compat_evidence_current(+e: CompatEvidence) -> String:
                         basis}:
       current_digest
 
-def compat_evidence_bindings(+e: CompatEvidence) -> SS:
+def compat_evidence_bindings(+e: CompatEvidence) -> Eng.SS:
   match e:
     case CompatEvidence{original_digest, current_digest, evidence_bindings,
                         basis}:
       evidence_bindings
 
-def compat_evidence_basis(+e: CompatEvidence) -> SS:
+def compat_evidence_basis(+e: CompatEvidence) -> Eng.SS:
   match e:
     case CompatEvidence{original_digest, current_digest, evidence_bindings,
                         basis}:

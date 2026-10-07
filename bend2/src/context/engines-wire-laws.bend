@@ -87,7 +87,7 @@ def wire_plan_of_one_step_renders_as_a_one_element_array():
 
 # --- admitted captured records -----------------------------------------------
 law wire_capture_renders_all_nine_members:
-  {Wire.capture_json(fx_capture()) == J.Jobj{Wire.wire_obj("captureKind", J.Jstr{"file"}, Wire.wire_obj("role", J.Jstr{"source"}, Wire.wire_obj("path", J.Jstr{"/work/a.ts"}, Wire.wire_obj("marker", J.Jstr{"aa"}, Wire.wire_obj("payload", J.Jstr{"capturedSourceText"}, Wire.wire_obj("payloadEncoding", J.Jstr{"utf8"}, Wire.wire_obj("producerModule", J.Jstr{"m1"}, Wire.wire_obj("producerDigest", J.Jstr{"d1"}, Wire.wire_obj("producerOperation", J.Jstr{"definition"}, J.Jnil{}))))))))} : J.Json}
+  {Wire.capture_json(fx_capture()) == J.Jobj{Wire.wire_obj("captureKind", J.Jstr{"file"}, Wire.wire_obj("role", J.Jstr{"source"}, Wire.wire_obj("path", J.Jstr{"/work/a.ts"}, Wire.wire_obj("marker", J.Jstr{"aa"}, Wire.wire_obj("payload", J.Jstr{"capturedSourceText"}, Wire.wire_obj("payloadEncoding", J.Jstr{"utf8"}, Wire.wire_obj("producerModule", J.Jstr{"m1"}, Wire.wire_obj("producerDigest", J.Jstr{"d1"}, Wire.wire_obj("producerOperation", J.Jstr{"definition"}, J.Jnil{})))))))))} : J.Json}
 
 def wire_capture_renders_all_nine_members():
   {==}
@@ -129,19 +129,19 @@ def wire_boolean_renders_as_a_json_boolean():
 
 # --- the decision conversion --------------------------------------------------
 law wire_catalog_refusal_keeps_its_artifact_operand:
-  {Wire.decision_outcome(Sel.AdmissionRefuses{"catalog", "missingArtifact", "declaration m1", Sel.RqCatalogRefused{"m1", Decl.DrMissingArtifact{"m1", "/pkg/m1.bin"}}}) == J.json_text(J.Jobj{Wire.wire_obj("kind", J.Jstr{"refuse"}, Wire.wire_obj("stage", J.Jstr{"catalog"}, Wire.wire_obj("code", J.Jstr{"missingArtifact"}, Wire.wire_obj("detail", J.Jstr{"declaration m1"}, Wire.wire_obj("reason", Wire.rq_reason_json(Sel.RqCatalogRefused{"m1", Decl.DrMissingArtifact{"m1", "/pkg/m1.bin"}}), J.Jnil{}))))}) : String}
+  {Wire.decision_outcome(Sel.AdmissionRefuses{"catalog", "missingArtifact", "declaration m1", Sel.RqCatalogRefused{"m1", Decl.DrMissingArtifact{"m1", "/pkg/m1.bin"}}}) == J.json_text(J.Jobj{Wire.wire_obj("kind", J.Jstr{"refuse"}, Wire.wire_obj("stage", J.Jstr{"catalog"}, Wire.wire_obj("code", J.Jstr{"missingArtifact"}, Wire.wire_obj("detail", J.Jstr{"declaration m1"}, Wire.wire_obj("reason", Wire.rq_reason_json(Sel.RqCatalogRefused{"m1", Decl.DrMissingArtifact{"m1", "/pkg/m1.bin"}}), J.Jnil{})))))}) : String}
 
 def wire_catalog_refusal_keeps_its_artifact_operand():
   {==}
 
 law wire_reason_renders_the_missing_artifact_path:
-  {Wire.rq_reason_json(Sel.RqCatalogRefused{"m1", Decl.DrMissingArtifact{"m1", "/pkg/m1.bin"}}) == J.Jobj{Wire.wire_obj("family", J.Jstr{"catalog"}, Wire.wire_obj("reason", J.Jobj{Wire.wire_obj("kind", J.Jstr{"missingArtifact"}, Wire.wire_obj("moduleId", J.Jstr{"m1"}, Wire.wire_obj("path", J.Jstr{"/pkg/m1.bin"}, J.Jnil{}))}, J.Jnil{}))} : J.Json}
+  {Wire.rq_reason_json(Sel.RqCatalogRefused{"m1", Decl.DrMissingArtifact{"m1", "/pkg/m1.bin"}}) == J.Jobj{Wire.wire_obj("family", J.Jstr{"catalog"}, Wire.wire_obj("reason", J.Jobj{Wire.wire_obj("kind", J.Jstr{"missingArtifact"}, Wire.wire_obj("moduleId", J.Jstr{"m1"}, Wire.wire_obj("path", J.Jstr{"/pkg/m1.bin"}, J.Jnil{})))}, J.Jnil{}))} : J.Json}
 
 def wire_reason_renders_the_missing_artifact_path():
   {==}
 
 law wire_ambiguous_selection_reason_keeps_its_candidates:
-  {Wire.sel_reason_json(Sel.SelAmbiguous{Eng.ss_two("m1", "m2")}) == J.Jobj{Wire.wire_obj("kind", J.Jstr{"ambiguousSelection"}, Wire.wire_obj("candidates", Wire.ss_json(Eng.ss_two("m1", "m2")), J.Jnil{})} : J.Json}
+  {Wire.sel_reason_json(Sel.SelAmbiguous{Eng.ss_two("m1", "m2")}) == J.Jobj{Wire.wire_obj("kind", J.Jstr{"ambiguousSelection"}, Wire.wire_obj("candidates", Wire.ss_json(Eng.ss_two("m1", "m2")), J.Jnil{}))} : J.Json}
 
 def wire_ambiguous_selection_reason_keeps_its_candidates():
   {==}

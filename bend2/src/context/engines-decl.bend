@@ -84,8 +84,8 @@ type Exec is Data:
 # `lifetime_profile` is the empty string when the declaration carries none.
 type Op is Data:
   Op{operation: String, implements_operation: String,
-     subject_schema: String, options_schema: String, projections: SS,
-     effects: SS, execution: Exec, result_schema: String,
+     subject_schema: String, options_schema: String, projections: Eng.SS,
+     effects: Eng.SS, execution: Exec, result_schema: String,
      reference_schema: String, event_schema: String,
      lifetime_profile: String, dependencies: ModRefs}
 
@@ -99,7 +99,7 @@ type Ops is Data:
 # carries an interpreter, schema or effect that a request could replace.
 type Entry is Data:
   ENative{artifact: Art, export_identity: String}
-  EProcess{artifact: Art, argv: SS}
+  EProcess{artifact: Art, argv: Eng.SS}
 
 # A declarative applicability check over admitted project facts. Evaluating one
 # reads admitted manifests, configuration and examined source; it loads no
@@ -134,7 +134,7 @@ type Digs is Data:
   DigsCons{head: Dig, rest: Digs}
 
 type Inv is Data:
-  Inv{artifacts: Arts, schemas: SS, digests: Digs}
+  Inv{artifacts: Arts, schemas: Eng.SS, digests: Digs}
 
 def digest_of(+digs: Digs, +want_module: String) -> String:
   match digs:
@@ -206,7 +206,7 @@ def protocol_version_supported(+v: String) -> Bool:
 # repeated as arguments: sourceAnalysis, catalogCapture, schemaValidation,
 # deploymentToolProbe, environmentRead, datasetRead, runtimeObserve,
 # queryControlRecover.
-def admitted_effect_vocabulary() -> SS:
+def admitted_effect_vocabulary() -> Eng.SS:
   Eng.union_add(Eng.required_effects(Eng.op_code_access_join()),
   Eng.union_add(Eng.required_effects(Eng.op_sql_plan()),
   Eng.union_add(Eng.required_effects(Eng.op_migration_replay()),
@@ -232,27 +232,30 @@ def check_version(+decl_version: String, +protocol_version: String) -> Chk:
            bool_chk(protocol_version_supported(protocol_version),
                     DrUnsupportedProtocolVersion{protocol_version}))
 
-# Whether the candidate set already holds this module id under a different
-# declared identity. A declaration matching itself is not a conflict.
+# Whether the candidate set holds this module id under a different declared
+# identity. A declaration matching itself is not a conflict and the walk carries
+# on, so a second declaration of the same module id is still found.
 def cat_conflict(+cat: Cat, +want_module: String, +want_package: String,
                  +want_revision: String) -> Bool:
   match cat:
     case CatNil{}: False{}
-    case CatCons{h, r}:
+    case CatCons{h, +r}:
       match h:
         case Decl{decl_version, module_id, revision, protocol_version,
                   package_identity, entry, dependencies, operations,
                   applicability}:
           Bool.pick(Bool, String.eq(module_id, want_module),
-            Bool.not(Bool.and(String.eq(package_identity, want_package),
-                              String.eq(revision, want_revision))),
+            Bool.pick(Bool, Bool.and(String.eq(package_identity, want_package),
+                                     String.eq(revision, want_revision)),
+                      cat_conflict(r, want_module, want_package, want_revision),
+                      True{}),
             cat_conflict(r, want_module, want_package, want_revision))
 
 # Stage two: the module id is nonempty and names one identity.
 def check_identifiers(+module_id: String, +package_identity: String,
                       +revision: String, +cat: Cat) -> Chk:
   then_chk(bool_chk(Bool.not(String.is_empty(module_id)),
-                    DrEmptyId{what: "module"}),
+                    DrEmptyId{"module"}),
            bool_chk(Bool.not(cat_conflict(cat, module_id, package_identity,
                                           revision)),
                     DrConflictingId{module_id, package_identity}))
@@ -268,15 +271,15 @@ def check_declaration_digest(+module_id: String, +inv: Inv) -> Chk:
 def check_artifact_digest(+module_id: String, +path: String, +want: String,
                           +saw: String) -> Chk:
   Bool.pick(Chk, String.is_empty(saw),
-    ChkFail{reason: DrMissingArtifact{module_id, path}},
+    ChkFail{DrMissingArtifact{module_id, path}},
     Bool.pick(Chk, String.eq(want, saw), ChkOk{},
-              ChkFail{reason: DrArtifactMismatch{module_id, path, want, saw}}))
+              ChkFail{DrArtifactMismatch{module_id, path, want, saw}}))
 
 def check_artifact(+module_id: String, +art: Art, +inv: Inv) -> Chk:
-  match inv:
-    case Inv{artifacts, schemas, digests}:
-      match art:
-        case Art{+path, sha256, role}:
+  match art:
+    case Art{+path, sha256, role}:
+      match inv:
+        case Inv{artifacts, schemas, digests}:
           check_artifact_digest(module_id, path, sha256,
                                 artifact_digest(artifacts, path))
 
@@ -293,16 +296,16 @@ def check_entry(+module_id: String, +entry: Entry, +inv: Inv) -> Chk:
     case ENative{artifact, export_identity}:
       then_chk(check_artifact(module_id, artifact, inv),
                bool_chk(Bool.not(String.is_empty(export_identity)),
-                        DrEmptyId{what: "entry export identity"}))
+                        DrEmptyId{"entry export identity"}))
     case EProcess{artifact, argv}:
       then_chk(check_artifact(module_id, artifact, inv),
                bool_chk(Eng.ss_nonempty(argv), DrEmptyEntryVector{}))
 
 # One declared schema identity must be admitted by the inventory.
 def check_schema(+module_id: String, +operation: String, +schema: String,
-                 +schemas: SS) -> Chk:
+                 +schemas: Eng.SS) -> Chk:
   Bool.pick(Chk, Eng.ss_member(schemas, schema), ChkOk{},
-            ChkFail{reason: DrMissingSchema{module_id, operation, schema}})
+            ChkFail{DrMissingSchema{module_id, operation, schema}})
 
 def check_schemas(+module_id: String, +operation: String, +subject: String,
                   +options: String, +result: String, +reference: String,
@@ -316,7 +319,7 @@ def check_schemas(+module_id: String, +operation: String, +subject: String,
                check_schema(module_id, operation, event, schemas)))))
 
 # Every declared effect must have an admitted meaning.
-def check_effects(+module_id: String, +operation: String, +effects: SS) -> Chk:
+def check_effects(+module_id: String, +operation: String, +effects: Eng.SS) -> Chk:
   match effects:
     case Eng.SSNil{}: ChkOk{}
     case Eng.SSCons{+head, rest}:
@@ -353,7 +356,7 @@ def check_one_operation(+module_id: String, +op: Op, +remaining: Ops,
             projections, effects, execution, result_schema, reference_schema,
             event_schema, lifetime_profile, dependencies}:
       then_chk(bool_chk(Bool.not(String.is_empty(operation)),
-                        DrEmptyId{what: "operation"}),
+                        DrEmptyId{"operation"}),
       then_chk(bool_chk(Bool.not(operations_have(remaining, operation)),
                         DrDuplicateOperation{module_id, operation}),
       then_chk(bool_chk(Eng.operation_known(implements_operation),
@@ -376,9 +379,9 @@ def check_operations(+module_id: String, +ops: Ops, +inv: Inv) -> Chk:
 def check_edge_compare(+module_id: String, +operation: String,
                        +dependency: String, +want: String, +saw: String) -> Chk:
   Bool.pick(Chk, String.is_empty(saw),
-    ChkFail{reason: DrDependencyUnresolved{module_id, operation, dependency}},
+    ChkFail{DrDependencyUnresolved{module_id, operation, dependency}},
     Bool.pick(Chk, String.eq(want, saw), ChkOk{},
-      ChkFail{reason: DrDependencyDigestMismatch{module_id, dependency, want,
+      ChkFail{DrDependencyDigestMismatch{module_id, dependency, want,
                                                  saw}}))
 
 def check_edge_digest(+module_id: String, +operation: String,
@@ -394,7 +397,7 @@ def check_edge(+module_id: String, +operation: String, +edge: ModRef,
     case ModRef{+dependency_module, declaration_digest, dependency_operation}:
       then_chk(bool_chk(Bool.and(Bool.not(String.is_empty(dependency_module)),
                                  Bool.not(String.is_empty(dependency_operation))),
-                        DrEmptyId{what: "dependency"}),
+                        DrEmptyId{"dependency"}),
                check_edge_digest(module_id, operation, dependency_module,
                                  declaration_digest, inv))
 
@@ -435,12 +438,12 @@ def check_declaration(+decl: Decl, +cat: Cat, +inv: Inv) -> Chk:
                check_dependency_edges(module_id, operations, inv)))))))
 
 def admitted_digest(+decl: Decl, +inv: Inv) -> String:
-  match inv:
-    case Inv{artifacts, schemas, digests}:
-      match decl:
-        case Decl{decl_version, module_id, revision, protocol_version,
-                  package_identity, entry, dependencies, operations,
-                  applicability}:
+  match decl:
+    case Decl{decl_version, module_id, revision, protocol_version,
+              package_identity, entry, dependencies, operations,
+              applicability}:
+      match inv:
+        case Inv{artifacts, schemas, digests}:
           digest_of(digests, module_id)
 
 def decl_outcome(+c: Chk, +decl: Decl, +inv: Inv) -> DeclOutcome:
@@ -514,7 +517,7 @@ def op_common(+op: Op) -> String:
             event_schema, lifetime_profile, dependencies}:
       implements_operation
 
-def op_effects(+op: Op) -> SS:
+def op_effects(+op: Op) -> Eng.SS:
   match op:
     case Op{operation, implements_operation, subject_schema, options_schema,
             projections, effects, execution, result_schema, reference_schema,
@@ -545,7 +548,7 @@ def op_result_schema(+op: Op) -> String:
       result_schema
 
 # The five schema identities one binding freezes, as a set.
-def op_schema_set(+op: Op) -> SS:
+def op_schema_set(+op: Op) -> Eng.SS:
   match op:
     case Op{operation, implements_operation, subject_schema, options_schema,
             projections, effects, execution, result_schema, reference_schema,
@@ -557,16 +560,16 @@ def op_schema_set(+op: Op) -> SS:
 # --- declarative applicability -----------------------------------------------
 # One rule against the admitted facts it names. A rule reads a recorded fact and
 # compares it; it loads no project code and starts no process.
-def rule_holds(+rule: Rule, +paths: SS, +manifests: SS, +subject: String,
-               +projections: SS) -> Bool:
+def rule_holds(+rule: Rule, +paths: Eng.SS, +manifests: Eng.SS, +subject: String,
+               +projections: Eng.SS) -> Bool:
   match rule:
     case RPath{value}: Eng.ss_member(paths, value)
     case RManifest{value}: Eng.ss_member(manifests, value)
     case RSubject{value}: String.eq(subject, value)
     case RProjection{value}: Eng.ss_member(projections, value)
 
-def rules_hold(+rules: Rules, +paths: SS, +manifests: SS, +subject: String,
-               +projections: SS) -> Bool:
+def rules_hold(+rules: Rules, +paths: Eng.SS, +manifests: Eng.SS, +subject: String,
+               +projections: Eng.SS) -> Bool:
   match rules:
     case RulesNil{}: True{}
     case RulesCons{head, rest}:
@@ -613,7 +616,7 @@ def cat_record(+fail: CatFail, +o: DeclOutcome, +head: Decl) -> CatFail:
 def cat_finish(+fail: CatFail, +acc: Cat) -> CatOutcome:
   match fail:
     case CfAt{module_id, reason}: CatRefused{module_id, reason}
-    case CfNone{}: CatAdmitted{admitted: cat_rev(acc)}
+    case CfNone{}: CatAdmitted{cat_rev(acc)}
 
 def admit_catalog_walk(+remaining: Cat, +context: Cat, +inv: Inv, +acc: Cat,
                        +fail: CatFail) -> CatOutcome:
