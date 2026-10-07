@@ -44,8 +44,10 @@ import time
 # observe the mutated decision at run time).
 MUTATIONS = [
     ("fail-delivery-fulfills-wake",
-     "Bool.pick(Duty,fulfilled(ref),Duty{owner,attempt,put_delivery(results,ref),False{}",
-     "Bool.pick(Duty,Bool.not(ref_open(ref)),Duty{owner,attempt,put_delivery(results,ref),False{}",
+     "def fulfilled(ref: Ref) -> Bool:\n  match ref:\n"
+     "    case RefDone{note}: True{}\n    case other: False{}",
+     "def fulfilled(ref: Ref) -> Bool:\n  match ref:\n"
+     "    case RefDone{note}: True{}\n    case RefFail{error}: True{}\n    case other: False{}",
      "a_failed_delivery_settles_and_leaves_the_wake_owed",
      "a settled Fail delivery keeps wake_owed true",
      "failed-delivery-settles-and-leaves-wake-owed"),
@@ -191,7 +193,10 @@ def main():
     def run_laws(name, binary, case):
         child, streams, started = launch(name + ".run", [str(binary), "laws"], case)
         code = complete(name + ".run", child, streams, started)
-        text = (output / (name + ".run.stdout")).read_text(errors="replace")
+        # A passing check prints "-ok" on stdout; the failing check reports its own
+        # name on stderr through IO.die, so both streams carry the evidence.
+        text = ((output / (name + ".run.stdout")).read_text(errors="replace") + "\n" +
+                (output / (name + ".run.stderr")).read_text(errors="replace"))
         failed = [line[:-len("-failed")] for line in text.splitlines()
                   if line.endswith("-failed")]
         return code, (failed[0] if failed else None), text
@@ -266,7 +271,9 @@ def main():
             baseline, "baseline.gate", baseline_module, original)
         assert refuse_failure is None, \
             f"the fixture gate refuses a non-law item: {refuse_failure}"
-        assert "law " not in baseline_source, "law stripping left law statements"
+        assert (len(LAW_STATEMENT.findall(original))
+                - len(LAW_STATEMENT.findall(baseline_source))) == len(refused), \
+            "law removal does not match the recorded refusals"
         (baseline / "law-stripped-source.bend").write_text(baseline_source)
         baseline_binary, build_exit = build_fixture("baseline.law-stripped", baseline)
         assert build_exit == 0, "law-stripped baseline fixture build failed"
@@ -327,14 +334,16 @@ def main():
         isolated = mutated_source
         for refused_law in baseline_refused:
             isolated = strip_law(refused_law, isolated)
+        module.write_text(isolated)
         isolated, extra_refusals, refuse_failure = strip_refused_laws(
             case, prefixes[2] + ".gate", module, isolated)
         assert refuse_failure is None, \
             f"{name}: the fixture gate refuses a non-law item: {refuse_failure}"
         gate_law = extra_refusals[0]["law"] if extra_refusals else None
-        assert gate_law in (None, law), \
-            (f"{name}: the gate refuses {gate_law!r} rather than the mutated law "
-             f"{law!r}")
+        if law not in baseline_refused:
+            assert gate_law is not None, \
+                (f"{name}: the gate discharged {law} before the mutation and refuses no "
+                 f"law after it")
         (case / "law-stripped-source.bend").write_text(isolated)
         module.write_text(isolated)
         binary, build_exit = build_fixture(prefixes[2], case)
