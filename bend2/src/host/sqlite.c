@@ -21,7 +21,7 @@ static const char *const baton_change_schema[] = {
   "CREATE TRIGGER IF NOT EXISTS native_changes_stops_update AFTER UPDATE ON session_stops WHEN OLD.id IS NOT NEW.id OR OLD.reason IS NOT NEW.reason OR OLD.attempt IS NOT NEW.attempt OR OLD.directory IS NOT NEW.directory OR OLD.signal IS NOT NEW.signal OR OLD.applied_signal IS NOT NEW.applied_signal OR OLD.control_error IS NOT NEW.control_error OR OLD.outcome IS NOT NEW.outcome OR OLD.native_status IS NOT NEW.native_status OR OLD.report_id IS NOT NEW.report_id BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('stop',NEW.session,NEW.session,'update','stop',NEW.outcome); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_stops_delete AFTER DELETE ON session_stops BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('stop',OLD.session,OLD.session,'delete','stop',OLD.outcome); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_messages_insert AFTER INSERT ON messages BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',NEW.id,NEW.recipient,'insert','message:' || NEW.kind,NEW.kind || ' from ' || NEW.sender); END;",
-  "CREATE TRIGGER IF NOT EXISTS native_changes_messages_receipt AFTER UPDATE OF receipt ON messages WHEN OLD.receipt IS NOT NEW.receipt BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',NEW.id,NEW.recipient,'update','receipt','acknowledged'); END;",
+  "CREATE TRIGGER IF NOT EXISTS native_changes_messages_update AFTER UPDATE ON messages WHEN OLD.sender IS NOT NEW.sender OR OLD.recipient IS NOT NEW.recipient OR OLD.kind IS NOT NEW.kind OR OLD.body IS NOT NEW.body OR OLD.receipt IS NOT NEW.receipt BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',NEW.id,NEW.recipient,'update',CASE WHEN OLD.receipt IS NOT NEW.receipt THEN 'receipt' ELSE 'message:' || NEW.kind END,CASE WHEN OLD.receipt IS NOT NEW.receipt THEN 'acknowledged' ELSE NEW.kind || ' from ' || NEW.sender END); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_messages_delete AFTER DELETE ON messages BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',OLD.id,OLD.recipient,'delete','message:' || OLD.kind,OLD.kind || ' from ' || OLD.sender); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_turns_insert AFTER INSERT ON turns BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('turn',NEW.id,NEW.worker,'insert','report','turn report recorded'); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_turns_update AFTER UPDATE ON turns WHEN OLD.worker IS NOT NEW.worker OR OLD.event IS NOT NEW.event BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('turn',NEW.id,NEW.worker,'update','report','turn report updated'); END;",
@@ -39,40 +39,16 @@ static const char *const baton_change_schema[] = {
   NULL
 };
 
-static int baton_projection_ready(sqlite3 *db, int *ready) {
-  sqlite3_stmt *statement = NULL;
-  int code = sqlite3_prepare_v2(db,
-    "SELECT count(*)=10 FROM sqlite_master WHERE type='table' AND name IN ('sessions','messages','turns','executions','session_stops','session_roles','ensembles','ensemble_members','sections','section_members')",
-    -1, &statement, NULL);
-  if (code != SQLITE_OK) return code;
-  code = sqlite3_step(statement);
-  if (code == SQLITE_ROW) *ready = sqlite3_column_int(statement, 0);
-  sqlite3_finalize(statement);
-  return code == SQLITE_ROW ? SQLITE_OK : code;
-}
-
-static int baton_install_projection(sqlite3 *db, char **error) {
-  int own_transaction = sqlite3_get_autocommit(db);
-  int code = own_transaction
-    ? sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, error)
-    : SQLITE_OK;
+static int baton_install_projection(sqlite3 *db, const char *schema, char **error) {
+  int code = sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, error);
+  if (code == SQLITE_OK)
+    code = sqlite3_exec(db, schema, NULL, NULL, error);
   for (size_t i = 0; code == SQLITE_OK && baton_change_schema[i]; i++)
     code = sqlite3_exec(db, baton_change_schema[i], NULL, NULL, error);
-  if (code == SQLITE_OK && own_transaction)
+  if (code == SQLITE_OK)
     code = sqlite3_exec(db, "COMMIT", NULL, NULL, error);
-  if (code != SQLITE_OK && own_transaction)
+  if (code != SQLITE_OK)
     sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
-  return code;
-}
-
-static int baton_ensure_projection(sqlite3 *db, int *installed, char **error) {
-  int ready = 0;
-  int code;
-  if (*installed) return SQLITE_OK;
-  code = baton_projection_ready(db, &ready);
-  if (code != SQLITE_OK || !ready) return code;
-  code = baton_install_projection(db, error);
-  if (code == SQLITE_OK) *installed = 1;
   return code;
 }
 
@@ -81,14 +57,14 @@ static int baton_ensure_projection(sqlite3 *db, int *installed, char **error) {
 typedef struct {
   char *path, *sql, *output, *error;
   size_t length;
-  int code;
+  int code, projection_only;
 } BatonSql;
 
-static int baton_sql_statement_row(BatonSql *call, sqlite3_stmt *statement) {
-  int count = sqlite3_column_count(statement);
+static int baton_sql_row(void *context, int count, char **values, char **columns) {
+  BatonSql *call = context;
+  (void)columns;
   for (int i = 0; i < count; i++) {
-    const unsigned char *raw = sqlite3_column_text(statement, i);
-    const char *value = raw ? (const char *)raw : "";
+    const char *value = values[i] ? values[i] : "";
     size_t n = strlen(value);
     char *next = realloc(call->output, call->length + n + 2);
     if (!next) return SQLITE_NOMEM;
@@ -117,30 +93,12 @@ static void baton_sql_call(IoWork *w) {
     sqlite3_busy_handler(db, baton_sql_busy, NULL);
     char *error = NULL;
     call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
-    int projection_installed = 0;
-    if (call->code == SQLITE_OK)
-      call->code = baton_ensure_projection(db, &projection_installed, &error);
-    const char *sql = call->sql;
-    while (call->code == SQLITE_OK && sql && *sql) {
-      sqlite3_stmt *statement = NULL;
-      const char *tail = NULL;
-      call->code = sqlite3_prepare_v2(db, sql, -1, &statement, &tail);
-      if (call->code != SQLITE_OK) break;
-      if (!statement) {
-        if (tail == sql) break;
-        sql = tail;
-        continue;
+    if (call->code == SQLITE_OK) {
+      if (call->projection_only) {
+        call->code = baton_install_projection(db, call->sql, &error);
+      } else {
+        call->code = sqlite3_exec(db, call->sql, baton_sql_row, call, &error);
       }
-      int step;
-      while ((step = sqlite3_step(statement)) == SQLITE_ROW) {
-        call->code = baton_sql_statement_row(call, statement);
-        if (call->code != SQLITE_OK) break;
-      }
-      if (call->code == SQLITE_OK && step != SQLITE_DONE) call->code = step;
-      sqlite3_finalize(statement);
-      if (call->code != SQLITE_OK) break;
-      sql = tail;
-      call->code = baton_ensure_projection(db, &projection_installed, &error);
     }
     if (call->code != SQLITE_OK) {
       call->error = strdup(error ? error : sqlite3_errmsg(db));
@@ -178,5 +136,25 @@ static Term baton_sql_run(Env e, Term *f, IoWork *w) {
 }
 static void __attribute__((constructor)) baton_sql_use(void) {
   io_eff(CID_SQL_QUERY, baton_sql_run, 0);
+}
+#endif
+
+#ifdef CID_SQL_ENSURE_PROJECTION
+static Term baton_sql_ensure_projection_run(Env e, Term *f, IoWork *w) {
+  BatonSql *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(e, ENOMEM, NULL);
+  u64 path_n = 0, schema_n = 0;
+  call->path = io_cstr(e, f[0], &path_n);
+  call->sql = io_cstr(e, f[1], &schema_n);
+  if (strlen(call->path) != path_n || strlen(call->sql) != schema_n) {
+    free(call->path); free(call->sql); free(call);
+    return io_fail(e, EINVAL, "database path or schema contains NUL");
+  }
+  call->projection_only = 1;
+  w->data = (char *)call;
+  return io_work(w, baton_sql_call, baton_sql_pack);
+}
+static void __attribute__((constructor)) baton_sql_ensure_projection_use(void) {
+  io_eff(CID_SQL_ENSURE_PROJECTION, baton_sql_ensure_projection_run, 0);
 }
 #endif

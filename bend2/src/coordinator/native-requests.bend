@@ -27,10 +27,15 @@ def dispatch(attempt: String, frame: String, allowed: Bool) -> IO(Result<&1,&1,U
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(1,"Native request is closed, unavailable, or belongs to another parent.")})
     case True{}: P.ProcessChild.control_write(attempt,frame)
 
+def prepare_projection(db: String) -> IO(Result<&1,&1,U32 & String,String>):
+  DB.Sql.ensure_projection(db,C.schema())
+
 def written(db: String, +id: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
-    case Done{unit}: DB.Sql.query(db,"UPDATE native_requests SET written=1 WHERE id=" ++ C.q(id) ++ ";SELECT json_object('request'," ++ C.q(id) ++ ",'status','stdin-written');")
+    case Done{unit}: do IO<Result<&1,&1,U32 & String,String>>:
+      ready : String <- IO.try(String,prepare_projection(db))
+      DB.Sql.query(db,"UPDATE native_requests SET written=1 WHERE id=" ++ C.q(id) ++ ";SELECT json_object('request'," ++ C.q(id) ++ ",'status','stdin-written');")
 
 def send(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
@@ -72,6 +77,7 @@ def record(+db: String, player: String, turn: String, attempt: String, event: St
       shown : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output("Native OMP UI request is unsupported for a session without a registered parent; its full frame remains in the native log.\n")
       IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,"Native OMP UI request has no registered parent; interaction requires a registered parent."))
     case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
+      ready : String <- IO.try(String,prepare_projection(db))
       result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ request_sql(player,turn,attempt,event) ++ "COMMIT;")
       saved(db,tasks,result)
 
@@ -85,7 +91,9 @@ def observe(+db: String, +player: String, turn: String, attempt: String, +event:
 def closed(db: String, attempt: String, enabled: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match enabled:
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
-    case True{}: DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ "UPDATE native_requests SET closed=coalesce(closed,'native-exited') WHERE attempt=" ++ C.q(attempt) ++ ";COMMIT;")
+    case True{}: do IO<Result<&1,&1,U32 & String,String>>:
+      ready : String <- IO.try(String,prepare_projection(db))
+      DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ "UPDATE native_requests SET closed=coalesce(closed,'native-exited') WHERE attempt=" ++ C.q(attempt) ++ ";COMMIT;")
 
 def combine(first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,Unit>:
   match first:
@@ -121,6 +129,7 @@ def reply_result(db: String, id: String, accepted: Bool, already: Bool) -> IO(Re
 
 def reply(+db: String, +parent: String, +id: String, +response: String) -> IO(Unit):
   do IO<Unit>:
+    ready : String <- IO.try(String,prepare_projection(db))
     accepted : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ schema() ++ response_sql(parent,id,response) ++ "SELECT changes();COMMIT;"))
     written : String <- IO.try(String,DB.Sql.query(db,"SELECT written FROM native_requests WHERE id=" ++ C.q(id) ++ ";"))
     result : String <- IO.try(String,reply_result(db,id,String.eq(accepted,"1\n"),String.eq(written,"1\n")))

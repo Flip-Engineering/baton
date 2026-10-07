@@ -76,6 +76,13 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
         pending = self.call('message', 'task-worker', 'root', 'worker', 'task',
                             'Retained task input.')
         self.assertEqual(pending['receipt'], None)
+        with sqlite3.connect(self.db) as db:
+            before_rollback = db.execute('SELECT max(change_id) FROM native_changes').fetchone()[0]
+        self.call('message', 'lead-report', 'worker', 'root', 'guidance',
+                  'Conflicting reuse must roll back.', success=False)
+        with sqlite3.connect(self.db) as db:
+            after_rollback = db.execute('SELECT max(change_id) FROM native_changes').fetchone()[0]
+        self.assertEqual(after_rollback, before_rollback)
         self.call('report', 'lead-report', 'lead', 'Lead report is retained.')
 
         self.run_turn('worker', 'worker-finished', 'completed',
@@ -108,7 +115,10 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
                             for row in rows))
         with sqlite3.connect(self.db) as db:
             pending_count = db.execute('''SELECT count(*) FROM messages
-                                           WHERE recipient='worker' AND receipt IS NULL''').fetchone()[0]
+                                           WHERE recipient='worker' AND receipt IS NULL
+                                             AND kind IN ('task', 'guidance', 'recovery')
+                                             AND NOT EXISTS (SELECT 1 FROM session_stops
+                                                              WHERE session='worker')''').fetchone()[0]
             self.assertEqual(pending_count, 1)
             events = {row[0]: json.loads(row[1]) for row in db.execute(
                 'SELECT id,event FROM turns WHERE worker IN (?,?)',
