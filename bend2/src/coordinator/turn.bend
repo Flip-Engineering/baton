@@ -559,7 +559,7 @@ def retained_output(+db: String, +player: String, id: String, +log: String, +har
     consume(db,player,id,log,policy,held,False{},handle,harness,cursor,last_message,primary,current,terminal,filter,codex_log,"",sender,attempt,checkpoint_state,False{},Nil{},first)
 
 def muse_retained_arguments(cmd: String, model: String, effort: String, prompt_file: String, +session: String) -> List<String>:
-  Bool.pick(List<String>,String.is_empty(session),Muse.arguments(cmd,model,effort,prompt_file),List.append(&1,String,Muse.arguments(cmd,model,effort,prompt_file),["--session-id",session]))
+  List.append(&1,String,Muse.arguments(cmd,model,effort,prompt_file),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session]))
 
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
