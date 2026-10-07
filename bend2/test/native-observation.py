@@ -188,10 +188,19 @@ class NativeObservation(RECEIVE.Receive):
         observer = self.spawn(*self.receive_args('parent'))
         stream, started = self.accept('parent')
         attempt, turn_id = self.eventually(lambda: self._retained_attempt(), 'retained attempt was not admitted')
-        text = 'R' * (1024 * 1024 + 128 * 1024)
+        text = '"' * 400_000
         assistant = {'type': 'message_end', 'message': {
             'id': 'oversized-checkpoint-assistant', 'role': 'assistant', 'provider': 'fixture',
             'content': [{'type': 'text', 'text': text}]}}
+        raw_frame = json.dumps(assistant, separators=(',', ':'))
+        encoded_message = json.dumps(assistant['message'], separators=(',', ':'))
+        encoded_state = json.dumps({'schema': 1, 'guidance_cursor': '0\n',
+                                    'last_message': encoded_message,
+                                    'muse_primary': '', 'muse_current': '', 'terminal': '',
+                                    'filter_mode': '', 'codex_log': '', 'held': ''},
+                                   separators=(',', ':'))
+        self.assertLess(len(raw_frame.encode()), 1_000_000)
+        self.assertGreater(len(encoded_state.encode()), 1 << 20)
         self.action(stream, native_frame=assistant)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
         self.eventually(lambda: (self.directory / 'parent.jsonl').exists() and
