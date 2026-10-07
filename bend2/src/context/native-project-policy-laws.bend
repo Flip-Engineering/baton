@@ -66,3 +66,38 @@ law project_policy_identity_binds_owner_and_worktree:
 
 def project_policy_identity_binds_owner_and_worktree():
   {==}
+
+def observed_present(+owner: String, +worktree: String, +path: String) -> J.Json:
+  J.Jobj{pair("status", J.Jstr{"present"},
+    pair("owner", J.Jstr{owner}, pair("worktree", J.Jstr{worktree},
+      pair("path", J.Jstr{path}, pair("sha256", J.Jstr{"aabb"},
+        pair("bytes", J.Jstr{"{}"}, J.Jnil{}))))))}
+
+law project_policy_native_decoder_keeps_the_authenticated_present_record:
+  {Policy.decode_observation(observed_present("owner", "/work", "/work/.baton/context.json"),
+      "owner", "/work") == Policy.PolicyObservationDecoded{
+        Policy.PolicyPresent{"owner", "/work", "/work/.baton/context.json", "aabb", "{}"}} : Policy.PolicyObservationDecode}
+
+def project_policy_native_decoder_keeps_the_authenticated_present_record():
+  {==}
+
+law project_policy_native_decoder_refuses_foreign_owner:
+  {Policy.decode_observation(observed_present("foreign", "/work", "/work/.baton/context.json"),
+      "owner", "/work") == Policy.PolicyObservationRefused{"projectPolicyObservationMalformed"} : Policy.PolicyObservationDecode}
+
+def project_policy_native_decoder_refuses_foreign_owner():
+  {==}
+
+law project_policy_native_decoder_refuses_a_path_outside_owner_policy_location:
+  {Policy.decode_observation(observed_present("owner", "/work", "/tmp/context.json"),
+      "owner", "/work") == Policy.PolicyObservationRefused{"projectPolicyObservationMalformed"} : Policy.PolicyObservationDecode}
+
+def project_policy_native_decoder_refuses_a_path_outside_owner_policy_location():
+  {==}
+
+law project_policy_native_decoder_refuses_an_unrecognized_observation_status:
+  {Policy.decode_observation(J.Jobj{pair("status", J.Jstr{"error"}, J.Jnil{})},
+      "owner", "/work") == Policy.PolicyObservationRefused{"projectPolicyUnavailable"} : Policy.PolicyObservationDecode}
+
+def project_policy_native_decoder_refuses_an_unrecognized_observation_status():
+  {==}

@@ -20,6 +20,10 @@ type PolicyObservation is Data:
                 sha256: String, bytes: String}
   PolicyAbsent{owner: String, worktree: String, path: String}
 
+type PolicyObservationDecode is Data:
+  PolicyObservationDecoded{observation: PolicyObservation}
+  PolicyObservationRefused{condition: String}
+
 type PolicyObservationIdentity is Data:
   PolicyReadIdentity{value: String}
   PolicyMissingIdentity{value: String}
@@ -98,6 +102,42 @@ def decode(+value: J.Json) -> PolicyDecode:
     PolicyDecoded{ProjectPolicy{text_array(member(value, "disabled")),
                                  text_array(member(value, "preferred"))}},
     PolicyRefused{"projectPolicyMalformed"})
+
+def text_field(+value: J.Json, +key: String) -> String:
+  Req.text_of(member(value, key))
+
+def observation_bytes_valid(+value: J.Json) -> Bool:
+  Bool.and(Req.is_jstr(member(value, "bytes")),
+    Bool.and(Req.is_jstr(member(value, "sha256")),
+      Bool.not(String.is_empty(text_field(value, "sha256")))))
+
+def observation_authority_valid(+value: J.Json, +owner: String, +worktree: String) -> Bool:
+  Bool.and(Req.is_jobj(value),
+    Bool.and(String.eq(text_field(value, "owner"), owner),
+      Bool.and(String.eq(text_field(value, "worktree"), worktree),
+        Bool.and(Bool.not(String.is_empty(owner)),
+          Bool.and(Bool.not(String.is_empty(worktree)),
+            String.eq(text_field(value, "path"), worktree ++ "/.baton/context.json")))))))
+
+def observation_present(+value: J.Json, +owner: String, +worktree: String) -> PolicyObservationDecode:
+  Bool.pick(PolicyObservationDecode,
+    Bool.and(observation_authority_valid(value, owner, worktree), observation_bytes_valid(value)),
+    PolicyObservationDecoded{PolicyPresent{owner, worktree, text_field(value, "path"),
+      text_field(value, "sha256"), text_field(value, "bytes")}},
+    PolicyObservationRefused{"projectPolicyObservationMalformed"})
+
+def observation_absent(+value: J.Json, +owner: String, +worktree: String) -> PolicyObservationDecode:
+  Bool.pick(PolicyObservationDecode,
+    observation_authority_valid(value, owner, worktree),
+    PolicyObservationDecoded{PolicyAbsent{owner, worktree, text_field(value, "path")}},
+    PolicyObservationRefused{"projectPolicyObservationMalformed"})
+
+def decode_observation(+value: J.Json, +owner: String, +worktree: String) -> PolicyObservationDecode:
+  Bool.pick(PolicyObservationDecode, String.eq(text_field(value, "status"), "present"),
+    observation_present(value, owner, worktree),
+    Bool.pick(PolicyObservationDecode, String.eq(text_field(value, "status"), "absent"),
+      observation_absent(value, owner, worktree),
+      PolicyObservationRefused{"projectPolicyUnavailable"}))
 
 def observation_identity(+observation: PolicyObservation) -> PolicyObservationIdentity:
   match observation:
