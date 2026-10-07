@@ -1122,8 +1122,9 @@ export const MUTATIONS = [
   {
     name: 'm3a-held-advance-drops-the-fast-forward-requirement',
     file: join('bend2', 'src', 'git', 'land.bend'),
-    find: '        merged : T.GitOut <- Git.runGit(p2, ["merge", "--ff-only", c2])',
-    replace: '        merged : T.GitOut <- Git.runGit(p2, ["merge", c2])',
+    scope: 'ld_adv_wt',
+    find: '    ld_adv_wt_target_pick(target_tip, p2, r2, t2, c2, b2)',
+    replace: '    IO.pure(LAdv, AdvMoved{})',
     law: 'm3a_held_advance_is_the_worktree_fast_forward',
   },
   {
