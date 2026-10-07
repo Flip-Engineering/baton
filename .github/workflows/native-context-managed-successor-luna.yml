@@ -20,7 +20,7 @@ jobs:
       - name: Check out immutable candidate source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: 2c300260068efe2f3df3106972c8eaa95f1542bf
+          ref: 2d3fe1e31bad339f93164475a5867eb491598acf
           path: candidate
       - name: Select Node 22
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -45,11 +45,11 @@ jobs:
           printf '%s\n' "$actual_tree" | tee "$NATIVE_CONTEXT_RUN/evidence/source-tree.txt"
           git -C candidate status --short --branch > "$NATIVE_CONTEXT_RUN/evidence/source-status.txt"
           printf 'expected_commit=%s\nactual_commit=%s\n' \
-            2c300260068efe2f3df3106972c8eaa95f1542bf "$actual_commit"
-          if [[ "$actual_commit" != 2c300260068efe2f3df3106972c8eaa95f1542bf ]]; then exit 1; fi
+            2d3fe1e31bad339f93164475a5867eb491598acf "$actual_commit"
+          if [[ "$actual_commit" != 2d3fe1e31bad339f93164475a5867eb491598acf ]]; then exit 1; fi
           printf 'expected_tree=%s\nactual_tree=%s\n' \
-            36ba32c6adffc8fa3e63eb849b005dd84f2d2bdd "$actual_tree"
-          if [[ "$actual_tree" != 36ba32c6adffc8fa3e63eb849b005dd84f2d2bdd ]]; then exit 1; fi
+            e12f4b923a24859576cfbb2435ab6b51332a9ce2 "$actual_tree"
+          if [[ "$actual_tree" != e12f4b923a24859576cfbb2435ab6b51332a9ce2 ]]; then exit 1; fi
           shasum -a 256 \
             candidate/bend2/src/coordinator/main.bend \
             candidate/bend2/src/context/native.bend \
