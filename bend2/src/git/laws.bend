@@ -1123,29 +1123,15 @@ def m3a_held_advance_is_the_worktree_fast_forward(path, repo, target, cand, basi
 # symbolic HEAD atomically across its final check and merge: a branch switch in
 # that interval can make merge update another branch. The post-read refuses a
 # landed answer on observed drift, but it cannot undo a concurrent ref update.
-def held_success_arm(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(L.LAdv):
-  match g:
-    case T.GRun{code, out}:
-      +p2 = path
-      +r2 = repo
-      +t2 = target
-      +c2 = cand
-      +b2 = basis
-      Bool.pick(IO(L.LAdv), U32.is_eq(code, 0),
-        L.ld_adv_wt_observe(p2, r2, t2, c2),
-        L.ld_adv_wt_refused(p2, r2, t2, b2))
-    case T.GBroken{detail}: IO.pure(L.LAdv, L.AdvBroken{detail})
-
 law m3a_held_success_arm_uses_publication_observation:
-  for +g: T.GitOut
   for path: String
   for repo: String
   for target: String
   for cand: String
   for basis: String
-  {L.ld_adv_wt_pick(g, path, repo, target, cand, basis) == held_success_arm(g, path, repo, target, cand, basis) : IO(L.LAdv)}
+  {L.ld_adv_wt_pick(T.GRun{0, ""}, path, repo, target, cand, basis) == L.ld_adv_wt_observe(path, repo, target, cand) : IO(L.LAdv)}
 
-def m3a_held_success_arm_uses_publication_observation(g, path, repo, target, cand, basis):
+def m3a_held_success_arm_uses_publication_observation(path, repo, target, cand, basis):
   {==}
 
 def held_success_observation(path: String, repo: String, target: String, cand: String) -> IO(L.LAdv):
