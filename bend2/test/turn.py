@@ -332,7 +332,8 @@ prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
 pathlib.Path('received.txt').write_text(prompt)
 session=args[args.index('--session-id')+1] if '--session-id' in args else 'native-muse'
 print(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'run.model.configured','payload':{'kind':'run_model_configured','model_id':'actual-muse'}}))
-print(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'run.terminal.completed','payload':{'kind':'run_terminal','terminal':'completed','text':prompt}}))
+print(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'turn.input.user','payload':{'kind':'turn_input_user','command_id':'muse-primary'}}))
+print(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'run.terminal.completed','payload':{'kind':'run_terminal','terminal':'completed','command_id':'muse-primary','text':prompt}}))
 ''')
         self.call('turn','muse-worker','muse-1',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
         native=json.loads(self.call('player','muse-worker'))['native']
