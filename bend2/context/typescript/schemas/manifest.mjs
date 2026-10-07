@@ -3,8 +3,11 @@
 // Each document is the admitted mirror of the provider's own closed-schema validation. The
 // validator in lib/protocol.mjs is the authority, every document carries a `sourceContract` block
 // citing the lines it mirrors, and a change to a cited line requires the document to change with it.
-// The admitted identities stay holes: package admission fills them from the inventory it admits, so
-// no row here carries an identity string.
+// Inside that block `authority` is the canonical path of the primary validator file and nothing else,
+// `source.validator` names the mirrored function, `source.lines` repeats the citations, and
+// `source.detail` names the secondary files whose lines the document also cites. The admitted
+// identities stay holes: package admission fills them from the inventory it admits, so no row here
+// carries an identity string.
 //
 // The request and result contracts are engine-level, so most role shapes are one document named by
 // both operations; `sharedAs` records that and the suite fails when a shared document and its
@@ -15,7 +18,7 @@
 export const SCHEMA_DOCUMENT_ROOT = 'libexec/baton2/context/typescript/schemas';
 export const SCHEMA_SOURCE_ROOT = 'bend2/context/typescript/schemas';
 export const SCHEMA_SOURCE_AUTHORITY = 'bend2/context/typescript/lib/protocol.mjs';
-export const SCHEMA_DRIFT_NOTE = 'the validator in lib/protocol.mjs is the authority and every document under schemas/ is its admitted mirror: a change to a cited line requires the document to change with it, and the suite fails when a document stops citing the line it mirrors';
+export const SCHEMA_DRIFT_NOTE = 'the validator in lib/protocol.mjs is the authority and its canonical path is the authority member of every document: the source member names the mirrored function, repeats the citations and records the secondary files those citations come from, a change to a cited line requires the document to change with it, and the suite fails when a document stops citing the line it mirrors';
 
 export const ROLE_NAMES = Object.freeze({
   subject: 'the subject member of the admitted canonical request',
@@ -25,13 +28,14 @@ export const ROLE_NAMES = Object.freeze({
   event: "the refusal frame, the module's other emitted frame",
 });
 
-function row({ operation, role, file, lines, sharedAs = null }) {
+function row({ operation, role, file, lines, sharedAs = null, secondaryFiles = [] }) {
   return Object.freeze({
     operation,
     role,
     path: `${SCHEMA_DOCUMENT_ROOT}/${operation}/${file}`,
     sourcePath: `${SCHEMA_SOURCE_ROOT}/${operation}/${file}`,
     sourceLines: Object.freeze([...lines]),
+    secondaryFiles: Object.freeze([...secondaryFiles]),
     sharedAs,
     names: ROLE_NAMES[role],
     identity: null,
@@ -43,14 +47,36 @@ const SUBJECT_LINES = ['49', '57-61', '70-73', '89-97', '106-131'];
 const OPTIONS_LINES = ['54-56', '74', '89-97', '158-200', '200-210'];
 const RESULT_LINES = ['33', '251-290', '118-155'];
 const REFERENCE_LINES = ['265-277', '16-23', '99-105'];
-const EVENT_LINES = ['294-300', '6-15'];
+const EVENT_LINES = ['294-300', '6-15', '113-118'];
+
+const RESULT_SECONDARY = ['lib/query.mjs', 'provider.mjs'];
+const REFERENCE_SECONDARY = ['lib/refs.mjs', 'lib/query.mjs'];
+const EVENT_SECONDARY = ['provider.mjs'];
 
 export const SCHEMA_DOCUMENTS = Object.freeze([
   row({ operation: 'sourceAnalysis', role: 'subject', file: 'subject.request.json', lines: SUBJECT_LINES }),
   row({ operation: 'sourceAnalysis', role: 'options', file: 'options.request.json', lines: OPTIONS_LINES }),
-  row({ operation: 'sourceAnalysis', role: 'result', file: 'result.frame.json', lines: RESULT_LINES }),
-  row({ operation: 'sourceAnalysis', role: 'reference', file: 'reference.json', lines: REFERENCE_LINES }),
-  row({ operation: 'sourceAnalysis', role: 'event', file: 'event.refusal-frame.json', lines: EVENT_LINES }),
+  row({
+    operation: 'sourceAnalysis',
+    role: 'result',
+    file: 'result.frame.json',
+    lines: RESULT_LINES,
+    secondaryFiles: RESULT_SECONDARY,
+  }),
+  row({
+    operation: 'sourceAnalysis',
+    role: 'reference',
+    file: 'reference.json',
+    lines: REFERENCE_LINES,
+    secondaryFiles: REFERENCE_SECONDARY,
+  }),
+  row({
+    operation: 'sourceAnalysis',
+    role: 'event',
+    file: 'event.refusal-frame.json',
+    lines: EVENT_LINES,
+    secondaryFiles: EVENT_SECONDARY,
+  }),
   row({
     operation: 'sqlPlan',
     role: 'subject',
@@ -65,6 +91,7 @@ export const SCHEMA_DOCUMENTS = Object.freeze([
     file: 'result.frame.json',
     lines: RESULT_LINES,
     sharedAs: 'sourceAnalysis/result.frame.json',
+    secondaryFiles: RESULT_SECONDARY,
   }),
   row({
     operation: 'sqlPlan',
@@ -72,6 +99,7 @@ export const SCHEMA_DOCUMENTS = Object.freeze([
     file: 'reference.json',
     lines: REFERENCE_LINES,
     sharedAs: 'sourceAnalysis/reference.json',
+    secondaryFiles: REFERENCE_SECONDARY,
   }),
   row({
     operation: 'sqlPlan',
@@ -79,6 +107,7 @@ export const SCHEMA_DOCUMENTS = Object.freeze([
     file: 'event.refusal-frame.json',
     lines: EVENT_LINES,
     sharedAs: 'sourceAnalysis/event.refusal-frame.json',
+    secondaryFiles: EVENT_SECONDARY,
   }),
 ]);
 
@@ -108,6 +137,7 @@ export function schemaDocumentInventory() {
     role: document.role,
     path: document.path,
     sourceLines: [...document.sourceLines],
+    secondaryFiles: [...document.secondaryFiles],
     identity: null,
     status: 'unadmitted',
   }));

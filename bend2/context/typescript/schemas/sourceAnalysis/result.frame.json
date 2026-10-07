@@ -3,8 +3,13 @@
   "title": "TypeScript provider result frame",
   "description": "The frame the provider writes for one query, mirrored from the envelope its builder constructs and from the closed-schema validation that admits it.",
   "sourceContract": {
-    "authority": "bend2/context/typescript/lib/protocol.mjs (validateResult :251-290); the built envelope is lib/query.mjs:118-155 and the frame is written by provider.mjs",
+    "authority": "bend2/context/typescript/lib/protocol.mjs",
     "lines": ["33", "251-290", "118-155"],
+    "source": {
+      "validator": "validateResult",
+      "lines": ["33", "251-290", "118-155"],
+      "detail": "the envelope builder is lib/query.mjs:118-155 and the frame writer is provider.mjs:1-15"
+    },
     "drift": "validateResult is the authority for admission and query.mjs is the authority for the members a published result carries; this document is their admitted mirror, so a change to either requires a change here. validateResult admits version 1 (:251), requires facts, relations, refs and limits to be arrays (:254-256), requires every fact and relation to carry a nonempty unique id (:258-262), a classification from CLASSIFICATIONS (:33, :263) and a nonempty evidence array (:264), requires every ref to carry a nonempty unique id (:265-270) and the snapshot identity in use (:271-277), and requires a record inside a value to carry the snapshot identity in use (:278-283).",
     "identityNote": "no $id is set: the admitted identity is a hole for package admission to fill, named by the inventory it admits.",
     "crossFieldRules": [
