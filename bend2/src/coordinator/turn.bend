@@ -305,9 +305,12 @@ def observe_event(db: String, player: String, id: String, line: String, relevant
 # recorded as a report under the sealed identity: the first terminal stays the
 # report of this receive attempt, and a later episode is named once in the
 # separate diagnostic with the guidance it leaves for the next receive.
-def deferred_terminal_sql(+event: String, +terminal: String, +primary: String, +current: String, +muse: Bool) -> String:
-  +candidate = Bool.pick(String,muse,primary_terminal_expr(event,current),C.terminal(event))
-  +later = Bool.pick(String,muse,C.q(current) ++ "<>'' AND " ++ C.q(current) ++ "<>" ++ C.q(primary),"1")
+def deferred_terminal_sql(+event: String, +terminal: String) -> String:
+  "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END ELSE 0 END;"
+
+def muse_deferred_terminal_sql(+event: String, +terminal: String, +primary: String, +current: String) -> String:
+  +candidate = primary_terminal_expr(event,current)
+  +later = C.q(current) ++ "<>'' AND " ++ C.q(current) ++ "<>" ++ C.q(primary)
   "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ candidate ++ " AND " ++ later ++ " THEN 1 ELSE 0 END ELSE 0 END;"
 
 # The note is written once: a later terminal frame must not try a second body
@@ -346,7 +349,8 @@ def deferred_note(+db: String, player: String, id: String, +event: String, +term
   match sealed:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
-      later : String <- IO.try(String,DB.Sql.query(db,deferred_terminal_sql(event,terminal,primary,current,muse)))
+      query : String <- IO.pure(String,Bool.pick(String,muse,muse_deferred_terminal_sql(event,terminal,primary,current),deferred_terminal_sql(event,terminal)))
+      later : String <- IO.try(String,DB.Sql.query(db,query))
       noted : Unit <- record_deferred(db,player,id,String.eq(later,"1\n"))
       IO.pure(Unit,Unit{})
 
