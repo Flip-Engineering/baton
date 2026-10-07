@@ -137,26 +137,32 @@ def validation_report_decoded(+db: String, +binding: String, +text: String,
     case RawDecoded{+value}:
       report_decided(db, binding, text, validation_report_condition(value))
 
+def validation_tree_result(+db: String, +binding: String, +text: String,
+                           tree: Result<&1,&1,U32 & String,String>) -> IO(RequestDecode):
+  match tree:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"validationReportRead"})
+    case Done{+rows}:
+      validation_report_decoded(db, binding, text, raw_rows(rows))
+
+def validation_query_result(+db: String, +binding: String, +text: String,
+                             report: Result<&1,&1,U32 & String,String>) -> IO(RequestDecode):
+  match report:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"requestValidationRead"})
+    case Done{+report_rows}:
+      validation_tree_result(db, binding, text,
+        DB.Sql.query_bound(db, binding, Req.json_tree_sql(Tx.trim_nl(report_rows))))
+
 def validation_report_row(+db: String, +binding: String, +text: String,
                           +row: String) -> IO(RequestDecode):
   match row:
     case "1":
       do IO<RequestDecode>:
         report : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, Req.validate_json_text_sql(text))
-        match report:
-          case Fail{error}:
-            match error:
-              case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"requestValidationRead"})
-          case Done{+reportRows}:
-            do IO<RequestDecode>:
-              reportTree : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
-                Req.json_tree_sql(Tx.trim_nl(reportRows)))
-              match reportTree:
-                case Fail{error}:
-                  match error:
-                    case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"validationReportRead"})
-                case Done{+rows}:
-                  validation_report_decoded(db, binding, text, raw_rows(rows))
+        validation_query_result(db, binding, text, report)
     case "0": IO.pure(RequestDecode, RequestDecodeRefused{"invalidJson"})
     case other: IO.pure(RequestDecode, RequestDecodeRefused{"malformedValidationObservation"})
 
