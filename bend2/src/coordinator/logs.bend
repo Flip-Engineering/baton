@@ -836,7 +836,7 @@ def unknown_session(session: String) -> String:
 def refused(+saved: String) -> Bool:
   Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-log-setting\""),Tx.starts_with(saved,"{\"error\":\"unknown-session\""))
 
-def cleaned(db: String, +session: String) -> IO(String):
+def cleaned(+db: String, +session: String) -> IO(String):
   do IO<String>:
     rows : String <- IO.try(String,DB.Sql.query(db,clean_sql(session)))
     removed : String <- clean_rows(Tx.split_lines(rows),"")
