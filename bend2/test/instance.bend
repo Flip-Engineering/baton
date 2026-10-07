@@ -530,7 +530,6 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 14: admit_file_cli(rest)
     case 15: subscribe_cli(rest)
     case 16: publish_cli(rest)
-    case 17: state_cli(rest)
     case 18: nolock_cli(rest)
     case 19: prepared_cli(rest)
     case 20: admit_recovery_cli(rest)
