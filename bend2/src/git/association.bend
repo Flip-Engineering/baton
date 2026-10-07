@@ -30,22 +30,22 @@ def hex_is(c: Char, n: U32) -> Bool:
   +value = n
   Char.is_eq(ch, Char.from_u32(value))
 
-def hex_chain_1(c: Char) -> Bool: match hex_is(c, 48): case True{}: True{} case False{}: hex_chain_2(c)
-def hex_chain_2(c: Char) -> Bool: match hex_is(c, 49): case True{}: True{} case False{}: hex_chain_3(c)
-def hex_chain_3(c: Char) -> Bool: match hex_is(c, 50): case True{}: True{} case False{}: hex_chain_4(c)
-def hex_chain_4(c: Char) -> Bool: match hex_is(c, 51): case True{}: True{} case False{}: hex_chain_5(c)
-def hex_chain_5(c: Char) -> Bool: match hex_is(c, 52): case True{}: True{} case False{}: hex_chain_6(c)
-def hex_chain_6(c: Char) -> Bool: match hex_is(c, 53): case True{}: True{} case False{}: hex_chain_7(c)
-def hex_chain_7(c: Char) -> Bool: match hex_is(c, 54): case True{}: True{} case False{}: hex_chain_8(c)
-def hex_chain_8(c: Char) -> Bool: match hex_is(c, 55): case True{}: True{} case False{}: hex_chain_9(c)
-def hex_chain_9(c: Char) -> Bool: match hex_is(c, 56): case True{}: True{} case False{}: hex_chain_10(c)
-def hex_chain_10(c: Char) -> Bool: match hex_is(c, 57): case True{}: True{} case False{}: hex_chain_11(c)
-def hex_chain_11(c: Char) -> Bool: match hex_is(c, 97): case True{}: True{} case False{}: hex_chain_12(c)
-def hex_chain_12(c: Char) -> Bool: match hex_is(c, 98): case True{}: True{} case False{}: hex_chain_13(c)
-def hex_chain_13(c: Char) -> Bool: match hex_is(c, 99): case True{}: True{} case False{}: hex_chain_14(c)
-def hex_chain_14(c: Char) -> Bool: match hex_is(c, 100): case True{}: True{} case False{}: hex_chain_15(c)
-def hex_chain_15(c: Char) -> Bool: match hex_is(c, 101): case True{}: True{} case False{}: hex_chain_16(c)
 def hex_chain_16(c: Char) -> Bool: match hex_is(c, 102): case True{}: True{} case False{}: False{}
+def hex_chain_15(c: Char) -> Bool: match hex_is(c, 101): case True{}: True{} case False{}: hex_chain_16(c)
+def hex_chain_14(c: Char) -> Bool: match hex_is(c, 100): case True{}: True{} case False{}: hex_chain_15(c)
+def hex_chain_13(c: Char) -> Bool: match hex_is(c, 99): case True{}: True{} case False{}: hex_chain_14(c)
+def hex_chain_12(c: Char) -> Bool: match hex_is(c, 98): case True{}: True{} case False{}: hex_chain_13(c)
+def hex_chain_11(c: Char) -> Bool: match hex_is(c, 97): case True{}: True{} case False{}: hex_chain_12(c)
+def hex_chain_10(c: Char) -> Bool: match hex_is(c, 57): case True{}: True{} case False{}: hex_chain_11(c)
+def hex_chain_9(c: Char) -> Bool: match hex_is(c, 56): case True{}: True{} case False{}: hex_chain_10(c)
+def hex_chain_8(c: Char) -> Bool: match hex_is(c, 55): case True{}: True{} case False{}: hex_chain_9(c)
+def hex_chain_7(c: Char) -> Bool: match hex_is(c, 54): case True{}: True{} case False{}: hex_chain_8(c)
+def hex_chain_6(c: Char) -> Bool: match hex_is(c, 53): case True{}: True{} case False{}: hex_chain_7(c)
+def hex_chain_5(c: Char) -> Bool: match hex_is(c, 52): case True{}: True{} case False{}: hex_chain_6(c)
+def hex_chain_4(c: Char) -> Bool: match hex_is(c, 51): case True{}: True{} case False{}: hex_chain_5(c)
+def hex_chain_3(c: Char) -> Bool: match hex_is(c, 50): case True{}: True{} case False{}: hex_chain_4(c)
+def hex_chain_2(c: Char) -> Bool: match hex_is(c, 49): case True{}: True{} case False{}: hex_chain_3(c)
+def hex_chain_1(c: Char) -> Bool: match hex_is(c, 48): case True{}: True{} case False{}: hex_chain_2(c)
 
 def hex_go(text: String, ok: Bool) -> Bool:
   match text:
@@ -106,7 +106,7 @@ def oid_checked(step: String, request: AssociationRequest, observation: T.GitOut
     case True{}: refuse(s, obs)
     case False{}: oid_profile(s, req, obs, oid_of(obs))
 
-def oid_profile(step: String, request: AssociationRequest, observation: T.GitOut, oid: String) -> IO<Association>:
+def oid_profile(step: String, request: AssociationRequest, observation: T.GitOut, oid: String) -> IO(Association):
   +s = step
   +req = request
   +obs = observation
@@ -130,7 +130,7 @@ def basis_checked(request: AssociationRequest, candidate: String, observation: T
     case True{}: refuse("basis", obs)
     case False{}: basis_profile(req, cand, obs, oid_of(obs))
 
-def basis_profile(request: AssociationRequest, candidate: String, observation: T.GitOut, basis: String) -> IO<Association>:
+def basis_profile(request: AssociationRequest, candidate: String, observation: T.GitOut, basis: String) -> IO(Association):
   +req = request
   +cand = candidate
   +obs = observation
@@ -139,7 +139,7 @@ def basis_profile(request: AssociationRequest, candidate: String, observation: T
     case False{}: IO.pure(Association, AssociationRefused{"basis", obs})
     case True{}: target_read(req, cand, value)
 
-def target_read(request: AssociationRequest, candidate: String, basis: String) -> IO<Association>:
+def target_read(request: AssociationRequest, candidate: String, basis: String) -> IO(Association):
   +req = request
   +cand = candidate
   +base = basis
@@ -189,7 +189,7 @@ def ancestor_read(request: AssociationRequest, candidate: String, basis: String,
         observed : T.GitOut <- Git.runGit(req.holder, ["merge-base", "--is-ancestor", "--end-of-options", tip, cand])
         ancestor_decided(req, cand, base, tip, observed)
 
-def ancestor_decided(request: AssociationRequest, candidate: String, basis: String, head: String, observation: T.GitOut) -> IO<Association>:
+def ancestor_decided(request: AssociationRequest, candidate: String, basis: String, head: String, observation: T.GitOut) -> IO(Association):
   +req = request
   +cand = candidate
   +base = basis
@@ -199,7 +199,7 @@ def ancestor_decided(request: AssociationRequest, candidate: String, basis: Stri
     case True{}: refuse("ancestor", obs)
     case False{}: holder_read(req, cand, base, tip)
 
-def holder_read(request: AssociationRequest, candidate: String, basis: String, head: String) -> IO<Association>:
+def holder_read(request: AssociationRequest, candidate: String, basis: String, head: String) -> IO(Association):
   +req = request
   +cand = candidate
   +base = basis
@@ -208,7 +208,7 @@ def holder_read(request: AssociationRequest, candidate: String, basis: String, h
     observed : T.GitOut <- Git.runGit(req.holder, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
     holder_decided(req, cand, base, tip, observed)
 
-def holder_decided(request: AssociationRequest, candidate: String, basis: String, head: String, observation: T.GitOut) -> IO<Association>:
+def holder_decided(request: AssociationRequest, candidate: String, basis: String, head: String, observation: T.GitOut) -> IO(Association):
   +req = request
   +cand = candidate
   +base = basis
@@ -218,7 +218,7 @@ def holder_decided(request: AssociationRequest, candidate: String, basis: String
     case True{}: refuse("holder-common", obs)
     case False{}: destination_read(req, cand, base, tip, oid_of(obs))
 
-def destination_read(request: AssociationRequest, candidate: String, basis: String, head: String, common: String) -> IO<Association>:
+def destination_read(request: AssociationRequest, candidate: String, basis: String, head: String, common: String) -> IO(Association):
   +req = request
   +cand = candidate
   +base = basis
@@ -228,7 +228,7 @@ def destination_read(request: AssociationRequest, candidate: String, basis: Stri
     observed : T.GitOut <- Git.runGit(req.destination, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
     destination_decided(req, cand, base, tip, holder_common, observed)
 
-def destination_decided(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, observation: T.GitOut) -> IO<Association>:
+def destination_decided(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, observation: T.GitOut) -> IO(Association):
   +req = request
   +cand = candidate
   +base = basis
@@ -291,10 +291,10 @@ law a_short_name_is_not_an_oid:
 def a_short_name_is_not_an_oid():
   {==}
 
-law an_absent_ref_is_told_apart_from_a_failed_read:
-  {read_failed(T.GRun{1, ""}) == False{} : Bool}
+law a_nonzero_read_is_classified_as_a_failure:
+  {read_failed(T.GRun{1, ""}) == True{} : Bool}
 
-def an_absent_ref_is_told_apart_from_a_failed_read():
+def a_nonzero_read_is_classified_as_a_failure():
   {==}
 
 law an_absent_ref_is_exit_one:
