@@ -18,26 +18,31 @@ type Role is Data:
   RoleStarter{}
   RoleTarget{}
   RoleAdapter{}
+  RoleCoordinator{}
 
 type Subject is Data:
   SubjectQuery{id: String}
   SubjectRuntime{id: String}
+  SubjectCoordinator{}
 
 def role_text(role: Role) -> String:
   match role:
     case RoleStarter{}: "starter"
     case RoleTarget{}: "target"
     case RoleAdapter{}: "adapter"
+    case RoleCoordinator{}: "coordinator"
 
 def subject_kind(subject: Subject) -> String:
   match subject:
     case SubjectQuery{id}: "query"
     case SubjectRuntime{id}: "runtime"
+    case SubjectCoordinator{}: "coordinator"
 
 def subject_id(+subject: Subject) -> String:
   match subject:
     case SubjectQuery{id}: id
     case SubjectRuntime{id}: id
+    case SubjectCoordinator{}: "fixed"
 
 # The canonical JSON text of the complete role identity. The array order is the
 # contract: the fixed tag first, then the database binding, subject kind, subject
@@ -61,13 +66,13 @@ def physical_role_identity(+subject: Subject, +role: Role) -> String:
     J.Jarr{J.Jstr{subject_id(subject)},
     J.Jarr{J.Jstr{role_text(role)}, J.Jnil{}}}}})
 
-def physical_role_key(identity: String) -> IO(Result<&1,&1,U32 & String,String>):
-  role_guard_key(identity)
-
 # The guard key of one complete identity. The host hashes the identity's exact UTF-8
 # bytes; a missing or failed digest is a host failure, never a repaired identity.
 def role_guard_key(identity: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./role-digest.c"
+
+def physical_role_key(identity: String) -> IO(Result<&1,&1,U32 & String,String>):
+  role_guard_key(identity)
 
 # The private directory `g` beside the recorded log directory, created with mode
 # 0700 and validated after creation: its canonical parent must be the recorded log

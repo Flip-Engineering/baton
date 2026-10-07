@@ -2,7 +2,9 @@ import Base
 import ../src/host/instance.bend as Custody
 import ../src/host/process.bend as P
 import ../src/host/session-lock.bend as Lock
+import ../src/host/sqlite.bend as Sql
 import ../src/host/text.bend as Text
+import ../src/context/identity.bend as Identity
 
 # The shared owner entry. The custody client starts this shape of process when
 # no owner answers for a database.
@@ -414,6 +416,33 @@ def lock_cli(args: List<String>) -> IO(Unit):
     case database <> session <> Nil{}: Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => lock_result(lock))
     case _: IO.die(Unit,2,"lock-try DATABASE SESSION")
 
+def role_binding(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Done{binding}: IO.print(binding)
+    case Fail{(code,text)}: IO.die(Unit,1,U32.show(code) ++ ": " ++ text)
+
+def role_binding_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case path <> Nil{}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,String> <- Sql.binding(path)
+      role_binding(result)
+    case _: IO.die(Unit,2,"role-binding DATABASE")
+
+def role_identity_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case Nil{}: IO.print(Identity.physical_role_identity(Identity.SubjectCoordinator{},Identity.RoleCoordinator{}))
+    case _: IO.die(Unit,2,"role-identity")
+
+def role_guard_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case path <> binding <> key <> Nil{}: do IO<Unit>:
+      handle : U32 <- IO.try(U32,Sql.role_guard(path,binding,key))
+      printed : Unit <- IO.print("role-held")
+      gate : String <- IO.try(String,Text.Text.read("-"))
+      released : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
+      IO.print("role-released")
+    case _: IO.die(Unit,2,"role-guard DATABASE BINDING SHA256")
+
 def file_started(start: P.RetainedStart) -> IO(Unit):
   match start:
     case P.Unstarted{error}: IO.die(Unit,1,error)
@@ -489,7 +518,10 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"subscribe"),15,Bool.pick(U32,String.eq(mode,"publish"),16,
   Bool.pick(U32,String.eq(mode,"state"),17,Bool.pick(U32,String.eq(mode,"admit-nolock"),18,
   Bool.pick(U32,String.eq(mode,"prepare"),19,Bool.pick(U32,String.eq(mode,"admit-recovery"),20,
-  Bool.pick(U32,String.eq(mode,"attach-complete"),21,0)))))))))))))))))))))
+  Bool.pick(U32,String.eq(mode,"attach-complete"),21,
+  Bool.pick(U32,String.eq(mode,"role-binding"),22,
+  Bool.pick(U32,String.eq(mode,"role-identity"),23,
+  Bool.pick(U32,String.eq(mode,"role-guard"),24,0))))))))))))))))))))))
 
 # Admits under the shared owner while holding no session guard, so the record
 # states no guard binding.
@@ -534,6 +566,9 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 19: prepared_cli(rest)
     case 20: admit_recovery_cli(rest)
     case 21: recovery_complete_cli(rest)
+    case 22: role_binding_cli(rest)
+    case 23: role_identity_cli(rest)
+    case 24: role_guard_cli(rest)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):
