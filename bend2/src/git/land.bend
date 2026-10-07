@@ -786,8 +786,8 @@ type LdQualified is Data:
   QualDecided{mode: MutationMode, target_ref: LdRead, head_ref: LdRead}
 
 type LdAdvObs is Data:
-  LdAdvNoCapture{advance: LAdv}
-  LdAdvCaptured{advance: LAdv, capture: T.CapturedRaw}
+  LdAdvNoCapture{advance: LAdv, mode: MutationMode}
+  LdAdvCaptured{advance: LAdv, capture: T.CapturedRaw, mode: MutationMode}
   LdAdvQualified{advance: LAdv, capture: T.CapturedRaw, qualification: LdQualified}
 
 # The public shared boundary. The canonical common directory is read once here, the target
@@ -984,9 +984,10 @@ def ladvctx_artifact(context: LdAdvCtx) -> String:
 def ld_tip_argv(target: String) -> List<String>:
   ["rev-parse", "--verify", Tx.str_cat(target, "^{commit}")]
 
-def ld_adv_wrap(advance: LAdv) -> LdAdvObs:
+def ld_adv_wrap(advance: LAdv, mode: MutationMode) -> LdAdvObs:
   +a = advance
-  LdAdvNoCapture{a}
+  +m = mode
+  LdAdvNoCapture{a, m}
 
 # The worktree that holds the target: its path, none, or the reason the report
 # cannot be trusted to name exactly one.
@@ -1085,10 +1086,11 @@ def ld_adv_status(+capture: T.CapturedRaw) -> T.GitOut:
     case T.CapturedFailed{code, detail}: T.GBroken{detail}
     case T.CapturedDone{framing, diagnostics}: ld_adv_framed(framing)
 
-def ld_adv_with(advance: LAdv, +capture: T.CapturedRaw) -> LdAdvObs:
+def ld_adv_with(advance: LAdv, +capture: T.CapturedRaw, mode: MutationMode) -> LdAdvObs:
   +a = advance
   +c = capture
-  LdAdvCaptured{a, c}
+  +m = mode
+  LdAdvCaptured{a, c, m}
 
 # The exact local target branch commit used to validate a held worktree.
 def ld_target_ref_argv(target: String) -> List<String>:
@@ -1103,14 +1105,14 @@ def ld_adv_cas(g: T.GitOut) -> LAdv:
 
 def ld_adv_capture(obs: LdAdvObs) -> T.CapturedRaw:
   match obs:
-    case LdAdvNoCapture{advance}: T.CapturedAbsent{}
-    case LdAdvCaptured{advance, capture}: capture
+    case LdAdvNoCapture{advance, mode}: T.CapturedAbsent{}
+    case LdAdvCaptured{advance, capture, mode}: capture
     case LdAdvQualified{advance, capture, qualification}: capture
 
 def ld_adv_qualification(obs: LdAdvObs) -> LdQualified:
   match obs:
-    case LdAdvNoCapture{advance}: QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}
-    case LdAdvCaptured{advance, capture}: QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}
+    case LdAdvNoCapture{advance, mode}: QualDecided{mode, ReadSkipped{}, ReadSkipped{}}
+    case LdAdvCaptured{advance, capture, mode}: QualDecided{mode, ReadSkipped{}, ReadSkipped{}}
     case LdAdvQualified{advance, capture, qualification}: qualification
 
 def ld_admitted(admission: Admission) -> Bool:
@@ -1157,8 +1159,8 @@ def ld_adv_cas_qualified(target: String, cand: String, +capture: T.CapturedRaw, 
         do IO<LdAdvObs>:
             after : T.GitOut <- Git.runGit(repo, ld_target_ref_argv(target))
             ld_adv_cas_readback(target, cand, capture, after),
-        IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(status), capture)))
-    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(status), capture))
+        IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(status), capture, MutationUnheld{})))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(status), capture, MutationUnheld{}))
 
 # The compare-and-swap where no worktree holds the target.
 def ld_adv_cas_reuse(target: String, cand: String, repo: String, +capture: T.CapturedRaw) -> IO(LdAdvObs):
@@ -1255,7 +1257,7 @@ def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand
       Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
         ld_adv_wt_target_read(p2, r2, t2, c2, capture),
         ld_adv_wt_refused(p2, r2, t2, b2, capture))
-    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(AdvBroken{detail}, capture))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(AdvBroken{detail}, capture, MutationHeld{path}))
 def ld_adv_wt_reuse(path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, +capture: T.CapturedRaw) -> IO(LdAdvObs):
   ld_adv_wt_pick(ld_adv_status(capture), path, repo, target, cand, basis, ctx, capture)
 
@@ -1267,7 +1269,7 @@ def ld_adv_wt_capture(path: String, repo: String, target: String, cand: String, 
 # target claim coordinates participating landings; it does not lock an independent Git process.
 def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match same:
-    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvHolderChanged{path}))
+    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvHolderChanged{path}, MutationHeld{path}))
     case True{}:
       +p2 = path
       +r2 = repo
@@ -1284,10 +1286,10 @@ def ld_adv_wt_head_pick(g: T.GitOut, path: String, repo: String, target: String,
       +status_ok = U32.is_eq(code, 0)
       +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(t2)), False{})
       ld_adv_wt_head_same(same, path, repo, t2, cand, basis, ctx)
-    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}, MutationHeld{path}))
 def ld_adv_wt_target_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   match same:
-    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvMoved{}))
+    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvMoved{}, MutationHeld{path}))
     case True{}:
       +p2 = path
       +r2 = repo
@@ -1304,7 +1306,7 @@ def ld_adv_wt_target_pick(g: T.GitOut, path: String, repo: String, target: Strin
       +status_ok = U32.is_eq(code, 0)
       +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), b2), False{})
       ld_adv_wt_target_same(same, path, repo, target, cand, b2, ctx)
-    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}, MutationHeld{path}))
 def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +p2 = path
   +r2 = repo
@@ -1319,10 +1321,10 @@ def ld_adv_holder(hold: LdHold, repo: String, target: String, cand: String, basi
   match hold:
     case HoldNone{}: ld_adv_cas_run(repo, target, cand, basis, ctx)
     case HoldPath{path}: ld_adv_wt(path, repo, target, cand, basis, ctx)
-    case HoldBlocked{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
+    case HoldBlocked{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}, MutationUnknown{}))
 def ld_adv_same(same: Bool, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   match same:
-    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvMoved{}))
+    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvMoved{}, MutationUnknown{}))
     case True{}:
       +r2 = repo
       +t2 = target
@@ -1337,8 +1339,8 @@ def ld_adv_pick(g: T.GitOut, repo: String, target: String, cand: String, basis: 
       +b2 = basis
       Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
         ld_adv_same(Tx.str_eq(Tx.trim_nl(out), b2), repo, target, cand, b2, ctx),
-        IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{"the target commit could not be read before publication"})))
-    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
+        IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{"the target commit could not be read before publication"}, MutationUnknown{})))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}, MutationUnknown{}))
 def ld_adv_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +r2 = repo
   +t2 = target
@@ -1558,8 +1560,8 @@ def ld_attest_admit(+reserved: String, evidence: AttemptEvidence, obs: LdAdvObs,
 # remain the source candidate before checking which branch the holder has now.
 def ld_adv_of(obs: LdAdvObs) -> LAdv:
   match obs:
-    case LdAdvNoCapture{advance}: advance
-    case LdAdvCaptured{advance, capture}: advance
+    case LdAdvNoCapture{advance, mode}: advance
+    case LdAdvCaptured{advance, capture, mode}: advance
     case LdAdvQualified{advance, capture, qualification}: advance
 
 def shared_reserved_attested(repo: String, target: String, cand: String, basis: String, +guard: String, +reserved: String, +obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>) -> IO(SharedLanding):
@@ -2717,25 +2719,25 @@ def an_empty_prefix_leaves_the_whole_line():
   {==}
 
 law an_unperformed_release_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseUnperformed{}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == FFDone{T.LBlocked{"the advance ran but its release was not performed"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}, MutationUnknown{}), T.ReleaseUnperformed{}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == FFDone{T.LBlocked{"the advance ran but its release was not performed"}} : FFLD}
 
 def an_unperformed_release_refuses_the_fast_forward():
   {==}
 
 law a_failed_release_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseFailed{13, "release failed"}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}, MutationUnknown{}), T.ReleaseFailed{13, "release failed"}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : FFLD}
 
 def a_failed_release_refuses_the_fast_forward():
   {==}
 
 law an_unperformed_release_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseUnperformed{}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == LdFail{T.FCmd{"land", "the advance ran but its release was not performed"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}, MutationUnknown{}), T.ReleaseUnperformed{}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == LdFail{T.FCmd{"land", "the advance ran but its release was not performed"}} : Ld}
 
 def an_unperformed_release_refuses_the_advance():
   {==}
 
 law a_failed_release_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseFailed{13, "release failed"}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == LdFail{T.FCmd{"land", Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}, MutationUnknown{}), T.ReleaseFailed{13, "release failed"}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == LdFail{T.FCmd{"land", Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : Ld}
 
 def a_failed_release_refuses_the_advance():
   {==}
@@ -2807,25 +2809,25 @@ def a_refused_pick_and_decision_retain_the_read():
 # Receipt admission gates the landed answer. A missing admission refuses even a landed advance with a
 # successful release, and a complete admitted record reaches the existing landed answer.
 law a_missing_admission_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionRefused{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"exit 0\n", "diag"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityMissing{}, AssociationMissing{}, IntentMissing{}}, StageUnperformed{}, StageUnperformed{}, StageUnperformed{}}, "the attempt record was not freshly created"}}, "t", "c") == FFDone{T.LBlocked{Tx.str_cat("the attempt record was not admitted: ", "the attempt record was not freshly created")}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}, MutationUnknown{}), T.ReleaseDone{}, "g", "r", AdmissionRefused{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"exit 0\n", "diag"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityMissing{}, AssociationMissing{}, IntentMissing{}}, StageUnperformed{}, StageUnperformed{}, StageUnperformed{}}, "the attempt record was not freshly created"}}, "t", "c") == FFDone{T.LBlocked{Tx.str_cat("the attempt record was not admitted: ", "the attempt record was not freshly created")}} : FFLD}
 
 def a_missing_admission_refuses_the_fast_forward():
   {==}
 
 law a_missing_admission_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionRefused{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"exit 0\n", "diag"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityMissing{}, AssociationMissing{}, IntentMissing{}}, StageUnperformed{}, StageUnperformed{}, StageUnperformed{}}, "the attempt record does not read back as published"}}, "t", "c") == LdFail{T.FCmd{"land", Tx.str_cat("the attempt record was not admitted: ", "the attempt record does not read back as published")}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}, MutationUnknown{}), T.ReleaseDone{}, "g", "r", AdmissionRefused{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"exit 0\n", "diag"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityMissing{}, AssociationMissing{}, IntentMissing{}}, StageUnperformed{}, StageUnperformed{}, StageUnperformed{}}, "the attempt record does not read back as published"}}, "t", "c") == LdFail{T.FCmd{"land", Tx.str_cat("the attempt record was not admitted: ", "the attempt record does not read back as published")}} : Ld}
 
 def a_missing_admission_refuses_the_advance():
   {==}
 
 law an_admitted_landed_advance_answers_landed:
-  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == FFDone{T.LLanded{"t", "c"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}, MutationUnknown{}), T.ReleaseDone{}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == FFDone{T.LLanded{"t", "c"}} : FFLD}
 
 def an_admitted_landed_advance_answers_landed():
   {==}
 
 law an_admitted_landed_advance_answers_the_landed_commit:
-  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == LdDone{T.LLanded{"t", "c"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}, MutationUnknown{}), T.ReleaseDone{}, "g", "r", AdmissionAdmitted{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageSucceeded{"published	/r/landing-record	0		0	"}, StageSucceeded{"qualified	/r/landing-record	0		0	"}, StageSucceeded{attempt_record(AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}})}}}, "t", "c") == LdDone{T.LLanded{"t", "c"}} : Ld}
 
 def an_admitted_landed_advance_answers_the_landed_commit():
   {==}
@@ -2949,13 +2951,13 @@ def a_mismatched_readback_is_refused():
   {==}
 
 law a_rejected_attempt_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionRefused{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageFailed{13, "i/o error"}, StageUnperformed{}, StageUnperformed{}}, "the attempt record was not published"}}, "t", "c") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt record was not published"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}, MutationUnknown{}), T.ReleaseDone{}, "g", "r", AdmissionRefused{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageFailed{13, "i/o error"}, StageUnperformed{}, StageUnperformed{}}, "the attempt record was not published"}}, "t", "c") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt record was not published"}} : FFLD}
 
 def a_rejected_attempt_refuses_the_fast_forward():
   {==}
 
 law a_rejected_attempt_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionRefused{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageFailed{13, "i/o error"}, StageUnperformed{}, StageUnperformed{}}, "the attempt record was not published"}}, "t", "c") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record was not published"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}, MutationUnknown{}), T.ReleaseDone{}, "g", "r", AdmissionRefused{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"f", "d"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityObserved{"c", "t"}, AssociationObserved{"s", "co", "bo", "th", "hc", "dc"}, IntentObserved{"i", "raw"}}, StageFailed{13, "i/o error"}, StageUnperformed{}, StageUnperformed{}}, "the attempt record was not published"}}, "t", "c") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record was not published"}} : Ld}
 
 def a_rejected_attempt_refuses_the_advance():
   {==}
