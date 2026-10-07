@@ -2,9 +2,12 @@ import hashlib
 import json
 import os
 import pathlib
+import select
 import sqlite3
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 
 
@@ -36,6 +39,107 @@ class PhysicalRoleGuard(unittest.TestCase):
     def acquire(self, path, binding, key):
         return subprocess.run([EXE, 'role-guard', path, binding, key],
                               text=True, capture_output=True)
+
+    def test_owner_restart_refuses_old_witness_before_admission(self):
+        def command(*args):
+            return subprocess.run([EXE, *map(str, args)], text=True,
+                                  capture_output=True, timeout=20)
+
+        def start_owner():
+            return subprocess.Popen([EXE, 'owner', str(self.db)],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    text=True)
+
+        def owner_witness():
+            for _ in range(100):
+                result = command('owner-witness', self.db)
+                if result.returncode == 0:
+                    return result.stdout.strip()
+                time.sleep(0.03)
+            self.fail(result.stderr)
+
+        old_owner = start_owner()
+        old_witness = owner_witness()
+        stopped = command('shutdown', self.db)
+        self.assertEqual(stopped.returncode, 0, stopped.stderr)
+        self.assertEqual(old_owner.wait(timeout=10), 0, old_owner.stderr.read())
+        old_owner.stdout.close()
+        old_owner.stderr.close()
+
+        new_owner = start_owner()
+        try:
+            new_witness = owner_witness()
+            self.assertNotEqual(old_witness, new_witness)
+            attempt = self.root / 'stale-owner-attempt'
+            refused = command('prepare-stale', self.db, old_witness, attempt,
+                              self.root, '/bin/true', 'native.py', 'bootstrap')
+            self.assertEqual(refused.returncode, 0, refused.stderr)
+            self.assertIn('prepare-refused:116:', refused.stdout)
+            self.assertFalse((attempt / 'manifest').exists())
+            self.assertFalse((attempt / 'launch').exists())
+        finally:
+            stopped = command('shutdown', self.db)
+            self.assertEqual(stopped.returncode, 0, stopped.stderr)
+            self.assertEqual(new_owner.wait(timeout=10), 0, new_owner.stderr.read())
+            new_owner.stdout.close()
+            new_owner.stderr.close()
+
+    def test_owner_restart_refuses_start_for_prepared_attempt(self):
+        env = os.environ.copy()
+        owner = subprocess.Popen([EXE, 'owner', str(self.db)], stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True, env=env)
+        witness = None
+        for _ in range(100):
+            result = subprocess.run([EXE, 'owner-witness', str(self.db)], text=True,
+                                    capture_output=True, env=env, timeout=10)
+            if result.returncode == 0:
+                witness = result.stdout.strip()
+                break
+            time.sleep(0.03)
+        self.assertIsNotNone(witness, result.stderr)
+        self.addCleanup(lambda: owner.kill() if owner.poll() is None else None)
+
+        fixture = self.root / 'native.py'
+        fixture.write_text('import sys\nprint("native-started", flush=True)\nfor line in sys.stdin:\n    if line.strip() == "exit": break\n')
+        bootstrap = json.dumps({'schema': 'baton2-managed-context-bootstrap-v1',
+                                'query': 'owner-witness-query', 'owner': 'owner-witness-test'},
+                               sort_keys=True, separators=(',', ':'))
+        decision = json.dumps({'schema': 'baton2-start-granted-v1',
+                               'query': 'owner-witness-query', 'owner': 'owner-witness-test'},
+                              sort_keys=True, separators=(',', ':'))
+        attempt = self.root / 'prepared-before-owner-restart'
+        observer = subprocess.Popen([EXE, 'prepare', str(self.db), 'witness-session',
+                                     str(attempt), str(self.root), 'seed\n', sys.executable,
+                                     str(fixture), bootstrap, decision, 'restart-start', witness],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, bufsize=0, env=env)
+        output = bytearray()
+        deadline = time.monotonic() + 20
+        while b'prepared-waiting-for-start\n' not in output:
+            ready, _, _ = select.select([observer.stdout], [], [], max(0, deadline-time.monotonic()))
+            self.assertTrue(ready, f'prepared observer did not report ready: {bytes(output)!r}')
+            chunk = os.read(observer.stdout.fileno(), 4096)
+            self.assertTrue(chunk, f'prepared observer closed stdout: {bytes(output)!r}')
+            output.extend(chunk)
+        self.assertIn(b'prepare-ready:', output)
+
+        owner.kill()
+        self.assertEqual(owner.wait(timeout=10), -9)
+        observer.stdin.close()
+        remaining = observer.stdout.read().decode()
+        observer_error = observer.stderr.read().decode()
+        self.assertEqual(observer.wait(timeout=20), 0, observer_error)
+        self.assertIn('start-after-owner-restart-failed:116:', remaining)
+        self.assertFalse((attempt / 'launch').exists())
+        self.assertFalse((attempt / 'native.pid').exists())
+
+        replacement = subprocess.run([EXE, 'shutdown', str(self.db)], text=True,
+                                     capture_output=True, env=env, timeout=10)
+        self.assertEqual(replacement.returncode, 0, replacement.stderr)
+        owner.stdout.close()
+        owner.stderr.close()
+        observer.stdout.close()
+        observer.stderr.close()
 
     def test_hardlink_alias_collision_release_and_independent_role(self):
         binding = self.binding(self.db)

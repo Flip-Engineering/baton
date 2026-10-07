@@ -300,23 +300,23 @@ def prepared_double_started(+handle: U32, wrong: Result<&1,&1,U32 & String,Unit>
     drained : Unit <- read_all_lines(handle,line)
     IO.pure(Unit,Unit{})
 
-def prepared_cancelled(+handle: U32, +bootstrap: String, +decision: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+def prepared_cancelled(+handle: U32, +bootstrap: String, +decision: String, +owner_witness: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   do IO<Unit>:
     cancelled : Unit <- operation("cancel",result)
-    repeated : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.cancel(handle,bootstrap,decision)
+    repeated : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.cancel(handle,bootstrap,decision,owner_witness)
     repeated_shown : Unit <- operation("cancel-repeat",repeated)
-    changed : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.cancel(handle,bootstrap,decision ++ "-changed")
+    changed : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.cancel(handle,bootstrap,decision ++ "-changed",owner_witness)
     changed_shown : Unit <- operation("cancel-changed",changed)
-    started : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision)
+    started : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision,owner_witness)
     refused : Unit <- operation("start-after-cancel",started)
     IO.pure(Unit,Unit{})
 
-def prepared_changed_grant(+handle: U32, +bootstrap: String, +decision: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+def prepared_changed_grant(+handle: U32, +bootstrap: String, +decision: String, +owner_witness: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match result:
     case Fail{(code,text)}: IO.print("start-refused:" ++ U32.show(code) ++ ":" ++ text)
     case Done{unit}: do IO<Unit>:
       first : Unit <- operation("start-first",result)
-      second : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision ++ "-changed")
+      second : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision ++ "-changed",owner_witness)
       changed : Unit <- operation("start-changed",second)
       written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,"exit\n"))
       closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
@@ -329,28 +329,48 @@ def prepared_action_code(+action: String) -> U32:
   Bool.pick(U32,String.eq(action,"wrong-start"),1,
   Bool.pick(U32,String.eq(action,"double-start"),2,
   Bool.pick(U32,String.eq(action,"changed-grant"),3,
-  Bool.pick(U32,String.eq(action,"cancel"),4,5)))))
+  Bool.pick(U32,String.eq(action,"cancel"),4,
+  Bool.pick(U32,String.eq(action,"restart-start"),5,6))))))
 
-def prepared_action(+handle: U32, +bootstrap: String, +decision: String, action: U32) -> IO(Unit):
+def prepared_start_completion(+handle: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match result:
+    case Fail{(code,text)}: IO.print("start-after-owner-restart-failed:" ++ U32.show(code) ++ ":" ++ text)
+    case Done{unit}: do IO<Unit>:
+      printed : Unit <- IO.print("start-after-owner-restart-ok")
+      written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,"exit\n"))
+      closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
+      line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      read_all_lines(handle,line)
+
+def prepared_after_owner_restart(+handle: U32, +bootstrap: String, +decision: String, +owner_witness: String) -> IO(Unit):
+  do IO<Unit>:
+    result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision,owner_witness)
+    prepared_start_completion(handle,result)
+
+def prepared_action(+handle: U32, +bootstrap: String, +decision: String, action: U32, +owner_witness: String) -> IO(Unit):
   match action:
     case 0: IO.print("prepared-only")
     case 1: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap ++ "-changed",decision)
+      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap ++ "-changed",decision,owner_witness)
       operation("start",result)
     case 2: do IO<Unit>:
-      wrong : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap ++ "-changed",decision)
-      first : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision)
-      second : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision)
-      changed : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision ++ "-changed")
+      wrong : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap ++ "-changed",decision,owner_witness)
+      first : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision,owner_witness)
+      second : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision,owner_witness)
+      changed : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision ++ "-changed",owner_witness)
       prepared_double_started(handle,wrong,first,second,changed)
     case 3: do IO<Unit>:
-      first : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision)
-      prepared_changed_grant(handle,bootstrap,decision,first)
+      first : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision,owner_witness)
+      prepared_changed_grant(handle,bootstrap,decision,owner_witness,first)
     case 4: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.cancel(handle,bootstrap,decision)
-      prepared_cancelled(handle,bootstrap,decision,result)
+      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.cancel(handle,bootstrap,decision,owner_witness)
+      prepared_cancelled(handle,bootstrap,decision,owner_witness,result)
+    case 5: do IO<Unit>:
+      printed : Unit <- IO.print("prepared-waiting-for-start")
+      gate : String <- IO.try(String,Text.Text.read("-"))
+      prepared_after_owner_restart(handle,bootstrap,decision,owner_witness)
     case _: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision)
+      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision,owner_witness)
       prepared_finished(handle,result)
 
 def bootstrap_matches(bound: String, bootstrap: String) -> U32:
@@ -361,26 +381,28 @@ def show_bootstrap_match(matched: U32) -> IO(Unit):
     case 1: IO.print("prepare-bootstrap:true")
     case _: IO.print("prepare-bootstrap:false")
 
-def prepared_result(result: Result<&1,&1,U32 & String,U32 & String & String>, +bootstrap: String, decision: String, action: String) -> IO(Unit):
+def prepared_result(result: Result<&1,&1,U32 & String,U32 & String & String>, +bootstrap: String, decision: String, action: String, +owner_witness: String) -> IO(Unit):
   match result:
     case Fail{(code,text)}: IO.print("prepare-refused:" ++ U32.show(code) ++ ":" ++ text)
     case Done{(handle,(bound,witness))}: do IO<Unit>:
       ready : Unit <- IO.print("prepare-ready:" ++ witness)
       shown : Unit <- show_bootstrap_match(bootstrap_matches(bound,bootstrap))
-      prepared_action(handle,bootstrap,decision,prepared_action_code(action))
+      prepared_action(handle,bootstrap,decision,prepared_action_code(action),owner_witness)
 
-def prepared_locked(+directory: String, +database: String, cwd: String, payload: String, executable: String, script: String, +bootstrap: String, decision: String, action: String, lock: Maybe<U32>) -> IO(Unit):
+def prepared_locked(+directory: String, +database: String, cwd: String, payload: String, executable: String, script: String, +bootstrap: String, decision: String, action: String, lock: Maybe<U32>, +owner_witness: String) -> IO(Unit):
   match lock:
     case None{}: IO.die(Unit,1,"fixture session busy")
     case Some{+guard}: do IO<Unit>:
       helper : String <- IO.try(String,Lock.SessionLock.executable())
-      result : Result<&1,&1,U32 & String,U32 & String & String> <- Custody.Instance.prepare_start(database,directory,P.argv([executable,script]),cwd,directory ++ "/native.stderr",payload,1,guard,P.argv([helper,"recover-retained",database,directory]),bootstrap)
-      prepared_result(result,bootstrap,decision,action)
+      result : Result<&1,&1,U32 & String,U32 & String & String> <- Custody.Instance.prepare_start(database,directory,P.argv([executable,script]),cwd,directory ++ "/native.stderr",payload,1,guard,P.argv([helper,"recover-retained",database,directory]),bootstrap,owner_witness)
+      prepared_result(result,bootstrap,decision,action,owner_witness)
 
 def prepared_cli(args: List<String>) -> IO(Unit):
   match args:
+    case database <> session <> directory <> cwd <> payload <> executable <> script <> bootstrap <> decision <> action <> owner_witness <> Nil{}:
+      Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => prepared_locked(directory,canonical,cwd,payload,executable,script,bootstrap,decision,action,lock,owner_witness))
     case database <> session <> directory <> cwd <> payload <> executable <> script <> bootstrap <> decision <> action <> Nil{}:
-      Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => prepared_locked(directory,canonical,cwd,payload,executable,script,bootstrap,decision,action,lock))
+      Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => prepared_locked(directory,canonical,cwd,payload,executable,script,bootstrap,decision,action,lock,""))
     case _: IO.die(Unit,2,"prepare DATABASE SESSION ATTEMPT CWD PAYLOAD EXECUTABLE SCRIPT BOOTSTRAP DECISION ACTION")
 
 def write_cli(args: List<String>) -> IO(Unit):
@@ -432,6 +454,31 @@ def role_identity_cli(args: List<String>) -> IO(Unit):
   match args:
     case Nil{}: IO.print(Identity.physical_role_identity(Identity.SubjectCoordinator{},Identity.RoleCoordinator{}))
     case _: IO.die(Unit,2,"role-identity")
+
+def owner_witness_result(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Done{witness}: IO.print(witness)
+    case Fail{(code,text)}: IO.die(Unit,code,text)
+
+def owner_witness_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case +database <> Nil{}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,String> <- Custody.Instance.owner_witness(database)
+      owner_witness_result(result)
+    case _: IO.die(Unit,2,"owner-witness DATABASE")
+
+def stale_prepare_result(result: Result<&1,&1,U32 & String,U32 & String & String>) -> IO(Unit):
+  match result:
+    case Fail{(code,text)}: IO.print("prepare-refused:" ++ U32.show(code) ++ ":" ++ text)
+    case Done{(handle,(bound,ready))}: IO.print("prepare-unexpectedly-ready:" ++ ready)
+
+def stale_prepare_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case +database <> +witness <> +directory <> +cwd <> +executable <> +script <> +bootstrap <> Nil{}: do IO<Unit>:
+      helper : String <- IO.try(String,Lock.SessionLock.executable())
+      result : Result<&1,&1,U32 & String,U32 & String & String> <- Custody.Instance.prepare_start(database,directory,P.argv([executable,script]),cwd,directory ++ "/native.stderr","",1,0,P.argv([helper,"recover-retained",database,directory]),bootstrap,witness)
+      stale_prepare_result(result)
+    case _: IO.die(Unit,2,"prepare-stale DATABASE WITNESS ATTEMPT CWD EXECUTABLE SCRIPT BOOTSTRAP")
 
 def role_guard_result(result: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
   match result:
@@ -527,7 +574,9 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"attach-complete"),21,
   Bool.pick(U32,String.eq(mode,"role-binding"),22,
   Bool.pick(U32,String.eq(mode,"role-identity"),23,
-  Bool.pick(U32,String.eq(mode,"role-guard"),24,0))))))))))))))))))))))))
+  Bool.pick(U32,String.eq(mode,"role-guard"),24,
+  Bool.pick(U32,String.eq(mode,"owner-witness"),25,
+  Bool.pick(U32,String.eq(mode,"prepare-stale"),26,0))))))))))))))))))))))))))
 
 # Admits under the shared owner while holding no session guard, so the record
 # states no guard binding.
@@ -575,6 +624,8 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 22: role_binding_cli(rest)
     case 23: role_identity_cli(rest)
     case 24: role_guard_cli(rest)
+    case 25: owner_witness_cli(rest)
+    case 26: stale_prepare_cli(rest)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):

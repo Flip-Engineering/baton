@@ -22,7 +22,7 @@ typedef struct {
   u32 handle, signal, index;
   uint64_t owner_incarnation,owner_attempt;
   int kind, error, eof, unstarted, fresh;
-  char *directory, *initial, *recovery, *detail, *database, *artifact_name, *artifact, *identity;
+  char *directory, *initial, *recovery, *detail, *database, *artifact_name, *artifact, *identity, *owner_witness;
   size_t initial_length, recovery_length, artifact_name_length, artifact_length, identity_length;
   u32 keep_stdin, lock;
   char *cursor, *generation;
@@ -50,7 +50,8 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_WAIT, BP_SIGNAL, BP_PID,
        BP_INSTANCE_JOB, BP_RETAIN_WITH_FILE, BP_INSTANCE_ADMIT_WITH_FILE,
        BP_INSTANCE_SUBSCRIBE, BP_INSTANCE_NOTICE, BP_INSTANCE_UNSUBSCRIBE,
        BP_INSTANCE_PUBLISH, BP_INSTANCE_STATE, BP_INSTANCE_PREPARE,
-       BP_INSTANCE_PREPARE_WITH_FILE, BP_INSTANCE_START, BP_INSTANCE_CANCEL };
+       BP_INSTANCE_PREPARE_WITH_FILE, BP_INSTANCE_START, BP_INSTANCE_CANCEL,
+       BP_INSTANCE_OWNER_WITNESS };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -197,7 +198,7 @@ typedef struct BatonRetained {
   int socket,spool,error,exited,status,input_closed;
   int guard,watch,life,orphan,unknown,released,acknowledged;
   char *directory,*database;
-  uint64_t version,serial,reply_serial,owner_attempt,owner_incarnation;
+  uint64_t version,serial,reply_serial,owner_attempt,owner_incarnation,owner_epoch;
   int reply_error;
   off_t offset;
   uint64_t offset_stored,incarnation;
@@ -3134,12 +3135,36 @@ static int br_instance_exchange(int socket_fd,BrInstanceFrame frame,const char *
    publishes its record, so a client can connect to a new owner while it still
    reads the previous incarnation's record: that window is retried, with the
    record read again each time, until the answer and the record agree. */
-static int br_instance_request(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply) {
+static int br_witness_decimal(const char *text,size_t length,uint64_t *value) {
+  if(!text || !length || !value)return EINVAL;
+  uint64_t result=0;
+  for(size_t i=0;i<length;i++) {
+    if(text[i]<'0' || text[i]>'9')return EINVAL;
+    unsigned digit=(unsigned)(text[i]-'0');
+    if(result>(UINT64_MAX-digit)/10)return ERANGE;
+    result=result*10+digit;
+  }
+  *value=result;return 0;
+}
+static int br_owner_witness_parse(const char *text,uint64_t *token,uint64_t *epoch) {
+  if(!text || !*text)return EINVAL;
+  const char *colon=strchr(text,':');
+  if(!colon || strchr(colon+1,':'))return EINVAL;
+  int error=br_witness_decimal(text,(size_t)(colon-text),token);
+  if(!error)error=br_witness_decimal(colon+1,strlen(colon+1),epoch);
+  if(!error && (!*token || !*epoch))error=EINVAL;
+  return error;
+}
+static int br_instance_request_witness(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply,uint64_t expected_token,uint64_t expected_epoch) {
+  if((expected_token==0)!=(expected_epoch==0))return EINVAL;
   for(int attempt=0;;attempt++) {
     BrOwnerRecord record={0};
     int socket_fd=-1;
     int error=br_instance_connect(database,attempt?0:1,&record,&socket_fd);
     if(error)return error;
+    if(expected_token && (record.token!=expected_token || record.epoch!=expected_epoch)) {
+      close(socket_fd);return ESTALE;
+    }
     frame.owner=record.token;frame.epoch=record.epoch;
     error=br_instance_exchange(socket_fd,frame,payload,rights,reply);
     close(socket_fd);
@@ -3151,6 +3176,22 @@ static int br_instance_request(const char *database,BrInstanceFrame frame,const 
     struct timespec pause={0,20000000};
     nanosleep(&pause,NULL);
   }
+}
+static int br_instance_request(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply) {
+  return br_instance_request_witness(database,frame,payload,rights,reply,0,0);
+}
+static void br_instance_owner_witness(BatonProcessCall *call) {
+  BrOwnerRecord record={0};int socket_fd=-1;
+  call->error=br_instance_connect(call->database,0,&record,&socket_fd);
+  if(socket_fd>=0)close(socket_fd);
+  if(call->error)return;
+  char text[64];
+  int length=snprintf(text,sizeof(text),"%llu:%llu",
+    (unsigned long long)record.token,(unsigned long long)record.epoch);
+  if(length<=0 || (size_t)length>=sizeof(text)){call->error=EOVERFLOW;return;}
+  call->text=strdup(text);
+  if(!call->text){call->error=ENOMEM;return;}
+  call->length=(size_t)length;
 }
 static void br_identity_sha256(const char *text,size_t length,unsigned char digest[32]) {
   BrSha256 sha;br_sha256_init(&sha);
@@ -3173,8 +3214,13 @@ static int br_instance_decision(BatonProcessCall *call) {
   br_identity_sha256(call->text,call->length,digests+32);
   BrInstanceFrame reply={0};
   uint32_t op=call->kind==BP_INSTANCE_START?BI_START:BI_CANCEL;
-  int error=br_instance_request(retained->database,
-    (BrInstanceFrame){.op=op,.length=payload_length},payload,-1,&reply);
+  uint64_t expected_token=0,expected_epoch=0;
+  int error=call->owner_witness && *call->owner_witness
+    ? br_owner_witness_parse(call->owner_witness,&expected_token,&expected_epoch) : 0;
+  if(!error && expected_token &&
+     (expected_token!=retained->owner_incarnation || expected_epoch!=retained->owner_epoch))error=ESTALE;
+  if(!error)error=br_instance_request_witness(retained->database,
+    (BrInstanceFrame){.op=op,.length=payload_length},payload,-1,&reply,expected_token,expected_epoch);
   free(payload);
   if(!error && (reply.op!=BI_HELLO || reply.length!=sizeof(BrOwnerState)))error=EPROTO;
   if(!error && call->kind==BP_INSTANCE_START) {
@@ -3222,7 +3268,7 @@ static int br_attempt_socket(const char *directory,uint32_t op,uint64_t serial,i
 }
 /* Joins an existing attempt as its observer, bound to the owner incarnation
    that resolved it. */
-static int br_instance_join(BatonProcessCall *call,const char *directory,uint64_t incarnation) {
+static int br_instance_join(BatonProcessCall *call,const char *directory,uint64_t incarnation,uint64_t epoch) {
   int socket_fd=-1;
   int error=br_attempt_socket(directory,BR_ATTACH,0,0,NULL,0,&socket_fd);
   if(!error) {
@@ -3231,6 +3277,7 @@ static int br_instance_join(BatonProcessCall *call,const char *directory,uint64_
       call->child->retained->database=strdup(call->database);
       if(!call->child->retained->database)error=ENOMEM;
       call->child->retained->owner_incarnation=incarnation;
+      call->child->retained->owner_epoch=epoch;
       call->child->retained->owner_attempt=call->owner_attempt;
     }
   }
@@ -3265,9 +3312,12 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
   BrInstanceFrame reply={0};
   int error=br_attempt_prepare(call,&directory,&address,1);
   if(!error) {
-    error=br_instance_request(call->database,
+    uint64_t expected_token=0,expected_epoch=0;
+    if(call->owner_witness && *call->owner_witness)
+      error=br_owner_witness_parse(call->owner_witness,&expected_token,&expected_epoch);
+    if(!error)error=br_instance_request_witness(call->database,
       (BrInstanceFrame){.op=dormant?BI_PREPARE:BI_ADMIT,.length=strlen(directory)+1},directory,
-      call->lock?(int)call->lock:-1,&reply);
+      call->lock?(int)call->lock:-1,&reply,expected_token,expected_epoch);
     if(!error)call->owner_attempt=reply.attempt;
     if(!error && reply.attempt)call->unstarted=0;
     if(error==EINVAL || error==ESTALE || error==ENOENT || error==ENOMEM) {
@@ -3280,7 +3330,7 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
       return error;
     }
   }
-  if(!error)error=br_instance_join(call,directory,reply.owner);
+  if(!error)error=br_instance_join(call,directory,reply.owner,reply.epoch);
   if(!error && dormant) {
     call->unstarted=0;
     br_instance_state_call(call);
@@ -3294,7 +3344,7 @@ static int br_instance_attach(BatonProcessCall *call) {
   BrInstanceFrame reply={0};
   int error=br_instance_request(call->database,
     (BrInstanceFrame){.op=BI_ATTACH,.length=strlen(directory)+1},directory,-1,&reply);
-  if(!error)error=br_instance_join(call,directory,reply.owner);
+  if(!error)error=br_instance_join(call,directory,reply.owner,reply.epoch);
   free(directory);
   return error;
 }
@@ -3305,7 +3355,7 @@ static int br_instance_attach_owned(BatonProcessCall *call) {
   int error=br_instance_request(call->database,
     (BrInstanceFrame){.op=BI_ATTACH,.length=strlen(directory)+1},directory,-1,&reply);
   if(!error) {
-    error=br_instance_join(call,directory,reply.owner);
+    error=br_instance_join(call,directory,reply.owner,reply.epoch);
     if(error==ECONNREFUSED || error==ENOENT || error==EPIPE)
       error=br_attach_orphan(call->child,directory,(int)call->lock);
   }
@@ -3631,12 +3681,13 @@ static void br_instance_state_call(BatonProcessCall *call) {
   char text[4096];
   int written=snprintf(text,sizeof(text),
     "{\"schema\":\"baton2-host-ready-v1\",\"state\":\"%s\",\"handle\":%u,\"directory\":\"%s\","
-    "\"ownerIncarnation\":%llu,\"ownerAttempt\":%llu,\"guardDevice\":%llu,\"guardInode\":%llu,\"guard\":\"%llu:%llu\","
+    "\"ownerIncarnation\":%llu,\"ownerEpoch\":%llu,\"ownerAttempt\":%llu,\"guardDevice\":%llu,\"guardInode\":%llu,\"guard\":\"%llu:%llu\","
     "\"observer_ready\":%s,\"native_pid\":%llu,\"status_known\":%s,\"status\":%d,"
     "\"spawn_latched\":%s,\"cancelled\":%s,\"identity\":\"%s\",\"expectedBinding\":\"%s\","
     "\"grant\":\"%s\",\"rejection\":\"%s\"}",
     state,(unsigned)call->handle,directory,
-    (unsigned long long)retained->owner_incarnation,(unsigned long long)retained->owner_attempt,
+    (unsigned long long)retained->owner_incarnation,(unsigned long long)retained->owner_epoch,
+    (unsigned long long)retained->owner_attempt,
     (unsigned long long)guard_device,(unsigned long long)guard_inode,
     (unsigned long long)guard_device,(unsigned long long)guard_inode,
     retained->socket>=0 && record.observer_ready?"true":"false",(unsigned long long)pid,
@@ -3717,6 +3768,7 @@ static void baton_process_call(IoWork *w) {
   BatonProcessCall *call=(BatonProcessCall *)w->data;
   BatonChild *child=call->child;
   if(call->kind==BP_SPAWN) { baton_child_spawn(call);return; }
+  if(call->kind==BP_INSTANCE_OWNER_WITNESS) { br_instance_owner_witness(call);return; }
   if(call->kind==BP_INSTANCE_SUBSCRIBE) { br_instance_subscribe_call(call);return; }
   if(call->kind==BP_INSTANCE_NOTICE) { br_instance_notice_call(call);return; }
   if(call->kind==BP_INSTANCE_UNSUBSCRIBE) { br_instance_unsubscribe_call(call);return; }
@@ -3787,7 +3839,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
     else if(call->kind==BP_INPUT_CLOSED) value=(Term)call->signal;
     else if(call->kind==BP_WAIT) value=io_str(e,call->text,call->length);
     else if(call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_JOB ||
-            call->kind==BP_INSTANCE_NOTICE)
+            call->kind==BP_INSTANCE_NOTICE || call->kind==BP_INSTANCE_OWNER_WITNESS)
       value=io_str(e,call->text?call->text:"",call->length);
     else if(call->kind==BP_INSTANCE_PREPARE || call->kind==BP_INSTANCE_PREPARE_WITH_FILE)
       value=io_tup(e,(Term)call->handle,io_tup(e,
@@ -3842,7 +3894,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
   }
   free(call->args);free(call->cwd);free(call->log);free(call->text);
   free(call->directory);free(call->initial);free(call->recovery);free(call->detail);free(call->database);
-  free(call->artifact_name);free(call->artifact);free(call->identity);free(call->cursor);free(call->generation);free(call);
+  free(call->artifact_name);free(call->artifact);free(call->identity);free(call->owner_witness);free(call->cursor);free(call->generation);free(call);
   w->data=NULL;
   return result;
 }
@@ -3874,6 +3926,8 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
     call->recovery=io_cstr(e,f[base+9],&length);call->recovery_length=length;
     if(kind==BP_INSTANCE_PREPARE_WITH_FILE) {
       call->identity=io_cstr(e,f[base+10],&length);call->identity_length=length;
+      call->owner_witness=io_cstr(e,f[base+11],&length);
+      if(!call->owner_witness || strlen(call->owner_witness)!=length)call->error=EINVAL;
     }
     if(strlen(call->cwd)!=cwd_length || strlen(call->log)!=log_length) call->error=EINVAL;
   } else if(kind==BP_SPAWN || kind==BP_RETAIN || kind==BP_INSTANCE_ADMIT || kind==BP_INSTANCE_PREPARE) {
@@ -3894,6 +3948,8 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
       call->recovery=io_cstr(e,f[8],&length);call->recovery_length=length;
       if(kind==BP_INSTANCE_PREPARE) {
         call->identity=io_cstr(e,f[9],&length);call->identity_length=length;
+        call->owner_witness=io_cstr(e,f[10],&length);
+        if(!call->owner_witness || strlen(call->owner_witness)!=length)call->error=EINVAL;
       }
     }
   }
@@ -3907,7 +3963,7 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
     if(kind==BP_KEEPER || kind==BP_ATTACH_OWNED)call->lock=(u32)f[1];
     if(kind==BP_CONTROL_WRITE) {call->text=io_cstr(e,f[1],&length);call->length=length;}
     if(kind==BP_CONTROL_SIGNAL)call->signal=(u32)f[1];
-  } else if(kind==BP_INSTANCE_OWNER || kind==BP_INSTANCE_SHUTDOWN) {
+  } else if(kind==BP_INSTANCE_OWNER || kind==BP_INSTANCE_SHUTDOWN || kind==BP_INSTANCE_OWNER_WITNESS) {
     u64 length=0;call->database=io_cstr(e,f[0],&length);
     if(strlen(call->database)!=length)call->error=EINVAL;
   } else if(kind==BP_INSTANCE_SUBSCRIBE || kind==BP_INSTANCE_PUBLISH) {
@@ -3941,6 +3997,10 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
       u64 length=0;
       call->identity=io_cstr(e,f[1],&length);call->identity_length=length;
       call->text=io_cstr(e,f[2],&length);call->length=length;
+      call->owner_witness=io_cstr(e,f[3],&length);
+      if(!call->identity || !call->text || !call->owner_witness ||
+         strlen(call->identity)!=call->identity_length || strlen(call->text)!=call->length ||
+         strlen(call->owner_witness)!=length)call->error=EINVAL;
     }
     if(kind==BP_INSTANCE_RESTORE) call->signal=(u32)f[1];
     if(kind==BP_SIGNAL) call->signal=(u32)f[1];
@@ -4008,6 +4068,9 @@ BP_EFFECT(baton_process_recovery_argv,CID_PROCESSCHILD_RECOVERY_ARGV,BP_RECOVERY
 
 #ifdef CID_INSTANCE_OWNER
 BP_EFFECT(baton_instance_owner,CID_INSTANCE_OWNER,BP_INSTANCE_OWNER)
+#endif
+#ifdef CID_INSTANCE_OWNER_WITNESS
+BP_EFFECT(baton_instance_owner_witness,CID_INSTANCE_OWNER_WITNESS,BP_INSTANCE_OWNER_WITNESS)
 #endif
 #ifdef CID_INSTANCE_ADMIT_START
 BP_EFFECT(baton_instance_admit,CID_INSTANCE_ADMIT_START,BP_INSTANCE_ADMIT)
