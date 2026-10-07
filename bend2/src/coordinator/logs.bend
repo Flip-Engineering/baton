@@ -862,7 +862,7 @@ def stderr_meta_json(+db: String, +directory: String) -> IO(String):
     result : String <- stderr_meta_json_read(db,text)
     IO.pure(String,result)
 
-def stderr_health(+db: String, +directory: String, metadata: String) -> IO(String):
+def stderr_health(+db: String, +directory: String, +metadata: String) -> IO(String):
   do IO<String>:
     +full : String <- IO.try(String,F.Files.regular(directory ++ "/stderr.full"))
     +meta : String <- IO.try(String,F.Files.regular(directory ++ "/stderr.meta"))
@@ -875,7 +875,7 @@ def stderr_health(+db: String, +directory: String, metadata: String) -> IO(Strin
       valid : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(metadata) ++ ") AND json_type(" ++ C.q(metadata) ++ ")='object' AND json_extract(" ++ C.q(metadata) ++ ",'$.schema')='baton2-stderr-v1' AND json_extract(" ++ C.q(metadata) ++ ",'$.status')='complete' AND json_type(" ++ C.q(metadata) ++ ",'$.limitBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.truncated') IN ('true','false') AND json_type(" ++ C.q(metadata) ++ ",'$.observedBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.retainedBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.spool')='text' THEN 'ok' ELSE 'metadata-invalid' END;"))
       IO.pure(String,Tx.trim_nl(valid))))))
 
-def stderr_generation_health(+db: String, +stderr_path: String, metadata: String) -> IO(String):
+def stderr_generation_health(+db: String, +stderr_path: String, +metadata: String) -> IO(String):
   do IO<String>:
     +full : String <- IO.try(String,F.Files.regular(stderr_path ++ ".full"))
     +meta : String <- IO.try(String,F.Files.regular(stderr_path ++ ".meta"))
