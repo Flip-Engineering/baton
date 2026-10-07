@@ -109,7 +109,7 @@ def host_surfaces(+log: String) -> IO(Unit):
     obs("anchor.canonical", anchor)
     +key : String <- IO.try(String, ContextRole.role_guard_key("abc"))
     obs("key.abc", key)
-    lock : Maybe<U32> <- IO.try(Maybe<U32>, Lock.SessionLock.try_acquire(anchor, key))
+    +lock : Maybe<U32> <- IO.try(Maybe<U32>, Lock.SessionLock.try_acquire(anchor, key))
     obs("lock.acquired", Bool.show(Maybe.is_some(&1, U32, lock)))
     +found : String <- IO.try(String, Files.Files.find_suffix(log, ContextRole.guard_lock_name(key)))
     obs("lock.found", found)
