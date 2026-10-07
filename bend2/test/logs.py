@@ -58,7 +58,7 @@ class Logs(unittest.TestCase):
         self.player.write_text('#!' + sys.executable + '\n' + body)
         self.player.chmod(0o700)
 
-    def stream(self, frames, player='omp-worker', turn='turn-1'):
+    def stream(self, frames, player='omp-worker', turn='turn-1', exit_code=0):
         """Write one native OMP stream, then run the turn over it."""
         self.events.write_text('\n'.join(frames) + '\n')
         self.harness('''import pathlib,sys
@@ -67,7 +67,8 @@ sys.stdin.readline()
 sys.stdin.readline()
 print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
 assert sys.stdin.read()==''
-''')
+sys.exit(%d)
+''' % exit_code)
         return self.call('turn', player, turn, str(self.player), 'model', 'low',
                          str(self.cwd), str(self.task), str(self.log), '')
 
@@ -322,6 +323,24 @@ assert sys.stdin.read()==''
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
         self.assertEqual(answer['attemptFiles'], [])
         self.assertEqual(evidence.read_text(), 'observer evidence')
+
+    def test_failed_native_turn_retains_attempt_diagnostics(self):
+        self.stream([self.terminal()], exit_code=1)
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        evidence = attempt_dir / 'observer.log'
+        evidence.write_text('failure diagnostics')
+        with sqlite3.connect(self.db) as connection:
+            status, report_count = connection.execute(
+                "SELECT e.status,(SELECT count(*) FROM messages m WHERE m.sender=e.session AND m.kind='report') "
+                'FROM executions e WHERE e.session=?', ('omp-worker',)).fetchone()
+        self.assertEqual(status, 'exit 1')
+        self.assertGreater(report_count, 0)
+        row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
+                   if item['attempt'] == attempt)
+        self.assertFalse(row['cleanupEligible'], row)
+        self.assertEqual(row['cleanupReason'], 'native-turn-failed')
+        self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['attemptFiles'], [])
+        self.assertEqual(evidence.read_text(), 'failure diagnostics')
 
     def test_attempt_with_pending_input_is_retained(self):
         self.stream([self.terminal()])
