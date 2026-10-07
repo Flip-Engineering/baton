@@ -18,13 +18,13 @@ function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1') {
   const guardIdentity = JSON.stringify(['context-role', 'binding-1', 'query', query, 'starter', '0']);
   return JSON.stringify({
     artifactPath: join(worktreePath, '.baton', 'context-artifacts', Buffer.from(query).toString('hex')),
-    databaseBinding: 'binding-1',
     cwd: worktreePath,
+    databaseBinding: 'binding-1',
     guardIdentity,
     guardKey: createHash('sha256').update(guardIdentity).digest('hex'),
     keeperPath: '/logs/keeper-1',
-    owner,
     originAttempt: '0',
+    owner,
     planIdentity: 'plan-identity-1',
     planValue: '[]',
     query,
