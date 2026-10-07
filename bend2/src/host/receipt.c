@@ -92,11 +92,12 @@ static int receipt_chars_ok(const char *text,size_t length) {
   return strcmp(text,".")!=0 && strcmp(text,"..")!=0;
 }
 
-/* The alphabet a reserved attempt name may use. It accepts what the target encoder emits —
-   letters, digits, dot, underscore, hyphen and the percent sign with lowercase hex — because
-   the name is expected to carry an encoded target, while still refusing empty, NUL, the
-   separator, and the dot and dot-dot names. The ordinary receipt-name alphabet is not
-   widened. */
+/* The component alphabet a reserved attempt name may use: letters, digits, dot, underscore,
+   hyphen and the percent sign, non-empty, without NUL, without the separator and not the dot
+   or dot-dot names. The percent sign is permitted because the target encoder emits it, but
+   this check does NOT validate that a percent is followed by two lowercase hex digits — it
+   admits any percent — and the consumer that requires the stronger producer association must
+   enforce it there. The ordinary receipt-name alphabet is not widened. */
 static int receipt_attempt_chars_ok(const char *text,size_t length) {
   if(length==0 || strlen(text)!=length) return 0;
   for(size_t index=0;index<length;index++) {
@@ -606,9 +607,12 @@ static void __attribute__((constructor)) baton_receipt_attempt_token_use(void) {
    a taken name answers the shared record's existing tag, a write failure answers failed with
    its errno and its phase, and no observation failure is read as absence. The name must be a
    single component in the attempt alphabet, so it cannot escape the parent. The work runs
-   through the same worker convention as the claim and ensure effects, and the answer is the
-   same six field record those effects return: created, existing or failed followed by the
-   path, the first errno, the phase, pending and the detail. */
+   through the same worker convention as the claim and ensure effects. The answer uses the
+   six field receipt-record format with tags created, existing and failed, followed by the
+   path, the first errno, the phase, pending and the detail. Unlike the claim, whose Result
+   payload is a Maybe of the descriptor, this record is the whole answer; an outer Fail still
+   carries packing or transport failure separately, so a caller must classify the record and
+   keep any outer failure distinct from it. */
 static void baton_receipt_reserve_call(IoWork *w) {
   BatonReceipt *call=(BatonReceipt *)w->data;
   size_t span=strlen(call->directory)+strlen(call->name)+2;
