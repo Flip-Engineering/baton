@@ -24,15 +24,16 @@ def commit(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, St
 ```
 
 After a successful commit, `Store.commit` reads `UIProjection.committed_high_water(db)`
-and calls `Instance.publish_commit(db, Tx.trim_nl(high_water))`. The notification contains
-no rows; the view reselects changes and state in a SQLite read transaction. A failed write
-does not publish. Publication is a post-commit result and must not be reported as a rolled
-back store write.
+and passes that result to `UIProjection.publish_committed(db, high_water)`. That helper calls
+`Instance.publish_commit(db, Tx.trim_nl(cursor))`. The notification contains no rows; the
+view reselects changes and state in a SQLite read transaction. A failed write does not
+publish. Publication is a post-commit result and must not be reported as a rolled back store
+write.
 
 The operative `m5_a_report_and_its_delivery_are_one_transaction` law in
 `bend2/src/coordinator/laws.bend` must include the `ensure_projection` effect before the
-existing write transaction. The naming law
-`named_commands_execute_the_committed_query_and_classify_its_answer` in
+existing write transaction and high-water publication after a successful commit. The naming
+law `named_commands_execute_the_committed_query_and_classify_its_answer` in
 `bend2/src/coordinator/naming-laws.bend` must compare against `Store.commit` and
 `Store.committed`, so the preflight is part of the law's execution path.
 
