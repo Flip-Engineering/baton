@@ -1,6 +1,9 @@
-"""Check the observed-usage read over recorded OMP conversation fixtures."""
+"""Check observed usage against recorded conversations and controlled usage children."""
 import json
 import pathlib
+import sqlite3
+import sys
+import time
 import subprocess
 import tempfile
 import unittest
@@ -72,7 +75,9 @@ class ObservedUsage(unittest.TestCase):
         answer = {'session': 'reader', 'harness': 'omp', 'native': 'native-1',
                   'source': str(self.source), 'shape': 'message-usage',
                   'records': 0, 'observations': 0, 'duplicates': 0, 'conflicts': 0,
-                  'malformed': 0, 'routes': [], 'absent': [], 'invalid': []}
+                  'malformed': 0, 'routes': [], 'absent': [], 'invalid': [],
+                  'providerUsage': {'availability': 'unknown', 'observationState': 'unknown',
+                                    'condition': 'unavailableConfiguredCommand'}}
         answer.update(values)
         return answer
 
@@ -253,6 +258,209 @@ class ObservedUsage(unittest.TestCase):
                                    'SELECT count(*) FROM sessions; SELECT count(*) FROM messages;'],
                                   text=True, capture_output=True, check=True)
         self.assertEqual(sessions.stdout, '1\n0\n')
+
+
+class ProviderUsage(unittest.TestCase):
+    call = ObservedUsage.call
+    read = ObservedUsage.read
+    write = ObservedUsage.write
+
+    def setUp(self):
+        ObservedUsage.setUp(self)
+        self.workspace = self.directory / 'recorded workspace'
+        self.workspace.mkdir()
+        self.child = self.directory / 'configured omp'
+        self.child.write_text('#!' + sys.executable + '\n' + '''import json, os, pathlib, signal, sys
+root = pathlib.Path(__file__).parent
+with (root / 'calls.jsonl').open('a') as calls:
+    calls.write(json.dumps({'argv': sys.argv, 'cwd': os.getcwd()}) + '\\n')
+answer = json.loads((root / 'child-answer.json').read_text())
+sys.stdout.write(answer['stdout'])
+sys.stderr.write(answer['stderr'])
+sys.stdout.flush()
+sys.stderr.flush()
+if answer.get('signal'):
+    os.kill(os.getpid(), answer['signal'])
+sys.exit(answer['code'])
+''')
+        self.child.chmod(0o700)
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("UPDATE sessions SET model=?,workspace=? WHERE id='reader'",
+                               ('kimi-code/k3', str(self.workspace)))
+        result = self.call('receiver', 'reader', self.child, self.directory / 'receiver.log')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.write([])
+        self.answer(self.document())
+
+    def document(self, reports=None):
+        return {'generatedAt': int(time.time() * 1000), 'reports': reports or [],
+                'accountsWithoutUsage': [], 'disabledCredentials': [], 'capacity': {}}
+
+    def report(self, fetched=None, reset=None):
+        now = int(time.time() * 1000)
+        return {'provider': 'kimi-code', 'fetchedAt': now - 5000 if fetched is None else fetched,
+                'metadata': {'endpoint': 'https://api.kimi.com/coding/v1/usages'},
+                'limits': [{'id': 'weekly', 'used': 100, 'limit': 100, 'remaining': 0,
+                            'window': {'resetsAt': now + 86400000 if reset is None else reset}}]}
+
+    def answer(self, value, code=0, stderr='', signal=None):
+        stdout = json.dumps(value) + '\n' if isinstance(value, dict) else value
+        (self.directory / 'child-answer.json').write_text(json.dumps(
+            {'stdout': stdout, 'stderr': stderr, 'code': code, 'signal': signal}))
+        return stdout
+
+    def calls(self):
+        path = self.directory / 'calls.jsonl'
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def account(self):
+        return self.read()['providerUsage']
+
+    def update(self, column, value):
+        self.assertIn(column, ('endpoint', 'harness', 'model', 'workspace'))
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(f"UPDATE sessions SET {column}=? WHERE id='reader'", (value,))
+
+    def test_reports_keep_source_windows_and_original_observation_time(self):
+        report = self.report()
+        document = self.document([report])
+        stdout = self.answer(document, stderr='usage notice\n')
+        result = self.account()
+        self.assertEqual(self.calls(), [{'argv': [str(self.child), 'usage', '--json', '--provider',
+                                                  'kimi-code'], 'cwd': str(self.workspace)}])
+        self.assertEqual(result['availability'], 'unknown')
+        self.assertEqual(result['observationState'], 'reported')
+        self.assertEqual(result['condition'], 'cacheFreshnessUnspecified')
+        self.assertEqual(result['generatedAt'], document['generatedAt'])
+        self.assertGreaterEqual(result['observedAt'], report['fetchedAt'])
+        account, = result['accounts']
+        self.assertEqual(account['fetchedAt'], report['fetchedAt'])
+        self.assertEqual(account['report'], report)
+        self.assertEqual(account['source'], report['metadata']['endpoint'])
+        self.assertEqual(account['freshness'], 'unknown')
+        self.assertEqual(account['availability'], 'unknown')
+        self.assertEqual(account['windows'], [{'reported': report['limits'][0],
+                                              'availability': 'unknown', 'observationState': 'reported'}])
+        self.assertEqual(result['source']['providerFilter'], 'outputOnly')
+        self.assertEqual(result['source']['accountSelection'], 'configuredHarnessPool')
+        self.assertEqual(result['process'], {'status': 'exit', 'code': 0, 'stdout': stdout,
+                                             'stderr': 'usage notice\n'})
+
+    def test_expired_quota_and_conversation_totals_do_not_assert_current_exhaustion(self):
+        self.write([record('large', usage(9000000, 9000000, 0, 0)),
+                    {'type': 'error', 'error': 'old quota exceeded'}])
+        report = self.report(fetched=1000, reset=2000)
+        self.answer(self.document([report]))
+        result = self.read()
+        self.assertEqual(result['observed']['totalTokens'], 18000000)
+        account = result['providerUsage']['accounts'][0]
+        self.assertEqual(account['fetchedAt'], 1000)
+        self.assertEqual(account['availability'], 'unknown')
+        self.assertEqual(account['windows'][0]['observationState'], 'expired')
+        self.assertEqual(account['windows'][0]['availability'], 'unknown')
+
+    def test_missing_and_disabled_accounts_remain_unknown(self):
+        document = self.document()
+        document['accountsWithoutUsage'] = [{'provider': 'kimi-code', 'reason': 'unsupported'}]
+        document['disabledCredentials'] = [{'provider': 'kimi-code', 'reason': 'expired'}]
+        self.answer(document)
+        result = self.account()
+        self.assertEqual(result['condition'], 'noProviderReport')
+        self.assertEqual(result['observationState'], 'unknown')
+        self.assertEqual(result['availability'], 'unknown')
+        self.assertEqual(result['accounts'], [])
+        self.assertEqual(result['accountsWithoutUsage'], document['accountsWithoutUsage'])
+        self.assertEqual(result['disabledCredentials'], document['disabledCredentials'])
+
+    def test_future_or_missing_report_timestamp_is_unknown(self):
+        for fetched in (None, int(time.time() * 1000) + 86400000):
+            with self.subTest(fetched=fetched):
+                report = self.report()
+                report['fetchedAt'] = fetched
+                self.answer(self.document([report]))
+                result = self.account()
+                self.assertEqual(result['observationState'], 'unknown')
+                self.assertEqual(result['accounts'][0]['observationState'], 'unknown')
+                self.assertEqual(result['availability'], 'unknown')
+
+    def test_malformed_nested_reports_do_not_become_account_observations(self):
+        self.answer(self.document(['broken', 42, None, {'provider': 'other'}]))
+        result = self.account()
+        self.assertEqual(result['accounts'], [])
+        self.assertEqual(result['condition'], 'noProviderReport')
+
+    def test_child_failures_preserve_status_and_both_streams(self):
+        for code, signal, status in ((17, None, 'exit'), (0, 15, 'signal')):
+            with self.subTest(status=status):
+                stdout = self.answer('quota\n\n', code=code, stderr='failure\n', signal=signal)
+                result = self.account()
+                self.assertEqual(result['availability'], 'unknown')
+                self.assertEqual(result['observationState'], 'unknown')
+                self.assertEqual(result['process'], {'status': status, 'code': signal or code,
+                                                     'stdout': stdout, 'stderr': 'failure\n'})
+
+    def test_malformed_json_and_unsupported_shape_preserve_child_output(self):
+        for text, condition in (('{bad\n', 'malformedUsageJson'),
+                                ('{}\n', 'unsupportedUsageShape')):
+            with self.subTest(condition=condition):
+                self.answer(text, stderr='notice\n')
+                result = self.account()
+                self.assertEqual(result['condition'], condition)
+                self.assertEqual(result['availability'], 'unknown')
+                self.assertEqual(result['process']['stdout'], text)
+                self.assertEqual(result['process']['stderr'], 'notice\n')
+
+    def test_unsupported_harness_does_not_run_usage(self):
+        self.update('harness', 'codex')
+        self.assertEqual(self.account(), {'availability': 'unknown', 'observationState': 'unknown',
+                                          'condition': 'unsupportedHarness'})
+        self.assertEqual(self.calls(), [])
+
+    def test_absent_malformed_and_foreign_routes_do_not_run_usage(self):
+        with sqlite3.connect(self.db) as connection:
+            saved, = connection.execute("SELECT endpoint FROM sessions WHERE id='reader'").fetchone()
+        foreign = json.loads(saved)
+        foreign[9 if len(foreign) == 18 else 1 if len(foreign) == 9 else 9] = '/foreign.db'
+        for endpoint in ('', '{bad', json.dumps(foreign)):
+            with self.subTest(endpoint=endpoint):
+                self.update('endpoint', endpoint)
+                self.assertEqual(self.account()['condition'], 'unavailableConfiguredCommand')
+                self.assertEqual(self.calls(), [])
+
+    def test_configured_route_uses_its_command_and_requires_assignment_match(self):
+        endpoint = ['node', '/recorded/helper', 'launch', '--registry', '/recorded/registry',
+                    '--model-key', 'kimi-code/k3', '--', str(EXE), str(self.db.resolve()),
+                    'receive-configured', 'reader', '3', 'omp', 'kimi-code/k3', '',
+                    str(self.child), str(self.directory / 'receiver.log')]
+        self.update('endpoint', json.dumps(endpoint))
+        self.assertEqual(self.account()['condition'], 'noProviderReport')
+        self.assertEqual(len(self.calls()), 1)
+        endpoint[14] = 'kimi-code/other'
+        self.update('endpoint', json.dumps(endpoint))
+        self.assertEqual(self.account()['condition'], 'unavailableConfiguredCommand')
+        self.assertEqual(len(self.calls()), 1)
+
+    def test_failed_observation_preserves_session_task_and_operator_stop(self):
+        self.answer('quota exceeded\n', code=19, stderr='old quota\n')
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)",
+                               ('retained-task', 'reader', 'reader', 'task', 'retain this work'))
+        stopped = self.call('stop', 'reader', 'operator-stop', 'explicit stop')
+        self.assertEqual(stopped.returncode, 0, stopped.stdout + stopped.stderr)
+        with sqlite3.connect(self.db) as connection:
+            before = list(connection.iterdump())
+        self.assertEqual(self.account()['availability'], 'unknown')
+        with sqlite3.connect(self.db) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+        self.assertEqual(self.source.read_text(), json.dumps(header()) + '\n')
+
+    def test_missing_executable_retains_failure_as_unknown(self):
+        self.child.unlink()
+        result = self.account()
+        self.assertEqual(result['availability'], 'unknown')
+        self.assertEqual(result['observationState'], 'unknown')
+        self.assertEqual(self.calls(), [])
+        self.assertTrue(result.get('condition') in ('hostFailure', 'usageCommandFailed'), result)
 
 
 if __name__ == '__main__':

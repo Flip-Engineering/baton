@@ -3,6 +3,10 @@ import ../host/process.bend as P
 import ../json/canonical.bend as J
 import ../host/files.bend as F
 
+# Usage uses the same configured executable and inherited account context.
+def usage_arguments(command: String, provider: String) -> List<String>:
+  [command,"usage","--json","--provider",provider]
+
 def select_file(directory: String, +session: String, +first: String, found: Bool) -> IO(String):
   match found:
     case True{}: IO.pure(String,first)

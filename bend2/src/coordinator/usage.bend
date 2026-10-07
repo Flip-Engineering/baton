@@ -11,6 +11,7 @@ import ../host/text.bend as Text
 import ../host/files.bend as F
 import ../git/text.bend as Tx
 import ../json/canonical.bend as J
+import ./account-usage.bend as Account
 
 # --- the recorded source ----------------------------------------------------
 
@@ -249,22 +250,31 @@ def usage_lines_json(file: String) -> IO(String):
     text : String <- IO.try(String,Text.Text.read(file))
     IO.pure(String,lines_array(Tx.split_lines(text)))
 
-def usage_unavailable(db: String, session: String, native: String, harness: String) -> IO(Unit):
-  do IO<Unit>:
+def usage_unavailable(db: String, session: String, native: String, harness: String) -> IO(String):
+  do IO<String>:
     projection : String <- IO.try(String,DB.Sql.query(db,project_sql("0","[]",session,Tx.trim_nl(harness),native,"")))
-    IO.print(projection)
+    IO.pure(String,projection)
 
 # A selected file is projected only after its recorded identity matches the
 # session's, and only the distinct entries it records are summed.
-def usage_selected(+db: String, +session: String, +native: String, harness: String, +file: String) -> IO(Unit):
-  do IO<Unit>:
+def usage_selected(+db: String, +session: String, +native: String, harness: String, +file: String) -> IO(String):
+  do IO<String>:
     +lines_json : String <- usage_lines_json(file)
     malformed : String <- IO.try(String,DB.Sql.query(db,malformed_sql(lines_json)))
     +recorded : String <- IO.try(String,DB.Sql.query(db,header_sql(lines_json)))
     checked : Unit <- usage_recorded_conversation(Tx.trim_nl(recorded),native,String.eq(Tx.trim_nl(recorded),native))
     entries : String <- IO.try(String,DB.Sql.query(db,extract_sql(lines_json)))
     projection : String <- IO.try(String,DB.Sql.query(db,project_sql(Tx.trim_nl(malformed),entries,session,Tx.trim_nl(harness),native,file)))
-    IO.print(projection)
+    IO.pure(String,projection)
+
+def with_account_sql(conversation: String, account: String) -> String:
+  "SELECT json_set(" ++ C.q(conversation) ++ ",'$.providerUsage',json(" ++ C.q(account) ++ "));"
+
+def usage_with_account(+db: String, +session: String, conversation: String) -> IO(Unit):
+  do IO<Unit>:
+    account : String <- Account.observe(db,session)
+    answer : String <- IO.try(String,DB.Sql.read(db,with_account_sql(conversation,account)))
+    IO.print(answer)
 
 def observed_usage(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:
@@ -275,8 +285,20 @@ def observed_usage(+db: String, +session: String) -> IO(Unit):
     storage : String <- IO.try(String,DB.Sql.query(db,storage_sql(db,session)))
     +file : String <- usage_source(Tx.trim_nl(storage),db ++ ".sessions",Tx.trim_nl(native))
     empty : Bool <- IO.pure(Bool,String.is_empty(file))
-    picked : Unit <- Bool.pick(IO(Unit),empty,usage_unavailable(db,session,Tx.trim_nl(native),Tx.trim_nl(harness)),usage_selected(db,session,Tx.trim_nl(native),Tx.trim_nl(harness),file))
-    IO.pure(Unit,Unit{})
+    conversation : String <- Bool.pick(IO(String),empty,usage_unavailable(db,session,Tx.trim_nl(native),Tx.trim_nl(harness)),usage_selected(db,session,Tx.trim_nl(native),Tx.trim_nl(harness),file))
+    usage_with_account(db,session,conversation)
+
+law observed_usage_includes_the_account_observation:
+  for +db: String
+  for +session: String
+  for conversation: String
+  {usage_with_account(db,session,conversation) == (do IO<Unit>:
+    account : String <- Account.observe(db,session)
+    answer : String <- IO.try(String,DB.Sql.read(db,with_account_sql(conversation,account)))
+    IO.print(answer)) : IO(Unit)}
+
+def observed_usage_includes_the_account_observation(db,session,conversation):
+  {==}
 
 # --- the operative laws -----------------------------------------------------
 # Each law restates the builder, projection or decision the read runs, so a mutation in
