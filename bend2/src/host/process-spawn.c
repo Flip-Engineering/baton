@@ -1300,7 +1300,6 @@ static int br_attempt_listener(const char *path,struct sockaddr_un *address) {
   if(listen(listener,SOMAXCONN)) {error=errno;close(listener);return error;}
   return listener;
 }
-}
 /* Starts custody of one attempt. The native process, its stdin writer, its
    stdout spool and its wait authority stay in this process for the attempt's
    lifetime, so observer and coordinator loss leave them intact. */
