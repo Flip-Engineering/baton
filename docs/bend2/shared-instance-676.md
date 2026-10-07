@@ -188,6 +188,23 @@ composition with the concurrent workload.
 - MCP wiring is implemented: `baton2_owner` and `baton2_subscribe` tools
   in `mcp-conductor.mjs` calling `coord('owner-status')` and
   `coord('subscribe')` through the existing helper.
+- Composition status at `b5137475` (read-only check of
+  `codex/ui-subscribe-cli-luna-20261007`, exact `b513`): the owner lives
+  in `bend2/src/host/instance.bend` as `Custody.Instance`, entered
+  through `baton2 --instance-owner DATABASE` and
+  `baton2 --instance-shutdown DATABASE`, with a
+  `baton2 DATABASE ui-subscribe AFTER GENERATION` streaming verb backed
+  by `UISubscription.run`. That branch contains no `serve`,
+  `owner-status` or `subscribe` verbs and no copy of this branch's
+  `coordinator/instance.bend`. The per-wake serve driver, the
+  owner-status answer and the subscribe cursor answer from this branch
+  stay proposals for composition. The host owner file is owned by
+  `context_cycle_fix_luna`; this lane makes no edits there. The matrix
+  in `bend2/test/shared-instance-matrix.py` gates this branch's verbs
+  and needs re-targeting to the composed entries at composition. The
+  ui-subscribe fixture at that branch records readiness generation 1,
+  cursor 0, gap true, a commit notice at cursor 1, subscriber exit 32
+  on shutdown close, and no owner residue.
 
 ## Scope of this change
 
