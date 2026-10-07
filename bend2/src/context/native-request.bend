@@ -77,15 +77,15 @@ def request_validation_result(+req: J.Json, verdict: Req.Verdict) -> RequestDeco
 def request_validation(+req: J.Json) -> RequestDecode:
   request_validation_result(req, Req.request_validate(req))
 
-def request_json_schema(raw: CoreCodec.RawValue, verdict: Schema.SchemaVerdict) -> RequestDecode:
-  match verdict:
-    case Schema.SvRefused{condition}: RequestDecodeRefused{condition}
-    case Schema.SvOk{}: request_json_value(raw, CoreCodec.raw_to_json(raw))
-
 def request_json_value(raw: CoreCodec.RawValue, converted: CoreCodec.JsonConv) -> RequestDecode:
   match converted:
     case CoreCodec.JcRefused{condition}: RequestDecodeRefused{condition}
     case CoreCodec.JcJson{+value}: request_validation(value)
+
+def request_json_schema(raw: CoreCodec.RawValue, verdict: Schema.SchemaVerdict) -> RequestDecode:
+  match verdict:
+    case Schema.SvRefused{condition}: RequestDecodeRefused{condition}
+    case Schema.SvOk{}: request_json_value(raw, CoreCodec.raw_to_json(raw))
 
 def request_json(+raw: CoreCodec.RawValue) -> RequestDecode:
   request_json_schema(raw, Schema.schema_admit_value(Schema.DefsNil{}, Schema.SfJson{}, raw))
