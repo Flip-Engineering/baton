@@ -1877,7 +1877,7 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
     if(error) {free(call);return io_fail(e,(u32)error,NULL);}
   }
   if(kind==BP_SPAWN || kind==BP_RETAIN || kind==BP_INSTANCE_ADMIT) {
-    int offset=kind==BP_RETAIN?1:2;
+    int offset=kind==BP_SPAWN?0:(kind==BP_RETAIN?1:2);
     u64 length=0,cwd_length=0,log_length=0;
     if(kind==BP_INSTANCE_ADMIT)call->database=io_cstr(e,f[0],&length);
     call->args=io_cstr(e,f[offset],&length);call->length=length;
