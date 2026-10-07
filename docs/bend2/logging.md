@@ -181,6 +181,17 @@ and a `raw` batch that fixes the retention semantics of frames that name
 26,164,652 retained bytes before the policy and 112 after it on the same
 `tool_execution_update` workload.
 
+Native Muse traces carry incremental deltas. One 2,044-line session holds 644
+`run.output.delta` frames with 10,631 bytes of text across all of them; a
+9,818-line conductor session holds 878 deltas with 15,898 text bytes. The
+frames repeat no cumulative payload, so the default keeps them verbatim and
+no snapshot holding applies to them. The same sessions spend their bytes on
+task lifecycle envelopes at about 800 bytes per event and on terminal tool
+results, which stay inline with the completed calls. The shape-faithful
+reference batch is
+[bend2/test/fixtures/muse-trace-audit-20261007.jsonl](../test/fixtures/muse-trace-audit-20261007.jsonl)
+with text payloads replaced by equal-length runs.
+
 ## Open work
 
 A receive that attaches to a retained attempt reads the attempt from its first
