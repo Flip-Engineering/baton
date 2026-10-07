@@ -135,7 +135,7 @@ def wire_catalog_refusal_keeps_its_artifact_operand():
   {==}
 
 law wire_reason_renders_the_missing_artifact_path:
-  {Wire.rq_reason_json(Sel.RqCatalogRefused{"m1", Decl.DrMissingArtifact{"m1", "/pkg/m1.bin"}}) == J.Jobj{Wire.wire_obj("family", J.Jstr{"catalog"}, Wire.wire_obj("reason", J.Jobj{Wire.wire_obj("kind", J.Jstr{"missingArtifact"}, Wire.wire_obj("moduleId", J.Jstr{"m1"}, Wire.wire_obj("path", J.Jstr{"/pkg/m1.bin"}, J.Jnil{}))}, J.Jnil{})))} : J.Json}
+  {Wire.rq_reason_json(Sel.RqCatalogRefused{"m1", Decl.DrMissingArtifact{"m1", "/pkg/m1.bin"}}) == J.Jobj{Wire.wire_obj("family", J.Jstr{"catalog"}, Wire.wire_obj("reason", J.Jobj{Wire.wire_obj("kind", J.Jstr{"missingArtifact"}, Wire.wire_obj("moduleId", J.Jstr{"m1"}, Wire.wire_obj("path", J.Jstr{"/pkg/m1.bin"}, J.Jnil{})))}, J.Jnil{}))} : J.Json}
 
 def wire_reason_renders_the_missing_artifact_path():
   {==}

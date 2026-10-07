@@ -362,9 +362,9 @@ def then_v(+a: VChk, +b: VChk) -> VChk:
 def v_binding_state(+fs: FieldState) -> VChk:
   match fs:
     case FsSame{}: VcOk{}
-    case FsDiffers{field, want, saw}: VcFail{reason: VrBinding{field, want, saw}}
-    case FsArtifacts{want, saw}: VcFail{reason: VrBindingArtifacts{want, saw}}
-    case FsSchemas{want, saw}: VcFail{reason: VrBindingSchemas{want, saw}}
+    case FsDiffers{field, want, saw}: VcFail{VrBinding{field, want, saw}}
+    case FsArtifacts{want, saw}: VcFail{VrBindingArtifacts{want, saw}}
+    case FsSchemas{want, saw}: VcFail{VrBindingSchemas{want, saw}}
 
 # --- canonical sequence text -------------------------------------------------
 # A sequence is canonical unsigned decimal text and carries no numeric domain
@@ -451,7 +451,7 @@ def check_type(+f: Frame, +e: Expect) -> VChk:
 # schema acceptance.
 def check_schema(+f: Frame, +e: Expect) -> VChk:
   Bool.pick(VChk, String.is_empty(expect_schema(e)),
-    VcFail{reason: VrSchemaInputMissing{expect_module(e), expect_operation(e)}},
+    VcFail{VrSchemaInputMissing{expect_module(e), expect_operation(e)}},
     then_v(v_chk(Eng.ss_member(Sel.bind_schemas(expect_producer(e)),
                                expect_schema(e)),
                  VrSchemaMissing{expect_module(e), expect_operation(e),

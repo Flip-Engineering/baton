@@ -545,21 +545,6 @@ def captures_nonempty(xs: Captures) -> Bool:
     case CapNil{}: False{}
     case CapCons{head, rest}: True{}
 
-# The captures one step produced, in recorded order.
-def captures_of_step(+xs: Captures, +step: Step) -> Captures:
-  match xs:
-    case CapNil{}: CapNil{}
-    case CapCons{+head, +rest}:
-      Bool.pick(Captures,
-                capture_of_step(head, step),
-                CapCons{head, captures_of_step(rest, step)},
-                captures_of_step(rest, step))
-
-def capture_of_step(+c: Capture, +step: Step) -> Bool:
-  Bool.and(String.eq(cap_producer_module(c), bind_module(step_binding(step))),
-  Bool.and(String.eq(cap_producer_digest(c), bind_digest(step_binding(step))),
-           String.eq(cap_producer_operation(c), bind_operation(step_binding(step)))))
-
 type Plan is Data:
   Plan{primary: MBind, common: String, steps: Steps, effective_effects: Eng.SS,
        inputs: Captures, available: Bool}
@@ -953,6 +938,21 @@ def step_binding(+step: Step) -> MBind:
     case Step{binding, common, declared_effects, execution, dependencies,
               result_schema}:
       binding
+
+def capture_of_step(+c: Capture, +step: Step) -> Bool:
+  Bool.and(String.eq(cap_producer_module(c), bind_module(step_binding(step))),
+  Bool.and(String.eq(cap_producer_digest(c), bind_digest(step_binding(step))),
+           String.eq(cap_producer_operation(c), bind_operation(step_binding(step)))))
+
+# The captures one step produced, in recorded order.
+def captures_of_step(+xs: Captures, +step: Step) -> Captures:
+  match xs:
+    case CapNil{}: CapNil{}
+    case CapCons{+head, +rest}:
+      Bool.pick(Captures,
+                capture_of_step(head, step),
+                CapCons{head, captures_of_step(rest, step)},
+                captures_of_step(rest, step))
 
 def step_common(+step: Step) -> String:
   match step:
