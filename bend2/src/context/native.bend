@@ -8,9 +8,12 @@ import ./engines-wire.bend as EnginesWire
 import ./native-request.bend as NativeRequest
 import ./native-catalog.bend as NativeCatalog
 import ./request.bend as Req
+import ../coordinator/commands.bend as C
 import ../host/sqlite.bend as DB
 import ../host/process.bend as Process
 import ../host/session-lock.bend as Host
+import ../git/process.bend as Git
+import ../git/types.bend as G
 import ../git/text.bend as Tx
 
 type InvocationFrame is Data:
@@ -68,6 +71,42 @@ type ProviderAnswer is Data:
   ProviderOutput{value: String, status: String}
   ProviderRefused{reason: String}
   ProviderRuntime{path: String, version: String}
+
+type OwnerWorkspace is Data:
+  OwnerWorkspaceReady{path: String}
+  OwnerWorkspaceRefused{reason: String}
+
+def owner_workspace_sql(owner: String) -> String:
+  "SELECT workspace FROM sessions WHERE id=" ++ C.q(owner) ++ ";"
+
+def owner_workspace_fields(fields: List<String>) -> OwnerWorkspace:
+  match fields:
+    case +path <> Nil{}:
+      Bool.pick(OwnerWorkspace, String.is_empty(path),
+        OwnerWorkspaceRefused{"sessionWorkspaceMissing"}, OwnerWorkspaceReady{path})
+    case Nil{}: OwnerWorkspaceRefused{"sessionWorkspaceAbsent"}
+    case other: OwnerWorkspaceRefused{"sessionWorkspaceShape"}
+
+def owner_workspace_rows(rows: String) -> OwnerWorkspace:
+  match Tx.split_lines(rows):
+    case Nil{}: OwnerWorkspaceRefused{"sessionWorkspaceAbsent"}
+    case +line <> rest:
+      match rest:
+        case Nil{}: owner_workspace_fields(Tx.split_tabs(line))
+        case other: OwnerWorkspaceRefused{"sessionWorkspaceSurplus"}
+
+def owner_workspace_result(result: Result<&1,&1,U32 & String,String>) -> IO(OwnerWorkspace):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(OwnerWorkspace, OwnerWorkspaceRefused{"sessionWorkspaceRead"})
+    case Done{+rows}: IO.pure(OwnerWorkspace, owner_workspace_rows(rows))
+
+def read_owner_workspace(+db: String, +binding: String, +owner: String) -> IO(OwnerWorkspace):
+  do IO<OwnerWorkspace>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+      owner_workspace_sql(owner))
+    owner_workspace_result(result)
 
 def absolute_node_path(+path: String) -> Bool:
   match path:
@@ -332,9 +371,9 @@ def query_catalog_result(db: String, binding: String, answer: ProviderAnswer,
     case ProviderRuntime{path, version}: IO.die(Unit, 3, "providerInventoryMalformed")
     case ProviderOutput{value, status}: query_catalog_output(db, binding, request, status, value)
 
-def query_request_result(db: String, binding: String, owner: String, query: String,
-                         result: NativeRequest.RequestDecode) -> IO(Unit):
-  match result:
+def query_request_environment(db: String, binding: String, owner: String, query: String,
+                              cwd: String, request: NativeRequest.RequestDecode) -> IO(Unit):
+  match request:
     case NativeRequest.RequestDecodeRefused{condition}:
       IO.die(Unit, 3, "request:" ++ condition)
     case NativeRequest.RequestDecoded{canonical, operands, operation_chain, +cwd, source_path}:
@@ -342,7 +381,48 @@ def query_request_result(db: String, binding: String, owner: String, query: Stri
         executable : String <- IO.try(String, Host.SessionLock.executable())
         runtime : ProviderAnswer <- resolve_node_runtime(cwd)
         answer : ProviderAnswer <- inventory_runtime_answer(executable, cwd, runtime)
-        query_catalog_result(db, binding, answer, result)
+        query_catalog_result(db, binding, answer, request)
+
+def request_cwd_root(+db: String, +binding: String, +owner: String, +query: String,
+                     +cwd: String, +request: NativeRequest.RequestDecode,
+                     +workspace: String, root: G.GitOut) -> IO(Unit):
+  match root:
+    case G.GBroken{detail}: IO.die(Unit, 3, "ownerWorktreeRootUnavailable")
+    case G.GRun{code, +out}:
+      Bool.pick(IO(Unit), U32.is_eq(code, 0),
+        Bool.pick(IO(Unit), String.eq(Tx.trim_nl(out), workspace),
+          query_request_environment(db, binding, owner, query, cwd, request),
+          IO.die(Unit, 3, "requestCwdOutsideOwnerWorktree")),
+        IO.die(Unit, 3, "requestCwdWorktreeUnavailable"))
+
+def owner_workspace_root(+db: String, +binding: String, +owner: String, +query: String,
+                         +cwd: String, +request: NativeRequest.RequestDecode,
+                         workspace: OwnerWorkspace) -> IO(Unit):
+  match workspace:
+    case OwnerWorkspaceRefused{reason}: IO.die(Unit, 3, reason)
+    case OwnerWorkspaceReady{+path}:
+      do IO<Unit>:
+        root : G.GitOut <- Git.runGit(path, ["rev-parse", "--show-toplevel"])
+        request_cwd_root(db, binding, owner, query, cwd, request, path, root)
+
+def owner_workspace_loaded(+db: String, +binding: String, +owner: String, +query: String,
+                           +cwd: String, +request: NativeRequest.RequestDecode,
+                           workspace: OwnerWorkspace) -> IO(Unit):
+  owner_workspace_root(db, binding, owner, query, cwd, request, workspace)
+
+def owner_workspace_read(+db: String, +binding: String, +owner: String, +query: String,
+                         +cwd: String, +request: NativeRequest.RequestDecode) -> IO(Unit):
+  do IO<Unit>:
+    workspace : OwnerWorkspace <- read_owner_workspace(db, binding, owner)
+    owner_workspace_loaded(db, binding, owner, query, cwd, request, workspace)
+
+def query_request_result(db: String, binding: String, owner: String, query: String,
+                         result: NativeRequest.RequestDecode) -> IO(Unit):
+  match result:
+    case NativeRequest.RequestDecodeRefused{condition}:
+      IO.die(Unit, 3, "request:" ++ condition)
+    case NativeRequest.RequestDecoded{canonical, operands, operation_chain, +cwd, source_path}:
+      owner_workspace_read(db, binding, owner, query, cwd, result)
 
 def query_binding_result(+db: String, +owner: String, +query: String, path: String,
                           binding_result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
