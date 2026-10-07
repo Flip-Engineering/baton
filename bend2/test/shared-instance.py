@@ -878,6 +878,9 @@ class SharedInstance(unittest.TestCase):
         child.kill()
         child.wait(timeout=10)
         self.addCleanup(self.kill_matching, str(nolock))
+        # The live owner holds the attempt it created; the durable record governs
+        # once that owner is gone, which is the case an adoption must decide.
+        self.kill_owner()
         detail = self.adoption_refusal(nolock)
         self.assertIn('states no session guard binding', detail, detail)
 
