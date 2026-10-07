@@ -124,25 +124,24 @@ def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
         source_identity, plan_value, plan_identity, result_schema, artifact_path,
         artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
         owner_witness, recovery_argv}:
-      J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-managed-context-bootstrap-v2"},
+      J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-managed-context-bootstrap-v1"},
       J.Jpair{"query", J.Jstr{query},
       J.Jpair{"owner", J.Jstr{owner},
       J.Jpair{"databaseBinding", J.Jstr{database_binding},
       J.Jpair{"request", J.Jstr{request},
       J.Jpair{"cwd", J.Jstr{cwd},
-      J.Jpair{"originAttempt", J.Jstr{origin_attempt},
-      J.Jpair{"sourceIdentity", J.Jstr{source_identity},
+      J.Jpair{"originAttempt", nullable_text(origin_attempt),
       J.Jpair{"planValue", J.Jstr{plan_value},
       J.Jpair{"planIdentity", J.Jstr{plan_identity},
       J.Jpair{"resultSchema", J.Jstr{result_schema},
       J.Jpair{"artifactPath", J.Jstr{artifact_path},
-      J.Jpair{"artifactSha256", J.Jstr{artifact_sha256},
       J.Jpair{"keeperPath", J.Jstr{keeper_path},
       J.Jpair{"guardIdentity", J.Jstr{guard_identity},
       J.Jpair{"guardKey", J.Jstr{guard_key},
-      J.Jpair{"physicalRoleKey", J.Jstr{physical_role_key},
-      J.Jpair{"ownerWitness", J.Jstr{owner_witness},
-      J.Jpair{"recoveryArgv", J.Jstr{recovery_argv}, J.Jnil{}}}}}}}}}}}}}}}}}}}}}
+      J.Jpair{"recoveryArgv", J.Jstr{recovery_argv}, J.Jnil{}}}}}}}}}}}}}}}}}}
+
+def nullable_text(+value: String) -> J.Json:
+  Bool.pick(J.Json, String.is_empty(value), J.Jnil{}, J.Jstr{value})
 
 def bootstrap_text(+bootstrap: Bootstrap) -> String:
   J.json_text(bootstrap_json(bootstrap))

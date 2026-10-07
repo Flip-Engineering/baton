@@ -14,7 +14,7 @@ function worktree(t) {
   return path;
 }
 
-function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1') {
+function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1', originAttempt = '0') {
   const guardIdentity = JSON.stringify(['context-role', 'binding-1', 'query', query, 'starter', '0']);
   return JSON.stringify({
     artifactPath: join(worktreePath, '.baton', 'context-artifacts', Buffer.from(query).toString('hex')),
@@ -23,7 +23,7 @@ function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1') {
     guardIdentity,
     guardKey: createHash('sha256').update(guardIdentity).digest('hex'),
     keeperPath: '/logs/keeper-1',
-    originAttempt: '0',
+    originAttempt,
     owner,
     planIdentity: 'plan-identity-1',
     planValue: '[]',
@@ -121,6 +121,18 @@ test('persists one immutable canonical bootstrap bound to owner, query and priva
   assert.equal(persistQueryBootstrap({ ...authority,
     bootstrapText: bootstrapText(root).replace('"query":"query-1"', '"query":"query-1","query":"query-1"') }).reason,
   'queryBootstrapCanonicalMismatch');
+});
+
+test('preserves absent origin attempt as JSON null and rejects an empty-string substitute', (t) => {
+  const root = worktree(t);
+  const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
+  const persisted = persistQueryBootstrap({ ...authority,
+    bootstrapText: bootstrapText(root, 'query-1', 'owner-1', null) });
+  assert.equal(persisted.status, 'persisted');
+  assert.equal(JSON.parse(readFileSync(persisted.path, 'utf8')).originAttempt, null);
+  const invalid = bootstrapText(root, 'query-1', 'owner-1', '');
+  assert.equal(persistQueryBootstrap({ ...authority, bootstrapText: invalid }).reason,
+    'queryBootstrapIdentityMismatch');
 });
 
 test('persists a canonical v2 event and actual exit status with immutable SHA references', (t) => {

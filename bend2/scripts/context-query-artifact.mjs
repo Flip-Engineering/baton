@@ -77,7 +77,8 @@ function decodeBootstrap(bytes, { owner, worktree, query, artifactPath }) {
         || typeof value.databaseBinding !== 'string' || value.databaseBinding.length === 0
         || typeof value.request !== 'string' || value.request.length === 0
         || typeof value.cwd !== 'string' || value.cwd.length === 0
-        || typeof value.originAttempt !== 'string' || value.originAttempt.length === 0
+        || (value.originAttempt !== null
+          && (typeof value.originAttempt !== 'string' || value.originAttempt.length === 0))
         || typeof value.planValue !== 'string' || value.planValue.length === 0
         || typeof value.planIdentity !== 'string' || value.planIdentity.length === 0
         || typeof value.resultSchema !== 'string' || value.resultSchema.length === 0

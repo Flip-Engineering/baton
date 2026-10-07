@@ -3,6 +3,7 @@ import Base
 import ./native-managed-query.bend as Managed
 import ./bound-admission.bend as Admission
 import ./service.bend as Service
+import ../json/canonical.bend as J
 
 def managed_bootstrap() -> Managed.Bootstrap:
   Managed.query_bootstrap("db-binding", "q-1", "owner-1", "{}", "/work", "0",
@@ -11,6 +12,12 @@ def managed_bootstrap() -> Managed.Bootstrap:
     "[]", "plan-identity", "result-v1", "/work/.baton/context-artifacts/q",
     "/logs/keeper-q", "guard-key-64", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "owner-token:1", "native-recover-argv")
+
+law an_absent_origin_attempt_serializes_as_null:
+  {Managed.nullable_text("") == J.Jnil{} : J.Json}
+
+def an_absent_origin_attempt_serializes_as_null():
+  {==}
 
 def accepted_admission() -> Admission.Admission:
   Admission.AdmissionCreated{"owner-1", "{}", "accepted", "accepted", "0",

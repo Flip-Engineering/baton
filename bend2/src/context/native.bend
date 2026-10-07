@@ -162,6 +162,26 @@ type BoundaryPath is Data:
 def owner_workspace_sql(owner: String) -> String:
   "SELECT workspace FROM sessions WHERE id=" ++ ContextCommands.q(owner) ++ ";"
 
+# The query records the owner's current active attempt as provenance. An owner
+# with no active attempt keeps SQL NULL through the bootstrap's nullable field.
+def origin_attempt_sql(owner: String) -> String:
+  "SELECT coalesce((SELECT id FROM executions WHERE session=" ++ ContextCommands.q(owner)
+  ++ " AND phase<>'exited' ORDER BY rowid DESC LIMIT 1),'');"
+
+def origin_attempt_rows(+rows: String) -> String:
+  Tx.trim_nl(rows)
+
+def origin_attempt_result(result: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match result:
+    case Fail{error}: IO.die(String, 3, "originAttemptRead")
+    case Done{+rows}: IO.pure(String, origin_attempt_rows(rows))
+
+def owner_origin_attempt(+db: String, +binding: String, +owner: String) -> IO(String):
+  do IO<String>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+      origin_attempt_sql(owner))
+    origin_attempt_result(result)
+
 def owner_workspace_fields(fields: List<String>) -> OwnerWorkspace:
   match fields:
     case +path <> Nil{}:
