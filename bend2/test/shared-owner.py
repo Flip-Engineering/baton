@@ -192,6 +192,14 @@ class SharedOwner(unittest.TestCase):
             time.sleep(.1)
         self.fail(f'{expected!r} never reached spool of {directory}')
 
+    def wait_path(self, path, expected, timeout=60):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if path.is_file() and expected in path.read_text(errors='replace'):
+                return path.read_text(errors='replace')
+            time.sleep(.1)
+        self.fail(f'{expected!r} never reached {path}')
+
     def role_count(self, directory):
         return sum(1 for line in self.spool_text(directory).splitlines()
                    if '"role": "native"' in line)
@@ -362,25 +370,28 @@ class SharedOwner(unittest.TestCase):
         child.wait(timeout=60)
         self.evidence('bytes-exact', True)
 
-    def test_torn_checkpoint_still_delivers_the_full_stream(self):
+    def test_torn_checkpoint_recovers_through_owner_recovery(self):
+        # The checkpoint is torn before the observer dies, so the owner's
+        # own recovery path (not a manual attach racing it) must replay
+        # the full stream. A manual attach here would race the recovery
+        # observer for the single observer slot and fail EBUSY.
         directory, child = self.partial('torn', 's-torn')
         self.wait_spool(directory, 'tick:2')
         native = self.role_pid(directory)
         self.native_pids.append(native)
         checkpoint = directory / 'checkpoint'
         self.assertTrue(checkpoint.is_file(), 'partial mode did not commit a checkpoint')
+        checkpoint.write_bytes(b'\x00torn-checkpoint')
         child.kill()
         child.wait(timeout=10)
-        checkpoint.write_bytes(b'\x00torn-checkpoint')
-        reattached = self.spawn('attach', self.db, directory)
-        self.wait_tick_above(reattached, 4)
+        log = directory / 'observer.log'
+        text = self.wait_path(log, 'echo:hello')
+        self.assertIn('"role": "native"', text,
+                      'recovery after a torn checkpoint skipped the stream start')
         self.assertEqual(self.role_count(directory), 1,
-                         'reattachment after a torn checkpoint started a second native child')
+                         'recovery after a torn checkpoint started a second native child')
         self.assertTrue(self.alive(native), 'the native child is gone')
-        restore = [line for line in self.snapshot(reattached)
-                   if line.startswith('restored:') or line.startswith('restore-failed:')]
-        self.evidence('torn-restore-outcome', restore)
-        reattached.kill()
+        self.evidence('torn-recovery-replayed', True)
 
 
 if __name__ == '__main__':
