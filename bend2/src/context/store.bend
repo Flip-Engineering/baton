@@ -166,7 +166,7 @@ def ref_result_present(+query: String) -> String:
 def ref_match_count(query: String, refId: String) -> String:
   "(SELECT count(*) FROM json_each(" ++ ref_result(query) ++ ",'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
 
-def ref_first_entry(query: String, refId: String) -> String:
+def ref_first_entry(+query: String, refId: String) -> String:
   "(SELECT baton_ref_entry(" ++ ref_result(query) ++ ",entry.key) FROM json_each(" ++ ref_result(query) ++ ",'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
 
 def ref_shape_ok(+query: String, refId: String) -> String:
