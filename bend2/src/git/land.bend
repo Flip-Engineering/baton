@@ -963,6 +963,13 @@ def ld_adv_cas(g: T.GitOut) -> LAdv:
     case T.GRun{code, out}: Bool.pick(LAdv, U32.is_eq(code, 0), AdvLanded{}, AdvRefused{})
     case T.GBroken{detail}: AdvBroken{detail}
 
+def ld_adv_qualified_with(advance: LAdv, +capture: T.CapturedRaw, qualification: LdQualified) -> LdAdvObs:
+  LdAdvQualified{advance, capture, qualification}
+
+# A refused mutation still records the target read it performed; HEAD was never reached.
+def ld_adv_read(observation: T.GitOut) -> LdRead:
+  ReadObserved{observation}
+
 def ld_adv_cas_compared(cand: String, +capture: T.CapturedRaw, after: T.GitOut, tip: String) -> IO(LdAdvObs):
   +c2 = cand
   +cp = capture
@@ -1026,13 +1033,6 @@ def ld_adv_refused_pick(g: T.GitOut, path: String, basis: String) -> LAdv:
         AdvBroken{"the target commit could not be read after a refused fast-forward"})
     case T.GBroken{detail}: AdvBroken{detail}
 
-def ld_adv_read(observation: T.GitOut) -> LdRead:
-  ReadObserved{observation}
-
-def ld_adv_qualified_with(advance: LAdv, +capture: T.CapturedRaw, qualification: LdQualified) -> LdAdvObs:
-  LdAdvQualified{advance, capture, qualification}
-
-# A refused mutation still records the target read it performed; HEAD was never reached.
 def ld_adv_wt_refused_decided(advance: LAdv, +read: T.GitOut, +capture: T.CapturedRaw) -> IO(LdAdvObs):
   IO.pure(LdAdvObs, ld_adv_qualified_with(advance, capture, QualDecided{ld_adv_read(read), ReadSkipped{}}))
 
