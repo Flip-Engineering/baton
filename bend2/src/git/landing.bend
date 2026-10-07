@@ -73,7 +73,7 @@ def expected_head(old_target: String) -> String:
 
 def mutation_old_value(old_target: String) -> String:
   +o = old_target
-  Bool.pick(Bool, Tx.str_eq(o, ""),
+  Bool.pick(String, Tx.str_eq(o, ""),
     zero_oid(),
     o)
 def request_holder(request: LandingRequest) -> String:
@@ -148,7 +148,7 @@ def Landing.old_value_checked(handle: U32, request: LandingRequest, published: S
   +base = basis
   +found = head
   +expected = expected_head(req.old_target)
-  Bool.pick(Bool, Tx.str_eq(found, expected),
+  Bool.pick(IO(Landing), Tx.str_eq(found, expected),
     Landing.mutated(h, req, cand, base, pub),
     Landing.stopped(req, h, LandingOldValueMismatch{expected, found, Done{Unit{}}}))
 # The mutation runs through the guarded capture with the live claim descriptor, so the child

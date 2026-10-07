@@ -140,31 +140,31 @@ def directory_precondition(directory: String) -> Bool:
 def publish_third(raw: String, path: String) -> String:
   +r = raw
   +p = path
-  Bool.pick(Bool, Tx.str_eq(r, production_record("existing", p, "1")),
+  Bool.pick(String, Tx.str_eq(r, production_record("existing", p, "1")),
     "existing-pending",
     "other")
 def publish_second(raw: String, path: String) -> String:
   +r = raw
   +p = path
-  Bool.pick(Bool, Tx.str_eq(r, production_record("existing", p, "0")),
+  Bool.pick(String, Tx.str_eq(r, production_record("existing", p, "0")),
     "existing",
     publish_third(r, p))
 def classify_publish(raw: String, path: String) -> String:
   +r = raw
   +p = path
-  Bool.pick(Bool, Tx.str_eq(r, production_record("published", p, "0")),
+  Bool.pick(String, Tx.str_eq(r, production_record("published", p, "0")),
     "published",
     publish_second(r, p))
 def ensure_second(raw: String, path: String) -> String:
   +r = raw
   +p = path
-  Bool.pick(Bool, Tx.str_eq(r, production_record("present", p, "0")),
+  Bool.pick(String, Tx.str_eq(r, production_record("present", p, "0")),
     "present",
     "other")
 def classify_ensure(raw: String, path: String) -> String:
   +r = raw
   +p = path
-  Bool.pick(Bool, Tx.str_eq(r, production_record("created", p, "0")),
+  Bool.pick(String, Tx.str_eq(r, production_record("created", p, "0")),
     "created",
     ensure_second(r, p))
 def Intent.refused(request: I.IntentInput, step: String, name: String, raw: String) -> IO(IntentPublish):
@@ -182,7 +182,7 @@ def Intent.read_back_compare(request: I.IntentInput, publication: String, path: 
   +p = path
   +want = content
   +got = seen
-  Bool.pick(Bool, Tx.str_eq(got, want),
+  Bool.pick(IO(IntentPublish), Tx.str_eq(got, want),
     IO.pure(IntentPublish, IntentBytesPublished{req, pub, p, got}),
     IO.pure(IntentPublish, PublishContentMismatch{req, pub, want, got}))
 def Intent.read_back_seen(request: I.IntentInput, publication: String, path: String, content: String, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPublish):
@@ -209,7 +209,7 @@ def publish_admit_third(request: I.IntentInput, path: String, content: String, r
   +want = content
   +r = raw
   +k = kind
-  Bool.pick(Bool, Tx.str_eq(k, "existing-pending"),
+  Bool.pick(IO(IntentPublish), Tx.str_eq(k, "existing-pending"),
     IO.pure(IntentPublish, PublishExistingPending{req, r, p}),
     Intent.refused(req, "publish", "", r))
 def publish_admit_second(request: I.IntentInput, path: String, content: String, raw: String, kind: String) -> IO(IntentPublish):
@@ -218,7 +218,7 @@ def publish_admit_second(request: I.IntentInput, path: String, content: String, 
   +want = content
   +r = raw
   +k = kind
-  Bool.pick(Bool, Tx.str_eq(k, "existing"),
+  Bool.pick(IO(IntentPublish), Tx.str_eq(k, "existing"),
     Intent.read_back(req, r, p, want),
     publish_admit_third(req, p, want, r, k))
 def Intent.publish_admit(request: I.IntentInput, path: String, content: String, raw: String, kind: String) -> IO(IntentPublish):
@@ -227,7 +227,7 @@ def Intent.publish_admit(request: I.IntentInput, path: String, content: String, 
   +want = content
   +r = raw
   +k = kind
-  Bool.pick(Bool, Tx.str_eq(k, "published"),
+  Bool.pick(IO(IntentPublish), Tx.str_eq(k, "published"),
     Intent.read_back(req, r, p, want),
     publish_admit_second(req, p, want, r, k))
 def Intent.publish_classify(request: I.IntentInput, path: String, content: String, raw: String) -> IO(IntentPublish):
@@ -263,7 +263,7 @@ def Intent.ensure_next(request: I.IntentInput, path: String, content: String, di
   +dir = directory
   +n = name
   +r = raw
-  Bool.pick(Bool, Tx.str_eq(kind, "other"),
+  Bool.pick(IO(IntentPublish), Tx.str_eq(kind, "other"),
     Intent.refused(req, "ensure", n, r),
     Intent.publish_now(req, p, want, dir, n))
 def Intent.ensure_admit(request: I.IntentInput, path: String, content: String, directory: String, name: String, raw: String) -> IO(IntentPublish):
@@ -305,7 +305,7 @@ def preflight_directory(request: I.IntentInput, path: String, content: String, d
   +want = content
   +dir = directory
   +n = name
-  Bool.pick(Bool, directory_precondition(dir),
+  Bool.pick(IO<IntentPublish>, directory_precondition(dir),
     publish_directory(req, p, want, dir, n),
     IO.pure(IntentPublish, PublishRefused{req, "directory", n, dir}))
 law a_fresh_publication_record_is_admitted:
@@ -317,7 +317,7 @@ def preflight_name(request: I.IntentInput, path: String, content: String, direct
   +want = content
   +dir = directory
   +n = name
-  Bool.pick(Bool, name_precondition(n),
+  Bool.pick(IO(IntentPublish), name_precondition(n),
     preflight_directory(req, p, want, dir, n),
     IO.pure(IntentPublish, PublishRefused{req, "name", n, ""}))
 def Intent.publish_intent(request: I.IntentInput, directory: String, name: String, content: String) -> IO(IntentPublish):
@@ -327,7 +327,7 @@ def Intent.publish_intent(request: I.IntentInput, directory: String, name: Strin
   +want = content
   +derived = intent_path(dir, n)
   +asked = I.requested_path(req)
-  Bool.pick(Bool, Tx.str_eq(asked, derived),
+  Bool.pick(IO(IntentPublish), Tx.str_eq(asked, derived),
     preflight_name(req, derived, want, dir, n),
     IO.pure(IntentPublish, PublishRefused{req, "association", n, derived}))
 law a_fresh_publication_record_is_admitted:

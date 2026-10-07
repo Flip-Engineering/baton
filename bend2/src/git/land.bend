@@ -630,7 +630,7 @@ def ff_stage5_postread_compared(target: String, candidate: String, artifact: Str
   +art = artifact
   +ev = evidence
   +seen = head
-  Bool.pick(Bool, Tx.str_eq(seen, cand),
+  Bool.pick(IO(FFLD), Tx.str_eq(seen, cand),
     ff_stage5_landed(tg, cand),
     ff_stage5_blocked(Tx.str_cat("post-state is not the candidate; ", ev)))
 def ff_stage5_postread_seen(target: String, candidate: String, artifact: String, evidence: String, observed: T.GitOut) -> IO(FFLD):
@@ -641,7 +641,7 @@ def ff_stage5_postread_seen(target: String, candidate: String, artifact: String,
   match observed:
     case T.GBroken{detail}: ff_stage5_blocked(Tx.str_cat("post-state unreadable: ", detail))
     case T.GRun{code, head}:
-      Bool.pick(Bool, U32.is_eq(code, 0),
+      Bool.pick(IO(FFLD), U32.is_eq(code, 0),
         ff_stage5_postread_compared(tg, cand, art, ev, Tx.trim_nl(head)),
         ff_stage5_blocked(Tx.str_cat("post-state read failed; ", ev)))
 def ff_stage5_postread(target: String, candidate: String, repo: String, artifact: String, evidence: String) -> IO(FFLD):
@@ -663,7 +663,7 @@ def ff_stage5_status(target: String, candidate: String, repo: String, artifact: 
   match status:
     case T.SSignal{num}: ff_stage5_blocked(Tx.str_cat("mutation signalled; ", ev))
     case T.SExit{code}:
-      Bool.pick(Bool, U32.is_eq(code, 0),
+      Bool.pick(IO(FFLD), U32.is_eq(code, 0),
         ff_stage5_postread(tg, cand, rp, art, ev),
         ff_stage5_blocked(Tx.str_cat("mutation exited nonzero; ", ev)))
 def ff_stage5_framing(target: String, candidate: String, artifact: String, repo: String, framing: String, diagnostics: String) -> IO(FFLD):
@@ -773,7 +773,7 @@ def ff_stage5_common(cand: String, old: String, repo: String, target: String, ob
   match observed:
     case T.GBroken{detail}: ff_stage5_blocked(detail)
     case T.GRun{code, out}:
-      Bool.pick(Bool, U32.is_eq(code, 0),
+      Bool.pick(IO(FFLD), U32.is_eq(code, 0),
         ff_stage5_guardpath(candidate, tb, rp, tg, Tx.trim_nl(out)),
         ff_stage5_blocked("cannot read the common directory for the landing guard"))
 def ff_stage5_guarded(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
@@ -977,7 +977,7 @@ def ld_adv_cas_compared(cand: String, capture: Result<&1,&1,U32 & String,String 
   +cp = capture
   +obs = after
   +seen = tip
-  Bool.pick(Bool, Tx.str_eq(seen, c2),
+  Bool.pick(IO(LdAdvObs), Tx.str_eq(seen, c2),
     IO.pure(LdAdvObs, LdAdvQualified{AdvLanded{}, cp, obs}),
     IO.pure(LdAdvObs, LdAdvQualified{AdvMoved{}, cp, obs}))
 def ld_adv_cas_readback(target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut) -> IO(LdAdvObs):
@@ -987,7 +987,7 @@ def ld_adv_cas_readback(target: String, cand: String, capture: Result<&1,&1,U32 
   match obs:
     case T.GRun{code, out}:
       +c0 = code
-      Bool.pick(Bool, U32.is_eq(c0, 0),
+      Bool.pick(IO(LdAdvObs), U32.is_eq(c0, 0),
         ld_adv_cas_compared(c2, cp, obs, Tx.trim_nl(out)),
         IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{"the target could not be read back after the advance"}, cp, obs}))
     case T.GBroken{detail}: IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{detail}, cp, obs})
@@ -1003,7 +1003,7 @@ def ld_adv_cas_qualified(target: String, cand: String, capture: Result<&1,&1,U32
   +r2 = repo
   match st:
     case T.GRun{code, out}:
-      Bool.pick(Bool, U32.is_eq(code, 0),
+      Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
         do IO<LdAdvObs>:
             after : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
             ld_adv_cas_readback(t2, c2, cp, after),
@@ -1058,7 +1058,7 @@ def ld_adv_wt_observed_holder_pick(g: T.GitOut, path: String, target: String) ->
   match g:
     case T.GRun{code, out}:
       +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(Bool, status_ok,
+      +same = Bool.pick(IO(LAdv), status_ok,
         Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)), False{})
       IO.pure(LAdv, ld_adv_wt_observed(True{}, same, path))
     case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
@@ -1077,7 +1077,7 @@ def ld_adv_wt_observed_target_pick(g: T.GitOut, path: String, target: String, ca
   match g:
     case T.GRun{code, out}:
       +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})
+      +same = Bool.pick(IO(LAdv), status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})
       ld_adv_wt_observed_target_same(same, path, target)
     case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
 
@@ -1133,7 +1133,7 @@ def ld_adv_wt_head_pick(g: T.GitOut, path: String, repo: String, target: String,
     case T.GRun{code, out}:
       +t2 = target
       +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(t2)), False{})
+      +same = Bool.pick(IO(LdAdvObs), status_ok, Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(t2)), False{})
       ld_adv_wt_head_same(same, path, repo, t2, cand, basis, cx)
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
 def ld_adv_wt_target_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
@@ -1155,7 +1155,7 @@ def ld_adv_wt_target_pick(g: T.GitOut, path: String, repo: String, target: Strin
     case T.GRun{code, out}:
       +b2 = basis
       +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), b2), False{})
+      +same = Bool.pick(IO(LdAdvObs), status_ok, Tx.str_eq(Tx.trim_nl(out), b2), False{})
       ld_adv_wt_target_same(same, path, repo, target, cand, b2, cx)
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
 def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
@@ -1226,7 +1226,7 @@ def shared_reserved_continue(handle: U32, repo: String, target: String, cand: St
 def shared_attempt_name(base: String, attempt: U32) -> String:
   +b = base
   +n = attempt
-  Bool.pick(Bool, U32.is_eq(n, 1),
+  Bool.pick(String, U32.is_eq(n, 1),
     b,
     Tx.str_cat(b, Tx.str_cat("-", U32.show(n))))
 # One self-recursive reservation body. The returned Result, the exact created/existing records
@@ -1248,44 +1248,19 @@ def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String,
       case Fail{error}: shared_step_failed("reserve", error, h)
       case Done{record}:
         +r = record
-        +created_ok = Tx.str_eq(r, Pb.production_record("created", shared_parent_path(pa, name), "0"))
-        Bool.pick(Bool, created_ok,
-          shared_reserved_continue(h, rp, tg, c, b, gd, shared_parent_path(pa, name)),
-          shared_reserve_else(h, rp, tg, c, b, gd, pa, bs, n, r))
+        +created_ok = Tx.str_eq(r, Pb.production_record("created", shared_parent_path(pa, shared_attempt_name(bs, n)), "0"))
+        +existing_ok = Tx.str_eq(r, Pb.production_record("existing", shared_parent_path(pa, shared_attempt_name(bs, n)), "0"))
+        Bool.pick(IO(SharedLanding), created_ok,
+          shared_reserved_continue(h, rp, tg, c, b, gd, shared_parent_path(pa, shared_attempt_name(bs, n))),
+          Bool.pick(IO(SharedLanding), existing_ok,
+            Bool.pick(IO(SharedLanding), U32.is_lt(n, 4294967295),
+              shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, shared_next_attempt(n)),
+              shared_record_failed("reserve-counter-maximum", r, h)),
+            shared_record_failed("reserve", r, h)))
 
-# The remaining reserve outcomes: an exact collision advances the counter under the same held
-# claim, any other record is kept, and the U32 maximum is the only refusal.
-def shared_reserve_else(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, attempt: U32, record: String) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
+def shared_next_attempt(attempt: U32) -> U32:
   +n = attempt
-  +r = record
-  +existing_ok = Tx.str_eq(r, Pb.production_record("existing", shared_parent_path(pa, shared_attempt_name(bs, n)), "0"))
-  Bool.pick(IO(SharedLanding), existing_ok,
-    shared_reserve_advance(h, rp, tg, c, b, gd, pa, bs, n, r),
-    shared_record_failed("reserve", r, h))
-
-def shared_reserve_advance(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, attempt: U32, record: String) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  +n = attempt
-  +r = record
-  +next = U32.add(n, 1)
-  Bool.pick(IO(SharedLanding), U32.is_lt(n, 4294967295),
-    shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, next),
-    shared_record_failed("reserve-counter-maximum", r, h))
+  U32.add(n, 1)
 
 def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle
@@ -1297,7 +1272,7 @@ def shared_parent_present(handle: U32, repo: String, target: String, cand: Strin
   +pa = parent
   +bs = base
   +r = record
-  Bool.pick(Bool, Tx.str_eq(r, Pb.production_record("present", pa, "0")),
+  Bool.pick(IO(SharedLanding), Tx.str_eq(r, Pb.production_record("present", pa, "0")),
     shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1),
     shared_record_failed("ensure", r, h))
 def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
@@ -1310,7 +1285,7 @@ def shared_parent_classified(handle: U32, repo: String, target: String, cand: St
   +pa = parent
   +bs = base
   +r = record
-  Bool.pick(Bool, Tx.str_eq(r, Pb.production_record("created", pa, "0")),
+  Bool.pick(IO(SharedLanding), Tx.str_eq(r, Pb.production_record("created", pa, "0")),
     shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1),
     shared_parent_present(h, rp, tg, c, b, gd, pa, bs, r))
 def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
@@ -1400,7 +1375,7 @@ def shared_common_read(repo: String, target: String, cand: String, basis: String
   match obs:
     case T.GRun{code, out}:
       +c0 = code
-      Bool.pick(Bool, U32.is_eq(c0, 0),
+      Bool.pick(IO(SharedLanding), U32.is_eq(c0, 0),
         shared_claimed(rp, tg, c, b, Tx.trim_nl(out)),
         IO.pure(SharedLanding, SharedCommonUnreadable{obs}))
     case T.GBroken{detail}: IO.pure(SharedLanding, SharedCommonUnreadable{obs})
