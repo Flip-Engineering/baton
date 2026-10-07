@@ -64,7 +64,7 @@ def note_task(+db: String, +failed: Bool, +session: String, done: Result<&1,&1,U
 # forks newly dirty sessions, draining those before rejoining the older tasks,
 # so discovery never waits for all tasks to end.
 @unsafe
-def drain_tasks(+db: String, +handle: U32, +failed: Bool, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, sessions: List<String>) -> IO(Bool):
+def drain(+db: String, +handle: U32, +failed: Bool, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, sessions: List<String>) -> IO(Bool):
   match tasks:
     case Nil{}: IO.pure(Bool, failed)
     case task <> rest_tasks:
@@ -75,18 +75,8 @@ def drain_tasks(+db: String, +handle: U32, +failed: Bool, tasks: List<Chan(Resul
           failed_now : Bool <- note_task(db, failed, session, done)
           +fresh : List<String> <- snapshot(db)
           extra : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, fresh)
-          failed_fresh : Bool <- drain_tasks(db, handle, failed_now, extra, fresh)
-          drain_tasks(db, handle, failed_fresh, rest_tasks, rest_sessions)
-
-@unsafe
-def drive_sessions(+db: String, +handle: U32, +failed: Bool, sessions: List<String>) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match sessions:
-    case Nil{}: idle(db, handle, failed)
-    case session <> rest: do IO<Result<&1,&1,U32 & String,Unit>>:
-      +both : List<String> <- IO.pure(List<String>, Con{session, rest})
-      first : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, both)
-      failed_now : Bool <- drain_tasks(db, handle, failed, first, both)
-      drive(db, handle, failed_now)
+          failed_fresh : Bool <- drain(db, handle, failed_now, extra, fresh)
+          drain(db, handle, failed_fresh, rest_tasks, rest_sessions)
 
 def close_subscription(+handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match failed:
@@ -95,26 +85,28 @@ def close_subscription(+handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & Str
       IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{(1, "The serve recorded a swept task failure.")})
     case False{}: Custody.Instance.unsubscribe(handle)
 
-def notice_closed(+db: String, +handle: U32, +failed: Bool, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match result:
-    case Fail{error}: close_subscription(handle, failed)
-    case Done{text}: drive(db, handle, failed)
-
 # Idle serves block on the owner notice. A notice carries only the cursor
 # high-water, so every notice replays the full pending snapshot; a gap notice
 # is served by the same snapshot. A failed notice means the owner is gone, and
 # the serve closes its subscription and exits with the carried status.
-@unsafe
-def idle(+db: String, +handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  do IO<Result<&1,&1,U32 & String,Unit>>:
-    result : Result<&1,&1,U32 & String,String> <- Custody.Instance.notice(handle)
-    notice_closed(db, handle, failed, result)
-
+# The loop is one self-recursive function: every back edge below targets drive
+# itself, so discovery never waits for all tasks to end and no join-all gate
+# stands between a commit and its snapshot.
 @unsafe
 def drive(+db: String, +handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     sessions : List<String> <- snapshot(db)
-    drive_sessions(db, handle, failed, sessions)
+    match sessions:
+      case Nil{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+        result : Result<&1,&1,U32 & String,String> <- Custody.Instance.notice(handle)
+        match result:
+          case Fail{error}: close_subscription(handle, failed)
+          case Done{text}: drive(db, handle, failed)
+      case session <> rest: do IO<Result<&1,&1,U32 & String,Unit>>:
+        +both : List<String> <- IO.pure(List<String>, Con{session, rest})
+        first : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, both)
+        failed_now : Bool <- drain(db, handle, failed, first, both)
+        drive(db, handle, failed_now)
 
 def admitted(+db: String, subscribed: Result<&1,&1,U32 & String,U32 & String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match subscribed:
