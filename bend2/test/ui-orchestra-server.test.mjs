@@ -53,6 +53,13 @@ function fixture() {
       VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),'message',NEW.id,NEW.recipient,'update',
         'receipt','acknowledged');
     END;
+    CREATE TRIGGER ui_ensemble_update AFTER UPDATE OF coupling ON ensembles
+    WHEN OLD.coupling IS NOT NEW.coupling
+    BEGIN
+      INSERT INTO native_changes(recorded_at,entity,entity_id,session_id,operation,kind,summary)
+      VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),'ensemble',NEW.id,NEW.owner,'update',
+        'ensemble',NEW.coupling);
+    END;
     INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base,endpoint)
       VALUES ('root',NULL,'codex','configured/root','high','/root','main','base',''),
              ('child','root','muse','configured/child','medium','/child','work','base','["node","endpoint"]'),
@@ -157,6 +164,39 @@ test('event endpoint stays unavailable when the canonical owner has no subscript
   const response = await fetch(`${base}/orchestra/events?subject=root&since=0`);
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), { error: 'native-owner-subscription-unavailable' });
+});
+
+test('scoped readers receive updates to outside-owned ensembles they can see through membership', async (t) => {
+  const f = fixture();
+  const notifications = commitNotifications();
+  const server = createOrchestraServer({ databasePath: f.databasePath, reader: 'root',
+    subscribeCommittedChanges: notifications.subscribeCommittedChanges });
+  t.after(async () => { await close(server); rmSync(f.directory, { recursive: true, force: true }); });
+  const base = await listen(server);
+  const snapshotResponse = await fetch(`${base}/orchestra/snapshot?subject=child&since=0`);
+  const snapshot = await snapshotResponse.json();
+  const response = await fetch(`${base}/orchestra/events?subject=child&since=${snapshot.cursor}`);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  await reader.read();
+  const writer = new DatabaseSync(f.databasePath);
+  writer.exec("UPDATE ensembles SET coupling='loose' WHERE id='shared-ensemble';");
+  notifications.committed();
+  let frame = '';
+  const deadline = Date.now() + 3000;
+  while (!frame.includes('event: ensemble') && Date.now() < deadline) {
+    const chunk = await Promise.race([
+      reader.read(),
+      new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1000)),
+    ]);
+    if (!chunk.timeout) frame += decoder.decode(chunk.value);
+  }
+  assert.match(frame, /event: ensemble/);
+  assert.match(frame, /"owner":null/);
+  assert.match(frame, /"members":\["child"\]/);
+  assert.doesNotMatch(frame, /"owner":"external"/);
+  writer.close();
+  await reader.cancel();
 });
 
 test('SSE pumps committed rows from owner hints and replays by durable cursor after reconnect', async (t) => {

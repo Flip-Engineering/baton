@@ -203,6 +203,13 @@ function eventRows(db, cursor, limit = 100) {
       FROM native_changes WHERE change_id > ? ORDER BY change_id LIMIT ?`, cursor, limit);
 }
 
+function ensembleHasVisibleMember(db, id, scope) {
+  return Boolean(one(db, `
+    SELECT EXISTS(SELECT 1 FROM ensemble_members
+      WHERE ensemble = ? AND session IN (SELECT value FROM json_each(?))) AS visible`,
+  id, JSON.stringify(scope))?.visible);
+}
+
 async function streamEvents(response, db, databasePath, reader, subject, initialCursor,
     expectedGeneration, subscribeCommittedChanges) {
   let subscription = null;
@@ -269,7 +276,15 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
           const visible = new Set(scope);
           const frames = changes.map((change) => {
             const id = Number(change.id);
-            if (!visible.has(change.session)) return { id, type: 'cursor', data: {} };
+            const ensembleId = change.entity === 'ensemble'
+              ? change.entityId
+              : ['section', 'section-membership'].includes(change.entity)
+                ? change.entityId.split('/')[0] : '';
+            const ensembleVisible = ensembleId
+              && ensembleHasVisibleMember(db, ensembleId, scope);
+            if (!visible.has(change.session) && !ensembleVisible) {
+              return { id, type: 'cursor', data: {} };
+            }
             if (['ensemble', 'membership', 'section', 'section-membership'].includes(change.entity)) {
               const value = ensembleSnapshot(db, change.entityId.split('/')[0], scope);
               return { id, type: 'ensemble', data: value ? JSON.parse(value) : null,
