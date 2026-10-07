@@ -14,7 +14,7 @@ space. `bend2/src/coordinator/logs.bend` implements the policy and
 | `OUTPUT_LOG.stderr` | the native process's stderr file | Baton2 |
 | `<database>.root.log` | each successful message delivery | Baton2 |
 | `<database>.dispatch-*` | a detached coordinator delivery | Baton2 |
-| `<database>.attempt-*/` | the retained keeper: `stdout`, `native.stderr`, `observer.log`, `keeper.log`, `manifest`, and the release and acknowledgement markers | Baton2 |
+| `<database>.attempt-*/` | the retained keeper: `stdout` until acknowledgement unlinks it, `native.stderr`, `keeper.log`, `manifest`, the release and acknowledgement markers, and `observer.log` only when the keeper respawns the recovery observer | Baton2 |
 | `<database>` | sessions, messages, turns, executions and the log policy | Baton2 |
 | `<database>.sessions`, `<database>.root-sessions`, `<database>.session-<hex>` | the OMP provider conversation store | provider |
 | Codex, Claude and Muse conversation stores | those harnesses | provider |
@@ -48,7 +48,7 @@ frames change. The replacement is synced before its name becomes visible.
 An observer process killed during a tool call leaves the newest observed
 partial result in that file. A later direct turn appends the checkpoint to the
 public log before new frames and removes it after that append succeeds.
-Retained receive attempts keep their raw stream in the attempt directory.
+A retained receive attempt keeps its raw stream in the attempt directory until acknowledgement removes it.
 The checkpoint contains frames the provider emitted; provider filtering can
 reduce the available partial information.
 
@@ -66,7 +66,10 @@ budget below one frame rotates on every append. The upper bound is the U32
 representation. `keep_segments` accepts positive U32 values. Rotation,
 inspection, and cleanup enumerate the canonical numbered files in the log's
 directory. Their work follows the existing files. The policy migration retains
-stored rows and the registered log paths.
+stored rows and the registered log paths. A migration that fails because a
+stored row violates the current constraint refuses the command with a nonzero
+exit and the constraint reason; the original rows survive unchanged and the
+next call retries the migration.
 A reader following the
 log by path reopens it after a change of
 name. Each step is one `rename`, so a concurrent reader sees either the old or
@@ -107,7 +110,9 @@ database and root-log sizes, the defaults, one entry per registered public log
 with its live size, its stderr size, its incomplete checkpoint path and size,
 and its numbered segments, and one entry
 per attempt directory with the sizes of its `stdout`, `native.stderr`,
-`observer.log` and `keeper.log`, its retained byte total, and its release and
+`observer.log` and `keeper.log` sampled at inspection time, so a removed or
+never-written file reports 0 and the manifest's size is not counted in the
+retained byte total, plus its release and
 acknowledgement markers. A segment the session's `keep_segments` no longer
 covers is marked `"eligible": true`.
 
