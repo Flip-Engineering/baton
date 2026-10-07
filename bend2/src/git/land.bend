@@ -625,42 +625,85 @@ def ff_stage5_blocked(detail: String) -> IO(FFLD):
   +d = detail
   IO.pure(FFLD, FFDone{T.LBlocked{d}})
 
-def ff_stage5_captured(target: String, candidate: String, artifact: String, observed: Result<&1,&1,U32 & String,String & String>) -> IO(FFLD):
+def ff_stage5_captured(target: String, candidate: String, artifact: String, repo: String, observed: Result<&1,&1,U32 & String,String & String>) -> IO(FFLD):
   +tg = target
   +cand = candidate
   +art = artifact
+  +rp = repo
   match observed:
     case Fail{error}:
       match error:
         case (code, detail): ff_stage5_blocked(Tx.str_cat("capture failed; stderr at ", Tx.str_cat(art, Tx.str_cat("; ", detail))))
     case Done{pair}:
       match pair:
-        case (framing, diagnostics): ff_stage5_framing(tg, cand, art, framing, diagnostics)
+        case (framing, diagnostics): ff_stage5_framing(tg, cand, art, rp, framing, diagnostics)
 
-def ff_stage5_framing(target: String, candidate: String, artifact: String, framing: String, diagnostics: String) -> IO(FFLD):
+def ff_stage5_framing(target: String, candidate: String, artifact: String, repo: String, framing: String, diagnostics: String) -> IO(FFLD):
   +tg = target
   +cand = candidate
   +art = artifact
+  +rp = repo
   +framed = framing
   +diag = diagnostics
   match Tx.run_res(Done{framed}):
+    case T.RRun{T.RSpawn{detail}, out}:
+      ff_stage5_blocked(Tx.str_cat("mutation could not be spawned: ", detail))
+    case T.RRun{T.SSignal{signal}, out}:
+      ff_stage5_blocked(Tx.str_cat("mutation signalled; stderr bytes ", Tx.str_cat(diag, Tx.str_cat("; stdout bytes ", Tx.str_cat(out, Tx.str_cat("; artifact ", art)))))
     case T.RRun{T.SExit{code}, out}:
       match U32.is_eq(code, 0):
-        case True{}: ff_stage5_landed(tg, cand)
-        case False{}: ff_stage5_blocked(Tx.str_cat("mutation exited nonzero; stderr bytes ", Tx.str_cat(diag, Tx.str_cat("; artifact ", art))))
-    case T.RRun{T.SSignal{signal}, out}: ff_stage5_blocked(Tx.str_cat("mutation signalled; stderr at ", art))
+        case True{}: ff_stage5_postread(tg, cand, rp, art, out, diag)
+        case False{}: ff_stage5_blocked(Tx.str_cat("mutation exited nonzero; stderr bytes ", Tx.str_cat(diag, Tx.str_cat("; stdout bytes ", Tx.str_cat(out, Tx.str_cat("; artifact ", art)))))
 
-def ff_stage5_outcome(target: String, candidate: String, artifact: String, outcome: Lg.Landing) -> IO(FFLD):
+def ff_stage5_postread(target: String, candidate: String, repo: String, artifact: String, stdout: String, diagnostics: String) -> IO(FFLD):
+  +tg = target
+  +cand = candidate
+  +rp = repo
+  +art = artifact
+  +out = stdout
+  +diag = diagnostics
+  do IO<FFLD>:
+    observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--verify", Con{"--end-of-options", Con{Tx.str_cat("refs/heads/", tg), Nil{}}}}})
+    ff_stage5_postread_seen(tg, cand, rp, art, out, diag, observed)
+
+def ff_stage5_postread_seen(target: String, candidate: String, repo: String, artifact: String, stdout: String, diagnostics: String, observed: T.GitOut) -> IO(FFLD):
+  +tg = target
+  +cand = candidate
+  +rp = repo
+  +art = artifact
+  +out = stdout
+  +diag = diagnostics
+  match observed:
+    case T.GBroken{detail}: ff_stage5_blocked(Tx.str_cat("post-state unreadable: ", detail))
+    case T.GRun{code, head}:
+      match U32.is_eq(code, 0):
+        case False{}: ff_stage5_blocked(Tx.str_cat("post-state read failed; artifact ", art))
+        case True{}: ff_stage5_postread_compared(tg, cand, art, Tx.trim_nl(head))
+
+def ff_stage5_postread_compared(target: String, candidate: String, artifact: String, head: String) -> IO(FFLD):
   +tg = target
   +cand = candidate
   +art = artifact
+  +seen = head
+  match Tx.str_eq(seen, cand):
+    case True{}: ff_stage5_landed(tg, cand)
+    case False{}: ff_stage5_blocked(Tx.str_cat("post-state is not the candidate; artifact ", art))
+def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo: String, outcome: Lg.Landing) -> IO(FFLD):
+  +tg = target
+  +cand = candidate
+  +art = artifact
+  +rp = repo
   +out = outcome
   match out:
     case Lg.LandingHeld{request, candidate, basis, published, mutation, released}:
       match released:
-        case Fail{error}: ff_stage5_blocked(Tx.str_cat("release failed; evidence at ", art))
-        case Done{unit}: ff_stage5_captured(tg, cand, art, mutation)
-    case Lg.LandingClaimFailed{error}: ff_stage5_blocked("claim failed")
+        case Fail{error}:
+          match error:
+            case (code, detail): ff_stage5_blocked(Tx.str_cat("release failed: ", Tx.str_cat(detail, Tx.str_cat("; artifact ", art))))
+        case Done{unit}: ff_stage5_captured(tg, cand, art, rp, mutation)
+    case Lg.LandingClaimFailed{error}:
+      match error:
+        case (code, detail): ff_stage5_blocked(Tx.str_cat("claim failed: ", detail))
     case Lg.LandingGuardBusy{target}: ff_stage5_blocked("guard busy")
     case Lg.LandingAssociationRefused{step, observation, released}: ff_stage5_blocked(Tx.str_cat("association refused at ", step))
     case Lg.LandingOldValueMismatch{expected, found, released}: ff_stage5_blocked("old target moved during landing; retry")
@@ -673,15 +716,29 @@ def ff_stage5_guarded_now(candidate: String, old: String, repo: String, target: 
   +tg = target
   +cm = common
   +gd = guard
-  +name = Tx.str_cat(cand, Tx.str_cat("-", tb))
-  +scratch = Lg.attempt_directory_for(cm, name)
-  +art = Lg.attempt_artifact_for(cm, name)
-  +intent = It.IntentRequested{name, cm, tg, rp, cand, tb, Pb.intent_path(scratch, "intent"), rp, tb}
-  +request = Lg.LandingRequested{intent, "intent", tb, "", gd, art, scratch, rp}
   do IO<FFLD>:
-    outcome : Lg.Landing <- Lg.Landing.run(request)
-    ff_stage5_outcome(tg, cand, art, outcome)
+    token : Result<U32 & String, String> <- Rec.Receipt.attempt_token(tg)
+    ff_stage5_named(cand, tb, rp, tg, cm, gd, token)
 
+def ff_stage5_named(candidate: String, old: String, repo: String, target: String, common: String, guard: String, observed: Result<U32 & String, String>) -> IO(FFLD):
+  +cand = candidate
+  +tb = old
+  +rp = repo
+  +tg = target
+  +cm = common
+  +gd = guard
+  match observed:
+    case Fail{error}: ff_stage5_blocked("cannot name the attempt token for this target")
+    case Done{token}:
+      +tk = token
+      +name = Tx.str_cat(tk, Tx.str_cat("-", Tx.str_cat(cand, Tx.str_cat("-", tb))))
+      +scratch = Lg.attempt_directory_for(cm, name)
+      +art = Lg.attempt_artifact_for(cm, name)
+      +intent = It.IntentRequested{name, cm, tg, rp, cand, tb, Pb.intent_path(scratch, "intent"), rp, tb}
+      +request = Lg.LandingRequested{intent, "intent", tb, "", gd, art, scratch, rp}
+      do IO<FFLD>:
+        outcome : Lg.Landing <- Lg.Landing.run(request)
+        ff_stage5_outcome(tg, cand, art, rp, outcome)
 def ff_stage5_guarded(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
   +cand = wc
   +old = tb
