@@ -112,7 +112,7 @@ function stableJson(value) {
   return JSON.stringify(value);
 }
 
-function cloneLinkedTree(source, destination) {
+export function cloneLinkedTree(source, destination) {
   mkdirSync(destination, { recursive: true });
   for (const entry of readdirSync(source, { withFileTypes: true })) {
     const from = join(source, entry.name);
@@ -123,7 +123,7 @@ function cloneLinkedTree(source, destination) {
   }
 }
 
-function detachFile(path) {
+export function detachFile(path) {
   const temporary = `${path}.detached-${randomUUID()}`;
   writeFileSync(temporary, readFileSync(path));
   renameSync(temporary, path);

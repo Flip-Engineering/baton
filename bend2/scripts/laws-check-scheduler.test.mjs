@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { concurrencyFor, producerSet, verifyResults } from './laws-check.mjs';
+import { cloneLinkedTree, concurrencyFor, detachFile, producerSet, verifyResults } from './laws-check.mjs';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 const rows = [
@@ -19,6 +19,7 @@ const mutations = [
 const controls = producerSet(rows, mutations);
 const dispatched = controls.map((control) => ({ ...control, workToken: randomUUID() }));
 const artifactRoot = mkdtempSync(join(tmpdir(), 'laws-check-scheduler-fixture-'));
+const workspaceRoot = mkdtempSync(join(tmpdir(), 'laws-check-workspace-fixture-'));
 const complete = dispatched.map((control, index) => {
   const diagnostic = control.kind === 'proof' ? 'Error expected :' : control.payload.law;
   const stdoutPath = join(artifactRoot, `${index}.stdout.log`);
@@ -45,7 +46,34 @@ const complete = dispatched.map((control, index) => {
   };
 });
 
-test.after(() => rmSync(artifactRoot, { recursive: true, force: true }));
+test.after(() => {
+  rmSync(artifactRoot, { recursive: true, force: true });
+  rmSync(workspaceRoot, { recursive: true, force: true });
+});
+
+test('control workspaces share unchanged source and isolate the edited producer file', () => {
+  const source = join(workspaceRoot, 'source');
+  const first = join(workspaceRoot, 'first');
+  const second = join(workspaceRoot, 'second');
+  mkdirSync(source);
+  writeFileSync(join(source, 'proof.bend'), 'proof source\n');
+  writeFileSync(join(source, 'dependency.bend'), 'shared dependency\n');
+  cloneLinkedTree(source, first);
+  cloneLinkedTree(source, second);
+
+  assert.equal(readFileSync(join(first, 'proof.bend'), 'utf8'), 'proof source\n');
+  assert.equal(readFileSync(join(second, 'proof.bend'), 'utf8'), 'proof source\n');
+  assert.equal(statSync(join(first, 'proof.bend')).ino, statSync(join(source, 'proof.bend')).ino);
+  assert.equal(statSync(join(first, 'dependency.bend')).ino, statSync(join(source, 'dependency.bend')).ino);
+
+  const edited = join(first, 'proof.bend');
+  detachFile(edited);
+  writeFileSync(edited, 'proof removed\n');
+  assert.equal(readFileSync(edited, 'utf8'), 'proof removed\n');
+  assert.equal(readFileSync(join(source, 'proof.bend'), 'utf8'), 'proof source\n');
+  assert.equal(readFileSync(join(second, 'proof.bend'), 'utf8'), 'proof source\n');
+  assert.notEqual(statSync(edited).ino, statSync(join(source, 'proof.bend')).ino);
+});
 
 test('producer discovery returns each proof and mutation identity once', async () => {
   assert.deepEqual(controls.map(({ id }) => id), [
