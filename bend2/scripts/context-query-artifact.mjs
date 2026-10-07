@@ -1,13 +1,173 @@
 // Create one private result directory inside the authenticated owner worktree.
 // The query identity selects a stable path and the marker binds that path to its
 // owner and worktree before native admission records it.
-import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync, fsyncSync, fchmodSync, unlinkSync, rmdirSync } from 'node:fs';
+import { closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync, fsyncSync, fchmodSync, unlinkSync, rmdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createRetainedWorktreeCapture } from './context-worktree-capture.mjs';
 
 function refusal(reason, detail = null) {
   return Object.freeze({ status: 'refused', reason, detail });
+}
+
+function sha256(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function exactKeys(value, expected) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
+}
+
+function stable(value) {
+  if (Array.isArray(value)) return value.map(stable);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])]));
+  }
+  return value;
+}
+
+function privateRegularFile(path) {
+  const stat = lstatSync(path);
+  return stat.isFile() && !stat.isSymbolicLink() && (stat.mode & 0o077) === 0;
+}
+
+function immutableWrite(path, bytes) {
+  let descriptor;
+  try {
+    descriptor = openSync(path, 'wx', 0o600);
+    fchmodSync(descriptor, 0o600);
+    writeFileSync(descriptor, bytes);
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    const directory = openSync(dirname(path), constants.O_RDONLY);
+    try {
+      fsyncSync(directory);
+    } finally {
+      closeSync(directory);
+    }
+    return Object.freeze({ status: 'written', path, sha256: sha256(bytes) });
+  } catch (error) {
+    if (descriptor !== undefined) closeSync(descriptor);
+    if (error.code !== 'EEXIST') return refusal('queryArtifactWriteFailed', error.message);
+  }
+  try {
+    if (!privateRegularFile(path)) return refusal('queryArtifactFileInvalid', path);
+    const retained = readFileSync(path);
+    if (!retained.equals(bytes)) return refusal('queryArtifactReplayMismatch', path);
+    return Object.freeze({ status: 'replayed', path, sha256: sha256(retained) });
+  } catch (error) {
+    return refusal('queryArtifactReadFailed', error.message);
+  }
+}
+
+function decodeBootstrap(bytes, { owner, query, artifactPath }) {
+  try {
+    const text = bytes.toString('utf8');
+    if (!text.endsWith('\n') || text.slice(0, -1).includes('\n')) return refusal('queryBootstrapFramingInvalid');
+    const value = JSON.parse(text);
+    const fields = ['schema', 'query', 'owner', 'databaseBinding', 'request', 'planValue',
+      'planIdentity', 'resultSchema', 'artifactPath', 'keeperPath', 'guardIdentity',
+      'guardKey', 'recoveryArgv'];
+    if (!exactKeys(value, fields) || value.schema !== 'baton2-managed-context-bootstrap-v1'
+        || value.query !== query || value.owner !== owner || value.artifactPath !== artifactPath
+        || typeof value.databaseBinding !== 'string' || value.databaseBinding.length === 0
+        || typeof value.request !== 'string' || value.request.length === 0
+        || typeof value.planValue !== 'string' || value.planValue.length === 0
+        || typeof value.planIdentity !== 'string' || value.planIdentity.length === 0
+        || typeof value.resultSchema !== 'string' || value.resultSchema.length === 0
+        || typeof value.keeperPath !== 'string' || value.keeperPath.length === 0
+        || typeof value.recoveryArgv !== 'string' || value.recoveryArgv.length === 0
+        || !/^[0-9a-f]{64}$/.test(value.guardKey)
+        || typeof value.guardIdentity !== 'string'
+        || JSON.stringify(JSON.parse(value.guardIdentity))
+          !== JSON.stringify(['context-role', value.databaseBinding, 'query', query, 'starter', '0'])) {
+      return refusal('queryBootstrapIdentityMismatch');
+    }
+    if (JSON.stringify(stable(value)) + '\n' !== text) return refusal('queryBootstrapCanonicalMismatch');
+    return Object.freeze({ status: 'loaded', value });
+  } catch (error) {
+    return refusal('queryBootstrapMalformed', error.message);
+  }
+}
+
+function readBootstrap(path, authority) {
+  try {
+    if (!privateRegularFile(path)) return refusal('queryBootstrapFileInvalid', path);
+    const bytes = readFileSync(path);
+    const decoded = decodeBootstrap(bytes, authority);
+    if (decoded.status !== 'loaded') return decoded;
+    return Object.freeze({ status: 'loaded', bytes, value: decoded.value });
+  } catch (error) {
+    return refusal('queryBootstrapReadFailed', error.message);
+  }
+}
+
+export function persistQueryBootstrap({ owner, worktree, query, bootstrapText } = {}) {
+  if (typeof bootstrapText !== 'string') return refusal('queryBootstrapMissing');
+  const prepared = prepareQueryArtifact({ owner, worktree, query });
+  if (prepared.status !== 'prepared') return prepared;
+  const path = join(prepared.path, 'bootstrap.json');
+  const bytes = Buffer.from(bootstrapText + '\n');
+  const decoded = decodeBootstrap(bytes, { owner: prepared.owner, query: prepared.query,
+    artifactPath: prepared.path });
+  if (decoded.status !== 'loaded') return decoded;
+  const saved = immutableWrite(path, bytes);
+  if (saved.status !== 'written' && saved.status !== 'replayed') return saved;
+  return Object.freeze({ status: 'persisted', owner, worktree: prepared.worktree,
+    query, path, sha256: saved.sha256, replay: saved.status === 'replayed' });
+}
+
+export function persistQueryOutcome({ owner, worktree, query, bootstrapSha256,
+  exitStatus, eventFrame = '' } = {}) {
+  if (typeof bootstrapSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(bootstrapSha256)
+      || !Number.isInteger(exitStatus) || exitStatus < 0 || exitStatus > 255
+      || typeof eventFrame !== 'string') return refusal('queryOutcomeAuthorityMalformed');
+  const prepared = prepareQueryArtifact({ owner, worktree, query });
+  if (prepared.status !== 'prepared') return prepared;
+  const bootstrapPath = join(prepared.path, 'bootstrap.json');
+  const bootstrap = readBootstrap(bootstrapPath, { owner, query, artifactPath: prepared.path });
+  if (bootstrap.status !== 'loaded' || sha256(bootstrap.bytes) !== bootstrapSha256) {
+    return refusal('queryOutcomeBootstrapMismatch', bootstrap.reason ?? null);
+  }
+
+  let eventSha256 = null;
+  if (exitStatus === 0) {
+    let event;
+    try {
+      event = JSON.parse(eventFrame);
+    } catch (error) {
+      return refusal('queryOutcomeEventMalformed', error.message);
+    }
+    const fields = ['version', 'query', 'owner', 'moduleBinding', 'runtime',
+      'role', 'incarnation', 'sequence', 'type', 'payload'];
+    if (!exactKeys(event, fields) || event.version !== 2 || event.query !== query
+        || event.owner !== owner || event.type !== 'event'
+        || JSON.stringify(event) !== eventFrame) return refusal('queryOutcomeEventIdentityMismatch');
+    const eventBytes = Buffer.from(eventFrame + '\n');
+    const savedEvent = immutableWrite(join(prepared.path, 'event.json'), eventBytes);
+    if (savedEvent.status !== 'written' && savedEvent.status !== 'replayed') return savedEvent;
+    eventSha256 = savedEvent.sha256;
+  } else if (eventFrame !== '') {
+    return refusal('queryOutcomeUnexpectedEvent');
+  }
+
+  const completion = Buffer.from(JSON.stringify({
+    schema: 'baton2-managed-context-completion-v1',
+    query,
+    owner,
+    bootstrapSha256,
+    exitStatus,
+    eventSha256,
+  }) + '\n');
+  const savedCompletion = immutableWrite(join(prepared.path, 'completion.json'), completion);
+  if (savedCompletion.status !== 'written' && savedCompletion.status !== 'replayed') return savedCompletion;
+  return Object.freeze({ status: 'persisted', query, owner, exitStatus,
+    event: eventSha256 === null ? null : { path: join(prepared.path, 'event.json'), sha256: eventSha256, pointer: '' },
+    completion: { path: savedCompletion.path, sha256: savedCompletion.sha256, pointer: '' },
+    replay: savedCompletion.status === 'replayed' });
 }
 
 function secureDirectory(path, parent) {

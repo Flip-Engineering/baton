@@ -10,6 +10,11 @@ function refused(reason, detail = null) {
   return Object.freeze({ status: 'refused', reason, detail });
 }
 
+function exactObjectShape(value, expected) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
+}
+
 export function moduleDirectoryName(value) {
   if (typeof value !== 'string' || value.length === 0) return null;
   return `m-${Buffer.from(value, 'utf8').toString('hex')}`;
@@ -235,6 +240,38 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
       if (result.status !== 'examined') process.exitCode = 2;
     } catch (error) {
       process.stdout.write(`${JSON.stringify(refused('querySourceAuthorityMalformed', error.message))}\n`);
+      process.exitCode = 2;
+    }
+  } else if (process.argv[2] === '--persist-query-bootstrap') {
+    const { persistQueryBootstrap } = await import('./context-query-artifact.mjs');
+    let input = '';
+    for await (const chunk of process.stdin) input += chunk;
+    try {
+      const authority = JSON.parse(input);
+      if (!exactObjectShape(authority, ['owner', 'worktree', 'query', 'bootstrapText'])) {
+        throw new Error('query bootstrap authority has an unsupported shape');
+      }
+      const result = persistQueryBootstrap(authority);
+      process.stdout.write(JSON.stringify(result) + '\n');
+      if (result.status !== 'persisted') process.exitCode = 2;
+    } catch (error) {
+      process.stdout.write(JSON.stringify(refused('queryBootstrapAuthorityMalformed', error.message)) + '\n');
+      process.exitCode = 2;
+    }
+  } else if (process.argv[2] === '--persist-query-outcome') {
+    const { persistQueryOutcome } = await import('./context-query-artifact.mjs');
+    let input = '';
+    for await (const chunk of process.stdin) input += chunk;
+    try {
+      const authority = JSON.parse(input);
+      if (!exactObjectShape(authority, ['owner', 'worktree', 'query', 'bootstrapSha256', 'exitStatus', 'eventFrame'])) {
+        throw new Error('query outcome authority has an unsupported shape');
+      }
+      const result = persistQueryOutcome(authority);
+      process.stdout.write(JSON.stringify(result) + '\n');
+      if (result.status !== 'persisted') process.exitCode = 2;
+    } catch (error) {
+      process.stdout.write(JSON.stringify(refused('queryOutcomeAuthorityMalformed', error.message)) + '\n');
       process.exitCode = 2;
     }
   } else {

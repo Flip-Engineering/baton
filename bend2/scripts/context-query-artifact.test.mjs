@@ -4,13 +4,46 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
-import { examineQuerySource, prepareQueryArtifact } from './context-query-artifact.mjs';
+import { examineQuerySource, persistQueryBootstrap, persistQueryOutcome, prepareQueryArtifact } from './context-query-artifact.mjs';
 
 function worktree(t) {
   const path = mkdtempSync(join(tmpdir(), 'baton-query-artifact-'));
   execFileSync('git', ['init', '-q', path]);
   t.after(() => rmSync(path, { recursive: true, force: true }));
   return path;
+}
+
+function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1') {
+  return JSON.stringify({
+    artifactPath: join(worktreePath, '.baton', 'context-artifacts', Buffer.from(query).toString('hex')),
+    databaseBinding: 'binding-1',
+    guardIdentity: JSON.stringify(['context-role', 'binding-1', 'query', query, 'starter', '0']),
+    guardKey: 'a'.repeat(64),
+    keeperPath: '/logs/keeper-1',
+    owner,
+    planIdentity: 'plan-identity-1',
+    planValue: '[]',
+    query,
+    recoveryArgv: '/opt/baton2/bin/baton2\0recover-context-role\0' + query,
+    request: '{}',
+    resultSchema: 'result-v1',
+    schema: 'baton2-managed-context-bootstrap-v1',
+  });
+}
+
+function eventFrame(query = 'query-1', owner = 'owner-1') {
+  return JSON.stringify({
+    version: 2,
+    query,
+    owner,
+    moduleBinding: { id: 'bend2', revision: 'rev-1', declarationDigest: 'a'.repeat(64) },
+    runtime: null,
+    role: 'adapter',
+    incarnation: '0',
+    sequence: '1',
+    type: 'event',
+    payload: { schema: 'result-v1', status: 'completed' },
+  });
 }
 
 test('prepares a private owner-bound artifact directory and replays its exact identity', (t) => {
@@ -54,4 +87,78 @@ test('source examination refuses missing paths and paths that resolve outside th
     'querySourceUnavailable');
   assert.equal(examineQuerySource({ owner: 'owner', worktree: root, cwd: root, path: '../outside.bend' }).reason,
     'querySourceUnavailable');
+});
+
+test('persists one immutable canonical bootstrap bound to owner, query and private artifact path', (t) => {
+  const root = worktree(t);
+  const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
+  const first = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
+  assert.equal(first.status, 'persisted');
+  assert.equal(lstatSync(first.path).mode & 0o777, 0o600);
+  const replay = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
+  assert.equal(replay.status, 'persisted');
+  assert.equal(replay.replay, true);
+  assert.equal(replay.sha256, first.sha256);
+  assert.equal(persistQueryBootstrap({ ...authority,
+    bootstrapText: bootstrapText(root).replace('plan-identity-1', 'plan-identity-2') }).reason,
+  'queryArtifactReplayMismatch');
+  assert.equal(persistQueryBootstrap({ ...authority,
+    bootstrapText: bootstrapText(root).replace('"owner":"owner-1"', '"owner":"owner-2"') }).reason,
+  'queryBootstrapIdentityMismatch');
+  assert.equal(persistQueryBootstrap({ ...authority,
+    bootstrapText: bootstrapText(root).replace('"query":"query-1"', '"query":"query-1","query":"query-1"') }).reason,
+  'queryBootstrapCanonicalMismatch');
+});
+
+test('persists a canonical v2 event and actual exit status with immutable SHA references', (t) => {
+  const root = worktree(t);
+  const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
+  const bootstrap = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
+  const outcome = persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
+    exitStatus: 0, eventFrame: eventFrame() });
+  assert.equal(outcome.status, 'persisted');
+  assert.equal(outcome.exitStatus, 0);
+  assert.match(outcome.event.sha256, /^[0-9a-f]{64}$/);
+  assert.match(outcome.completion.sha256, /^[0-9a-f]{64}$/);
+  assert.equal(lstatSync(outcome.event.path).mode & 0o777, 0o600);
+  assert.deepEqual(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
+    exitStatus: 0, eventFrame: eventFrame() }), { ...outcome, replay: true });
+});
+
+test('refuses altered event identity, duplicate members and a different completion replay', (t) => {
+  const root = worktree(t);
+  const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
+  const bootstrap = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
+  assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
+    exitStatus: 0, eventFrame: eventFrame('query-2') }).reason,
+  'queryOutcomeEventIdentityMismatch');
+  assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
+    exitStatus: 0, eventFrame: eventFrame().replace('"query":"query-1"', '"query":"query-1","query":"query-1"') }).reason,
+  'queryOutcomeEventIdentityMismatch');
+  assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
+    exitStatus: 0, eventFrame: eventFrame() }).status, 'persisted');
+  assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
+    exitStatus: 1 }).reason, 'queryArtifactReplayMismatch');
+});
+
+test('retains an observed nonzero child status without claiming an event result', (t) => {
+  const root = worktree(t);
+  const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
+  const bootstrap = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
+  const outcome = persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256, exitStatus: 23 });
+  assert.equal(outcome.status, 'persisted');
+  assert.equal(outcome.exitStatus, 23);
+  assert.equal(outcome.event, null);
+  assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: 'b'.repeat(64),
+    exitStatus: 23 }).reason, 'queryOutcomeBootstrapMismatch');
+});
+
+test('refuses symlinked immutable completion artifacts', (t) => {
+  const root = worktree(t);
+  const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
+  const bootstrap = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
+  const directory = prepareQueryArtifact(authority).path;
+  symlinkSync(join(root, 'target'), join(directory, 'event.json'));
+  assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
+    exitStatus: 0, eventFrame: eventFrame() }).reason, 'queryArtifactFileInvalid');
 });
