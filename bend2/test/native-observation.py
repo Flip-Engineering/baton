@@ -275,7 +275,7 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual(barrier_frames[0], barrier_frames[1])
         launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
-        self.eventually(lambda: not self.owned_processes(), 'oversized OMP fixture did not exit')
+        self.shutdown_idle_database_owner('fixture database owner did not exit after oversized OMP completion')
 
     def _retained_attempt(self):
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
