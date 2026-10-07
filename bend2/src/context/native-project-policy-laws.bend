@@ -35,7 +35,7 @@ def project_policy_refuses_duplicate_disabled_ids():
 law project_policy_refuses_unknown_fields:
   {Policy.decode(J.Jobj{pair("schema", J.Jstr{"baton2-context-project-v1"},
     pair("disabled", empty_array(), pair("preferred", empty_array(),
-      pair("installed", strings("example.mod", empty_array()), J.Jnil{})))}) ==
+      pair("installed", strings("example.mod", empty_array()), J.Jnil{}))))} ==
       Policy.PolicyRefused{"projectPolicyMalformed"} : Policy.PolicyDecode}
 
 def project_policy_refuses_unknown_fields():
@@ -51,14 +51,14 @@ def project_policy_refuses_wrong_schema():
 
 law project_policy_identity_distinguishes_read_and_absence:
   {Bool.not(Policy.observation_identity(Policy.PolicyPresent{"owner", "/work", "/work/.baton/context.json", "abc", "{}"}) ==
-   Policy.observation_identity(Policy.PolicyAbsent{"owner", "/work", "/work/.baton/context.json"})) : Bool}
+   Policy.observation_identity(Policy.PolicyAbsent{"owner", "/work", "/work/.baton/context.json"})) == True{} : Bool}
 
 def project_policy_identity_distinguishes_read_and_absence():
   {==}
 
 law project_policy_identity_binds_owner_and_worktree:
   {Bool.not(Policy.observation_identity(Policy.PolicyAbsent{"owner-a", "/work", "/work/.baton/context.json"}) ==
-   Policy.observation_identity(Policy.PolicyAbsent{"owner-b", "/work", "/work/.baton/context.json"})) : Bool}
+   Policy.observation_identity(Policy.PolicyAbsent{"owner-b", "/work", "/work/.baton/context.json"})) == True{} : Bool}
 
 def project_policy_identity_binds_owner_and_worktree():
   {==}
