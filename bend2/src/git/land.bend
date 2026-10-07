@@ -1436,22 +1436,19 @@ def decision_landed(decision: LAdv) -> Bool:
     case AdvRefused{}: False{}
     case AdvBroken{detail}: False{}
 
-def mutation_succeeded(framing: String) -> Bool:
-  match ld_adv_framed(framing):
+def observation_succeeded(observation: T.GitOut) -> Bool:
+  match observation:
     case T.GRun{code, out}: U32.is_eq(code, 0)
     case T.GBroken{detail}: False{}
+
+def mutation_succeeded(framing: String) -> Bool:
+  observation_succeeded(ld_adv_framed(framing))
 
 def capture_landed(capture: T.CapturedRaw) -> Bool:
   match capture:
     case T.CapturedDone{framing, diagnostics}: mutation_succeeded(framing)
     case T.CapturedAbsent{}: False{}
     case T.CapturedFailed{code, detail}: False{}
-
-def observation_succeeded(observation: T.GitOut) -> Bool:
-  match observation:
-    case T.GRun{code, out}: U32.is_eq(code, 0)
-    case T.GBroken{detail}: False{}
-
 def read_observed(read: LdRead) -> Bool:
   match read:
     case ReadObserved{observation}: observation_succeeded(observation)
@@ -1493,11 +1490,11 @@ def evidence_complete(evidence: AttemptEvidence) -> Bool:
             False{}),
           False{}),
         False{})
-def admission_of(+attestation: Attestation) -> Admission:
+
+def admission_stages(attestation: Attestation, reserved: String, evidence: AttemptEvidence) -> Admission:
   match attestation:
     case Attestation{reserved, evidence, publication, qualification, readback}:
-      Bool.pick(Admission, reserved_matches(reserved, evidence),
-       Bool.pick(Admission, stage_publishes(publication, landing_record_path(reserved)),
+      Bool.pick(Admission, stage_publishes(publication, landing_record_path(reserved)),
         Bool.pick(Admission, stage_qualifies(qualification, landing_record_path(reserved)),
           Bool.pick(Admission, readback_matches(readback, evidence),
             Bool.pick(Admission, evidence_complete(evidence),
@@ -1506,6 +1503,16 @@ def admission_of(+attestation: Attestation) -> Admission:
             AdmissionRefused{attestation, "the attempt record does not read back as published"}),
           AdmissionRefused{attestation, "the attempt record is not durable"}),
         AdmissionRefused{attestation, "the attempt record was not published"})
+
+def admission_reserved(attestation: Attestation, reserved: String, evidence: AttemptEvidence) -> Admission:
+  Bool.pick(Admission, reserved_matches(reserved, evidence),
+    admission_stages(attestation, reserved, evidence),
+    AdmissionRefused{attestation, "the receipt does not name this attempt"})
+
+def admission_of(+attestation: Attestation) -> Admission:
+  match attestation:
+    case Attestation{reserved, evidence, publication, qualification, readback}:
+      admission_reserved(attestation, reserved, evidence)
 def ld_attest_admit(+reserved: String, evidence: AttemptEvidence, obs: LdAdvObs, +release: T.ReleaseRaw, +guard: String) -> IO(SharedLanding):
   do IO<SharedLanding>:
     attestation : Attestation <- ld_attest(reserved, evidence)
