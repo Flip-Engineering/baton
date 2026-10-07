@@ -31,11 +31,11 @@ law held_prefix_progress_keeps_the_prior_replay_offset:
 
 law omp_completed_message_advances_reducer_checkpoint:
   for +message: String
-  {Observer.checkpoint_due(Observer.empty(),Observer.make("0\n",message,"","","","","","")) == Bool.not(String.is_empty(message)) : Bool}
+  {Observer.checkpoint_due(Observer.empty(),Observer.make("0\n",message,"","","","","","")) == Bool.or(Bool.not(String.eq("",message)),False{}) : Bool}
 
 law muse_primary_identity_advances_reducer_checkpoint:
   for +command: String
-  {Observer.checkpoint_due(Observer.empty(),Observer.make("0\n","",command,"","","","","")) == Bool.not(String.is_empty(command)) : Bool}
+  {Observer.checkpoint_due(Observer.empty(),Observer.make("0\n","",command,"","","","","")) == Bool.or(Bool.not(String.eq("",command)),False{}) : Bool}
 
 def failed_store_observation_does_not_advance_the_native_cursor(db,handle,state,code,text):
   {==}
