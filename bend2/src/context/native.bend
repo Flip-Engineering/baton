@@ -23,25 +23,6 @@ def invocation_frame(+invocation: Sel.Invocation) -> InvocationFrame:
           role, incarnation)},
         NativeFrameRefused{"invocationVersion"})
 
-def provider_wait(handle: U32, +value: String,
-                  waited: Result<&1,&1,U32 & String,String>) -> IO(ProviderAnswer):
-  match waited:
-    case Done{status}: IO.pure(ProviderAnswer,
-      Bool.pick(ProviderAnswer, String.eq(status, "exit 0"), ProviderOutput{value}, ProviderRefused{"providerExit"}))
-    case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"providerWait"})
-
-def provider_second(handle: U32, +value: String,
-                    second: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(ProviderAnswer):
-  match second:
-    case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"providerOutputRead"})
-    case Done{+line}:
-      match line:
-        case Some{value}: IO.pure(ProviderAnswer, ProviderRefused{"providerOutputSurplus"})
-        case None{}:
-          do IO<ProviderAnswer>:
-            waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
-            provider_wait(handle, value, waited)
-
 def dirname_step(+rest: String, +current: String, +last: String) -> String:
   match rest:
     case SNil{}: last
@@ -57,21 +38,54 @@ def installed_provider_path(executable: String) -> String:
   executable_directory(executable) ++ "/../libexec/baton2/context-provider.mjs"
 
 type ProviderAnswer is Data:
-  ProviderOutput{value: String}
+  ProviderOutput{value: String, status: String}
   ProviderRefused{reason: String}
+
+def provider_wait_answer(+value: String, surplus: Bool,
+                         waited: Result<&1,&1,U32 & String,String>) -> IO(ProviderAnswer):
+  match waited:
+    case Done{+status}: IO.pure(ProviderAnswer,
+      Bool.pick(ProviderAnswer, surplus, ProviderRefused{"providerOutputSurplus"}, ProviderOutput{value, status}))
+    case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"providerWait"})
+
+def provider_wait(handle: U32, +value: String, surplus: Bool) -> IO(ProviderAnswer):
+  do IO<ProviderAnswer>:
+    waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
+    provider_wait_answer(value, surplus, waited)
+
+def provider_reap_answer(+reason: String,
+                         waited: Result<&1,&1,U32 & String,String>) -> IO(ProviderAnswer):
+  match waited:
+    case Done{status}: IO.pure(ProviderAnswer, ProviderRefused{reason})
+    case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"providerWait"})
+
+def provider_reap(handle: U32, +reason: String) -> IO(ProviderAnswer):
+  do IO<ProviderAnswer>:
+    waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
+    provider_reap_answer(reason, waited)
+
+def provider_second(handle: U32, +value: String,
+                    second: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(ProviderAnswer):
+  match second:
+    case Fail{error}: provider_reap(handle, "providerOutputRead")
+    case Done{+line}:
+      match line:
+        case Some{value}: provider_wait(handle, value, True{})
+        case None{}: provider_wait(handle, value, False{})
+
+def provider_after_first(handle: U32, +value: String) -> IO(ProviderAnswer):
+  do IO<ProviderAnswer>:
+    extra : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
+    provider_second(handle, value, extra)
 
 def provider_read(handle: U32, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(ProviderAnswer):
   match result:
-    case Fail{error}:
-      match error:
-        case (code, detail): IO.pure(ProviderAnswer, ProviderRefused{"providerOutputRead"})
+    case Fail{error}: provider_reap(handle, "providerOutputRead")
     case Done{+line}:
       match line:
-        case None{}: IO.pure(ProviderAnswer, ProviderRefused{"providerOutputMissing"})
+        case None{}: provider_reap(handle, "providerOutputMissing")
         case Some{+value}:
-          do IO<ProviderAnswer>:
-            extra : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
-            provider_second(handle, value, extra)
+          provider_after_first(handle, value)
 
 def provider_close(handle: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(ProviderAnswer):
   match result:

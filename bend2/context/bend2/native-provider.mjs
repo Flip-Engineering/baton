@@ -42,7 +42,8 @@ const INVOCATION_KEYS = Object.freeze([
 export function validateInvocation(value) {
   if (!exactKeys(value, INVOCATION_KEYS)) return refusal('invocationShape');
   if (value.version !== 2) return refusal('invocationVersion');
-  if (![value.query, value.owner, value.role, value.incarnation].every((field) => typeof field === 'string')) {
+  if (![value.query, value.owner].every((field) => typeof field === 'string')
+      || ![value.role, value.incarnation].every((field) => field === null || typeof field === 'string')) {
     return refusal('invocationIdentityKind');
   }
   if (!value.query || !value.owner) return refusal('invocationIdentityMissing');
@@ -106,6 +107,7 @@ export function loadSelectedFrontendPackage({ packageRoot = PACKAGE_ROOT } = {})
     if (item === null || typeof item !== 'object' || item.status === 'refused') return item;
   }
   if (declaration.schema !== 'baton2-native-module-declaration-v1'
+      || manifest.schema !== 'baton2-selected-module-artifact-v1'
       || declaration.moduleId !== sourceManifest.moduleId || declaration.moduleId !== manifest.moduleId
       || declaration.protocolVersion !== '2' || sourceManifest.protocolVersion !== '2'
       || manifest.protocolVersion !== '2') return refusal('selectedModuleMetadataMismatch');

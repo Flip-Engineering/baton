@@ -30,6 +30,14 @@ test('selected provider accepts the exact v2 invocation value and retains empty 
   assert.equal(result.invocation.incarnation, '');
 });
 
+test('selected provider preserves null role and incarnation values from the canonical frame', () => {
+  const frame = invocation({ role: null, incarnation: null });
+  const result = validateInvocation(frame);
+  assert.equal(result.status, 'accepted');
+  assert.equal(result.invocation.role, null);
+  assert.equal(result.invocation.incarnation, null);
+});
+
 test('selected provider refuses malformed and incomplete invocation frames', () => {
   assert.deepEqual(validateInvocation(invocation({ version: 1 })), { status: 'refused', reason: 'invocationVersion', detail: null });
   assert.deepEqual(validateInvocation(invocation({ moduleBinding: '{"id":"bend2"}' })), { status: 'refused', reason: 'moduleBindingKind', detail: null });

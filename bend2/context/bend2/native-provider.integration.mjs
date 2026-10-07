@@ -50,6 +50,11 @@ assert.equal(completed.payload.session.identity, target);
 assert.equal(completed.payload.retainedReadSet.status, 'sealed');
 assert.ok(completed.payload.retainedReadSet.descriptors.some((entry) => entry.real === target && /^[0-9a-f]{64}$/.test(entry.sha256)));
 
+const nullRole = await invokeSourceAnalysis(invocation({ role: null, incarnation: null }), { cwd: worktree, packageRoot });
+assert.equal(nullRole.type, 'event');
+assert.equal(nullRole.role, null);
+assert.equal(nullRole.incarnation, null);
+
 const installedPrefix = mkdtempSync(join(tmpdir(), 'baton2-provider-install-'));
 try {
   const installedWrapper = join(installedPrefix, 'libexec/baton2/context-provider.mjs');
@@ -62,6 +67,10 @@ try {
   assert.equal(installed.type, 'event');
   assert.equal(installed.query, 'integration-query-1');
   assert.equal(installed.owner, 'integration-owner-1');
+  const installedNullRole = await runSelectedInvocation(invocation({ role: null, incarnation: null }), { wrapperPath: installedWrapper });
+  assert.equal(installedNullRole.type, 'event');
+  assert.equal(installedNullRole.role, null);
+  assert.equal(installedNullRole.incarnation, null);
   const staleBinding = { ...binding, declarationDigest: '0'.repeat(64) };
   const stale = await runSelectedInvocation(invocation({ moduleBinding: staleBinding,
     operationPlan: [{ binding: staleBinding, common: 'sourceAnalysis', dependencies: [] }] }),
