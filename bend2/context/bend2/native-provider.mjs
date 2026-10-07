@@ -23,6 +23,11 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+function runtimeIdentity() {
+  const executable = realpathSync(process.execPath);
+  return `${executable};node=${process.versions.node};sha256=${sha256(readFileSync(executable))}`;
+}
+
 function refusal(reason, detail = null) {
   return Object.freeze({ status: 'refused', reason, detail });
 }
@@ -209,7 +214,7 @@ function lazyAcquisition({ reader, owner, basePath }) {
 
 function eventFrame(invocation, payload) {
   return Object.freeze({ version: 2, query: invocation.query, owner: invocation.owner,
-    moduleBinding: invocation.moduleBinding, runtime: null, role: invocation.role,
+    moduleBinding: invocation.moduleBinding, runtime: runtimeIdentity(), role: invocation.role,
     incarnation: invocation.incarnation, sequence: '1', type: 'event', payload });
 }
 

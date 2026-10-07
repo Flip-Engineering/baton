@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { invokeSourceAnalysis } from './native-provider.mjs';
@@ -40,6 +40,7 @@ assert.equal(completed.type, 'event');
 assert.equal(completed.version, 2);
 assert.equal(completed.query, 'integration-query-1');
 assert.equal(completed.owner, 'integration-owner-1');
+assert.equal(completed.runtime, `${realpathSync(process.execPath)};node=${process.versions.node};sha256=${createHash('sha256').update(readFileSync(realpathSync(process.execPath))).digest('hex')}`);
 assert.equal(completed.role, '');
 assert.equal(completed.incarnation, '');
 assert.deepEqual(completed.moduleBinding, binding);
@@ -67,6 +68,7 @@ try {
   assert.equal(installed.type, 'event');
   assert.equal(installed.query, 'integration-query-1');
   assert.equal(installed.owner, 'integration-owner-1');
+  assert.equal(installed.runtime, completed.runtime);
   const installedNullRole = await runSelectedInvocation(invocation({ role: null, incarnation: null }), { wrapperPath: installedWrapper });
   assert.equal(installedNullRole.type, 'event');
   assert.equal(installedNullRole.role, null);
