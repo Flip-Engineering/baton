@@ -125,18 +125,32 @@ def run_started(db: String, reader: String, url: String, spawned: Result<&1,&1,U
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
         serve(db,reader,url,handle,first)
 
-def run_body(db: String, subject: String, +reader: String, +port: String, +canonical: String) -> IO(Unit):
+def node_or_die(node: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match node:
+    case Done{+path}: IO.pure(String,path)
+    case Fail{error}:
+      IO.die(String,2,"Node is required to serve the Orchestra live view (the server uses node:sqlite); add Node 22 or newer to PATH: " ++ error_text(error))
+
+def run_body(subject: String, +reader: String, +port: String, +canonical: String) -> IO(Unit):
   do IO<Unit>:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
-    node : String <- IO.try(String,Host.Control.command("node"))
+    found : Result<&1,&1,U32 & String,String> <- Host.Control.command("node")
+    node : String <- node_or_die(found)
     server : String <- resolve_server(executable)
     spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([node,server,"--database",canonical,"--reader",reader,"--subject",subject,"--host","127.0.0.1","--port",port]),".",canonical ++ ".view.stderr")
     run_started(canonical,reader,"http://127.0.0.1:" ++ port ++ "/",spawned)
 
+def canonical_or_die(+db: String, canonical: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match canonical:
+    case Done{+path}: IO.pure(String,path)
+    case Fail{error}:
+      IO.die(String,2,"The coordinator database cannot be resolved (" ++ db ++ "): " ++ error_text(error))
+
 def run(+db: String, subject: String, reader: String, port: String) -> IO(Unit):
   do IO<Unit>:
-    canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
-    run_body(db,subject,reader,port,canonical)
+    found : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(db)
+    canonical : String <- canonical_or_die(db,found)
+    run_body(subject,reader,port,canonical)
 
 # The entry serves the canonical database under the declared reader: it resolves the
 # installed server beside the executable, spawns it bound to loopback with the durable
@@ -147,8 +161,9 @@ law view_run_serves_the_canonical_database_under_the_declared_reader:
   for reader: String
   for port: String
   {run(db,subject,reader,port) == (do IO<Unit>:
-    canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
-    run_body(db,subject,reader,port,canonical)) : IO(Unit)}
+    found : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(db)
+    canonical : String <- canonical_or_die(db,found)
+    run_body(subject,reader,port,canonical)) : IO(Unit)}
 
 def view_run_serves_the_canonical_database_under_the_declared_reader(db,subject,reader,port):
   {==}
