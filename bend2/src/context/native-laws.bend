@@ -114,8 +114,7 @@ law installed_declaration_adapter_refuses_an_empty_path_suffix:
       J.Jarr{
         NativeDeclarationLaws.obj(
           NativeDeclarationLaws.obj_pair("kind", J.Jstr{"pathSuffix"},
-            NativeDeclarationLaws.obj_pair("value", J.Jstr{""}, J.Jnil{})),
-          J.Jnil{}),
+            NativeDeclarationLaws.obj_pair("value", J.Jstr{""}, J.Jnil{}))),
         J.Jnil{}}), "d1") ==
       NativeDeclaration.DeclarationRefused{"nativeModuleDeclaration"} : NativeDeclaration.DeclarationDecode}
 
