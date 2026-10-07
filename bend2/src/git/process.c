@@ -15,12 +15,14 @@
 // size = output length, made = kind * 1000 + status number, code = errno.
 
 #include <errno.h>
+#include <fcntl.h>
 #include <spawn.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 extern char** environ;
@@ -60,7 +62,7 @@ static void git_proc_free_argv(char** argv) {
   free(argv);
 }
 
-static void git_proc_call(IoWork* w) {
+static void git_proc_call_with_stderr(IoWork* w, int stderr_fd) {
   char** argv = (char**)w->hand;
   char* cwd = w->text;
   int fds[2];
@@ -72,6 +74,7 @@ static void git_proc_call(IoWork* w) {
   posix_spawn_file_actions_init(&acts);
   posix_spawn_file_actions_addclose(&acts, fds[0]);
   posix_spawn_file_actions_adddup2(&acts, fds[1], 1);
+  if (stderr_fd >= 0) posix_spawn_file_actions_adddup2(&acts, stderr_fd, 2);
   posix_spawn_file_actions_addclose(&acts, fds[1]);
   posix_spawn_file_actions_addchdir_np(&acts, cwd);
   pid_t pid = -1;
@@ -117,6 +120,10 @@ static void git_proc_call(IoWork* w) {
   }
 }
 
+static void git_proc_call(IoWork* w) {
+  git_proc_call_with_stderr(w, -1);
+}
+
 static Term git_proc_pack(Env e, IoWork* w) {
   Term r;
   if (w->code) {
@@ -159,4 +166,104 @@ static void __attribute__((constructor)) process_run_use(void) {
   io_eff(CID_PROCESS_RUN, process_run_run, 0);
 }
 
+#endif
+
+#ifdef CID_PROCESS_CAPTURE
+/* Capture stderr in an unlinked file so both streams are complete without
+   blocking one pipe while the other fills. Legacy Process.run inherits stderr. */
+typedef struct {
+  IoWork process;
+  char *diagnostic;
+  size_t diagnostic_size;
+} GitCapture;
+
+static void git_capture_call(IoWork *w) {
+  GitCapture *capture = (GitCapture *)w->data;
+  FILE *diagnostic = tmpfile();
+  if (!diagnostic) { capture->process.code = errno; return; }
+  if (fcntl(fileno(diagnostic), F_SETFD, FD_CLOEXEC) < 0) {
+    capture->process.code = errno; fclose(diagnostic); return;
+  }
+  git_proc_call_with_stderr(&capture->process, fileno(diagnostic));
+  if (fseek(diagnostic, 0, SEEK_END) != 0) {
+    if (!capture->process.code) capture->process.code = errno;
+  } else {
+    long size = ftell(diagnostic);
+    if (size < 0 || fseek(diagnostic, 0, SEEK_SET) != 0) {
+      if (!capture->process.code) capture->process.code = errno;
+    } else {
+      capture->diagnostic = malloc((size_t)size + 1);
+      if (!capture->diagnostic) {
+        if (!capture->process.code) capture->process.code = ENOMEM;
+      } else {
+        capture->diagnostic_size = fread(capture->diagnostic, 1, (size_t)size, diagnostic);
+        capture->diagnostic[capture->diagnostic_size] = 0;
+        if (ferror(diagnostic) && !capture->process.code) capture->process.code = errno ? errno : EIO;
+      }
+    }
+  }
+  fclose(diagnostic);
+}
+
+static Term git_capture_pack(Env e, IoWork *w) {
+  GitCapture *capture = (GitCapture *)w->data;
+  IoWork *p = &capture->process;
+  Term result;
+  if (p->code) {
+    result = io_fail(e, p->code, capture->diagnostic_size ? capture->diagnostic : NULL);
+  } else {
+    char head[32];
+    int n = snprintf(head, sizeof(head), p->made / 1000 == GIT_PROC_KIND_EXIT ? "exit %d\n" : "signal %d\n", (int)(p->made % 1000));
+    char *out = io_mem(malloc((size_t)n + p->size));
+    memcpy(out, head, (size_t)n);
+    memcpy(out + n, p->data, p->size);
+    result = io_done(e, io_tup(e, io_str(e, out, (size_t)n + p->size), io_str(e, capture->diagnostic ? capture->diagnostic : "", capture->diagnostic_size)));
+    free(out);
+  }
+  git_proc_free_argv((char **)p->hand);
+  free(p->text); free(p->data); free(capture->diagnostic); free(capture);
+  w->data = NULL;
+  return result;
+}
+
+static Term git_capture_run(Env e, Term *f, IoWork *w) {
+  GitCapture *capture = calloc(1, sizeof(*capture));
+  if (!capture) return io_fail(e, ENOMEM, NULL);
+  u64 args_n = 0, cwd_n = 0;
+  char *args = io_cstr(e, f[0], &args_n);
+  capture->process.text = io_cstr(e, f[1], &cwd_n);
+  if (strlen(args) != args_n || strlen(capture->process.text) != cwd_n) {
+    free(args); free(capture->process.text); free(capture);
+    return io_fail(e, EINVAL, "process arguments or directory contain NUL");
+  }
+  capture->process.hand = (intptr_t)git_proc_parse_argv(args);
+  free(args);
+  capture->process.word = 65536;
+  capture->process.data = io_mem(malloc(capture->process.word));
+  w->data = (char *)capture;
+  return io_work(w, git_capture_call, git_capture_pack);
+}
+
+static void __attribute__((constructor)) git_capture_use(void) {
+  io_eff(CID_PROCESS_CAPTURE, git_capture_run, 0);
+}
+#endif
+
+#ifdef CID_PROCESS_PATH_EXISTS
+static void git_path_call(IoWork *w) {
+  struct stat status;
+  if (lstat(w->text, &status) == 0) w->made = 1;
+  else if (errno != ENOENT) w->code = errno;
+}
+static Term git_path_pack(Env e, IoWork *w) {
+  Term answer = w->code ? io_fail(e, w->code, NULL) : io_done(e, term_pak(w->made ? CID_TRUE : CID_FALSE, 0));
+  free(w->text); return answer;
+}
+static Term git_path_run(Env e, Term *f, IoWork *w) {
+  u64 n = 0;
+  w->text = io_cstr(e, f[0], &n); w->code = 0; w->made = 0;
+  if (strlen(w->text) != n) {free(w->text); return io_fail(e, EINVAL, "path contains NUL");}
+  return io_work(w, git_path_call, git_path_pack);
+}
+static void __attribute__((constructor)) git_path_use(void) {io_eff(CID_PROCESS_PATH_EXISTS, git_path_run, 0);}
 #endif
