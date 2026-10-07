@@ -275,14 +275,19 @@ def optional_output(argv):
 def toolchain_identity(cc):
     """Full C/Xcode/SDK toolchain identity for identical package qualification.
 
-    A bare C version alone loses material identity. Install paths and runner
-    names are provenance only; the compared identity is versions and the Xcode
-    directory, which are image-level on qualified runners. Xcode and SDK
-    entries are absent off Darwin.
+    A bare C version alone loses material identity. Only versions are
+    compared: install paths and runner names are provenance, recorded in the
+    receipt environment and producer block but never compared, so differing
+    Xcode installations on otherwise identical runners still assemble. Xcode
+    and SDK versions are absent off Darwin.
     """
     return {'cc_version': cc_version(cc),
-            'xcode_directory': optional_output(['xcode-select', '-p']),
+            'xcode_version': optional_output(['xcodebuild', '-version']),
             'sdk_version': optional_output(['xcrun', '--show-sdk-version'])}
+
+
+def toolchain_provenance():
+    return {'xcode_directory': optional_output(['xcode-select', '-p'])}
 
 
 def run_one_gate(gate_name, compiler, env, output, initial):
@@ -315,7 +320,8 @@ def run_one_gate(gate_name, compiler, env, output, initial):
     receipt = {'gate': gate_name, 'status': 'running', 'worktree': str(ROOT),
                'output': str(output), 'log': gate_name + '.log',
                'before': snapshot(),
-               'environment': {'BEND': str(compiler), 'BEND_NO_TELEMETRY': '1', 'CC': cc},
+               'environment': {'BEND': str(compiler), 'BEND_NO_TELEMETRY': '1', 'CC': cc,
+                               **toolchain_provenance()},
                'compiler_sha256': sha256(compiler),
                'compiler_version': bend_version(compiler),
                'compiler_arch': platform.machine(),

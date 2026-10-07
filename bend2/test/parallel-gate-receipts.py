@@ -63,9 +63,12 @@ class Receipts(unittest.TestCase):
         self.addCleanup(setattr, PACKAGE, 'bend_version', self.previous_bend_version)
         self.previous_toolchain_identity = PACKAGE.toolchain_identity
         PACKAGE.toolchain_identity = lambda cc: {'cc_version': 'fake-cc 1.0',
-                                                 'xcode_directory': '/fake/Xcode.app/Contents/Developer',
+                                                 'xcode_version': 'Xcode 16.4\nBuild version 16F6',
                                                  'sdk_version': '26.0'}
         self.addCleanup(setattr, PACKAGE, 'toolchain_identity', self.previous_toolchain_identity)
+        self.previous_toolchain_provenance = PACKAGE.toolchain_provenance
+        PACKAGE.toolchain_provenance = lambda: {'xcode_directory': '/fake/Xcode.app/Contents/Developer'}
+        self.addCleanup(setattr, PACKAGE, 'toolchain_provenance', self.previous_toolchain_provenance)
         saved = {key: os.environ.pop(key) for key in GITHUB_KEYS if key in os.environ}
         self.addCleanup(os.environ.update, saved)
 
@@ -114,7 +117,7 @@ class Receipts(unittest.TestCase):
             'compiler_version': 'bend 2.0.25',
             'compiler_arch': platform.machine(),
             'toolchain': {'cc_version': 'fake-cc 1.0',
-                          'xcode_directory': '/fake/Xcode.app/Contents/Developer',
+                          'xcode_version': 'Xcode 16.4\nBuild version 16F6',
                           'sdk_version': '26.0'},
             'runner_sha256': PACKAGE.sha256(pathlib.Path(PACKAGE.__file__)),
             'producer': producer,
@@ -282,12 +285,39 @@ class Receipts(unittest.TestCase):
 
         def mutate(summary, directory):
             summary['toolchain'] = {'cc_version': 'other-cc 2.0',
-                                    'xcode_directory': '/fake/Xcode.app/Contents/Developer',
+                                    'xcode_version': 'Xcode 16.4\nBuild version 16F6',
                                     'sdk_version': '26.0'}
 
         self.write_receipt(receipts, 'build-native', mutate=mutate)
         with self.assertRaises(RuntimeError):
             self.assemble(receipts)
+
+    def test_xcode_version_mismatch_rejected(self):
+        receipts = self.home / 'receipts'
+        receipts.mkdir()
+        self.complete_set(receipts)
+
+        def mutate(summary, directory):
+            summary['toolchain'] = {'cc_version': 'fake-cc 1.0',
+                                    'xcode_version': 'Xcode 15.0\nBuild version 15A240d',
+                                    'sdk_version': '26.0'}
+
+        self.write_receipt(receipts, 'laws-check', mutate=mutate)
+        with self.assertRaises(RuntimeError):
+            self.assemble(receipts)
+
+    def test_differing_install_paths_accepted(self):
+        receipts = self.home / 'receipts'
+        receipts.mkdir()
+        self.complete_set(receipts)
+
+        def mutate(summary, directory):
+            summary['environment']['BEND'] = '/elsewhere/toolchain-home/bin/bend'
+            summary['environment']['XCODE_DIRECTORY'] = '/elsewhere/Xcode.app/Contents/Developer'
+
+        self.write_receipt(receipts, 'check-native', mutate=mutate)
+        _, summary = self.assemble(receipts)
+        self.assertEqual(len(summary['stages']), len(PACKAGE.GATE_NAMES))
 
     def test_sdk_identity_mismatch_rejected(self):
         receipts = self.home / 'receipts'
@@ -296,7 +326,7 @@ class Receipts(unittest.TestCase):
 
         def mutate(summary, directory):
             summary['toolchain'] = {'cc_version': 'fake-cc 1.0',
-                                    'xcode_directory': '/fake/Xcode.app/Contents/Developer',
+                                    'xcode_version': 'Xcode 16.4\nBuild version 16F6',
                                     'sdk_version': '25.0'}
 
         self.write_receipt(receipts, 'check-native', mutate=mutate)
