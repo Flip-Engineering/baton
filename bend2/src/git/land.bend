@@ -1120,17 +1120,16 @@ def ld_adv_update(repo: String, target: String, cand: String, basis: String) -> 
     g : T.GitOut <- Git.runGit(r2, ld_update_argv(t2, c2, b2))
     IO.pure(Ld, ld_update_pick(g, t2, c2))
 
-def ld_adv_same(same: Bool, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+def ld_adv_same(same: Bool, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
   match same:
-    case False{}: IO.pure(LAdv, AdvMoved{})
+    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvMoved{}))
     case True{}:
       +r2 = repo
       +t2 = target
-      do IO<LAdv>:
+      do IO<LdAdvObs>:
         gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
-        ld_adv_holder(ld_hold_read(gl, t2), r2, t2, cand, basis)
-
-
+        ld_adv_holder(ld_hold_read(gl, t2), r2, t2, cand, basis, cx)
 def ld_hold_ref(target: String) -> String:
   Tx.str_cat("refs/heads/", target)
 
@@ -1225,18 +1224,15 @@ def ld_adv_cas(g: T.GitOut) -> LAdv:
     case T.GRun{code, out}: Bool.pick(LAdv, U32.is_eq(code, 0), AdvLanded{}, AdvRefused{})
     case T.GBroken{detail}: AdvBroken{detail}
 
-def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +r2 = repo
   +t2 = target
   +c2 = cand
   +b2 = basis
-  do IO<LAdv>:
-    g : T.GitOut <- Git.runGit(r2, ld_update_argv(t2, c2, b2))
-    IO.pure(LAdv, ld_adv_cas(g))
-
-# A refused fast-forward of a target that still reads as the basis is that
-# worktree's own state: uncommitted changes in the way, or an unfinished
-# operation. A target that no longer reads as the basis moved instead.
+  +cx = ctx
+  do IO<LdAdvObs>:
+    capture : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", ld_update_argv(t2, c2, b2)}), r2, cx.claim, cx.guard, cx.artifact)
+    IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(ld_adv_status(capture)), capture))
 def ld_adv_refused_same(same: Bool, path: String) -> LAdv:
   match same:
     case True{}: AdvHeld{path}
@@ -1250,22 +1246,14 @@ def ld_adv_refused_pick(g: T.GitOut, path: String, basis: String) -> LAdv:
         AdvBroken{"the target commit could not be read after a refused fast-forward"})
     case T.GBroken{detail}: AdvBroken{detail}
 
-def ld_adv_wt_refused(path: String, repo: String, target: String, basis: String) -> IO(LAdv):
+def ld_adv_wt_refused(path: String, repo: String, target: String, basis: String, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
   +p2 = path
   +r2 = repo
   +b2 = basis
-  do IO<LAdv>:
+  +cp = capture
+  do IO<LdAdvObs>:
     g : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(target))
-    IO.pure(LAdv, ld_adv_refused_pick(g, p2, b2))
-
-# A successful held merge is observed at the local target ref and at the
-# worktree's current symbolic HEAD before it can answer landed. The preflight
-# checks both again after worktree discovery, so an already-visible branch
-# change does not reuse a stale holder path. Git provides no atomic CLI
-# operation that pins symbolic HEAD across the final identity check and merge.
-# A switch in that interval can still direct Git's merge to another branch;
-# post-operation reads refuse a landed answer if the holder or target changed,
-# but they cannot roll back that concurrent side effect.
+    IO.pure(LdAdvObs, ld_adv_with(ld_adv_refused_pick(g, p2, b2), cp))
 def ld_adv_wt_observed(target_matches: Bool, holder_matches: Bool, path: String) -> LAdv:
   match target_matches:
     case False{}: AdvMoved{}
@@ -1303,6 +1291,18 @@ def ld_adv_wt_observed_target_pick(g: T.GitOut, path: String, target: String, ca
 
 # Read the exact target ref after the held fast-forward and require its tip to
 # remain the source candidate before checking which branch the holder has now.
+def ld_adv_of(obs: LdAdvObs) -> LAdv:
+  +o = obs
+  match o:
+    case LdAdvNoCapture{advance}: advance
+    case LdAdvCaptured{advance, capture}: advance
+
+def ld_adv_wt_observe_wrapped(path: String, repo: String, target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
+  +cp = capture
+  do IO<LdAdvObs>:
+    inner : LAdv <- ld_adv_wt_observe(path, repo, target, cand)
+    IO.pure(LdAdvObs, ld_adv_with(inner, cp))
+
 def ld_adv_wt_observe(path: String, repo: String, target: String, cand: String) -> IO(LAdv):
   +p2 = path
   +r2 = repo
@@ -1312,7 +1312,9 @@ def ld_adv_wt_observe(path: String, repo: String, target: String, cand: String) 
     target_tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
     ld_adv_wt_observed_target_pick(target_tip, p2, t2, c2)
 
-def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
+  +cx = ctx
+  +cp = capture
   match g:
     case T.GRun{code, out}:
       +p2 = path
@@ -1320,103 +1322,116 @@ def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand
       +t2 = target
       +c2 = cand
       +b2 = basis
-      Bool.pick(IO(LAdv), U32.is_eq(code, 0),
-        ld_adv_wt_observe(p2, r2, t2, c2),
-        ld_adv_wt_refused(p2, r2, t2, b2))
-    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
-
-def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+      Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
+        ld_adv_wt_observe_wrapped(p2, r2, t2, c2, cp),
+        ld_adv_wt_refused(p2, r2, t2, b2, cp))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(AdvBroken{detail}, cp))
+def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
   match same:
-    case False{}: IO.pure(LAdv, AdvHolderChanged{path})
+    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvHolderChanged{path}))
     case True{}:
       +p2 = path
       +r2 = repo
       +t2 = target
       +c2 = cand
       +b2 = basis
-      do IO<LAdv>:
-        merged : T.GitOut <- Git.runGit(p2, ["merge", "--ff-only", c2])
-        ld_adv_wt_pick(merged, p2, r2, t2, c2, b2)
-
-def ld_adv_wt_head_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+      do IO<LdAdvObs>:
+        capture : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"merge", Con{"--ff-only", Con{c2, Nil{}}}}}), p2, cx.claim, cx.guard, cx.artifact)
+        ld_adv_wt_pick(ld_adv_status(capture), p2, r2, t2, c2, b2, cx, capture)
+def ld_adv_wt_head_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
   match g:
     case T.GRun{code, out}:
       +t2 = target
       +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(Bool, status_ok,
-        Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(t2)), False{})
-      ld_adv_wt_head_same(same, path, repo, t2, cand, basis)
-    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
-
-def ld_adv_wt_target_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(t2)), False{})
+      ld_adv_wt_head_same(same, path, repo, t2, cand, basis, cx)
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
+def ld_adv_wt_target_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
   match same:
-    case False{}: IO.pure(LAdv, AdvMoved{})
+    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvMoved{}))
     case True{}:
       +p2 = path
       +r2 = repo
       +t2 = target
       +c2 = cand
       +b2 = basis
-      do IO<LAdv>:
+      do IO<LdAdvObs>:
         holder : T.GitOut <- Git.runGit(p2, ld_head_argv())
-        ld_adv_wt_head_pick(holder, p2, r2, t2, c2, b2)
-
-def ld_adv_wt_target_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+        ld_adv_wt_head_pick(holder, p2, r2, t2, c2, b2, cx)
+def ld_adv_wt_target_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
   match g:
     case T.GRun{code, out}:
       +b2 = basis
       +status_ok = U32.is_eq(code, 0)
       +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), b2), False{})
-      ld_adv_wt_target_same(same, path, repo, target, cand, b2)
-    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
-
-
-def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+      ld_adv_wt_target_same(same, path, repo, target, cand, b2, cx)
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
+def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +p2 = path
   +r2 = repo
   +t2 = target
   +c2 = cand
   +b2 = basis
-  do IO<LAdv>:
+  +cx = ctx
+  do IO<LdAdvObs>:
     target_tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
-    ld_adv_wt_target_pick(target_tip, p2, r2, t2, c2, b2)
-# The advance of a target no worktree holds, and of one a worktree holds.
-def ld_adv_holder(hold: LdHold, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+    ld_adv_wt_target_pick(target_tip, p2, r2, t2, c2, b2, cx)
+def ld_adv_holder(hold: LdHold, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
   match hold:
-    case HoldNone{}: ld_adv_cas_run(repo, target, cand, basis)
-    case HoldPath{path}: ld_adv_wt(path, repo, target, cand, basis)
-    case HoldBlocked{detail}: IO.pure(LAdv, AdvBroken{detail})
-
+    case HoldNone{}: ld_adv_cas_run(repo, target, cand, basis, cx)
+    case HoldPath{path}: ld_adv_wt(path, repo, target, cand, basis, cx)
+    case HoldBlocked{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
 def ld_adv_holder_changed_text(target: String, path: String) -> String:
   "the worktree at " ++ path ++ " changed away from target branch " ++ target ++ " during landing; inspect the target and worktree before retrying"
 
 # The holder is read only for a target that still reads as the basis, so a
 # moved target answers the movement before any worktree is touched.
-def ld_adv_pick(g: T.GitOut, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+def ld_adv_pick(g: T.GitOut, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
   match g:
     case T.GRun{code, out}:
       +b2 = basis
-      Bool.pick(IO(LAdv), U32.is_eq(code, 0),
-        ld_adv_same(Tx.str_eq(Tx.trim_nl(out), b2), repo, target, cand, b2),
-        IO.pure(LAdv, AdvBroken{"the target commit could not be read before publication"}))
-    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
+      Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
+        ld_adv_same(Tx.str_eq(Tx.trim_nl(out), b2), repo, target, cand, b2, cx),
+        IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{"the target commit could not be read before publication"})))
+    case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
+def ld_adv_wrap(advance: LAdv) -> LdAdvObs:
+  +a = advance
+  LdAdvNoCapture{a}
 
-# The advance: read the target tip, then move the branch only while it still
-# reads as the basis the candidate was checked against. The tip read is what
-# refuses a branch nobody holds that moved since the candidate was prepared,
-# and what keeps the update-ref compare-and-swap honest.
-def ld_adv_run(repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+def ld_adv_with(advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>) -> LdAdvObs:
+  +a = advance
+  +c = capture
+  LdAdvCaptured{a, c}
+
+def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
+  +c = capture
+  match c:
+    case Fail{error}:
+      match error:
+        case (code, detail): T.GBroken{detail}
+    case Done{pair}:
+      match pair:
+        case (framing, diagnostics):
+          match Tx.run_res(Done{framing}):
+            case T.RRun{T.SExit{code}, out}: T.GRun{code, out}
+            case T.RRun{T.SSignal{num}, out}: T.GBroken{"the mutation signalled"}
+            case T.RSpawn{detail}: T.GBroken{detail}
+
+def ld_adv_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +r2 = repo
   +t2 = target
   +c2 = cand
   +b2 = basis
-  do IO<LAdv>:
+  +cx = ctx
+  do IO<LdAdvObs>:
     g : T.GitOut <- Git.runGit(r2, ld_tip_argv(t2))
-    ld_adv_pick(g, r2, t2, c2, b2)
-
-# What a refused fast-forward of a held target answers. Git's own message for
-# the refusal is in the coordinator log; the answer names the worktree and the
-# operation that resolves it.
+    ld_adv_pick(g, r2, t2, c2, b2, cx)
 def ld_adv_held_text(target: String, path: String) -> String:
   "the target branch " ++ target ++ " is checked out at " ++ path ++ "; the fast-forward into that worktree was refused (git's own message is in the coordinator log); commit or stash that worktree's changes, or repair the worktree, and "
 
@@ -2073,7 +2088,7 @@ type SharedLanding is Data:
   SharedGuardBusy{target: String}
   SharedStepFailed{step: String, error: U32 & String, released: Result<U32 & String, Unit>}
   SharedStepRecordFailed{step: String, record: String, released: Result<U32 & String, Unit>}
-  SharedAdvanced{advance: LAdv, released: Result<U32 & String, Unit>, guard: String, reserved: String}
+  SharedAdvanced{obs: LdAdvObs, released: Result<U32 & String, Unit>, guard: String, reserved: String}
 
 def shared_parent_path(directory: String, name: String) -> String:
   +d = directory
@@ -2112,10 +2127,11 @@ def shared_reserved_continue(handle: U32, repo: String, target: String, cand: St
   +b = basis
   +gd = guard
   +rv = reserved
+  +cx = LdAdvContext{h, gd, shared_parent_path(rv, "stderr")}
   do IO<SharedLanding>:
-    a : LAdv <- ld_adv_run(rp, tg, c, b)
+    o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
     released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
-    IO.pure(SharedLanding, SharedAdvanced{a, released, gd, rv})
+    IO.pure(SharedLanding, SharedAdvanced{o, released, gd, rv})
 
 # One self-recursive reservation helper. A collision grows the suffix by one character and tries
 # again under the same held claim, so there is no fixed retry cap: the only refusals are a real
@@ -2303,12 +2319,12 @@ def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String)
       match error:
         case (code, detail): FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " failed: "), detail)}}
     case SharedStepRecordFailed{step, record, released}: FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " refused: "), record)}}
-    case SharedAdvanced{advance, released, guard, reserved}:
+    case SharedAdvanced{obs, released, guard, reserved}:
       match released:
         case Fail{error}:
           match error:
             case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", detail)}}
-        case Done{unit}: ff_stage5_adv_answer(advance, tg, c)
+        case Done{unit}: ff_stage5_adv_answer(ld_adv_of(obs), tg, c)
 
 def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String) -> Ld:
   +s = shared
@@ -2324,9 +2340,9 @@ def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String
       match error:
         case (code, detail): LdFail{T.FCmd{"land", detail}}
     case SharedStepRecordFailed{step, record, released}: LdFail{T.FCmd{"land", record}}
-    case SharedAdvanced{advance, released, guard, reserved}:
+    case SharedAdvanced{obs, released, guard, reserved}:
       match released:
         case Fail{error}:
           match error:
             case (code, detail): LdFail{T.FCmd{"land", detail}}
-        case Done{unit}: ld_adv_answer(advance, tg, c)
+        case Done{unit}: ld_adv_answer(ld_adv_of(obs), tg, c)
