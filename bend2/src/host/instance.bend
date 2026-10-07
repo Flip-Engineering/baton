@@ -45,6 +45,12 @@ def Instance.commit(handle: U32, schema: U32, state: String) -> IO(Result<&1,&1,
 def Instance.restore(handle: U32, schema: U32) -> IO(Result<&1,&1,U32 & String,String>):
   import "./process-spawn.c"
 
+# Rewinds this admitted reader to the beginning after its own decode of the
+# restored state was rejected. The child, its custody and its spool are
+# untouched; the reader replays with its own deduplication.
+def Instance.replay(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
 def Instance.started(result: Result<&1,&1,U32 & String,Maybe<U32> & String>) -> Result<&1,&1,U32 & String,P.RetainedStart>:
   match result:
     case Fail{error}: Fail{error}
