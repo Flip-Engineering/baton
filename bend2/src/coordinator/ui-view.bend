@@ -13,7 +13,7 @@ import ../git/text.bend as Tx
 def drop_to_slash(s: String) -> Maybe<String>:
   match s:
     case SNil{}: None{}
-    case SCon{+head, tail}:
+    case SCon{+head, +tail}:
       Bool.pick(Maybe<String>,Char.is_eq(head,Char.from_u32(47)),Some{tail},drop_to_slash(tail))
 
 # The text before the last '/' of a path; the executable's install directory.
