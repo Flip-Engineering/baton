@@ -861,6 +861,9 @@ assert sys.stdin.read()==''
             'spool': str(stderr) + '.full'}))
         for name in ('stdout', 'native.stderr', 'observer.log', 'keeper.log'):
             (attempt_dir / name).write_text('diagnostic data for ' + name)
+        stderr_row = next(row for row in json.loads(self.call('logs-storage'))['stderrRuns']
+                          if row['stderr'] == str(stderr))
+        self.assertEqual(stderr_row['health'], 'ok', stderr_row)
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
         removed = [item for item in answer['attemptLogs'] if item.get('attempt') == attempt and item.get('path') == str(generation)]
         self.assertEqual(len(removed), 1, answer)
@@ -868,7 +871,7 @@ assert sys.stdin.read()==''
         self.assertEqual(removed[0]['path'], str(generation))
         self.assertFalse(generation.exists())
         self.assertFalse((self.cwd / (generation.name + '.pending')).exists())
-        self.assertFalse(stderr.exists())
+        self.assertFalse(stderr.exists(), answer)
         self.assertFalse(pathlib.Path(str(stderr) + '.full').exists())
         self.assertFalse(pathlib.Path(str(stderr) + '.meta').exists())
         self.assertFalse(self.base_log.exists())
