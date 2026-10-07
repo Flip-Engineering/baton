@@ -1,5 +1,6 @@
 """Native inbox delivery with controlled harness processes and real coordinator state."""
 import fcntl
+import glob
 import json
 import os
 import pathlib
@@ -1766,19 +1767,34 @@ class Receive(unittest.TestCase):
         self.assertEqual(taken[2:], ('owed', taken[3]))
         self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
 
-    def test_wake_behind_a_live_claim_and_attempt_stands_down_without_reclaiming(self):
-        """Two-driver launch handoff: with a live owner's claim row and a live
-        retained attempt, a second admission's wake reads both under the lock
-        and stands down, so the row keeps its owner and generation and no
-        second launch rewrites the obligation."""
+    def test_wake_behind_an_unreaped_attempt_stands_down_without_reclaiming(self):
+        """Two-driver launch handoff: with a claimed obligation whose recorded
+        attempt was never reaped, host custody stays ambiguous — launch
+        markers without terminal marks — so a second admission's wake stands
+        down even though the execution phase still reads running. The row
+        keeps its owner and generation and no second launch rewrites the
+        obligation. A bare phase value never proves custody."""
         self.player()
         self.message('first', 'parent')
-        self.claim('parent', 'claimed', 'first', 4)
-        with sqlite3.connect(str(self.db)) as database:
-            database.execute("INSERT INTO executions(session, id, mode, directory, phase, status)"
-                             " VALUES ('parent', 'live-1', 'direct', '/tmp', 'running', '')")
+        first = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.assertIn('[id: first]', started['prompt'])
         before = self.claim_rows('parent')
-        self.assertEqual(before, [('parent', 'claimed', 'first', 4)])
+        self.assertEqual(len(before), 1)
+        self.assertEqual(before[0][2], 'first')
+        self.freeze_owned()
+        first.kill()
+        first.wait(timeout=15)
+        self.kill_fixture()
+        self.kill_keeper(first)
+        self.drain_owned()
+        directory = self.execution('parent')[2]
+        self.assertTrue(os.path.isfile(os.path.join(directory, 'manifest')))
+        self.assertTrue(os.path.isfile(os.path.join(directory, 'launch')))
+        self.assertFalse(os.path.exists(os.path.join(directory, 'acknowledged')),
+                         'keeper recovered the killed observer before it died')
+        self.assertFalse(os.path.exists(os.path.join(directory, 'status')),
+                         'keeper reaped the killed native before it died')
         self.message('second', 'parent')
         self.assert_no_start()
         self.assertEqual(self.claim_rows('parent'), before)
@@ -1796,6 +1812,85 @@ class Receive(unittest.TestCase):
                     os.kill(int(fields[0]), signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+
+    def freeze_owned(self, spare_fixture=False):
+        """SIGSTOP run processes so a killed observer cannot be recovered
+        before the keepers die. The keeper reaps a dead observer within
+        milliseconds, so killing without freezing lets keeper-side recovery
+        finish first and leaves receive-side adoption nothing to adopt.
+        With spare_fixture the live native keeps running so the test can
+        still drive it while the frozen observer cannot observe."""
+        for process in self.owned_processes():
+            if spare_fixture and 'native fixture' in process['command']:
+                continue
+            try:
+                os.kill(process['pid'], signal.SIGSTOP)
+            except ProcessLookupError:
+                pass
+
+    @staticmethod
+    def spared(command):
+        """The live fixture's own command. Receivers name the fixture path
+        as an argument, keepers and recoveries supervise it: only the bare
+        fixture process itself is spared."""
+        return ('native fixture' in command
+                and 'receive parent' not in command
+                and '--host-process-keeper' not in command
+                and '--recover-receive' not in command
+                and '--dispatch-message' not in command)
+
+    def drain_others(self):
+        """Kill every run process except the live fixture and wait until
+        only it remains. A keeper-side recover orphan inherits the session
+        lock; leaving it alive lets a second driver queue vacuously
+        instead of deciding on custody."""
+        for process in self.owned_processes():
+            if self.spared(process['command']):
+                continue
+            try:
+                os.kill(process['pid'], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        self.eventually(lambda: all(self.spared(process['command'])
+                                    for process in self.run_processes()),
+                        'run strays never drained')
+
+    def assert_native_alive(self, directory, message):
+        """The recorded native is a live non-zombie process. A test about a
+        live child proves nothing if the child died unnoticed."""
+        try:
+            pid = int(pathlib.Path(directory, 'native.pid').read_text().split()[0])
+            state = pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[0]
+        except (FileNotFoundError, ValueError, IndexError):
+            self.fail(message)
+        self.assertNotEqual(state, 'Z', message)
+
+    def drain_owned(self):
+        """Kill run stragglers and wait until none hold attempt pipes. A
+        half-reaped keeper keeps the native's stdout open, so an adopter
+        would block on read instead of reaching EOF; the status file alone
+        does not prove the pipes are free. Zombies count too: an unreaped
+        native still answers liveness probes, so adoption must wait for
+        init to reap it."""
+        for process in self.owned_processes():
+            try:
+                os.kill(process['pid'], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        self.eventually(lambda: not self.run_processes(),
+                        'run processes never drained')
+
+    def run_processes(self):
+        """Every process of this run, including unreaped zombies."""
+        result = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                capture_output=True, text=True, check=True)
+        found = []
+        for line in result.stdout.splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) == 4 and str(self.directory) in fields[3]:
+                found.append({'pid': int(fields[0]), 'ppid': int(fields[1]),
+                              'status': fields[2], 'command': fields[3]})
+        return found
 
     def kill_keeper(self, leader):
         """Kill the keeper processes of this run, freeing an inherited
@@ -1842,10 +1937,15 @@ class Receive(unittest.TestCase):
                          ['first', 'second'])
 
     def test_direct_receive_recovers_a_dead_attempt_behind_a_stale_running_phase(self):
-        """Crash recovery through adoption: with the observer gone and the
-        native dead, a direct receive adopts the corpse and records its exit,
-        a later admission takes the still-owed input over with a fenced claim,
-        and a fresh turn carries it exactly once."""
+        """Crash recovery through adoption: the native completes while the
+        observer is frozen, then the observer and keepers die before the
+        observer records anything. A direct receive adopts the corpse,
+        records the completed turn from its retained output, and settles
+        the satisfied claim since the input was acknowledged. Nothing is
+        owed, so no second native starts; the single attempt carries the
+        adoption's release and acknowledgement markers. The host still
+        flags the keeperless observation unknown, so the run reports the
+        failure honestly instead of a false success."""
         self.player()
         self.message('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
@@ -1853,28 +1953,38 @@ class Receive(unittest.TestCase):
         self.assertIn('[id: first]', started['prompt'])
         before = self.claim_rows('parent')
         self.assertEqual(len(before), 1)
+        directory = self.execution('parent')[2]
+        self.freeze_owned(spare_fixture=True)
+        self.action(control, body='Adopted result complete.')
+        self.eventually(lambda: 'Adopted result complete.' in
+                        pathlib.Path(directory, 'stdout').read_text(),
+                        'driven native never wrote its completion')
         first.kill()
         first.wait(timeout=15)
-        self.kill_fixture()
         self.kill_keeper(first)
-        directory = self.execution('parent')[2]
-        self.eventually(lambda: os.path.exists(os.path.join(directory, 'status')),
-                        'keeper never reaped the killed native')
+        self.kill_fixture()
+        self.drain_owned()
+        self.assertTrue(os.path.isfile(os.path.join(directory, 'manifest')))
+        self.assertFalse(os.path.exists(os.path.join(directory, 'acknowledged')),
+                         'keeper recovered the killed observer before it died')
+        self.assertFalse(os.path.exists(os.path.join(directory, 'status')),
+                         'keeper reaped the killed native before it died')
         second = self.spawn(*self.receive_args('parent'))
-        self.finish(second, ok=False)
+        _, error = self.finish(second, ok=False)
+        self.assertIn('Native receive failed', error)
         self.assertEqual(self.execution('parent')[0], 'exited')
-        self.assertEqual(self.claim_rows('parent'), before)
-        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['first'])
-        self.message('second', 'parent')
-        taken = self.claim_rows('parent')
-        self.assertEqual(len(taken), 1)
-        self.assertEqual(taken[0][2], 'first')
-        self.assertGreater(taken[0][3], before[0][3])
-        third = self.spawn(*self.receive_args('parent'))
-        control3, started3 = self.accept('parent')
-        self.assertIn('[id: first]', started3['prompt'])
-        self.action(control3, ack=False)
-        self.finish(third)
+        self.assertEqual(self.claim_rows('parent'), [])
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
+                         ['Adopted result complete.'])
+        exits = [row for row in self.coord('inbox', 'root') if row['id'].endswith(':exit')]
+        self.assertEqual(len(exits), 1)
+        self.assertIn('unknown after keeper loss', exits[0]['body'])
+        attempts = glob.glob(str(self.directory / '*.attempt-*'))
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(self.execution('parent')[2], attempts[0])
+        self.assertTrue(os.path.isfile(os.path.join(directory, 'acknowledged')))
+        self.assertTrue(os.path.isfile(os.path.join(directory, 'released')))
+        self.assertFalse(os.path.exists(os.path.join(directory, 'status')))
 
     def test_direct_receive_behind_a_live_child_starts_no_second_turn(self):
         """A live retained child outlives its dead observer with the session
@@ -1889,9 +1999,15 @@ class Receive(unittest.TestCase):
         self.assertEqual(len(before), 1)
         first.kill()
         first.wait(timeout=15)
-        self.kill_keeper(first)
+        self.drain_others()
+        directory = self.execution('parent')[2]
+        self.assert_native_alive(directory, 'retained child died; the live-child premise is void')
         second = self.spawn(*self.receive_args('parent'))
         self.assert_no_start()
+        time.sleep(1.5)
+        self.assertIsNone(second.poll(),
+                          'direct receive exited instead of adopting the live attempt')
+        self.assert_native_alive(directory, 'retained child died during adoption')
         self.assertEqual(self.claim_rows('parent'), before)
         self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['first'])
 
@@ -1909,9 +2025,12 @@ class Receive(unittest.TestCase):
         self.assertEqual(len(before), 1)
         first.kill()
         first.wait(timeout=15)
-        self.kill_keeper(first)
+        self.drain_others()
+        directory = self.execution('parent')[2]
+        self.assert_native_alive(directory, 'retained child died; the live-child premise is void')
         self.message('second', 'parent')
         self.assert_no_start()
+        self.assert_native_alive(directory, 'retained child died during the racing wake')
         self.assertEqual(self.claim_rows('parent'), before)
         self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')],
                          ['first', 'second'])
