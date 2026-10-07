@@ -189,7 +189,7 @@ class Matrix(unittest.TestCase):
         return child
 
     def query(self, sql):
-        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+        with sqlite3.connect(str(self.db), timeout=30) as database:
             return database.execute(sql).fetchall()
 
     def recruit(self, name, harness):
@@ -257,10 +257,16 @@ class Matrix(unittest.TestCase):
                     is_baton = first.endswith('/baton2') or first == 'baton2'
                     if '--host-process-keeper' in fields[1]:
                         kind = 'keeper'
-                    elif is_baton:
-                        kind = 'coordinator'
+                    elif ' serve ' in fields[1]:
+                        kind = 'serve'
+                    elif ' receive ' in fields[1]:
+                        kind = 'receive'
+                    elif 'dispatch-message' in fields[1]:
+                        kind = 'dispatch'
                     elif 'native-fixture' in fields[1]:
                         kind = 'fixture'
+                    elif is_baton:
+                        kind = 'cli'
                     else:
                         continue
                     totals[kind] = totals.get(kind, 0) + rss
@@ -389,6 +395,69 @@ class Matrix(unittest.TestCase):
             text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         return [json.loads(line) for line in result.stdout.splitlines()]
+
+    def test_03_killed_serve_is_adopted_without_duplicate_resume(self):
+        self.recruit('w7', 'codex')
+        self.queue('w7', {'body': 'w7 adopted turn complete', 'hold_exit': True})
+        self.dispatch('t7', 'w7', 'Task surviving its first owner.')
+        self.assert_pending('t7')
+        self.receiver('w7')
+        first = self.spawn('serve', 'matrix-owner-adopt')
+        held, _ = self.stream_for('w7')
+        self.assertEqual(json.loads(held.readline()), {'terminal_written': True})
+        first.kill()
+        first.wait(timeout=10)
+        keepers = [p for p in self.owned_processes() if '--host-process-keeper' in p['command']]
+        self.assertEqual(len(keepers), 1, 'the keeper survives its coordinator')
+        self.assertEqual(self.coord('owner-status')['owner'], 'matrix-owner-adopt')
+        second = self.spawn('serve', 'matrix-owner-adopt')
+        time.sleep(3)
+        self.assertEqual(len(self.connections('w7')), 1,
+                         'adoption reuses the live native instead of resuming a duplicate')
+        self.release('w7')
+        stdout, stderr = second.communicate(timeout=90)
+        self.assertEqual(second.returncode, 0, stderr)
+        bodies = [m['body'] for m in self.inbox('root') if m['sender'] == 'w7']
+        self.assertEqual(len([b for b in bodies if 'w7 adopted turn complete' in b]), 1)
+        row = self.query("SELECT receipt FROM messages WHERE id='t7'")
+        self.assertNotEqual(row, [(None,)], 'adopted input was lost')
+        self.assertIsNone(self.coord('owner-status'))
+
+    def test_04_keeper_loss_completes_exactly_once(self):
+        self.recruit('w8', 'codex')
+        self.queue('w8', {'body': 'w8 keeper-loss turn complete', 'hold_exit': True})
+        self.receiver('w8')
+        msg = subprocess.Popen([str(EXE), str(self.db), 'message', 't8', 'root', 'w8',
+                                'task', 'Task surviving its keeper.'],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.children.append(msg)
+        held, _ = self.stream_for('w8')
+        self.assertEqual(json.loads(held.readline()), {'terminal_written': True})
+        keeper = self.eventually(
+            lambda: next((p for p in self.owned_processes()
+                          if '--host-process-keeper' in p['command']), None),
+            'no keeper for the held turn')
+        native_pid = self.connections('w8')[0]['pid']
+        os.kill(keeper['pid'], signal.SIGKILL)
+        try:
+            os.kill(native_pid, 0)
+        except ProcessLookupError:
+            self.fail('the native died with its keeper')
+        self.release('w8')
+        try:
+            msg.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            msg.kill()
+            self.fail('the surviving observer never reconciled the keeper loss')
+        bodies = [m['body'] for m in self.inbox('root') if m['sender'] == 'w8']
+        self.assertEqual(len([b for b in bodies if 'w8 keeper-loss turn complete' in b]), 1)
+        row = self.query("SELECT receipt FROM messages WHERE id='t8'")
+        self.assertNotEqual(row, [(None,)], 'keeper-loss input was lost')
+        self.ack_inbox('root')
+        serve = self.spawn('serve', 'matrix-owner-after-loss')
+        stdout, stderr = serve.communicate(timeout=60)
+        self.assertEqual(serve.returncode, 0, stderr)
+        self.assertIsNone(self.coord('owner-status'))
 
     def test_05_stopped_session_keeps_input_unexecuted(self):
         self.recruit('w4', 'codex')
@@ -524,8 +593,10 @@ class Matrix(unittest.TestCase):
 
         direct_wall, direct_count = self.arm('direct', direct)
         served_wall, served_count = self.arm('served', served)
-        self.assertEqual(served_count.get('coordinator', 0), 1)
-        self.assertEqual(direct_count.get('coordinator', 0), 2)
+        self.assertEqual(served_count.get('serve', 0), 1)
+        self.assertEqual(served_count.get('receive', 0), 0)
+        self.assertEqual(direct_count.get('serve', 0), 0)
+        self.assertEqual(direct_count.get('receive', 0), 2)
         print(f'matrix before/after walls direct={direct_wall:.2f}s served={served_wall:.2f}s')
         self.assertIsNone(self.coord('owner-status'))
 
