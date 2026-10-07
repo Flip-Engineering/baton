@@ -19,7 +19,7 @@ export function parseLinuxProcStat(text) {
   const fields = text.slice(end + 2).trim().split(/\s+/);
   if (fields.length < 22 || fields[0].length !== 1) throw new Error(`malformed /proc/${pid}/stat fields`);
   const processGroup = Number(fields[2]);
-  if (!Number.isSafeInteger(processGroup) || processGroup < 0) throw new Error(`invalid Linux process group: ${fields[2]}`);
+  if (!Number.isSafeInteger(processGroup)) throw new Error(`invalid Linux process group: ${fields[2]}`);
   const userTicks = Number(fields[11]);
   const systemTicks = Number(fields[12]);
   if (!Number.isSafeInteger(userTicks) || userTicks < 0 || !Number.isSafeInteger(systemTicks) || systemTicks < 0) {

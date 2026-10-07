@@ -26,6 +26,12 @@ test('Linux stat parsing uses the final command delimiter and CPU tick fields', 
   });
 });
 
+test('Linux stat parsing retains a negative process-group sentinel for later filtering', () => {
+  assert.deepEqual(parseLinuxProcStat(statFixture({ processGroup: -1 })), {
+    pid: 321, processGroup: -1, cpuTicks: 154,
+  });
+});
+
 test('Linux RSS parsing converts KiB to bytes and treats absent VmRSS as zero', () => {
   assert.equal(parseLinuxProcStatus('Name: fixture\nVmRSS: 1536 kB\n', 42), 1_572_864);
   assert.equal(parseLinuxProcStatus('Name: kernel-thread\n', 43), 0);
@@ -97,6 +103,19 @@ test('sampling errors are reported to each tracked group', () => {
   const group = sampler.track(55);
   try {
     assert.throws(() => group.usage(), /process-group sampling failed: fixture snapshot failure/);
+  } finally {
+    group.close();
+    sampler.close();
+  }
+});
+
+test('Linux sampler filters unrelated process groups during a real proc snapshot', {
+  skip: process.platform !== 'linux',
+}, () => {
+  const sampler = createProcessGroupSampler({ intervalMs: 100 });
+  const group = sampler.track(2_000_000_000);
+  try {
+    assert.deepEqual(group.usage(), { rssBytes: 0, cpuSecondsByPid: new Map(), processCount: 0 });
   } finally {
     group.close();
     sampler.close();
