@@ -188,8 +188,99 @@ def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) ->
   match enabled:
     case False{}: IO.pure(String,event)
     case True{}: do IO<String>:
-      normalized : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 AND coalesce(json_array_length(" ++ C.q(event) ++ ",'$.messages'),0)=0 AND " ++ C.q(message) ++ "<>'' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END;"))
+      normalized : String <- IO.try(String,DB.Sql.query(db,omp_terminal_sql(event,message)))
       IO.pure(String,Tx.trim_nl(normalized))
+
+# OMP may return valid terminal envelopes whose messages array contains a
+# non-object metadata marker. Keep object messages in their original order for
+# result extraction. The native log retains the unmodified frame.
+def omp_terminal_sql(+event: String, +message: String) -> String:
+  +objects = "(SELECT count(*) FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object')"
+  +kept = "coalesce((SELECT json_group_array(json(m.value)) FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object' ORDER BY m.key),'[]')"
+  +messages = "CASE WHEN " ++ objects ++ "=0 AND json_valid(" ++ C.q(message) ++ ") THEN json_array(json(" ++ C.q(message) ++ ")) ELSE " ++ kept ++ " END"
+  "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 THEN CASE WHEN json_type(" ++ C.q(event) ++ ",'$.messages')='array' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json(" ++ messages ++ ")) WHEN json_valid(" ++ C.q(message) ++ ") THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END;"
+
+# The root turn input identifies the admitted Muse invocation. Nested task
+# streams can complete while that invocation is still running.
+def primary_command_sql(+event: String) -> String:
+  "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.payload_type')='turn.input.user' AND json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='turn_input_user' THEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.payload.command_id'),'') ELSE '' END ELSE '' END;"
+
+def primary_command(db: String, +event: String, previous: String, muse: Bool) -> IO(String):
+  match muse:
+    case False{}: IO.pure(String,previous)
+    case True{}:
+      match String.is_empty(previous):
+        case False{}: IO.pure(String,previous)
+        case True{}: do IO<String>:
+          found : String <- IO.try(String,DB.Sql.query(db,primary_command_sql(event)))
+          selected : String <- IO.pure(String,Tx.trim_nl(found))
+          IO.pure(String,Bool.pick(String,String.is_empty(selected),previous,selected))
+
+def current_command(db: String, +event: String, previous: String, muse: Bool) -> IO(String):
+  match muse:
+    case False{}: IO.pure(String,previous)
+    case True{}: do IO<String>:
+      found : String <- IO.try(String,DB.Sql.query(db,primary_command_sql(event)))
+      selected : String <- IO.pure(String,Tx.trim_nl(found))
+      IO.pure(String,Bool.pick(String,String.is_empty(selected),previous,selected))
+
+def primary_terminal_expr(+event: String, +primary: String) -> String:
+  "CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='run_terminal' AND " ++ C.q(primary) ++ "<>'' AND json_extract(" ++ C.q(event) ++ ",'$.payload.command_id')=" ++ C.q(primary) ++ " THEN 1 ELSE 0 END ELSE 0 END"
+
+def primary_terminal_sql(+event: String, +primary: String) -> String:
+  "SELECT " ++ primary_terminal_expr(event,primary) ++ ";"
+
+def primary_terminal(db: String, +event: String, +primary: String, muse: Bool) -> IO(Bool):
+  match muse:
+    case False{}: do IO<Bool>:
+      found : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN " ++ C.terminal(event) ++ " ELSE 0 END;"))
+      IO.pure(Bool,String.eq(Tx.trim_nl(found),"1"))
+    case True{}: do IO<Bool>:
+      found : String <- IO.try(String,DB.Sql.query(db,primary_terminal_sql(event,primary)))
+      IO.pure(Bool,String.eq(Tx.trim_nl(found),"1"))
+
+# A completion identity may already name a delivered report or a different
+# terminal. Compare the report body before committing so the upsert guard never
+# turns a changed observation into a NOT NULL failure.
+def completion_state_expr(+id: String, +player: String, +event: String) -> String:
+  "CASE WHEN EXISTS(SELECT 1 FROM turns WHERE id=" ++ C.q(id) ++ ") AND EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(player) ++ " AND kind='report' AND body=" ++ C.terminal_body(event) ++ ") THEN 'same' WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(player) ++ " AND kind='report' AND body=" ++ C.terminal_body(event) ++ ") THEN '' WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ ") OR EXISTS(SELECT 1 FROM turns WHERE id=" ++ C.q(id) ++ ") THEN 'conflict' ELSE '' END"
+
+def completion_state_sql(+id: String, +player: String, +event: String) -> String:
+  "SELECT " ++ completion_state_expr(id,player,event) ++ ";"
+
+def completion_state(db: String, +id: String, +player: String, +event: String) -> IO(String):
+  do IO<String>:
+    state : String <- IO.try(String,DB.Sql.query(db,completion_state_sql(id,player,event)))
+    IO.pure(String,Tx.trim_nl(state))
+
+def completion_state_event_sql(+id: String, +player: String, +event: String) -> String:
+  "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.terminal(event) ++ " THEN " ++ completion_state_expr(id,player,event) ++ " ELSE '' END ELSE '' END;"
+
+def completion_state_event(db: String, id: String, player: String, +event: String, +primary: String, muse: Bool) -> IO(String):
+  do IO<String>:
+    accepted : Bool <- primary_terminal(db,event,primary,muse)
+    selected : String <- Bool.pick(IO(String),accepted,IO.try(String,DB.Sql.query(db,completion_state_event_sql(id,player,event))),IO.pure(String,""))
+    IO.pure(String,Tx.trim_nl(selected))
+
+def completion_note_id_sql(+id: String, +event: String) -> String:
+  "SELECT " ++ C.q(id ++ ":observation-conflict:") ++ " || coalesce(json_extract(" ++ C.q(event) ++ ",'$.id'),json_extract(" ++ C.q(event) ++ ",'$.payload.command_id'),json_extract(" ++ C.q(event) ++ ",'$.command_id'),'unknown');"
+
+def completion_conflict_note(db: String, player: String, id: String, +event: String, conflict: Bool) -> IO(Unit):
+  match conflict:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      note_id : String <- IO.try(String,DB.Sql.query(db,completion_note_id_sql(id,event)))
+      saved : Unit <- report(db,player,Tx.trim_nl(note_id),"A native terminal produced output for report ID " ++ id ++ " after a different report already used that ID. The original report is preserved; this terminal event remains in the native log.")
+      IO.pure(Unit,Unit{})
+
+def observe_sealed(db: String, id: String, player: String, +event: String, +primary: String, sealed: Bool, muse: Bool) -> IO(Bool):
+  do IO<Bool>:
+      terminal_text : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN " ++ C.terminal(event) ++ " ELSE 0 END;"))
+      +terminal : Bool <- IO.pure(Bool,String.eq(Tx.trim_nl(terminal_text),"1"))
+      accepted : Bool <- primary_terminal(db,event,primary,muse)
+      +admitted : Bool <- IO.pure(Bool,Bool.and(terminal,Bool.or(Bool.not(muse),accepted)))
+      state : String <- Bool.pick(IO(String),admitted,completion_state(db,id,player,event),IO.pure(String,""))
+      IO.pure(Bool,Bool.or(sealed,Bool.and(admitted,Bool.not(String.is_empty(state)))))
 
 def observe_event(db: String, player: String, id: String, line: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
@@ -200,8 +291,10 @@ def observe_event(db: String, player: String, id: String, line: String, relevant
 # recorded as a report under the sealed identity: the first terminal stays the
 # report of this receive attempt, and a later episode is named once in the
 # separate diagnostic with the guidance it leaves for the next receive.
-def deferred_terminal_sql(+event: String, +terminal: String) -> String:
-  "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END ELSE 0 END;"
+def deferred_terminal_sql(+event: String, +terminal: String, +primary: String, +current: String, muse: Bool) -> String:
+  +candidate = Bool.pick(String,muse,primary_terminal_expr(event,current),C.terminal(event))
+  +later = Bool.pick(String,muse,C.q(current) ++ "<>'' AND " ++ C.q(current) ++ "<>" ++ C.q(primary),"1")
+  "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ candidate ++ " AND " ++ later ++ " THEN 1 ELSE 0 END ELSE 0 END;"
 
 # The note is written once: a later terminal frame must not try a second body
 # under the same identity, which the same-identity store guard would refuse.
@@ -235,11 +328,11 @@ def record_deferred(+db: String, +player: String, +id: String, later: Bool) -> I
       written : Unit <- write_deferred(db,player,id,String.eq(presence,"1\n"))
       IO.pure(Unit,Unit{})
 
-def deferred_note(+db: String, player: String, id: String, +event: String, +terminal: String, sealed: Bool) -> IO(Unit):
+def deferred_note(+db: String, player: String, id: String, +event: String, +terminal: String, +primary: String, +current: String, sealed: Bool, muse: Bool) -> IO(Unit):
   match sealed:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
-      later : String <- IO.try(String,DB.Sql.query(db,deferred_terminal_sql(event,terminal)))
+      later : String <- IO.try(String,DB.Sql.query(db,deferred_terminal_sql(event,terminal,primary,current,muse)))
       noted : Unit <- record_deferred(db,player,id,String.eq(later,"1\n"))
       IO.pure(Unit,Unit{})
 
@@ -277,11 +370,11 @@ def record_filter(log: String, +state: String, omp: Bool) -> IO(Result<&1,&1,U32
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case True{}: append_frame(log,Omp.filter_note(state),True{})
 
-def terminal_event(db: String, +event: String, +previous: String, relevant: Bool) -> IO(String):
+def terminal_event(db: String, +event: String, +previous: String, +primary: String, relevant: Bool, muse: Bool) -> IO(String):
   match relevant:
     case False{}: IO.pure(String,previous)
     case True{}: do IO<String>:
-      selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.terminal(event) ++ " THEN CASE WHEN " ++ C.q(previous) ++ "='' THEN " ++ C.q(event) ++ " ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
+      selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ Bool.pick(String,muse,primary_terminal_expr(event,primary),C.terminal(event)) ++ " THEN CASE WHEN " ++ C.q(previous) ++ "='' THEN " ++ C.q(event) ++ " ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
       IO.pure(String,Tx.trim_nl(selected))
 
 def codex_frames(db: String, +previous: String, +line: String, codex: Bool) -> IO(String):
@@ -325,7 +418,7 @@ def checkpoint_restore(+log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
     IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),checkpoint_restore_file(log))
 
 @unsafe
-def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, cursor: String, last_message: String, +terminal: String, filter: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, cursor: String, last_message: String, primary: String, current: String, +terminal: String, filter: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   match result:
     case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
@@ -362,16 +455,21 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         next_cursor : String <- Guidance.observe(db,player,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant),sealed)
         +message : String <- omp_message(db,line,last_message,Bool.and(String.eq(harness,"omp\n"),relevant))
         +event : String <- omp_terminal(db,line,message,Bool.and(String.eq(harness,"omp\n"),relevant))
-        deferred : Unit <- deferred_note(db,player,id,event,terminal,sealed)
-        observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant,sealed)
-        ended : String <- terminal_event(db,event,terminal,relevant)
+        +next_primary : String <- primary_command(db,event,primary,String.eq(harness,"muse\n"))
+        +next_current : String <- current_command(db,event,current,String.eq(harness,"muse\n"))
+        +state : String <- completion_state_event(db,id,player,event,next_primary,String.eq(harness,"muse\n"))
+        +observation_sealed : Bool <- observe_sealed(db,id,player,event,next_primary,sealed,String.eq(harness,"muse\n"))
+        conflict_note : Unit <- completion_conflict_note(db,player,id,event,String.eq(state,"conflict"))
+        deferred : Unit <- deferred_note(db,player,id,event,terminal,next_primary,next_current,sealed,String.eq(harness,"muse\n"))
+        observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant,observation_sealed)
+        ended : String <- terminal_event(db,event,terminal,next_primary,relevant,String.eq(harness,"muse\n"))
         codex_state : String <- codex_frames(db,codex_log,line,String.eq(harness,"codex\n"))
         questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String <- NativeRequests.observe(db,player,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
         +mode : String <- filter_mode(db,line,String.eq(harness,"omp\n"))
         +next_filter : String <- IO.pure(String,Omp.filter_next(filter,Tx.trim_nl(mode)))
         NativeRequests.with_observation(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,questions,wakes => question_error => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
           next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-          consume(db,player,id,log,current_policy,next_held,failed,handle,harness,next_cursor,message,ended,next_filter,codex_state,remember(remember_write(Bool.pick(String,String.is_empty(first_error),question_error,first_error),written),observed),sender,attempt,wakes,next))
+          consume(db,player,id,log,current_policy,next_held,failed,handle,harness,next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,remember(remember_write(Bool.pick(String,String.is_empty(first_error),question_error,first_error),written),observed),sender,attempt,wakes,next))
 
 def direct_observed(observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Outcome):
   (outcome,deliveries)=observation
@@ -388,7 +486,7 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
         restored : Result<&1,&1,U32 & String,Unit> <- checkpoint_restore(log)
         sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness))
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,log,policy,"",False{},handle,harness,"0\n","","","","",remember_write("",restored),sender,"",Nil{},first)
+        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,log,policy,"",False{},handle,harness,"0\n","","","","","","","",remember_write("",restored),sender,"",Nil{},first)
         direct_observed(observation)
 
 # The retained process sends its initial input once. Reattachment reads the same
@@ -398,7 +496,7 @@ def retained_output(+db: String, +player: String, id: String, +log: String, +har
     +policy : Logs.Policy <- Logs.open(db,player,log)
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-    consume(db,player,id,log,policy,"",False{},handle,harness,"0\n","","","","","",sender,attempt,Nil{},first)
+    consume(db,player,id,log,policy,"",False{},handle,harness,"0\n","","","","","","","",sender,attempt,Nil{},first)
 
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
