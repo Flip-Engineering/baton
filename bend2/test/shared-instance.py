@@ -689,7 +689,7 @@ class SharedInstance(unittest.TestCase):
         child.kill()
         child.wait(timeout=10)
         adopter = self.spawn('attach-owned', self.db, directory)
-        self.line(adopter, 'attached')
+        self.attach_owned_adopt(directory, adopter)
         restored = self.subscription_line(adopter, 'restored:')
         self.assertEqual(restored, {'reducer': 'seen two frames'}, restored)
         # The restored offset stops after the frames the checkpoint covered, so
@@ -728,6 +728,32 @@ class SharedInstance(unittest.TestCase):
         self.assertNotIn('attached', detail, detail)
         self.assertNotIn('busy', detail.lower(), detail)
         return detail
+
+    def attach_owned_adopt(self, directory, child):
+        """Waits for the adopted observer and, when the adoption is refused,
+        reports the attempt's own durable diagnostics."""
+        try:
+            self.line(child, 'attached')
+        except AssertionError:
+            detail = []
+            for name in ('admission-error', 'keeper-error', 'observer.log'):
+                path = directory / name
+                if path.exists():
+                    detail.append(f'{name}={path.read_text(errors="replace").strip()}')
+            stderr = child.stderr.read() if child.poll() is not None else ''
+            self.fail(f'adoption was refused: {" ".join(detail)} stderr={stderr!r} '
+                      f'owners={self.owner_processes()}')
+
+    def native_rows(self, child, timeout=30):
+        """Waits for the native role rows an observer reports and returns them."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            rows = [json.loads(line) for line in child.output
+                    if line.startswith('{') and 'role' in line]
+            if rows:
+                return rows
+            time.sleep(.05)
+        self.fail('no native role row observed: ' + ''.join(child.output))
 
     def overwrite(self, path, data, mode=0o400):
         """Replaces a file the host wrote read-only, which is what an attempt's
@@ -790,9 +816,8 @@ class SharedInstance(unittest.TestCase):
 
         # The valid original: same directory, same database, same session guard.
         adopter = self.spawn('attach-owned', self.db, directory)
-        self.line(adopter, 'attached')
-        adopted = [json.loads(line) for line in adopter.output
-                   if line.startswith('{') and 'role' in json.loads(line)]
+        self.attach_owned_adopt(directory, adopter)
+        adopted = self.native_rows(adopter)
         self.assertEqual([row['pid'] for row in adopted], [summary['pid']],
                          'adoption did not bind the original native process')
         os.kill(summary['pid'], 0)
