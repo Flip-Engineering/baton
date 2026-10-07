@@ -127,14 +127,6 @@ def declaration_value(+value: J.Json) -> Decl.Decl:
     artifacts_tail(member(value, "dependencies")), operations_tail(member(value, "operations")),
     rules_tail(member(value, "applicability"))}
 
-def operation_fields_rest(+items: J.Json) -> Bool:
-  match items:
-    case J.Jnil{}: True{}
-    case J.Jarr{J.Jnil{}, J.Jnil{}}: True{}
-    case J.Jarr{+head, +tail}:
-      Bool.and(operation_field_valid(head), operation_fields_rest(tail))
-    case other: False{}
-
 def operation_field_schema_valid(+head: J.Json) -> Bool:
   Bool.and(Req.is_jobj(head),
   Bool.and(String.eq(Req.text_of(member(head, "schema")), "baton2-native-operation-v1"),
@@ -153,6 +145,14 @@ def operation_field_execution_valid(+head: J.Json) -> Bool:
 
 def operation_field_valid(+head: J.Json) -> Bool:
   Bool.and(operation_field_schema_valid(head), operation_field_execution_valid(head))
+
+def operation_fields_rest(+items: J.Json) -> Bool:
+  match items:
+    case J.Jnil{}: True{}
+    case J.Jarr{J.Jnil{}, J.Jnil{}}: True{}
+    case J.Jarr{+head, +tail}:
+      Bool.and(operation_field_valid(head), operation_fields_rest(tail))
+    case other: False{}
 
 def operation_fields_valid(+items: J.Json) -> Bool:
   match items:
