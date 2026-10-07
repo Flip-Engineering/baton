@@ -34,8 +34,8 @@ def captured_raw_of(host: Result<&1, &1, U32 & String, String & String>) -> Capt
       match framing:
         case (frame, details): CapturedDone{frame, details}
 
-# A release outcome kept as data: only the release's own success and failure, with
-# absence handled by the enclosing observation.
+# A release outcome kept as data: an unperformed release, the release's own failure
+# with its code and detail, or the release's observed success.
 type ReleaseRaw is Data:
   ReleaseUnperformed{}
   ReleaseFailed{code: U32, detail: String}

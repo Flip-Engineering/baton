@@ -199,11 +199,11 @@ def Landing.published(handle: U32, landing_request: LandingRequest, outcome: P.I
   match outcome:
     case P.IntentBytesPublished{request, raw, path, content}:
       Landing.associate_now(handle, landing_request, raw)
-    case P.PublishRefused{request, step, name, raw}: Landing.stopped(landing_request, handle, LandingPublishRefused{outcome, T.ReleaseUnperformed{}})
-    case P.PublishExistingPending{request, raw, path}: Landing.stopped(landing_request, handle, LandingPublishRefused{outcome, T.ReleaseUnperformed{}})
-    case P.PublishContentMismatch{request, raw, expected, found}: Landing.stopped(landing_request, handle, LandingPublishRefused{outcome, T.ReleaseUnperformed{}})
-    case P.PublishReadbackFailed{request, publication, path, error}: Landing.stopped(landing_request, handle, LandingPublishRefused{outcome, T.ReleaseUnperformed{}})
-    case P.PublishHostFailed{step, request, error}: Landing.stopped(landing_request, handle, LandingPublishRefused{outcome, T.ReleaseUnperformed{}})
+    case P.PublishRefused{request, step, name, raw}: Landing.stopped(landing_request, handle, LandingPublishRefused{P.PublishRefused{request, step, name, raw}, T.ReleaseUnperformed{}})
+    case P.PublishExistingPending{request, raw, path}: Landing.stopped(landing_request, handle, LandingPublishRefused{P.PublishExistingPending{request, raw, path}, T.ReleaseUnperformed{}})
+    case P.PublishContentMismatch{request, raw, expected, found}: Landing.stopped(landing_request, handle, LandingPublishRefused{P.PublishContentMismatch{request, raw, expected, found}, T.ReleaseUnperformed{}})
+    case P.PublishReadbackFailed{request, publication, path, error}: Landing.stopped(landing_request, handle, LandingPublishRefused{P.PublishReadbackFailed{request, publication, path, error}, T.ReleaseUnperformed{}})
+    case P.PublishHostFailed{step, request, error}: Landing.stopped(landing_request, handle, LandingPublishRefused{P.PublishHostFailed{step, request, error}, T.ReleaseUnperformed{}})
 
 def Landing.associate_now(handle: U32, request: LandingRequest, published: String) -> IO(Landing):
   +h = handle
@@ -224,12 +224,12 @@ def Landing.claimed_associated(handle: U32, request: LandingRequest) -> IO(Landi
     decision : A.Association <- A.Association.decide(A.AssociationRequested{I.requested_attempt(intent), I.requested_common(intent), I.requested_target(intent), I.requested_destination(intent), I.requested_candidate(intent), I.requested_basis(intent), I.requested_holder(intent), I.requested_retry(intent)})
     Landing.association_before_publish(h, req, decision)
 
-def Landing.association_before_publish(handle: U32, request: LandingRequest, observation: A.Association) -> IO(Landing):
+def Landing.association_before_publish(handle: U32, landing_request: LandingRequest, observation: A.Association) -> IO(Landing):
   match observation:
     case A.AssociationRefused{step, observation}:
       Landing.stopped(landing_request, handle, LandingAssociationRefused{step, observation, T.ReleaseUnperformed{}})
     case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
-      Landing.publish_now(handle, request, candidate_oid, basis_oid)
+      Landing.publish_now(handle, landing_request, candidate_oid, basis_oid)
 
 def Landing.publish_now(handle: U32, request: LandingRequest, candidate: String, basis: String) -> IO(Landing):
   +h = handle
@@ -241,12 +241,16 @@ def Landing.publish_now(handle: U32, request: LandingRequest, candidate: String,
     written : P.IntentPublish <- P.Intent.publish_intent(intent, attempt_directory_for(intent_common(intent), intent_name(intent)), landingreq_name(req), intent_content(cand, base, intent_target(intent)))
     Landing.published(h, req, written)
 
+def landing_claim_failed(error: U32 & String) -> IO(Landing):
+  match error:
+    case (code, detail): IO.pure(Landing, LandingClaimFailed{T.HostError{code, detail}})
+
 def Landing.decided(request: LandingRequest, claimed: Result<&1, &1, U32 & String, Maybe<U32>>) -> IO(Landing):
   match claimed:
-    case Fail{error}: IO.pure(Landing, LandingClaimFailed{error})
+    case Fail{error}: landing_claim_failed(error)
     case Done{held}:
       match held:
-        case None{}: IO.pure(Landing, LandingGuardBusy{intent_target(landingreq_intent(req))})
+        case None{}: IO.pure(Landing, LandingGuardBusy{intent_target(landingreq_intent(request))})
         case Some{handle}: Landing.claimed_associated(handle, request)
 
 # The guarded operands come from the caller and are checked here rather than assumed: an
@@ -357,7 +361,7 @@ def a_busy_guard_refuses_before_any_effect(request):
 
 law a_release_failure_keeps_the_earlier_refusal:
   for request: LandingRequest
-  {replace_release(LandingOldValueMismatch{"a", "b", T.ReleaseUnperformed{}}, Fail{(13, "release failed")}) == LandingOldValueMismatch{"a", "b", Fail{(13, "release failed")}} : Landing}
+  {replace_release(LandingOldValueMismatch{"a", "b", T.ReleaseUnperformed{}}, T.ReleaseFailed{13, "release failed"}) == LandingOldValueMismatch{"a", "b", T.ReleaseFailed{13, "release failed"}} : Landing}
 
 def a_release_failure_keeps_the_earlier_refusal(request):
   {==}
