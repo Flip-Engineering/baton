@@ -268,8 +268,13 @@ static int br_checkpoint_verified_offset(const char *directory,int spool_fd,uint
 static uint64_t br_attempt_identity(const char *directory);
 static int br_checkpoint_custody(const char *directory,int spool_fd,BrBirth *birth,
                                  uint64_t *manifest,uint64_t *spool_device,uint64_t *spool_inode);
-static uint64_t br_manifest_digest(const BrManifestHeader *header,char *const *fields);
+static uint64_t br_manifest_digest(const BrManifestHeader *header,char *const *fields,int count);
 static int br_manifest_digest_file(const char *directory,uint64_t *digest);
+static int br_artifact_name_ok(const char *name,size_t length);
+static uint64_t br_digest_bytes(const char *bytes,size_t length);
+static int br_artifact_write(const char *directory,const char *name,const char *bytes,size_t length);
+static int br_artifact_digest(const char *directory,const char *name,size_t name_length,uint64_t *digest);
+static int br_manifest_store(const char *directory,const char *manifest_path,BrManifestHeader *header,char **fields,size_t *lengths,int count);
 typedef struct {
   int listener,lock,finishing,single,database_fd,bound;
   uint64_t token,epoch,device,inode,parent_device,parent_inode;
