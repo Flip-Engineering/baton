@@ -82,6 +82,9 @@ class NativeObservation(RECEIVE.Receive):
         frames = [
             {'id': 'input-frame', 'payload_type': 'turn.input.user',
              'payload': {'kind': 'turn_input_user', 'command_id': 'primary-run'}},
+            {'id': 'unlinked-frame', 'payload_type': 'run.terminal.completed',
+             'payload': {'kind': 'run_terminal', 'terminal': 'completed',
+                         'text': 'Terminal without command identity.'}},
             {'id': 'nested-frame', 'payload_type': 'run.terminal.completed',
              'payload': {'kind': 'run_terminal', 'command_id': 'nested-run',
                          'terminal': 'completed', 'text': 'Nested task completion.'}},
@@ -117,8 +120,10 @@ class NativeObservation(RECEIVE.Receive):
         self.assertIn('later native terminal completed', deferred[0]['body'])
         self.assertTrue(any('original report is preserved' in row['body'] for row in reports))
         self.assertFalse(any('Nested task completion' in row['body'] for row in reports))
+        self.assertFalse(any('Terminal without command identity.' in row['body'] for row in reports))
         self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
         self.assertIn('primary-frame', log.read_text())
+        self.assertIn('unlinked-frame', log.read_text())
         self.assertIn('nested-frame', log.read_text())
         self.assertIn('Changed primary output.', log.read_text())
         self.assertIn('Later lifecycle completion.', log.read_text())
