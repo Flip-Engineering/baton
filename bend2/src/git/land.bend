@@ -2068,71 +2068,13 @@ def prepared_holder_discovery_rejects_a_quoted_or_relative_path():
 # every returned advance outcome with its own Result preserved beside the advance observation.
 # A release failure is therefore visible to both adapters and can never read as a landing.
 type SharedLanding is Data:
+  SharedCommonUnreadable{observation: T.GitOut}
   SharedClaimFailed{error: U32 & String}
   SharedGuardBusy{target: String}
+  SharedStepFailed{step: String, error: U32 & String, released: Result<U32 & String, Unit>}
+  SharedStepRecordFailed{step: String, record: String, released: Result<U32 & String, Unit>}
   SharedAdvanced{advance: LAdv, released: Result<U32 & String, Unit>, guard: String, reserved: String}
 
-def shared_advance_under_claim(handle: U32, advance: LAdv) -> IO(SharedLanding):
-  +h = handle
-  +a = advance
-  do IO<SharedLanding>:
-    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
-    IO.pure(SharedLanding, SharedAdvanced{a, released, guard, reserved})
-
-def shared_ran_advance(handle: U32, repo: String, target: String, cand: String, basis: String) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  do IO<SharedLanding>:
-    a : LAdv <- ld_adv_run(rp, tg, c, b)
-    shared_advance_under_claim(h, a)
-
-def shared_claim_decided(repo: String, target: String, cand: String, basis: String, common: String, claimed: Result<U32 & String, Maybe<U32>>) -> IO(SharedLanding):
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +cm = common
-  match claimed:
-    case Fail{error}: IO.pure(SharedLanding, SharedClaimFailed{error})
-    case Done{held}:
-      match held:
-        case None{}: IO.pure(SharedLanding, SharedGuardBusy{target})
-        case Some{handle}: shared_guarded(handle, rp, tg, c, b, cm)
-def shared_claimed(repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +cm = common
-  do IO<SharedLanding>:
-    claimed : Result<U32 & String, Maybe<U32>> <- Rec.Receipt.claim(cm, tg)
-    shared_claim_decided(rp, tg, c, b, cm, claimed)
-def shared_common_read(repo: String, target: String, cand: String, basis: String, observed: T.GitOut) -> IO(SharedLanding):
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  match observed:
-    case T.GBroken{detail}: IO.pure(SharedLanding, SharedClaimFailed{(1, detail)})
-    case T.GRun{code, out}:
-      match U32.is_eq(code, 0):
-        case False{}: IO.pure(SharedLanding, SharedClaimFailed{(code, "cannot read the common directory for the landing claim")})
-        case True{}: shared_claimed(rp, tg, c, b, Tx.trim_nl(out))
-
-def shared_landing_run(repo: String, target: String, cand: String, basis: String) -> IO(SharedLanding):
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  do IO<SharedLanding>:
-    observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
-    shared_common_read(rp, tg, c, b, observed)
-
-# The fast-forward adapter. A release failure, a busy guard and a claim failure each answer
-# blocked; only a landed advance with a completed release reports the landing.
 def shared_parent_path(directory: String, name: String) -> String:
   +d = directory
   +n = name
@@ -2142,20 +2084,43 @@ def shared_attempts_parent(common: String) -> String:
   +c = common
   Tx.str_cat(c, "/baton2-attempts")
 
-def shared_reserved_continue(reserved: String, handle: U32, repo: String, target: String, cand: String, basis: String, guard: String) -> IO(SharedLanding):
-  +rv = reserved
+# Every step failure releases the acquired descriptor and keeps its own stage, its complete
+# error or raw record, and the actual release Result.
+def shared_step_failed(step: String, error: U32 & String, handle: U32) -> IO(SharedLanding):
+  +s = step
+  +e = error
+  +h = handle
+  do IO<SharedLanding>:
+    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
+    IO.pure(SharedLanding, SharedStepFailed{s, e, released})
+
+def shared_record_failed(step: String, record: String, handle: U32) -> IO(SharedLanding):
+  +s = step
+  +r = record
+  +h = handle
+  do IO<SharedLanding>:
+    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
+    IO.pure(SharedLanding, SharedStepRecordFailed{s, r, released})
+
+# Admission runs the advance for the reserved directory and releases, carrying the guard and
+# the reserved path forward for the capture sites.
+def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, reserved: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
   +c = cand
   +b = basis
   +gd = guard
+  +rv = reserved
   do IO<SharedLanding>:
     a : LAdv <- ld_adv_run(rp, tg, c, b)
     released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
     IO.pure(SharedLanding, SharedAdvanced{a, released, gd, rv})
 
-def shared_reserve_seen(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, name: String, observed: Result<U32 & String, String>) -> IO<SharedLanding>:
+# One self-recursive reservation helper. A collision grows the suffix by one character and tries
+# again under the same held claim, so there is no fixed retry cap: the only refusals are a real
+# error, a malformed record, and a representational suffix length.
+def shared_reserve_rec(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, suffix: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -2163,12 +2128,29 @@ def shared_reserve_seen(handle: U32, repo: String, target: String, cand: String,
   +b = basis
   +gd = guard
   +pa = parent
+  +bs = base
+  +sf = suffix
+  +name = Tx.str_cat(bs, sf)
+  do IO<SharedLanding>:
+    observed : Result<U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, name)
+    shared_reserve_rec_seen(h, rp, tg, c, b, gd, pa, bs, sf, name, observed)
+
+def shared_reserve_rec_seen(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, suffix: String, name: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +gd = guard
+  +pa = parent
+  +bs = base
+  +sf = suffix
   +n = name
   match observed:
     case Fail{error}: shared_step_failed("reserve", error, h)
-    case Done{record}: shared_reserve_classified(h, rp, tg, c, b, gd, pa, n, record)
+    case Done{record}: shared_reserve_rec_classified(h, rp, tg, c, b, gd, pa, bs, sf, n, record)
 
-def shared_reserve_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, name: String, record: String) -> IO<SharedLanding>:
+def shared_reserve_rec_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, suffix: String, name: String, record: String) -> IO<SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -2176,13 +2158,15 @@ def shared_reserve_classified(handle: U32, repo: String, target: String, cand: S
   +b = basis
   +gd = guard
   +pa = parent
+  +bs = base
+  +sf = suffix
   +n = name
   +r = record
   match Tx.str_eq(r, Pb.production_record("created", shared_parent_path(pa, n), "0")):
-    case True{}: shared_reserved_continue(shared_parent_path(pa, n), h, rp, tg, c, b, gd)
-    case False{}: shared_reserve_next(h, rp, tg, c, b, gd, pa, n, r)
+    case True{}: shared_reserved_continue(h, rp, tg, c, b, gd, shared_parent_path(pa, n))
+    case False{}: shared_reserve_rec_next(h, rp, tg, c, b, gd, pa, bs, sf, n, r)
 
-def shared_reserve_next(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, name: String, record: String) -> IO<SharedLanding>:
+def shared_reserve_rec_next(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, suffix: String, name: String, record: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -2190,26 +2174,19 @@ def shared_reserve_next(handle: U32, repo: String, target: String, cand: String,
   +b = basis
   +gd = guard
   +pa = parent
+  +bs = base
+  +sf = suffix
   +n = name
   +r = record
   match Tx.str_eq(r, Pb.production_record("existing", shared_parent_path(pa, n), "0")):
     case False{}: shared_record_failed("reserve", r, h)
-    case True{}: shared_reserve_second(h, rp, tg, c, b, gd, pa, n)
+    case True{}:
+      +next = Tx.str_cat(sf, "-")
+      match U32.is_lt(Tx.byte_len(next), 65):
+        case True{}: shared_reserve_rec(h, rp, tg, c, b, gd, pa, bs, next)
+        case False{}: shared_record_failed("reserve-suffix-exhausted", r, h)
 
-def shared_reserve_second(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String) -> IO<SharedLanding>:
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +n2 = Tx.str_cat(base, "-2")
-  do IO<SharedLanding>:
-    observed : Result<U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, n2)
-    shared_reserve_second_seen(h, rp, tg, c, b, gd, pa, base, n2, observed)
-
-def shared_reserve_second_seen(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, name: String, observed: Result<U32 & String, String>) -> IO<SharedLanding>:
+def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -2218,108 +2195,12 @@ def shared_reserve_second_seen(handle: U32, repo: String, target: String, cand: 
   +gd = guard
   +pa = parent
   +bs = base
-  +n = name
-  match observed:
-    case Fail{error}: shared_step_failed("reserve", error, h)
-    case Done{record}: shared_reserve_second_classified(h, rp, tg, c, b, gd, pa, bs, n, record)
-
-def shared_reserve_second_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, name: String, record: String) -> IO<SharedLanding>:
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  +n = name
-  +r = record
-  match Tx.str_eq(r, Pb.production_record("created", shared_parent_path(pa, n), "0")):
-    case True{}: shared_reserved_continue(shared_parent_path(pa, n), h, rp, tg, c, b, gd)
-    case False{}: shared_reserve_third(h, rp, tg, c, b, gd, pa, bs, n, r)
-
-def shared_reserve_third(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, name: String, record: String) -> IO<SharedLanding>:
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  +n = name
-  +r = record
-  match Tx.str_eq(r, Pb.production_record("existing", shared_parent_path(pa, n), "0")):
-    case False{}: shared_record_failed("reserve", r, h)
-    case True{}: shared_reserve_fourth(h, rp, tg, c, b, gd, pa, bs)
-
-def shared_reserve_fourth(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String) -> IO<SharedLanding>:
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +n3 = Tx.str_cat(base, "-3")
-  do IO<SharedLanding>:
-    observed : Result<U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, n3)
-    shared_reserve_fourth_seen(h, rp, tg, c, b, gd, pa, n3, observed)
-
-def shared_reserve_fourth_seen(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, name: String, observed: Result<U32 & String, String>) -> IO<SharedLanding>:
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +n = name
-  match observed:
-    case Fail{error}: shared_step_failed("reserve", error, h)
-    case Done{record}: shared_reserve_fourth_classified(h, rp, tg, c, b, gd, pa, n, record)
-
-def shared_reserve_fourth_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, name: String, record: String) -> IO<SharedLanding>:
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +n = name
-  +r = record
-  match Tx.str_eq(r, Pb.production_record("created", shared_parent_path(pa, n), "0")):
-    case True{}: shared_reserved_continue(shared_parent_path(pa, n), h, rp, tg, c, b, gd)
-    case False{}: shared_record_failed("reserve-exhausted", r, h)
-
-def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, base: String, observed: Result<U32 & String, String>) -> IO<SharedLanding>:
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = shared_attempts_parent(base)
-  match observed:
-    case Fail{error}: shared_step_failed("ensure", error, h)
-    case Done{record}: shared_parent_classified(h, rp, tg, c, b, gd, pa, base, record)
-
-def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO<SharedLanding>:
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +n = base
   +r = record
   match Tx.str_eq(r, Pb.production_record("created", pa, "0")):
-    case True{}: shared_reserve_first(h, rp, tg, c, b, gd, pa, n)
-    case False{}: shared_parent_present(h, rp, tg, c, b, gd, pa, n, r)
+    case True{}: shared_reserve_rec(h, rp, tg, c, b, gd, pa, bs, "")
+    case False{}: shared_parent_present(h, rp, tg, c, b, gd, pa, bs, r)
 
-def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO<SharedLanding>:
+def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -2327,13 +2208,13 @@ def shared_parent_present(handle: U32, repo: String, target: String, cand: Strin
   +b = basis
   +gd = guard
   +pa = parent
-  +n = base
+  +bs = base
   +r = record
   match Tx.str_eq(r, Pb.production_record("present", pa, "0")):
-    case True{}: shared_reserve_first(h, rp, tg, c, b, gd, pa, n)
+    case True{}: shared_reserve_rec(h, rp, tg, c, b, gd, pa, bs, "")
     case False{}: shared_record_failed("ensure", r, h)
 
-def shared_reserve_first(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String) -> IO<SharedLanding>:
+def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -2341,12 +2222,12 @@ def shared_reserve_first(handle: U32, repo: String, target: String, cand: String
   +b = basis
   +gd = guard
   +pa = parent
-  +n = base
-  do IO<SharedLanding>:
-    observed : Result<U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, n)
-    shared_reserve_seen(h, rp, tg, c, b, gd, pa, n, observed)
+  +bs = base
+  match observed:
+    case Fail{error}: shared_step_failed("ensure", error, h)
+    case Done{record}: shared_parent_classified(h, rp, tg, c, b, gd, pa, bs, record)
 
-def shared_token_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, guard: String, observed: Result<U32 & String, String>) -> IO<SharedLanding>:
+def shared_token_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, guard: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -2357,12 +2238,13 @@ def shared_token_named(handle: U32, repo: String, target: String, cand: String, 
   match observed:
     case Fail{error}: shared_step_failed("token", error, h)
     case Done{token}:
+      +parent = shared_attempts_parent(cm)
       +base = Tx.str_cat(token, Tx.str_cat("-", Tx.str_cat(c, Tx.str_cat("-", b))))
       do IO<SharedLanding>:
-        ensured : Result<U32 & String, String> <- Rec.Receipt.ensure(shared_attempts_parent(cm))
-        shared_parent_ensured(h, rp, tg, c, b, gd, cm, ensured)
+        ensured : Result<U32 & String, String> <- Rec.Receipt.ensure(parent)
+        shared_parent_ensured(h, rp, tg, c, b, gd, parent, base, ensured)
 
-def shared_guard_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, observed: Result<U32 & String, String>) -> IO<SharedLanding>:
+def shared_guard_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -2376,7 +2258,7 @@ def shared_guard_named(handle: U32, repo: String, target: String, cand: String, 
         token : Result<U32 & String, String> <- Rec.Receipt.attempt_token(tg)
         shared_token_named(h, rp, tg, c, b, cm, guard, token)
 
-def shared_guarded(handle: U32, repo: String, target: String, cand: String, basis: String, common: String) -> IO<SharedLanding>:
+def shared_guarded(handle: U32, repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -2387,15 +2269,66 @@ def shared_guarded(handle: U32, repo: String, target: String, cand: String, basi
     observed : Result<U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
     shared_guard_named(h, rp, tg, c, b, cm, observed)
 
+def shared_claim_decided(repo: String, target: String, cand: String, basis: String, common: String, claimed: Result<U32 & String, Maybe<U32>>) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +cm = common
+  match claimed:
+    case Fail{error}: IO.pure(SharedLanding, SharedClaimFailed{error})
+    case Done{held}:
+      match held:
+        case None{}: IO.pure(SharedLanding, SharedGuardBusy{tg})
+        case Some{handle}: shared_guarded(handle, rp, tg, c, b, cm)
+
+def shared_claimed(repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +cm = common
+  do IO<SharedLanding>:
+    claimed : Result<U32 & String, Maybe<U32>> <- Rec.Receipt.claim(cm, tg)
+    shared_claim_decided(rp, tg, c, b, cm, claimed)
+
+def shared_common_read(repo: String, target: String, cand: String, basis: String, observed: T.GitOut) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +obs = observed
+  match obs:
+    case T.GRun{code, out}:
+      +c0 = code
+      match U32.is_eq(c0, 0):
+        case True{}: shared_claimed(rp, tg, c, b, Tx.trim_nl(out))
+        case False{}: IO.pure(SharedLanding, SharedCommonUnreadable{obs})
+    case T.GBroken{detail}: IO.pure(SharedLanding, SharedCommonUnreadable{obs})
+
+def shared_landing_run(repo: String, target: String, cand: String, basis: String) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  do IO<SharedLanding>:
+    observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
+    shared_common_read(rp, tg, c, b, observed)
+
 def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String) -> FFLD:
   +s = shared
   +tg = target
   +c = cand
   match s:
+    case SharedCommonUnreadable{observation}: FFDone{T.LBlocked{"the common directory could not be read for the landing claim"}}
     case SharedClaimFailed{error}:
       match error:
         case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the landing claim failed: ", detail)}}
     case SharedGuardBusy{target}: FFDone{T.LBlocked{"another landing holds the target"}}
+    case SharedStepFailed{step, error, released}:
+      match error:
+        case (code, detail): FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " failed: "), detail)}}
+    case SharedStepRecordFailed{step, record, released}: FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " refused: "), record)}}
     case SharedAdvanced{advance, released, guard, reserved}:
       match released:
         case Fail{error}:
@@ -2408,10 +2341,15 @@ def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String
   +tg = target
   +c = cand
   match s:
+    case SharedCommonUnreadable{observation}: LdFail{T.FCmd{"land", "the common directory could not be read for the landing claim"}}
     case SharedClaimFailed{error}:
       match error:
         case (code, detail): LdFail{T.FCmd{"land", detail}}
     case SharedGuardBusy{target}: LdFail{T.FCmd{"land", "another landing holds the target; rerun land-checked to prepare and check against the current target"}}
+    case SharedStepFailed{step, error, released}:
+      match error:
+        case (code, detail): LdFail{T.FCmd{"land", detail}}
+    case SharedStepRecordFailed{step, record, released}: LdFail{T.FCmd{"land", record}}
     case SharedAdvanced{advance, released, guard, reserved}:
       match released:
         case Fail{error}:
