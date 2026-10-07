@@ -66,6 +66,49 @@ def Instance.started(result: Result<&1,&1,U32 & String,Maybe<U32> & String>) -> 
         case Some{value}: Done{P.Retained{value}}
         case None{}: Done{P.Unstarted{error}}
 
+def Instance.admit_with_file_start(database: String, directory: String, argv: String, cwd: String, stderr: String, artifact_name: String, artifact_bytes: String, initial_stdin: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32> & String>):
+  import "./process-spawn.c"
+
+# The prepared file-input variant on the shared owner: the same private artifact
+# preparation and identity binding as ProcessChild.retain_with_file, with the
+# owner elected for the database instead of a keeper per attempt.
+def Instance.admit_with_file(database: String, directory: String, argv: String, cwd: String, stderr: String, artifact_name: String, artifact_bytes: String, initial_stdin: String, keep_stdin: U32, lock: Maybe<U32>, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+  match lock:
+    case None{}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
+      result : Result<&1,&1,U32 & String,Maybe<U32> & String> <- Instance.admit_with_file_start(database,directory,argv,cwd,stderr,artifact_name,artifact_bytes,initial_stdin,keep_stdin,0,recovery_argv)
+      IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Instance.started(result))
+    case Some{value_lock}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
+      result : Result<&1,&1,U32 & String,Maybe<U32> & String> <- Instance.admit_with_file_start(database,directory,argv,cwd,stderr,artifact_name,artifact_bytes,initial_stdin,keep_stdin,value_lock,recovery_argv)
+      IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Instance.started(result))
+
+# Opens a committed-change subscription on the elected owner for this database.
+# The ok value carries the subscription handle and the readiness facts: the owner
+# incarnation, the committed cursor the caller may replay rows up to, and whether
+# a gap forces a fresh snapshot. Cursors are decimal text because this dialect has
+# no 64-bit integer type; the host refuses a malformed or oversized value instead
+# of truncating it.
+def Instance.subscribe(database: String, after_cursor: String, expected_generation: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
+  import "./process-spawn.c"
+
+# Waits for the next committed-change notice on a subscription and returns it as
+# JSON: kind commit or gap, the committed cursor high-water, and the incarnation
+# that sent it. A notice carries no row data; the caller rereads rows from SQLite
+# up to the cursor inside its own read transaction.
+def Instance.notice(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
+# Ends a subscription locally. The owner drops the connection when it reads the
+# closed socket, so no request is needed.
+def Instance.unsubscribe(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
+# Publishes one committed change after the caller's transaction committed: the
+# cursor is the durable native_changes high-water. The owner records it and
+# notifies every subscriber, and a cursor that does not advance changes nothing.
+# A rolled-back transaction publishes nothing because it never calls here.
+def Instance.publish_commit(database: String, cursor: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
 # Starts a native attempt under the database owner. No lock means the caller
 # holds no session guard for this attempt.
 def Instance.admit(database: String, directory: String, argv: String, cwd: String, stderr: String, initial: String, keep_stdin: U32, lock: Maybe<U32>, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
