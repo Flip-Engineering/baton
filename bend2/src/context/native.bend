@@ -220,6 +220,7 @@ def invoke_runtime(+executable: String, +cwd: String, +invocation: Sel.Invocatio
   match runtime:
     case ProviderRefused{reason}: IO.pure(ProviderAnswer, ProviderRefused{reason})
     case ProviderRuntime{path, version}: invoke_frame(executable, path, cwd, invocation_frame(invocation))
+    case ProviderOutput{value, status}: IO.pure(ProviderAnswer, ProviderRefused{"nodeRuntimeProbeMalformed"})
 
 def invoke(+invocation: Sel.Invocation, +cwd: String) -> IO(ProviderAnswer):
   do IO<ProviderAnswer>:
