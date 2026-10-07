@@ -154,6 +154,11 @@ def validation_report_condition(+raw: CoreCodec.RawValue) -> String:
       "duplicateKey"),
     "invalidJson")
 
+def request_rows_after_validation(+db: String, +binding: String, +text: String) -> IO(RequestDecode):
+  do IO<RequestDecode>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, Req.json_tree_sql(text))
+    request_schema_query_result(db, binding, text, result)
+
 def report_decided(+db: String, +binding: String, +text: String, +condition: String) -> IO(RequestDecode):
   match condition:
     case "": request_rows_after_validation(db, binding, text)
@@ -203,11 +208,6 @@ def report_after_validation(+db: String, +binding: String, +text: String,
       match error:
         case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"requestValidationRead"})
     case Done{+row}: validation_report_row(db, binding, text, Tx.trim_nl(row))
-
-def request_rows_after_validation(+db: String, +binding: String, +text: String) -> IO(RequestDecode):
-  do IO<RequestDecode>:
-    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, Req.json_tree_sql(text))
-    request_schema_query_result(db, binding, text, result)
 
 def read_raw_after(+db: String, +binding: String, result: Result<&1,&1,U32 & String,Raw.RawRead>) -> IO(RequestDecode):
   match result:
