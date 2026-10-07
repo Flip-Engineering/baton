@@ -4,7 +4,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { invokeSourceAnalysis } from './native-provider.mjs';
-import { runSelectedInvocation } from '../../scripts/context-provider.mjs';
+import { moduleDirectoryName, runSelectedInvocation } from '../../scripts/context-provider.mjs';
 
 const [packageArgument, worktreeArgument, targetArgument] = process.argv.slice(2);
 assert.ok(packageArgument && worktreeArgument && targetArgument, 'usage: node native-provider.integration.mjs MODULE_ROOT WORKTREE TARGET');
@@ -53,7 +53,7 @@ assert.ok(completed.payload.retainedReadSet.descriptors.some((entry) => entry.re
 const installedPrefix = mkdtempSync(join(tmpdir(), 'baton2-provider-install-'));
 try {
   const installedWrapper = join(installedPrefix, 'libexec/baton2/context-provider.mjs');
-  const installedModule = join(installedPrefix, 'lib/context/modules', declaration.moduleId);
+  const installedModule = join(installedPrefix, 'lib/context/modules', moduleDirectoryName(declaration.moduleId));
   mkdirSync(join(installedPrefix, 'libexec/baton2'), { recursive: true });
   mkdirSync(installedModule, { recursive: true });
   cpSync(packageRoot, installedModule, { recursive: true });

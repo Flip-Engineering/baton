@@ -44,6 +44,15 @@ def file_info(path):
     return {'bytes': path.stat().st_size, 'sha256': sha256(path)}
 
 
+def module_directory_name(module_id):
+    require(isinstance(module_id, str) and module_id, 'A selected module needs a non-empty identity')
+    try:
+        encoded = module_id.encode('utf-8').hex()
+    except UnicodeEncodeError as error:
+        raise RuntimeError('A selected module identity is not valid Unicode') from error
+    return 'm-' + encoded
+
+
 def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + '\n')
 
@@ -260,7 +269,7 @@ def stage_selected_context_payload(payload):
     require(isinstance(declaration['files'], list) and declaration['files'],
             'The selected Bend2 module manifest has no artifacts')
 
-    module_root = payload / 'lib/context/modules' / declaration['moduleId']
+    module_root = payload / 'lib/context/modules' / module_directory_name(declaration['moduleId'])
     module_root.mkdir(parents=True)
     staged_files = []
     seen = set()

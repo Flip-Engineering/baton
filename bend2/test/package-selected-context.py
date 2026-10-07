@@ -31,7 +31,7 @@ class SelectedContextPackageTest(unittest.TestCase):
     def test_stages_the_exact_manifested_provider_and_frontend_closure(self):
         declaration = json.loads((self.root / 'bend2/context/bend2/selected-module.json').read_text())
         manifest = PACKAGE.stage_selected_context_payload(self.payload)
-        module_root = self.payload / 'lib/context/modules/bend2'
+        module_root = self.payload / 'lib/context/modules/m-62656e6432'
         self.assertEqual(manifest['moduleId'], 'bend2')
         self.assertEqual({row['path'] for row in manifest['files']}, {
             row['path'] for row in declaration['files']

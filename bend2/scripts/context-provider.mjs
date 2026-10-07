@@ -10,9 +10,9 @@ function refused(reason, detail = null) {
   return Object.freeze({ status: 'refused', reason, detail });
 }
 
-function safeModuleId(value) {
-  return typeof value === 'string' && value.length > 0 && value !== '.' && value !== '..'
-    && !value.includes('/') && !value.includes('\\') && !value.includes('\0');
+export function moduleDirectoryName(value) {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  return `m-${Buffer.from(value, 'utf8').toString('hex')}`;
 }
 
 function sha256(bytes) {
@@ -60,6 +60,14 @@ function packageMatchesInvocation(root, manifest, invocation) {
       const sourceRow = sourceFiles.get(row.path);
       return sourceRow !== undefined && sourceRow.bytes === row.bytes && sourceRow.sha256 === row.sha256;
     })) return false;
+    if (!Array.isArray(declaration.artifactIdentities) || !declaration.artifactIdentities.every((artifact) => {
+      if (artifact === null || typeof artifact !== 'object' || typeof artifact.packagePath !== 'string'
+          || artifact.packagePath.startsWith('/')
+          || artifact.packagePath.split('/').some((part) => !part || part === '.' || part === '..')
+          || typeof artifact.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(artifact.sha256)) return false;
+      const artifactPath = join(root, ...artifact.packagePath.split('/'));
+      return realpathSync(artifactPath) === artifactPath && sha256(readFileSync(artifactPath)) === artifact.sha256;
+    })) return false;
     return declaration.moduleId === binding.id && declaration.revision === binding.revision
       && declaration.protocolVersion === binding.protocolVersion
       && sha256(declarationBytes) === binding.declarationDigest
@@ -71,15 +79,17 @@ function packageMatchesInvocation(root, manifest, invocation) {
 }
 
 export function resolveSelectedPackageRoot(wrapperPath, moduleId) {
-  if (!safeModuleId(moduleId)) return refused('selectedModuleIdInvalid');
+  const directoryName = moduleDirectoryName(moduleId);
+  if (directoryName === null) return refused('selectedModuleIdInvalid');
   try {
     const wrapper = realpathSync(wrapperPath);
     if (!statSync(wrapper).isFile()) return refused('providerWrapperUnavailable');
     const prefix = realpathSync(join(dirname(wrapper), '..', '..'));
-    const candidate = join(prefix, 'lib', 'context', 'modules', moduleId);
+    const modulesRoot = join(prefix, 'lib', 'context', 'modules');
+    const candidate = join(modulesRoot, directoryName);
     const root = realpathSync(candidate);
-    const rel = relative(join(prefix, 'lib', 'context', 'modules'), root);
-    if (rel !== moduleId || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return refused('selectedModuleOutsideInstallation');
+    const rel = relative(modulesRoot, root);
+    if (rel !== directoryName || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return refused('selectedModuleOutsideInstallation');
     if (!statSync(root).isDirectory()) return refused('selectedModulePackageUnavailable');
     const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
     if (manifest === null || typeof manifest !== 'object' || manifest.moduleId !== moduleId
