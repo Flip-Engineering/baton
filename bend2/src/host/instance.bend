@@ -31,6 +31,12 @@ def Instance.shutdown(database: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 def Instance.retire(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
+# Records the offset this observer has durably observed. The observation owner
+# calls it after its own store transaction or report commit has succeeded; a
+# bare read is not a durable observation.
+def Instance.commit(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
 def Instance.started(result: Result<&1,&1,U32 & String,Maybe<U32> & String>) -> Result<&1,&1,U32 & String,P.RetainedStart>:
   match result:
     case Fail{error}: Fail{error}
