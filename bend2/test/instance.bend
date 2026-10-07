@@ -149,8 +149,10 @@ def partial_started(start: P.RetainedStart, payload: String) -> IO(Unit):
     case P.Retained{+handle}: do IO<Unit>:
       printed : Unit <- IO.print("admitted")
       written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,payload))
-      line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
-      observed : Unit <- printed_line(line)
+      first : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      shown : Unit <- printed_line(first)
+      second : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      observed : Unit <- printed_line(second)
       gate : String <- IO.try(String,Text.Text.read("-"))
       IO.print("partial-released")
 
