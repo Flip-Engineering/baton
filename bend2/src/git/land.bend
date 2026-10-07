@@ -572,7 +572,7 @@ def holder_verdict_of_discovery(discovery: HolderDiscovery) -> HolderVerdict:
     case DiscoverBroken{request, detail}: VerdictBroken{request, detail}
 
 # The boundary a caller retains: the observation and its interpretation together.
-def holder_read(discovery: HolderDiscovery) -> HolderObservation:
+def holder_read(+discovery: HolderDiscovery) -> HolderObservation:
   match discovery:
     case DiscoverRead{request, code, out}: HolderObserved{request, code, out, holder_verdict_of_discovery(discovery)}
     case DiscoverBroken{request, detail}: HolderObservedBroken{request, detail, holder_verdict_of_discovery(discovery)}
@@ -686,7 +686,7 @@ def ff_stage5_captured(target: String, candidate: String, artifact: String, repo
       match pair:
         case (framing, diagnostics): ff_stage5_framing(target, candidate, artifact, repo, framing, diagnostics)
 
-def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo: String, outcome: Lg.Landing) -> IO(FFLD):
+def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo: String, +outcome: Lg.Landing) -> IO(FFLD):
   match outcome:
     case Lg.LandingHeld{request, candidate, basis, published, mutation, released}:
       match released:
@@ -769,7 +769,7 @@ type LAdv is Data:
 # The fast-forward now advances through the same holder-aware path the checked landing uses,
 # so both reach one effect. Only a landed answer reports LLanded; a moved target, a held
 # worktree, a changed holder, a refused update and a broken read each keep their own answer.
-def ff_stage5_adv_answer(a: LAdv, target: String, cand: String) -> FFLD:
+def ff_stage5_adv_answer(+a: LAdv, target: String, cand: String) -> FFLD:
   match a:
     case AdvLanded{}: FFDone{T.LLanded{target, cand}}
     case AdvMoved{}: FFDone{T.LBlocked{"target moved during landing; retry"}}
@@ -976,7 +976,7 @@ def ld_adv_cas_compared(cand: String, +capture: T.CapturedRaw, after: T.GitOut, 
   Bool.pick(IO(LdAdvObs), Tx.str_eq(seen, c2),
     IO.pure(LdAdvObs, LdAdvQualified{AdvLanded{}, cp, obs}),
     IO.pure(LdAdvObs, LdAdvQualified{AdvMoved{}, cp, obs}))
-def ld_adv_cas_readback(target: String, cand: String, +capture: T.CapturedRaw, after: T.GitOut) -> IO(LdAdvObs):
+def ld_adv_cas_readback(target: String, cand: String, +capture: T.CapturedRaw, +after: T.GitOut) -> IO(LdAdvObs):
   match after:
     case T.GRun{code, out}:
       +c0 = code
@@ -988,7 +988,7 @@ def ld_adv_cas_readback(target: String, cand: String, +capture: T.CapturedRaw, a
 # The unheld advance is not landed on exit zero alone: while the target claim is still held the
 # target ref is read back and required to be the candidate. A moved target answers AdvMoved with
 # the capture retained; an unreadable readback answers AdvBroken with it.
-def ld_adv_cas_qualified(target: String, cand: String, +capture: T.CapturedRaw, status: T.GitOut, repo: String) -> IO(LdAdvObs):
+def ld_adv_cas_qualified(target: String, cand: String, +capture: T.CapturedRaw, +status: T.GitOut, repo: String) -> IO(LdAdvObs):
   match status:
     case T.GRun{code, out}:
       Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
@@ -1332,7 +1332,7 @@ def shared_claimed(repo: String, target: String, cand: String, basis: String, co
     claimed : Result<&1, &1, U32 & String, Maybe<U32>> <- Rec.Receipt.claim(cm, tg)
     shared_claim_decided(rp, tg, c, b, cm, claimed)
 
-def shared_common_read(repo: String, target: String, cand: String, basis: String, observed: T.GitOut) -> IO(SharedLanding):
+def shared_common_read(repo: String, target: String, cand: String, basis: String, +observed: T.GitOut) -> IO(SharedLanding):
   match observed:
     case T.GRun{code, out}:
       +c0 = code
@@ -1690,7 +1690,7 @@ def ld_adv_held_text(target: String, path: String) -> String:
 
 # ---------------------------------------------------------------------------
 
-def ld_adv_answer(a: LAdv, target: String, cand: String) -> Ld:
+def ld_adv_answer(+a: LAdv, target: String, cand: String) -> Ld:
   match a:
     case AdvLanded{}: LdDone{T.LLanded{target, cand}}
     case AdvMoved{}: LdDone{T.LBlocked{"target moved during checked landing; rerun land-checked to prepare and check against the current target"}}
@@ -1931,7 +1931,7 @@ def ld_stage5(repo: String, scratch: String, worker: String, sha: String, tip: S
 
 # The gate: every unjudged run and every candidate failure line the target
 # run does not show blocks; otherwise the advance starts.
-def ld_judged_news(news: List<String>, repo: String, target: String, scratch: String, tip: String, cand: String) -> IO(Ld):
+def ld_judged_news(+news: List<String>, repo: String, target: String, scratch: String, tip: String, cand: String) -> IO(Ld):
   match news:
     case Nil{}: ld_advance(repo, target, cand, tip)
     case Con{h, rest}: IO.pure(Ld, LdDone{T.LBlocked{Tx.str_cat("new failures: ", Tx.join("; ", news))}})
