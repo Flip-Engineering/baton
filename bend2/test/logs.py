@@ -282,7 +282,7 @@ sys.exit(%d)
         self.call('logs', 'omp-worker', 'default', '65536', '2')
         pads = [json.dumps({'type': 'response', 'id': 'p%d' % i, 'command': 'probe',
                             'pad': 'y' * 32000}) for i in range(3)]
-        self.stream(pads, turn='turn-1')
+        self.stream([self.terminal()] + pads, turn='turn-1')
         self.assertGreater(self.log.stat().st_size, 65536)
         self.assertFalse((self.cwd / 'turn.jsonl.1').exists())
         update = json.dumps({'type': 'tool_execution_update', 'toolCallId': 'tool-0',
