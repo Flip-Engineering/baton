@@ -28,7 +28,7 @@ def source_request() -> J.Json:
 
 def source_request_decodes_to_selection_operands(decoded: NativeRequest.RequestDecode) -> Bool:
   match decoded:
-    case NativeRequest.RequestDecoded{canonical, operands, operation_chain, cwd, source_path}:
+    case NativeRequest.RequestDecoded{canonical, +operands, operation_chain, cwd, source_path}:
       Bool.and(String.eq(Sel.req_subject(operands), "symbol"),
       Bool.and(Eng.ss_member(Sel.req_projections(operands), "definition"),
       Bool.and(String.eq(Sel.req_common(operands), "sourceAnalysis"),
