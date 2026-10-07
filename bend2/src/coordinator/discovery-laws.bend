@@ -118,3 +118,12 @@ law m8_a_catalog_metadata_groups_the_provider_scopes:
 
 def m8_a_catalog_metadata_groups_the_provider_scopes(reported):
   {==}
+
+# M-8 (#694): the usage document names each provider's limit windows from the
+# provider's own report, and the components it withholds are named in absent.
+law m8_a_usage_read_names_the_provider_windows:
+  for +text: String
+  {Probes.usage_providers(text) == "json(CASE WHEN json_valid(" ++ text ++ ") THEN (SELECT coalesce(json_group_array(json_object('provider',k.key,'windows',json(coalesce(k.value,'[]')))),json('[]')) FROM json_each(json(" ++ text ++ "),'$.capacity') k) ELSE '[]' END)" : String}
+
+def m8_a_usage_read_names_the_provider_windows(text):
+  {==}

@@ -58,6 +58,13 @@ def has_access(+harness: String) -> Bool:
 def access_args(+harness: String, executable: String) -> List<String>:
   Bool.pick(List<String>,String.eq(harness,"codex"),Codex.access_args(executable),Nil{})
 
+# Only the OMP adapter states per-provider usage limits beside its catalog.
+def has_usage(+harness: String) -> Bool:
+  String.eq(harness,"omp")
+
+def usage_args(+harness: String, executable: String) -> List<String>:
+  Bool.pick(List<String>,String.eq(harness,"omp"),Omp.usage_args(executable),Nil{})
+
 # The latest probe row per harness. The table is append-only, so rowid order is
 # observation order and the read takes the newest.
 def latest_cte() -> String:
@@ -83,8 +90,11 @@ def capacity_state(+p: String) -> String:
 def access_of(+p: String) -> String:
   "json(coalesce(json_extract(" ++ p ++ ".metadata,'$.access'),'null'))"
 
+def usage_of(+p: String) -> String:
+  "json(coalesce(json_extract(" ++ p ++ ".metadata,'$.usage'),'null'))"
+
 def metadata_object(+p: String) -> String:
-  "CASE WHEN " ++ p ++ ".harness IS NULL THEN json_object('state','unknown','models',NULL,'provenance',NULL,'providers',NULL,'requestedModel',NULL,'absent',json('[]'),'cause',NULL,'access',json('null')) WHEN " ++ p ++ ".outcome='ok' THEN json_object('state','known','models',coalesce(json(json_extract(" ++ p ++ ".metadata,'$.models')),json('null')),'provenance',json_extract(" ++ p ++ ".metadata,'$.provenance'),'providers',json(coalesce(json_extract(" ++ p ++ ".metadata,'$.providers'),'null')),'requestedModel',json_extract(" ++ p ++ ".metadata,'$.requestedModel'),'absent',json(coalesce(json_extract(" ++ p ++ ".metadata,'$.absent'),'[]')),'cause',NULL,'access'," ++ access_of(p) ++ ") ELSE json_object('state','error','models',NULL,'provenance',NULL,'providers',NULL,'requestedModel',NULL,'absent',json('[]'),'cause',nullif(" ++ p ++ ".cause,''),'access'," ++ access_of(p) ++ ") END"
+  "CASE WHEN " ++ p ++ ".harness IS NULL THEN json_object('state','unknown','models',NULL,'provenance',NULL,'providers',NULL,'requestedModel',NULL,'absent',json('[]'),'cause',NULL,'access',json('null'),'usage',json('null')) WHEN " ++ p ++ ".outcome='ok' THEN json_object('state','known','models',coalesce(json(json_extract(" ++ p ++ ".metadata,'$.models')),json('null')),'provenance',json_extract(" ++ p ++ ".metadata,'$.provenance'),'providers',json(coalesce(json_extract(" ++ p ++ ".metadata,'$.providers'),'null')),'requestedModel',json_extract(" ++ p ++ ".metadata,'$.requestedModel'),'absent',json(coalesce(json_extract(" ++ p ++ ".metadata,'$.absent'),'[]')),'cause',NULL,'access'," ++ access_of(p) ++ ",'usage'," ++ usage_of(p) ++ ") ELSE json_object('state','error','models',NULL,'provenance',NULL,'providers',NULL,'requestedModel',NULL,'absent',json('[]'),'cause',nullif(" ++ p ++ ".cause,''),'access'," ++ access_of(p) ++ ",'usage'," ++ usage_of(p) ++ ") END"
 
 # The absent list names each component the provider did not state, following the
 # observed-usage idiom; a component stated as zero stays zero.
@@ -135,7 +145,7 @@ def scoped_metadata(model: String, +reported: String) -> String:
   "json_object('models',CASE WHEN " ++ echoed_identifier(C.q(reported)) ++ " IS NULL THEN NULL ELSE json_array(" ++ echoed_identifier(C.q(reported)) ++ ") END,'requestedModel'," ++ C.q(model) ++ ",'provenance',CASE WHEN " ++ echoed_identifier(C.q(reported)) ++ " IS NULL THEN 'caller-stated' ELSE 'provider-echoed' END,'absent',json(CASE WHEN " ++ echoed_identifier(C.q(reported)) ++ " IS NULL THEN '[\"catalog\",\"model-identifier\"]' ELSE '[\"catalog\"]' END))"
 
 def access_field(+text: String, +path: String) -> String:
-  "CASE WHEN json_valid(json(" ++ text ++ ")) THEN json_extract(json(" ++ text ++ ")," ++ path ++ ") END"
+  "CASE WHEN json_valid(" ++ text ++ ") THEN json_extract(json(" ++ text ++ ")," ++ path ++ ") END"
 
 # The access report is the provider's own document: the stored credential mode and
 # its status, and no quota window. A report that did not parse is an error; a report
@@ -154,7 +164,7 @@ def access_key(+text: String) -> String:
   access_field(text,"'$.checks.\"auth.credentials\".details.\"stored API key\"'")
 
 def access_state(+text: String) -> String:
-  "CASE WHEN NOT json_valid(json(" ++ text ++ ")) THEN 'error' WHEN json_extract(json(" ++ text ++ "),'$.checks.\"auth.credentials\"') IS NULL THEN 'unknown' ELSE 'known' END"
+  "CASE WHEN NOT json_valid(" ++ text ++ ") THEN 'error' WHEN json_extract(json(" ++ text ++ "),'$.checks.\"auth.credentials\"') IS NULL THEN 'unknown' ELSE 'known' END"
 
 def access_absent(+text: String) -> String:
   "json((SELECT json_group_array(n) FROM ("
@@ -170,11 +180,28 @@ def access_document(+text: String) -> String:
   ++ ",'chatgptTokens'," ++ access_tokens(text)
   ++ ",'apiKey'," ++ access_key(text)
   ++ ",'absent'," ++ access_absent(text)
-  ++ ",'cause',CASE WHEN json_valid(json(" ++ text ++ ")) THEN NULL ELSE 'the access report did not parse' END"
+  ++ ",'cause',CASE WHEN json_valid(" ++ text ++ ") THEN NULL ELSE 'the access report did not parse' END"
   ++ ",'reportedBytes',length(" ++ text ++ "))"
 
 def access_object(+harness: String, +text: String) -> String:
   Bool.pick(String,has_access(harness),access_document(text),"json('null')")
+
+# The usage report is the provider's own document: a limit window per provider with
+# its reset instant and the allowance it holds. Account identifiers and endpoints are
+# left out of the answer and named in absent; the verbatim report stays in the row.
+def usage_providers(+text: String) -> String:
+  "json(CASE WHEN json_valid(" ++ text ++ ") THEN (SELECT coalesce(json_group_array(json_object('provider',k.key,'windows',json(coalesce(k.value,'[]')))),json('[]')) FROM json_each(json(" ++ text ++ "),'$.capacity') k) ELSE '[]' END)"
+
+def usage_limits(+text: String) -> String:
+  "json(CASE WHEN json_valid(" ++ text ++ ") THEN (SELECT coalesce(json_group_array(json_object('provider',json_extract(r.value,'$.provider'),'fetchedAt',json_extract(r.value,'$.fetchedAt'),'limits',(SELECT coalesce(json_group_array(json_object('id',json_extract(l.value,'$.id'),'label',json_extract(l.value,'$.label'),'windowId',json_extract(l.value,'$.scope.windowId'),'windowLabel',json_extract(l.value,'$.window.label'),'durationMs',json_extract(l.value,'$.window.durationMs'),'resetsAt',json_extract(l.value,'$.window.resetsAt'),'used',json_extract(l.value,'$.amount.used'),'limit',json_extract(l.value,'$.amount.limit'),'remaining',json_extract(l.value,'$.amount.remaining'),'unit',json_extract(l.value,'$.amount.unit'),'usedFraction',json_extract(l.value,'$.amount.usedFraction'),'remainingFraction',json_extract(l.value,'$.amount.remainingFraction'),'status',json_extract(l.value,'$.status'))),json('[]')) FROM json_each(r.value,'$.limits') l))),json('[]')) FROM json_each(json(" ++ text ++ "),'$.reports') r) ELSE '[]' END)"
+
+def usage_disabled(+text: String) -> String:
+  "json(CASE WHEN json_valid(" ++ text ++ ") THEN (SELECT coalesce(json_group_array(json_object('provider',json_extract(x.value,'$.provider'),'type',json_extract(x.value,'$.type'),'cause',json_extract(x.value,'$.cause'),'disabledAtMs',json_extract(x.value,'$.disabledAtMs'))),json('[]')) FROM json_each(json(" ++ text ++ "),'$.disabledCredentials') x) ELSE '[]' END)"
+
+def usage_object(+text: String, present: Bool) -> String:
+  Bool.pick(String,present,
+    "json_object('state',CASE WHEN NOT json_valid(" ++ text ++ ") THEN 'error' WHEN json_extract(json(" ++ text ++ "),'$.capacity') IS NULL AND json_extract(json(" ++ text ++ "),'$.reports') IS NULL THEN 'unknown' ELSE 'known' END,'generatedAt',CASE WHEN json_valid(" ++ text ++ ") THEN json_extract(json(" ++ text ++ "),'$.generatedAt') END,'reportedBytes',length(" ++ text ++ "),'providers'," ++ usage_providers(text) ++ ",'limits'," ++ usage_limits(text) ++ ",'accountsWithoutUsage',CASE WHEN json_valid(" ++ text ++ ") THEN json_array_length(json(" ++ text ++ "),'$.accountsWithoutUsage') END,'disabledCredentials'," ++ usage_disabled(text) ++ ",'absent',json('[\"account-email\",\"account-id\",\"endpoint\"]'),'cause',CASE WHEN json_valid(" ++ text ++ ") THEN NULL ELSE 'the usage report did not parse' END)",
+    "json('null')")
 
 def base_metadata(+harness: String, model: String, +reported: String, +ok: Bool) -> String:
   Bool.pick(String,Bool.and(ok,catalog_read(harness)),catalog_metadata(reported),
@@ -182,8 +209,8 @@ def base_metadata(+harness: String, model: String, +reported: String, +ok: Bool)
 
 # Metadata is the provider's parsed catalog when a catalog read succeeded, the
 # named model when a model-scoped read succeeded, and null otherwise.
-def metadata_columns(+harness: String, model: String, reported: String, +ok: Bool, +access: String) -> String:
-  "json_set(" ++ base_metadata(harness,model,reported,ok) ++ ",'$.access'," ++ access ++ ")"
+def metadata_columns(+harness: String, model: String, reported: String, +ok: Bool, +access: String, +usage: String) -> String:
+  "json_set(" ++ base_metadata(harness,model,reported,ok) ++ ",'$.access'," ++ access ++ ",'$.usage'," ++ usage ++ ")"
 
 def capacity_columns(+limit: String, +used: String, +remaining: String, +reset: String) -> String:
   absent_columns(limit,used,remaining,reset,"json_object('limit'," ++ limit ++ ",'used'," ++ used ++ ",'remaining'," ++ remaining ++ ",'resetAt'," ++ reset ++ ",'reported',NULL")
@@ -209,9 +236,9 @@ def probe_insert(+harness: String, executable: String, outcome: String, cause: S
 def record_sql(harness: String, executable: String, outcome: String, cause: String, reported: String, metadata: String, capacity: String) -> String:
   "BEGIN IMMEDIATE;" ++ C.schema() ++ probe_insert(harness,executable,outcome,cause,reported,metadata,capacity) ++ "COMMIT;"
 
-def recorded(+db: String, +harness: String, executable: String, outcome: String, cause: String, +reported: String, model: String, ok: Bool, parseable: Bool, +access: String) -> IO(Unit):
+def recorded(+db: String, +harness: String, executable: String, outcome: String, cause: String, +reported: String, model: String, ok: Bool, parseable: Bool, +access: String, +usage: String) -> IO(Unit):
   do IO<Unit>:
-    saved : String <- IO.try(String,DB.Sql.query(db,record_sql(harness,executable,outcome,cause,reported,metadata_columns(harness,model,reported,ok,access),capacity_expr(reported,parseable))))
+    saved : String <- IO.try(String,DB.Sql.query(db,record_sql(harness,executable,outcome,cause,reported,metadata_columns(harness,model,reported,ok,access,usage),capacity_expr(reported,parseable))))
     IO.print(Tx.trim_nl(saved))
     IO.pure(Unit,Unit{})
 
@@ -251,31 +278,31 @@ def verify_parse(db: String, reported: String) -> IO(Bool):
     valid : String <- IO.try(String,DB.Sql.query(db,parse_check_sql(reported)))
     IO.pure(Bool,String.eq(Tx.trim_nl(valid),"1"))
 
-def exited_ok(+db: String, +harness: String, +executable: String, +reported: String, +access: String) -> IO(Unit):
+def exited_ok(+db: String, +harness: String, +executable: String, +reported: String, +access: String, +usage: String) -> IO(Unit):
   do IO<Unit>:
     listed : Bool <- verify_parse(db,reported)
-    done : Unit <- Bool.pick(IO(Unit),listed,recorded(db,harness,executable,"ok","",reported,"",True{},True{},access),recorded(db,harness,executable,"error","the provider output stated no model catalog",reported,"",False{},False{},access))
+    done : Unit <- Bool.pick(IO(Unit),listed,recorded(db,harness,executable,"ok","",reported,"",True{},True{},access,usage),recorded(db,harness,executable,"error","the provider output stated no model catalog",reported,"",False{},False{},access,usage))
     IO.pure(Unit,Unit{})
 
-def exited(+db: String, +harness: String, +executable: String, +reported: String, +access: String, +code: U32) -> IO(Unit):
-  Bool.pick(IO(Unit),U32.is_eq(code,0),exited_ok(db,harness,executable,reported,access),recorded(db,harness,executable,"error","the provider exited with status " ++ U32.show(code),reported,"",False{},False{},access))
+def exited(+db: String, +harness: String, +executable: String, +reported: String, +access: String, +usage: String, +code: U32) -> IO(Unit):
+  Bool.pick(IO(Unit),U32.is_eq(code,0),exited_ok(db,harness,executable,reported,access,usage),recorded(db,harness,executable,"error","the provider exited with status " ++ U32.show(code),reported,"",False{},False{},access,usage))
 
-def scoped_ok(+db: String, +harness: String, +executable: String, +model: String, +reported: String, +access: String) -> IO(Unit):
-  recorded(db,harness,executable,"ok","",reported,model,True{},False{},access)
+def scoped_ok(+db: String, +harness: String, +executable: String, +model: String, +reported: String, +access: String, +usage: String) -> IO(Unit):
+  recorded(db,harness,executable,"ok","",reported,model,True{},False{},access,usage)
 
-def completed(+db: String, +harness: String, +executable: String, +model: String, +access: String, result: T.RunRes) -> IO(Unit):
+def completed(+db: String, +harness: String, +executable: String, +model: String, +access: String, +usage: String, result: T.RunRes) -> IO(Unit):
   match result:
-    case T.RSpawn{detail}: recorded(db,harness,executable,"error",detail,"",model,False{},False{},access)
+    case T.RSpawn{detail}: recorded(db,harness,executable,"error",detail,"",model,False{},False{},access,usage)
     case T.RRun{T.SExit{+code}, +out}: Bool.pick(IO(Unit),needs_model(harness),
-      Bool.pick(IO(Unit),U32.is_eq(code,0),scoped_ok(db,harness,executable,model,out,access),
-        recorded(db,harness,executable,"error","the provider exited with status " ++ U32.show(code),out,model,False{},False{},access)),
-      exited(db,harness,executable,out,access,code))
-    case T.RRun{T.SSignal{num}, out}: recorded(db,harness,executable,"error","the provider was killed by signal " ++ U32.show(num),out,model,False{},False{},access)
+      Bool.pick(IO(Unit),U32.is_eq(code,0),scoped_ok(db,harness,executable,model,out,access,usage),
+        recorded(db,harness,executable,"error","the provider exited with status " ++ U32.show(code),out,model,False{},False{},access,usage)),
+      exited(db,harness,executable,out,access,usage,code))
+    case T.RRun{T.SSignal{num}, out}: recorded(db,harness,executable,"error","the provider was killed by signal " ++ U32.show(num),out,model,False{},False{},access,usage)
 
 # An adapter that exposes no read is recorded refused, so its unavailability is an
 # explicit observed state rather than an absent row.
 def absent_read(+db: String, +harness: String, +executable: String) -> IO(Unit):
-  recorded(db,harness,executable,"refused","this adapter exposes no non-interactive metadata read","","",False{},False{},"json('null')")
+  recorded(db,harness,executable,"refused","this adapter exposes no non-interactive metadata read","","",False{},False{},"json('null')","json('null')")
 
 def run_text(result: T.RunRes) -> String:
   match result:
@@ -293,11 +320,22 @@ def access_text(+harness: String, executable: String) -> IO(String):
 def access_run(+harness: String, executable: String) -> IO(String):
   Bool.pick(IO(String),has_access(harness),access_text(harness,executable),IO.pure(String,""))
 
+# The usage limits are a second provider read in the same explicit action, recorded
+# beside the catalog with its own failure stated in its own object.
+def usage_text(+harness: String, executable: String) -> IO(String):
+  do IO<String>:
+    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(usage_args(harness,executable)),".")
+    IO.pure(String,run_text(Tx.run_res(run)))
+
+def usage_run(+harness: String, executable: String) -> IO(String):
+  Bool.pick(IO(String),has_usage(harness),usage_text(harness,executable),IO.pure(String,""))
+
 def invoked(+db: String, +harness: String, +executable: String, +model: String) -> IO(Unit):
   do IO<Unit>:
     report : String <- access_run(harness,executable)
+    limits : String <- usage_run(harness,executable)
     run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(read_args(harness,executable,model)),".")
-    completed(db,harness,executable,model,access_object(harness,C.q(report)),Tx.run_res(run))
+    completed(db,harness,executable,model,access_object(harness,C.q(report)),usage_object(C.q(limits),has_usage(harness)),Tx.run_res(run))
 
 # The executable is resolved through the existing host binding before any read
 # runs. The row records the resolved path, never the caller's text.

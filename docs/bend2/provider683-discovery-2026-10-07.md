@@ -28,6 +28,7 @@ expects an initialized database.
 | `codex` 0.160.1 | `codex debug models` | JSON, `$.models[].slug`; 11 slugs |
 | `codex` 0.160.1 | `codex doctor --json` | redacted report, `$.checks."auth.credentials"` |
 | `omp` 17.4.0 | `omp models --json` | JSON, `$.models[].selector`; 92 models |
+| `omp` 17.4.0 | `omp usage --json` | JSON, `$.capacity` per provider, `$.reports[].limits`, `$.disabledCredentials` |
 | `muse` | `muse model-profile show MODEL` | text profile for one named model |
 | `claude-code` 2.1.287 | none | the adapter exposes no metadata read |
 
@@ -135,6 +136,20 @@ A harness may serve several providers, and two routes can share a model name. Th
   `capacity.state` is `known` only for a component the provider stated, so a
   successful read establishes observed usability at that time and never a remaining
   amount.
+
+The OMP adapter answers provider usage limits for every authenticated account
+through `omp usage --json`, observed 2026-10-07: `capacity` holds one entry per
+provider with `window`, `durationMs`, `accounts`, `usedAccounts` and
+`remainingAccounts`; `reports[].limits[]` holds each labelled limit with its
+`window.durationMs`, `window.resetsAt` and `amount` (`used`, `limit`, `remaining`,
+`unit`, `usedFraction`, `remainingFraction`) and `status`; `disabledCredentials`
+holds the provider's own credential refusals with their cause. The probe records
+that report in `metadata.usage`: `providers[]` and `limits[]` carry the provider's
+own values, `disabledCredentials` carries the refusals, and account identifiers and
+endpoints are left out and named in `absent`. The verbatim report stays in the probe
+row. A report that parsed without windows answers `unknown`, and one that did not
+parse answers `error` with the cause, so an absent usage answer is never read as an
+available allowance.
 
 ## Unobserved
 

@@ -69,6 +69,14 @@ class Models(unittest.TestCase):
                             '  debug) cat <<\'CAT\'\n' + catalog + '\nCAT\n  ;;\n'
                             'esac\n')
 
+    # The OMP probe runs the catalog and the usage read in one action.
+    def omp_harness(self, name, catalog, usage):
+        return self.harness(name,
+                            'case "$1" in\n'
+                            '  models) cat <<\'CAT\'\n' + catalog + '\nCAT\n  ;;\n'
+                            '  usage) cat <<\'USE\'\n' + usage + '\nUSE\n  ;;\n'
+                            'esac\n')
+
     def call(self, *args, env=None):
         return subprocess.run([str(EXE), str(self.db), *map(str, args)],
                               text=True, capture_output=True, env=env or self.env)
@@ -322,6 +330,35 @@ class Models(unittest.TestCase):
         row = self.provider(self.read(), 'omp')
         self.assertEqual(row['capacity']['scope'], 'omp')
         self.assertGreaterEqual(row['probe']['ageSeconds'], 0)
+
+    def test_omp_usage_read_reports_provider_windows_and_excludes_account_identity(self):
+        catalog = '{"models":[{"provider":"opencode-go","selector":"opencode-go/gpt-6-luna"}]}'
+        usage = ('{"generatedAt":1,"reports":[{"provider":"opencode-go","fetchedAt":2,"limits":['
+                 '{"id":"5h","label":"5 Hour limit","scope":{"provider":"opencode-go","windowId":"5h"},'
+                 '"window":{"id":"5h","label":"5 Hour","durationMs":18000000,"resetsAt":3},'
+                 '"amount":{"used":51,"usedFraction":0.51,"remainingFraction":0.49,"unit":"percent"},'
+                 '"status":"ok"}],"metadata":{"endpoint":"invented","email":"invented@example.invalid"}}],'
+                 '"accountsWithoutUsage":[],"disabledCredentials":[],'
+                 '"capacity":{"opencode-go":[{"window":"5h","durationMs":18000000,"accounts":1,'
+                 '"usedAccounts":0.51,"remainingAccounts":0.49}]}}')
+        recorded = self.probe('omp', self.omp_harness('omp-both', catalog, usage))
+        document = recorded['metadata']['usage']
+        self.assertEqual(document['state'], 'known')
+        self.assertEqual([row['provider'] for row in document['providers']], ['opencode-go'])
+        self.assertEqual(document['providers'][0]['windows'][0]['remainingAccounts'], 0.49)
+        limit = document['limits'][0]['limits'][0]
+        self.assertEqual((limit['windowId'], limit['resetsAt'], limit['usedFraction'], limit['status']),
+                         ('5h', 3, 0.51, 'ok'))
+        self.assertIn('account-email', document['absent'])
+        self.assertNotIn('invented@example.invalid', json.dumps(document))
+        row = self.provider(self.read(), 'omp')
+        self.assertEqual(row['metadata']['usage']['state'], 'known')
+
+    def test_omp_probe_without_a_usage_report_states_unknown(self):
+        catalog = self.harness('omp-catalog-only', 'echo \'{"models":[{"selector":"kimi-code/k3"}]}\'\n')
+        recorded = self.probe('omp', catalog)
+        self.assertEqual(recorded['metadata']['usage']['state'], 'unknown')
+        self.assertEqual(recorded['metadata']['usage']['providers'], [])
 
     def test_pretty_read_prints_the_same_document(self):
         plain = self.read()

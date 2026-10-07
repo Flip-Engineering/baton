@@ -1077,8 +1077,10 @@ MUTATIONS.push(
   {"name": "discovery-omp-query-uses-another-read", "file": "bend2/src/harness/omp-player.bend", "find": "[cmd,\"models\",\"--json\"]", "replace": "[cmd,\"models\"]", "law": "m8_omp_query_reads_its_own_catalog"},
   {"name": "discovery-muse-query-drops-the-model", "file": "bend2/src/harness/muse-player.bend", "find": "[cmd,\"model-profile\",\"show\",model]", "replace": "[cmd,\"model-profile\",\"show\",\"\"]", "law": "m8_muse_query_reads_one_named_model"},
   {"name": "discovery-muse-caller-string-becomes-a-provider-listing", "file": "bend2/src/coordinator/probes.bend", "find": "THEN 'caller-stated' ELSE 'provider-echoed' END", "replace": "THEN 'provider-echoed' ELSE 'provider-echoed' END", "law": "m8_a_model_scoped_read_lists_only_the_echoed_identifier"},
-  {"name": "discovery-refusal-guidance-names-no-harness", "file": "bend2/src/coordinator/continuation.bend", "find": ",\"(SELECT harness FROM seat LIMIT 1)))", "replace": ",NULL))", "law": "m12_a_continuation_refusal_names_a_harness"},
+  {"name": "discovery-refusal-guidance-names-no-harness", "file": "bend2/src/coordinator/continuation.bend", "find": ",(SELECT harness FROM seat LIMIT 1)))", "replace": ",NULL))", "law": "m12_a_continuation_refusal_names_a_harness"},
   {"name": "discovery-catalog-groups-every-scope-under-one-provider", "file": "bend2/src/coordinator/probes.bend", "find": "'provider',g.provider", "replace": "'provider','omp'", "law": "m8_a_catalog_metadata_groups_the_provider_scopes"},
+  {"name": "discovery-omp-usage-read-uses-the-catalog", "file": "bend2/src/harness/omp-player.bend", "find": "[cmd,\"usage\",\"--json\"]", "replace": "[cmd,\"models\",\"--json\"]", "law": "m8_omp_usage_read_names_the_account_usage_limits"},
+  {"name": "discovery-usage-read-omits-the-provider-windows", "file": "bend2/src/coordinator/probes.bend", "find": "'provider',k.key", "replace": "'provider','omp'", "law": "m8_a_usage_read_names_the_provider_windows"},
 );
 
 for (const mutation of MUTATIONS) {

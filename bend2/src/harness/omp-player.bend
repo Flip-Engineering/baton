@@ -26,6 +26,11 @@ def arguments(cmd: String, model: String, effort: String, sessions: String) -> L
 def query_args(cmd: String) -> List<String>:
   [cmd,"models","--json"]
 
+# The adapter's usage read: provider usage limits for every authenticated account,
+# with limit windows and their reset instants.
+def usage_args(cmd: String) -> List<String>:
+  [cmd,"usage","--json"]
+
 def argv(cmd: String, model: String, effort: String, sessions: String, session: String, fresh: Bool) -> String:
   match fresh:
     case True{}: P.argv(arguments(cmd,model,effort,sessions))

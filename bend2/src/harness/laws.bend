@@ -301,3 +301,12 @@ law m8_muse_query_reads_one_named_model:
 
 def m8_muse_query_reads_one_named_model(cmd, model):
   {==}
+
+# The OMP adapter states provider usage limits for every authenticated account, with
+# the limit windows and their reset instants (#694).
+law m8_omp_usage_read_names_the_account_usage_limits:
+  for +cmd: String
+  {Omp.usage_args(cmd) == [cmd,"usage","--json"] : List<String>}
+
+def m8_omp_usage_read_names_the_account_usage_limits(cmd):
+  {==}

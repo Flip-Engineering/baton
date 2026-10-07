@@ -342,7 +342,7 @@ Each adapter states its own read, and the row records the resolved executable:
 | Harness | Read |
 | --- | --- |
 | `codex` | `<cmd> debug models`, with `<cmd> doctor --json` for the stored credential mode |
-| `omp` | `<cmd> models --json` |
+| `omp` | `<cmd> models --json`, with `<cmd> usage --json` for per-provider usage limits |
 | `muse` | `<cmd> model-profile show MODEL` |
 | `claude-code` | no metadata read; the probe records a refusal |
 
@@ -365,6 +365,16 @@ Where no candidate is established as usable, `continuation.refusal` answers with
 `continuation-capacity-unknown` and lists the would-be candidates;
 `continuation.seat` reports the seat's recorded route, stop state and owed input
 count.
+
+`metadata.usage` carries the adapter's usage report where the adapter states one.
+For `omp`, `usage --json` answers provider usage limits per authenticated account:
+`providers[]` holds each provider's limit windows with their duration and remaining
+allowance, `limits[]` holds each provider's labelled limits with their window,
+reset instant, used and remaining amounts and status, and `disabledCredentials`
+holds the provider's own credential refusals with their cause. Account identifiers
+and endpoints are left out and named in `absent`; the verbatim report stays in the
+probe row. A report that parsed without windows answers `state` `unknown`, and one
+that did not parse answers `error` with the cause.
 
 A registry key proves a configured identity exists, and a harness catalog proves
 the harness can serve a model. Neither proves that the account can use it now, so
