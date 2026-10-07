@@ -442,15 +442,18 @@ def holder_close(acc: HolderScan, +request: String) -> HolderScan:
             ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks})
         case NoBlock{}: ScanState{NoBlock{}, matched, seen, bad, blocks}
 
+def holder_open_fresh_path(block: HolderBlock, matched: Maybe<String>, seen: U32, bad: U32, blocks: U32, path: Maybe<String>) -> HolderScan:
+  match path:
+    case Some{value}:
+      Bool.pick(HolderScan, holder_path_ok(value),
+        ScanState{InBlock{value, False{}, 0}, matched, seen, bad, blocks},
+        ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks})
+    case None{}: ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks}
+
 def holder_open_fresh(+path: Maybe<String>, +acc: HolderScan, +request: String) -> HolderScan:
   match acc:
     case ScanState{block, matched, seen, bad, blocks}:
-      match path:
-        case Some{value}:
-          Bool.pick(HolderScan, holder_path_ok(value),
-            ScanState{InBlock{value, False{}, 0}, matched, seen, bad, blocks},
-            ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks})
-        case None{}: ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks}
+      holder_open_fresh_path(block, matched, seen, bad, blocks, path)
 
 def holder_open(+path: Maybe<String>, +acc: HolderScan, +request: String) -> HolderScan:
   match acc:
