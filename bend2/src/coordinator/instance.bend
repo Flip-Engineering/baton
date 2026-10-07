@@ -79,18 +79,15 @@ def join_all(tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>) -> IO(Result<&1
       head : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,task)
       IO.pure(Result<&1,&1,U32 & String,Unit>,combine(head,tail))
 
-def serve_next(+db: String, id: String, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, empty: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match empty:
-    case True{}: join_all(tasks)
-    case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,serve_session(db,id))
-      serve_loop(db,id,task <> tasks)
-
 def serve_loop(+db: String, cursor: String, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     next : String <- IO.try(String,DB.Sql.query(db,next_session_sql(cursor)))
     +id : String <- IO.pure(String,Tx.trim_nl(next))
-    serve_next(db,id,tasks,String.is_empty(id))
+    match String.is_empty(id):
+      case True{}: join_all(tasks)
+      case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+        task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,serve_session(db,id))
+        serve_loop(db,id,Con{task,tasks})
 
 def serve_owned(+db: String, +owner: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
