@@ -2323,7 +2323,10 @@ typedef struct {
 static uint64_t br_admission_check(const BrAdmission *record,const char *directory,size_t length) {
   uint64_t digest=0xcbf29ce484222325ULL;
   const unsigned char *bytes=(const unsigned char *)record;
-  for(size_t i=0;i<sizeof(*record);i++) {digest^=bytes[i];digest*=0x100000001b3ULL;}
+  for(size_t i=0;i<offsetof(BrAdmission,check);i++) {digest^=bytes[i];digest*=0x100000001b3ULL;}
+  for(size_t i=offsetof(BrAdmission,check)+sizeof(uint64_t);i<sizeof(*record);i++) {
+    digest^=bytes[i];digest*=0x100000001b3ULL;
+  }
   for(size_t i=0;i<length;i++) {digest^=(unsigned char)directory[i];digest*=0x100000001b3ULL;}
   return digest;
 }
