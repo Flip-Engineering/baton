@@ -218,6 +218,7 @@ typedef struct BrKeeper {
   /* Recovery observers are owner-managed continuation work. An acknowledged
      attempt remains live until every child launched for it has been reaped. */
   size_t recovery_pending;
+  struct BrWaiter *unwatched_recovery;
   char *directory,*incoming;
   size_t incoming_size,incoming_capacity;
   BrManifest manifest;
@@ -910,7 +911,7 @@ static int br_reply(BrKeeper *keeper,uint64_t serial,uint64_t generation,int err
   return br_send(keeper,(BrFrame){.op=BR_REPLY,.serial=serial,.error=error},NULL);
 }
 typedef struct { int kind,status; pid_t pid; uint64_t generation; } BrWake;
-typedef struct { BrWake event; int descriptor; } BrWaiter;
+typedef struct BrWaiter { BrWake event; int descriptor; struct BrWaiter *next; } BrWaiter;
 static void *br_waiter(void *argument) {
   BrWaiter *waiter=argument;
   int result;
@@ -925,24 +926,67 @@ static void *br_waiter(void *argument) {
   br_write_all(waiter->descriptor,&waiter->event,sizeof(waiter->event));
   close(waiter->descriptor);free(waiter);return NULL;
 }
-static int br_wait_start(BrKeeper *keeper,pid_t pid,int kind) {
+static BrWaiter *br_waiter_prepare(BrKeeper *keeper,int kind) {
   BrWaiter *waiter=calloc(1,sizeof(*waiter));
-  if(!waiter)return ENOMEM;
-  waiter->event=(BrWake){.kind=kind,.pid=pid,.generation=keeper->generation};
+  if(!waiter)return NULL;
+  waiter->event=(BrWake){.kind=kind,.generation=keeper->generation};
   waiter->descriptor=fcntl(keeper->wake[1],F_DUPFD_CLOEXEC,10);
-  if(waiter->descriptor<0){int error=errno;free(waiter);return error;}
+  if(waiter->descriptor<0){free(waiter);return NULL;}
+  return waiter;
+}
+static void br_waiter_discard(BrWaiter *waiter) {
+  if(!waiter)return;
+  if(waiter->descriptor>=0)close(waiter->descriptor);
+  free(waiter);
+}
+static int br_waiter_submit(BrKeeper *keeper,BrWaiter *waiter,pid_t pid) {
+  waiter->event.pid=pid;
+  if(waiter->event.kind=='R')keeper->recovery_pending++;
   pthread_t thread;int error=pthread_create(&thread,NULL,br_waiter,waiter);
-  if(error){close(waiter->descriptor);free(waiter);return error;}
-  if(kind=='R')keeper->recovery_pending++;
+  if(error) {
+    if(waiter->event.kind=='R') {
+      waiter->next=keeper->unwatched_recovery;
+      keeper->unwatched_recovery=waiter;
+    } else br_waiter_discard(waiter);
+    return error;
+  }
   pthread_detach(thread);return 0;
+}
+static int br_wait_start(BrKeeper *keeper,pid_t pid,int kind) {
+  BrWaiter *waiter=br_waiter_prepare(keeper,kind);
+  if(!waiter)return errno?errno:ENOMEM;
+  return br_waiter_submit(keeper,waiter,pid);
+}
+/* A recovery child remains tracked if the waiter thread could not start. The
+   owner reaps that exceptional child with WNOHANG while continuing its normal
+   request loop; the periodic poll only applies while such a child is pending. */
+static int br_recovery_reap_unwatched(BrKeeper *keeper) {
+  for(BrWaiter **link=&keeper->unwatched_recovery;*link;) {
+    BrWaiter *waiter=*link;int status=0;pid_t result;
+    do {result=waitpid(waiter->event.pid,&status,WNOHANG);} while(result<0 && errno==EINTR);
+    if(!result){link=&waiter->next;continue;}
+    if(result<0 && errno!=ECHILD)return errno;
+    *link=waiter->next;
+    if(keeper->recovery_pending)keeper->recovery_pending--;
+    if(result<0)br_note(keeper,"observer-error",ECHILD);
+    else if(keeper->client<0) {
+      char text[96];int n=snprintf(text,sizeof(text),"pid %d exited before attach: wait status %d\n",waiter->event.pid,status);
+      br_file(keeper->directory,"observer-error",text,(size_t)n,0);
+    }
+    br_waiter_discard(waiter);
+  }
+  return 0;
 }
 static void br_recover(BrKeeper *keeper) {
   char **argv=br_argv(keeper->manifest.field[4],(size_t)keeper->manifest.header.lengths[4]);
   char *path=br_path(keeper->directory,"observer.log");
   int null=open("/dev/null",O_RDONLY|O_CLOEXEC),log=path?open(path,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600):-1;
-  int error=argv&&path&&null>=0&&log>=0?br_spawn(&keeper->recovery_pid,argv,keeper->manifest.field[1],null,log,log,-1,-1):errno?errno:ENOMEM;
+  BrWaiter *waiter=argv&&path&&null>=0&&log>=0?br_waiter_prepare(keeper,'R'):NULL;
+  int error=argv&&path&&null>=0&&log>=0&&waiter?
+    br_spawn(&keeper->recovery_pid,argv,keeper->manifest.field[1],null,log,log,-1,-1):errno?errno:ENOMEM;
   if(null>=0)close(null);if(log>=0)close(log);free(path);free(argv);
-  if(!error) error=br_wait_start(keeper,keeper->recovery_pid,'R');
+  if(!error)error=br_waiter_submit(keeper,waiter,keeper->recovery_pid);
+  else br_waiter_discard(waiter);
   if(error) br_note(keeper,"observer-error",error);
 }
 static void br_disconnected(BrKeeper *keeper) {
@@ -2071,6 +2115,9 @@ static int br_owner_loop(BrOwner *owner) {
     }
     for(BrKeeper **link=&owner->attempts;*link;) {
       BrKeeper *keeper=*link;
+      if(keeper->unwatched_recovery && (error=br_recovery_reap_unwatched(keeper))) {
+        br_note(keeper,"observer-error",error);error=0;
+      }
       if(keeper->finishing && !keeper->outgoing && !keeper->recovery_pending) {
         *link=keeper->next;
         if(owner->single)owner->finishing=1;
@@ -2118,7 +2165,10 @@ static int br_owner_loop(BrOwner *owner) {
         clients[bound++]=control,fds[index]=(struct pollfd){control->socket,POLLIN|(control->answered?POLLOUT:0),0};
     }
     apart[slots]=bound;
-    int ready;do {ready=poll(fds,(nfds_t)total,-1);} while(ready<0 && errno==EINTR);
+    int poll_timeout=-1;
+    for(BrKeeper *keeper=owner->attempts;keeper;keeper=keeper->next)
+      if(keeper->unwatched_recovery) {poll_timeout=100;break;}
+    int ready;do {ready=poll(fds,(nfds_t)total,poll_timeout);} while(ready<0 && errno==EINTR);
     if(ready<0) {error=errno;goto polled;}
     if(head && fds[0].revents&POLLIN) {
       int socket=accept(owner->listener,NULL,NULL);

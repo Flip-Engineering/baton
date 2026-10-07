@@ -388,11 +388,11 @@ class SharedInstance(unittest.TestCase):
         finished = self.home / 'recovery-finished'
         recovery.write_text(
             '#!/bin/sh\n'
-            f': > {shlex.quote(str(started))}\n'
+            f'echo started >> {shlex.quote(str(started))}\n'
             'sleep 3\n'
             f'{shlex.quote(str(EXE))} recover-retained {shlex.quote(str(self.db))} {shlex.quote(str(directory))}\n'
             'status=$?\n'
-            f'echo "$status" > {shlex.quote(str(finished))}\n'
+            f'echo "$status" >> {shlex.quote(str(finished))}\n'
             'exit "$status"\n')
         recovery.chmod(0o700)
         child = self.spawn('admit-recovery', self.db, 'recovery-child', directory,
@@ -401,15 +401,20 @@ class SharedInstance(unittest.TestCase):
         child.kill()
         child.wait(timeout=10)
         self.hold(started, '')
+        observer = self.spawn('attach', self.db, directory)
+        self.line(observer, 'attached')
+        observer.kill()
+        observer.wait(timeout=10)
+        self.hold(started, 'started\nstarted', timeout=10)
         self.write(directory, 'exit\n')
         self.hold(directory / 'stdout', 'native-done')
         completed = self.command('attach-complete', self.db, directory)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn('acknowledge-ok', completed.stdout)
         self.assertFalse(finished.exists(), 'the delayed recovery child should still be running')
-        self.hold(finished, '0', timeout=15)
-        self.assertEqual(finished.read_text().strip(), '0',
-                         'the tracked recovery observer must attach before attempt retirement')
+        self.hold(finished, '0\n0', timeout=15)
+        self.assertEqual(finished.read_text().splitlines(), ['0', '0'],
+                         'every tracked recovery observer must attach before attempt retirement')
         print('evidence recovery-child-retained', completed.stdout.replace('\n', '|'),
               'recovery-exit', finished.read_text().strip())
 
