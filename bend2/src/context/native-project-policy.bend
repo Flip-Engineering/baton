@@ -75,7 +75,7 @@ def text_array_values(+items: J.Json) -> Bool:
 def text_list_unique(xs: List<String>, +seen: Eng.SS) -> Bool:
   match xs:
     case Nil{}: True{}
-    case head <> tail:
+    case +head <> tail:
       Bool.pick(Bool, Eng.ss_member(seen, head), False{},
         text_list_unique(tail, Eng.SSCons{head, seen}))
 
