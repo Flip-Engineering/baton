@@ -7,6 +7,9 @@ import ./process.bend as P
 def Instance.owner(database: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
+def Instance.admit_with_file_start(database: String, directory: String, argv: String, cwd: String, stderr: String, artifact_name: String, artifact_bytes: String, initial_stdin: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32> & String>):
+  import "./process-spawn.c"
+
 # The prepared file-input variant on the shared owner: the same private artifact
 # preparation and identity binding as ProcessChild.retain_with_file, with the
 # owner elected for the database instead of a keeper per attempt.
@@ -18,9 +21,6 @@ def Instance.admit_with_file(database: String, directory: String, argv: String, 
     case Some{value_lock}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
       result : Result<&1,&1,U32 & String,Maybe<U32> & String> <- Instance.admit_with_file_start(database,directory,argv,cwd,stderr,artifact_name,artifact_bytes,initial_stdin,keep_stdin,value_lock,recovery_argv)
       IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Instance.started(result))
-
-def Instance.admit_with_file_start(database: String, directory: String, argv: String, cwd: String, stderr: String, artifact_name: String, artifact_bytes: String, initial_stdin: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32> & String>):
-  import "./process-spawn.c"
 
 # Starts a native attempt under the database owner and joins it as its observer.
 # The result carries the attempt handle, or the reason no native child started.
