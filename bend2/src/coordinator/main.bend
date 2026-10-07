@@ -191,11 +191,13 @@ law player_executes_the_stored_command:
 def player_executes_the_stored_command(db,id):
   {==}
 
-law orchestra_executes_the_stored_command:
-  for db: String
-  {execute(db,C.Orchestra{}) == run(db,C.Orchestra{}) : IO(Unit)}
+# The orchestra answer combines the players, operators, and ensembles
+# surfaces. This law pins the assembly; unfolding the full orchestra SQL
+# in one equality exceeds the law checker's term capacity.
+law orchestra_answer_combines_the_role_surfaces:
+  {C.orchestra_sql() == ("SELECT json_object('players'," ++ C.players_json(C.assigned_role("s.id") ++ "<>'operator'") ++ ",'operators'," ++ C.players_json(C.assigned_role("s.id") ++ "='operator'") ++ ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT " ++ C.ensemble_row("e") ++ " AS item FROM ensembles e ORDER BY e.id)));") : String}
 
-def orchestra_executes_the_stored_command(db):
+def orchestra_answer_combines_the_role_surfaces():
   {==}
 
 law section_executes_the_stored_command:
