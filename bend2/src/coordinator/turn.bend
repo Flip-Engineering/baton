@@ -489,7 +489,7 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
         restored : Result<&1,&1,U32 & String,Unit> <- checkpoint_restore(log)
         sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness))
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,log,policy,"",False{},handle,harness,"0\n","","","","","","","",remember_write("",restored),sender,"",Nil{},first)
+        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,log,policy,"",False{},handle,harness,"0\n","","","","","","",remember_write("",restored),sender,"",Nil{},first)
         direct_observed(observation)
 
 # The retained process sends its initial input once. Reattachment reads the same
