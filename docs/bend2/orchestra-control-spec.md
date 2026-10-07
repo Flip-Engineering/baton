@@ -229,6 +229,8 @@ Every refused setup or messaging operation exits 2 with one JSON object:
  "next": "<the reader command and the permitted next operation>"}
 ```
 
+Semantic-context refusals use exit 2 uniformly, including unknown query and result identities; this supersedes the lead draft's exit-1 form.
+
 Safe echo: `command` echoes identifying arguments (IDs, kinds, action words)
 and omits opaque message bodies, endpoint argv and any credential-bearing
 values, per M-14 (`docs/bend2/laws-proposed.md:196-199`). A host or storage
