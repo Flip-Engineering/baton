@@ -38,7 +38,7 @@ def parse_digits(xs: List<&2, Char>, acc: U32) -> U32:
 def parse_u32(s: String) -> U32:
   parse_digits(String.to_list(s), 0)
 
-def case_fields(fs: List<&2, String>) -> CaseRow:
+def case_fields(+fs: List<&2, String>) -> CaseRow:
   CaseRow{
     field(fs, 1n),
     field(fs, 2n),
@@ -68,7 +68,7 @@ def decide(+request: String, rowsBefore: U32) -> Verdict:
 
 def render_verdict(name: String, readerCursor: U32, v: Verdict) -> String:
   match v:
-    case Admitted{+rows, cursor}:
+    case Admitted{+rows, +cursor}:
       String.concat(["RESULT|", name, "|admitted=true|refusal_class=none|rows_written=", U32.show(rows),
         "|cursor=", U32.show(cursor), "|owed=", U32.show(U32.sub(cursor, readerCursor))])
     case Refused{classification, +rows, +cursor}:

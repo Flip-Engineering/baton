@@ -347,7 +347,7 @@ law m1_a_stored_record_result_delivers_its_notice:
 def m1_a_stored_record_result_delivers_its_notice(db,id,h,t):
   {==}
 
-def record_io(db: String, id: String, author: String, claim: String, evidence: String, limits: String) -> IO(Unit):
+def record_io(+db: String, +id: String, author: String, claim: String, evidence: String, limits: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.query(db,K.commit_sql(K.record_statements(id,author,claim,evidence,limits))))
     delivery : Result<&1,&1,U32 & String,String> <- K.deliver_record(db,id,saved)
@@ -366,7 +366,7 @@ def m1_the_record_io_queries_delivers_and_answers(db, id, author, claim, evidenc
   {==}
 
 # M-8: the read's own IO sequence: one committing query, then the answer.
-def read_io(db: String, reader: String) -> IO(Unit):
+def read_io(+db: String, +reader: String) -> IO(Unit):
   do IO<Unit>:
     visible : String <- IO.try(String,DB.Sql.query(db,K.commit_sql(K.read_sql(reader))))
     IO.write(visible)
@@ -400,7 +400,7 @@ def m1_a_stored_promotion_result_delivers_its_notice(db,id,h,t):
   {==}
 
 # M-1: the promotion commits its row and notice, delivers, then answers.
-def promote_io(db: String, id: String, promoter: String, source: String, destination: String, finding: String) -> IO(Unit):
+def promote_io(+db: String, +id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.query(db,K.commit_sql(K.promote_statements(id,promoter,source,destination,finding))))
     delivery : Result<&1,&1,U32 & String,String> <- K.deliver_promotion(db,id,saved)

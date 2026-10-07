@@ -10,7 +10,7 @@ def accepted(db: String, command: C.Command, saved: String, stopped: Bool) -> IO
     case False{}: Delivery.after(db,command,saved)
 
 # Endpoint delivery starts after the message transaction commits.
-def route_accepted(db: String, command: C.Command, saved: String, denied: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def route_accepted(db: String, command: C.Command, +saved: String, denied: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match denied:
     case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,saved)})
     case False{}: accepted(db,command,saved,Tx.starts_with(saved,"{\"error\":\"session-stopped\""))
@@ -28,7 +28,7 @@ def committed(db: String, command: C.Command, result: Result<&1,&1,U32 & String,
 def commit(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
   DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ C.sql(command) ++ "COMMIT;")
 
-def apply(+db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
+def apply(+db: String, +command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     result : Result<&1,&1,U32 & String,String> <- commit(db,command)
     committed(db,command,result)

@@ -17,7 +17,7 @@ import ../json/canonical.bend as J
 # The storage directory the launch path records for a session's native
 # conversations. A parentless session keeps its conversations under the
 # root-sessions directory.
-def storage_sql(db: String, session: String) -> String:
+def storage_sql(+db: String, +session: String) -> String:
   "SELECT CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END FROM sessions WHERE id=" ++ C.q(session) ++ ";"
 
 # The file a recorded native conversation is stored under.
@@ -26,7 +26,7 @@ def source_suffix(+native: String) -> String:
 
 # Two stores can each carry a file for the same native identity. Nothing records
 # which one the session wrote last, so the read names both and refuses.
-def source_ambiguous(first: String, second: String, native: String) -> String:
+def source_ambiguous(first: String, second: String, +native: String) -> String:
   "Two recorded conversations match the native identity " ++ native ++ ": " ++ first ++ " and " ++ second ++ "; the read does not choose one. Both conversations stay preserved; inspect them and repair the recorded source identity, then retry."
 
 def source_first_case(first: String, second: String, native: String, second_present: Bool) -> IO(String):
@@ -41,7 +41,7 @@ def source_decide(first: String, second: String, native: String, first_present: 
 
 # The session's own recorded conversation file, or "" when neither directory
 # records one. Two distinct matching files are refused rather than guessed.
-def usage_source(primary: String, alternate: String, native: String) -> IO(String):
+def usage_source(primary: String, alternate: String, +native: String) -> IO(String):
   do IO<String>:
     +suffix : String <- IO.pure(String,source_suffix(native))
     +first : String <- IO.try(String,F.Files.find_suffix(primary,suffix))
@@ -66,7 +66,7 @@ def usage_recorded_name(+recorded: String) -> String:
 
 # The selected file must record the session's own native identity, or the
 # projection would describe another conversation.
-def usage_recorded_conversation(recorded: String, native: String, matches: Bool) -> IO(Unit):
+def usage_recorded_conversation(recorded: String, +native: String, matches: Bool) -> IO(Unit):
   match matches:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: IO.die(Unit,2,"The selected conversation file records " ++ usage_recorded_name(recorded) ++ " rather than " ++ native ++ "; inspect the session's recorded identity and its conversation files.")
@@ -256,7 +256,7 @@ def usage_unavailable(db: String, session: String, native: String, harness: Stri
 
 # A selected file is projected only after its recorded identity matches the
 # session's, and only the distinct entries it records are summed.
-def usage_selected(+db: String, session: String, native: String, harness: String, file: String) -> IO(Unit):
+def usage_selected(+db: String, +session: String, +native: String, harness: String, +file: String) -> IO(Unit):
   do IO<Unit>:
     +lines_json : String <- usage_lines_json(file)
     malformed : String <- IO.try(String,DB.Sql.query(db,malformed_sql(lines_json)))
@@ -266,7 +266,7 @@ def usage_selected(+db: String, session: String, native: String, harness: String
     projection : String <- IO.try(String,DB.Sql.query(db,project_sql(Tx.trim_nl(malformed),entries,session,Tx.trim_nl(harness),native,file)))
     IO.print(projection)
 
-def observed_usage(+db: String, session: String) -> IO(Unit):
+def observed_usage(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:
     found : String <- IO.try(String,Store.apply(db,C.Session{session}))
     present : Unit <- usage_registered(found)

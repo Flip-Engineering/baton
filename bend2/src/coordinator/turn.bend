@@ -24,7 +24,7 @@ def error_text(error: U32 & String) -> String:
   (code,text)=error
   U32.show(code) ++ ": " ++ text
 
-def remember(previous: String, result: Result<&1,&1,U32 & String,String>) -> String:
+def remember(+previous: String, result: Result<&1,&1,U32 & String,String>) -> String:
   match result:
     case Fail{error}: Bool.pick(String,String.is_empty(previous),error_text(error),previous)
     case Done{value}: previous
@@ -57,7 +57,7 @@ def exit_failure(db: String, player: String, id: String, status: String, success
     case True{}: IO.pure(Unit,Unit{})
     case False{}: report(db,player,id ++ ":exit","Player process ended with " ++ status)
 
-def failed(status: String, event: String, error: String) -> Bool:
+def failed(+status: String, +event: String, error: String) -> Bool:
   Bool.or(Bool.not(String.eq(status,"exit 0")),Bool.or(String.is_empty(event),Bool.not(String.is_empty(error))))
 
 def combine(first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,Unit>:
@@ -65,10 +65,10 @@ def combine(first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U32 & S
     case Fail{error}: Fail{error}
     case Done{unit}: second
 
-def delivery_result(error: String) -> Result<&1,&1,U32 & String,Unit>:
+def delivery_result(+error: String) -> Result<&1,&1,U32 & String,Unit>:
   Bool.pick(Result<&1,&1,U32 & String,Unit>,String.is_empty(error),Done{Unit{}},Fail{(1,error)})
 
-def prepare_finished(+db: String, player: String, id: String, log: String, stderr: String, error: String, status: String) -> IO(Unit):
+def prepare_finished(+db: String, +player: String, +id: String, log: String, stderr: String, +error: String, +status: String) -> IO(Unit):
   do IO<Unit>:
     result : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM turns WHERE id=" ++ C.q(id) ++ ";"))
     noted : Unit <- diagnostic(db,player,id,error,String.is_empty(error))
@@ -88,7 +88,7 @@ def prepare_parent(db: String, player: String, id: String, log: String, stderr: 
         case True{}: prepare_player(db,player,id,log,stderr,error,status,Bool.or(String.eq(status,"start failed"),String.eq(status,"input failed")))
 
 # Failure reports are committed while this invocation still owns the session.
-def prepare(+db: String, player: String, id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):
+def prepare(+db: String, +player: String, id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     prepare_parent(db,player,id,log,stderr,outcome,String.eq(recipient,"1\n"))
@@ -97,7 +97,7 @@ def record_exit(db: String, player: String, id: String, log: String, outcome: Ou
   match outcome:
     case Ended{status,event,error}: Stop.exited(db,player,id,status,event,error,log)
 
-def player_finished(db: String, player: String, id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def player_finished(+db: String, player: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
     diagnostic_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":observation","1","")
@@ -109,14 +109,14 @@ def player_finished(db: String, player: String, id: String) -> IO(Result<&1,&1,U
 
 def finish_parent(db: String, player: String, id: String, log: String, outcome: Outcome, parent: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match outcome:
-    case Ended{+status,event,error}:
+    case Ended{+status,+event,error}:
       match parent:
         case True{}: player_finished(db,player,id)
         case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
           output : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'error'," ++ C.q(error) ++ ");"))
           T.Text.control_output(output)
 
-def finish(+db: String, player: String, id: String, log: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
+def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"))
@@ -131,7 +131,7 @@ def send_result(first: Result<&1,&1,U32 & String,Unit>, closed: Result<&1,&1,U32
     case Fail{error}: Fail{error}
     case Done{unit}: closed
 
-def input(handle: U32, prompt: String, harness: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def input(+handle: U32, +prompt: String, +harness: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"omp\n"),
     Omp.input(handle,prompt),
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"muse\n"),
@@ -145,7 +145,7 @@ def close_input(handle: U32, is_open: Bool) -> IO(Result<&1,&1,U32 & String,Unit
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case False{}: P.ProcessChild.close_stdin(handle)
 
-def send_prompt(handle: U32,prompt: String,harness: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def send_prompt(+handle: U32,prompt: String,+harness: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     sent : Result<&1,&1,U32 & String,Unit> <- input(handle,prompt,harness)
     closed : Result<&1,&1,U32 & String,Unit> <- close_input(handle,String.eq(harness,"omp\n"))
@@ -182,7 +182,7 @@ def omp_message(db: String, +event: String, previous: String, enabled: Bool) -> 
       message : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='message_end' AND json_extract(" ++ C.q(event) ++ ",'$.message.role')='assistant' THEN json_extract(" ++ C.q(event) ++ ",'$.message') ELSE " ++ C.q(previous) ++ " END;"))
       IO.pure(String,Tx.trim_nl(message))
 
-def omp_terminal(db: String, +event: String, message: String, enabled: Bool) -> IO(String):
+def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) -> IO(String):
   match enabled:
     case False{}: IO.pure(String,event)
     case True{}: do IO<String>:
@@ -198,7 +198,7 @@ def observe_event(db: String, player: String, id: String, line: String, relevant
 # recorded as a report under the sealed identity: the first terminal stays the
 # report of this receive attempt, and a later episode is named once in the
 # separate diagnostic with the guidance it leaves for the next receive.
-def deferred_terminal_sql(event: String, terminal: String) -> String:
+def deferred_terminal_sql(+event: String, +terminal: String) -> String:
   "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END ELSE 0 END;"
 
 # The note is written once: a later terminal frame must not try a second body
@@ -217,7 +217,7 @@ def deferred_pending(+pending: String) -> String:
 def deferred_text(id: String, pending: String) -> String:
   "A later native terminal completed after the report " ++ id ++ " was sealed; the episode is retained in the native log" ++ deferred_pending(pending) ++ "."
 
-def write_deferred(db: String, player: String, id: String, recorded: Bool) -> IO(Unit):
+def write_deferred(+db: String, +player: String, +id: String, recorded: Bool) -> IO(Unit):
   match recorded:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
@@ -225,7 +225,7 @@ def write_deferred(db: String, player: String, id: String, recorded: Bool) -> IO
       noted : Unit <- report(db,player,id ++ ":deferred",deferred_text(id,Tx.trim_nl(pending)))
       IO.pure(Unit,Unit{})
 
-def record_deferred(+db: String, +player: String, id: String, later: Bool) -> IO(Unit):
+def record_deferred(+db: String, +player: String, +id: String, later: Bool) -> IO(Unit):
   match later:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
@@ -233,7 +233,7 @@ def record_deferred(+db: String, +player: String, id: String, later: Bool) -> IO
       written : Unit <- write_deferred(db,player,id,String.eq(presence,"1\n"))
       IO.pure(Unit,Unit{})
 
-def deferred_note(+db: String, player: String, id: String, event: String, terminal: String, sealed: Bool) -> IO(Unit):
+def deferred_note(+db: String, player: String, id: String, +event: String, +terminal: String, sealed: Bool) -> IO(Unit):
   match sealed:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
@@ -278,14 +278,14 @@ def record_filter(log: String, +state: String, omp: Bool) -> IO(Result<&1,&1,U32
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case True{}: append_frame(log,Omp.filter_note(state),True{})
 
-def terminal_event(db: String, +event: String, previous: String, relevant: Bool) -> IO(String):
+def terminal_event(db: String, +event: String, +previous: String, relevant: Bool) -> IO(String):
   match relevant:
     case False{}: IO.pure(String,previous)
     case True{}: do IO<String>:
       selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.terminal(event) ++ " THEN CASE WHEN " ++ C.q(previous) ++ "='' THEN " ++ C.q(event) ++ " ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
       IO.pure(String,Tx.trim_nl(selected))
 
-def codex_frames(db: String, +previous: String, line: String, codex: Bool) -> IO(String):
+def codex_frames(db: String, +previous: String, +line: String, codex: Bool) -> IO(String):
   match codex:
     case False{}: IO.pure(String,previous)
     case True{}: do IO<String>:
@@ -293,7 +293,7 @@ def codex_frames(db: String, +previous: String, line: String, codex: Bool) -> IO
       IO.pure(String,Tx.trim_nl(value))
 
 @unsafe
-def consume(+db: String, +player: String, id: String, log: String, handle: U32, harness: String, cursor: String, last_message: String, terminal: String, filter: String, codex_log: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def consume(+db: String, +player: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, last_message: String, +terminal: String, filter: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   match result:
     case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
@@ -334,7 +334,7 @@ def direct_observed(observation: Outcome & List<Chan(Result<&1,&1,U32 & String,S
     settled : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     IO.pure(Outcome,outcome)
 
-def started(db: String, player: String, id: String, log: String, prompt: String, harness: String, result: Result<&1,&1,U32 & String,U32>) -> IO(Outcome):
+def started(+db: String, +player: String, +id: String, +log: String, prompt: String, +harness: String, result: Result<&1,&1,U32 & String,U32>) -> IO(Outcome):
   match result:
     case Fail{error}: IO.pure(Outcome,Ended{"start failed","","Player process could not start: " ++ error_text(error)})
     case Done{+handle}:
@@ -346,13 +346,13 @@ def started(db: String, player: String, id: String, log: String, prompt: String,
 
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
-def retained_output(db: String, player: String, id: String, log: String, harness: String, attempt: String, handle: U32) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def retained_output(db: String, player: String, id: String, log: String, +harness: String, attempt: String, +handle: U32) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
     consume(db,player,id,log,handle,harness,"0\n","","","","","",sender,attempt,Nil{},first)
 
-def retained(db: String, player: String, directory: String, cmd: String, model: String, effort: String, cwd: String, session: String, harness: String, sessions: String, prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
     alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
@@ -370,7 +370,7 @@ def muse_launch(cmd: String, model: String, effort: String, cwd: String, stderr:
     case True{}: Muse.start_player(cmd,model,effort,cwd,stderr,task)
     case False{}: Muse.resume_player(cmd,model,effort,cwd,stderr,session,task)
 
-def launch(sessions: String, cmd: String, model: String, effort: String, cwd: String, log: String, session: String, harness: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
+def launch(sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"omp\n"),
     Omp.start_player(cmd,model,effort,cwd,log,sessions,session,String.is_empty(session)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"muse\n"),
@@ -423,12 +423,12 @@ def refusal(+log: String, resumable: Bool, +outcome: Outcome) -> IO(Bool):
 
 # The refused conversation is gone, so the pending input runs fresh and names
 # the state the workspace holds; the fresh turn records its own identity.
-def restart(db: String, player: String, id: String, log: String, note: String, harness: String, child: Result<&1,&1,U32 & String,U32>) -> IO(Outcome):
+def restart(+db: String, +player: String, +id: String, +log: String, +note: String, +harness: String, child: Result<&1,&1,U32 & String,U32>) -> IO(Outcome):
   do IO<Outcome>:
     noted : Unit <- report(db,player,id ++ ":recovery","The recorded conversation could not be resumed; the turn restarted in a fresh conversation that names the workspace's current state.")
     started(db,player,id,log,note,harness,child)
 
-def supervise_gone(db: String, player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, harness: String, sessions: String, prompt: String, first: Outcome, gone: Bool) -> IO(Outcome):
+def supervise_gone(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +prompt: String, +first: Outcome, gone: Bool) -> IO(Outcome):
   match gone:
     case False{}: IO.pure(Outcome,first)
     case True{}: do IO<Outcome>:
@@ -436,13 +436,13 @@ def supervise_gone(db: String, player: String, id: String, cmd: String, model: S
       child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,log,"",harness,task)
       restart(db,player,id,log,note,harness,child)
 
-def supervise_retry(db: String, player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, harness: String, sessions: String, native: String, prompt: String, first: Outcome) -> IO(Outcome):
+def supervise_retry(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +native: String, +prompt: String, +first: Outcome) -> IO(Outcome):
   do IO<Outcome>:
     resumable : Bool <- IO.pure(Bool, Bool.not(String.is_empty(native)))
     gone : Bool <- refusal(log,resumable,first)
     supervise_gone(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,prompt,first,gone)
 
-def supervise(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, task: String, log: String, session: String, harness: String, sessions: String, prompt: String) -> IO(Outcome):
+def supervise(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String, +harness: String, +sessions: String, +prompt: String) -> IO(Outcome):
   do IO<Outcome>:
     alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
@@ -460,7 +460,7 @@ def replay_result(result: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 &
     case Fail{error}: Fail{error}
     case Done{unit}: Done{None{}}
 
-def choose(db: String, player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, harness: String, replay: Bool) -> IO(Result<&1,&1,U32 & String,Maybe<Outcome>>):
+def choose(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, +task: String, log: String, session: String, harness: String, replay: Bool) -> IO(Result<&1,&1,U32 & String,Maybe<Outcome>>):
   match replay:
     case True{}:
       do IO<Result<&1,&1,U32 & String,Maybe<Outcome>>>:
@@ -493,7 +493,7 @@ def id_owner_sql(id: String, player: String) -> String:
 def turn_present_sql(id: String) -> String:
   "SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ ";"
 
-def player_checked(db: String, player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, harness: String, missing: Bool) -> IO(Result<&1,&1,U32 & String,Maybe<Outcome>>):
+def player_checked(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, +harness: String, missing: Bool) -> IO(Result<&1,&1,U32 & String,Maybe<Outcome>>):
   match missing:
     case True{}: IO.die(Result<&1,&1,U32 & String,Maybe<Outcome>>,2,"Player has no recorded parent and workspace; register it before starting a turn.")
     case False{}:
@@ -533,13 +533,13 @@ def retained_receive_admitted(recovery: Maybe<String>) -> IO(Unit):
     case Some{args}: IO.die(Unit,2,"Session retains an interrupted native receive; run receive to observe its output and completion before starting a direct turn.")
 
 # The acquired canonical guard protects this check before direct admission.
-def retained_receive_guard(db: String, player: String) -> IO(Unit):
+def retained_receive_guard(+db: String, player: String) -> IO(Unit):
   do IO<Unit>:
     directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(player) ++ " AND mode='retained'),'');"))
     recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(Tx.trim_nl(directory)))
     retained_receive_admitted(recovery)
 
-def acquired(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, missing: Bool, lock: Maybe<U32>) -> IO(Unit):
+def acquired(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, +log: String, session: String, missing: Bool, lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: IO.die(Unit,2,"Session already has an active native turn; send a message to queue input.")
     case Some{handle}: do IO<Unit>:

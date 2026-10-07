@@ -33,7 +33,7 @@ type UintResult is Data:
   UintAccepted{value: U32}
   UintRefused{reason: String}
 
-def is_space(code: U32) -> Bool:
+def is_space(+code: U32) -> Bool:
   Bool.pick(Bool, U32.is_eq(code, 32), True{},
     Bool.pick(Bool, U32.is_eq(code, 9), True{},
       Bool.pick(Bool, U32.is_eq(code, 10), True{}, U32.is_eq(code, 13))))
@@ -61,7 +61,7 @@ def append_checked(value: U32, digit: U32, fits: Bool) -> UintState:
     case True{}: UintDigits{U32.add(U32.mul(value, 10), digit)}
     case False{}: UintRejected{"u32_overflow"}
 
-def append_digit(+value: U32, digit: U32) -> UintState:
+def append_digit(+value: U32, +digit: U32) -> UintState:
   append_checked(value, digit,
     Bool.pick(Bool, U32.is_lt(value, 429496729), True{},
       Bool.pick(Bool, U32.is_eq(value, 429496729), U32.is_lt(digit, 6), False{})))
@@ -144,10 +144,10 @@ def cat_cases(xs: List<List<String>>, ys: List<List<String>>) -> List<List<Strin
 def split_case(a: String, b: String) -> List<List<String>>:
   [[a, b]]
 
-def splits_go(text: String, prefix: String) -> List<List<String>>:
+def splits_go(text: String, +prefix: String) -> List<List<String>>:
   match text:
     case SNil{}: [[prefix, SNil{}]]
-    case SCon{+h, t}:
+    case SCon{+h, +t}:
       cat_cases(split_case(prefix, text), splits_go(t, prefix ++ SCon{h, SNil{}}))
 
 def one_char_partition(text: String) -> List<String>:
