@@ -115,7 +115,7 @@ def Landing.associations(request: LandingRequest, handle: U32, published: String
     case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
       Landing.old_value_checked(h, req, pub, candidate_oid, basis_oid, target_head)
 
-def Landing.old_value_checked(handle: U32, request: LandingRequest, published: String, candidate: String, basis: String, head: String) -> IO(Landing)>:
+def Landing.old_value_checked(handle: U32, request: LandingRequest, published: String, candidate: String, basis: String, head: String) -> IO(Landing):
   +h = handle
   +req = request
   +pub = published
@@ -129,14 +129,14 @@ def Landing.old_value_checked(handle: U32, request: LandingRequest, published: S
 
 # The mutation runs through the guarded capture with the live claim descriptor, so the child
 # inherits the lock and the artifact retains the diagnostics and the terminal outcome.
-def Landing.mutated(handle: U32, request: LandingRequest, candidate: String, basis: String, published: String) -> IO(Landing)>:
+def Landing.mutated(handle: U32, request: LandingRequest, candidate: String, basis: String, published: String) -> IO(Landing):
   +h = handle
   +req = request
   +pub = published
   +cand = candidate
   +base = basis
-  +argv = Tx.enc_argv(Con{"update-ref", Con{qualified_target(intent_target(req.intent)), Con{cand, Con{mutation_old_value(req.old_target), Nil{}}}}})
-  do IO(Landing):
+  +argv = Tx.enc_argv(Con{"git", Con{"update-ref", Con{qualified_target(intent_target(req.intent)), Con{cand, Con{mutation_old_value(req.old_target), Nil{}}}}}})
+  do IO<Landing>:
     observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(argv, req.repository, h, req.guard, req.artifact)
     Landing.release(h, req, cand, base, pub, observed)
 
@@ -217,38 +217,24 @@ def Landing.decided(request: LandingRequest, claimed: Result<U32 & String, Maybe
 
 # The guarded operands come from the caller and are checked here rather than assumed: an
 # empty guard, artifact, attempt directory or repository never reaches an effect.
+# The caller's guarded operands are checked for presence before any effect. This is a
+# precondition, not a derivation: guard, artifact and attempt directory are still caller
+# strings, and deriving them from the admitted attempt is the open caller work.
+def nonempty(text: String) -> Bool:
+  +s = text
+  Bool.not(Tx.str_eq(s, ""))
+
 def preconditions_hold(request: LandingRequest) -> Bool:
   match request:
     case LandingRequested{intent, name, old_target, content, guard, artifact, attempt_directory, repository}:
-      preconditions_rest(name, guard, artifact, attempt_directory, repository)
+      preconditions_four(nonempty(name), nonempty(guard), nonempty(artifact), nonempty(attempt_directory))
 
-def empty_strings_ok(name: String, guard: String, artifact: String, attempt_directory: String, repository: String) -> Bool:
+def preconditions_four(name: Bool, guard: Bool, artifact: Bool, attempt_directory: Bool) -> Bool:
   +a = name
   +b = guard
   +c = artifact
   +d = attempt_directory
-  +e = repository
-  Bool.pick(Bool, Bool.not(Tx.str_eq(name, "")), empty_second(guard, artifact, attempt_directory, repository), Bool.not(Tx.str_eq(guard, "")))
-
-def preconditions_rest(name: String, guard: String, artifact: String, attempt_directory: String, repository: String) -> Bool:
-  +n = name
-  +g = guard
-  +ar = artifact
-  +ad = attempt_directory
-  +rp = repository
-  Bool.pick(Bool, Bool.not(Tx.str_eq(n, "")), preconditions_guarded(g, ar, ad, rp), Bool.not(Tx.str_eq(g, "")))
-
-def preconditions_guarded(guard: String, artifact: String, attempt_directory: String, repository: String) -> Bool:
-  +g = guard
-  +ar = artifact
-  +ad = attempt_directory
-  +rp = repository
-  Bool.pick(Bool, Bool.not(Tx.str_eq(ar, "")), preconditions_dirs(ad, rp), Bool.not(Tx.str_eq(ad, "")))
-
-def preconditions_dirs(attempt_directory: String, repository: String) -> Bool:
-  +ad = attempt_directory
-  +rp = repository
-  Bool.pick(Bool, Bool.not(Tx.str_eq(ad, "")), Bool.not(Tx.str_eq(rp, "")), Bool.not(Tx.str_eq(rp, "")))
+  Bool.pick(Bool, a, Bool.pick(Bool, b, Bool.pick(Bool, c, d, False{}), False{}), False{})
 
 def Landing.run(request: LandingRequest) -> IO(Landing):
   +req = request
@@ -290,7 +276,7 @@ law an_absent_old_target_consumes_an_absent_head:
   for attempt_directory: String
   for repository: String
   {Landing.old_value_checked(1, LandingRequested{intent, name, old_target: "", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "") == (do IO<Landing>:
-    observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(Tx.enc_argv(Con{"update-ref", Con{qualified_target(intent_target(intent)), Con{"0123456789abcdef0123456789abcdef01234567", Con{mutation_old_value(""), Nil{}}}}}), repository, 1, guard, artifact)
+    observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"update-ref", Con{qualified_target(intent_target(intent)), Con{"0123456789abcdef0123456789abcdef01234567", Con{mutation_old_value(""), Nil{}}}}}}), repository, 1, guard, artifact)
     released : Result<U32 & String, Unit> <- R.Receipt.release(1)
     IO.pure(Landing, LandingHeld{LandingRequested{intent, name, old_target: "", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "published", observed, released})) : IO(Landing)}
 
@@ -306,7 +292,7 @@ law a_present_old_target_matching_the_head_consumes_it:
   for attempt_directory: String
   for repository: String
   {Landing.old_value_checked(1, LandingRequested{intent, name, old_target: "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222") == (do IO<Landing>:
-    observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(Tx.enc_argv(Con{"update-ref", Con{qualified_target(intent_target(intent)), Con{"0123456789abcdef0123456789abcdef01234567", Con{mutation_old_value("2222222222222222222222222222222222222222"), Nil{}}}}}), repository, 1, guard, artifact)
+    observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"update-ref", Con{qualified_target(intent_target(intent)), Con{"0123456789abcdef0123456789abcdef01234567", Con{mutation_old_value("2222222222222222222222222222222222222222"), Nil{}}}}}}), repository, 1, guard, artifact)
     released : Result<U32 & String, Unit> <- R.Receipt.release(1)
     IO.pure(Landing, LandingHeld{LandingRequested{intent, name, old_target: "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "published", observed, released})) : IO(Landing)}
 
