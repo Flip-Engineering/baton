@@ -79,11 +79,13 @@ def valid_sql(+value: String) -> String:
 def field_sql(+value: String, +field: String) -> String:
   "SELECT CASE WHEN json_valid(" ++ C.q(value) ++ ") THEN json_extract(" ++ C.q(value) ++ "," ++ C.q("$." ++ field) ++ ") ELSE '' END;"
 
-def without_query_newline(+raw: String) -> String:
-  +reversed = Tx.str_rev(raw)
+def without_query_newline_reversed(+reversed: String, +raw: String) -> String:
   match reversed:
     case SNil{}: ""
     case SCon{c,rest}: Bool.pick(String,Tx.is_nl(c),Tx.str_rev(rest),raw)
+
+def without_query_newline(+raw: String) -> String:
+  without_query_newline_reversed(Tx.str_rev(raw),raw)
 
 def decode_valid(db: String, +value: String) -> IO(State):
   do IO<State>:
