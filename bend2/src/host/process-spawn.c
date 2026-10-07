@@ -1736,18 +1736,75 @@ static int br_instance_record(const char *canonical,char **ipc_out,char **key_ou
   }
   return error;
 }
-static int br_instance_spawn(const char *canonical,pid_t *pid) {
+static int br_instance_spawn(const char *canonical,pid_t *pid,const char *log_path) {
   char *self=br_self();
   int null=self?open("/dev/null",O_RDONLY|O_CLOEXEC):-1;
-  int log=null>=0?null:-1;
+  int log=log_path?open(log_path,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600):-1;
+  if(log<0)log=null;
   char *argv[]={self,"--instance-owner",(char *)canonical,NULL};
-  int error=self && null>=0?br_spawn(pid,argv,NULL,null,log,log,-1,-1):(errno?errno:ENOMEM);
+  int error=self && null>=0?br_spawn(pid,argv,NULL,null,log,null,-1,-1):(errno?errno:ENOMEM);
   if(null>=0)close(null);
+  if(log>=0 && log!=null)close(log);
   free(self);
   if(!error) {
     pthread_t reaper;
     if(!pthread_create(&reaper,NULL,br_reap_detached,(void *)(intptr_t)*pid))pthread_detach(reaper);
   }
+  return error;
+}
+/* True when another process holds the election lock for this database. A held
+   lock with no answering socket means the elected owner is wedged or its
+   published record is stale; a caller must see that as a refusal rather than as
+   a connect timeout. */
+static int br_instance_election_held(const char *canonical) {
+  struct stat info;
+  if(stat(canonical,&info))return 0;
+  char ipc[512];
+  if(br_ipc_directory(ipc,sizeof(ipc)))return 0;
+  char *key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
+  if(!key)return 0;
+  char *lock_path=br_ipc_path(ipc,key,".lock");
+  int held=0;
+  if(lock_path) {
+    int fd=open(lock_path,O_CREAT|O_RDWR|O_CLOEXEC,0600);
+    if(fd>=0) {
+      int result;do {result=flock(fd,LOCK_EX|LOCK_NB);}while(result<0 && errno==EINTR);
+      held=result<0;
+      if(!held)flock(fd,LOCK_UN);
+      close(fd);
+    }
+    free(lock_path);
+  }
+  free(key);
+  return held;
+}
+/* The socket pathname a client would use for this database. A failure detail
+   carries it so a caller can tell a missing owner from an unreachable one. */
+static int br_instance_socket_for(const char *database,char *buffer,size_t size) {
+  char *canonical=realpath(database,NULL);
+  if(!canonical)return errno;
+  struct stat info;
+  int error=stat(canonical,&info)?errno:0;
+  char ipc[512];
+  char *key=NULL,*record_path=NULL;
+  BrOwnerRecord record;
+  if(!error)error=br_ipc_directory(ipc,sizeof(ipc));
+  if(!error) {
+    key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
+    if(!key)error=ENOMEM;
+  }
+  if(!error) {
+    record_path=br_ipc_path(ipc,key,".record");
+    if(!record_path)error=ENOMEM;
+  }
+  if(!error) {
+    if(br_owner_record_read(ipc,record_path,&record)) {
+      char *socket_path=br_ipc_path(ipc,key,".sock");
+      if(socket_path){snprintf(buffer,size,"%s",socket_path);free(socket_path);}
+      else snprintf(buffer,size,"%s",record_path);
+    } else snprintf(buffer,size,"%s",record.socket);
+  }
+  free(key);free(record_path);free(canonical);
   return error;
 }
 /* Connects to the database owner. The socket pathname comes from the published
@@ -1759,6 +1816,7 @@ static int br_instance_connect(const char *database,int spawn,BrOwnerRecord *rec
   char *canonical=realpath(database,NULL);
   if(!canonical)return errno;
   int socket_fd=-1,started=0,error=0;
+  char *owner_log=NULL;
   for(int attempt=0;!error && attempt<600;attempt++) {
     if(attempt){struct timespec pause={0,20000000};nanosleep(&pause,NULL);}
     char *ipc=NULL,*key=NULL,*record_path=NULL;
@@ -1773,6 +1831,8 @@ static int br_instance_connect(const char *database,int spawn,BrOwnerRecord *rec
       record_path=br_ipc_path(directory,key,".sock");
       if(!key || !record_path){error=ENOMEM;free(key);free(record_path);break;}
       snprintf(record->socket,sizeof(record->socket),"%s",record_path);
+      char *log_path=br_ipc_path(directory,key,".log");
+      if(log_path){if(!owner_log)owner_log=log_path;else free(log_path);}
     }
     struct sockaddr_un address;
     int address_error=br_socket_address(&address,record->socket);
@@ -1787,13 +1847,18 @@ static int br_instance_connect(const char *database,int spawn,BrOwnerRecord *rec
     if(!spawn)break;
     if(!started) {
       pid_t pid;
-      if((error=br_instance_spawn(canonical,&pid)))break;
+      if((error=br_instance_spawn(canonical,&pid,owner_log)))break;
       started=1;
+    } else if(attempt>50 && br_instance_election_held(canonical)) {
+      /* Another owner holds the election lock and no socket answers it. */
+      error=EBUSY;
+      break;
     }
     error=0;
     if(attempt==599)error=ETIMEDOUT;
   }
   free(canonical);
+  free(owner_log);
   if(error && socket_fd>=0){close(socket_fd);socket_fd=-1;}
   *socket_out=socket_fd;
   return error;
@@ -2026,11 +2091,18 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
       call->kind==BP_INSTANCE_OWNER?"owner":call->kind==BP_INSTANCE_ADMIT?"admit":
       call->kind==BP_INSTANCE_ATTACH?"instance_attach":call->kind==BP_INSTANCE_ATTACH_OWNED?"instance_attach_owned":
       call->kind==BP_INSTANCE_SHUTDOWN?"shutdown":call->kind==BP_INSTANCE_RETIRE?"retire":"keeper";
-    size_t n=(call->directory?strlen(call->directory):0)+(call->database?strlen(call->database):0)+160;
+    size_t n=(call->directory?strlen(call->directory):0)+(call->database?strlen(call->database):0)+640;
     call->detail=malloc(n);
-    if(call->detail)snprintf(call->detail,n,"%s %s%s%s: %s; inspect manifest, keeper-error and observer.log",
-      operation,call->database?call->database:"",call->database?" ":"",
-      call->directory?call->directory:"",strerror(call->error));
+    if(call->detail) {
+      char socket[512]="";
+      if(call->database && !br_instance_socket_for(call->database,socket,sizeof(socket)))
+        snprintf(call->detail,n,"%s %s%s%s at %s: %s; inspect manifest, keeper-error and observer.log",
+          operation,call->database,call->database?" ":"",
+          call->directory?call->directory:"",socket,strerror(call->error));
+      else snprintf(call->detail,n,"%s %s%s%s: %s; inspect manifest, keeper-error and observer.log",
+        operation,call->database?call->database:"",call->database?" ":"",
+        call->directory?call->directory:"",strerror(call->error));
+    }
   }
 }
 

@@ -6,7 +6,7 @@ source, what a caller must do, and what each test establishes.
 
 ## Resident processes
 
-One owner process serves one canonical database. It holds, for every admitted
+One owner process serves one physical database. It holds, for every admitted
 attempt, the native child's stdin writer, `waitpid` authority, process group and
 stdout spool. A coordinator or observer can exit without ending the native work
 or losing its output.
@@ -14,27 +14,57 @@ or losing its output.
 The owner is started by the first client that needs it, as
 `<self> --instance-owner <database>`. Later clients reach the same process.
 
+## Election directory
+
+Lock, socket, owner record and custody epoch live in one fixed per-user
+directory, the first writable of:
+
+- `$XDG_RUNTIME_DIR/baton2`
+- `/tmp/baton2-<uid>`
+- `$HOME/.local/state/baton2`
+
+No client `TMPDIR` value participates, so two clients with different
+environments still elect one owner. The directory is checked with `lstat` (a
+symlink is refused), `mkdir` 0700, and a final `fstat` that requires a directory
+owned by the effective uid; a directory with group or other permission bits is
+changed to 0700. Intermediate components such as `/tmp` belong to the system and
+are used as they are.
+
+The election key is `owner-<st_dev hex>-<st_ino hex>` of the physical database
+file, so a hard link or a symlink alias of the same file elects the same owner.
+
 ## Binding
 
 `br_owner_bind` performs these steps in order:
 
-1. `realpath` the database, `stat` it; a non-regular file is `EINVAL` and a file
-   with more than one link is `EMLINK`.
-2. `open` `<database>.owner-lock` and take `flock(LOCK_EX|LOCK_NB)`. A second
-   owner is refused with `EBUSY`.
-3. Draw a 128-bit token from `/dev/urandom` and write it to
-   `<database>.owner-token` with `fsync`.
-4. `bind` a rendezvous socket under `TMPDIR` with a name derived from the
-   database's `(st_dev, st_ino)`, then `listen`.
-5. Write the bound pathname to `<database>.owner-endpoint`.
+1. `realpath` the database, `open` it read-only and `fstat` the descriptor.
+2. `stat` the pathname and require the same identity, so a replaced file is
+   `ESTALE` before the owner is elected.
+3. Take `flock(LOCK_EX|LOCK_NB)` on `<key>.lock`. A second owner is `EBUSY`.
+4. Increment the persistent custody epoch in `<key>.generation`. The epoch is a
+   counter in the election directory, so it advances across owner restarts and
+   is never derived from a row that can be removed.
+5. Draw a 128-bit incarnation token from `/dev/urandom`.
+6. Bind and listen on `<key>.sock`, then publish `<key>.record`: the token, the
+   epoch, the device and inode, the pid and the socket pathname. The record and
+   the epoch are written by rename with a device flush.
 
-Every admission re-`stat`s the database path and compares `(st_dev, st_ino)`
-with the bound identity; a replacement is `ESTALE`. An attempt directory outside
-`<database>.attempt-` is `EINVAL`.
+Every admission re-`fstat`s the held descriptor, re-`stat`s the pathname and
+requires both to match the bound identity. An attempt directory is admitted when
+its parent directory has the same `(st_dev, st_ino)` as the bound database's
+parent, so an alias pathname's attempt directory is admitted and an unrelated
+directory is not.
 
-`<database>.owner-endpoint` exists so a client started with a different `TMPDIR`
-connects to the owner that is running. Its content is the pathname the owner
-bound. The owner removes both the socket and the endpoint record when it exits.
+The owner holds the database descriptor for its lifetime and removes its socket
+and record when it exits. Liveness is the election lock and the socket, never a
+heartbeat or an elapsed time.
+
+## Handshake
+
+A client reads `<key>.record` after connecting and refuses a reply whose token or
+epoch differs, so a socket left behind by an earlier owner incarnation is
+rejected. A request carries the expected token and epoch; a mismatch is `ESTALE`,
+and the client re-reads the record and retries exactly once.
 
 ## Bend surface
 
@@ -54,12 +84,17 @@ def Instance.retire(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>)
 
 The module is `src/host/instance.bend`. A caller imports the file with any alias
 and writes the alias, the module name and the function:
-`import ../host/instance.bend as Custody` then
-`Custody.Instance.admit(...)`. The same rule applies to `ProcessChild` and
-`SessionLock` callers (`P.ProcessChild.read_line(handle)`).
+`import ../host/instance.bend as Custody` then `Custody.Instance.admit(...)`.
+The same rule applies to `ProcessChild` and `SessionLock` callers
+(`P.ProcessChild.read_line(handle)`).
 
 `Instance.admit` returns the `RetainedStart` shape that `ProcessChild.retain`
-returns, so a caller keeps its existing `retained_start` handling.
+returns, so a caller keeps its existing `retained_start` handling. When the owner
+refuses an admission that started no custody (`EINVAL`, `ESTALE`, `ENOENT`,
+`ENOMEM`), the client removes the attempt directory and manifest it created, so a
+retry prepares them again. A refusal that may leave custody running (`EEXIST` for
+an attempt that already launched, `EBUSY` for an attempt the owner already holds)
+leaves the directory in place.
 
 ## Unchanged caller surface
 
@@ -75,26 +110,35 @@ The attempt protocol is unchanged: `BR_WRITE`, `BR_CLOSE`, `BR_RELEASE`,
 
 ## Owner protocol
 
-The owner socket carries a 40-byte header, little-endian:
+The owner socket carries a 48-byte header, little-endian:
 
 ```c
 typedef struct { uint32_t op; int32_t error;
-                 uint64_t owner, attempt, generation, length; } BrInstanceFrame;
+                 uint64_t owner, epoch, attempt, generation, length; } BrInstanceFrame;
 ```
 
 Requests are `BI_ENSURE`, `BI_ADMIT`, `BI_SHUTDOWN` and `BI_STATE`. `BI_ADMIT`
 carries the attempt directory as a NUL-terminated payload and may carry the
-session guard as `SCM_RIGHTS` on the header. A request whose `owner` field does
-not equal the bound token is refused with `ESTALE`.
+session guard as `SCM_RIGHTS` on the header. The socket is a persistent listener:
+`BI_ENSURE` resolves the owner for ordinary CLI and MCP entry points, which is
+what makes the resident instance the single owner for the database.
 
-A successful `BI_ADMIT` reply is `BI_HELLO` with the owner token,
-the attempt id, the attempt generation and a `BrState` payload
-(`pid,exited,status,released,input_closed`). `Instance.admit` then connects to
-the attempt's own socket and performs the existing `BR_ATTACH` handshake, so the
-client's observer protocol is the one it already uses.
+A successful `BI_ADMIT` reply is `BI_HELLO` with the token, the epoch, the
+attempt id, the attempt generation and a `BrOwnerState` payload. `Instance.admit`
+then connects to the attempt's own socket and performs the existing `BR_ATTACH`
+handshake, so the client's observer protocol is the one it already uses.
 
-`BI_ADMIT` refuses an attempt that already launched, so a retry after a lost
-reply never starts a second native child for the same attempt.
+## Observation checkpoint
+
+`<attempt>/cursor` holds `BrCursor{ char magic[8]; uint64_t offset; uint64_t check; }`
+and records the byte offset an observer has consumed from the attempt's stdout
+spool. It is replaced by rename, without a device flush, because it is a resume
+hint: a lost update means an observer reads a little more of the stream again.
+An attaching observer resumes at the recorded offset, and the checkpoint
+advances after every consumed frame, so recovery reads the unread extent instead
+of parsing frames the previous observer already reported. A short, oversized or
+checksum-mismatched record is a typed refusal and writes `<attempt>/cursor-error`;
+a corrupted checkpoint never silently replays a stream.
 
 ## Capability lifetime
 
@@ -121,17 +165,24 @@ is not reused.
 
 ## What the tests establish
 
-`test/shared-instance.py` runs against the built `test/instance.bend`:
+`test/shared-instance.py` runs against the built `test/instance.bend`, which
+`scripts/check-native.sh` builds with the other native test entries:
 
 - Three concurrent attempts produce three distinct native processes whose parent
-  is the single owner process for the database; each attempt sees only its own
-  input.
+  is the single owner process for the database, and each attempt sees only its
+  own input.
 - A second owner for the same database is refused while the first holds it.
-- A hard link to the database is refused by the physical-identity check.
+- A hard link to the database elects the owner already running: a second owner
+  through the alias is refused, and an attempt admitted through the alias path
+  runs under the same owner process.
 - After the observer process is killed, the native child keeps running, and the
   recovery observer the owner launches reads the attempt's retained output from
   the beginning of its spool and continues to report new output and the exit
   status.
+- An observer that consumed part of the stream leaves a checkpoint, and the
+  recovery observer resumes there: it does not report output the checkpoint
+  already covered.
+- A corrupted checkpoint is refused and recorded, and the stream is not replayed.
 - A write through a retired capability is refused.
 - `Instance.shutdown` ends the owner, and a later attempt starts a new one.
 
@@ -145,11 +196,13 @@ is not reused.
   process per attempt.
 - The child environment is still `environ`; the explicit snapshot and
   `prepare_env` receipt remain with their named owner.
-- The owner holds one waiter thread and one wake pipe per attempt, and it watches
+- The owner holds one waiter thread and one wake pipe per attempt, and watches
   each attempt's spool file to notify the observer. The observer still reads the
   spool with blocking `read_line`, so readiness-driven child reads remain the
   controls handoff.
-- Owner loss leaves each attempt's native child running with its spool intact;
-  the client falls back to the existing orphan attachment. A replacement owner
-  starts custody only for attempts whose manifest has no `launch` marker, so it
-  never starts a second native child for a running attempt.
+- The custody event subscription a UI client would use is specified in the
+  coordination message that carries this interface; it is not implemented yet.
+- Owner loss leaves each attempt's native child running with its spool intact,
+  and the client falls back to the existing orphan attachment. A replacement
+  owner starts custody only for an attempt whose manifest has no `launch` marker,
+  so it never starts a second native child for a running attempt.
