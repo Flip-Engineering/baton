@@ -85,6 +85,14 @@ def request_json_value(converted: CoreCodec.JsonConv) -> RequestDecode:
 def request_json(+raw: CoreCodec.RawValue) -> RequestDecode:
   request_json_value(CoreCodec.raw_to_json(raw))
 
+def raw_frame(frame: CoreCodec.FrameRead) -> RawDecode:
+  match frame:
+    case CoreCodec.FrRefused{condition}: RawDecodeRefused{condition}
+    case CoreCodec.FrValue{+value}: RawDecoded{value}
+
+def raw_rows(+rows: String) -> RawDecode:
+  raw_frame(CoreCodec.frame_read(Req.parse_rows(rows)))
+
 def request_rows_decoded(raw: RawDecode) -> RequestDecode:
   match raw:
     case RawDecodeRefused{condition}: RequestDecodeRefused{condition}
@@ -127,14 +135,6 @@ def request_schema_query_result(+db: String, +binding: String, +text: String,
         case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"requestTreeRead"})
     case Done{+rows}:
       request_schema_after(db, binding, text, request_schema_rows(rows))
-
-def raw_frame(frame: CoreCodec.FrameRead) -> RawDecode:
-  match frame:
-    case CoreCodec.FrRefused{condition}: RawDecodeRefused{condition}
-    case CoreCodec.FrValue{+value}: RawDecoded{value}
-
-def raw_rows(+rows: String) -> RawDecode:
-  raw_frame(CoreCodec.frame_read(Req.parse_rows(rows)))
 
 def report_field_result(found: Maybe<&2, CoreCodec.RawValue>) -> String:
   match found:
