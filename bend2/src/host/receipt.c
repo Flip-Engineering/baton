@@ -583,3 +583,34 @@ static Term baton_receipt_attempt_token_run(Env e,Term *f,IoWork *w) {
 }
 static void __attribute__((constructor)) baton_receipt_attempt_token_use(void) {io_eff(CID_RECEIPT_ATTEMPT_TOKEN,baton_receipt_attempt_token_run,0);}
 #endif
+
+#ifdef CID_RECEIPT_RESERVE_ATTEMPT
+/* Exclusively establish one attempt directory under a parent. mkdir is the write boundary, so
+   an existing name is reported as taken rather than probed, a write failure is reported with
+   its own errno, and nothing here treats an observation failure as absence. The caller is
+   expected to hold the target claim: the reservation admits the attempt, it does not
+   establish the guard. Success answers the reserved path; every failure answers its errno, so
+   the caller can tell EEXIST from a real error. */
+static Term baton_receipt_reserve_attempt_run(Env e,Term *f,IoWork *w) {
+  BatonReceipt *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  u64 dn=0,nn=0;
+  call->directory=io_cstr(e,f[0],&dn);
+  call->name=io_cstr(e,f[1],&nn);
+  if(strlen(call->directory)!=dn) {receipt_free(call);return io_fail(e,EINVAL,"parent contains NUL");}
+  if(strlen(call->name)!=nn) {receipt_free(call);return io_fail(e,EINVAL,"name contains NUL");}
+  if(dn==0 || nn==0) {receipt_free(call);return io_fail(e,EINVAL,"parent or name is empty");}
+  size_t span=dn+nn+2;
+  char *path=malloc(span);
+  if(!path) {receipt_free(call);return io_fail(e,ENOMEM,NULL);}
+  snprintf(path,span,"%s/%s",call->directory,call->name);
+  receipt_free(call);
+  int result=mkdir(path,0700);
+  int error=result?errno:0;
+  if(error) {free(path);return io_fail(e,error,NULL);}
+  Term value=io_str(e,path,strlen(path));
+  free(path);
+  return io_done(e,value);
+}
+static void __attribute__((constructor)) baton_receipt_reserve_attempt_use(void) {io_eff(CID_RECEIPT_RESERVE_ATTEMPT,baton_receipt_reserve_attempt_run,0);}
+#endif

@@ -47,3 +47,9 @@ def Receipt.guard_path(common: String, target: String) -> IO(Result<&1, &1, U32 
 # structure and two distinct targets never share a token.
 def Receipt.attempt_token(target: String) -> IO(Result<&1, &1, U32 & String, String>):
   import "./receipt.c"
+
+# Exclusively establish one attempt directory under a parent, so a fresh attempt identity is
+# reserved at the write boundary rather than inferred from a probe. Success answers the
+# reserved path; failure answers its errno, so a taken name is distinguishable from an error.
+def Receipt.reserve_attempt(parent: String, name: String) -> IO(Result<&1, &1, U32 & String, String>):
+  import "./receipt.c"
