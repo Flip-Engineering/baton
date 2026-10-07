@@ -62,10 +62,11 @@ def candidates_array() -> String:
   "json((SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ candidate_item() ++ " AS item FROM candidates ORDER BY " ++ order_expr() ++ ")))"
 
 # The basis names which of the two admissions established a proposed candidate. A
-# listed candidate matched the identifier its own harness reported, exactly; a bare
-# id is not matched against another provider's selector.
+# catalog listing is an exact selector the provider stated; an identifier a
+# model-scoped read echoed only restates the request, so it is named as such and never
+# as a provider listing. A bare id is not matched against another provider's selector.
 def basis_expr() -> String:
-  "CASE WHEN EXISTS(SELECT 1 FROM json_each(json(coalesce(json_extract(p2.metadata,'$.models'),'[]'))) e WHERE e.value=candidates.model) THEN 'listed-exact-selector' ELSE 'configured-registry-alias' END"
+  "CASE WHEN EXISTS(SELECT 1 FROM json_each(json(coalesce(json_extract(p2.metadata,'$.models'),'[]'))) e WHERE e.value=candidates.model) THEN CASE WHEN json_extract(p2.metadata,'$.provenance')='provider-catalog' THEN 'listed-exact-selector' ELSE 'echoed-request-identifier' END ELSE 'configured-registry-alias' END"
 
 def proposal_expr() -> String:
   "CASE WHEN " ++ usable_total() ++ "=0 THEN NULL ELSE json((SELECT json_object('harness',candidates.harness,'model',candidates.model,'effort',candidates.effort,'capacity',candidates.capacity,'basis'," ++ basis_expr() ++ ") FROM candidates LEFT JOIN latest p2 ON p2.harness=candidates.harness WHERE candidates.usable=1 ORDER BY " ++ order_qualified() ++ " LIMIT 1)) END"

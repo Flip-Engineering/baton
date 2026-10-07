@@ -137,12 +137,14 @@ def catalog_metadata(+reported: String) -> String:
 def echoed_identifier(+text: String) -> String:
   "CASE WHEN instr(" ++ text ++ ",'model:')>0 THEN nullif(trim(CASE WHEN instr(substr(" ++ text ++ ",instr(" ++ text ++ ",'model:')+6),char(10))>0 THEN substr(substr(" ++ text ++ ",instr(" ++ text ++ ",'model:')+6),1,instr(substr(" ++ text ++ ",instr(" ++ text ++ ",'model:')+6),char(10))-1) ELSE substr(" ++ text ++ ",instr(" ++ text ++ ",'model:')+6) END),'') END"
 
-# A model-scoped read lists only the identifier its own output echoed. The caller's
-# string is recorded beside it as the requested model, and an output with no echoed
-# identifier states a caller-stated provenance with the identifier absent, so a
-# caller's name is never presented as provider output.
+# A model-scoped read lists only the identifier its own output echoed. That echo
+# restates the request: an invented id is echoed the same way, so an echoed
+# identifier is not evidence that the model exists. The caller's string is recorded
+# beside it as the requested model, and an output with no echoed identifier states a
+# caller-stated provenance with the identifier absent, so a caller's name is never
+# presented as provider output.
 def scoped_metadata(model: String, +reported: String) -> String:
-  "json_object('models',CASE WHEN " ++ echoed_identifier(C.q(reported)) ++ " IS NULL THEN NULL ELSE json_array(" ++ echoed_identifier(C.q(reported)) ++ ") END,'requestedModel'," ++ C.q(model) ++ ",'provenance',CASE WHEN " ++ echoed_identifier(C.q(reported)) ++ " IS NULL THEN 'caller-stated' ELSE 'provider-echoed' END,'absent',json(CASE WHEN " ++ echoed_identifier(C.q(reported)) ++ " IS NULL THEN '[\"catalog\",\"model-identifier\"]' ELSE '[\"catalog\"]' END))"
+  "json_object('models',CASE WHEN " ++ echoed_identifier(C.q(reported)) ++ " IS NULL THEN NULL ELSE json_array(" ++ echoed_identifier(C.q(reported)) ++ ") END,'requestedModel'," ++ C.q(model) ++ ",'provenance',CASE WHEN " ++ echoed_identifier(C.q(reported)) ++ " IS NULL THEN 'caller-stated' ELSE 'provider-echoed-request' END,'existenceProof','false','absent',json(CASE WHEN " ++ echoed_identifier(C.q(reported)) ++ " IS NULL THEN '[\"catalog\",\"model-identifier\"]' ELSE '[\"catalog\",\"model-existence\"]' END))"
 
 def access_field(+text: String, +path: String) -> String:
   "CASE WHEN json_valid(" ++ text ++ ") THEN json_extract(json(" ++ text ++ ")," ++ path ++ ") END"

@@ -41,15 +41,18 @@ state rather than an absent row.
 
 An identifier is stored as the provider stated it: a catalog read groups the
 identifiers the catalog states by the `provider` field that catalog carries, and a
-model-scoped read lists only the identifier that read echoed in its own output. The
-caller's MODEL is recorded beside it as `requestedModel`; where the output echoes no
-identifier, `provenance` is `caller-stated`, `models` is null, and `absent` names
-`model-identifier`, so a caller's string is never presented as provider output.
-`provenance` is `provider-catalog`, `provider-echoed` or `caller-stated`. A
+model-scoped read lists only the identifier that read echoed in its own output. That
+echo restates the request. Live `muse model-profile show no-such-model-xyz` exits 0
+and echoes `model:  no-such-model-xyz`, so an echoed identifier is not evidence that
+the model exists; `provenance` is `provider-echoed-request` with
+`existenceProof: "false"` and `model-existence` named in `absent`. A catalog read
+states `provenance: provider-catalog`. The caller's MODEL is recorded beside it as
+`requestedModel`, and where the output echoes no identifier `provenance` is
+`caller-stated`, `models` is null, and `absent` names `model-identifier`. A
 candidate matches only its own harness's reported identifier, by exact string
 equality, so a bare id is not matched against another provider's selector;
-`proposal.basis` names the admission (`listed-exact-selector` or
-`configured-registry-alias`).
+`proposal.basis` names the admission: `listed-exact-selector` for a catalog listing,
+`echoed-request-identifier` for a model-scoped echo, or `configured-registry-alias`.
 
 ## Storage
 

@@ -127,7 +127,7 @@ class Models(unittest.TestCase):
         self.assertEqual(document['observed'], [])
         self.assertEqual(document['providers'], [])
         self.assertIsNone(document['continuation'])
-        self.assertEqual(len(document['limits']), 6)
+        self.assertEqual(len(document['limits']), 7)
 
     def test_missing_registry_reports_unknown_not_empty(self):
         env = dict(self.env)
@@ -298,9 +298,20 @@ class Models(unittest.TestCase):
         recorded = self.probe('muse', profile, 'muse-spark-1.3')
         self.assertEqual(recorded['outcome'], 'ok')
         self.assertEqual(recorded['metadata']['models'], ['muse-spark-1.3'])
-        self.assertEqual(recorded['metadata']['provenance'], 'provider-echoed')
+        self.assertEqual(recorded['metadata']['provenance'], 'provider-echoed-request')
+        self.assertEqual(recorded['metadata']['existenceProof'], 'false')
         self.assertEqual(recorded['metadata']['requestedModel'], 'muse-spark-1.3')
-        self.assertEqual(recorded['metadata']['absent'], ['catalog'])
+        self.assertEqual(sorted(recorded['metadata']['absent']), ['catalog', 'model-existence'])
+
+    def test_an_echoed_invented_identifier_is_not_a_provider_listing(self):
+        # Live `muse model-profile show no-such-model-xyz` echoes the invented id, so the
+        # echo restates the request: the route stays eligible but its basis says so.
+        profile = self.harness('muse-echo-any', 'echo "model:  no-such-model-xyz"\necho "effort: none"\n')
+        self.probe('muse', profile, 'no-such-model-xyz')
+        self.session('seat', 'muse', 'no-such-model-xyz')
+        continuation = self.read('seat')['continuation']
+        self.assertEqual(continuation['proposal']['basis'], 'echoed-request-identifier')
+        self.assertNotEqual(continuation['proposal']['basis'], 'listed-exact-selector')
 
     def test_model_scoped_read_without_an_echo_marks_the_caller_string(self):
         profile = self.harness('muse-generic', 'echo "effort: none"\necho "default_reasoning_effort   high"\n')

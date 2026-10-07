@@ -318,10 +318,13 @@ series registry:
 - `continuation` is present for a named `SESSION`.
 
 An identifier is provider output. A catalog read stores the identifiers the catalog
-states; a model-scoped read stores only the identifier that read echoed, records the
-caller's MODEL as `requestedModel`, and states `provenance` as `provider-catalog`,
-`provider-echoed` or `caller-stated`. Where no identifier is echoed, `models` is null
-and `absent` names `model-identifier`.
+states and reports `provenance` `provider-catalog`. A model-scoped read stores only the
+identifier that read echoed, which restates the request rather than proving the model
+exists: `provenance` is `provider-echoed-request` with `existenceProof` false and
+`model-existence` named in `absent`. Where no identifier is echoed, `provenance` is
+`caller-stated`, `models` is null and `absent` names `model-identifier`. The caller's
+MODEL is always recorded as `requestedModel`, and a proposal names its basis
+(`listed-exact-selector`, `echoed-request-identifier` or `configured-registry-alias`).
 
 Capacity is a provider-stated value. A probe that stated no limit, usage,
 remaining or reset time leaves capacity `unknown` and names those components in

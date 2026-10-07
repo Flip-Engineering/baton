@@ -20,7 +20,7 @@ import ../git/text.bend as Tx
 import ../json/canonical.bend as J
 
 def limits() -> String:
-  "'capacity-is-only-as-current-as-the-last-explicit-probe','observed_harness-and-observed_effort-are-declared-at-bind-not-provider-observed','provider-metadata-is-reported-as-the-provider-stated-it','a-registry-key-proves-a-configured-identity-and-not-capacity','a-listed-candidate-matches-the-identifier-its-own-harness-reported-exactly','a-registry-that-maps-no-key-for-a-model-does-not-refuse-that-model'"
+  "'capacity-is-only-as-current-as-the-last-explicit-probe','observed_harness-and-observed_effort-are-declared-at-bind-not-provider-observed','provider-metadata-is-reported-as-the-provider-stated-it','a-registry-key-proves-a-configured-identity-and-not-capacity','a-listed-candidate-matches-the-identifier-its-own-harness-reported-exactly','a-registry-that-maps-no-key-for-a-model-does-not-refuse-that-model','an-echoed-model-identifier-restates-the-request-and-proves-no-existence'"
 
 def seen_cte() -> String:
   "seen AS (SELECT DISTINCT harness FROM sessions WHERE " ++ Probes.adapter_set("harness") ++ " UNION SELECT DISTINCT harness FROM provider_probes WHERE " ++ Probes.adapter_set("harness") ++ ")"

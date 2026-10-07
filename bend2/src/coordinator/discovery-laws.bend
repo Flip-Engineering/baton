@@ -96,7 +96,7 @@ def m5_a_probe_leaves_the_inbox_in_sequence(harness, executable, outcome, cause,
 law m8_a_model_scoped_read_lists_only_the_echoed_identifier:
   for model: String
   for +reported: String
-  {Probes.scoped_metadata(model, reported) == "json_object('models',CASE WHEN " ++ Probes.echoed_identifier(C.q(reported)) ++ " IS NULL THEN NULL ELSE json_array(" ++ Probes.echoed_identifier(C.q(reported)) ++ ") END,'requestedModel'," ++ C.q(model) ++ ",'provenance',CASE WHEN " ++ Probes.echoed_identifier(C.q(reported)) ++ " IS NULL THEN 'caller-stated' ELSE 'provider-echoed' END,'absent',json(CASE WHEN " ++ Probes.echoed_identifier(C.q(reported)) ++ " IS NULL THEN '[\"catalog\",\"model-identifier\"]' ELSE '[\"catalog\"]' END))" : String}
+  {Probes.scoped_metadata(model, reported) == "json_object('models',CASE WHEN " ++ Probes.echoed_identifier(C.q(reported)) ++ " IS NULL THEN NULL ELSE json_array(" ++ Probes.echoed_identifier(C.q(reported)) ++ ") END,'requestedModel'," ++ C.q(model) ++ ",'provenance',CASE WHEN " ++ Probes.echoed_identifier(C.q(reported)) ++ " IS NULL THEN 'caller-stated' ELSE 'provider-echoed-request' END,'existenceProof','false','absent',json(CASE WHEN " ++ Probes.echoed_identifier(C.q(reported)) ++ " IS NULL THEN '[\"catalog\",\"model-identifier\"]' ELSE '[\"catalog\",\"model-existence\"]' END))" : String}
 
 def m8_a_model_scoped_read_lists_only_the_echoed_identifier(model, reported):
   {==}
