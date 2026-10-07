@@ -33,11 +33,6 @@ def fx_inv_other_digest() -> Decl.Inv:
   Decl.Inv{fx_arts(), fx_schemas(),
            Decl.DigsCons{Decl.Dg{"m1", "changed"}, Decl.DigsNil{}}}
 
-def fx_entry(+module_id: String) -> Decl.Entry:
-  Decl.ENative{Decl.Art{"/pkg/" ++ module_id ++ ".bin",
-                        Decl.decl_digest_sentinel(module_id), "entry"},
-               module_id ++ ".export"}
-
 def fx_op_common(+common: String) -> Decl.Op:
   Decl.Op{"definition", common, "sub", "opt", Eng.ss_one("definition"),
           Eng.ss_empty(), Decl.ExDirect{}, "res", "ref", "evt", "",

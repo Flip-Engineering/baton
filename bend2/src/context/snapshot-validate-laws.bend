@@ -19,7 +19,7 @@ import ./engines-select.bend as Sel
 import ./snapshot-validate.bend as SV
 
 # --- fixtures ----------------------------------------------------------------
-def fx_schemas() -> SS:
+def fx_schemas() -> Eng.SS:
   Eng.union_add(Eng.ss_three("sub", "opt", "res"),
                 Eng.union_add(Eng.ss_two("ref", "evt"), Eng.ss_empty()))
 
@@ -385,7 +385,7 @@ def frame_projection_refuses_a_withdrawn_current_support():
   {==}
 
 law frame_replay_requirement_unions_the_historical_and_current_floor:
-  {SV.effective_requirements(Eng.ss_one("executeTarget"), Eng.ss_one("planTargetSql"), Eng.ss_one("replayMigrations")) == Eng.ss_three("executeTarget", "planTargetSql", "replayMigrations") : SS}
+  {SV.effective_requirements(Eng.ss_one("executeTarget"), Eng.ss_one("planTargetSql"), Eng.ss_one("replayMigrations")) == Eng.ss_three("executeTarget", "planTargetSql", "replayMigrations") : Eng.SS}
 
 def frame_replay_requirement_unions_the_historical_and_current_floor():
   {==}
