@@ -82,6 +82,7 @@ function decodeBootstrap(bytes, { owner, query, artifactPath }) {
         || typeof value.recoveryArgv !== 'string' || value.recoveryArgv.length === 0
         || !/^[0-9a-f]{64}$/.test(value.guardKey)
         || typeof value.guardIdentity !== 'string'
+        || sha256(Buffer.from(value.guardIdentity, 'utf8')) !== value.guardKey
         || JSON.stringify(JSON.parse(value.guardIdentity))
           !== JSON.stringify(['context-role', value.databaseBinding, 'query', query, 'starter', '0'])) {
       return refusal('queryBootstrapIdentityMismatch');

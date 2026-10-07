@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, chmodSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -14,11 +15,12 @@ function worktree(t) {
 }
 
 function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1') {
+  const guardIdentity = JSON.stringify(['context-role', 'binding-1', 'query', query, 'starter', '0']);
   return JSON.stringify({
     artifactPath: join(worktreePath, '.baton', 'context-artifacts', Buffer.from(query).toString('hex')),
     databaseBinding: 'binding-1',
-    guardIdentity: JSON.stringify(['context-role', 'binding-1', 'query', query, 'starter', '0']),
-    guardKey: 'a'.repeat(64),
+    guardIdentity,
+    guardKey: createHash('sha256').update(guardIdentity).digest('hex'),
     keeperPath: '/logs/keeper-1',
     owner,
     planIdentity: 'plan-identity-1',
@@ -105,6 +107,10 @@ test('persists one immutable canonical bootstrap bound to owner, query and priva
   assert.equal(persistQueryBootstrap({ ...authority,
     bootstrapText: bootstrapText(root).replace('"owner":"owner-1"', '"owner":"owner-2"') }).reason,
   'queryBootstrapIdentityMismatch');
+  const wrongGuardKey = bootstrapText(root).replace(/"guardKey":"[0-9a-f]{64}"/,
+    '"guardKey":"' + 'a'.repeat(64) + '"');
+  assert.equal(persistQueryBootstrap({ ...authority, bootstrapText: wrongGuardKey }).reason,
+    'queryBootstrapIdentityMismatch');
   assert.equal(persistQueryBootstrap({ ...authority,
     bootstrapText: bootstrapText(root).replace('"query":"query-1"', '"query":"query-1","query":"query-1"') }).reason,
   'queryBootstrapCanonicalMismatch');
