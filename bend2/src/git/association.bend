@@ -144,135 +144,17 @@ def refuse(step: String, observation: T.GitOut) -> IO(Association):
   +o = observation
   IO.pure(Association, AssociationRefused{s, o})
 
-def oid_checked(step: String, request: AssociationRequest, observation: T.GitOut) -> IO(Association):
-  +s = step
-  +req = request
-  +obs = observation
-  Bool.pick(IO(Association), read_failed(obs),
-    refuse(s, obs),
-    oid_profile(s, req, obs, oid_of(obs)))
-def oid_profile(step: String, request: AssociationRequest, observation: T.GitOut, oid: String) -> IO(Association):
-  +s = step
-  +req = request
-  +obs = observation
-  +value = oid
-  Bool.pick(IO(Association), oid_ok(value),
-    basis_read(req, value),
-    IO.pure(Association, AssociationRefused{s, obs}))
-def basis_read(request: AssociationRequest, candidate: String) -> IO(Association):
-  +req = request
-  +cand = candidate
-  do IO<Association>:
-    observed : T.GitOut <- Git.runGit(req.holder, ["rev-parse", "--verify", "--end-of-options", Tx.str_cat(req.basis, "^{commit}")])
-    basis_checked(req, cand, observed)
-
-def basis_checked(request: AssociationRequest, candidate: String, observation: T.GitOut) -> IO(Association):
-  +req = request
-  +cand = candidate
-  +obs = observation
-  Bool.pick(IO(Association), read_failed(obs),
-    refuse("basis", obs),
-    basis_profile(req, cand, obs, oid_of(obs)))
-def basis_profile(request: AssociationRequest, candidate: String, observation: T.GitOut, basis: String) -> IO(Association):
-  +req = request
-  +cand = candidate
-  +obs = observation
-  +value = basis
-  Bool.pick(IO(Association), oid_ok(value),
-    target_read(req, cand, value),
-    IO.pure(Association, AssociationRefused{"basis", obs}))
-def target_read(request: AssociationRequest, candidate: String, basis: String) -> IO(Association):
-  +req = request
-  +cand = candidate
-  +base = basis
-  do IO<Association>:
-    observed : T.GitOut <- Git.runGit(req.holder, ["rev-parse", "--verify", "--quiet", "--end-of-options", Tx.str_cat("refs/heads/", req.target)])
-    target_decided(req, cand, base, observed)
-
-# An absent target ref is the first landing and is carried as an empty head; a failed read is
-# refused with its own observation, and a present ref must still answer a supported name.
-def target_decided(request: AssociationRequest, candidate: String, basis: String, observation: T.GitOut) -> IO(Association):
-  +req = request
-  +cand = candidate
-  +base = basis
-  +obs = observation
-  Bool.pick(IO(Association), ref_absent(obs),
-    ancestor_read(req, cand, base, ""),
-    target_present(req, cand, base, obs))
-def target_present(request: AssociationRequest, candidate: String, basis: String, observation: T.GitOut) -> IO(Association):
-  +req = request
-  +cand = candidate
-  +base = basis
-  +obs = observation
-  Bool.pick(IO(Association), read_failed(obs),
-    refuse("target", obs),
-    target_profile(req, cand, base, obs))
-def target_profile(request: AssociationRequest, candidate: String, basis: String, observation: T.GitOut) -> IO(Association):
-  +req = request
-  +cand = candidate
-  +base = basis
-  +obs = observation
-  +head = oid_of(obs)
-  Bool.pick(IO(Association), oid_ok(head),
-    ancestor_read(req, cand, base, head),
-    IO.pure(Association, AssociationRefused{"target", obs}))
-def ancestor_read(request: AssociationRequest, candidate: String, basis: String, head: String) -> IO(Association):
-  +req = request
-  +cand = candidate
-  +base = basis
-  +tip = head
-  Bool.pick(IO(Association), Tx.str_eq(tip, ""),
-    holder_read(req, cand, base, tip),
-    do IO<Association>:
-        observed : T.GitOut <- Git.runGit(req.holder, ["merge-base", "--is-ancestor", "--end-of-options", tip, cand])
-        ancestor_decided(req, cand, base, tip, observed))
-def ancestor_decided(request: AssociationRequest, candidate: String, basis: String, head: String, observation: T.GitOut) -> IO(Association):
-  +req = request
-  +cand = candidate
-  +base = basis
-  +tip = head
-  +obs = observation
-  Bool.pick(IO(Association), read_failed(obs),
-    refuse("ancestor", obs),
-    holder_read(req, cand, base, tip))
-def holder_read(request: AssociationRequest, candidate: String, basis: String, head: String) -> IO(Association):
-  +req = request
-  +cand = candidate
-  +base = basis
-  +tip = head
-  do IO<Association>:
-    observed : T.GitOut <- Git.runGit(req.holder, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
-    holder_decided(req, cand, base, tip, observed)
-
-def holder_decided(request: AssociationRequest, candidate: String, basis: String, head: String, observation: T.GitOut) -> IO(Association):
-  +req = request
-  +cand = candidate
-  +base = basis
-  +tip = head
-  +obs = observation
-  Bool.pick(IO(Association), read_failed(obs),
-    refuse("holder-common", obs),
-    destination_read(req, cand, base, tip, oid_of(obs)))
-def destination_read(request: AssociationRequest, candidate: String, basis: String, head: String, common: String) -> IO(Association):
+def requested_compared(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, destination_common: String) -> IO(Association):
   +req = request
   +cand = candidate
   +base = basis
   +tip = head
   +holder_common = common
-  do IO<Association>:
-    observed : T.GitOut <- Git.runGit(req.destination, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
-    destination_decided(req, cand, base, tip, holder_common, observed)
+  +dest_common = destination_common
+  Bool.pick(IO(Association), Tx.str_eq(holder_common, req.common),
+    IO.pure(Association, AssociationHeld{req, cand, base, tip, holder_common, dest_common}),
+    IO.pure(Association, AssociationRefused{"requested-common", T.GBroken{Tx.str_cat("holder answers ", Tx.str_cat(holder_common, Tx.str_cat(" for the requested ", req.common)))}}))
 
-def destination_decided(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, observation: T.GitOut) -> IO(Association):
-  +req = request
-  +cand = candidate
-  +base = basis
-  +tip = head
-  +holder_common = common
-  +obs = observation
-  Bool.pick(IO(Association), read_failed(obs),
-    refuse("destination-common", obs),
-    common_compared(req, cand, base, tip, holder_common, obs, oid_of(obs)))
 def common_compared(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, observation: T.GitOut, destination_common: String) -> IO(Association):
   +req = request
   +cand = candidate
@@ -284,16 +166,147 @@ def common_compared(request: AssociationRequest, candidate: String, basis: Strin
   Bool.pick(IO(Association), Tx.str_eq(holder_common, dest_common),
     requested_compared(req, cand, base, tip, holder_common, dest_common),
     IO.pure(Association, AssociationRefused{"common", obs}))
-def requested_compared(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, destination_common: String) -> IO(Association):
+
+def destination_decided(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, observation: T.GitOut) -> IO(Association):
   +req = request
   +cand = candidate
   +base = basis
   +tip = head
   +holder_common = common
-  +dest_common = destination_common
-  Bool.pick(IO(Association), Tx.str_eq(holder_common, req.common),
-    IO.pure(Association, AssociationHeld{req, cand, base, tip, holder_common, dest_common}),
-    IO.pure(Association, AssociationRefused{"requested-common", T.GBroken{Tx.str_cat("holder answers ", Tx.str_cat(holder_common, Tx.str_cat(" for the requested ", req.common)))}}))
+  +obs = observation
+  Bool.pick(IO(Association), read_failed(obs),
+    refuse("destination-common", obs),
+    common_compared(req, cand, base, tip, holder_common, obs, oid_of(obs)))
+
+def destination_read(request: AssociationRequest, candidate: String, basis: String, head: String, common: String) -> IO(Association):
+  +req = request
+  +cand = candidate
+  +base = basis
+  +tip = head
+  +holder_common = common
+  do IO<Association>:
+    observed : T.GitOut <- Git.runGit(req.destination, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    destination_decided(req, cand, base, tip, holder_common, observed)
+
+def holder_decided(request: AssociationRequest, candidate: String, basis: String, head: String, observation: T.GitOut) -> IO(Association):
+  +req = request
+  +cand = candidate
+  +base = basis
+  +tip = head
+  +obs = observation
+  Bool.pick(IO(Association), read_failed(obs),
+    refuse("holder-common", obs),
+    destination_read(req, cand, base, tip, oid_of(obs)))
+
+def holder_read(request: AssociationRequest, candidate: String, basis: String, head: String) -> IO(Association):
+  +req = request
+  +cand = candidate
+  +base = basis
+  +tip = head
+  do IO<Association>:
+    observed : T.GitOut <- Git.runGit(req.holder, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    holder_decided(req, cand, base, tip, observed)
+
+def ancestor_decided(request: AssociationRequest, candidate: String, basis: String, head: String, observation: T.GitOut) -> IO(Association):
+  +req = request
+  +cand = candidate
+  +base = basis
+  +tip = head
+  +obs = observation
+  Bool.pick(IO(Association), read_failed(obs),
+    refuse("ancestor", obs),
+    holder_read(req, cand, base, tip))
+
+def ancestor_read(request: AssociationRequest, candidate: String, basis: String, head: String) -> IO(Association):
+  +req = request
+  +cand = candidate
+  +base = basis
+  +tip = head
+  Bool.pick(IO(Association), Tx.str_eq(tip, ""),
+    holder_read(req, cand, base, tip),
+    do IO<Association>:
+        observed : T.GitOut <- Git.runGit(req.holder, ["merge-base", "--is-ancestor", "--end-of-options", tip, cand])
+        ancestor_decided(req, cand, base, tip, observed))
+
+def target_profile(request: AssociationRequest, candidate: String, basis: String, observation: T.GitOut) -> IO(Association):
+  +req = request
+  +cand = candidate
+  +base = basis
+  +obs = observation
+  +head = oid_of(obs)
+  Bool.pick(IO(Association), oid_ok(head),
+    ancestor_read(req, cand, base, head),
+    IO.pure(Association, AssociationRefused{"target", obs}))
+
+def target_present(request: AssociationRequest, candidate: String, basis: String, observation: T.GitOut) -> IO(Association):
+  +req = request
+  +cand = candidate
+  +base = basis
+  +obs = observation
+  Bool.pick(IO(Association), read_failed(obs),
+    refuse("target", obs),
+    target_profile(req, cand, base, obs))
+
+def target_decided(request: AssociationRequest, candidate: String, basis: String, observation: T.GitOut) -> IO(Association):
+  +req = request
+  +cand = candidate
+  +base = basis
+  +obs = observation
+  Bool.pick(IO(Association), ref_absent(obs),
+    ancestor_read(req, cand, base, ""),
+    target_present(req, cand, base, obs))
+
+def target_read(request: AssociationRequest, candidate: String, basis: String) -> IO(Association):
+  +req = request
+  +cand = candidate
+  +base = basis
+  do IO<Association>:
+    observed : T.GitOut <- Git.runGit(req.holder, ["rev-parse", "--verify", "--quiet", "--end-of-options", Tx.str_cat("refs/heads/", req.target)])
+    target_decided(req, cand, base, observed)
+
+# An absent target ref is the first landing and is carried as an empty head; a failed read is
+# refused with its own observation, and a present ref must still answer a supported name.
+
+def basis_profile(request: AssociationRequest, candidate: String, observation: T.GitOut, basis: String) -> IO(Association):
+  +req = request
+  +cand = candidate
+  +obs = observation
+  +value = basis
+  Bool.pick(IO(Association), oid_ok(value),
+    target_read(req, cand, value),
+    IO.pure(Association, AssociationRefused{"basis", obs}))
+
+def basis_checked(request: AssociationRequest, candidate: String, observation: T.GitOut) -> IO(Association):
+  +req = request
+  +cand = candidate
+  +obs = observation
+  Bool.pick(IO(Association), read_failed(obs),
+    refuse("basis", obs),
+    basis_profile(req, cand, obs, oid_of(obs)))
+
+def basis_read(request: AssociationRequest, candidate: String) -> IO(Association):
+  +req = request
+  +cand = candidate
+  do IO<Association>:
+    observed : T.GitOut <- Git.runGit(req.holder, ["rev-parse", "--verify", "--end-of-options", Tx.str_cat(req.basis, "^{commit}")])
+    basis_checked(req, cand, observed)
+
+def oid_profile(step: String, request: AssociationRequest, observation: T.GitOut, oid: String) -> IO(Association):
+  +s = step
+  +req = request
+  +obs = observation
+  +value = oid
+  Bool.pick(IO(Association), oid_ok(value),
+    basis_read(req, value),
+    IO.pure(Association, AssociationRefused{s, obs}))
+
+def oid_checked(step: String, request: AssociationRequest, observation: T.GitOut) -> IO(Association):
+  +s = step
+  +req = request
+  +obs = observation
+  Bool.pick(IO(Association), read_failed(obs),
+    refuse(s, obs),
+    oid_profile(s, req, obs, oid_of(obs)))
 def Association.decide_observed(request: AssociationRequest, observation: T.GitOut) -> IO(Association):
   +req = request
   +obs = observation
