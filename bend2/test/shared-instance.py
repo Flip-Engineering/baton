@@ -164,9 +164,9 @@ class SharedInstance(unittest.TestCase):
         return subprocess.run([str(EXE), *map(str, args)], capture_output=True,
                               text=True, timeout=30)
 
-    def begin(self, label, session=None, mode='admit', payload='hello\n'):
+    def begin(self, label, session=None, mode='admit', payload='hello\n', cwd=None):
         directory = pathlib.Path(f'{self.db}.attempt-{label}')
-        child = self.spawn(mode, self.db, session or label, directory, self.home,
+        child = self.spawn(mode, self.db, session or label, directory, cwd or self.home,
                            payload, sys.executable, self.fixture)
         return directory, child
 
@@ -363,7 +363,7 @@ class SharedInstance(unittest.TestCase):
         self.line(first, 'admitted')
         spool = directory / 'stdout'
         self.hold(spool, 'echo:one')
-        replayed, second = self.begin('repeat', mode='hold', payload='one\n')
+        repeated, second = self.begin('repeat', mode='hold', payload='one\n')
         second.stdin.close()
         second.wait(timeout=60)
         self.assertNotEqual(second.returncode, 0,
@@ -372,23 +372,23 @@ class SharedInstance(unittest.TestCase):
                          'a repeated admission must not start a second native child')
         first.kill()
         first.wait(timeout=10)
-        again, third = self.begin('repeat', mode='hold', payload='one\n')
-        output = ''.join(third.output)
-        self.line(third, 'admitted')
-        self.hold(again / 'stdout', 'echo:one')
-        again_text = (again / 'stdout').read_text(errors='replace')
-        self.assertEqual(again_text.count('"role": "native"'), 1)
-        self.assertIn('echo:one', again_text)
-        third.kill()
-        third.wait(timeout=10)
+        log = directory / 'observer.log'
+        text = self.hold(log, 'echo:one')
+        self.assertIn('"role": "native"', text,
+                      'the admitted attempt kept its custody and its stream across the repeat')
+        self.assertEqual(spool.read_text(errors='replace').count('"role": "native"'), 1,
+                         'the recovery observer must join the one existing native child')
         print('evidence repeated-admission second-exit', second.returncode)
-        print('evidence repeated-admission spool', again_text.replace('\n', '|'))
+        print('evidence repeated-admission spool', spool.read_text(errors='replace').replace('\n', '|'))
+        print('evidence repeated-admission recovery', text.replace('\n', '|'))
 
     def test_conflicting_reuse_of_one_attempt_is_refused(self):
+        other = self.home / 'other-cwd'
+        other.mkdir()
         directory, child = self.begin('conflict', mode='hold', payload='one\n')
         self.line(child, 'admitted')
         self.hold(directory / 'stdout', 'echo:one')
-        other, second = self.begin('conflict', mode='hold', payload='different\n')
+        repeated, second = self.begin('conflict', mode='hold', payload='one\n', cwd=other)
         second.stdin.close()
         second.wait(timeout=60)
         self.assertNotEqual(second.returncode, 0,
