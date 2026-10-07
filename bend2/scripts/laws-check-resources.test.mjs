@@ -33,9 +33,14 @@ test('Linux RSS parsing converts KiB to bytes and treats absent VmRSS as zero', 
 
 test('process CPU time parsing preserves seconds across Darwin ps formats', () => {
   assert.equal(parseProcessCpuTime('00:00.75'), 0.75);
+  assert.equal(parseProcessCpuTime('218:08.33'), 13_088.33);
+  assert.equal(parseProcessCpuTime('89:17.92'), 5_357.92);
   assert.equal(parseProcessCpuTime('02:03:04.50'), 7_384.5);
   assert.equal(parseProcessCpuTime('1-02:03:04.50'), 93_784.5);
-  assert.throws(() => parseProcessCpuTime('00:61.00'), /invalid process CPU time/);
+  for (const value of ['', '1::02', ':00', '1:02:', '-1:02.00', '1.5-00:00:00',
+    '1:2.5:03', '1:60:00', '1-24:00:00', '1:02:-3', '1:02:03.x']) {
+    assert.throws(() => parseProcessCpuTime(value), /invalid process CPU time/);
+  }
 });
 
 test('Darwin ps snapshots parse units and aggregate only the requested process group', () => {
@@ -43,6 +48,7 @@ test('Darwin ps snapshots parse units and aggregate only the requested process g
     '101 50 12 00:00.30',
     '102 50 24 00:01.20',
     '201 60 900 4-00:00:00.00',
+    '302 60 800 218:08.33',
   ].join('\n'));
   assert.deepEqual(aggregateProcessGroup(rows, 50), {
     rssBytes: 36 * 1024,
