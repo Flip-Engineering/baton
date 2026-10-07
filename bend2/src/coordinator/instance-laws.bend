@@ -14,13 +14,13 @@ def dirty_snapshot_marks_the_serving_route():
   {==}
 
 law parse_split_routes_receivable_sessions:
-  {Instance.member(Instance.sessions_of(Instance.serve_part(Instance.parse_split(Con{"w1|codex|serve", Con{"m1|muse|refuse", Con{"w3|omp|serve", Nil{}}}))), "w1") == True{} : Bool}
+  {Instance.member(Instance.sessions_of(Instance.serve_part(Instance.parse_split(Con{"w1|codex|serve", Con{"m1|muse|refuse", Con{"w3|omp|serve", Nil{}}}}))), "w1") == True{} : Bool}
 
 def parse_split_routes_receivable_sessions():
   {==}
 
 law parse_split_refuses_turn_route_sessions:
-  {Instance.member(Instance.sessions_of(Instance.refuse_part(Instance.parse_split(Con{"w1|codex|serve", Con{"m1|muse|refuse", Con{"w3|omp|serve", Nil{}}}))), "m1") == True{} : Bool}
+  {Instance.member(Instance.sessions_of(Instance.refuse_part(Instance.parse_split(Con{"w1|codex|serve", Con{"m1|muse|refuse", Con{"w3|omp|serve", Nil{}}}}))), "m1") == True{} : Bool}
 
 def parse_split_refuses_turn_route_sessions():
   {==}
