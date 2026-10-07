@@ -13,6 +13,7 @@ def notice_loop(handle: U32, result: Result<&1,&1,U32 & String,String>, again: U
       written : Unit <- IO.write(notice ++ "\n")
       again(Unit{})
 
+@unsafe
 def notice_lines(handle: U32) -> IO(Unit):
   do IO<Unit>:
     result : Result<&1,&1,U32 & String,String> <- Custody.Instance.notice(handle)
