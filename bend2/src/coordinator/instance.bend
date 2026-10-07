@@ -53,7 +53,7 @@ def fork_tasks(+db: String, sessions: List<String>) -> IO(List<Chan(Result<&1,&1
 # serve failure: the stop retained its input by design. Any other failure is
 # carried to the shutdown exit.
 @unsafe
-def note_task(+db: String, failed: Bool, +session: String, done: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
+def note_task(+db: String, +failed: Bool, +session: String, done: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
   match done:
     case Done{unit}: IO.pure(Bool, failed)
     case Fail{error}: do IO<Bool>:
@@ -64,7 +64,7 @@ def note_task(+db: String, failed: Bool, +session: String, done: Result<&1,&1,U3
 # forks newly dirty sessions, draining those before rejoining the older tasks,
 # so discovery never waits for all tasks to end.
 @unsafe
-def drain_tasks(+db: String, +handle: U32, failed: Bool, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, sessions: List<String>) -> IO(Bool):
+def drain_tasks(+db: String, +handle: U32, +failed: Bool, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, sessions: List<String>) -> IO(Bool):
   match tasks:
     case Nil{}: IO.pure(Bool, failed)
     case task <> rest_tasks:
@@ -79,7 +79,7 @@ def drain_tasks(+db: String, +handle: U32, failed: Bool, tasks: List<Chan(Result
           drain_tasks(db, handle, failed_fresh, rest_tasks, rest_sessions)
 
 @unsafe
-def drive_sessions(+db: String, +handle: U32, failed: Bool, sessions: List<String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def drive_sessions(+db: String, +handle: U32, +failed: Bool, sessions: List<String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match sessions:
     case Nil{}: idle(db, handle, failed)
     case session <> rest: do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -88,14 +88,14 @@ def drive_sessions(+db: String, +handle: U32, failed: Bool, sessions: List<Strin
       failed_now : Bool <- drain_tasks(db, handle, failed, first, both)
       drive(db, handle, failed_now)
 
-def close_subscription(+handle: U32, failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def close_subscription(+handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match failed:
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       closed : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.unsubscribe(handle)
       IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{(1, "The serve recorded a swept task failure.")})
     case False{}: Custody.Instance.unsubscribe(handle)
 
-def notice_closed(+db: String, +handle: U32, failed: Bool, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def notice_closed(+db: String, +handle: U32, +failed: Bool, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
     case Fail{error}: close_subscription(handle, failed)
     case Done{text}: drive(db, handle, failed)
@@ -105,13 +105,13 @@ def notice_closed(+db: String, +handle: U32, failed: Bool, result: Result<&1,&1,
 # is served by the same snapshot. A failed notice means the owner is gone, and
 # the serve closes its subscription and exits with the carried status.
 @unsafe
-def idle(+db: String, +handle: U32, failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def idle(+db: String, +handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     result : Result<&1,&1,U32 & String,String> <- Custody.Instance.notice(handle)
     notice_closed(db, handle, failed, result)
 
 @unsafe
-def drive(+db: String, +handle: U32, failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def drive(+db: String, +handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     sessions : List<String> <- snapshot(db)
     drive_sessions(db, handle, failed, sessions)
@@ -119,7 +119,7 @@ def drive(+db: String, +handle: U32, failed: Bool) -> IO(Result<&1,&1,U32 & Stri
 def admitted(+db: String, subscribed: Result<&1,&1,U32 & String,U32 & String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match subscribed:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{error})
-    case Done{(handle, readiness)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+    case Done{(+handle, +readiness)}: do IO<Result<&1,&1,U32 & String,Unit>>:
       ready : Unit <- IO.write(readiness ++ "\n")
       drive(db, handle, False{})
 
@@ -133,7 +133,7 @@ def serve(+db: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 def status_read(+db: String, subscribed: Result<&1,&1,U32 & String,U32 & String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match subscribed:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{error})
-    case Done{(handle, readiness)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+    case Done{(+handle, +readiness)}: do IO<Result<&1,&1,U32 & String,Unit>>:
       ready : Unit <- IO.write(readiness ++ "\n")
       Custody.Instance.unsubscribe(handle)
 
