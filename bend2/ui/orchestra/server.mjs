@@ -320,6 +320,13 @@ export function createOrchestraServer({ databasePath, reader, assetRoot = fileUR
       return streamEvents(response, db, reader, subject, since);
     }
     if (url.pathname.startsWith('/orchestra/')) return json(response, 404, { error: 'not-found' });
+    if (url.pathname === '/' && !url.searchParams.has('api') && !url.searchParams.has('fixture')) {
+      const address = server.address();
+      const apiBase = `http://127.0.0.1:${address.port}`;
+      response.writeHead(302, { location: `/?api=${encodeURIComponent(apiBase)}`, 'cache-control': 'no-store' });
+      response.end();
+      return;
+    }
     return serveAsset(response, resolve(assetRoot), url.pathname);
   });
   server.on('close', () => db.close());

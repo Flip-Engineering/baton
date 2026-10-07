@@ -79,6 +79,10 @@ test('snapshot binds a selected subtree to the reader and preserves recorded unk
   t.after(async () => { await close(server); rmSync(f.directory, { recursive: true, force: true }); });
   const base = await listen(server);
 
+  const page = await fetch(base, { redirect: 'manual' });
+  assert.equal(page.status, 302);
+  assert.match(page.headers.get('location'), /^\/?\?api=http%3A%2F%2F127\.0\.0\.1%3A/);
+
   const response = await fetch(`${base}/orchestra/snapshot?subject=child&since=0`);
   assert.equal(response.status, 200);
   const snapshot = await response.json();
@@ -153,4 +157,6 @@ test('SSE replays committed projection rows after a silent write and reports cur
   const gap = await fetch(`${base}/orchestra/snapshot?subject=root&since=99`);
   const gapSnapshot = await gap.json();
   assert.equal(gapSnapshot.selection.gap, true);
+  const gapStream = await fetch(`${base}/orchestra/events?subject=root&since=99`);
+  assert.match(await gapStream.text(), /event: gap[\s\S]*cursor-gap/);
 });
