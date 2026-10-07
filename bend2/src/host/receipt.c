@@ -453,34 +453,39 @@ static void __attribute__((constructor)) baton_receipt_matches_use(void) {io_eff
 
 /* --- claim and release --------------------------------------------------- */
 
-/* The canonical guard path for a common directory and target. One builder, so the claim
-   and any caller that names the guard cannot disagree about where it is. On failure it
-   returns NULL with *problem set: ENOMEM for an allocation, otherwise the mkdir error the
-   claim reports in its own phase. */
-static char *receipt_guard_path_alloc(const char *common,const char *target,int *problem) {
-  size_t span=strlen(common)+strlen(target)*3+64;
-  char *path=malloc(span);
+/* The canonical guard location for a common directory, and the guard path for a target
+   under it. Both are naming only: no directory is created and no filesystem call is made,
+   so a caller asking where the guard is cannot change what is on disk. On failure each
+   returns NULL with *problem set to ENOMEM. */
+static char *receipt_guard_root(const char *common,int *problem) {
+  size_t span=strlen(common)+strlen("/baton2-landing")+1;
   char *root=malloc(span);
-  char *encoded=malloc(strlen(target)*3+2);
-  if(!path || !root || !encoded) {
-    free(path);free(root);free(encoded);
-    *problem=ENOMEM;
-    return NULL;
-  }
+  if(!root) {*problem=ENOMEM;return NULL;}
   snprintf(root,span,"%s/baton2-landing",common);
+  return root;
+}
+
+static char *receipt_guard_path(const char *root,const char *target,int *problem) {
+  size_t span=strlen(root)+strlen(target)*3+8;
+  char *path=malloc(span);
+  char *encoded=malloc(strlen(target)*3+2);
+  if(!path || !encoded) {free(path);free(encoded);*problem=ENOMEM;return NULL;}
   receipt_encode_ref(target,encoded,strlen(target)*3+2);
-  int made=receipt_mkdir_p(root);
-  if(made) {free(path);free(root);free(encoded);*problem=made;return NULL;}
   snprintf(path,span,"%s/%s.lock",root,encoded);
-  free(root);free(encoded);
+  free(encoded);
   return path;
 }
 
 static void baton_receipt_claim_call(IoWork *w) {
   BatonReceipt *call=(BatonReceipt *)w->data;
   int problem=0;
-  call->path=receipt_guard_path_alloc(call->common,call->target,&problem);
-  if(!call->path) {receipt_fail(call,problem,problem==ENOMEM?"path":"mkdir");return;}
+  char *root=receipt_guard_root(call->common,&problem);
+  if(!root) {receipt_fail(call,problem,"path");return;}
+  int made=receipt_mkdir_p(root);
+  if(made) {receipt_fail(call,made,"mkdir");free(root);return;}
+  call->path=receipt_guard_path(root,call->target,&problem);
+  free(root);
+  if(!call->path) {receipt_fail(call,problem,"path");return;}
   call->handle=open(call->path,O_CREAT|O_RDWR|O_CLOEXEC,0600);
   if(call->handle<0) {receipt_fail(call,errno,"open-lock");return;}
   int result;
@@ -528,7 +533,8 @@ static void __attribute__((constructor)) baton_receipt_release_use(void) {io_eff
 #endif
 
 #ifdef CID_RECEIPT_GUARD_PATH
-/* Naming data only: it reports where the guard is, not that any claim is held. */
+/* Naming data only: it reports where the guard is, not that any claim is held, and it
+   creates nothing. */
 static Term baton_receipt_guard_path_run(Env e,Term *f,IoWork *w) {
   BatonReceipt *call=calloc(1,sizeof(*call));
   if(!call) return io_fail(e,ENOMEM,NULL);
@@ -539,8 +545,11 @@ static Term baton_receipt_guard_path_run(Env e,Term *f,IoWork *w) {
     receipt_free(call);return io_fail(e,EINVAL,"target is empty or truncated at NUL");
   }
   int problem=0;
-  char *path=receipt_guard_path_alloc(call->common,call->target,&problem);
+  char *root=receipt_guard_root(call->common,&problem);
   receipt_free(call);
+  if(!root) return io_fail(e,problem,NULL);
+  char *path=receipt_guard_path(root,call->target,&problem);
+  free(root);
   if(!path) return io_fail(e,problem,NULL);
   Term value=io_str(e,path,strlen(path));
   free(path);
