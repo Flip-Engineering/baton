@@ -663,7 +663,7 @@ def attempt_json_fields(session: String, attempt: String, mode: String, phase: S
       ++ ",\"cleanupEligible\":" ++ Bool.pick(String,eligible,"true","false")
       ++ ",\"cleanupReason\":" ++ J.string_literal(reason) ++ "}"
 
-def attempt_json(session: String, attempt: String, mode: String, phase: String, status: String, +directory: String, +stdout: U32, +stderr: U32, +observer: U32, +keeper: U32, released: U32, acknowledged: U32, reported: String, pending: String, level: String, path: String) -> String:
+def attempt_json(session: String, attempt: String, mode: String, phase: String, status: String, +directory: String, +stdout: U32, +stderr: U32, +observer: U32, +keeper: U32, released: U32, acknowledged: U32, +reported: String, +pending: String, level: String, path: String) -> String:
   attempt_json_fields(session,attempt,mode,phase,status,directory,stdout,stderr,observer,keeper,released,acknowledged,reported,pending,attempt_decision(phase,Bool.pick(String,U32.is_lt(0,released),"1","0"),Bool.pick(String,U32.is_lt(0,acknowledged),"1","0"),reported,pending,level,path,U32.add(stdout,U32.add(stderr,U32.add(observer,keeper)))) )
 
 def attempt_fields(fields: List<String>) -> IO(String):
