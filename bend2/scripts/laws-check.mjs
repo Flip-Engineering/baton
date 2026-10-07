@@ -412,8 +412,8 @@ async function runPool(controls, concurrency, runRoot) {
       }
       const row = results[index];
       console.log(JSON.stringify({
-        requestId: process.env.BATON2_GATE_REQUEST ?? null,
-        job: process.env.BATON2_GATE_JOB ?? null,
+        requestId: process.env.BATON2_GATE_REQUEST ?? 'local',
+        job: process.env.BATON2_GATE_JOB ?? 'local',
         producerId: row.id,
         producerSha256: row.descriptorSha256,
         workToken: row.workToken,
@@ -1427,21 +1427,14 @@ async function runGate() {
   const controls = producerSet(rows, MUTATIONS);
   const compilerSha256 = await hashFile(BEND);
   const wrapperRequest = ENV.BATON2_GATE_REQUEST ?? null;
-  const requestId = wrapperRequest ?? hash(stableJson({
-    sourceSha256: identity.sha256,
-    compilerSha256,
-    node: process.version,
-    entry: ENTRY,
-    command: [ENTRY, '--check-only'],
-    producers: controls.map(({ descriptorSha256 }) => descriptorSha256),
-    output: '.scratch/bend2-laws-check',
-  }));
+  const requestId = wrapperRequest ?? 'local';
+  const job = ENV.BATON2_GATE_JOB ?? 'local';
   const requestParts = requestId.split('/');
-  if (requestParts.some((part) => !/^[A-Za-z0-9._-]+$/.test(part) || part === '.' || part === '..')) {
+  if (requestParts.some((part) => !/^[A-Za-z0-9._-]+$/.test(part) || part === '.' || part === '..') ||
+      !/^[A-Za-z0-9._-]+$/.test(job) || job === '.' || job === '..') {
     throw new Error(`invalid BATON2_GATE_REQUEST path: ${requestId}`);
   }
-  const runId = wrapperRequest ? requestId : `${hash(requestId)}-${randomUUID()}`;
-  const runRoot = join(SCRATCH, ...runId.split('/'));
+  const runRoot = join(SCRATCH, ...requestParts, 'artifacts', job);
   const artifactRoot = join(runRoot, 'artifacts');
   mkdirSync(artifactRoot, { recursive: true });
   const controlsPath = join(runRoot, 'controls.json');
@@ -1477,9 +1470,9 @@ async function runGate() {
   }));
   const metadata = {
     schema: 'bend2-laws-check-run-v1',
-    runId,
+    runId: `${requestId}/${job}`,
     requestId,
-    job: ENV.BATON2_GATE_JOB ?? null,
+    job,
     startedAt,
     finishedAt: null,
     status: 'running',
