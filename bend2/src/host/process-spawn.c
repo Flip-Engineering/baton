@@ -2331,31 +2331,33 @@ static uint64_t br_admission_check(const BrAdmission *record,const char *directo
    path the admitting call named and `guard` its session guard descriptor. */
 static int br_admission_store(const char *directory,const char *database,int guard) {
   struct stat attempt,database_info,guard_info;
-  if(lstat(directory,&attempt) || !S_ISDIR(attempt.st_mode))return EPERM;
+  char *canonical=realpath(directory,NULL);
+  if(!canonical)return errno;
+  if(lstat(canonical,&attempt) || !S_ISDIR(attempt.st_mode)){free(canonical);return EPERM;}
   memset(&database_info,0,sizeof(database_info));
   /* An admission through the legacy attempt-level API carries no database, so the
      record states no database binding and verification skips that comparison. */
-  if(database && stat(database,&database_info))return EPERM;
-  if(guard>=0) {if(fstat(guard,&guard_info))return EPERM;}
+  if(database && stat(database,&database_info)){free(canonical);return EPERM;}
+  if(guard>=0) {if(fstat(guard,&guard_info)){free(canonical);return EPERM;}}
   else memset(&guard_info,0,sizeof(guard_info));
-  size_t length=strlen(directory);
+  size_t length=strlen(canonical);
   BrAdmission record={.schema=1,
     .database_device=(uint64_t)database_info.st_dev,.database_inode=(uint64_t)database_info.st_ino,
     .guard_device=(uint64_t)guard_info.st_dev,.guard_inode=(uint64_t)guard_info.st_ino,
     .attempt_device=(uint64_t)attempt.st_dev,.attempt_inode=(uint64_t)attempt.st_ino,
     .directory_length=length};
   memcpy(record.magic,BR_ADMISSION_MAGIC,8);
-  record.check=br_admission_check(&record,directory,length);
-  char *path=br_path(directory,"admission");
-  if(!path)return ENOMEM;
+  record.check=br_admission_check(&record,canonical,length);
+  char *path=br_path(canonical,"admission");
+  if(!path){free(canonical);return ENOMEM;}
   char *bytes=malloc(sizeof(record)+length);
   int error=bytes?0:ENOMEM;
   if(!error) {
     memcpy(bytes,&record,sizeof(record));
-    memcpy(bytes+sizeof(record),directory,length);
-    error=br_replace(directory,path,bytes,sizeof(record)+length,1);
+    memcpy(bytes+sizeof(record),canonical,length);
+    error=br_replace(canonical,path,bytes,sizeof(record)+length,1);
   }
-  free(bytes);free(path);
+  free(bytes);free(path);free(canonical);
   return error;
 }
 /* Verifies the admission record of a directory against the database that requests
@@ -2383,12 +2385,14 @@ static int br_admission_verify(const char *directory,const char *database,int gu
     else recorded[length]=0;
   }
   close(fd);free(path);
+  char *canonical=realpath(directory,NULL);
+  if(!canonical) {free(recorded);return errno;}
   struct stat attempt,database_info,guard_info;
-  if(!error && (lstat(directory,&attempt) || !S_ISDIR(attempt.st_mode)))error=EPERM;
+  if(lstat(canonical,&attempt) || !S_ISDIR(attempt.st_mode))error=EPERM;
   if(!error && ((uint64_t)attempt.st_dev!=record.attempt_device ||
                 (uint64_t)attempt.st_ino!=record.attempt_inode))error=EPERM;
-  if(!error && strcmp(recorded,directory))error=EPERM;
-  if(!error && br_admission_check(&record,recorded,length)!=record.check)error=EPERM;
+  if(!error && strcmp(recorded,canonical))error=EPERM;
+  if(!error && br_admission_check(&record,canonical,length)!=record.check)error=EPERM;
   if(!error && database && record.database_inode) {
     if(stat(database,&database_info))error=EPERM;
     else if((uint64_t)database_info.st_dev!=record.database_device ||
@@ -2400,6 +2404,7 @@ static int br_admission_verify(const char *directory,const char *database,int gu
             (uint64_t)guard_info.st_ino!=record.guard_inode)error=EPERM;
   }
   free(recorded);
+  free(canonical);
   return error;
 }
 /* Verifies the manifest of an attempt and, for a prepared artifact, that the file
