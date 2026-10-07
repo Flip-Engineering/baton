@@ -132,6 +132,19 @@ law terminal_admission_does_not_grant_a_duplicate_native_start:
 def terminal_admission_does_not_grant_a_duplicate_native_start():
   {==}
 
+law recovery_replays_the_original_grant_after_terminal_publication:
+  {Managed.accepted_recovery_managed_admission(managed_bootstrap(), "starter", "0",
+    Admission.AdmissionRetained{"owner-1", "{}", "accepted", "complete", "0",
+      "/logs/keeper-q", "/work", "/work/.baton/context-artifacts/q"},
+    "[]", "plan-identity", "result-v1",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    Managed.bootstrap_text(managed_bootstrap())) ==
+    Managed.StartGranted{"q-1", "owner-1", "starter", "0", "{}",
+      "/logs/keeper-q", "/work/.baton/context-artifacts/q", "[]", "result-v1"} : Managed.StartDecision}
+
+def recovery_replays_the_original_grant_after_terminal_publication():
+  {==}
+
 law an_unavailable_original_observer_never_grants_a_start:
   {Managed.start_from_submission(managed_bootstrap(),
     Managed.KeeperObserverUnavailable{"observerAttach"}, accepted_submission()) ==

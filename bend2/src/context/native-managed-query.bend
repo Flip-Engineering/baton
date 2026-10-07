@@ -469,6 +469,11 @@ def bootstrap_text(+bootstrap: Bootstrap) -> String:
 def accepted_query_state(+state: String) -> Bool:
   Bool.or(String.eq(state, "accepted"), String.eq(state, "running"))
 
+def recovery_query_state(+state: String) -> Bool:
+  Bool.or(accepted_query_state(state),
+    Bool.or(String.eq(state, "complete"),
+    Bool.or(String.eq(state, "failed"), String.eq(state, "interrupted"))))
+
 def admission_identity_match(+expected_owner: String, +expected_request: String,
                              +expected_keeper: String, +expected_cwd: String,
                              +expected_attempt: String, +expected_artifact: String,
@@ -502,6 +507,45 @@ def admission_fields_match(bootstrap: Bootstrap, +admission: Admission.Admission
         owner_witness, recovery_argv, executable_path, runtime_path, provider_path, invocation_path, invocation_sha256}:
       admission_identity_match(owner, request, keeper_path, cwd, origin_attempt,
         artifact_path, admission)
+
+def recovery_admission_identity_match(+expected_owner: String,
+                                      +expected_request: String,
+                                      +expected_keeper: String,
+                                      +expected_cwd: String,
+                                      +expected_attempt: String,
+                                      +expected_artifact: String,
+                                      +admission: Admission.Admission) -> Bool:
+  match admission:
+    case Admission.AdmissionCreated{+owner, +request, decision, state, attempt,
+        +keeperPath, +cwd, +artifactPath}:
+      Bool.and(String.eq(owner, expected_owner),
+      Bool.and(String.eq(request, expected_request),
+      Bool.and(String.eq(keeperPath, expected_keeper),
+      Bool.and(String.eq(cwd, expected_cwd),
+      Bool.and(String.eq(attempt, expected_attempt),
+      Bool.and(String.eq(artifactPath, expected_artifact),
+      Bool.and(String.eq(decision, "accepted"), recovery_query_state(state))))))))
+    case Admission.AdmissionRetained{+owner, +request, decision, state, attempt,
+        +keeperPath, +cwd, +artifactPath}:
+      Bool.and(String.eq(owner, expected_owner),
+      Bool.and(String.eq(request, expected_request),
+      Bool.and(String.eq(keeperPath, expected_keeper),
+      Bool.and(String.eq(cwd, expected_cwd),
+      Bool.and(String.eq(attempt, expected_attempt),
+      Bool.and(String.eq(artifactPath, expected_artifact),
+      Bool.and(String.eq(decision, "accepted"), recovery_query_state(state))))))))
+    case _: False{}
+
+def recovery_admission_fields_match(bootstrap: Bootstrap,
+                                    +admission: Admission.Admission) -> Bool:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv, executable_path, runtime_path, provider_path,
+        invocation_path, invocation_sha256}:
+      recovery_admission_identity_match(owner, request, keeper_path, cwd,
+        origin_attempt, artifact_path, admission)
 
 def accepted_admission(+bootstrap: Bootstrap, +role: String, +incarnation: String,
                        +admission: Admission.Admission, +stored_plan: String,
@@ -539,6 +583,31 @@ def accepted_managed_admission(+bootstrap: Bootstrap, +role: String,
         StartGranted{query, owner, role, incarnation, request, keeper_path,
           artifact_path, stored_plan, stored_schema},
         StartHeld{"committedManagedAdmissionMismatch"})
+
+def accepted_recovery_managed_admission(+bootstrap: Bootstrap, +role: String,
+                                        +incarnation: String,
+                                        +admission: Admission.Admission,
+                                        +stored_plan: String,
+                                        +stored_identity: String,
+                                        +stored_schema: String,
+                                        +artifact_sha: String,
+                                        +stored_bootstrap: String) -> StartDecision:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv, executable_path, runtime_path, provider_path,
+        invocation_path, invocation_sha256}:
+      Bool.pick(StartDecision,
+        Bool.and(recovery_admission_fields_match(bootstrap, admission),
+        Bool.and(String.eq(plan_value, stored_plan),
+        Bool.and(String.eq(plan_identity, stored_identity),
+        Bool.and(String.eq(result_schema, stored_schema),
+        Bool.and(String.eq(artifact_sha256, artifact_sha),
+        String.eq(bootstrap_text(bootstrap), stored_bootstrap)))))),
+        StartGranted{query, owner, role, incarnation, request, keeper_path,
+          artifact_path, stored_plan, stored_schema},
+        StartHeld{"recoveryManagedAdmissionMismatch"})
 
 def rejection_identity_match(+expected_owner: String, +expected_request: String,
                              +expected_keeper: String, +expected_cwd: String,
@@ -592,6 +661,7 @@ def submission_decision(+bootstrap: Bootstrap, +role: String, +incarnation: Stri
 def reconcile_admission_association(+bootstrap: Bootstrap, +role: String,
                                     +incarnation: String,
                                     +admission: Admission.Admission,
+                                    recovery: Bool,
                                     +association: Result<&1,&1,U32 & String,Admission.ManagedAssociation>) -> StartDecision:
   match association:
     case Fail{error}: StartHeld{"committedDecisionAssociationUnavailable"}
@@ -599,13 +669,18 @@ def reconcile_admission_association(+bootstrap: Bootstrap, +role: String,
       match stored:
         case Admission.ManagedAssociationStored{+planValue, +planIdentity,
             +resultSchema, +artifactSha256, +bootstrapText}:
-          accepted_managed_admission(bootstrap, role, incarnation, admission,
-            planValue, planIdentity, resultSchema, artifactSha256, bootstrapText)
+          Bool.pick(StartDecision, recovery,
+            accepted_recovery_managed_admission(bootstrap, role, incarnation,
+              admission, planValue, planIdentity, resultSchema, artifactSha256,
+              bootstrapText),
+            accepted_managed_admission(bootstrap, role, incarnation, admission,
+              planValue, planIdentity, resultSchema, artifactSha256, bootstrapText))
         case other: StartHeld{"committedDecisionAssociationMissing"}
 
 def reconciled_admission_decision(+bootstrap: Bootstrap, +role: String,
                                   +incarnation: String,
                                   +admission: Admission.Admission,
+                                  recovery: Bool,
                                   +association: Result<&1,&1,U32 & String,Admission.ManagedAssociation>) -> StartDecision:
   Bool.pick(StartDecision,
     rejection_identity_match(bootstrap_owner(bootstrap), bootstrap_request(bootstrap),
@@ -613,34 +688,45 @@ def reconciled_admission_decision(+bootstrap: Bootstrap, +role: String,
       bootstrap_attempt(bootstrap), bootstrap_artifact_path(bootstrap), admission),
     rejected_admission_decision(bootstrap, admission),
     reconcile_admission_association(bootstrap, role, incarnation, admission,
-      association))
+      recovery, association))
 
 def reconcile_stored_admission(+bootstrap: Bootstrap, +role: String,
                                +incarnation: String, +db: String,
+                               recovery: Bool,
                                +admission: Admission.Admission) -> IO(StartDecision):
   do IO<StartDecision>:
     association : Result<&1,&1,U32 & String,Admission.ManagedAssociation> <-
       Admission.readback_managed_association(db,
         bootstrap_database_binding(bootstrap), bootstrap_query(bootstrap))
     IO.pure(StartDecision, reconciled_admission_decision(bootstrap,
-      role, incarnation, admission, association))
+      role, incarnation, admission, recovery, association))
 
 def reconcile_admission_result(+bootstrap: Bootstrap, +role: String,
                                +incarnation: String, +db: String,
+                               recovery: Bool,
                                result: Result<&1,&1,U32 & String,Admission.Admission>) -> IO(StartDecision):
   match result:
     case Fail{error}: IO.pure(StartDecision,
       StartHeld{"committedDecisionReadbackUnavailable"})
     case Done{+admission}: reconcile_stored_admission(bootstrap, role,
-      incarnation, db, admission)
+      incarnation, db, recovery, admission)
 
-def reconcile_committed_admission(+bootstrap: Bootstrap, +role: String,
-                                 +incarnation: String, +db: String) -> IO(StartDecision):
+def reconcile_committed_admission_mode(+bootstrap: Bootstrap, +role: String,
+                                      +incarnation: String, +db: String,
+                                      recovery: Bool) -> IO(StartDecision):
   do IO<StartDecision>:
     admission : Result<&1,&1,U32 & String,Admission.Admission> <-
       Admission.readback(db, bootstrap_database_binding(bootstrap),
         bootstrap_query(bootstrap))
-    reconcile_admission_result(bootstrap, role, incarnation, db, admission)
+    reconcile_admission_result(bootstrap, role, incarnation, db, recovery, admission)
+
+def reconcile_committed_admission(+bootstrap: Bootstrap, +role: String,
+                                 +incarnation: String, +db: String) -> IO(StartDecision):
+  reconcile_committed_admission_mode(bootstrap, role, incarnation, db, False{})
+
+def reconcile_recovery_admission(+bootstrap: Bootstrap, +role: String,
+                                 +incarnation: String, +db: String) -> IO(StartDecision):
+  reconcile_committed_admission_mode(bootstrap, role, incarnation, db, True{})
 
 def reconcile_unresolved_decision(+bootstrap: Bootstrap, +role: String,
                                   +incarnation: String, +db: String,

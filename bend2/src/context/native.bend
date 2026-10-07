@@ -602,10 +602,30 @@ def persist_managed_output(+executable: String, +runtime_path: String,
         managed_persist_output(owner, worktree, query, bootstrap_digest, output)), spawned)
     managed_persist_answer(owner, worktree, query, bootstrap_digest, output, answer)
 
-def managed_store_result(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+def managed_store_publish_result(result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match result:
+    case Fail{(code, message)}: IO.die(Unit, code, "managedOwnerNoticePublish:" ++ message)
+    case Done{value}: IO.pure(Unit, Unit{})
+
+def managed_store_cursor(+db: String,
+                         result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Fail{(code, message)}: IO.die(Unit, code, "managedOwnerNoticeCursor:" ++ message)
+    case Done{+rows}:
+      managed_store_publish_result(Instance.publish_commit(db, Tx.trim_nl(rows)))
+
+def managed_store_rows(+db: String, +binding: String, +rows: String) -> IO(Unit):
+  do IO<Unit>:
+    written : Unit <- IO.write(rows)
+    cursor : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db,
+      binding, "SELECT CAST(coalesce(max(change_id),0) AS TEXT) FROM native_changes;")
+    managed_store_cursor(db, cursor)
+
+def managed_store_result(+db: String, +binding: String,
+                         result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Fail{error}: IO.die(Unit, 3, "managedOutcomeStore")
-    case Done{+rows}: IO.write(rows)
+    case Done{+rows}: managed_store_rows(db, binding, rows)
 
 def store_managed_output(+db: String, +binding: String, +query: String, +owner: String,
                          output: ManagedOutput) -> IO(Unit):
@@ -617,7 +637,7 @@ def store_managed_output(+db: String, +binding: String, +query: String, +owner: 
             Bool.pick(String, complete, "complete", "failed"),
             Bool.pick(String, complete, event_frame, SNil{}),
             Bool.pick(String, complete, SNil{}, error_json)))
-        managed_store_result(result)
+        managed_store_result(db, binding, result)
 
 def launch_bootstrap(launch: ManagedLaunch) -> ManagedQuery.Bootstrap:
   match launch:
@@ -711,7 +731,7 @@ def recovery_file_verified(+db: String, +binding: String, +executable: String,
 def managed_recovery_association_ok(+bootstrap: ManagedQuery.Bootstrap,
                                    +admission: ContextAdmit.Admission,
                                    association: ContextAdmit.ManagedAssociation) -> Bool:
-  Bool.and(Bool.or(ManagedQuery.admission_fields_match(bootstrap, admission),
+  Bool.and(Bool.or(ManagedQuery.recovery_admission_fields_match(bootstrap, admission),
     ManagedQuery.rejection_identity_match(
       ManagedQuery.bootstrap_owner(bootstrap),
       ManagedQuery.bootstrap_request(bootstrap),
@@ -843,7 +863,7 @@ def managed_recovery_attach(+db: String, +executable: String,
                                 ManagedQuery.bootstrap_runtime_path(bootstrap),
                                 worktree, bootstrap_digest}
                               decision : ManagedQuery.StartDecision <-
-                                ManagedQuery.reconcile_committed_admission(bootstrap,
+                                ManagedQuery.reconcile_recovery_admission(bootstrap,
                                   "starter", "0", db)
                               managed_start_decision(db,
                                 ManagedQuery.bootstrap_database_binding(bootstrap),
