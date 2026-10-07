@@ -126,6 +126,7 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
                                                AND NOT EXISTS (SELECT 1 FROM session_stops
                                                                 WHERE session='worker')
                                              ORDER BY seq''').fetchall()
+            print('pending inputs admitted for worker: ' + json.dumps(pending_inputs), flush=True)
             self.assertEqual(len(pending_inputs), 3, pending_inputs)
             self.assertIn(('task-worker', 'task', 'root', None), pending_inputs)
             self.assertTrue(all(row[1] in ('task', 'guidance', 'recovery')
