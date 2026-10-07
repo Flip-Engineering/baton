@@ -2120,9 +2120,8 @@ def shared_reserved_continue(handle: U32, repo: String, target: String, cand: St
 # One self-recursive reservation helper. A collision grows the suffix by one character and tries
 # again under the same held claim, so there is no fixed retry cap: the only refusals are a real
 # error, a malformed record, and a representational suffix length.
-# The attempt name: the base alone for the first attempt, then the base extended with the
-# counter rendered by U32.show. The counter is a U32 and the only refusal past a collision is
-# the type's own maximum, not a chosen policy limit.
+# The attempt name: the base alone for the first attempt, then the base extended with the U32
+# counter rendered by U32.show. The only refusal past a collision is the type's own maximum.
 def shared_attempt_name(base: String, attempt: U32) -> String:
   +b = base
   +n = attempt
@@ -2148,17 +2147,18 @@ def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String,
     match observed:
       case Fail{error}: shared_step_failed("reserve", error, h)
       case Done{record}:
-        match Tx.str_eq(record, Pb.production_record("created", shared_parent_path(pa, name), "0")):
+        +r = record
+        match Tx.str_eq(r, Pb.production_record("created", shared_parent_path(pa, name), "0")):
           case True{}: shared_reserved_continue(h, rp, tg, c, b, gd, shared_parent_path(pa, name))
           case False{}:
-            match Tx.str_eq(record, Pb.production_record("existing", shared_parent_path(pa, name), "0")):
-              case False{}: shared_record_failed("reserve", record, h)
+            match Tx.str_eq(r, Pb.production_record("existing", shared_parent_path(pa, name), "0")):
+              case False{}: shared_record_failed("reserve", r, h)
               case True{}:
                 match U32.is_lt(n, 4294967295):
                   case True{}:
                     +next = U32.add(n, 1)
                     shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, next)
-                  case False{}: shared_record_failed("reserve-counter-maximum", record, h)
+                  case False{}: shared_record_failed("reserve-counter-maximum", r, h)
 
 def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle
