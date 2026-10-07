@@ -85,7 +85,8 @@ def Instance.attach_owned(database: String, directory: String, lock: U32)
   -> IO(Result<&1,&1,U32 & String,U32>)
 def Instance.shutdown(database: String) -> IO(Result<&1,&1,U32 & String,Unit>)
 def Instance.retire(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>)
-def Instance.commit(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>)
+def Instance.commit_state(handle: U32, state: String) -> IO(Result<&1,&1,U32 & String,Unit>)
+def Instance.restore_state(handle: U32) -> IO(Result<&1,&1,U32 & String,String>)
 ```
 
 The module is `src/host/instance.bend`. A caller imports the file with any alias
@@ -136,24 +137,43 @@ handshake, so the client's observer protocol is the one it already uses.
 
 ## Observation checkpoint
 
-`<attempt>/cursor` holds `BrCursor{ char magic[8]; uint64_t offset; uint64_t check; }`
-and records the byte offset an observer has **durably observed** from the
-attempt's stdout spool. It is replaced by rename, without a device flush, because
-it is a resume hint: a lost update means an observer reads a little more of the
-stream again.
+`<attempt>/checkpoint` is one record:
 
-Reading bytes is not a durable observation. The reader does not move the
-checkpoint; `Instance.commit(handle)` records the offset the observer has
-consumed so far, and the observation owner calls it only after its own durable
-commit (its store transaction, its terminal report write). A crash between a read
-and that commit therefore leaves the checkpoint at the previous commit and the
-recovery observer reports the uncommitted frames again. Replay is bounded by the
-frames since the last commit, and no frame is skipped.
+```c
+typedef struct { char magic[8];
+                 uint64_t incarnation, attempt, offset, length, check;
+                 BrBirth birth; } BrCheckpoint;   /* reducer bytes follow */
+```
 
-An attaching observer resumes at the recorded offset. A short, oversized or
-checksum-mismatched checkpoint is not fatal: recovery starts again at offset 0 so
-every byte is preserved, and records the reason in `<attempt>/cursor-error`. A
-damaged resume hint costs replay and never loses output.
+It binds the consumed spool offset to the reducer state the observation owner
+had reached there, to the native process that produced the bytes (`BrBirth`, the
+native pid and start time from `native.birth`) and to the owner incarnation that
+observed them. The reducer bytes are opaque to the host; the host writes the
+header and the bytes in one rename, so a crash cannot leave an offset without the
+state that belongs to it.
+
+Reading bytes is not a durable observation, and an offset alone never authorizes
+a resume:
+
+- The reader does not move the checkpoint. An observer calls
+  `Instance.commit_state(handle, state)` after its own durable commit: its store
+  transaction and its reducer checkpoint for the same frame. A crash between a
+  read and that call leaves the checkpoint at the previous commit, so the
+  recovery observer reports the uncommitted frames again.
+- An observer calls `Instance.restore_state(handle)` before it reads. The call
+  returns the recorded reducer state and resumes the reader at the recorded
+  offset, so a caller cannot obtain the offset without also receiving the state
+  it was committed with. An empty state and a zero offset mean there is no
+  checkpoint, and the observer reads from the beginning.
+- A checkpoint bound to another native process or another owner incarnation is
+  not resumed. A damaged record is not resumed either. Both are reported with
+  `<attempt>/checkpoint-error`, and the observer replays from the beginning with
+  its own deduplication. Replay plus durable deduplication is the fallback for
+  every unreadable or unbound checkpoint.
+
+The reducer state itself is the observation owner's. The module that captures and
+restores it belongs to the turn owner; this host interface only transports it and
+keeps it bound to the frame it describes.
 
 ## Admission identity
 
@@ -213,13 +233,15 @@ is not reused.
   recovery observer the owner launches reads the attempt's retained output from
   the beginning of its spool and continues to report new output and the exit
   status.
-- An observer that committed part of the stream leaves a checkpoint, and the
-  recovery observer resumes there: it does not report output the checkpoint
-  already covered.
-- An observer killed between a read and its commit leaves no checkpoint advance,
-  and the recovery observer reports that frame again, so no frame is skipped.
+- An observer that committed a checkpoint leaves one record carrying its reducer
+  state; the recovery observer restores that state and resumes there, and it does
+  not report output the checkpoint already covered.
+- An observer killed between a read and its commit leaves no checkpoint, and the
+  recovery observer reports that frame again, so no frame is skipped.
+- A checkpoint bound to another owner incarnation is not resumed: the recovery
+  observer replays from the beginning and `<attempt>/checkpoint-error` records it.
 - A damaged checkpoint is recovered from the beginning: every frame is reported
-  again and `<attempt>/cursor-error` records the reason.
+  again and `<attempt>/checkpoint-error` records it.
 - A repeated admission with the same identity starts no second native child and
   leaves the existing attempt's custody and stream intact; the same directory
   with different work is refused with `EEXIST`.
