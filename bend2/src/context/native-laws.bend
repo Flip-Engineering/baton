@@ -112,7 +112,7 @@ def installed_declaration_adapter_decodes_generic_path_suffix_rule():
 law installed_declaration_adapter_refuses_an_empty_path_suffix:
   {NativeDeclaration.decode(declaration_object_with_applicability(
       J.Jarr{NativeDeclarationLaws.obj(NativeDeclarationLaws.obj_pair("kind", J.Jstr{"pathSuffix"},
-        NativeDeclarationLaws.obj_pair("value", J.Jstr{""}, J.Jnil{}})), J.Jnil{}}), "d1") ==
+        NativeDeclarationLaws.obj_pair("value", J.Jstr{""}, J.Jnil{})), J.Jnil{}}), "d1") ==
       NativeDeclaration.DeclarationRefused{"nativeModuleDeclaration"} : NativeDeclaration.DeclarationDecode}
 
 def installed_declaration_adapter_refuses_an_empty_path_suffix():
