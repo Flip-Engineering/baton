@@ -1,0 +1,14 @@
+frame-engines {"id":7,"query":null,"requestCanonical":null,"scope":null,"tool":"context-engines","version":1}
+frame-query {"id":-1,"query":"q1","requestCanonical":"{\"version\":1}","scope":null,"tool":"context-query","version":1}
+metadata
+
+
+invalidProgressToken
+envelope
+{"id":7,"query":null,"requestCanonical":null,"scope":null,"tool":"context-engines","version":1}
+{"id":"7","query":"q7","requestCanonical":"{\"version\":1}","scope":null,"tool":"context-query","version":1}
+invalidJsonrpc
+dispatch
+refused:validationRefusal:effectNotGranted
+refused:validationRefusal:unknownOperation
+end
