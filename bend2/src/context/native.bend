@@ -1090,30 +1090,30 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
     guard_key : String <- IO.try(String, ContextIdentity.role_guard_key(guard_identity))
     physical_role_key : String <- IO.try(String,
       ContextIdentity.physical_role_key(physical_identity))
-    +keeper_path = ContextIdentity.role_directory(artifact_path, guard_key)
-    bootstrap_file = artifact_path ++ "/bootstrap.json"
-    invocation_path = keeper_path ++ "/invocation.json"
-    provider_path = installed_provider_path(executable)
+    +keeper_path : String = ContextIdentity.role_directory(artifact_path, guard_key)
+    bootstrap_file : String = artifact_path ++ "/bootstrap.json"
+    invocation_path : String = keeper_path ++ "/invocation.json"
+    provider_path : String = installed_provider_path(executable)
     invocation_sha256 : String <- IO.try(String,
       ContextIdentity.role_guard_key(invocation_text))
     canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
-    +recovery_argv = Process.argv([executable, "--recover-context-query", canonical_database,
+    +recovery_argv : String = Process.argv([executable, "--recover-context-query", canonical_database,
       owner, query, keeper_path, worktree, bootstrap_file])
-    +bootstrap = ManagedQuery.query_bootstrap(binding, query, owner, request, cwd,
+    +bootstrap : ManagedQuery.Bootstrap = ManagedQuery.query_bootstrap(binding, query, owner, request, cwd,
       origin_attempt, ManagedQuery.ArtifactEvidence{source_identity, artifact_sha256},
       EnginesWire.plan_value(plan), EnginesWire.plan_identity(plan), result_schema,
       artifact_path, keeper_path, guard_key, physical_role_key, owner_witness,
       recovery_argv, executable, runtime_path, provider_path, invocation_path,
       invocation_sha256)
-    +bootstrap_text = ManagedQuery.bootstrap_text(bootstrap)
+    +bootstrap_text : String = ManagedQuery.bootstrap_text(bootstrap)
     bootstrap_digest : String <- persist_managed_bootstrap(executable, runtime_path,
       cwd, owner, worktree, query, bootstrap_file, bootstrap)
-    +launch = ManagedLaunch{bootstrap, invocation_text, executable, runtime_path,
+    +launch : ManagedLaunch = ManagedLaunch{bootstrap, invocation_text, executable, runtime_path,
       worktree, bootstrap_digest}
-    argv = Process.argv([runtime_path, "--experimental-strip-types",
+    argv : String = Process.argv([runtime_path, "--experimental-strip-types",
       installed_provider_path(executable), "--invoke-file",
       keeper_path ++ "/invocation.json"])
-    stderr_path = keeper_path ++ "/native.stderr"
+    stderr_path : String = keeper_path ++ "/native.stderr"
     result : Result<&1,&1,U32 & String,U32 & String & String> <-
       Instance.prepare_with_file_bounded_start(db, keeper_path, argv, cwd,
         stderr_path, budget, "invocation.json", invocation_text, SNil{}, 0, lock,
@@ -1183,9 +1183,9 @@ def managed_prepare_anchor(+db: String, +binding: String, +owner: String,
                            +result_schema: String, +artifact_sha256: String,
                            +plan: Sel.Plan) -> IO(Unit):
   do IO<Unit>:
-    guard_identity = ContextIdentity.guard_identity(binding,
+    guard_identity : String = ContextIdentity.guard_identity(binding,
       ContextIdentity.SubjectQuery{query}, ContextIdentity.RoleStarter{}, "0")
-    physical_identity = ContextIdentity.physical_role_identity(
+    physical_identity : String = ContextIdentity.physical_role_identity(
       ContextIdentity.SubjectQuery{query}, ContextIdentity.RoleStarter{})
     physical_role_key : String <- IO.try(String,
       ContextIdentity.physical_role_key(physical_identity))
