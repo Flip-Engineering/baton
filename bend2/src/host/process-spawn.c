@@ -23,6 +23,7 @@ typedef struct {
   char *directory, *initial, *recovery, *detail, *database, *artifact_name, *artifact;
   size_t initial_length, recovery_length, artifact_name_length, artifact_length;
   u32 keep_stdin, lock;
+  char *cursor, *generation;
 } BatonProcessCall;
 
 /* A capability packs its slot index and generation. A retired slot is reused
@@ -42,7 +43,9 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_WAIT, BP_SIGNAL, BP_PID,
        BP_INSTANCE_OWNER, BP_INSTANCE_ADMIT, BP_INSTANCE_ATTACH,
        BP_INSTANCE_ATTACH_OWNED, BP_INSTANCE_SHUTDOWN, BP_INSTANCE_RETIRE,
        BP_INSTANCE_COMMIT, BP_INSTANCE_RESTORE, BP_INSTANCE_REPLAY,
-       BP_INSTANCE_JOB, BP_RETAIN_WITH_FILE, BP_INSTANCE_ADMIT_WITH_FILE };
+       BP_INSTANCE_JOB, BP_RETAIN_WITH_FILE, BP_INSTANCE_ADMIT_WITH_FILE,
+       BP_INSTANCE_SUBSCRIBE, BP_INSTANCE_NOTICE, BP_INSTANCE_UNSUBSCRIBE,
+       BP_INSTANCE_PUBLISH };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -193,6 +196,8 @@ typedef struct BatonRetained {
   int reply_error;
   off_t offset;
   uint64_t offset_stored,incarnation;
+  uint64_t subscribe_generation,subscribe_cursor;
+  int subscribe_gap;
   pthread_t receiver;
   pthread_mutex_t state,command,reader;
   pthread_cond_t changed;
@@ -222,10 +227,26 @@ typedef struct {
   uint64_t owner,epoch,attempt,generation,length;
   uint32_t state,reserved;
 } BrInstanceFrame;
-enum { BI_ENSURE=1, BI_ADMIT, BI_ATTACH, BI_SHUTDOWN, BI_STATE, BI_HELLO, BI_REPLY };
+enum { BI_ENSURE=1, BI_ADMIT, BI_ATTACH, BI_SHUTDOWN, BI_STATE, BI_HELLO, BI_REPLY,
+       BI_SUBSCRIBE, BI_COMMIT, BI_NOTICE, BI_READY };
+/* A committed-change subscription. A process that committed a database
+   transaction publishes the durable native_changes high-water cursor with
+   BI_COMMIT after its commit; the owner records the highest published cursor and
+   sends one BI_NOTICE to each subscribed connection per advance. A notice carries
+   the cursor only: the subscriber rereads the rows from SQLite in its own read
+   transaction, scoped to its reader and subtree. */
+typedef struct { uint64_t generation,after_cursor; } BrInstanceSubscribe;
+typedef struct { uint64_t cursor; } BrInstanceCommit;
+/* The readiness reply. `gap` is one when this owner incarnation cannot serve the
+   range the subscriber asked to resume from, so the subscriber takes a fresh
+   snapshot; `cursor` is the high-water it may replay rows up to either way. */
+typedef struct { uint64_t generation,cursor; uint32_t gap,reserved; } BrInstanceReady;
+enum { BN_COMMIT=1, BN_GAP=2 };
+typedef struct { uint64_t cursor; uint32_t kind,reserved; } BrInstanceNotice;
 typedef struct BrOwnerControl {
   struct BrOwnerControl *next;
-  int socket,answered,rights;
+  int socket,answered,rights,subscribe;
+  uint64_t after_cursor;
   char *incoming,*reply;
   size_t size,capacity,reply_length,sent;
 } BrOwnerControl;
@@ -271,9 +292,7 @@ static int br_checkpoint_custody(const char *directory,int spool_fd,BrBirth *bir
 static uint64_t br_manifest_digest(const BrManifestHeader *header,char *const *fields,int count);
 static int br_manifest_digest_file(const char *directory,uint64_t *digest);
 static int br_artifact_name_ok(const char *name,size_t length);
-static uint64_t br_digest_bytes(const char *bytes,size_t length);
 static int br_artifact_write(const char *directory,const char *name,const char *bytes,size_t length);
-static int br_artifact_digest(const char *directory,const char *name,size_t name_length,uint64_t *digest);
 static int br_artifact_binding(const char *directory,const char *name,size_t name_length,
                                unsigned char digest[32],uint64_t *length);
 static int br_artifact_same(const char *directory,const char *name,size_t name_length,
@@ -283,7 +302,8 @@ static int br_manifest_store(const char *directory,const char *manifest_path,BrM
 typedef struct {
   int listener,lock,finishing,single,database_fd,bound;
   uint64_t token,epoch,device,inode,parent_device,parent_inode;
-  char *database,*ipc,*key,*socket_path,*record_path,*generation_path;
+  uint64_t cursor;
+  char *database,*ipc,*key,*socket_path,*record_path,*generation_path,*cursor_path;
   BrKeeper *attempts;
   BrOwnerControl *controls;
   uint32_t next_id;
@@ -1645,6 +1665,9 @@ static void br_owner_control_flush(BrOwnerControl *control) {
     if(n<=0) {br_owner_control_close(control);return;}
     control->sent+=(size_t)n;
   }
+  /* A subscribed connection is this database's notice channel: it stays open
+     after its readiness reply and receives one notice per committed change. */
+  if(control->subscribe) {control->answered=0;control->sent=0;control->reply_length=0;return;}
   br_owner_control_close(control);
 }
 static int br_owner_reply(BrOwnerControl *control,BrInstanceFrame frame,const void *payload) {
@@ -1684,6 +1707,47 @@ static void br_owner_state(BrOwner *owner,BrKeeper *keeper,BrOwnerState *state) 
     fclose(file);
   }
   free(status);
+}
+/* The committed-change cursor is durable across owner incarnations, so a
+   replacement owner never reports a high-water below the one its predecessor
+   published. */
+static void br_owner_cursor_load(BrOwner *owner) {
+  FILE *file=owner->cursor_path?fopen(owner->cursor_path,"r"):NULL;
+  if(!file)return;
+  unsigned long long value=0;
+  if(fscanf(file,"%llu",&value)==1)owner->cursor=(uint64_t)value;
+  fclose(file);
+}
+static void br_owner_cursor_store(BrOwner *owner) {
+  if(!owner->cursor_path)return;
+  char text[32];
+  int length=snprintf(text,sizeof(text),"%llu\n",(unsigned long long)owner->cursor);
+  int fd=open(owner->cursor_path,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC,0600);
+  if(fd<0)return;
+  if(!br_write_all(fd,text,(size_t)length))fsync(fd);
+  close(fd);
+}
+/* Sends one notice per subscriber whose cursor the publication advanced. The
+   notice payload is the cursor alone, so a notice still in flight is replaced by
+   the newer cursor instead of queued: the subscriber rereads rows up to the
+   cursor it is told, and a notice is never lost to a busy socket. */
+static void br_owner_notify(BrOwner *owner) {
+  BrInstanceNotice notice={.cursor=owner->cursor,.kind=BN_COMMIT};
+  BrInstanceFrame frame={.op=BI_NOTICE,.owner=owner->token,.epoch=owner->epoch,
+    .length=sizeof(notice)};
+  for(BrOwnerControl *subscriber=owner->controls;subscriber;subscriber=subscriber->next) {
+    if(!subscriber->subscribe || subscriber->socket<0)continue;
+    if(subscriber->after_cursor>=owner->cursor)continue;
+    subscriber->after_cursor=owner->cursor;
+    if(subscriber->sent<subscriber->reply_length) {
+      BrInstanceFrame pending;
+      memcpy(&pending,subscriber->reply,sizeof(pending));
+      if(pending.op==BI_NOTICE && pending.length==sizeof(notice))
+        memcpy(subscriber->reply+sizeof(pending),&notice,sizeof(notice));
+      continue;
+    }
+    br_owner_reply(subscriber,frame,&notice);
+  }
 }
 static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFrame frame) {
   const char *payload=control->incoming+sizeof(frame);
@@ -1739,6 +1803,41 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
     return br_owner_reply(control,(BrInstanceFrame){.op=BI_HELLO,.owner=owner->token,
       .epoch=owner->epoch,.attempt=held->id,.generation=held->generation,.state=1,
       .length=sizeof(state)},&state);
+  }
+  if(frame.op==BI_SUBSCRIBE) {
+    if(frame.length!=sizeof(BrInstanceSubscribe))
+      return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
+        .epoch=owner->epoch,.error=EPROTO},NULL);
+    BrInstanceSubscribe request;
+    memcpy(&request,payload,sizeof(request));
+    /* A subscription opened against another owner incarnation cannot be served
+       continuously: commits written while that owner was gone were never
+       forwarded, and a cursor ahead of this owner's record cannot be resumed
+       here. Both report the gap so the subscriber takes a fresh snapshot, and the
+       ready cursor states the high-water it may replay rows up to either way. */
+    BrInstanceReady ready={.generation=owner->epoch,.cursor=owner->cursor,
+      .gap=(uint32_t)(request.generation!=owner->epoch || request.after_cursor>owner->cursor)};
+    control->subscribe=1;
+    control->after_cursor=request.after_cursor;
+    return br_owner_reply(control,(BrInstanceFrame){.op=BI_READY,.owner=owner->token,
+      .epoch=owner->epoch,.generation=owner->epoch,.length=sizeof(ready)},&ready);
+  }
+  if(frame.op==BI_COMMIT) {
+    if(frame.length!=sizeof(BrInstanceCommit))
+      return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
+        .epoch=owner->epoch,.error=EPROTO},NULL);
+    BrInstanceCommit commit;
+    memcpy(&commit,payload,sizeof(commit));
+    /* A commit that does not advance the high-water publishes nothing: a
+       rolled-back transaction publishes nothing because it never calls here. */
+    if(commit.cursor>owner->cursor) {
+      owner->cursor=commit.cursor;
+      br_owner_cursor_store(owner);
+      br_owner_notify(owner);
+    }
+    BrInstanceReady ready={.generation=owner->epoch,.cursor=owner->cursor};
+    return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
+      .epoch=owner->epoch,.length=sizeof(ready)},&ready);
   }
   return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.error=EINVAL},NULL);
 }
@@ -1903,8 +2002,10 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
   char *lock_path=br_ipc_path(owner->ipc,owner->key,".lock");
   owner->record_path=br_ipc_path(owner->ipc,owner->key,".record");
   owner->generation_path=br_ipc_path(owner->ipc,owner->key,".generation");
+  owner->cursor_path=br_ipc_path(owner->ipc,owner->key,".cursor");
   owner->socket_path=br_ipc_path(owner->ipc,owner->key,".sock");
-  if(!lock_path || !owner->record_path || !owner->generation_path || !owner->socket_path) {
+  if(!lock_path || !owner->record_path || !owner->generation_path || !owner->socket_path ||
+     !owner->cursor_path) {
     free(lock_path);return ENOMEM;
   }
   owner->lock=open(lock_path,O_CREAT|O_RDWR|O_CLOEXEC,0600);
@@ -1942,6 +2043,9 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
 static int br_owner_serve(const char *database) {
   BrOwner owner={.listener=-1,.lock=-1,.database_fd=-1};
   int error=br_owner_bind(&owner,database);
+  /* The elected owner resumes the committed-change high-water its predecessor
+     published, so the cursor it reports never regresses. */
+  if(!error)br_owner_cursor_load(&owner);
   if(!error)error=br_owner_loop(&owner);
   if(owner.listener>=0)close(owner.listener);
   /* A failed election must not remove the elected owner's socket or record;
@@ -2116,12 +2220,6 @@ static int br_artifact_binding(const char *directory,const char *name,size_t nam
   br_sha256_final(&sha,digest);
   *length=total;
   return 0;
-}
-static int br_artifact_digest(const char *directory,const char *name,size_t name_length,uint64_t *digest) {
-  unsigned char value[32];uint64_t length=0;
-  int error=br_artifact_binding(directory,name,name_length,value,&length);
-  if(!error)memcpy(digest,value,sizeof(*digest));
-  return error;
 }
 /* Exact comparison of the artifact already in custody with a requested byte
    string: the same length and the same bytes. */
@@ -2709,6 +2807,146 @@ static int br_recovery(BatonProcessCall *call) {
   }
   br_manifest_free(&manifest);free(directory);return error;
 }
+/* Parses a non-negative decimal cursor. A durable change cursor is not a 32-bit
+   quantity, so it crosses this boundary as text and a malformed or oversized
+   value is refused here. */
+static int br_parse_u64(const char *text,size_t length,uint64_t *value) {
+  if(!text || !length || length>20)return EINVAL;
+  uint64_t result=0;
+  for(size_t i=0;i<length;i++) {
+    if(text[i]<'0' || text[i]>'9')return EINVAL;
+    uint64_t digit=(uint64_t)(text[i]-'0');
+    if(result>(UINT64_MAX-digit)/10)return EOVERFLOW;
+    result=result*10+digit;
+  }
+  *value=result;
+  return 0;
+}
+/* Opens the committed-change subscription on the elected owner. The connection
+   stays open as the notice channel, so the handle carries one notice per commit
+   the owner publishes. */
+static int br_instance_subscription(const char *database,uint64_t generation,uint64_t after_cursor,
+                                    BrInstanceReady *ready,int *socket_out) {
+  BrOwnerRecord record;
+  int socket_fd=-1;
+  BrInstanceSubscribe request={.generation=generation,.after_cursor=after_cursor};
+  BrInstanceFrame reply={0};
+  int error=br_instance_connect(database,1,&record,&socket_fd);
+  if(error)return error;
+  BrInstanceFrame frame={.op=BI_SUBSCRIBE,.owner=record.token,.epoch=record.epoch,
+    .length=sizeof(request)};
+  error=br_instance_exchange(socket_fd,frame,(const char *)&request,-1,&reply);
+  if(!error && reply.error==ESTALE) {
+    /* The record named an owner that was replaced between the read and the
+       request; retry once against the record the replacement published. */
+    close(socket_fd);socket_fd=-1;
+    if((error=br_instance_connect(database,0,&record,&socket_fd)))return error;
+    frame.owner=record.token;frame.epoch=record.epoch;
+    error=br_instance_exchange(socket_fd,frame,(const char *)&request,-1,&reply);
+  }
+  if(!error && (reply.owner!=record.token || reply.epoch!=record.epoch))error=ESTALE;
+  if(!error && reply.error)error=reply.error;
+  if(!error && (reply.op!=BI_READY || reply.length!=sizeof(*ready)))error=EPROTO;
+  if(!error)error=br_read_all(socket_fd,ready,sizeof(*ready));
+  if(error) {if(socket_fd>=0)close(socket_fd);socket_fd=-1;}
+  *socket_out=socket_fd;
+  return error;
+}
+/* Waits for the next notice on a subscription. The notice carries the committed
+   cursor high-water; the subscriber rereads rows from the database up to it. */
+static int br_instance_notice(int socket_fd,BrInstanceNotice *notice,uint64_t *generation) {
+  BrInstanceFrame frame;
+  int error=br_read_all(socket_fd,&frame,sizeof(frame));
+  if(error)return error;
+  if(frame.op!=BI_NOTICE || frame.length!=sizeof(*notice))return EPROTO;
+  if((error=br_read_all(socket_fd,notice,sizeof(*notice))))return error;
+  if(generation)*generation=frame.epoch;
+  return 0;
+}
+/* Publishes one committed change: the caller has already committed the
+   transaction that produced this cursor. A commit that does not advance the
+   high-water publishes nothing, and a rolled-back transaction never calls here. */
+static int br_instance_publish(const char *database,uint64_t cursor) {
+  BrInstanceCommit commit={.cursor=cursor};
+  BrInstanceFrame reply={0};
+  return br_instance_request(database,(BrInstanceFrame){.op=BI_COMMIT,.length=sizeof(commit)},
+    (const char *)&commit,-1,&reply);
+}
+static void br_subscription_free(BatonRetained *retained) {
+  if(!retained)return;
+  if(retained->socket>=0)close(retained->socket);
+  retained->socket=-1;
+  free(retained->directory);
+  free(retained);
+}
+static void br_instance_subscribe_call(BatonProcessCall *call) {
+  uint64_t generation=0,after_cursor=0;
+  int error=br_parse_u64(call->generation,call->generation?strlen(call->generation):0,&generation);
+  if(!error)error=br_parse_u64(call->cursor,call->cursor?strlen(call->cursor):0,&after_cursor);
+  BrInstanceReady ready={0};
+  int socket_fd=-1;
+  if(!error)error=br_instance_subscription(call->database,generation,after_cursor,&ready,&socket_fd);
+  BatonRetained *retained=error?NULL:calloc(1,sizeof(*retained));
+  if(!error && !retained)error=ENOMEM;
+  if(error) {
+    if(socket_fd>=0)close(socket_fd);
+    call->error=error;
+    return;
+  }
+  retained->socket=socket_fd;
+  retained->spool=-1;retained->guard=-1;retained->watch=-1;retained->life=-1;
+  retained->directory=strdup(call->database?call->database:"");
+  retained->subscribe_generation=ready.generation;
+  retained->subscribe_cursor=ready.cursor;
+  retained->subscribe_gap=(int)ready.gap;
+  if(!retained->directory) {
+    br_subscription_free(retained);
+    call->error=ENOMEM;
+    return;
+  }
+  call->child->retained=retained;
+  char text[224];
+  int written=snprintf(text,sizeof(text),"{\"generation\":%llu,\"cursor\":%llu,\"gap\":%s}",
+    (unsigned long long)ready.generation,(unsigned long long)ready.cursor,
+    ready.gap?"true":"false");
+  call->text=malloc((size_t)written+1);
+  if(!call->text) {call->error=ENOMEM;return;}
+  memcpy(call->text,text,(size_t)written+1);
+  call->length=(size_t)written;
+}
+static void br_instance_notice_call(BatonProcessCall *call) {
+  BatonRetained *retained=call->child?call->child->retained:NULL;
+  if(!retained || retained->socket<0) {call->error=EBADF;return;}
+  BrInstanceNotice notice={0};
+  uint64_t generation=0;
+  int error=br_instance_notice(retained->socket,&notice,&generation);
+  if(error) {call->error=error;return;}
+  const char *kind=notice.kind==BN_COMMIT?"commit":notice.kind==BN_GAP?"gap":"unknown";
+  char text[192];
+  int written=snprintf(text,sizeof(text),
+    "{\"kind\":\"%s\",\"cursor\":%llu,\"generation\":%llu}",kind,
+    (unsigned long long)notice.cursor,(unsigned long long)generation);
+  call->text=malloc((size_t)written+1);
+  if(!call->text) {call->error=ENOMEM;return;}
+  memcpy(call->text,text,(size_t)written+1);
+  call->length=(size_t)written;
+}
+/* Ends the subscription locally. The owner drops the connection when it reads
+   the closed socket, so no request is needed and a dead owner costs nothing. */
+static void br_instance_unsubscribe_call(BatonProcessCall *call) {
+  if(!call->child) {call->error=EBADF;return;}
+  br_subscription_free(call->child->retained);
+  call->child->retained=NULL;
+  baton_children[call->index]=NULL;
+  free(call->child);
+  call->child=NULL;
+}
+static void br_instance_publish_call(BatonProcessCall *call) {
+  uint64_t cursor=0;
+  int error=br_parse_u64(call->text,call->length,&cursor);
+  if(!error)error=br_instance_publish(call->database,cursor);
+  call->error=error;
+}
 static void baton_retained_begin_call(BatonProcessCall *call) {
   if(call->kind==BP_RECOVERY)call->error=br_recovery(call);
   else if(call->kind==BP_KEEPER) call->error=br_keeper(call->directory,(int)call->lock);
@@ -2773,6 +3011,10 @@ static void baton_process_call(IoWork *w) {
   BatonProcessCall *call=(BatonProcessCall *)w->data;
   BatonChild *child=call->child;
   if(call->kind==BP_SPAWN) { baton_child_spawn(call);return; }
+  if(call->kind==BP_INSTANCE_SUBSCRIBE) { br_instance_subscribe_call(call);return; }
+  if(call->kind==BP_INSTANCE_NOTICE) { br_instance_notice_call(call);return; }
+  if(call->kind==BP_INSTANCE_UNSUBSCRIBE) { br_instance_unsubscribe_call(call);return; }
+  if(call->kind==BP_INSTANCE_PUBLISH) { br_instance_publish_call(call);return; }
   if(call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED || call->kind==BP_RECOVERY || call->kind==BP_KEEPER || call->kind==BP_CONTROL_WRITE || call->kind==BP_CONTROL_SIGNAL ||
      call->kind==BP_INSTANCE_OWNER || call->kind==BP_INSTANCE_ADMIT || call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED ||
      call->kind==BP_INSTANCE_SHUTDOWN || call->kind==BP_INSTANCE_RETIRE ||
@@ -2837,7 +3079,8 @@ static Term baton_process_pack(Env e, IoWork *w) {
        call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED) value=(Term)call->handle;
     else if(call->kind==BP_INPUT_CLOSED) value=(Term)call->signal;
     else if(call->kind==BP_WAIT) value=io_str(e,call->text,call->length);
-    else if(call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_JOB)
+    else if(call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_JOB ||
+            call->kind==BP_INSTANCE_NOTICE)
       value=io_str(e,call->text?call->text:"",call->length);
 #ifdef CID_SOME
     else if(call->kind==BP_READ || call->kind==BP_RECOVERY) value=call->eof ? term_pak(CID_NONE,0)
@@ -2872,15 +3115,22 @@ static Term baton_process_pack(Env e, IoWork *w) {
       io_str(e,call->unstarted?error:"",call->unstarted?strlen(error):0));
   }
 #endif
+#ifdef CID_INSTANCE_SUBSCRIBE
+  if(call->kind==BP_INSTANCE_SUBSCRIBE && !call->error)
+    value=io_tup(e,(Term)call->handle,io_str(e,call->text?call->text:"",call->length));
+#endif
   Term result=call->error && !call->unstarted ? io_fail(e,call->error,call->detail) : io_done(e,value);
   if((call->kind==BP_SPAWN || call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
       call->kind==BP_INSTANCE_ADMIT || call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED ||
-      call->kind==BP_RETAIN_WITH_FILE || call->kind==BP_INSTANCE_ADMIT_WITH_FILE) && call->error) {
+      call->kind==BP_RETAIN_WITH_FILE || call->kind==BP_INSTANCE_ADMIT_WITH_FILE ||
+      call->kind==BP_INSTANCE_SUBSCRIBE) && call->error) {
+    if(call->child && call->child->retained)br_subscription_free(call->child->retained);
+    if(call->child)call->child->retained=NULL;
     baton_children[call->index]=NULL;free(call->child);call->child=NULL;
   }
   free(call->args);free(call->cwd);free(call->log);free(call->text);
   free(call->directory);free(call->initial);free(call->recovery);free(call->detail);free(call->database);
-  free(call->artifact_name);free(call->artifact);free(call);
+  free(call->artifact_name);free(call->artifact);free(call->cursor);free(call->generation);free(call);
   w->data=NULL;
   return result;
 }
@@ -2890,7 +3140,8 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
   if(!call) return io_fail(e,ENOMEM,NULL);
   int acquire=kind==BP_SPAWN || kind==BP_RETAIN || kind==BP_ATTACH || kind==BP_ATTACH_OWNED ||
               kind==BP_INSTANCE_ADMIT || kind==BP_INSTANCE_ATTACH || kind==BP_INSTANCE_ATTACH_OWNED ||
-              kind==BP_RETAIN_WITH_FILE || kind==BP_INSTANCE_ADMIT_WITH_FILE;
+              kind==BP_RETAIN_WITH_FILE || kind==BP_INSTANCE_ADMIT_WITH_FILE ||
+              kind==BP_INSTANCE_SUBSCRIBE;
   call->kind=kind;
   if(acquire) {
     int error=baton_child_allocate(call);
@@ -2941,7 +3192,16 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
   } else if(kind==BP_INSTANCE_OWNER || kind==BP_INSTANCE_SHUTDOWN) {
     u64 length=0;call->database=io_cstr(e,f[0],&length);
     if(strlen(call->database)!=length)call->error=EINVAL;
-  } else if(kind==BP_INSTANCE_ATTACH || kind==BP_INSTANCE_ATTACH_OWNED || kind==BP_INSTANCE_JOB) {
+  } else if(kind==BP_INSTANCE_SUBSCRIBE || kind==BP_INSTANCE_PUBLISH) {
+    u64 length=0;call->database=io_cstr(e,f[0],&length);
+    if(kind==BP_INSTANCE_SUBSCRIBE) {
+      /* The durable cursor crosses as decimal text: this dialect has no 64-bit
+         integer type, and a truncated cursor would resume the wrong range. */
+      call->cursor=io_cstr(e,f[1],&length);
+      call->generation=io_cstr(e,f[2],&length);
+    } else {call->text=io_cstr(e,f[1],&length);call->length=length;}
+  } else if(kind==BP_INSTANCE_ATTACH || kind==BP_INSTANCE_ATTACH_OWNED || kind==BP_INSTANCE_JOB ||
+            kind==BP_INSTANCE_NOTICE || kind==BP_INSTANCE_UNSUBSCRIBE) {
     u64 length=0;call->database=io_cstr(e,f[0],&length);
     call->directory=io_cstr(e,f[1],&length);
     if(strlen(call->directory)!=length)call->error=EINVAL;
@@ -3059,6 +3319,18 @@ BP_EFFECT(baton_process_retain_with_file,CID_PROCESSCHILD_RETAIN_WITH_FILE,BP_RE
 #endif
 #ifdef CID_INSTANCE_ADMIT_WITH_FILE_START
 BP_EFFECT(baton_instance_admit_with_file,CID_INSTANCE_ADMIT_WITH_FILE_START,BP_INSTANCE_ADMIT_WITH_FILE)
+#endif
+#ifdef CID_INSTANCE_SUBSCRIBE
+BP_EFFECT(baton_instance_subscribe,CID_INSTANCE_SUBSCRIBE,BP_INSTANCE_SUBSCRIBE)
+#endif
+#ifdef CID_INSTANCE_NOTICE
+BP_EFFECT(baton_instance_notice,CID_INSTANCE_NOTICE,BP_INSTANCE_NOTICE)
+#endif
+#ifdef CID_INSTANCE_UNSUBSCRIBE
+BP_EFFECT(baton_instance_unsubscribe,CID_INSTANCE_UNSUBSCRIBE,BP_INSTANCE_UNSUBSCRIBE)
+#endif
+#ifdef CID_INSTANCE_PUBLISH_COMMIT
+BP_EFFECT(baton_instance_publish_commit,CID_INSTANCE_PUBLISH_COMMIT,BP_INSTANCE_PUBLISH)
 #endif
 
 #undef BP_EFFECT
