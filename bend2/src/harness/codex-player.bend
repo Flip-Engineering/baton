@@ -5,6 +5,15 @@ import ../json/canonical.bend as J
 def arguments(model: String, effort: String) -> List<String>:
   ["--json","--model",model,"-c","model_reasoning_effort=" ++ J.string_literal(effort),"--dangerously-bypass-approvals-and-sandbox","-"]
 
+# The adapter's non-interactive metadata reads. The catalog is the raw model
+# document; the access report is the redacted doctor document, which states the
+# stored credential mode and no quota window.
+def query_args(cmd: String) -> List<String>:
+  [cmd,"debug","models"]
+
+def access_args(cmd: String) -> List<String>:
+  [cmd,"doctor","--json"]
+
 def argv(cmd: String, model: String, effort: String, session: String, fresh: Bool) -> String:
   match fresh:
     case True{}: P.argv(List.append(&1,String,["/usr/bin/env","-u","OPENAI_API_KEY","-u","CODEX_API_KEY",cmd,"-c","forced_login_method=\"chatgpt\"","exec"],arguments(model,effort)))

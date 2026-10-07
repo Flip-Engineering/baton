@@ -21,6 +21,11 @@ def resume_file(primary: String, alternate: String, +session: String, enabled: B
 def arguments(cmd: String, model: String, effort: String, sessions: String) -> List<String>:
   [cmd,"--mode","rpc","--model",model,"--thinking",effort,"--approval-mode","yolo","--session-dir",sessions]
 
+# The adapter's non-interactive catalog read: every model this harness can serve,
+# provider-qualified, with no quota, account or authentication field.
+def query_args(cmd: String) -> List<String>:
+  [cmd,"models","--json"]
+
 def argv(cmd: String, model: String, effort: String, sessions: String, session: String, fresh: Bool) -> String:
   match fresh:
     case True{}: P.argv(arguments(cmd,model,effort,sessions))

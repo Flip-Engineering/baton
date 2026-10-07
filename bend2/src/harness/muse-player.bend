@@ -4,6 +4,11 @@ import ../host/process.bend as P
 def arguments(cmd: String, model: String, effort: String, task: String) -> List<String>:
   [cmd,"exec","--json","--prompt-file",task,"--model",model,"--reasoning-effort",effort,"--yolo"]
 
+# Muse states a resolved profile for one named model rather than a catalog, so its
+# metadata read is model-scoped.
+def query_args(cmd: String, model: String) -> List<String>:
+  [cmd,"model-profile","show",model]
+
 def start_player(cmd: String, model: String, effort: String, cwd: String, stderr: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
   P.ProcessChild.spawn(P.argv(arguments(cmd,model,effort,task)),cwd,stderr)
 

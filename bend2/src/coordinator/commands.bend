@@ -41,6 +41,8 @@ type Command is Data:
   Push{repo: String, branch: String, remote: String}
   RemoteTip{repo: String, branch: String, remote: String}
   ObservedUsage{session: String}
+  Models{session: String}
+  ProviderProbe{harness: String, cmd: String, model: String}
   Logs{session: String, level: String, budget: String, segments: String}
   LogsStorage{}
   LogsClean{session: String}
@@ -86,6 +88,11 @@ def messaging_schema() -> String:
 # Stored role families and turn columns retain their existing names. Section
 # membership references the existing Ensemble membership of each Player.
 
+# The probe table is append-only: one row per explicit provider read, with the
+# provider's own text, its parsed components, and the store clock at commit.
+def provider_probes_schema() -> String:
+  "CREATE TABLE IF NOT EXISTS provider_probes (id TEXT PRIMARY KEY NOT NULL,harness TEXT NOT NULL,executable TEXT NOT NULL,outcome TEXT NOT NULL CHECK(outcome IN ('ok','refused','error')),cause TEXT NOT NULL DEFAULT '',reported TEXT NOT NULL DEFAULT '',metadata TEXT NOT NULL DEFAULT '{}',capacity TEXT NOT NULL DEFAULT '{}',at TEXT NOT NULL);"
+
 def schema() -> String:
   "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
@@ -93,6 +100,7 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');"
   ++ messaging_schema()
+  ++ provider_probes_schema()
 
 def stopped_session_sql(session: String) -> String:
   "EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ session ++ ")"
@@ -337,6 +345,8 @@ def sql(command: Command) -> String:
     case Push{repo,branch,remote}: ""
     case RemoteTip{repo,branch,remote}: ""
     case ObservedUsage{session}: ""
+    case Models{session}: ""
+    case ProviderProbe{harness,cmd,model}: ""
     case Logs{session,level,budget,segments}: ""
     case LogsStorage{}: ""
     case LogsClean{session}: ""
@@ -360,19 +370,20 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"workers"),LegacySubordinates{},
       Bool.pick(Command, String.eq(verb,"players"),Players{},
       Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},
-      Bool.pick(Command, String.eq(verb,"pending"),Pending{},Invalid{})))))))
+      Bool.pick(Command, String.eq(verb,"pending"),Pending{},
+      Bool.pick(Command,String.eq(verb,"models"),Models{""},Invalid{}))))))))
     case +verb <> +id <> Nil{}:
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,"","",""},
       Bool.pick(Command,String.eq(verb,"logs-clean"),LogsClean{id},
-      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"players"),Bool.or(String.eq(verb,"orchestra"),String.eq(verb,"pending"))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"players"),Players{},Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},Pending{}))},Bool.pick(Command,Bool.and(String.eq(verb,"status"),String.eq(id,"--pretty")),StatusPretty{},Bool.pick(Command,String.eq(verb,"player"),PlayerRead{id},Bool.pick(Command, String.eq(verb,"role"),RoleRead{id},Bool.pick(Command, String.eq(verb,"ensemble"),EnsembleRead{id},Bool.pick(Command, String.eq(verb,"inbox"),Inbox{id},
+      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"players"),Bool.or(String.eq(verb,"orchestra"),Bool.or(String.eq(verb,"pending"),String.eq(verb,"models")))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"players"),Players{},Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},Bool.pick(Command,String.eq(verb,"models"),Models{""},Pending{})))},Bool.pick(Command,Bool.and(String.eq(verb,"status"),String.eq(id,"--pretty")),StatusPretty{},Bool.pick(Command,String.eq(verb,"player"),PlayerRead{id},Bool.pick(Command, String.eq(verb,"role"),RoleRead{id},Bool.pick(Command, String.eq(verb,"ensemble"),EnsembleRead{id},Bool.pick(Command, String.eq(verb,"inbox"),Inbox{id},
       Bool.pick(Command, String.eq(verb,"session"),Session{id},
       Bool.pick(Command, String.eq(verb,"delivery"),Delivery{id},
       Bool.pick(Command, String.eq(verb,"worktree"),Worktree{id},
       Bool.pick(Command, String.eq(verb,"turns"),Turns{id},
-      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Bool.pick(Command, String.eq(verb,"observed-usage"),ObservedUsage{id},Invalid{}))))))))))))))
+      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Bool.pick(Command,String.eq(verb,"models"),Models{id},Bool.pick(Command, String.eq(verb,"observed-usage"),ObservedUsage{id},Invalid{})))))))))))))))
     case +verb <> +session <> +id <> Nil{}:
       Bool.pick(Command,String.eq(verb,"logs"),Logs{session,id,"",""},
-      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"player"),Bool.or(String.eq(verb,"session"),Bool.or(String.eq(verb,"inbox"),Bool.or(String.eq(verb,"delivery"),Bool.or(String.eq(verb,"turns"),Bool.or(String.eq(verb,"knowledge"),String.eq(verb,"worktree"))))))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"player"),PlayerRead{session},Bool.pick(Command,String.eq(verb,"session"),Session{session},Bool.pick(Command,String.eq(verb,"inbox"),Inbox{session},Bool.pick(Command,String.eq(verb,"delivery"),Delivery{session},Bool.pick(Command,String.eq(verb,"turns"),Turns{session},Bool.pick(Command,String.eq(verb,"knowledge"),KnowledgeRead{session},Worktree{session}))))))},Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Invalid{}))))))
+      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"player"),Bool.or(String.eq(verb,"session"),Bool.or(String.eq(verb,"inbox"),Bool.or(String.eq(verb,"delivery"),Bool.or(String.eq(verb,"turns"),Bool.or(String.eq(verb,"knowledge"),String.eq(verb,"worktree"))))))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"player"),PlayerRead{session},Bool.pick(Command,String.eq(verb,"session"),Session{session},Bool.pick(Command,String.eq(verb,"inbox"),Inbox{session},Bool.pick(Command,String.eq(verb,"delivery"),Delivery{session},Bool.pick(Command,String.eq(verb,"turns"),Turns{session},Bool.pick(Command,String.eq(verb,"knowledge"),KnowledgeRead{session},Worktree{session}))))))},Bool.pick(Command,Bool.and(String.eq(verb,"models"),String.eq(id,"--pretty")),Pretty{Models{session}},Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Bool.pick(Command,String.eq(verb,"provider-probe"),ProviderProbe{session,id,""},Invalid{}))))))))
     case +verb <> +id <> +one <> +two <> Nil{}:
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,one,two,""},
       Bool.pick(Command,String.eq(verb,"receiver"),Receiver{id,one,two},Bool.pick(Command, String.eq(verb,"ensemble"),Ensemble{id,one,two},Bool.pick(Command, String.eq(verb,"native-reply"),NativeReply{id,one,two},
@@ -385,7 +396,7 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},
       Bool.pick(Command, String.eq(verb,"push"),Push{id,one,two},
       Bool.pick(Command, String.eq(verb,"ask"),Ask{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Bool.pick(Command, String.eq(verb,"remote-tip"),RemoteTip{id,one,two},Invalid{})))))))))))))))
+      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Bool.pick(Command, String.eq(verb,"remote-tip"),RemoteTip{id,one,two},Bool.pick(Command,String.eq(verb,"provider-probe"),ProviderProbe{id,one,two},Invalid{}))))))))))))))))
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,one,two,three},
       Bool.pick(Command,String.eq(verb,"section"),Section{id,one,two,three},Bool.pick(Command, String.eq(verb,"ensemble-member"),EnsembleMember{id,one,two,three},Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{}))))
