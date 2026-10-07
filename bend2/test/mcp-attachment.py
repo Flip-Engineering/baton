@@ -92,8 +92,9 @@ class Attachment(unittest.TestCase):
         # Both notifications exercise the same in-flight attachment.
         for _ in range(2):
             mcp.send_mcp(proc, {'jsonrpc': '2.0', 'method': 'notifications/initialized'})
-        mcp.send_mcp(proc, {'jsonrpc': '2.0', 'id': 'tools', 'method': 'tools/list'})
-        self.assertEqual(mcp.read_mcp(proc, handle_ping=False)['id'], 'tools')
+        for identity in ('tools', 'tools-again', 'tools-third'):
+            mcp.send_mcp(proc, {'jsonrpc': '2.0', 'id': identity, 'method': 'tools/list'})
+            self.assertEqual(mcp.read_mcp(proc, handle_ping=False)['id'], identity)
         mcp.send_mcp(proc, {'jsonrpc': '2.0', 'id': 'responsive', 'method': 'ping'})
         self.assertEqual(mcp.read_mcp(proc, handle_ping=False),
                          {'jsonrpc': '2.0', 'id': 'responsive', 'result': {}})
@@ -111,6 +112,13 @@ class Attachment(unittest.TestCase):
                 self.assertEqual(mcp.read_mcp(proc, handle_ping=False),
                                  {'jsonrpc': '2.0', 'id': 'conductor-channel-ready',
                                   'method': 'ping'})
+                # The readiness reply is withheld while ordinary replies continue.
+                for identity in ('ready-tools', 'ready-tools-again'):
+                    mcp.send_mcp(proc, {'jsonrpc': '2.0', 'id': identity, 'method': 'tools/list'})
+                    self.assertEqual(mcp.read_mcp(proc, handle_ping=False)['id'], identity)
+                mcp.send_mcp(proc, {'jsonrpc': '2.0', 'id': 'conductor-channel-ready', 'result': {}})
+                mcp.send_mcp(proc, {'jsonrpc': '2.0', 'id': 'acknowledged-tools', 'method': 'tools/list'})
+                self.assertEqual(mcp.read_mcp(proc, handle_ping=False)['id'], 'acknowledged-tools')
                 selected = session or 'root'
                 calls = self.recorded()
                 attachment, role = calls[-2:]

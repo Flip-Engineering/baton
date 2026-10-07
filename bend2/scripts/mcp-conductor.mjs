@@ -403,6 +403,7 @@ const TOOLS = [
 let deliveryReady = null;
 let attachmentState = { state: 'not-started' };
 let channelReady = false;
+let channelPingSent = false;
 let notifiedSeqs = new Set();
 let deliveryServer = null;
 let db = null;
@@ -489,7 +490,6 @@ async function startDelivery() {
   if (!registered || registered.id !== sessionId || registered.endpoint !== endpoint) {
     throw new Error('Attachment endpoint registration did not match the selected session');
   }
-  return { session: sessionId, endpoint, native: registered.native, harness: registered.harness };
 }
 
 function selectedSession() {
@@ -498,7 +498,8 @@ function selectedSession() {
 
 // MCP message handler.
 function handleMessage(msg) {
-  if (msg.id === 'conductor-channel-ready' && msg.result !== undefined) {
+  if (msg.id === 'conductor-channel-ready' && msg.result !== undefined
+      && channelPingSent && attachmentState.state === 'ready') {
     channelReady = true;
     notifyPending();
     return;
@@ -519,8 +520,8 @@ function handleMessage(msg) {
   if (msg.method === 'notifications/initialized') {
     if (deliveryReady) return;
     attachmentState = { state: 'starting' };
-    deliveryReady = startDelivery().then((association) => {
-      attachmentState = { state: 'ready', association };
+    deliveryReady = startDelivery().then(() => {
+      attachmentState = { state: 'ready' };
     }, (error) => {
       attachmentState = { state: 'failed', detail: error.message };
       process.stderr.write(`mcp-conductor: ${error.message}\n`);
@@ -534,8 +535,9 @@ function handleMessage(msg) {
     sendResponse(msg.id, { tools: TOOLS });
     // In the native recovery run, replay before the client installed its channel
     // handler was lost. Complete a round trip after discovery before replaying.
-    if (!channelReady) deliveryReady?.then(() => {
-      if (attachmentState.state === 'ready') {
+    if (!channelReady && !channelPingSent) deliveryReady?.then(() => {
+      if (attachmentState.state === 'ready' && !channelPingSent) {
+        channelPingSent = true;
         writeMessage({ jsonrpc: '2.0', id: 'conductor-channel-ready', method: 'ping' });
       }
     });
