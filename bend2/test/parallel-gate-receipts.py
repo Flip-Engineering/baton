@@ -2,14 +2,17 @@
 
 Each CI gate job runs one exact-source gate on its own isolated runner and
 records a receipt. Assembly accepts only the complete authentic set and
-rejects omitted, duplicated, altered, or unfinished producer work, plus
-receipts from another run. No compiler, binary, or network is needed.
+rejects omitted, duplicated, altered, or unfinished producer work, receipts
+from another run, compiler identity mismatches, wrong producer jobs, and
+incomplete run fields in hosted mode. The compiler is bound by bytes,
+version, architecture, and C toolchain, never by its absolute install path.
+No compiler, binary, or network is needed.
 """
-import copy
 import importlib.util
 import json
 import os
 import pathlib
+import platform
 import tempfile
 import unittest
 from unittest import mock
@@ -55,6 +58,12 @@ class Receipts(unittest.TestCase):
         PACKAGE.snapshot = lambda: dict(self.initial,
                                         binary_sha256=PACKAGE.sha256(self.compiler))
         self.addCleanup(setattr, PACKAGE, 'snapshot', self.previous_snapshot)
+        self.previous_bend_version = PACKAGE.bend_version
+        PACKAGE.bend_version = lambda compiler: 'bend 2.0.25'
+        self.addCleanup(setattr, PACKAGE, 'bend_version', self.previous_bend_version)
+        self.previous_cc_version = PACKAGE.cc_version
+        PACKAGE.cc_version = lambda cc: 'fake-cc 1.0'
+        self.addCleanup(setattr, PACKAGE, 'cc_version', self.previous_cc_version)
         saved = {key: os.environ.pop(key) for key in GITHUB_KEYS if key in os.environ}
         self.addCleanup(os.environ.update, saved)
 
@@ -63,7 +72,10 @@ class Receipts(unittest.TestCase):
 
     def log_text(self, gate):
         return {'build-native': BUILD_LOG, 'laws-check': LAWS_LOG,
-                'check-native': NATIVE_LOG}[gate]
+                'check-native': NATIVE_LOG}.get(gate, 'unknown\n')
+
+    def gate_argv(self, gate):
+        return list(dict(PACKAGE.GATES).get(gate, ['unknown']))
 
     def write_receipt(self, receipts, gate, producer=None, mutate=None):
         directory = receipts / gate
@@ -78,12 +90,12 @@ class Receipts(unittest.TestCase):
             binary_sha = PACKAGE.sha256(self.compiler)
             generated_sha = PACKAGE.sha256(self.compiler)
         if producer is None:
-            producer = dict(RUN_BINDING, job='gate-' + gate)
+            producer = dict(RUN_BINDING, job='gate-' + gate, runner=None)
         summary = {
             'gate': gate,
             'stage': {
                 'name': gate,
-                'argv': list(dict(PACKAGE.GATES)[gate]),
+                'argv': self.gate_argv(gate),
                 'status': 'passed',
                 'before': dict(self.initial),
                 'log': gate + '.log',
@@ -94,8 +106,12 @@ class Receipts(unittest.TestCase):
             },
             'before': dict(self.initial),
             'after': dict(self.initial),
-            'environment': {'BEND': str(self.compiler), 'BEND_NO_TELEMETRY': '1'},
+            'environment': {'BEND': str(self.compiler), 'BEND_NO_TELEMETRY': '1',
+                            'CC': 'clang'},
             'compiler_sha256': PACKAGE.sha256(self.compiler),
+            'compiler_version': 'bend 2.0.25',
+            'compiler_arch': platform.machine(),
+            'cc_version': 'fake-cc 1.0',
             'runner_sha256': PACKAGE.sha256(pathlib.Path(PACKAGE.__file__)),
             'producer': producer,
             'binary_sha256': binary_sha,
@@ -229,6 +245,109 @@ class Receipts(unittest.TestCase):
         self.write_receipt(receipts, 'build-native', mutate=mutate)
         with self.assertRaises(RuntimeError):
             self.assemble(receipts)
+
+    def test_absolute_bend_path_ignored(self):
+        receipts = self.home / 'receipts'
+        receipts.mkdir()
+        self.complete_set(receipts)
+
+        def mutate(summary, directory):
+            summary['environment']['BEND'] = '/elsewhere/toolchain-home/bin/bend'
+
+        self.write_receipt(receipts, 'build-native', mutate=mutate)
+        _, summary = self.assemble(receipts)
+        self.assertEqual([stage['name'] for stage in summary['stages']],
+                         list(PACKAGE.GATE_NAMES))
+
+    def test_compiler_version_mismatch_rejected(self):
+        receipts = self.home / 'receipts'
+        receipts.mkdir()
+        self.complete_set(receipts)
+
+        def mutate(summary, directory):
+            summary['compiler_version'] = 'bend 9.9.9'
+
+        self.write_receipt(receipts, 'laws-check', mutate=mutate)
+        with self.assertRaises(RuntimeError):
+            self.assemble(receipts)
+
+    def test_cc_toolchain_mismatch_rejected(self):
+        receipts = self.home / 'receipts'
+        receipts.mkdir()
+        self.complete_set(receipts)
+
+        def mutate(summary, directory):
+            summary['cc_version'] = 'other-cc 2.0'
+
+        self.write_receipt(receipts, 'build-native', mutate=mutate)
+        with self.assertRaises(RuntimeError):
+            self.assemble(receipts)
+
+    def test_arch_mismatch_rejected(self):
+        receipts = self.home / 'receipts'
+        receipts.mkdir()
+        self.complete_set(receipts)
+
+        def mutate(summary, directory):
+            summary['compiler_arch'] = 'other-arch'
+
+        self.write_receipt(receipts, 'check-native', mutate=mutate)
+        with self.assertRaises(RuntimeError):
+            self.assemble(receipts)
+
+    def test_wrong_producer_job_rejected(self):
+        receipts = self.home / 'receipts'
+        receipts.mkdir()
+        self.complete_set(receipts)
+        wrong = dict(RUN_BINDING, job='gate-laws-check', runner=None)
+        self.write_receipt(receipts, 'build-native', producer=wrong)
+        current = {'GITHUB_WORKFLOW': RUN_BINDING['workflow'],
+                   'GITHUB_RUN_ID': RUN_BINDING['run_id'],
+                   'GITHUB_RUN_ATTEMPT': RUN_BINDING['run_attempt'],
+                   'GITHUB_JOB': 'darwin-arm64',
+                   'GITHUB_SHA': RUN_BINDING['sha']}
+        with mock.patch.dict(os.environ, current):
+            with self.assertRaises(RuntimeError):
+                self.assemble(receipts)
+
+    def test_missing_run_fields_rejected_in_hosted_mode(self):
+        receipts = self.home / 'receipts'
+        receipts.mkdir()
+        self.complete_set(receipts)
+        for gate in PACKAGE.GATE_NAMES:
+            path = receipts / gate / 'summary.json'
+            summary = json.loads(path.read_text())
+            producer = {key: value for key, value in summary['producer'].items()
+                        if key != 'run_attempt'}
+            self.write_receipt(receipts, gate, producer=producer)
+        current = {'GITHUB_WORKFLOW': RUN_BINDING['workflow'],
+                   'GITHUB_RUN_ID': RUN_BINDING['run_id'],
+                   'GITHUB_RUN_ATTEMPT': RUN_BINDING['run_attempt'],
+                   'GITHUB_JOB': 'darwin-arm64',
+                   'GITHUB_SHA': RUN_BINDING['sha']}
+        with mock.patch.dict(os.environ, current):
+            with self.assertRaises(RuntimeError):
+                self.assemble(receipts)
+
+    def test_unknown_gate_rejected(self):
+        receipts = self.home / 'receipts'
+        receipts.mkdir()
+        self.complete_set(receipts)
+        self.write_receipt(receipts, 'extra')
+        with self.assertRaises(RuntimeError):
+            self.assemble(receipts)
+
+    def test_runner_provenance_not_compared(self):
+        receipts = self.home / 'receipts'
+        receipts.mkdir()
+        self.complete_set(receipts)
+        for gate in PACKAGE.GATE_NAMES:
+            path = receipts / gate / 'summary.json'
+            summary = json.loads(path.read_text())
+            producer = dict(summary['producer'], runner='runner-for-' + gate)
+            self.write_receipt(receipts, gate, producer=producer)
+        _, summary = self.assemble(receipts)
+        self.assertEqual(len(summary['stages']), len(PACKAGE.GATE_NAMES))
 
     def test_run_binding_accepts_matching_run(self):
         receipts = self.home / 'receipts'

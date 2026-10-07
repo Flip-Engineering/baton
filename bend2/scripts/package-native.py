@@ -241,7 +241,8 @@ def producer_identity():
             'run_id': os.environ.get('GITHUB_RUN_ID') or None,
             'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT') or None,
             'job': os.environ.get('GITHUB_JOB') or None,
-            'sha': os.environ.get('GITHUB_SHA') or None}
+            'sha': os.environ.get('GITHUB_SHA') or None,
+            'runner': os.environ.get('RUNNER_NAME') or None}
 
 
 def producer_run_binding(producer):
@@ -249,10 +250,18 @@ def producer_run_binding(producer):
     return {key: producer.get(key) for key in ('workflow', 'run_id', 'run_attempt', 'sha')}
 
 
+def bend_version(compiler):
+    return subprocess.check_output([str(compiler), 'version'], cwd=ROOT,
+                                   stdin=subprocess.DEVNULL, text=True).strip()
+
+
 def check_compiler_version(compiler):
-    version = subprocess.check_output([str(compiler), 'version'], cwd=ROOT,
-                                      stdin=subprocess.DEVNULL, text=True).strip()
-    require(version == 'bend 2.0.25', 'The artifact requires Bend 2.0.25')
+    require(bend_version(compiler) == 'bend 2.0.25', 'The artifact requires Bend 2.0.25')
+
+
+def cc_version(cc):
+    return subprocess.check_output([cc, '--version'], cwd=ROOT,
+                                   stdin=subprocess.DEVNULL, text=True).strip()
 
 
 def run_one_gate(gate_name, compiler, env, output, initial):
@@ -281,12 +290,15 @@ def run_one_gate(gate_name, compiler, env, output, initial):
     env = dict(env, BATON2_GATE_REQUEST=request,
                BATON2_GATE_JOB=producer.get('job') or gate_name)
     generated = ROOT / '.scratch/bend2/baton2.c'
+    cc = env.get('CC', 'clang')
     receipt = {'gate': gate_name, 'status': 'running', 'worktree': str(ROOT),
                'output': str(output), 'log': gate_name + '.log',
                'before': snapshot(),
-               'environment': {'BEND': str(compiler), 'BEND_NO_TELEMETRY': '1',
-                               'CC': env.get('CC', 'clang')},
+               'environment': {'BEND': str(compiler), 'BEND_NO_TELEMETRY': '1', 'CC': cc},
                'compiler_sha256': sha256(compiler),
+               'compiler_version': bend_version(compiler),
+               'compiler_arch': platform.machine(),
+               'cc_version': cc_version(cc),
                'runner_sha256': sha256(Path(__file__)),
                'producer': producer}
     same_source(receipt['before'], initial)
@@ -341,20 +353,30 @@ def verify_gate_receipt(directory, initial, compiler):
 
     A matching source hash alone does not establish producer authenticity: the
     receipt must also bind the runner source bytes, the complete log bytes with
-    recomputed success evidence, and the exact gate identity.
+    recomputed success evidence, and the exact gate identity. The compiler is
+    bound by its actual bytes, version, architecture, and selected C toolchain,
+    never by its absolute install path, which differs across isolated runners.
     """
     summary_path = directory / 'summary.json'
     require(summary_path.is_file(), 'Missing gate receipt: ' + str(summary_path))
     summary = json.loads(summary_path.read_text())
     require(summary.get('gate') == directory.name,
             'Gate receipt misfiled: ' + str(summary_path))
+    require(summary.get('gate') in dict(GATES),
+            'Gate receipt names an unknown gate: ' + str(summary.get('gate')))
     require(summary.get('runner_sha256') == sha256(Path(__file__)),
             'Gate receipt runner source differs from this runner source')
     require(summary.get('compiler_sha256') == sha256(compiler),
             'Gate receipt compiler differs from the selected compiler')
-    require(summary.get('environment', {}).get('BEND') == str(compiler) and
-            summary.get('environment', {}).get('BEND_NO_TELEMETRY') == '1',
-            'Gate receipt must select this compiler with telemetry disabled')
+    require(summary.get('compiler_version') == bend_version(compiler),
+            'Gate receipt compiler version differs from the selected compiler')
+    require(summary.get('compiler_arch') == platform.machine(),
+            'Gate receipt compiler architecture differs from this host')
+    cc = summary.get('environment', {}).get('CC', 'clang')
+    require(summary.get('cc_version') == cc_version(cc),
+            'Gate receipt C toolchain differs from the selected toolchain')
+    require(summary.get('environment', {}).get('BEND_NO_TELEMETRY') == '1',
+            'Gate receipt must disable compiler telemetry')
     stage = summary.get('stage', {})
     require([(stage.get('name'), stage.get('argv'))] ==
             [(summary['gate'], dict(GATES)[summary['gate']])],
@@ -384,8 +406,10 @@ def assemble_gate_receipts(receipts_dir, build_outputs, compiler, env, logs, ini
     """
     receipts_dir = receipts_dir.resolve()
     found = sorted(p for p in receipts_dir.iterdir() if p.is_dir())
-    require([p.name for p in found] == sorted(GATE_NAMES),
-            'Gate receipts must contain exactly the complete gate set')
+    expected = sorted(GATE_NAMES)
+    require([p.name for p in found] == expected,
+            'Gate receipts must contain exactly one directory per gate in GATES: expected '
+            + ','.join(expected) + ' but found ' + ','.join(p.name for p in found))
     verified, producers = {}, []
     for directory in found:
         summary, _ = verify_gate_receipt(directory, initial, compiler)
@@ -394,11 +418,15 @@ def assemble_gate_receipts(receipts_dir, build_outputs, compiler, env, logs, ini
     bindings = [producer_run_binding(producer) for producer in producers]
     require(all(binding == bindings[0] for binding in bindings),
             'Gate receipts carry different producers')
-    current = producer_run_binding(producer_identity())
+    current = producer_identity()
     if current.get('run_id') is not None:
-        require(bindings[0] == current, 'Gate receipts belong to another run')
-        require(len({(producer or {}).get('job') for producer in producers}) == len(GATE_NAMES),
-                'Gate receipts must come from one isolated job per gate')
+        require(all(all(binding.get(key) for key in
+                       ('workflow', 'run_id', 'run_attempt', 'sha')) for binding in bindings),
+                'Gate receipts must carry complete run fields in hosted mode')
+        require(bindings[0] == producer_run_binding(current), 'Gate receipts belong to another run')
+        for summary in verified.values():
+            require((summary.get('producer') or {}).get('job') == 'gate-' + summary['gate'],
+                    'Gate receipt producer job must be its actual workflow job')
     build = verified['build-native']
     binary = Path(build_outputs).resolve() / 'baton2'
     generated = Path(build_outputs).resolve() / 'baton2.c'
