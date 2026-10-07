@@ -98,7 +98,7 @@ def serve_loop(+db: String, cursor: String, tasks: List<Chan(Result<&1,&1,U32 & 
 def serve_owned(+db: String, +owner: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
-    saved : String <- IO.try(String,DB.Sql.query(canonical,guarded(claim_sql(owner))))
+    +saved : String <- IO.try(String,DB.Sql.query(canonical,guarded(claim_sql(owner))))
     held : String <- claim_result(saved,claim_refused(saved))
     done : Result<&1,&1,U32 & String,Unit> <- serve_loop(canonical,"",Nil{})
     released : String <- IO.try(String,DB.Sql.query(canonical,guarded(release_sql(owner))))
