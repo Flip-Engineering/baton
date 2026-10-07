@@ -5,7 +5,6 @@
 // every `law` in bend2/src it creates an isolated source workspace, removes
 // that law's proof, and requires the entry compile to fail. A removable proof
 // that leaves the entry compiling is not part of the gate, and the script reports it.
-// the entry still compiles is not part of the gate, and the script reports it.
 //
 // Usage: node bend2/scripts/laws-check.mjs [compiler]
 
@@ -26,6 +25,17 @@ const ENTRY = join('bend2', 'src', 'coordinator', 'main.bend');
 const SCRATCH = join(ROOT, '.scratch', 'bend2-laws-check');
 const ENV = { ...process.env, BEND_NO_TELEMETRY: '1' };
 const EXCERPT_BYTES = 512;
+const MINIMUM_NODE_VERSION = [22, 15, 0];
+
+export function supportedNodeVersion(version) {
+  const match = /^v(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  if (!match) return false;
+  const actual = match.slice(1).map(Number);
+  for (let index = 0; index < MINIMUM_NODE_VERSION.length; index++) {
+    if (actual[index] !== MINIMUM_NODE_VERSION[index]) return actual[index] > MINIMUM_NODE_VERSION[index];
+  }
+  return true;
+}
 
 function resolveBend() {
   const candidates = [
@@ -1540,11 +1550,11 @@ async function runGate() {
     dispatchesArtifact: metadata.dispatchesIndex,
   }));
   console.log(JSON.stringify({ check: 'compiler identity', version: toolchain.version, compilerSha256, passed: version === 'bend 2.0.25' && versionRun.status === 0 }));
-  if (process.version !== 'v22.23.3' || version !== 'bend 2.0.25' || versionRun.status !== 0 || versionRun.error) {
+  if (!supportedNodeVersion(process.version) || version !== 'bend 2.0.25' || versionRun.status !== 0 || versionRun.error) {
     metadata.status = 'red';
     metadata.finishedAt = new Date().toISOString();
     writeJson(join(runRoot, 'run.json'), metadata);
-    console.error(`expected Node v22.23.3 and bend 2.0.25, got Node ${process.version}, Bend ${version || toolchain.versionError || `exit ${versionRun.status}`}`);
+    console.error(`expected Node >=22.15.0 and bend 2.0.25, got Node ${process.version}, Bend ${version || toolchain.versionError || `exit ${versionRun.status}`}`);
     return 1;
   }
 

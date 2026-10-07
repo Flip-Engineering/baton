@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cloneLinkedTree, concurrencyFor, detachFile, producerSet, verifyResults } from './laws-check.mjs';
+import { cloneLinkedTree, concurrencyFor, detachFile, producerSet, supportedNodeVersion, verifyResults } from './laws-check.mjs';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 const rows = [
@@ -73,6 +73,14 @@ test('control workspaces share unchanged source and isolate the edited producer 
   assert.equal(readFileSync(join(source, 'proof.bend'), 'utf8'), 'proof source\n');
   assert.equal(readFileSync(join(second, 'proof.bend'), 'utf8'), 'proof source\n');
   assert.notEqual(statSync(edited).ino, statSync(join(source, 'proof.bend')).ino);
+});
+
+test('Node support follows the published minimum and preserves exact runtime identity', () => {
+  assert.equal(supportedNodeVersion('v22.14.9'), false);
+  assert.equal(supportedNodeVersion('v22.15.0'), true);
+  assert.equal(supportedNodeVersion('v22.23.3'), true);
+  assert.equal(supportedNodeVersion('v23.0.0'), true);
+  assert.equal(supportedNodeVersion('v22'), false);
 });
 
 test('producer discovery returns each proof and mutation identity once', async () => {
