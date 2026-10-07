@@ -448,7 +448,7 @@ def checkpoint_restore(+log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
     IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),checkpoint_restore_file(log))
 
 @unsafe
-def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, cursor: String, last_message: String, primary: String, current: String, +terminal: String, filter: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, checkpoint_blocked: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, cursor: String, last_message: String, primary: String, current: String, +terminal: String, filter: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +checkpoint_blocked: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   match result:
     case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
