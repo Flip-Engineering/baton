@@ -1439,7 +1439,7 @@ def reserved_matches(expect: String, evidence: AttemptEvidence) -> Bool:
 
 def attestation_bound(attestation: Attestation, target: String, candidate: String) -> Bool:
   match attestation:
-    case Attestation{reserved, evidence, publication, qualification, readback}:
+    case Attestation{reserved, +evidence, publication, qualification, readback}:
       Bool.pick(Bool, reserved_matches(reserved, evidence),
         Bool.pick(Bool, Tx.str_eq(evidence_target(evidence), target),
           Tx.str_eq(evidence_candidate(evidence), candidate), False{}),
@@ -1583,7 +1583,7 @@ def admission_of(+attestation: Attestation) -> Admission:
   match attestation:
     case Attestation{reserved, evidence, publication, qualification, readback}:
       admission_reserved(attestation, reserved, evidence)
-def ld_attest_admit(evidence: AttemptEvidence) -> IO<SharedLanding>:
+def ld_attest_admit(+evidence: AttemptEvidence) -> IO(SharedLanding):
   do IO<SharedLanding>:
     attestation : Attestation <- ld_attest(evidence_reserved(evidence), evidence)
     IO.pure(SharedLanding, SharedAdvanced{attestation})
@@ -1751,17 +1751,16 @@ def shared_landing_run(+repo: String, +target: String, +cand: String, +basis: St
     observed : T.GitOut <- Git.runGit(repo, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
     shared_common_read(repo, target, cand, basis, observed)
 
-def ff_stage5_advanced(+attestation: Attestation, target: String, cand: String) -> FFLD:
+def ff_stage5_advanced(+attestation: Attestation, +target: String, +cand: String) -> FFLD:
   +ev = attestation_evidence(attestation)
-  Bool.pick(FFLD, ld_admitted(admission_of(attestation)),
-    Bool.pick(FFLD, T.release_done(evidence_release(ev)),
+  Bool.pick(FFLD, T.release_done(evidence_release(ev)),
+    Bool.pick(FFLD, ld_admitted(admission_of(attestation)),
       ff_stage5_adv_answer(evidence_decision(ev), target, cand),
-      Bool.pick(FFLD, T.release_unperformed(evidence_release(ev)),
-        FFDone{T.LBlocked{"the advance ran but its release was not performed"}},
-        FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", T.release_detail(evidence_release(ev)))}})),
-    FFDone{T.LBlocked{Tx.str_cat("the attempt record was not admitted: ", ld_admission(admission_of(attestation)))}})
-
-def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String) -> FFLD:
+      FFDone{T.LBlocked{Tx.str_cat("the attempt record was not admitted: ", ld_admission(admission_of(attestation)))}),
+    Bool.pick(FFLD, T.release_unperformed(evidence_release(ev)),
+      FFDone{T.LBlocked{"the advance ran but its release was not performed"}},
+      FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", T.release_detail(evidence_release(ev)))}}))
+def ff_stage5_shared_answer(shared: SharedLanding, +target: String, +cand: String) -> FFLD:
   match shared:
     case SharedCommonUnreadable{observation}: FFDone{T.LBlocked{"the common directory could not be read for the landing claim"}}
     case SharedClaimFailed{error}: FFDone{T.LBlocked{Tx.str_cat("the landing claim failed: ", T.host_detail(error))}}
@@ -2106,17 +2105,16 @@ def ld_adv_answer(+a: LAdv, target: String, cand: String) -> Ld:
 # Advance the checked candidate from its checked basis. A changed target
 # returns an explicit retry result; the next invocation prepares both trees.
 
-def ld_advance_advanced(+attestation: Attestation, target: String, cand: String) -> Ld:
+def ld_advance_advanced(+attestation: Attestation, +target: String, +cand: String) -> Ld:
   +ev = attestation_evidence(attestation)
-  Bool.pick(Ld, ld_admitted(admission_of(attestation)),
-    Bool.pick(Ld, T.release_done(evidence_release(ev)),
+  Bool.pick(Ld, T.release_done(evidence_release(ev)),
+    Bool.pick(Ld, ld_admitted(admission_of(attestation)),
       ld_adv_answer(evidence_decision(ev), target, cand),
-      Bool.pick(Ld, T.release_unperformed(evidence_release(ev)),
-        LdFail{T.FCmd{"land", "the advance ran but its release was not performed"}},
-        LdFail{T.FCmd{"land", Tx.str_cat("the advance ran but its release failed: ", T.release_detail(evidence_release(ev)))}})),
-    LdFail{T.FCmd{"land", Tx.str_cat("the attempt record was not admitted: ", ld_admission(admission_of(attestation)))}})
-
-def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String) -> Ld:
+      LdFail{T.FCmd{"land", Tx.str_cat("the attempt record was not admitted: ", ld_admission(admission_of(attestation)))}),
+    Bool.pick(Ld, T.release_unperformed(evidence_release(ev)),
+      LdFail{T.FCmd{"land", "the advance ran but its release was not performed"}},
+      LdFail{T.FCmd{"land", Tx.str_cat("the advance ran but its release failed: ", T.release_detail(evidence_release(ev)))}}))
+def ld_advance_shared_answer(shared: SharedLanding, +target: String, +cand: String) -> Ld:
   match shared:
     case SharedCommonUnreadable{observation}: LdFail{T.FCmd{"land", "the common directory could not be read for the landing claim"}}
     case SharedClaimFailed{error}: LdFail{T.FCmd{"land", T.host_detail(error)}}
@@ -2127,6 +2125,8 @@ def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String
       Bool.pick(Ld, attestation_bound(attestation, target, cand),
         ld_advance_advanced(attestation, target, cand),
         LdFail{T.FCmd{"land", "the retained attempt does not name this target and candidate"}})
+# Stage 1 resolves the worker commit; the pipeline carries the resolved sha
+# so the LAlready answer names the worker commit.
 def ld_resolved_ok(ok: Bool, out: String, worker: String) -> IO(Ld):
   match ok:
     case True{}: IO.pure(Ld, LdWk{worker, Tx.trim_nl(out)})
@@ -2886,7 +2886,7 @@ def a_missing_admission_refuses_the_fast_forward():
   {==}
 
 law a_missing_admission_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{fixture_stages("r", fixture_held_evidence("r", "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0"}, StageSucceeded{Pb.production_record("qualified", landing_record_path("r"), "0")}, StageSucceeded{"other bytes"}))}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record does not read back as published"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{fixture_stages("r", fixture_held_evidence("r", "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path("r"), "0")}, StageSucceeded{"other bytes"})}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record does not read back as published"}} : Ld}
 
 def a_missing_admission_refuses_the_advance():
   {==}
