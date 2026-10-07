@@ -2142,19 +2142,23 @@ static int br_owner_loop(BrOwner *owner) {
     if(owner->finishing && !owner->attempts)return 0;
     size_t head=owner->listener>=0?1:0,total=head+owner_controls+slots*5+attempt_controls;
     struct pollfd *fds=calloc(total?total:1,sizeof(*fds));
+    BrOwnerControl **owner_clients=calloc(owner_controls?owner_controls:1,sizeof(*owner_clients));
     BrKeeper **keepers=calloc(slots?slots:1,sizeof(*keepers));
     BrControl **clients=calloc(attempt_controls?attempt_controls:1,sizeof(*clients));
     size_t *bases=calloc(slots?slots:1,sizeof(*bases));
     size_t *apart=calloc(slots+1,sizeof(*apart));
-    if(!fds || !keepers || !clients || !bases || !apart) {
-      free(fds);free(keepers);free(clients);free(bases);free(apart);return ENOMEM;
+    if(!fds || !owner_clients || !keepers || !clients || !bases || !apart) {
+      free(fds);free(owner_clients);free(keepers);free(clients);free(bases);free(apart);return ENOMEM;
     }
     size_t index=0;
     if(head)fds[index++]=(struct pollfd){owner->listener,POLLIN,0};
     size_t owner_first=index;
-    for(BrOwnerControl *control=owner->controls;control;control=control->next,index++)
+    size_t owner_bound=0;
+    for(BrOwnerControl *control=owner->controls;control;control=control->next,index++) {
+      owner_clients[owner_bound++]=control;
       fds[index]=(struct pollfd){control->socket,POLLIN|(control->answered?POLLOUT:0),0};
-    size_t owner_last=index,bound=0,slot=0;
+    }
+    size_t bound=0,slot=0;
     for(BrKeeper *keeper=owner->attempts;keeper;keeper=keeper->next,slot++) {
       keepers[slot]=keeper;bases[slot]=index;apart[slot]=bound;
       fds[index++]=(struct pollfd){keeper->listener,POLLIN,0};
@@ -2181,10 +2185,12 @@ static int br_owner_loop(BrOwner *owner) {
         control->next=owner->controls;owner->controls=control;
       } else if(errno!=EINTR && errno!=EAGAIN) {error=errno;goto polled;}
     }
-    BrOwnerControl *control=owner->controls;
-    for(size_t i=owner_first;i<owner_last && control;i++,control=control->next)
-      if(fds[i].revents&(POLLIN|POLLHUP|POLLERR))
+    for(size_t i=0;i<owner_bound;i++) {
+      BrOwnerControl *control=owner_clients[i];
+      size_t fd_index=owner_first+i;
+      if(fds[fd_index].revents&(POLLIN|POLLHUP|POLLERR))
         if((error=br_owner_control_read(owner,control)))goto polled;
+    }
     for(size_t i=0;i<slots;i++) {
       error=br_attempt_ready(keepers[i],fds+bases[i],clients+apart[i],apart[i+1]-apart[i]);
       if(error) {
@@ -2194,7 +2200,7 @@ static int br_owner_loop(BrOwner *owner) {
       }
     }
 polled:
-    free(fds);free(keepers);free(clients);free(bases);free(apart);
+    free(fds);free(owner_clients);free(keepers);free(clients);free(bases);free(apart);
     if(error)return error;
   }
 }

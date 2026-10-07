@@ -5,6 +5,7 @@ and it is elected by the database's physical identity in one stable per-user IPC
 directory. These tests exercise concurrent attempts, alias election, observer
 loss, the bound observation checkpoint, admission identity and owner shutdown.
 """
+import concurrent.futures
 import fcntl
 import hashlib
 import json
@@ -358,6 +359,27 @@ class SharedInstance(unittest.TestCase):
         self.assertIn('busy', result.stdout.lower())
         self.assertEqual(len(self.owner_processes()), 1)
         print('evidence second-owner', result.stdout.strip())
+
+    def test_owner_accept_keeps_ready_control_mapping_stable(self):
+        directory, attempt = self.begin('owner-control-race', payload='exit\n')
+        self.line(attempt, 'admitted')
+        self.wait_run(attempt)
+        self.assertEqual(len(self.owner_processes()), 1)
+        count = 16
+        barrier = threading.Barrier(count)
+
+        def publish():
+            barrier.wait(timeout=10)
+            return self.spawn('publish', self.db, '0')
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=count) as pool:
+            controls = list(pool.map(lambda _: publish(), range(count)))
+        for child in controls:
+            self.line(child, 'published')
+            self.wait_run(child)
+        owners = self.owner_processes()
+        self.assertEqual(len(owners), 1, owners)
+        print('evidence owner-control-concurrency', count, 'requests', owners[0].strip())
 
     def test_hard_link_alias_converges_on_one_owner(self):
         directory, child = self.begin('base', payload='base\n')
