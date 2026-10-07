@@ -55,7 +55,14 @@ def held(state: State) -> String:
 # are included in the next semantic checkpoint, but do not cause a disk write
 # for every cumulative progress frame. Restart replays from the prior offset.
 def checkpoint_due(previous: State, next: State) -> Bool:
-  Bool.or(Bool.not(String.eq(cursor(previous),cursor(next))),Bool.or(Bool.not(String.eq(last_message(previous),last_message(next))),Bool.or(Bool.not(String.eq(muse_primary(previous),muse_primary(next))),Bool.or(Bool.not(String.eq(muse_current(previous),muse_current(next))),Bool.or(Bool.not(String.eq(terminal(previous),terminal(next))),Bool.or(Bool.not(String.eq(filter_mode(previous),filter_mode(next))),Bool.not(String.eq(codex_log(previous),codex_log(next))))))))
+  +guidance_changed = Bool.not(String.eq(cursor(previous),cursor(next)))
+  +message_changed = Bool.not(String.eq(last_message(previous),last_message(next)))
+  +primary_changed = Bool.not(String.eq(muse_primary(previous),muse_primary(next)))
+  +current_changed = Bool.not(String.eq(muse_current(previous),muse_current(next)))
+  +terminal_changed = Bool.not(String.eq(terminal(previous),terminal(next)))
+  +filter_changed = Bool.not(String.eq(filter_mode(previous),filter_mode(next)))
+  +codex_changed = Bool.not(String.eq(codex_log(previous),codex_log(next)))
+  Bool.or(guidance_changed,Bool.or(message_changed,Bool.or(primary_changed,Bool.or(current_changed,Bool.or(terminal_changed,Bool.or(filter_changed,codex_changed))))))
 
 # SQLite encodes every reducer field as a JSON string, including raw provider
 # frames and the newline-delimited held log state.
