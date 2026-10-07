@@ -680,6 +680,7 @@ def ff_stage5_framing(target: String, candidate: String, artifact: String, repo:
   ff_stage5_runres(tg, cand, art, rp, held, Tx.run_res(Done{framed}))
 def ff_stage5_captured_observation(target: String, candidate: String, artifact: String, repo: String, +observed: T.CapturedRaw) -> IO(FFLD):
   match observed:
+    case T.CapturedAbsent{}: ff_stage5_blocked("the mutation was not performed")
     case T.CapturedFailed{code, detail}: ff_stage5_blocked(Tx.str_cat("capture failed; stderr at ", Tx.str_cat(artifact, Tx.str_cat("; ", detail))))
     case T.CapturedDone{framing, diagnostics}: ff_stage5_framing(target, candidate, artifact, repo, framing, diagnostics)
 def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo: String, +outcome: Lg.Landing) -> IO(FFLD):
@@ -994,6 +995,7 @@ def ld_adv_framed(framing: String) -> T.GitOut:
 
 def ld_adv_status(+capture: T.CapturedRaw) -> T.GitOut:
   match capture:
+    case T.CapturedAbsent{}: T.GBroken{"the mutation was not performed"}
     case T.CapturedFailed{code, detail}: T.GBroken{detail}
     case T.CapturedDone{framing, diagnostics}: ld_adv_framed(framing)
 
@@ -1266,62 +1268,89 @@ def ld_adv_run(repo: String, target: String, cand: String, basis: String, ctx: L
 # The complete attempt evidence is published once, after the release, and admitted only when the
 # record was freshly created, is durable, and reads back byte for byte.
 def ld_attest_bytes(evidence: AttemptEvidence, path: String, seen: Result<&1, &1, U32 & String, String>) -> IO(Admission):
-  +ev = evidence
-  +p = path
   match seen:
     case Fail{error}: IO.pure(Admission, AdmissionMissing{"the attempt record could not be read back"})
     case Done{raw}:
-      Bool.pick(IO(Admission), String.eq(raw, attempt_record(ev)),
-        IO.pure(Admission, AdmissionAdmitted{attempt_record(ev), p}),
+      Bool.pick(IO(Admission), Tx.str_eq(raw, attempt_record(evidence)),
+        IO.pure(Admission, AdmissionAdmitted{attempt_record(evidence), path}),
         IO.pure(Admission, AdmissionMissing{"the attempt record does not read back as published"}))
 
 def ld_attest_read(evidence: AttemptEvidence, path: String) -> IO(Admission):
-  +ev = evidence
-  +p = path
   do IO<Admission>:
-    seen : Result<&1, &1, U32 & String, String> <- Text.Text.read(p)
-    ld_attest_bytes(ev, p, seen)
+    seen : Result<&1, &1, U32 & String, String> <- Text.Text.read(path)
+    ld_attest_bytes(evidence, path, seen)
 
-def ld_attest_qualified(evidence: AttemptEvidence, path: String, qualified: Result<&1, &1, U32 & String, String>) -> IO(Admission):
-  +ev = evidence
-  +p = path
+def ld_attest_qualified(reserved: String, evidence: AttemptEvidence, path: String, qualified: Result<&1, &1, U32 & String, String>) -> IO(Admission):
   match qualified:
     case Fail{error}: IO.pure(Admission, AdmissionMissing{"the attempt record is not durable"})
     case Done{raw}:
-      Bool.pick(IO(Admission), Tx.starts_with(raw, "qualified"),
-        ld_attest_read(ev, p),
+      Bool.pick(IO(Admission), receipt_qualified(raw, Tx.str_cat(reserved, "/landing-record")),
+        ld_attest_read(evidence, path),
         IO.pure(Admission, AdmissionMissing{"the attempt record is not durable"}))
 
-def ld_attest_durable(evidence: AttemptEvidence, path: String) -> IO(Admission):
-  +ev = evidence
-  +p = path
+def ld_attest_durable(reserved: String, evidence: AttemptEvidence, path: String) -> IO(Admission):
   do IO<Admission>:
-    qualified : Result<&1, &1, U32 & String, String> <- Rec.Receipt.qualify(p)
-    ld_attest_qualified(ev, p, qualified)
+    qualified : Result<&1, &1, U32 & String, String> <- Rec.Receipt.qualify(path)
+    ld_attest_qualified(reserved, evidence, path, qualified)
 
-def ld_attest_path(evidence: AttemptEvidence, parts: List<String>) -> IO(Admission):
+def ld_attest_path(reserved: String, evidence: AttemptEvidence, parts: List<String>) -> IO(Admission):
   match parts:
     case Nil{}: IO.pure(Admission, AdmissionMissing{"the publication record carried no path"})
     case Con{tag, rest}:
       match rest:
         case Nil{}: IO.pure(Admission, AdmissionMissing{"the publication record carried no path"})
-        case Con{path, more}: ld_attest_durable(evidence, path)
+        case Con{path, more}: ld_attest_durable(reserved, evidence, path)
 
-def ld_attest_seen(evidence: AttemptEvidence, published: Result<&1, &1, U32 & String, String>) -> IO(Admission):
-  +ev = evidence
+# The receipt record carries exactly tag, path, errno, phase, pending and detail. Publication of the
+# landing record is admitted only for a complete, successful record bound to the expected path.
+def receipt_published(raw: String, expected: String) -> Bool:
+  match Tx.split_tabs(raw):
+    case Con{tag, Con{path, Con{errno, Con{phase, Con{pending, Con{detail, Nil{}}}}}}}:
+      Bool.pick(Bool, Tx.str_eq(tag, "published"),
+        Bool.pick(Bool, Tx.str_eq(path, expected),
+          Bool.pick(Bool, Tx.str_eq(errno, "0"),
+            Bool.pick(Bool, Tx.str_eq(detail, ""), Bool.pick(Bool, Tx.str_eq(pending, ""), True{}, False{}), False{})),
+          False{}),
+        False{})
+    case Nil{}: False{}
+    case Con{head, tail}: False{}
+
+def receipt_qualified(raw: String, expected: String) -> Bool:
+  match Tx.split_tabs(raw):
+    case Con{tag, Con{path, Con{errno, Con{phase, Con{pending, Con{detail, Nil{}}}}}}}:
+      Bool.pick(Bool, Tx.str_eq(tag, "qualified"),
+        Bool.pick(Bool, Tx.str_eq(path, expected),
+          Bool.pick(Bool, Tx.str_eq(errno, "0"),
+            Bool.pick(Bool, Tx.str_eq(detail, ""), Bool.pick(Bool, Tx.str_eq(pending, ""), True{}, False{}), False{})),
+          False{}),
+        False{})
+    case Nil{}: False{}
+    case Con{head, tail}: False{}
+
+def ld_attest_seen(reserved: String, evidence: AttemptEvidence, published: Result<&1, &1, U32 & String, String>) -> IO(Admission):
   match published:
     case Fail{error}: IO.pure(Admission, AdmissionMissing{"the attempt record could not be published"})
     case Done{raw}:
-      Bool.pick(IO(Admission), Tx.starts_with(raw, "created"),
-        ld_attest_path(ev, Tx.split_tabs(raw)),
+      Bool.pick(IO(Admission), receipt_published(raw, Tx.str_cat(reserved, "/landing-record")),
+        ld_attest_path(reserved, evidence, Tx.split_tabs(raw)),
         IO.pure(Admission, AdmissionMissing{"the attempt record was not freshly created"}))
 
 def ld_attest(reserved: String, evidence: AttemptEvidence) -> IO(Admission):
+  do IO<Admission>:
+    published : Result<&1, &1, U32 & String, String> <- Rec.Receipt.publish(reserved, "landing-record", attempt_record(evidence))
+    ld_attest_seen(reserved, evidence, published)
+
+def shared_reserved_attested(repo: String, target: String, cand: String, basis: String, guard: String, reserved: String, obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>) -> IO(SharedLanding):
+  +rel = T.release_raw_of(released)
+  ld_attest_admit(reserved, AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_capture(obs), ld_adv_qualification(obs), rel}, obs, rel, guard)
+
+def ld_attest_admit(reserved: String, evidence: AttemptEvidence, obs: LdAdvObs, +release: T.ReleaseRaw, +guard: String) -> IO(SharedLanding):
   +rv = reserved
   +ev = evidence
-  do IO<Admission>:
-    published : Result<&1, &1, U32 & String, String> <- Rec.Receipt.publish(rv, "landing-record", attempt_record(ev))
-    ld_attest_seen(ev, published)
+  +o = obs
+  do IO<SharedLanding>:
+    admitted : Admission <- ld_attest(rv, ev)
+    IO.pure(SharedLanding, SharedAdvanced{o, release, guard, rv, admitted})
 
 def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, reserved: String) -> IO(SharedLanding):
   +h = handle
@@ -1333,11 +1362,9 @@ def shared_reserved_continue(handle: U32, repo: String, target: String, cand: St
   +rv = reserved
   +cx = LdAdvContext{h, gd, shared_parent_path(rv, "stderr")}
   do IO<SharedLanding>:
-    +o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
+    o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
     released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(h)
-    +rel = T.release_raw_of(released)
-    admitted : Admission <- ld_attest(rv, AttemptEvidence{rv, rp, tg, c, b, gd, shared_parent_path(rv, "stderr"), ld_adv_capture(o), ld_adv_qualification(o), rel})
-    IO.pure(SharedLanding, SharedAdvanced{o, rel, gd, rv, admitted})
+    shared_reserved_attested(rp, tg, c, b, gd, rv, o, released)
 
 # The attempt name: the bare base for the first attempt, then the base extended with the
 # counter rendered by U32.show. The only refusal past a collision is the U32 maximum, checked
