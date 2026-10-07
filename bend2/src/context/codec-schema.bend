@@ -258,12 +258,11 @@ def scan_found(+defs: SchemaDefs, +name: String) -> Bool:
       match head:
         case SchemaDef{bound, form}: Bool.pick(Bool, String.eq(bound, name), True{}, scan_found(tail, name))
 
-# A fuel spine with two cells per definition. The reachability walk below burns
-# one cell per reference descent and the substitution burns one cell per
-# inlined body, while sibling branches reuse the same remaining cells and
-# definition scans cost nothing. A reachable target is then found along a simple
-# path within twice a definition count of expansions, and an exhausted spine
-# reports the target unreachable.
+# A fuel spine with two cells per definition for the reachability walk below.
+# The walk burns one cell per reference descent, while sibling branches reuse
+# the same remaining cells and definition scans cost nothing. A reachable
+# target is then found along a simple path within twice a definition count of
+# expansions, and an exhausted spine reports the target unreachable.
 def defs_fuel(+defs: SchemaDefs) -> SchemaDefs:
   match defs:
     case DefsNil{}: DefsNil{}
@@ -696,13 +695,39 @@ def json_walk(value: Codec.RawValue, +mode: String) -> SchemaVerdict:
 def json_admit(value: Codec.RawValue) -> SchemaVerdict:
   json_walk(value, "value")
 
+# Append two definition spines. The left spine rebuilds cell by cell, so each
+# input node below contributes fresh fuel cells.
+def fuel_append(+left: SchemaDefs, +right: SchemaDefs) -> SchemaDefs:
+  match left:
+    case DefsNil{}: right
+    case DefsCons{+head, +tail}: DefsCons{head, fuel_append(tail, right)}
+
+# Substitution fuel from the input value: one definition-spine copy per input
+# node. A guarded cycle revisits definitions only through value-consuming
+# constructors, so each input node funds at most a definition count of
+# inlinings along any substitution path.
+def input_fuel(+input: Codec.RawValue, +defs: SchemaDefs) -> SchemaDefs:
+  match input:
+    case Codec.Rnil{}: DefsNil{}
+    case Codec.Rpair{key, val, tail}: fuel_append(defs, fuel_append(input_fuel(val, defs), input_fuel(tail, defs)))
+    case Codec.Rarr{head, tail}: fuel_append(defs, fuel_append(input_fuel(head, defs), input_fuel(tail, defs)))
+    case Codec.Robj{members}: fuel_append(defs, input_fuel(members, defs))
+    case Codec.Rstr{text}: defs
+    case Codec.Rnum{token}: defs
+    case Codec.Rtrue{}: defs
+    case Codec.Rfalse{}: defs
+    case Codec.Rnull{}: defs
+    case other: DefsNil{}
+
 # Reference substitution. A bound reference inlines the bound body, so the value
 # walk never descends into a looked-up definition; the definition scan finds
 # the body and reports whether the name is bound. An unbound name stays as a
-# reference and the walk refuses it. The fuel burns one cell per inlined body: definition
-# cycles are refused by the preflight first, so an admitted declaration unfolds
-# within a definition count of inlinings. Exhausted fuel leaves the form in
-# place; any reference left behind is unbound and refused by the walk.
+# reference and the walk refuses it. The fuel burns one cell per inlined body
+# and comes from the input value: unguarded cycles are refused by the preflight
+# first, and a guarded cycle revisits definitions only through value-consuming
+# constructors, so the fuel covers every substitution path. Exhausted fuel
+# leaves the form in place; any reference left behind is unbound and refused
+# by the walk.
 def subst_form(+fuel: SchemaDefs, +form: SchemaForm, +defs: SchemaDefs) -> SchemaForm:
   match fuel:
     case DefsNil{}: form
@@ -796,12 +821,12 @@ def schema_walk(+form: SchemaForm, +defs: SchemaDefs, +input: Codec.RawValue, +c
     case other: SvRefused{"wrongKind"}
 
 # The checked public entry: the declaration preflight runs first, over the definitions
-# and over the root form, then bound references substitute, and only then is the
-# value walked.
+# and over the root form, then bound references substitute with fuel from the input
+# value, and only then is the value walked.
 def admit_step(+defs: SchemaDefs, +form: SchemaForm, +input: Codec.RawValue, verdict: SchemaVerdict) -> SchemaVerdict:
   match verdict:
     case SvRefused{condition}: SvRefused{condition}
-    case SvOk{}: schema_walk(subst_form(defs_fuel(defs), form, defs), defs, input, defs, Codec.Rnil{})
+    case SvOk{}: schema_walk(subst_form(input_fuel(input, defs), form, defs), defs, input, defs, Codec.Rnil{})
 
 def schema_admit_value(+defs: SchemaDefs, +form: SchemaForm, +input: Codec.RawValue) -> SchemaVerdict:
   admit_step(defs, form, input, schema_preflight(defs, form))
@@ -1054,4 +1079,25 @@ law schema_law_a_nested_union_case_reference_resolves:
   {schema_admit_value(DefsCons{SchemaDef{"m", SfScalar{SsNumberToken{}}}, DefsCons{SchemaDef{"z", SfScalar{SsText{}}}, DefsNil{}}}, SfUnion{SfCasesCons{SchemaCase{"t", SfRef{"z"}}, SfCasesNil{}}}, Codec.Robj{Codec.Rpair{"t", Codec.Rstr{"v"}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
 
 def schema_law_a_nested_union_case_reference_resolves():
+  {==}
+
+# A guarded recursive union admits a chain deeper than twice the definition count.
+law schema_law_a_deep_guarded_union_chain_admits:
+  {schema_admit_value(DefsCons{SchemaDef{"node", SfUnion{SfCasesCons{SchemaCase{"c", SfRef{"node"}}, SfCasesCons{SchemaCase{"z", SfScalar{SsText{}}}, SfCasesNil{}}}}}, DefsNil{}}, SfRef{"node"}, Codec.Robj{Codec.Rpair{"c", Codec.Robj{Codec.Rpair{"c", Codec.Robj{Codec.Rpair{"c", Codec.Robj{Codec.Rpair{"c", Codec.Robj{Codec.Rpair{"c", Codec.Robj{Codec.Rpair{"z", Codec.Rstr{"x"}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}) == SvOk{} : SchemaVerdict}
+
+def schema_law_a_deep_guarded_union_chain_admits():
+  {==}
+
+# Proof control: the same deep chain with a number leaf refuses on the kind.
+law schema_law_a_deep_guarded_union_chain_refuses_a_wrong_leaf:
+  {schema_admit_value(DefsCons{SchemaDef{"node", SfUnion{SfCasesCons{SchemaCase{"c", SfRef{"node"}}, SfCasesCons{SchemaCase{"z", SfScalar{SsText{}}}, SfCasesNil{}}}}}, DefsNil{}}, SfRef{"node"}, Codec.Robj{Codec.Rpair{"c", Codec.Robj{Codec.Rpair{"c", Codec.Robj{Codec.Rpair{"c", Codec.Robj{Codec.Rpair{"z", Codec.Rnum{"1"}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}) == SvRefused{"wrongKind"} : SchemaVerdict}
+
+def schema_law_a_deep_guarded_union_chain_refuses_a_wrong_leaf():
+  {==}
+
+# Proof control: the same deep chain with an undeclared tag refuses on the tag.
+law schema_law_a_deep_guarded_union_chain_refuses_an_unknown_tag:
+  {schema_admit_value(DefsCons{SchemaDef{"node", SfUnion{SfCasesCons{SchemaCase{"c", SfRef{"node"}}, SfCasesCons{SchemaCase{"z", SfScalar{SsText{}}}, SfCasesNil{}}}}}, DefsNil{}}, SfRef{"node"}, Codec.Robj{Codec.Rpair{"c", Codec.Robj{Codec.Rpair{"c", Codec.Robj{Codec.Rpair{"q", Codec.Rstr{"x"}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}) == SvRefused{"unknownTag"} : SchemaVerdict}
+
+def schema_law_a_deep_guarded_union_chain_refuses_an_unknown_tag():
   {==}
