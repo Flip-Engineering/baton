@@ -250,9 +250,13 @@ message delivered to that session invokes the endpoint with the message ID.
 | Claude Code | The interactive Conductor's channel adapter delivers the committed message as a channel notification. | The adapter re-registers its endpoint and replays pending messages after its own restart; it needs its own process. |
 
 Session ownership is one active attempt per logical session for Codex, OMP and
-Muse. Input committed while an attempt is live remains pending; the attempt
-releases the session and then reads the pending index, so the next turn starts
-with that input and consumes it once.
+Muse. Input committed while an attempt is live remains pending. After the
+attempt releases the session, the drain reads the pending index and the next
+turn consumes the input that read observed, once. Input committed between that
+count read and the drain's reacquisition of the session lock stays pending until
+a later delivery trigger reads it: `Receive.pending_count_sql` counts the rows
+after the cursor and `Receive.continue_pending` re-enters `Receive.run`
+(`bend2/src/coordinator/receive.bend`).
 
 ### Claude Code Channels
 
