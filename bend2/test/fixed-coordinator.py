@@ -645,6 +645,51 @@ class FixedCoordinator(unittest.TestCase):
         self.assertNotEqual(row, [(None,)], 't2 was not acknowledged')
         self.shutdown()
 
+    def test_11_owner_drain_leaves_no_duplicate_serve_admission(self):
+        # The actual owner/native topology: the owner/Receive drain runs
+        # queued guidance inside the open call while the serve must not
+        # fork a duplicate native nor refuse aloud what the drain consumes.
+        self.recruit('w1', 'codex')
+        self.queue('w1', {'body': 'w1 turn one complete', 'hold_exit': True},
+                   {'body': 'w1 guidance turn complete'})
+        self.dispatch('t1', 'w1', 'First task.')
+        self.receiver('w1')
+        self.start_owner()
+        self.start_serve()
+        self._serve_lines = []
+
+        def _drain():
+            try:
+                for line in self.serve_proc.stdout:
+                    self._serve_lines.append(line)
+            except (OSError, ValueError):
+                pass
+        drain = threading.Thread(target=_drain, daemon=True)
+        drain.start()
+        first_w1, _ = self.stream_for('w1')
+        self.assertEqual(json.loads(first_w1.readline()), {'terminal_written': True})
+        self.dispatch('g1', 'w1', 'Guidance issued while turn one is held.', kind='guidance')
+        self.assertEqual(len(self.connections('w1')), 1,
+                         'guidance forked a second native while the turn is held')
+        self.release('w1')
+        self.await_inbox('root', lambda messages: (
+            [m['body'] for m in messages]
+            if any('w1 turn one complete' in m['body'] for m in messages)
+            and any('w1 guidance turn complete' in m['body'] for m in messages) else None),
+            'turn and guidance reports never reached the root inbox')
+        self.assertEqual(len(self.connections('w1')), 2,
+                         'guidance ran without exactly one resume')
+        bodies = [m['body'] for m in self.inbox('root')]
+        self.assertEqual(len([b for b in bodies if 'w1 guidance turn complete' in b]), 1,
+                         'guidance executed more than once')
+        log = ''.join(self._serve_lines)
+        self.assertNotIn('serve-refused w1', log,
+                         'the serve refused work the owner drain consumed')
+        for ident in ('t1', 'g1'):
+            row = self.query(f"SELECT receipt FROM messages WHERE id='{ident}'")
+            self.assertNotEqual(row, [(None,)], f'{ident} was not acknowledged')
+        self.shutdown()
+
 
 if __name__ == '__main__':
     unittest.main()
