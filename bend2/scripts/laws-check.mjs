@@ -2,21 +2,30 @@
 // The negative control for the tree's law gate. The entry module imports
 // bend2/src/coordinator/laws.bend, so a compile of the entry verifies every law
 // the module states. This script proves that each law is really verified: for
-// every `law` in bend2/src it copies the tree, removes that law's proof, and
-// requires the entry's compile to fail. A law whose proof can be removed while
+// every `law` in bend2/src it creates an isolated source workspace, removes
+// that law's proof, and requires the entry compile to fail. A removable proof
+// that leaves the entry compiling is not part of the gate, and the script reports it.
 // the entry still compiles is not part of the gate, and the script reports it.
 //
 // Usage: node bend2/scripts/laws-check.mjs [compiler]
 
-import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+import {
+  closeSync, createReadStream, existsSync, fsyncSync, linkSync, mkdirSync,
+  openSync, readFileSync, readSync, readdirSync, readlinkSync, renameSync,
+  statSync, symlinkSync, writeFileSync,
+} from 'node:fs';
+import { availableParallelism, freemem, hostname, totalmem } from 'node:os';
+import { createHash, randomUUID } from 'node:crypto';
+import { dirname, join, relative, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const SRC = join(ROOT, 'bend2', 'src');
 const ENTRY = join('bend2', 'src', 'coordinator', 'main.bend');
 const SCRATCH = join(ROOT, '.scratch', 'bend2-laws-check');
 const ENV = { ...process.env, BEND_NO_TELEMETRY: '1' };
+const EXCERPT_BYTES = 512;
 
 function resolveBend() {
   const candidates = [
@@ -32,20 +41,7 @@ function resolveBend() {
   process.exit(1);
 }
 
-const BEND = resolveBend();
-
-function run(args, cwd) {
-  return execFileSync(BEND, args, { env: ENV, cwd, encoding: 'utf8', maxBuffer: Infinity });
-}
-
-function compile(cwd) {
-  try {
-    run([ENTRY, '--check-only'], cwd);
-    return { ok: true, output: '' };
-  } catch (err) {
-    return { ok: false, output: `${err.stdout ?? ''}${err.stderr ?? ''}` };
-  }
-}
+let BEND;
 
 function discover(dir) {
   const found = [];
@@ -84,43 +80,371 @@ function removeProof(modulePath, name) {
   return true;
 }
 
-const version = run(['version'], ROOT).trim();
-if (version !== 'bend 2.0.25') {
-  console.error(`expected bend 2.0.25, got: ${version}`);
-  process.exit(1);
+function hash(value) {
+  return createHash('sha256').update(value).digest('hex');
 }
 
-rmSync(SCRATCH, { recursive: true, force: true });
-mkdirSync(SCRATCH, { recursive: true });
-cpSync(join(ROOT, 'bend2'), join(SCRATCH, 'bend2'), { recursive: true });
-
-const rows = laws();
-let failures = 0;
-
-const baseline = compile(SCRATCH);
-console.log(JSON.stringify({ check: 'entry compiles with every law proven', passed: baseline.ok }));
-if (!baseline.ok) {
-  failures++;
-  console.log(baseline.output.trimEnd());
-  console.log(`laws-check: red - ${rows.length} laws, 1 compile, ${failures} failure; proof-removal controls did not run`);
-  process.exit(1);
+function hashFile(path) {
+  return new Promise((resolveHash, reject) => {
+    const digest = createHash('sha256');
+    const stream = createReadStream(path);
+    stream.on('data', (chunk) => digest.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolveHash(digest.digest('hex')));
+  });
 }
 
-for (const { law, file } of rows) {
-  const copied = join(SCRATCH, relative(ROOT, file));
-  cpSync(file, copied);
-  const removed = removeProof(copied, law);
-  const control = removed ? compile(SCRATCH) : { ok: true, output: '' };
-  const passed = removed && !control.ok && /TODO found|expected :|Error/.test(control.output);
-  if (!passed) failures++;
-  console.log(JSON.stringify({
-    law,
-    module: relative(ROOT, file),
-    proof: removed ? 'removed' : 'missing',
-    gate: passed ? 'refuses' : 'accepts',
-    passed,
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function cloneLinkedTree(source, destination) {
+  mkdirSync(destination, { recursive: true });
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    const from = join(source, entry.name);
+    const to = join(destination, entry.name);
+    if (entry.isDirectory()) cloneLinkedTree(from, to);
+    else if (entry.isSymbolicLink()) symlinkSync(readlinkSync(from), to);
+    else linkSync(from, to);
+  }
+}
+
+function detachFile(path) {
+  const temporary = `${path}.detached-${randomUUID()}`;
+  writeFileSync(temporary, readFileSync(path));
+  renameSync(temporary, path);
+}
+
+function controlWorkspace(runRoot, id) {
+  const cwd = join(runRoot, 'workspaces', hash(id));
+  mkdirSync(dirname(cwd), { recursive: true });
+  cloneLinkedTree(join(ROOT, 'bend2'), join(cwd, 'bend2'));
+  return cwd;
+}
+
+function availableMemory() {
+  let available = freemem();
+  try {
+    const mem = readFileSync('/proc/meminfo', 'utf8').match(/^MemAvailable:\s+(\d+)\s+kB/m);
+    if (mem) available = Math.min(available, Number(mem[1]) * 1024);
+  } catch {}
+  for (const path of ['/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory/memory.limit_in_bytes']) {
+    try {
+      const limit = readFileSync(path, 'utf8').trim();
+      if (limit === 'max' || Number(limit) >= Number.MAX_SAFE_INTEGER) continue;
+      const currentPath = path.replace(/memory\.max$/, 'memory.current').replace(/memory.limit_in_bytes$/, 'memory.usage_in_bytes');
+      const current = Number(readFileSync(currentPath, 'utf8').trim());
+      available = Math.min(available, Math.max(0, Number(limit) - current));
+      break;
+    } catch {}
+  }
+  return available;
+}
+
+function runnerCpuCapacity() {
+  let capacity = availableParallelism();
+  try {
+    const [quota, period] = readFileSync('/sys/fs/cgroup/cpu.max', 'utf8').trim().split(/\s+/);
+    if (quota !== 'max') capacity = Math.min(capacity, Math.max(1, Math.floor(Number(quota) / Number(period))));
+  } catch {}
+  return capacity;
+}
+
+function peakRss(pid) {
+  try {
+    const status = readFileSync(`/proc/${pid}/status`, 'utf8').match(/^VmHWM:\s+(\d+)\s+kB/m);
+    if (status) return Number(status[1]) * 1024;
+    const statm = readFileSync(`/proc/${pid}/statm`, 'utf8').trim().split(/\s+/);
+    return Number(statm[1]) * 4096;
+  } catch {
+    return 0;
+  }
+}
+
+function excerpt(path) {
+  const fd = openSync(path, 'r');
+  try {
+    const size = statSync(path).size;
+    const head = Buffer.alloc(Math.min(EXCERPT_BYTES, size));
+    const headRead = head.length ? (awaitRead(fd, head, 0)) : 0;
+    const tailSize = Math.min(EXCERPT_BYTES, Math.max(0, size - headRead));
+    const tail = Buffer.alloc(tailSize);
+    const tailRead = tailSize ? awaitRead(fd, tail, size - tailSize) : 0;
+    return {
+      bytes: size,
+      head: head.subarray(0, headRead).toString('utf8'),
+      tail: tail.subarray(0, tailRead).toString('utf8'),
+      artifact: path,
+    };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function awaitRead(fd, buffer, position) {
+  // readSync is kept behind this helper so excerpts never enter the scheduler's
+  // control flow as complete compiler output.
+  return readSync(fd, buffer, 0, buffer.length, position);
+}
+
+function runCompiler(args, cwd, stdoutPath, stderrPath) {
+  return new Promise((resolveResult) => {
+    const stdoutFd = openSync(stdoutPath, 'w');
+    const stderrFd = openSync(stderrPath, 'w');
+    const child = spawn(BEND, args, { cwd, env: ENV, stdio: ['ignore', stdoutFd, stderrFd] });
+    let maxRssBytes = 0;
+    let startupError = null;
+    const sample = setInterval(() => { maxRssBytes = Math.max(maxRssBytes, peakRss(child.pid)); }, 100);
+    child.on('error', (error) => { startupError = `${error.name}: ${error.message}`; });
+    child.on('close', (code, signal) => {
+      clearInterval(sample);
+      maxRssBytes = Math.max(maxRssBytes, peakRss(child.pid));
+      fsyncSync(stdoutFd);
+      fsyncSync(stderrFd);
+      closeSync(stdoutFd);
+      closeSync(stderrFd);
+      resolveResult({ exitCode: code, signal, startupError, maxRssBytes });
+    });
+  });
+}
+
+async function fileContains(path, needle) {
+  const stream = createReadStream(path);
+  let carry = '';
+  for await (const buffer of stream) {
+    const text = carry + buffer.toString('utf8');
+    if (text.includes(needle)) return true;
+    carry = text.slice(-Math.max(needle.length - 1, 0));
+  }
+  return false;
+}
+
+async function outputMatches(paths, pattern) {
+  // Existing controls classify these compiler diagnostics by their complete
+  // raw output; streaming keeps large logs outside the scheduler process.
+  const needles = pattern === 'proof' ? ['TODO found', 'expected :', 'Error'] : [pattern];
+  for (const path of paths) for (const needle of needles) if (await fileContains(path, needle)) return true;
+  return false;
+}
+
+function sourceIdentity(rows) {
+  const paths = new Set(discover(SRC));
+  for (const { file } of rows) paths.add(file);
+  paths.add(import.meta.filename);
+  paths.add(join(ROOT, 'bend2', 'scripts', 'laws-check-scheduler.test.mjs'));
+  const records = [...paths].sort().map((path) => ({
+    path: relative(ROOT, path),
+    sha256: hash(readFileSync(path)),
   }));
-  cpSync(file, copied);
+  const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 4096 });
+  if (revision.status !== 0 || revision.error) throw new Error(`cannot identify source revision: ${revision.error?.message ?? revision.stderr}`);
+  return {
+    gitRevision: revision.stdout.trim(),
+    files: records,
+    sha256: hash(stableJson({ gitRevision: revision.stdout.trim(), files: records })),
+  };
+}
+
+function producer(kind, payload) {
+  const id = kind === 'proof'
+    ? `proof:${payload.module}:${payload.law}`
+    : `mutation:${payload.name}`;
+  const descriptor = { id, kind, payload };
+  return { ...descriptor, descriptorSha256: hash(stableJson(descriptor)) };
+}
+
+export function producerSet(rows, mutations) {
+  const controls = [
+    ...rows.map(({ law, file }) => producer('proof', { law, module: relative(ROOT, file) })),
+    ...mutations.map((mutation) => producer('mutation', mutation)),
+  ];
+  const ids = controls.map(({ id }) => id);
+  if (new Set(ids).size !== ids.length) throw new Error('control producer IDs are not unique');
+  return controls;
+}
+
+export async function verifyResults(expected, results) {
+  const byId = new Map(expected.map((item) => [item.id, item]));
+  const seen = new Set();
+  const failures = [];
+  for (const result of results) {
+    const descriptor = byId.get(result.id);
+    if (!descriptor) {
+      failures.push({ id: result.id, reason: 'unknown producer' });
+      continue;
+    }
+    if (seen.has(result.id)) {
+      failures.push({ id: result.id, reason: 'duplicate producer result' });
+      continue;
+    }
+    seen.add(result.id);
+    if (result.descriptorSha256 !== descriptor.descriptorSha256) failures.push({ id: result.id, reason: 'altered producer descriptor' });
+    if (!descriptor.workToken || result.workToken !== descriptor.workToken) failures.push({ id: result.id, reason: 'execution token mismatch' });
+    if (result.completed !== true) failures.push({ id: result.id, reason: 'producer did not complete' });
+    if (result.applied !== true) failures.push({ id: result.id, reason: 'producer change was not applied' });
+    if (!Number.isInteger(result.exitCode) || result.signal !== null || result.startupError !== null) {
+      failures.push({ id: result.id, reason: 'compiler process did not report an ordinary completed exit' });
+    } else if (result.exitCode === 0) {
+      failures.push({ id: result.id, reason: 'compiler accepted the control' });
+    }
+    const outputPaths = [];
+    for (const stream of ['stdout', 'stderr']) {
+      const output = result.outputs?.[stream];
+      if (!output?.artifact || !Number.isInteger(output.bytes) || !/^[a-f0-9]{64}$/.test(output.sha256 ?? '')) {
+        failures.push({ id: result.id, reason: `missing ${stream} artifact receipt` });
+        continue;
+      }
+      try {
+        if (statSync(output.artifact).size !== output.bytes || await hashFile(output.artifact) !== output.sha256) {
+          failures.push({ id: result.id, reason: `${stream} artifact changed after completion` });
+          continue;
+        }
+        outputPaths.push(output.artifact);
+      } catch {
+        failures.push({ id: result.id, reason: `${stream} artifact is unavailable` });
+      }
+    }
+    const expectedDiagnostic = descriptor.kind === 'proof' ? 'proof' : descriptor.payload.law;
+    if (outputPaths.length === 2 && !(await outputMatches(outputPaths, expectedDiagnostic))) {
+      failures.push({ id: result.id, reason: 'compiler output does not contain the producer diagnostic' });
+    }
+    if (result.passed !== true) failures.push({ id: result.id, reason: 'control failed' });
+  }
+  for (const descriptor of expected) if (!seen.has(descriptor.id)) failures.push({ id: descriptor.id, reason: 'producer result omitted' });
+  return failures;
+}
+
+export function concurrencyFor({ cpuCapacity, memoryAvailableBytes, memoryEstimateBytes, runnerCapacity }) {
+  const configuredCapacity = Number.isInteger(runnerCapacity) && runnerCapacity > 0 ? runnerCapacity : Infinity;
+  const memoryCapacity = Math.floor(memoryAvailableBytes / Math.max(memoryEstimateBytes, 1));
+  return {
+    admitted: Math.max(1, Math.min(cpuCapacity, configuredCapacity, memoryCapacity)),
+    cpuCapacity,
+    memoryAvailableBytes,
+    memoryEstimateBytes,
+    memoryCapacity,
+    totalMemoryBytes: totalmem(),
+    runnerCapacity: Number.isFinite(configuredCapacity) ? configuredCapacity : null,
+  };
+}
+
+function admittedConcurrency(memoryEstimateBytes) {
+  return concurrencyFor({
+    cpuCapacity: runnerCpuCapacity(),
+    memoryAvailableBytes: availableMemory(),
+    memoryEstimateBytes,
+    runnerCapacity: Number(process.env.BATON_LAW_CHECK_RUNNER_CAPACITY),
+  });
+}
+
+async function runControl(control, runRoot) {
+  const cwd = controlWorkspace(runRoot, control.id);
+  const artifactRoot = join(runRoot, 'artifacts', hash(control.id));
+  mkdirSync(artifactRoot, { recursive: true });
+  const stdoutPath = join(artifactRoot, 'stdout.log');
+  const stderrPath = join(artifactRoot, 'stderr.log');
+  const copied = join(cwd, control.kind === 'proof' ? control.payload.module : control.payload.file);
+  detachFile(copied);
+  let applied;
+  if (control.kind === 'proof') applied = removeProof(copied, control.payload.law);
+  else {
+    const text = readFileSync(copied, 'utf8');
+    applied = text.includes(control.payload.find);
+    if (applied) writeFileSync(copied, text.replace(control.payload.find, control.payload.replace));
+  }
+  const startedAt = new Date().toISOString();
+  const started = process.hrtime.bigint();
+  const outcome = applied
+    ? await runCompiler([ENTRY, '--check-only'], cwd, stdoutPath, stderrPath)
+    : { exitCode: null, signal: null, startupError: null, maxRssBytes: 0 };
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+  let rejectedForExpectedReason = false;
+  if (applied && outcome.exitCode !== null && outcome.signal === null && outcome.startupError === null) {
+    rejectedForExpectedReason = control.kind === 'proof'
+      ? await outputMatches([stdoutPath, stderrPath], 'proof')
+      : await outputMatches([stdoutPath, stderrPath], control.payload.law);
+  }
+  const completed = applied && outcome.exitCode !== null && outcome.signal === null && outcome.startupError === null;
+  const passed = completed && outcome.exitCode !== 0 && rejectedForExpectedReason;
+  const outputs = applied ? {
+    stdout: { ...(await excerpt(stdoutPath)), sha256: await hashFile(stdoutPath) },
+    stderr: { ...(await excerpt(stderrPath)), sha256: await hashFile(stderrPath) },
+  } : null;
+  return {
+    id: control.id,
+    kind: control.kind,
+    descriptorSha256: control.descriptorSha256,
+    workToken: control.workToken,
+    completed,
+    passed,
+    applied,
+    startedAt,
+    elapsedMs,
+    exitCode: outcome.exitCode,
+    signal: outcome.signal,
+    startupError: outcome.startupError,
+    peakRssBytes: outcome.maxRssBytes,
+    outputs,
+  };
+}
+
+async function runPool(controls, concurrency, runRoot) {
+  const results = new Array(controls.length);
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      const index = cursor++;
+      if (index >= controls.length) return;
+      try {
+        results[index] = await runControl(controls[index], runRoot);
+      } catch (error) {
+        results[index] = {
+          id: controls[index].id,
+          descriptorSha256: controls[index].descriptorSha256,
+          completed: false,
+          passed: false,
+          workerError: `${error.name}: ${error.message}`,
+        };
+      }
+      const row = results[index];
+      console.log(JSON.stringify({
+        requestId: process.env.BATON2_GATE_REQUEST ?? null,
+        job: process.env.BATON2_GATE_JOB ?? null,
+        producerId: row.id,
+        producerSha256: row.descriptorSha256,
+        workToken: row.workToken,
+        id: row.id,
+        kind: row.kind,
+        name: controls[index].kind === 'proof' ? controls[index].payload.law : controls[index].payload.name,
+        law: controls[index].payload.law,
+        module: controls[index].kind === 'proof' ? controls[index].payload.module : controls[index].payload.file,
+        mutation: controls[index].kind === 'mutation' ? controls[index].payload.name : undefined,
+        proof: controls[index].kind === 'proof' ? (row.applied ? 'removed' : 'missing') : undefined,
+        gate: row.passed ? 'refuses' : 'accepts',
+        passed: row.passed,
+        completed: row.completed,
+        applied: row.applied,
+        exitCode: row.exitCode,
+        signal: row.signal,
+        startupError: row.startupError,
+        elapsedMs: row.elapsedMs,
+        peakRssBytes: row.peakRssBytes,
+        stdout: row.outputs?.stdout && { bytes: row.outputs.stdout.bytes, sha256: row.outputs.stdout.sha256, artifact: row.outputs.stdout.artifact },
+        stderr: row.outputs?.stderr && { bytes: row.outputs.stderr.bytes, sha256: row.outputs.stderr.sha256, artifact: row.outputs.stderr.artifact },
+        excerpts: row.passed ? undefined : {
+          stdout: row.outputs?.stdout && { head: row.outputs.stdout.head, tail: row.outputs.stdout.tail },
+          stderr: row.outputs?.stderr && { head: row.outputs.stderr.head, tail: row.outputs.stderr.tail },
+        },
+        workerError: row.workerError,
+      }));
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, controls.length) }, () => worker()));
+  return results;
 }
 
 // A mutation is a deliberate change to an implementation, made in the scratch
@@ -1090,27 +1414,192 @@ MUTATIONS.push(
   },
 );
 
-for (const mutation of MUTATIONS) {
-  const copied = join(SCRATCH, mutation.file);
-  cpSync(join(ROOT, mutation.file), copied);
-  const text = readFileSync(copied, 'utf8');
-  const applied = text.includes(mutation.find);
-  writeFileSync(copied, applied ? text.replace(mutation.find, mutation.replace) : text);
-  const control = applied ? compile(SCRATCH) : { ok: true, output: '' };
-  const passed = applied && !control.ok && control.output.includes(mutation.law);
-  if (!passed) failures++;
-  console.log(JSON.stringify({
-    mutation: mutation.name,
-    law: mutation.law,
-    applied,
-    gate: passed ? 'refuses' : 'accepts',
-    passed,
-  }));
-  if (applied && !control.ok && !control.output.includes(mutation.law)) {
-    console.log(control.output.trimEnd());
-  }
-  cpSync(join(ROOT, mutation.file), copied);
+function writeJson(path, value) {
+  const temporary = `${path}.tmp-${randomUUID()}`;
+  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  renameSync(temporary, path);
 }
 
-console.log(`laws-check: ${failures === 0 ? 'green' : 'red'} - ${rows.length} laws, ${MUTATIONS.length} mutations, ${rows.length + MUTATIONS.length + 1} compiles, ${failures} failures`);
-process.exit(failures === 0 ? 0 : 1);
+async function runGate() {
+  BEND = resolveBend();
+  const rows = laws();
+  const identity = sourceIdentity(rows);
+  const controls = producerSet(rows, MUTATIONS);
+  const compilerSha256 = await hashFile(BEND);
+  const wrapperRequest = ENV.BATON2_GATE_REQUEST ?? null;
+  const requestId = wrapperRequest ?? hash(stableJson({
+    sourceSha256: identity.sha256,
+    compilerSha256,
+    node: process.version,
+    entry: ENTRY,
+    command: [ENTRY, '--check-only'],
+    producers: controls.map(({ descriptorSha256 }) => descriptorSha256),
+    output: '.scratch/bend2-laws-check',
+  }));
+  const requestParts = requestId.split('/');
+  if (requestParts.some((part) => !/^[A-Za-z0-9._-]+$/.test(part) || part === '.' || part === '..')) {
+    throw new Error(`invalid BATON2_GATE_REQUEST path: ${requestId}`);
+  }
+  const runId = wrapperRequest ? requestId : `${hash(requestId)}-${randomUUID()}`;
+  const runRoot = join(SCRATCH, ...runId.split('/'));
+  const artifactRoot = join(runRoot, 'artifacts');
+  mkdirSync(artifactRoot, { recursive: true });
+  const controlsPath = join(runRoot, 'controls.json');
+  writeJson(controlsPath, controls);
+  const controlsArtifactSha256 = await hashFile(controlsPath);
+  const startedAt = new Date().toISOString();
+  const versionOut = join(artifactRoot, 'compiler-version.stdout.log');
+  const versionErr = join(artifactRoot, 'compiler-version.stderr.log');
+  const versionRun = spawnSync(BEND, ['version'], { cwd: ROOT, env: ENV, encoding: 'utf8', maxBuffer: 64 * 1024 });
+  writeFileSync(versionOut, versionRun.stdout ?? '');
+  writeFileSync(versionErr, versionRun.stderr ?? '');
+  const version = (versionRun.stdout ?? '').trim();
+  const toolchain = {
+    bend: BEND,
+    bendSha256: compilerSha256,
+    version,
+    versionExitCode: versionRun.status,
+    versionSignal: versionRun.signal,
+    versionError: versionRun.error ? `${versionRun.error.name}: ${versionRun.error.message}` : null,
+    versionStdout: await hashFile(versionOut),
+    versionStderr: await hashFile(versionErr),
+  };
+  toolchain.toolchainSha256 = hash(stableJson({
+    bendSha256: toolchain.bendSha256,
+    version: toolchain.version,
+    node: process.version,
+    cc: ENV.CC ?? null,
+    ldLibraryPath: ENV.LD_LIBRARY_PATH ?? null,
+  }));
+  const metadata = {
+    schema: 'bend2-laws-check-run-v1',
+    runId,
+    requestId,
+    job: ENV.BATON2_GATE_JOB ?? null,
+    startedAt,
+    finishedAt: null,
+    status: 'running',
+    source: identity,
+    entry: ENTRY,
+    node: process.version,
+    executionHost: { hostname: hostname(), platform: process.platform, arch: process.arch },
+    toolchain,
+    producerCount: null,
+    producerSetSha256: hash(stableJson(controls)),
+    controlsArtifactSha256,
+    completedCount: 0,
+    elapsedMs: null,
+    baseline: null,
+    capacity: null,
+    controlsIndex: join(runRoot, 'controls.json'),
+  };
+  writeJson(join(runRoot, 'run.json'), metadata);
+  console.log(JSON.stringify({
+    event: 'run',
+    requestId,
+    job: metadata.job,
+    runRoot,
+    sourceSha256: identity.sha256,
+    toolchainSha256: toolchain.toolchainSha256,
+    producerCount: controls.length,
+    producerSetSha256: metadata.producerSetSha256,
+    producerSetArtifact: metadata.controlsIndex,
+  }));
+  console.log(JSON.stringify({ check: 'compiler identity', version: toolchain.version, compilerSha256, passed: version === 'bend 2.0.25' && versionRun.status === 0 }));
+  if (process.version !== 'v22.23.3' || version !== 'bend 2.0.25' || versionRun.status !== 0 || versionRun.error) {
+    metadata.status = 'red';
+    metadata.finishedAt = new Date().toISOString();
+    writeJson(join(runRoot, 'run.json'), metadata);
+    console.error(`expected Node v22.23.3 and bend 2.0.25, got Node ${process.version}, Bend ${version || toolchain.versionError || `exit ${versionRun.status}`}`);
+    return 1;
+  }
+
+  const baselineCwd = join(runRoot, 'workspaces', 'entry-baseline');
+  mkdirSync(dirname(baselineCwd), { recursive: true });
+  cloneLinkedTree(join(ROOT, 'bend2'), join(baselineCwd, 'bend2'));
+  const baselineStarted = process.hrtime.bigint();
+  const baselineResult = await runCompiler(
+    [ENTRY, '--check-only'],
+    baselineCwd,
+    join(artifactRoot, 'entry-baseline.stdout.log'),
+    join(artifactRoot, 'entry-baseline.stderr.log'),
+  );
+  const baselineElapsedMs = Number(process.hrtime.bigint() - baselineStarted) / 1e6;
+  const baselinePassed = baselineResult.exitCode === 0 && baselineResult.signal === null && baselineResult.startupError === null;
+  const baseline = {
+    ...baselineResult,
+    passed: baselinePassed,
+    elapsedMs: baselineElapsedMs,
+    stdout: await excerpt(join(artifactRoot, 'entry-baseline.stdout.log')),
+    stderr: await excerpt(join(artifactRoot, 'entry-baseline.stderr.log')),
+  };
+  baseline.stdout.sha256 = await hashFile(baseline.stdout.artifact);
+  baseline.stderr.sha256 = await hashFile(baseline.stderr.artifact);
+  console.log(JSON.stringify({
+    check: 'entry compiles with every law proven',
+    requestId,
+    job: metadata.job,
+    passed: baselinePassed,
+    exitCode: baseline.exitCode,
+    signal: baseline.signal,
+    startupError: baseline.startupError,
+    elapsedMs: baselineElapsedMs,
+    peakRssBytes: baseline.maxRssBytes,
+    stdout: { bytes: baseline.stdout.bytes, sha256: baseline.stdout.sha256, artifact: baseline.stdout.artifact },
+    stderr: { bytes: baseline.stderr.bytes, sha256: baseline.stderr.sha256, artifact: baseline.stderr.artifact },
+  }));
+  metadata.baseline = baseline;
+  if (!baselinePassed) {
+    metadata.status = 'red';
+    metadata.finishedAt = new Date().toISOString();
+    metadata.elapsedMs = baselineElapsedMs;
+    writeJson(join(runRoot, 'run.json'), metadata);
+    return 1;
+  }
+  if (baseline.maxRssBytes === 0) {
+    metadata.status = 'red';
+    metadata.finishedAt = new Date().toISOString();
+    metadata.failure = 'baseline compiler peak memory could not be measured';
+    writeJson(join(runRoot, 'run.json'), metadata);
+    console.error(metadata.failure);
+    return 1;
+  }
+
+  const capacity = admittedConcurrency(Math.max(baseline.maxRssBytes, 1));
+  metadata.capacity = capacity;
+  metadata.producerCount = controls.length;
+  console.log(JSON.stringify({ scheduler: 'admitted', ...capacity, producerCount: controls.length }));
+  const controlsStarted = process.hrtime.bigint();
+  const dispatchedControls = controls.map((control) => ({ ...control, workToken: randomUUID() }));
+  const results = await runPool(dispatchedControls, capacity.admitted, runRoot);
+  const controlsElapsedMs = Number(process.hrtime.bigint() - controlsStarted) / 1e6;
+  const integrityFailures = await verifyResults(dispatchedControls, results);
+  if (await hashFile(controlsPath) !== controlsArtifactSha256) {
+    integrityFailures.push({ id: 'producer-set', reason: 'producer set artifact changed during execution' });
+  }
+  const completedCount = results.filter(({ completed }) => completed === true).length;
+  const elapsedMs = baselineElapsedMs + controlsElapsedMs;
+  const passed = integrityFailures.length === 0 && results.length === controls.length;
+  metadata.status = passed ? 'green' : 'red';
+  metadata.finishedAt = new Date().toISOString();
+  metadata.completedCount = completedCount;
+  metadata.elapsedMs = elapsedMs;
+  metadata.controlsElapsedMs = controlsElapsedMs;
+  metadata.integrityFailures = integrityFailures;
+  metadata.resultsIndex = join(runRoot, 'results.json');
+  writeJson(join(runRoot, 'results.json'), results);
+  metadata.resultsArtifactSha256 = await hashFile(metadata.resultsIndex);
+  writeJson(join(runRoot, 'run.json'), metadata);
+  console.log(`laws-check: ${passed ? 'green' : 'red'} - ${rows.length} laws, ${MUTATIONS.length} mutations, ${rows.length + MUTATIONS.length + 1} compiles, ${integrityFailures.length} failures`);
+  if (!passed) console.error(JSON.stringify({ integrityFailures }));
+  return passed ? 0 : 1;
+}
+
+export { runGate };
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  runGate().then((status) => { process.exitCode = status; }).catch((error) => {
+    console.error(`laws-check: red - ${error.stack ?? error}`);
+    process.exitCode = 1;
+  });
+}
