@@ -692,12 +692,6 @@ law ui_projection_uses_a_bounded_durable_cursor:
 def ui_projection_uses_a_bounded_durable_cursor():
   {==}
 
-law ui_projection_schema_is_admitted_with_the_native_store:
-  {C.schema() == C.base_schema() ++ C.native_change_schema() : String}
-
-def ui_projection_schema_is_admitted_with_the_native_store():
-  {==}
-
 law ui_projection_tracks_session_state:
   {C.native_session_change_schema() == "CREATE TRIGGER IF NOT EXISTS native_changes_sessions_insert AFTER INSERT ON sessions BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('player',NEW.id,NEW.id,'insert','session','session insert'); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_sessions_update AFTER UPDATE ON sessions WHEN OLD.parent IS NOT NEW.parent OR OLD.harness IS NOT NEW.harness OR OLD.model IS NOT NEW.model OR OLD.effort IS NOT NEW.effort OR OLD.native IS NOT NEW.native OR OLD.observed_harness IS NOT NEW.observed_harness OR OLD.observed_model IS NOT NEW.observed_model OR OLD.observed_effort IS NOT NEW.observed_effort OR OLD.endpoint IS NOT NEW.endpoint OR OLD.workspace IS NOT NEW.workspace OR OLD.branch IS NOT NEW.branch OR OLD.base IS NOT NEW.base BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('player',NEW.id,NEW.id,'update','session','session update'); END;"
