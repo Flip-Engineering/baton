@@ -130,8 +130,13 @@ function proofLawsGate({ frontend, adapter, owner, root, seen }) {
   return Object.freeze({ status: 'refused', identity: lookup.identity, message: 'PROOF.bend must import ./LAWS.bend' });
 }
 
+// The invocation entry emits in the producer's exact shape: the hook registry
+// stamps the installing owner into every event and as the sink call argument,
+// and the adapter's event validation requires that member. An emission
+// without it is refused as ownerMissing and never recorded, which drops the
+// gate entry the run actually reached.
 function emitEvent(adapter, owner, event) {
-  return adapter.sink.emit({ ...event }, owner);
+  return adapter.sink.emit({ ...event, owner }, owner);
 }
 
 async function runOwned({ frontend, adapter, owner, root, phases, comp, seen, state }) {
@@ -216,12 +221,17 @@ async function runOwned({ frontend, adapter, owner, root, phases, comp, seen, st
   if (hookState !== undefined && hookState !== null && typeof hookState === 'object') {
     const failures = typeof hookState.failures === 'number' ? hookState.failures : 0;
     const refusals = typeof hookState.refusals === 'number' ? hookState.refusals : 0;
+    const unrendered = typeof hookState.unrendered === 'number' ? hookState.unrendered : 0;
     const baseline = state.hookBaseline;
     if (baseline === undefined) {
-      state.hookBaseline = { failures, refusals };
+      state.hookBaseline = { failures, refusals, unrendered };
     } else {
       if (failures > baseline.failures) adapter.sink.evidenceFailure('frontendHookFailures', owner, String(failures - baseline.failures));
       if (refusals > baseline.refusals) adapter.sink.evidenceFailure('frontendHookRefusals', owner, String(refusals - baseline.refusals));
+      // Skipped best-effort observations travel under their own code, which
+      // the adapter records as a limitation with the count: the capture they
+      // observe stays complete.
+      if (unrendered > (baseline.unrendered ?? 0)) adapter.sink.evidenceFailure('typeObservationsUnrendered', owner, String(unrendered - (baseline.unrendered ?? 0)));
     }
   }
 
@@ -252,7 +262,7 @@ export async function runFrontendInvocation({ frontend, adapter, root, phases = 
   const started = adapter.beginQuery({ identity: root });
   if (started.status !== 'started') return rejected(started.reason, started.token);
   const owner = started.token;
-  const state = { installed: false, hookBaseline: frontend.bendHookState === undefined || frontend.bendHookState === null ? undefined : { failures: frontend.bendHookState.failures ?? 0, refusals: frontend.bendHookState.refusals ?? 0 } };
+  const state = { installed: false, hookBaseline: frontend.bendHookState === undefined || frontend.bendHookState === null ? undefined : { failures: frontend.bendHookState.failures ?? 0, refusals: frontend.bendHookState.refusals ?? 0, unrendered: frontend.bendHookState.unrendered ?? 0 } };
 
   let result;
   try {

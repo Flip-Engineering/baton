@@ -54,7 +54,11 @@ export interface BendHookSink {
 }
 export interface BendHookInstall { status: "installed" | "refused"; owner: string; reason?: string; }
 let bendHookSink: BendHookSink | null = null;
-export const bendHookState = { failures: 0, refusals: 0, owner: "", installs: 0, refusedInstalls: 0 };
+// failures counts observer breakage: a throwing emit, install, release or consumer call, or a
+// rendering the run needed (a diagnostic). refusals counts loader refusals. unrendered counts
+// best-effort type-observation renders the shower could not produce: the observation is skipped,
+// the capture it observes stays intact, and the skip is accounted here rather than as a failure.
+export const bendHookState = { failures: 0, refusals: 0, unrendered: 0, owner: "", installs: 0, refusedInstalls: 0 };
 export function bendHooks(sink: BendHookSink | null, owner?: string): BendHookInstall {
   const token = owner === undefined ? "" : owner;
   if (sink !== null && token === "") {
@@ -111,7 +115,10 @@ function bendTermShow(value: unknown): string | null {
   try {
     return term_show(term_lower(value as LTerm));
   } catch {
-    bendHookState.failures += 1;
+    // A term outside the shower's coverage is not observer breakage: the
+    // caller skips that observation, the count stays visible here, and the
+    // run's evidence is not marked failed for it.
+    bendHookState.unrendered += 1;
     return null;
   }
 }

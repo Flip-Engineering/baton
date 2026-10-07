@@ -41,6 +41,20 @@ test('a version-2 invocation extracts request, binding and identities', () => {
   assert.equal(answer.owner, 'o1');
 });
 
+test('a version-2 invocation with value-form members extracts their canonical text', () => {
+  // The wire carries the composite members as canonical JSON values, not
+  // text (codec-wire invocation_frame): the bridge renders them to the text
+  // the provider reads instead of refusing the frame.
+  const text = '{"version":2,"query":"q1","owner":"o1","moduleBinding":{"id":"m"},"request":{"version":1},"inputIdentities":[],"operationPlan":[],"role":"r1","incarnation":"i1"}';
+  const answer = bridgeInvocationToRequest(text);
+  assert.equal(answer.status, 'request');
+  assert.equal(answer.envelope, 'invocationV2');
+  assert.equal(answer.request, '{"version":1}');
+  assert.equal(answer.binding, '{"id":"m"}');
+  assert.equal(answer.query, 'q1');
+  assert.equal(answer.owner, 'o1');
+});
+
 test('an unknown version is refused by name', () => {
   const answer = bridgeInvocationToRequest('{"version":3,"request":"{}"}');
   assert.equal(answer.status, 'refused');

@@ -747,8 +747,15 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
 
   // An evidence failure is the observer's own failure: rendering, hook installation, hook release or
   // a consumer error. It is recorded apart from anything the frontend did, and it never replaces a
-  // frontend outcome.
+  // frontend outcome. Skipped best-effort type observations are the one exception: the hook counts
+  // them apart under typeObservationsUnrendered, and they are preserved here as a limitation with
+  // their count. A skipped observation leaves the capture it observes intact, so unlike a real
+  // observer failure it never drives incompleteness.
   function sinkEvidenceFailure(code, owner, detail) {
+    if (code === 'typeObservationsUnrendered') {
+      note(ownsActive(owner) ? active : null, code, detail === undefined ? null : detail);
+      return;
+    }
     counters.evidenceFailures += 1;
     if (code === 'hookInstallThrew' || code === 'hookReleaseThrew') counters.hookInstallFailures += 1;
     note(ownsActive(owner) ? active : null, code, detail === undefined ? null : detail);
