@@ -19,7 +19,6 @@ SPEC.loader.exec_module(RECEIVE)
 class NativeObservation(RECEIVE.Receive):
     def setUp(self):
         super().setUp()
-        self.addCleanup(self.preserve_failed_fixture)
         fixture = self.fixture.read_text()
         needle = "    action=json.loads(line)\n"
         addition = (
@@ -34,7 +33,7 @@ class NativeObservation(RECEIVE.Receive):
         self.assertIn(needle, fixture)
         self.fixture.write_text(fixture.replace(needle, needle + addition, 1))
 
-    def preserve_failed_fixture(self):
+    def cleanup_fixture(self):
         outcome = getattr(self, '_outcome', None)
         errors = list(getattr(outcome, 'errors', ())) if outcome is not None else []
         result = getattr(outcome, 'result', None) if outcome is not None else None
@@ -42,6 +41,7 @@ class NativeObservation(RECEIVE.Receive):
             errors.extend(getattr(result, 'failures', ()))
             errors.extend(getattr(result, 'errors', ()))
         if not any(test is self for test, _ in errors):
+            super().cleanup_fixture()
             return
         self.temp._finalizer.detach()
         print(f'preserved_native_observation_fixture={self.directory}',

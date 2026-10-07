@@ -182,7 +182,7 @@ class Receive(unittest.TestCase):
         if not EXE.exists():
             self.skipTest(f'Coordinator not built at {EXE}')
         self.temp = tempfile.TemporaryDirectory(prefix="receive ' paths ", dir=ROOT / '.scratch/bend2')
-        self.addCleanup(self.temp.cleanup)
+        self.addCleanup(self.cleanup_fixture)
         self.directory = pathlib.Path(self.temp.name)
         self.repo = self.directory / 'repository'
         self.repo.mkdir()
@@ -215,6 +215,9 @@ class Receive(unittest.TestCase):
         self.coord('role', 'root', 'principal-conductor')
         self.coord('attach', 'operator', 'terminal', '', '')
         self.coord('role', 'operator', 'operator')
+
+    def cleanup_fixture(self):
+        self.temp.cleanup()
 
     def close_children(self):
         for stream, connection in self.controls:
