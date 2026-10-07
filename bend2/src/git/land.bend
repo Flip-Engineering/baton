@@ -807,8 +807,8 @@ def ff_stage5_shared(wc: String, tb: String, repo: String, target: String) -> IO
   +rp = repo
   +tg = target
   do IO<FFLD>:
-    a : LAdv <- ld_adv_run(rp, tg, cand, basis)
-    IO.pure(FFLD, ff_stage5_adv_answer(a, tg, cand))
+    shared : SharedLanding <- shared_landing_run(rp, tg, cand, basis)
+    IO.pure(FFLD, ff_stage5_shared_answer(shared, tg, cand))
 
 def ff_go5(r: FFLD, repo: String, target: String) -> IO(FFLD):
   match r:
@@ -1438,8 +1438,8 @@ def ld_advance(repo: String, target: String, cand: String, basis: String) -> IO(
   +t2 = target
   +c2 = cand
   do IO<Ld>:
-    a : LAdv <- ld_adv_run(repo, t2, c2, basis)
-    IO.pure(Ld, ld_adv_answer(a, t2, c2))
+    shared : SharedLanding <- shared_landing_run(repo, t2, c2, basis)
+    IO.pure(Ld, ld_advance_shared_answer(shared, t2, c2))
 
 # Stage 1 resolves the worker commit; the pipeline carries the resolved sha
 # so the LAlready answer names the worker commit.
@@ -2062,4 +2062,101 @@ law prepared_holder_discovery_rejects_a_quoted_or_relative_path:
 
 def prepared_holder_discovery_rejects_a_quoted_or_relative_path():
   {==}
+
+# The public shared boundary. The canonical common directory is read once here, the target
+# claim is taken around the holder selection and the selected advance, and the release runs for
+# every returned advance outcome with its own Result preserved beside the advance observation.
+# A release failure is therefore visible to both adapters and can never read as a landing.
+type SharedLanding is Data:
+  SharedClaimFailed{error: U32 & String}
+  SharedGuardBusy{target: String}
+  SharedAdvanced{advance: LAdv, released: Result<U32 & String, Unit>}
+
+def shared_advance_under_claim(handle: U32, advance: LAdv) -> IO(SharedLanding):
+  +h = handle
+  +a = advance
+  do IO<SharedLanding>:
+    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
+    IO.pure(SharedLanding, SharedAdvanced{a, released})
+
+def shared_ran_advance(handle: U32, repo: String, target: String, cand: String, basis: String) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  do IO<SharedLanding>:
+    a : LAdv <- ld_adv_run(rp, tg, c, b)
+    shared_advance_under_claim(h, a)
+
+def shared_claim_decided(repo: String, target: String, cand: String, basis: String, claimed: Result<U32 & String, Maybe<U32>>) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  match claimed:
+    case Fail{error}: IO.pure(SharedLanding, SharedClaimFailed{error})
+    case Done{held}:
+      match held:
+        case None{}: IO.pure(SharedLanding, SharedGuardBusy{tg})
+        case Some{handle}: shared_ran_advance(handle, rp, tg, c, b)
+
+def shared_claimed(repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +cm = common
+  do IO<SharedLanding>:
+    claimed : Result<U32 & String, Maybe<U32>> <- Rec.Receipt.claim(cm, tg)
+    shared_claim_decided(rp, tg, c, b, claimed)
+
+def shared_common_read(repo: String, target: String, cand: String, basis: String, observed: T.GitOut) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  match observed:
+    case T.GBroken{detail}: IO.pure(SharedLanding, SharedClaimFailed{(1, detail)})
+    case T.GRun{code, out}:
+      match U32.is_eq(code, 0):
+        case False{}: IO.pure(SharedLanding, SharedClaimFailed{(code, "cannot read the common directory for the landing claim")})
+        case True{}: shared_claimed(rp, tg, c, b, Tx.trim_nl(out))
+
+def shared_landing_run(repo: String, target: String, cand: String, basis: String) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  do IO<SharedLanding>:
+    observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
+    shared_common_read(rp, tg, c, b, observed)
+
+# The fast-forward adapter. A release failure, a busy guard and a claim failure each answer
+# blocked; only a landed advance with a completed release reports the landing.
+def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String) -> FFLD:
+  +s = shared
+  +tg = target
+  +c = cand
+  match s:
+    case SharedClaimFailed{error}: FFDone{T.LBlocked{"the landing claim could not be taken"}}
+    case SharedGuardBusy{target}: FFDone{T.LBlocked{"another landing holds the target"}}
+    case SharedAdvanced{advance, released}:
+      match released:
+        case Fail{error}: FFDone{T.LBlocked{"the advance ran but its release failed; inspect the target and the guard"}}
+        case Done{unit}: ff_stage5_adv_answer(advance, tg, c)
+
+# The checked adapter uses the same combined outcome, so it also refuses to answer landed when
+# the release failed.
+def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String) -> Ld:
+  +s = shared
+  +tg = target
+  +c = cand
+  match s:
+    case SharedClaimFailed{error}: LdFail{T.FCmd{"land", "the landing claim could not be taken"}}
+    case SharedGuardBusy{target}: LdFail{T.FCmd{"land", "another landing holds the target; rerun land-checked to prepare and check against the current target"}}
+    case SharedAdvanced{advance, released}:
+      match released:
+        case Fail{error}: LdFail{T.FCmd{"land", "the advance ran but its release failed; inspect the target and the guard"}}
+        case Done{unit}: ld_adv_answer(advance, tg, c)
 
