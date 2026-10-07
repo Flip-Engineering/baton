@@ -90,6 +90,7 @@ import ./native-request-laws.bend as NativeRequestLaws
 import ./knowledge-laws.bend as KnowledgeLaws
 import ./messaging-laws.bend as MessagingLaws
 import ./connect-laws.bend as ConnectLaws
+import ./instance-laws.bend as InstanceLaws
 import ./naming-laws.bend as NamingLaws
 import ./delivery.bend as Delivery
 import ./turn.bend as Turn
