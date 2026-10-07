@@ -1163,10 +1163,9 @@ def held_candidate_tip_reads_holder(path: String, target: String) -> IO(L.LAdv):
 law m3a_held_candidate_tip_reads_the_holder:
   for path: String
   for target: String
-  for cand: String
-  {L.ld_adv_wt_observed_target_pick(T.GRun{0, cand}, path, target, cand) == held_candidate_tip_reads_holder(path, target) : IO(L.LAdv)}
+  {L.ld_adv_wt_observed_target_pick(T.GRun{0, "candidate\n"}, path, target, "candidate") == held_candidate_tip_reads_holder(path, target) : IO(L.LAdv)}
 
-def m3a_held_candidate_tip_reads_the_holder(path, target, cand):
+def m3a_held_candidate_tip_reads_the_holder(path, target):
   {==}
 
 law m3a_held_target_tip_mismatch_refuses:
