@@ -1395,10 +1395,10 @@ def ld_attest(+reserved: String, +evidence: AttemptEvidence) -> IO(Attestation):
 # association and intent evidence must be present and observed, the capture must be real, the release
 # must have succeeded, and all three stages must carry the exact expected bytes.
 
-def reserved_matches(reserved: String, evidence: AttemptEvidence) -> Bool:
+def reserved_matches(expect: String, evidence: AttemptEvidence) -> Bool:
   match evidence:
     case AttemptEvidence{reserved, repo, target, candidate, basis, guard, artifact, decision, capture, qualification, release, identity, association, intent}:
-      Tx.str_eq(reserved, reserved)
+      Tx.str_eq(reserved, expect)
 
 def readback_matches(readback: StageResult, evidence: AttemptEvidence) -> Bool:
   match readback:
