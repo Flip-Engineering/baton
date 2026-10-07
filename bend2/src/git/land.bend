@@ -182,7 +182,7 @@ def publish_destination_ok(+path: String) -> Bool:
 
 def publish_argv(+destination: String, +target: String, +oid: String, +basis: String) -> List<String>:
   Bool.pick(List<String>, publish_destination_ok(destination),
-    Con{"push", Con{"--porcelain", Con{Tx.str_cat("--receive-pack=", publish_receiver()), Con{T.str_cat3("--force-with-lease=refs/heads/", target, Tx.str_cat(":", basis)), Con{destination, Con{publish_refspec(oid, target), Nil{}}}}}},
+    Con{"push", Con{"--porcelain", Con{Tx.str_cat("--receive-pack=", publish_receiver()), Con{T.str_cat3("--force-with-lease=refs/heads/", target, Tx.str_cat(":", basis)), Con{destination, Con{publish_refspec(oid, target), Nil{}}}}}}},
     Nil{})
 
 def pub_flag_like(+line: String) -> Bool:
