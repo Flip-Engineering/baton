@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TypeScript provider refusal frame",
+  "description": "The frame the provider writes when it refuses a query, mirrored from the frame builder. This document fills the event role for this operation.",
+  "sourceContract": {
+    "authority": "bend2/context/typescript/lib/protocol.mjs (refusalFrame :294-300)",
+    "lines": ["294-300", "6-15", "113-118"],
+    "drift": "refusalFrame is the authority for this frame; this document is its admitted mirror, so a change to those lines requires a change here. A refusal carries the frame version 1, the engine name, the query in hand or null, and a validationRefusal error whose condition is the rule that refused and whose limits are the limits it names (:295-299); request member values, paths and expressions never appear in a refusal, and provider stderr carries no request content either (:8-10).",
+    "roleNote": "This operation emits no event stream: the provider writes exactly one frame per query and exits, and the exit status separates a result from a refusal and from a failure (provider.mjs:1-15, :6-15). The event role therefore names this frame, the module's other emitted frame, and no streaming event shape is claimed.",
+    "identityNote": "no $id is set: the admitted identity is a hole for package admission to fill, named by the inventory it admits.",
+    "crossFieldRules": [
+      {
+        "code": "conditionIsRuleText",
+        "lines": ["8-10"],
+        "detail": "the condition is fixed text naming the rule that refused; no request member value, path or expression appears in it"
+      },
+      {
+        "code": "exitStatusCarriesOutcome",
+        "lines": ["6-15"],
+        "detail": "exit status 0 is one result frame, 2 is one refusal frame and 1 is a provider failure on stderr with no result published"
+      }
+    ]
+  },
+  "type": "object",
+  "properties": {
+    "version": { "const": 1 },
+    "engine": { "type": "string", "minLength": 1 },
+    "query": { "type": ["string", "null"] },
+    "error": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "validationRefusal" },
+        "condition": { "type": "string", "minLength": 1 },
+        "limits": { "type": "array" }
+      },
+      "required": ["kind", "condition", "limits"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["version", "engine", "query", "error"],
+  "additionalProperties": false
+}

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TypeScript provider request options for sourceAnalysis",
+  "description": "The options member of the admitted canonical request, mirrored from the provider's own validation for the source-analysis operation.",
+  "sourceContract": {
+    "authority": "bend2/context/typescript/lib/protocol.mjs",
+    "lines": ["54-56", "74", "89-97", "158-200", "200-210"],
+    "drift": "validateRequest is the authority and this document is its admitted mirror: a change to those lines requires a change here. Allowed keys are exactly OPTION_KEYS (:54, rejectUnknownKeys :158-162); the keys the C engine owns are refused by name for this engine (:55, :161-163); project defaults to the empty string when absent (:161); every read root is a nonempty string (:164-170); database admits the two DATABASE_ENGINES only (:74, :171-189) and carries path for sqlite-schema and connectionFile for postgres-schema; client carries a nonempty path with line and column defaulting to zero (:190-198); effects are a request member, not an option (:202-207).",
+    "operationBinding": {
+      "operation": "sourceAnalysis",
+      "lines": ["200-210"],
+      "detail": "needsDatabase holds only when the selected projections include databaseAccesses on a position or symbol subject, and this operation serves the other projections, so database and client stay optional here and the sqlPlan document is the one that requires them"
+    },
+    "identityNote": "no $id is set: the admitted identity is a hole for package admission to fill, named by the inventory it admits.",
+    "crossFieldRules": [
+      {
+        "code": "optionKeysAreClosed",
+        "lines": ["158-163"],
+        "detail": "the keys of options are exactly OPTION_KEYS; a C-only key refuses with context-option-unsupported-for-engine and any other refuses with context-option-unknown"
+      },
+      {
+        "code": "u32Domain",
+        "lines": ["89-92"],
+        "detail": "requireU32 admits a safe integer from 0 to 0xffffffff, and nothing else"
+      },
+      {
+        "code": "nonemptyStrings",
+        "lines": ["94-97"],
+        "detail": "requireNonEmptyString admits a string of length at least one, and nothing else"
+      }
+    ]
+  },
+  "type": "object",
+  "properties": {
+    "project": { "type": "string", "minLength": 1 },
+    "readRoots": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "database": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "engine": { "const": "sqlite-schema" },
+            "path": { "type": "string", "minLength": 1 }
+          },
+          "required": ["engine", "path"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "engine": { "const": "postgres-schema" },
+            "connectionFile": { "type": "string", "minLength": 1 }
+          },
+          "required": ["engine", "connectionFile"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "client": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "line": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "column": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+      },
+      "required": ["path"],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

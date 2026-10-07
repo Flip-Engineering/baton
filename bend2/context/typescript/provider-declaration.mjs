@@ -60,6 +60,15 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+import {
+  SCHEMA_DOCUMENTS,
+  SCHEMA_DRIFT_NOTE,
+  SCHEMA_SOURCE_AUTHORITY,
+  schemaShapeFor,
+} from './schemas/manifest.mjs';
+
+export { SCHEMA_DOCUMENTS, SCHEMA_DRIFT_NOTE, SCHEMA_SOURCE_AUTHORITY, schemaShapeFor };
+
 export const PROVIDER_DECLARATION_SCHEMA = 'baton2.context.provider-declaration.v1';
 export const DECLARATION_VERSION = '1';
 export const DECLARED_TRANSPORT_VERSION = '1';
@@ -186,6 +195,7 @@ function operation({ id, projections, effects }) {
       role,
       identity: null,
       status: 'unadmitted',
+      shape: schemaShapeFor(id, role),
     }))),
   });
 }
@@ -315,10 +325,14 @@ export function checkProviderDeclaration(declaration) {
       ));
     }
     const rows = Array.isArray(declared.schemas) ? declared.schemas : [];
-    const roles = rows.filter((row) => row?.operation === id).map((row) => row.role);
     for (const role of SCHEMA_ROLES) {
-      if (!roles.includes(role)) {
+      const row = rows.find((entry) => entry?.operation === id && entry.role === role);
+      if (row === undefined) {
         reasons.push(reject('schemaRoleMissing', `${id} declares no ${role} schema role`));
+        continue;
+      }
+      if (typeof row.shape !== 'string' || row.shape.length === 0) {
+        reasons.push(reject('schemaShapeMissing', `${id}.${role} names no schema document`));
       }
     }
     for (const row of rows) {
@@ -376,6 +390,10 @@ export function admissionRequirements(declaration = PROVIDER_DECLARATION) {
     operation: row.operation,
     role: row.role,
     identity: row.identity ?? null,
+    shape: row.shape ?? null,
+    sourceLines: SCHEMA_DOCUMENTS
+      .filter((document) => document.operation === row.operation && document.role === row.role)
+      .flatMap((document) => [...document.sourceLines]),
     status: typeof row.identity === 'string' && row.identity.length > 0 ? 'admitted' : 'unadmitted',
   })));
   const activation = declaration.activation ?? {};
