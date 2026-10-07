@@ -243,6 +243,34 @@ def command_frame_name(+c: CodecCommand) -> String:
 def command_admits_frame_name(+c: CodecCommand, +name: String) -> Bool:
   String.eq(command_frame_name(c), name)
 
+# The typed tool the selected command admits, for a decision that already carries its
+# validated tool. This is the match an accepted decision is checked against, so the gate
+# never reads unchecked frame text.
+def command_tool(+c: CodecCommand) -> CodecTool:
+  match c:
+    case CcQuery{}: CtQuery{}
+    case CcQueryFile{}: CtQuery{}
+    case CcResult{}: CtResult{}
+    case CcEngines{}: CtEngines{}
+
+def tool_names_equal(+a: CodecTool, +b: CodecTool) -> Bool:
+  String.eq(codec_tool_name(a), codec_tool_name(b))
+
+def command_admits_tool(+c: CodecCommand, +t: CodecTool) -> Bool:
+  tool_names_equal(command_tool(c), t)
+
+law contracts_law_the_file_query_command_admits_the_query_tool:
+  {command_admits_tool(CcQueryFile{}, CtQuery{}) == True{} : Bool}
+
+def contracts_law_the_file_query_command_admits_the_query_tool():
+  {==}
+
+law contracts_law_the_engines_command_refuses_the_result_tool:
+  {command_admits_tool(CcEngines{}, CtResult{}) == False{} : Bool}
+
+def contracts_law_the_engines_command_refuses_the_result_tool():
+  {==}
+
 # One fixed condition for a frame whose public tool does not match the selected command.
 # It echoes no input.
 def command_mismatch_condition() -> String:
@@ -375,6 +403,16 @@ def frame_id_text(f: FrameId) -> String:
     case IdText{value}: J.json_text(J.Jstr{value})
     case IdNumber{token}: token
 
+# The signed-safe pieces come first because the frame-id profile below reads them.
+def unsigned_rest(s: String) -> String:
+  match s:
+    case SNil{}: s
+    case SCon{+head, +tail}: Bool.pick(String, U32.is_eq(cp(head), 45), tail, s)
+
+def signed_safe_token_ok(+s: String) -> Bool:
+  Bool.pick(Bool, String.is_empty(s), False{},
+    Bool.pick(Bool, U32.is_eq(cp(head_ch(s)), 45), safe_integer_token_ok(unsigned_rest(s)), safe_integer_token_ok(s)))
+
 def frame_id_ok(+f: FrameId) -> Bool:
   match f:
     case IdText{value}: True{}
@@ -481,18 +519,6 @@ def safe_shape_ok(+s: String) -> Bool:
 def safe_integer_token_ok(+s: String) -> Bool:
   Bool.pick(Bool, String.is_empty(s), False{},
     Bool.pick(Bool, all_digits(s), safe_shape_ok(s), False{}))
-
-# A signed safe-integer token: an optional minus over the unsigned profile. This
-# is the frame-id profile; an id may be a signed safe integer, and the unsigned
-# declaration profile above stays separate.
-def unsigned_rest(s: String) -> String:
-  match s:
-    case SNil{}: s
-    case SCon{+head, +tail}: Bool.pick(String, U32.is_eq(cp(head), 45), tail, s)
-
-def signed_safe_token_ok(+s: String) -> Bool:
-  Bool.pick(Bool, String.is_empty(s), False{},
-    Bool.pick(Bool, U32.is_eq(cp(head_ch(s)), 45), safe_integer_token_ok(unsigned_rest(s)), safe_integer_token_ok(s)))
 
 # A monotone lifetime counter token: unsigned decimal, "0" or [1-9][0-9]*, with no
 # magnitude bound, admitted as exact text and never normalized. Malformed aliases

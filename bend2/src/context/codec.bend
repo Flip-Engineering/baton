@@ -1475,28 +1475,20 @@ def decision_document(+c: Context.CodecCommand, +d: FrameDecision) -> Document:
     case FdOk{tool, id, query, request, scope}: DocOk{Context.codec_success_text(tool, id, query, request, scope)}
     case FdRefused{cls, condition}: DocRefused{Context.refusal_text(Context.Refuse{cls, Context.command_name(c), Context.text_condition(condition), Context.NextStop{}})}
 
+# The single operative gate. It applies to the complete envelope-and-metadata decision,
+# so the tool it reads is the one the decision already validated: an unknown tool still
+# refuses as an unknown tool, a malformed frame still refuses as its own walk refused it,
+# and only an accepted frame whose typed tool is not the one the selected command admits
+# becomes the one fixed mismatch refusal. The document entry and the correlated entry both
+# pass through this gate, so no path correlates one way and dispatches another.
+def command_decision(+c: Context.CodecCommand, +d: FrameDecision) -> FrameDecision:
+  match d:
+    case FdOk{+tool, +id, +query, +request, +scope}:
+      Bool.pick(FrameDecision, Context.command_admits_tool(c, tool), FdOk{tool, id, query, request, scope}, FdRefused{Context.RfValidation{}, Context.command_mismatch_condition()})
+    case other: other
+
 def document_of_rows(+c: Context.CodecCommand, rows: String) -> Document:
-  decision_document(c, frame_decision(frame_envelope(Req.Context.parse_rows(rows))))
-
-# The frame's public tool must match the argv-selected command before any accepted
-# decision or effect. This entry is that gate: a frame whose public name is not the one
-# the selected command admits refuses with the one fixed mismatch condition, so a frame
-# never chooses the command and no unchecked frame text becomes command authority. The
-# name it reads is the same public name the envelope already validates, so an unknown
-# tool still refuses as an unknown tool in the ordinary decision below.
-def command_frame_name_of_read(+r: FrameRead) -> String:
-  match r:
-    case FrValue{+value}: raw_field_text(params_of(value), "name")
-    case FrRefused{condition}: SNil{}
-
-def command_frame_name_of_text(rows_text: String) -> String:
-  command_frame_name_of_read(frame_read(Req.Context.parse_rows(rows_text)))
-
-def command_document_step(+c: Context.CodecCommand, rows_text: String, ok: Bool) -> Document:
-  Bool.pick(Document, ok, document_of_rows(c, rows_text), DocRefused{validation_refusal(c, Context.command_mismatch_condition())})
-
-def command_document(+c: Context.CodecCommand, rows_text: String) -> Document:
-  command_document_step(c, rows_text, Context.command_admits_frame_name(c, command_frame_name_of_text(rows_text)))
+  decision_document(c, command_decision(c, frame_decision(frame_envelope(Req.Context.parse_rows(rows)))))
 
 # ---------------------------------------------------------------------------
 # The correlated frame decision. A caller that answers one frame correlates its
@@ -1535,6 +1527,53 @@ def correlated_decision(rows: Req.Rows) -> CorrelatedDecision:
 
 def correlated_decision_of_text(text: String) -> CorrelatedDecision:
   correlated_decision(Req.Context.parse_rows(text))
+
+# The correlated entry for an ordinary call. It runs the same single gate on the same
+# accepted variant, so a frame whose tool the selected command does not admit refuses with
+# the checked id retained and the one fixed condition, while a refused or uncorrelated
+# frame keeps its own variant untouched. Main therefore correlates and dispatches through
+# one gate rather than two.
+def correlated_command_of(+c: Context.CodecCommand, +cd: CorrelatedDecision) -> CorrelatedDecision:
+  match cd:
+    case CdAccepted{+id, +tool, +query, +request, +scope}:
+      Bool.pick(CorrelatedDecision, Context.command_admits_tool(c, tool), CdAccepted{id, tool, query, request, scope}, CdRefused{id, Context.RfValidation{}, Context.command_mismatch_condition()})
+    case other: other
+
+def correlated_command_decision(+c: Context.CodecCommand, rows: Req.Rows) -> CorrelatedDecision:
+  correlated_command_of(c, correlated_decision(rows))
+
+def correlated_command_of_text(+c: Context.CodecCommand, text: String) -> CorrelatedDecision:
+  correlated_command_decision(c, Req.Context.parse_rows(text))
+
+law codec_law_a_mismatched_command_refuses_the_correlated_decision_with_its_id:
+  {correlated_command_of(Context.CcEngines{}, CdAccepted{Context.IdNumber{"7"}, Context.CtResult{}, Context.Absent{}, Context.Absent{}, Context.Absent{}}) == CdRefused{Context.IdNumber{"7"}, Context.RfValidation{}, "commandToolMismatch"} : CorrelatedDecision}
+
+def codec_law_a_mismatched_command_refuses_the_correlated_decision_with_its_id():
+  {==}
+
+law codec_law_a_matching_command_keeps_the_accepted_correlated_decision:
+  {correlated_command_of(Context.CcQueryFile{}, CdAccepted{Context.IdNumber{"7"}, Context.CtQuery{}, Context.Present{"q1"}, Context.Absent{}, Context.Absent{}}) == CdAccepted{Context.IdNumber{"7"}, Context.CtQuery{}, Context.Present{"q1"}, Context.Absent{}, Context.Absent{}} : CorrelatedDecision}
+
+def codec_law_a_matching_command_keeps_the_accepted_correlated_decision():
+  {==}
+
+law codec_law_an_uncorrelated_decision_passes_through_the_command_gate:
+  {correlated_command_of(Context.CcEngines{}, CdUncorrelated{"malformedHexField"}) == CdUncorrelated{"malformedHexField"} : CorrelatedDecision}
+
+def codec_law_an_uncorrelated_decision_passes_through_the_command_gate():
+  {==}
+
+law codec_law_a_mismatched_command_refuses_the_decision:
+  {command_decision(Context.CcEngines{}, FdOk{Context.CtResult{}, Context.IdNumber{"7"}, Context.Absent{}, Context.Absent{}, Context.Absent{}}) == FdRefused{Context.RfValidation{}, "commandToolMismatch"} : FrameDecision}
+
+def codec_law_a_mismatched_command_refuses_the_decision():
+  {==}
+
+law codec_law_an_unknown_tool_refusal_survives_the_command_gate:
+  {command_decision(Context.CcEngines{}, FdRefused{Context.RfValidation{}, "unknownTool"}) == FdRefused{Context.RfValidation{}, "unknownTool"} : FrameDecision}
+
+def codec_law_an_unknown_tool_refusal_survives_the_command_gate():
+  {==}
 
 def record_probe(subject: String, policy: String, +projections: Eng.SS) -> Refs.RefRecord:
   Refs.Ref{"r1", "typescript", subject, subject, "s1", policy, projections}
