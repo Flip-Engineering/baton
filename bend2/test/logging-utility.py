@@ -19,6 +19,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
 SPOOL = ROOT / 'bend2/test/fixtures/logging-utility-spool.jsonl'
 OPEN_STREAM = ROOT / 'bend2/test/fixtures/logging-utility-open-stream.jsonl'
+OPEN_TOOL = ROOT / 'bend2/test/fixtures/logging-utility-open-tool.jsonl'
+CUMULATIVE = ROOT / 'bend2/test/fixtures/logging-utility-cumulative.jsonl'
+MUSE_BATCH = ROOT / 'bend2/test/fixtures/logging-utility-muse.jsonl'
+CODEX_BATCH = ROOT / 'bend2/test/fixtures/logging-utility-codex.jsonl'
 
 
 class LoggingUtility(unittest.TestCase):
@@ -111,6 +115,57 @@ sys.exit(0)
         updates = [line for line in kept if json.loads(line).get('type') == 'message_update']
         newest = text.splitlines()[-1]
         self.assertEqual(updates, [newest])
+
+    def test_open_tool_call_flushes_newest_update_and_keeps_start(self):
+        text = OPEN_TOOL.read_text()
+        self.stream(text, turn='turn-2')
+        kept = self.retained()
+        frames = [json.loads(line) for line in text.splitlines()]
+        start = next(line for line, frame in zip(text.splitlines(), frames)
+                     if frame.get('type') == 'tool_execution_start')
+        self.assertIn(start, kept)
+        last = None
+        for line, frame in zip(text.splitlines(), frames):
+            if frame.get('type') == 'tool_execution_update':
+                last = line
+        self.assertIsNotNone(last)
+        self.assertIn(last, kept)
+        self.assertNotIn('tool_execution_end', {json.loads(line).get('type') for line in kept})
+
+
+class LoggingShapes(unittest.TestCase):
+    """Real-vocabulary shape pins that need no native executable."""
+
+    def test_cumulative_tool_chain_repeats_args(self):
+        frames = [json.loads(line) for line in CUMULATIVE.read_text().splitlines()]
+        self.assertTrue(len(frames) >= 3)
+        self.assertTrue(all(frame.get('type') == 'tool_execution_update' for frame in frames))
+        ids = {frame.get('toolCallId') for frame in frames}
+        self.assertEqual(len(ids), 1)
+        args = [json.dumps(frame.get('args'), sort_keys=True) for frame in frames]
+        self.assertTrue(all(entry == args[0] for entry in args))
+        sizes = sorted(len(json.dumps(frame.get('partialResult'))) for frame in frames)
+        self.assertLess(sizes[0], sizes[-1])
+
+    def test_muse_batch_envelope_and_tool_result(self):
+        frames = [json.loads(line) for line in MUSE_BATCH.read_text().splitlines()]
+        self.assertTrue(len(frames) > 0)
+        envelope = ('schema_version', 'stream', 'sequence', 'record_type', 'payload_type', 'payload')
+        for frame in frames:
+            for key in envelope:
+                self.assertIn(key, frame)
+        kinds = {frame.get('payload_type') for frame in frames}
+        self.assertIn('tool.result', kinds)
+        self.assertTrue(any(name.startswith('task.lifecycle.') for name in kinds))
+
+    def test_codex_batch_items_unique_with_terminal(self):
+        frames = [json.loads(line) for line in CODEX_BATCH.read_text().splitlines()]
+        kinds = {frame.get('type') for frame in frames}
+        self.assertIn('turn.completed', kinds)
+        ids = [frame.get('item', {}).get('id') for frame in frames
+               if frame.get('type') == 'item.completed']
+        self.assertTrue(len(ids) > 0)
+        self.assertEqual(len(ids), len(set(ids)))
 
 
 if __name__ == '__main__':
