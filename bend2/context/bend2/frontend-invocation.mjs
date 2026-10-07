@@ -111,14 +111,17 @@ function validateRequest({ frontend, adapter, root, phases, comp }) {
 // of the host: when the root is PROOF.bend and a sibling LAWS.bend is present but its canonical
 // identity was never loaded, the run is refused before any completion step.
 function proofLawsGate({ frontend, adapter, owner, root, seen }) {
-  if (basename(root) !== 'PROOF.bend') return Object.freeze({ status: 'notApplicable' });
+  // The notApplicable answers carry the operative values (root, lawsPath,
+  // lookup status) so a missing gate entry diagnoses itself in the report
+  // instead of leaving a silent gap; they change no outcome or emission.
+  if (basename(root) !== 'PROOF.bend') return Object.freeze({ status: 'notApplicable', root });
   const lawsPath = join(dirname(root), 'LAWS.bend');
   const lookup = adapter.sink.lookupSource(lawsPath, owner);
   if (lookup === undefined) return Object.freeze({ status: 'unavailable', reason: 'outsideInvocation' });
   // Only the closure answering that the sibling is not there means the rule does not apply. A lookup
   // this side could not answer, or answered with a cached failure, is unavailable with its reason:
   // a failed acquisition is not evidence of absence.
-  if (lookup.status === 'absent') return Object.freeze({ status: 'notApplicable', presence: 'absent' });
+  if (lookup.status === 'absent') return Object.freeze({ status: 'notApplicable', presence: 'absent', lawsPath });
   if (lookup.status === 'unavailable') return Object.freeze({ status: 'unavailable', reason: lookup.detail === undefined || lookup.detail === null ? 'closureUnavailable' : lookup.detail });
   if (lookup.status === 'unknown') return Object.freeze({ status: 'unavailable', reason: lookup.detail === undefined || lookup.detail === null ? 'closureResolutionMissing' : lookup.detail });
   if (lookup.status !== 'present' && lookup.status !== 'captured') return Object.freeze({ status: 'unavailable', reason: `lookupUnsupported: ${String(lookup.status)}` });

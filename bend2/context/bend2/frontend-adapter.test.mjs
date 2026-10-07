@@ -106,7 +106,10 @@ test('two imports finalize one view at the pre-parse boundary and resolve earlie
   const owner = start(adapter, '/work/multi.bend');
   loadFile(adapter, owner, '/work/multi.bend');
   importLine(adapter, owner, '/work/multi.bend', 0, 11, 'import Base');
-  importLine(adapter, owner, '/work/multi.bend', 12, 31, 'import ./d.bend as D');
+  // The second import spans original indexes 12..32: 'import ./d.bend as D'
+  // is 20 characters, so the exclusive removal end is 32 and the view keeps
+  // the newline at 32, matching the transformed text above.
+  importLine(adapter, owner, '/work/multi.bend', 12, 32, 'import ./d.bend as D');
   // The declaration is emitted before the boundary, exactly as the patched frontend orders it.
   declare(adapter, owner, '/work/multi.bend', 'value', { src: transformed, beg: 2, end: 7 });
   preParse(adapter, owner, '/work/multi.bend', transformed, { D: './d' });
@@ -120,7 +123,9 @@ test('two imports finalize one view at the pre-parse boundary and resolve earlie
   const declaration = session.declarations[0];
   assert.equal(declaration.span.status, 'mapped');
   assert.equal(declaration.span.text, 'value');
-  assert.equal(declaration.span.original.start.index, 32);
+  // 'value' sits at transformed index 2, which the spliced view maps to
+  // original index 33 (past both removals and their newlines).
+  assert.equal(declaration.span.original.start.index, 33);
   assert.equal(session.completeness, 'complete');
 });
 
@@ -163,7 +168,9 @@ test('a span crossing a removed import is refused, and a mismatched pre-parse te
   importLine(adapter, owner, '/work/imports.bend', 4, 15, 'import Base');
   declare(adapter, owner, '/work/imports.bend', 'body', { src: transformed, beg: 5, end: 9 });
   declare(adapter, owner, '/work/imports.bend', 'across', { src: transformed, beg: 3, end: 6 });
-  preParse(adapter, owner, '/work/imports.bend', 'aaa\n\nbody\n', {});
+  // The handed-over text genuinely differs from the finalized view (a
+  // trailing space), which is what the mismatch recording below asserts.
+  preParse(adapter, owner, '/work/imports.bend', 'aaa\n\nbody \n', {});
   adapter.endQuery();
 
   const session = adapter.report().sessions[0];
@@ -624,7 +631,11 @@ test('a failing check stops before completion and still restores the hook', asyn
   assert.equal(result.status, 'failed');
   assert.deepEqual([...result.phasesRun], ['parse']);
   assert.equal(result.outcome.phase, 'check');
-  assert.equal(result.outcome.thrown.kind, 'Err');
+  // The outcome contract carries the summary and the value on separate
+  // members (outcomeOf; every other consumer reads thrownSummary and
+  // thrownValue): the kind-only summary is never the value itself.
+  assert.equal(result.outcome.thrownSummary.kind, 'Err');
+  assert.deepEqual(result.outcome.thrownValue, { $: 'Err', def: 'body', spn: null });
   assert.equal(ownedCalls, 0, 'completion is never reported as reached');
   assert.equal(frontend.state.owner, null);
   assert.equal(frontend.calls.some((call) => call[0] === 'book_valid'), true);

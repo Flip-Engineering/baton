@@ -359,16 +359,18 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
   // declaration is ambiguous and stays unattributed, and source text selects nothing: identical text
   // in two files is a normal case, not an identity.
   function declarationFileFor(session, qualified) {
-    let found = null;
-    let matches = 0;
+    // Identical qualified names in one file are duplicate recordings of one
+    // declaration, not an attribution conflict: the observation is
+    // attributable to that file. Only names spread across distinct files
+    // are genuinely ambiguous.
+    const files = new Set();
     for (let index = 0; index < session.declarations.length; index += 1) {
-      if (session.declarations[index].qualified === qualified) {
-        matches += 1;
-        found = session.declarations[index];
+      if (session.declarations[index].qualified === qualified && session.declarations[index].file !== null) {
+        files.add(session.declarations[index].file);
       }
     }
-    if (matches === 1) return found.file;
-    if (matches > 1) {
+    if (files.size === 1) return [...files][0];
+    if (files.size > 1) {
       counters.ambiguousAttributions += 1;
       note(session, 'ambiguousDeclaration', qualified);
     }

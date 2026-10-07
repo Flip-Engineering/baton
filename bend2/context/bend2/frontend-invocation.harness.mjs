@@ -180,7 +180,9 @@ function reportOf(name, result, adapter, extra) {
     outcome: result.outcome === null || result.outcome === undefined ? null : {
       phase: result.outcome.phase,
       gate: result.outcome.gate ?? null,
-      thrownKind: result.outcome.thrownSummary === undefined ? null : result.outcome.thrownSummary.kind,
+      // A refusal carries no thrown summary at all (refusalOf sets null
+      // rather than inventing one); only a real summary names a kind.
+      thrownKind: result.outcome.thrownSummary === undefined || result.outcome.thrownSummary === null ? null : result.outcome.thrownSummary.kind,
       thrownIsValue: result.outcome.thrownValue !== undefined,
       rendered: result.outcome.rendered ?? null,
     },
@@ -199,6 +201,10 @@ function reportOf(name, result, adapter, extra) {
     completeness: session === null ? null : session.completeness,
     incompleteness: session === null ? [] : [...session.incompleteness],
     acquisitions: session === null ? [] : session.acquisitions,
+    // Observer limitations (ambiguous attributions, evidence failures and
+    // their details) travel with the report so a red gate names its cause
+    // instead of hiding it behind a bare incompleteness flag.
+    limitations: session === null ? [] : [...session.limitations],
     counters: session === null ? null : session.counterDelta,
     assertions: [],
     failed: false,
@@ -300,7 +306,10 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     check(report, 'a parse diagnostic was reported', diagnostic !== undefined, report.diagnostics);
     check(report, 'the diagnostic names the parsed file', diagnostic !== undefined && typeof diagnostic.file === 'string' && diagnostic.file.endsWith('typo.bend'), diagnostic);
     check(report, 'the span is mapped to the original capture', diagnostic !== undefined && diagnostic.span.status === 'mapped', diagnostic === undefined ? null : diagnostic.span);
-    check(report, 'the span sits on the unbalanced line', diagnostic !== undefined && diagnostic.span.line === 3, diagnostic === undefined ? null : diagnostic.span);
+    // The unbalanced open paren sits on fixture line 4 (`  (x`); line 3 is
+    // the balanced def line, so the kernel's 1-based line 4 is the truthful
+    // mapping and the old literal was a 0-based slip.
+    check(report, 'the span sits on the unbalanced line', diagnostic !== undefined && diagnostic.span.line === 4, diagnostic === undefined ? null : diagnostic.span);
     check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
     return report;
   }));
