@@ -6,6 +6,7 @@ import ./engines.bend as Eng
 import ./engines-decl.bend as Decl
 import ./native-request.bend as NativeRequest
 import ./native-declaration.bend as NativeDeclaration
+import ./native-runtime-laws.bend as NativeRuntimeLaws
 import ./engines.bend as Eng
 import ../json/canonical.bend as J
 
@@ -110,27 +111,6 @@ law native_installed_provider_path_uses_the_executable_install_prefix:
   {Native.installed_provider_path("/opt/baton2/bin/baton2") == "/opt/baton2/bin/../libexec/baton2/context-provider.mjs" : String}
 
 def native_installed_provider_path_uses_the_executable_install_prefix():
-  {==}
-
-law native_runtime_admission_keeps_the_discovered_absolute_executable:
-  {Native.node_runtime_fields(["/opt/node22/bin/node", "supported", "22.15.0"]) ==
-    Native.ProviderRuntime{"/opt/node22/bin/node", "22.15.0"} : Native.ProviderAnswer}
-
-def native_runtime_admission_keeps_the_discovered_absolute_executable():
-  {==}
-
-law native_runtime_admission_refuses_an_unsupported_version:
-  {Native.node_runtime_fields(["/opt/node/bin/node", "unsupported", "22.14.9"]) ==
-    Native.ProviderRefused{"nodeRuntimeUnsupported"} : Native.ProviderAnswer}
-
-def native_runtime_admission_refuses_an_unsupported_version():
-  {==}
-
-law native_runtime_admission_refuses_a_non_absolute_executable:
-  {Native.node_runtime_fields(["node", "supported", "22.23.3"]) ==
-    Native.ProviderRefused{"nodeRuntimeUnsupported"} : Native.ProviderAnswer}
-
-def native_runtime_admission_refuses_a_non_absolute_executable():
   {==}
 
 law native_engines_refuses_without_admission:
