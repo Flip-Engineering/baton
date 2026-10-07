@@ -49,7 +49,12 @@ def Receipt.attempt_token(target: String) -> IO(Result<&1, &1, U32 & String, Str
   import "./receipt.c"
 
 # Exclusively establish one attempt directory under a parent, so a fresh attempt identity is
-# reserved at the write boundary rather than inferred from a probe. Success answers the
-# reserved path; failure answers its errno, so a taken name is distinguishable from an error.
+# reserved at the write boundary rather than inferred from a probe. The answer is the same six
+# field record the claim and ensure effects return: the tag is created, existing or failed,
+# followed by the path, the first errno, the phase, the pending field and the detail. Created
+# admits the reservation and names the reserved path; existing is a collision and nothing
+# else may advance; a failed or unreadable record keeps its own observation. The name is one
+# component in the attempt alphabet, which accepts the percent escapes the target encoder
+# emits.
 def Receipt.reserve_attempt(parent: String, name: String) -> IO(Result<&1, &1, U32 & String, String>):
   import "./receipt.c"

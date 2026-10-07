@@ -19,6 +19,7 @@ import ./debris.bend as Deb
 import ./text.bend as Tx
 import ./status.bend as WS
 import ./create-worktree.bend as CW
+import ../host/receipt.bend as Receipt
 
 # ---------------------------------------------------------------------------
 # M-2: an unresolved external attempt stays unresolved until justified.
@@ -1596,4 +1597,18 @@ law m10_ld_go5_keeps_a_failed_landing:
   {L.ld_go5(L.LdFail{fail}, repo, target, script, files, scratch) == IO.pure(L.Ld, L.LdFail{fail}) : IO(L.Ld)}
 
 def m10_ld_go5_keeps_a_failed_landing(fail, repo, target, script, files, scratch):
+  {==}
+
+# The attempt token the reservation name carries is the target encoder's own output, so a
+# slash-bearing target arrives already escaped and stays a single path component.
+law m5_receipt_attempt_token_escapes_a_slash_bearing_target:
+  {Receipt.Receipt.attempt_token("feature/x") == IO.pure(Result<&1, &1, U32 & String, String>, Done{"feature%2fx"}) : IO(Result<&1, &1, U32 & String, String>)}
+
+def m5_receipt_attempt_token_escapes_a_slash_bearing_target():
+  {==}
+
+law m5_receipt_attempt_token_leaves_a_plain_target_unchanged:
+  {Receipt.Receipt.attempt_token("main") == IO.pure(Result<&1, &1, U32 & String, String>, Done{"main"}) : IO(Result<&1, &1, U32 & String, String>)}
+
+def m5_receipt_attempt_token_leaves_a_plain_target_unchanged():
   {==}

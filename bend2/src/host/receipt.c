@@ -92,6 +92,23 @@ static int receipt_chars_ok(const char *text,size_t length) {
   return strcmp(text,".")!=0 && strcmp(text,"..")!=0;
 }
 
+/* The alphabet a reserved attempt name may use. It accepts what the target encoder emits —
+   letters, digits, dot, underscore, hyphen and the percent sign with lowercase hex — because
+   the name is expected to carry an encoded target, while still refusing empty, NUL, the
+   separator, and the dot and dot-dot names. The ordinary receipt-name alphabet is not
+   widened. */
+static int receipt_attempt_chars_ok(const char *text,size_t length) {
+  if(length==0 || strlen(text)!=length) return 0;
+  for(size_t index=0;index<length;index++) {
+    char c=text[index];
+    int ok=(c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')
+           ||c=='.'||c=='_'||c=='-'||c=='%';
+    if(!ok) return 0;
+  }
+  if(strchr(text,'/')) return 0;
+  return strcmp(text,".")!=0 && strcmp(text,"..")!=0;
+}
+
 /* A reversible encoding of the target ref for a lock name: no hashing, so two
    distinct targets in one repository can never share a lock, and every other
    character is confined to the internal alphabet. */
@@ -587,9 +604,11 @@ static void __attribute__((constructor)) baton_receipt_attempt_token_use(void) {
 #ifdef CID_RECEIPT_RESERVE_ATTEMPT
 /* Exclusively establish one attempt directory under a parent. mkdir is the write boundary, so
    a taken name answers the shared record's existing tag, a write failure answers failed with
-   its errno, and no observation failure is read as absence. The name must be a single
-   component in the internal alphabet, so it cannot escape the parent, and the work runs
-   through the same worker convention as the claim and ensure effects. */
+   its errno and its phase, and no observation failure is read as absence. The name must be a
+   single component in the attempt alphabet, so it cannot escape the parent. The work runs
+   through the same worker convention as the claim and ensure effects, and the answer is the
+   same six field record those effects return: created, existing or failed followed by the
+   path, the first errno, the phase, pending and the detail. */
 static void baton_receipt_reserve_call(IoWork *w) {
   BatonReceipt *call=(BatonReceipt *)w->data;
   size_t span=strlen(call->directory)+strlen(call->name)+2;
@@ -619,7 +638,7 @@ static Term baton_receipt_reserve_run(Env e,Term *f,IoWork *w) {
   if(strlen(call->directory)!=dn) {receipt_free(call);return io_fail(e,EINVAL,"parent contains NUL");}
   if(dn==0) {receipt_free(call);return io_fail(e,EINVAL,"parent is empty");}
   if(nn==0 || strlen(call->name)!=nn) {receipt_free(call);return io_fail(e,EINVAL,"name is empty or truncated at NUL");}
-  if(!receipt_chars_ok(call->name,nn)) {receipt_free(call);return io_fail(e,EINVAL,"name is not a single component in the internal alphabet");}
+  if(!receipt_attempt_chars_ok(call->name,nn)) {receipt_free(call);return io_fail(e,EINVAL,"name is not a single component in the attempt alphabet");}
   w->data=(char *)call;
   return io_work(w,baton_receipt_reserve_call,baton_receipt_reserve_pack);
 }
