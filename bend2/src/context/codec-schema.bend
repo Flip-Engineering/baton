@@ -1737,3 +1737,19 @@ law schema_law_disc_member_consuming_cycle_admits:
 
 def schema_law_disc_member_consuming_cycle_admits():
   {==}
+
+# Keep selected-reference traversal working through a 32-level singleton
+# union path, where each selected case consumes one object member.
+def disc_depth32_union_defs() -> SchemaDefs:
+  DefsCons{SchemaDef{"node", SfUnion{SfCasesCons{
+    SchemaCase{"leaf", SfScalar{SsNull{}}},
+    SfCasesCons{SchemaCase{"child", SfRef{"node"}}, SfCasesNil{}}}}}, DefsNil{}}
+
+def disc_depth32_union_value() -> Codec.RawValue:
+  Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"leaf", Codec.Rnull{}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}, Codec.Rnil{}}}
+
+law schema_law_a_depth32_selected_union_reference_admits:
+  {schema_admit_value(disc_depth32_union_defs(), SfRef{"node"}, disc_depth32_union_value()) == SvOk{} : SchemaVerdict}
+
+def schema_law_a_depth32_selected_union_reference_admits():
+  {==}
