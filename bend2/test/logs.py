@@ -236,20 +236,25 @@ sys.exit(%d)
         self.assertFalse((self.cwd / 'turn.jsonl.2').exists())
 
     def test_sustained_update_stream_stays_within_retention_bound(self):
-        budget, keep = 65536, 2
+        budget, keep, calls = 65536, 2, 40
         self.call('logs', 'omp-worker', 'default', str(budget), str(keep))
-        updates = [json.dumps({'type': 'tool_execution_update', 'toolCallId': 'tool-9',
-                               'toolName': 'bash', 'seq': i,
-                               'partialResult': {'content': [{'type': 'text', 'text': 'x' * 2000}]}})
-                   for i in range(60)]
-        end = json.dumps({'type': 'tool_execution_end', 'toolCallId': 'tool-9', 'toolName': 'bash',
-                          'result': {'content': [{'type': 'text', 'text': 'done'}]}, 'isError': False})
-        self.stream(updates + [end, self.terminal()])
+        frames = []
+        for i in range(calls):
+            frames.append(json.dumps({'type': 'tool_execution_update', 'toolCallId': 'tool-%d' % i,
+                                      'toolName': 'bash', 'seq': i,
+                                      'partialResult': {'content': [{'type': 'text', 'text': 'x' * 2000}]}}))
+            frames.append(json.dumps({'type': 'tool_execution_end', 'toolCallId': 'tool-%d' % i,
+                                      'toolName': 'bash',
+                                      'result': {'content': [{'type': 'text', 'text': 'done'}]}}))
+        self.stream(frames + [self.terminal()])
         self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
         retained = self.rotated_frames()
         kinds = [json.loads(line).get('type') for line in retained]
-        self.assertEqual(kinds.count('tool_execution_update'), 1)
-        self.assertIn('"seq": 59', '\n'.join(retained))
+        self.assertEqual(kinds.count('tool_execution_update'), calls)
+        self.assertEqual(kinds.count('tool_execution_end'), calls)
+        text = '\n'.join(retained)
+        self.assertIn('"seq": 0', text)
+        self.assertIn('"seq": %d' % (calls - 1), text)
         self.assertIn(self.terminal(), retained)
         total = sum(p.stat().st_size for p in [self.log, self.cwd / 'turn.jsonl.1',
                                                self.cwd / 'turn.jsonl.2'] if p.exists())
