@@ -8,9 +8,16 @@ name: bend2-native-development
 
 permissions:
   contents: read
+  actions: read
+
+# One execution per exact source and pinned toolchain: a repeated request for
+# the same commit waits on the active run instead of duplicating heavy gates.
+concurrency:
+  group: bend2-native-${{ github.sha }}-bend2.0.25
+  cancel-in-progress: false
 
 jobs:
-  darwin-arm64:
+  gate-build-native:
     runs-on: xcode-27
     env:
       BEND_NO_TELEMETRY: '1'
@@ -49,11 +56,211 @@ jobs:
           BEND_HOME="$run/toolchain-home" sh "$run/build-source/docs/bend2/reference/toolchain/install-2.0.25.sh" \
             > "$run/toolchain/install.log" 2>&1
 
-      - name: Run complete exact-source gates and package
+      - name: Run build-native gate and record receipt
         shell: bash
         run: |
           set -euo pipefail
           python3 "$BATON2_NATIVE_RUN/build-source/bend2/scripts/package-native.py" \
+            --run-gate build-native \
+            --bend "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" \
+            --gate-output "$BATON2_NATIVE_RUN/gate-build-native"
+          mkdir -p "$BATON2_NATIVE_RUN/gate-build-native/outputs"
+          cp "$BATON2_NATIVE_RUN/build-source/.scratch/bend2/baton2" \
+            "$BATON2_NATIVE_RUN/gate-build-native/outputs/baton2"
+          cp "$BATON2_NATIVE_RUN/build-source/.scratch/bend2/baton2.c" \
+            "$BATON2_NATIVE_RUN/gate-build-native/outputs/baton2.c"
+
+      - name: Retain build-native gate receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gate-build-native-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.BATON2_NATIVE_RUN }}/gate-build-native/
+            ${{ env.BATON2_NATIVE_RUN }}/clone.log
+          if-no-files-found: error
+          include-hidden-files: true
+
+  gate-laws-check:
+    runs-on: xcode-27
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Select Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Create owned build clone and preserve compiler archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          run="$RUNNER_TEMP/baton2-native-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          mkdir -p "$run/toolchain"
+          printf 'BATON2_NATIVE_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          git clone --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$run/build-source" > "$run/clone.log" 2>&1
+          git -C "$run/build-source" checkout --detach "$GITHUB_SHA" >> "$run/clone.log" 2>&1
+          test "$(git -C "$run/build-source" rev-parse HEAD)" = "$GITHUB_SHA"
+          archive="$run/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
+            -o "$archive" > "$run/toolchain/download.log" 2>&1
+          printf 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31  %s\n' "$archive" | \
+            shasum -a 256 -c - > "$run/toolchain/archive-check.log" 2>&1
+          tar -tzf "$archive" > "$run/toolchain/archive-members.txt"
+          test ! -e "$run/toolchain-home"
+          BEND_HOME="$run/toolchain-home" sh "$run/build-source/docs/bend2/reference/toolchain/install-2.0.25.sh" \
+            > "$run/toolchain/install.log" 2>&1
+
+      - name: Run laws-check gate and record receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$BATON2_NATIVE_RUN/build-source/bend2/scripts/package-native.py" \
+            --run-gate laws-check \
+            --bend "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" \
+            --gate-output "$BATON2_NATIVE_RUN/gate-laws-check"
+
+      - name: Retain laws-check gate receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gate-laws-check-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.BATON2_NATIVE_RUN }}/gate-laws-check/
+            ${{ env.BATON2_NATIVE_RUN }}/clone.log
+          if-no-files-found: error
+          include-hidden-files: true
+
+  gate-check-native:
+    runs-on: xcode-27
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Select Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Create owned build clone and preserve compiler archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          run="$RUNNER_TEMP/baton2-native-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          mkdir -p "$run/toolchain"
+          printf 'BATON2_NATIVE_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          git clone --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$run/build-source" > "$run/clone.log" 2>&1
+          git -C "$run/build-source" checkout --detach "$GITHUB_SHA" >> "$run/clone.log" 2>&1
+          test "$(git -C "$run/build-source" rev-parse HEAD)" = "$GITHUB_SHA"
+          archive="$run/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
+            -o "$archive" > "$run/toolchain/download.log" 2>&1
+          printf 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31  %s\n' "$archive" | \
+            shasum -a 256 -c - > "$run/toolchain/archive-check.log" 2>&1
+          tar -tzf "$archive" > "$run/toolchain/archive-members.txt"
+          test ! -e "$run/toolchain-home"
+          BEND_HOME="$run/toolchain-home" sh "$run/build-source/docs/bend2/reference/toolchain/install-2.0.25.sh" \
+            > "$run/toolchain/install.log" 2>&1
+
+      - name: Run check-native gate and record receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$BATON2_NATIVE_RUN/build-source/bend2/scripts/package-native.py" \
+            --run-gate check-native \
+            --bend "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" \
+            --gate-output "$BATON2_NATIVE_RUN/gate-check-native"
+
+      - name: Retain check-native gate receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gate-check-native-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.BATON2_NATIVE_RUN }}/gate-check-native/
+            ${{ env.BATON2_NATIVE_RUN }}/clone.log
+          if-no-files-found: error
+          include-hidden-files: true
+
+  darwin-arm64:
+    needs: [gate-build-native, gate-laws-check, gate-check-native]
+    runs-on: xcode-27
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Select Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Create owned build clone and preserve compiler archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          run="$RUNNER_TEMP/baton2-native-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          mkdir -p "$run/toolchain" "$run/receipts"
+          printf 'BATON2_NATIVE_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          git clone --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$run/build-source" > "$run/clone.log" 2>&1
+          git -C "$run/build-source" checkout --detach "$GITHUB_SHA" >> "$run/clone.log" 2>&1
+          test "$(git -C "$run/build-source" rev-parse HEAD)" = "$GITHUB_SHA"
+          archive="$run/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
+            -o "$archive" > "$run/toolchain/download.log" 2>&1
+          printf 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31  %s\n' "$archive" | \
+            shasum -a 256 -c - > "$run/toolchain/archive-check.log" 2>&1
+          tar -tzf "$archive" > "$run/toolchain/archive-members.txt"
+          test ! -e "$run/toolchain-home"
+          BEND_HOME="$run/toolchain-home" sh "$run/build-source/docs/bend2/reference/toolchain/install-2.0.25.sh" \
+            > "$run/toolchain/install.log" 2>&1
+
+      - name: Collect parallel gate receipts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: gate-*-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ env.BATON2_NATIVE_RUN }}/collected
+          merge-multiple: false
+
+      - name: Assemble complete gates and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          run="$BATON2_NATIVE_RUN"
+          for gate in build-native laws-check check-native; do
+            test -d "$run/collected/gate-$gate-$GITHUB_SHA-$GITHUB_RUN_ATTEMPT/gate-$gate"
+          done
+          mkdir -p "$run/receipts"
+          for gate in build-native laws-check check-native; do
+            mv "$run/collected/gate-$gate-$GITHUB_SHA-$GITHUB_RUN_ATTEMPT/gate-$gate" "$run/receipts/$gate"
+          done
+          python3 "$BATON2_NATIVE_RUN/build-source/bend2/scripts/package-native.py" \
+            --assemble-gates "$BATON2_NATIVE_RUN/receipts" \
+            --build-outputs "$BATON2_NATIVE_RUN/receipts/build-native/outputs" \
             --output "$BATON2_NATIVE_RUN/package" \
             --bend "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" \
             --compiler-archive "$BATON2_NATIVE_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
