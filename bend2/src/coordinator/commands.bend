@@ -85,11 +85,6 @@ def messaging_schema() -> String:
 
 # Projection rows are written by triggers in the same transaction as the
 # coordinator state change. A rolled-back state change leaves no event row.
-def native_change_schema() -> String:
-  native_change_base_schema() ++ native_session_change_schema()
-  ++ native_message_change_schema()
-  ++ native_topology_change_schema()
-
 def native_change_base_schema() -> String:
   "CREATE TABLE IF NOT EXISTS native_changes (change_id INTEGER PRIMARY KEY AUTOINCREMENT,recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),entity TEXT NOT NULL,entity_id TEXT NOT NULL,session_id TEXT NOT NULL DEFAULT '',operation TEXT NOT NULL CHECK(operation IN ('insert','update','delete')),kind TEXT NOT NULL DEFAULT '',summary TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_retention AFTER INSERT ON native_changes BEGIN DELETE FROM native_changes WHERE change_id<=NEW.change_id-10000; END;"
@@ -127,6 +122,11 @@ def native_topology_change_schema() -> String:
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_sections_delete AFTER DELETE ON sections BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) SELECT 'section',OLD.ensemble || '/' || OLD.id,e.owner,'delete','section',OLD.capability FROM ensembles e WHERE e.id=OLD.ensemble; END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_section_members_insert AFTER INSERT ON section_members BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) SELECT 'section-membership',NEW.ensemble || '/' || NEW.section,NEW.session,'insert','section-membership',s.capability FROM sections s WHERE s.ensemble=NEW.ensemble AND s.id=NEW.section; END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_section_members_delete AFTER DELETE ON section_members BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) SELECT 'section-membership',OLD.ensemble || '/' || OLD.section,OLD.session,'delete','section-membership',s.capability FROM sections s WHERE s.ensemble=OLD.ensemble AND s.id=OLD.section; END;"
+
+def native_change_schema() -> String:
+  native_change_base_schema() ++ native_session_change_schema()
+  ++ native_message_change_schema()
+  ++ native_topology_change_schema()
 
 # Stored role families and turn columns retain their existing names. Section
 # membership references the existing Ensemble membership of each Player.
