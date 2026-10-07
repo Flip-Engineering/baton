@@ -221,6 +221,72 @@ def fx_plan() -> Sel.Plan:
   Sel.Plan{fx_bind(), "sourceAnalysis", Sel.StepsCons{fx_step(), Sel.StepsNil{}},
            Eng.ss_empty(), fx_captures(), True{}}
 
+def fx_collision_root_op() -> Decl.Op:
+  Decl.Op{"c", "sourceAnalysis", "sub", "opt",
+          Eng.ss_one("definition"), Eng.ss_empty(), Decl.ExDirect{}, "res",
+          "ref", "evt", "",
+          Decl.ModRefsCons{Decl.ModRef{"a", "leaf-declaration", "b/c"},
+                           Decl.ModRefsNil{}}}
+
+def fx_collision_leaf_op() -> Decl.Op:
+  Decl.Op{"b/c", "sourceAnalysis", "sub", "opt",
+          Eng.ss_one("definition"), Eng.ss_empty(), Decl.ExDirect{}, "res",
+          "ref", "evt", "", Decl.ModRefsNil{}}
+
+def fx_collision_root_decl() -> Decl.Decl:
+  Decl.Decl{"1", "a/b", "rev-root", "2", "pkg-root",
+            Decl.ENative{Decl.Art{"/pkg/root.bin", "root-artifact", "entry"},
+                         "root.export"},
+            Decl.ArtsNil{},
+            Decl.OpsCons{fx_collision_root_op(), Decl.OpsNil{}},
+            Decl.RulesCons{Decl.RSubject{"handler"}, Decl.RulesNil{}}}
+
+def fx_collision_leaf_decl() -> Decl.Decl:
+  Decl.Decl{"1", "a", "rev-leaf", "2", "pkg-leaf",
+            Decl.ENative{Decl.Art{"/pkg/leaf.bin", "leaf-artifact", "entry"},
+                         "leaf.export"},
+            Decl.ArtsNil{},
+            Decl.OpsCons{fx_collision_leaf_op(), Decl.OpsNil{}},
+            Decl.RulesCons{Decl.RSubject{"handler"}, Decl.RulesNil{}}}
+
+def fx_collision_cat() -> Decl.Cat:
+  Decl.CatCons{fx_collision_root_decl(),
+    Decl.CatCons{fx_collision_leaf_decl(), Decl.CatNil{}}}
+
+def fx_collision_inv() -> Decl.Inv:
+  Decl.Inv{
+    Decl.ArtsCons{Decl.Art{"/pkg/root.bin", "root-artifact", "entry"},
+      Decl.ArtsCons{Decl.Art{"/pkg/leaf.bin", "leaf-artifact", "entry"},
+                    Decl.ArtsNil{}}},
+    fx_schemas(),
+    Decl.DigsCons{Decl.Dg{"a/b", "root-declaration"},
+      Decl.DigsCons{Decl.Dg{"a", "leaf-declaration"}, Decl.DigsNil{}}}}
+
+def fx_collision_root_binding() -> Sel.MBind:
+  Sel.MBind{"a/b", "rev-root", "root-declaration", "2", "c",
+            Decl.ArtsCons{Decl.Art{"/pkg/root.bin", "root-artifact", "entry"},
+                          Decl.ArtsNil{}},
+            Decl.op_schema_set(fx_collision_root_op())}
+
+def fx_collision_leaf_binding() -> Sel.MBind:
+  Sel.MBind{"a", "rev-leaf", "leaf-declaration", "2", "b/c",
+            Decl.ArtsCons{Decl.Art{"/pkg/leaf.bin", "leaf-artifact", "entry"},
+                          Decl.ArtsNil{}},
+            Decl.op_schema_set(fx_collision_leaf_op())}
+
+def fx_collision_plan() -> Sel.Plan:
+  Sel.Plan{fx_collision_root_binding(), "sourceAnalysis",
+    Sel.StepsCons{
+      Sel.Step{fx_collision_root_binding(), "sourceAnalysis", Eng.ss_empty(),
+        Decl.ExDirect{},
+        Sel.StepRefsCons{Sel.StepRef{"a", "leaf-declaration", "b/c"},
+                         Sel.StepRefsNil{}}, "res"},
+      Sel.StepsCons{
+        Sel.Step{fx_collision_leaf_binding(), "sourceAnalysis", Eng.ss_empty(),
+          Decl.ExDirect{}, Sel.StepRefsNil{}, "res"},
+        Sel.StepsNil{}}},
+    Eng.ss_empty(), fx_captures(), True{}}
+
 law selection_frozen_plan_names_the_binding_and_the_inputs:
   {Sel.freeze(fx_cat_one(), fx_cand("m1", "d1", False{}, True{}), fx_inv(), fx_captures()) == Sel.PlanFrozen{fx_plan()} : Sel.PlanOutcome}
 
@@ -307,6 +373,21 @@ law selection_plan_refuses_a_cycle:
   {Sel.freeze(Decl.CatCons{fx_decl_dep("m1", "aa", Decl.ModRef{"m1", "d1", "definition"}), Decl.CatNil{}}, fx_cand("m1", "d1", False{}, True{}), fx_inv(), fx_captures()) == Sel.PlanRefused{Sel.PlanCycle{"m1"}} : Sel.PlanOutcome}
 
 def selection_plan_refuses_a_cycle():
+  {==}
+
+# The admission law keeps slash-bearing identifiers available to declarations.
+law selection_plan_admits_slash_identifiers:
+  {Decl.admit_catalog(fx_collision_cat(), fx_collision_inv()) == Decl.CatAdmitted{fx_collision_cat()} : Decl.CatOutcome}
+
+def selection_plan_admits_slash_identifiers():
+  {==}
+
+# The old joined keys were identical although this dependency names a different
+# module and operation.
+law selection_plan_keeps_distinct_slash_pairs:
+  {Sel.freeze(fx_collision_cat(), Sel.Cand{"a/b", "root-declaration", "c", "sourceAnalysis", Eng.ss_empty(), Decl.ExDirect{}, True{}, False{}}, fx_collision_inv(), fx_captures()) == Sel.PlanFrozen{fx_collision_plan()} : Sel.PlanOutcome}
+
+def selection_plan_keeps_distinct_slash_pairs():
   {==}
 
 # An explicit selector resolves the one-query ambiguity that auto reports.
