@@ -711,7 +711,9 @@ class SharedInstance(unittest.TestCase):
         child = self.spawn('admit-file', self.db, session, directory, self.home, artifact,
                            sys.executable, self.survivor)
         self.line(child, 'admitted')
-        summary = self.native(''.join(child.output))
+        spool = self.hold(directory / 'stdout', '"role": "native"')
+        summary = json.loads([line for line in spool.splitlines()
+                              if line.startswith('{') and 'role' in line][0])
         return directory, child, summary
 
     def kill_owner(self):

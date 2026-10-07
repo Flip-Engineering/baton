@@ -2363,13 +2363,6 @@ static int br_admission_store(const char *directory,const char *database,int gua
   free(bytes);free(path);free(canonical);
   return error;
 }
-/* Records why an attempt's admission record was refused. The refusal path is the
-   only place a caller learns that a directory is not the attempt it claims to be,
-   so the reason is durable next to the record. */
-static int br_admission_refuse(const char *directory,const char *reason) {
-  br_file(directory,"admission-error",reason,strlen(reason),1);
-  return EPERM;
-}
 /* Verifies the admission record of a directory against the database that requests
    it and the guard the caller holds. Every mismatch refuses: a directory whose
    recorded identity, database or guard differs is not the attempt that was
@@ -2379,8 +2372,9 @@ static int br_admission_verify(const char *directory,const char *database,int gu
   if(!path)return ENOMEM;
   int fd=open(path,O_RDONLY|O_CLOEXEC);
   if(fd<0) {
-    int error=errno;free(path);
-    return error==ENOENT?br_admission_refuse(directory,"no admission record\n"):error;
+    /* A directory with no admission record is not ours to write into, so the
+       refusal is reported to the caller alone. */
+    int error=errno;free(path);return error==ENOENT?EPERM:error;
   }
   BrAdmission record;
   const char *reason=NULL;
