@@ -265,7 +265,7 @@ def fork_each(+db: String, +chan: Chan(Event), pairs: List<(String & String)>, f
 def refuse_each(pairs: List<(String & String)>, refused: List<String>) -> IO(List<String>):
   match pairs:
     case Nil{}: IO.pure(List<String>, refused)
-    case (session, +harness) <> rest: do IO<List<String>>:
+    case (+session, +harness) <> rest: do IO<List<String>>:
       logged : Unit <- IO.write("serve-refused " ++ session ++ " " ++ harness ++ ": this loop serves Codex and OMP sessions through receive; serve " ++ harness ++ " sessions with dispatch-turn.\n")
       refuse_each(rest, Con{session, refused})
 
