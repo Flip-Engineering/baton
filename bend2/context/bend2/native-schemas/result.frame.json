@@ -2110,6 +2110,24 @@
               },
               "name": "retainedReadSet"
             }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfScalar": {
+                  "kind": "SsText"
+                }
+              },
+              "name": "reason"
+            }
+          },
+          {
+            "SfOptionalField": {
+              "form": {
+                "SfJson": {}
+              },
+              "name": "detail"
+            }
           }
         ]
       }
