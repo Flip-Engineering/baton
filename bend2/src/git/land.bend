@@ -1096,8 +1096,7 @@ def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, 
       +b2 = basis
       do IO<LdAdvObs>:
         captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"merge", Con{"--ff-only", Con{c2, Nil{}}}}}), p2, cx.claim, cx.guard, cx.artifact)
-        +capture = captured
-        ld_adv_wt_pick(ld_adv_status(capture), p2, r2, t2, c2, b2, ctx, capture)
+        ld_adv_wt_pick(ld_adv_status(captured), p2, r2, t2, c2, b2, ctx, captured)
 def ld_adv_wt_head_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   match g:
     case T.GRun{code, out}:
@@ -1212,16 +1211,15 @@ def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String,
     match observed:
       case Fail{error}: shared_step_failed("reserve", error, h)
       case Done{record}:
-        +r = record
-        +created_ok = Tx.str_eq(r, Pb.production_record("created", shared_parent_path(pa, shared_attempt_name(bs, n)), "0"))
-        +existing_ok = Tx.str_eq(r, Pb.production_record("existing", shared_parent_path(pa, shared_attempt_name(bs, n)), "0"))
+        +created_ok = Tx.str_eq(record, Pb.production_record("created", shared_parent_path(pa, shared_attempt_name(bs, n)), "0"))
+        +existing_ok = Tx.str_eq(record, Pb.production_record("existing", shared_parent_path(pa, shared_attempt_name(bs, n)), "0"))
         Bool.pick(IO(SharedLanding), created_ok,
           shared_reserved_continue(h, rp, tg, c, b, gd, shared_parent_path(pa, shared_attempt_name(bs, n))),
           Bool.pick(IO(SharedLanding), existing_ok,
             Bool.pick(IO(SharedLanding), U32.is_lt(n, 4294967295),
               shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, U32.add(n, 1)),
-              shared_record_failed("reserve-counter-maximum", r, h)),
-            shared_record_failed("reserve", r, h)))
+              shared_record_failed("reserve-counter-maximum", record, h)),
+            shared_record_failed("reserve", record, h)))
 
 def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle
