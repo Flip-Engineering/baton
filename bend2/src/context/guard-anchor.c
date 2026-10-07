@@ -53,7 +53,7 @@ static Term baton_guard_anchor_pack(Env e, IoWork *w) {
   return result;
 }
 
-#ifdef CID_CONTEXT_PREPARE_GUARD_ANCHOR
+#ifdef CID_PREPARE_GUARD_ANCHOR
 static Term baton_guard_anchor_run(Env e, Term *f, IoWork *w) {
   BatonGuardAnchor *call = calloc(1, sizeof(*call));
   if (!call) return io_fail(e, ENOMEM, NULL);
@@ -67,6 +67,6 @@ static Term baton_guard_anchor_run(Env e, Term *f, IoWork *w) {
   return io_work(w, baton_guard_anchor_call, baton_guard_anchor_pack);
 }
 static void __attribute__((constructor)) baton_guard_anchor_use(void) {
-  io_eff(CID_CONTEXT_PREPARE_GUARD_ANCHOR, baton_guard_anchor_run, 0);
+  io_eff(CID_PREPARE_GUARD_ANCHOR, baton_guard_anchor_run, 0);
 }
 #endif

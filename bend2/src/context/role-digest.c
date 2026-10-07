@@ -140,7 +140,7 @@ static Term baton_role_digest_pack(Env e, IoWork *w) {
 }
 
 /* The effect ID uses the definition name from the Bend source. */
-#ifdef CID_CONTEXT_ROLE_GUARD_KEY
+#ifdef CID_ROLE_GUARD_KEY
 static Term baton_role_digest_run(Env e, Term *f, IoWork *w) {
   BatonRoleDigest *call = calloc(1, sizeof(*call));
   if (!call) return io_fail(e, ENOMEM, NULL);
@@ -154,6 +154,6 @@ static Term baton_role_digest_run(Env e, Term *f, IoWork *w) {
   return io_work(w, baton_role_digest_call, baton_role_digest_pack);
 }
 static void __attribute__((constructor)) baton_role_digest_use(void) {
-  io_eff(CID_CONTEXT_ROLE_GUARD_KEY, baton_role_digest_run, 0);
+  io_eff(CID_ROLE_GUARD_KEY, baton_role_digest_run, 0);
 }
 #endif
