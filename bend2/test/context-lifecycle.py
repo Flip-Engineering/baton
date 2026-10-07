@@ -219,6 +219,13 @@ def check_store(values):
     kept = json.loads(values.get("publish.kept", "{}"))
     check(kept.get("state") == "complete", "publish.kept", kept)
     check(kept.get("result", {}).get("engine") == "typescript", "publish.kept.result", kept.get("result"))
+    managed = json.loads(values.get("managed.publish", "{}"))
+    check(managed.get("state") == "complete", "managed.publish", managed)
+    managed_replay = json.loads(values.get("managed.replay", "{}"))
+    check(managed_replay.get("state") == "complete", "managed.replay", managed_replay)
+    check(values.get("managed.conflict.error", "") != "", "managed.conflict", values.get("managed.conflict"))
+    check(values.get("managed.notice", "") == '{"query":"q-managed","state":"complete"}',
+          "managed.notice", values.get("managed.notice"))
     refused = json.loads(values.get("reject.envelope", "{}"))
     check(refused.get("state") == "refused", "reject.envelope", refused)
     check(refused.get("result") is None, "reject.envelope.result", refused)

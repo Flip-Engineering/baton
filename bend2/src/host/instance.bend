@@ -44,6 +44,11 @@ def Instance.cancel(handle: U32, bootstrap: String, decision: String, owner_witn
 def Instance.attach(database: String, directory: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./process-spawn.c"
 
+# Reads the attached attempt's durable host lifecycle record and actual observer
+# readiness, owner witness, and process status.
+def Instance.state(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
 # Adopts an attempt whose observer died while the caller holds the session
 # guard. It refuses a second native launch for the same attempt.
 def Instance.attach_owned(database: String, directory: String, lock: U32) -> IO(Result<&1,&1,U32 & String,U32>):

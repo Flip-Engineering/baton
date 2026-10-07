@@ -23,8 +23,11 @@ function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1', origi
     artifactSha256: 'b'.repeat(64),
     cwd: worktreePath,
     databaseBinding: 'binding-1',
+    executablePath: '/opt/baton2/bin/baton2',
     guardIdentity,
     guardKey,
+    invocationPath: join(artifactPath, guardKey, 'invocation.json'),
+    invocationSha256: 'd'.repeat(64),
     keeperPath: join(artifactPath, guardKey),
     originAttempt,
     owner,
@@ -32,12 +35,14 @@ function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1', origi
     physicalRoleKey: 'c'.repeat(64),
     planIdentity: 'plan-identity-1',
     planValue: '[]',
+    providerPath: '/opt/baton2/libexec/baton2/context-provider.mjs',
     query,
     recoveryArgv: '/opt/baton2/bin/baton2\0--recover-context-query\0/database\0'
       + owner + '\0' + query + '\0/logs/keeper-1\0' + worktreePath + '\0'
       + join(worktreePath, '.baton', 'context-artifacts', Buffer.from(query).toString('hex'), 'bootstrap.json'),
     request: '{}',
     resultSchema: 'result-v1',
+    runtimePath: '/usr/bin/node',
     schema: 'baton2-managed-context-bootstrap-v1',
     sourceIdentity: 'source-identity-1',
   });
@@ -129,6 +134,24 @@ test('persists one immutable canonical bootstrap bound to owner, query and priva
   assert.equal(persistQueryBootstrap({ ...authority,
     bootstrapText: bootstrapText(root).replace('"query":"query-1"', '"query":"query-1","query":"query-1"') }).reason,
   'queryBootstrapCanonicalMismatch');
+});
+
+test('bootstrap binds the installed runtime and invocation file identity', (t) => {
+  const root = worktree(t);
+  const authority = { owner: 'owner-1', worktree: root, query: 'query-tool-identity' };
+  const bootstrap = JSON.parse(bootstrapText(root, authority.query));
+  for (const [key, value] of [
+    ['runtimePath', 'node'],
+    ['providerPath', '/opt/other/context-provider.mjs'],
+    ['invocationPath', join(bootstrap.keeperPath, 'other.json')],
+    ['invocationSha256', 'not-a-digest'],
+  ]) {
+    const changed = { ...bootstrap, [key]: value };
+    assert.equal(persistQueryBootstrap({ ...authority,
+      bootstrapText: JSON.stringify(changed) }).reason, 'queryBootstrapIdentityMismatch');
+  }
+  assert.equal(persistQueryBootstrap({ ...authority,
+    bootstrapText: bootstrapText(root, authority.query) }).status, 'persisted');
 });
 
 test('recovery reads only the bootstrap under the matching owner-worktree marker', (t) => {

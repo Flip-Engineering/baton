@@ -170,6 +170,16 @@ def store_surfaces(+db: String, +binding: String) -> IO(Unit):
     show("publish.late", late)
     kept : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.envelope_sql("q1"))
     show("publish.kept", kept)
+    managed_accept : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.accept_sql("q-managed", "root", "{\"version\":1}", "/work", "attempt-1", "/log/q-managed", "/art/q-managed"))
+    show("managed.accept", managed_accept)
+    managed_publish : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.state_publish_managed_sql("q-managed", "root", "complete", "{\"answer\":42}", ""))
+    show("managed.publish", managed_publish)
+    managed_replay : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.state_publish_managed_sql("q-managed", "root", "complete", "{\"answer\":42}", ""))
+    show("managed.replay", managed_replay)
+    managed_conflict : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.state_publish_managed_sql("q-managed", "root", "complete", "{\"answer\":43}", ""))
+    show("managed.conflict", managed_conflict)
+    managed_notice : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT body FROM messages WHERE id='context-query:q-managed:terminal';")
+    show("managed.notice", managed_notice)
     IO.pure(Unit, Unit{})
 
 def rejection_surfaces(+db: String, +binding: String) -> IO(Unit):

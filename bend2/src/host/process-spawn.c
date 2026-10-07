@@ -796,6 +796,10 @@ static void br_read_line(BatonProcessCall *call) {
 }
 static void baton_retained_call(BatonProcessCall *call) {
   BatonRetained *retained=call->child->retained;
+  if(call->kind==BP_INSTANCE_STATE) {
+    br_instance_state_call(call);
+    return;
+  }
   if(call->kind==BP_INSTANCE_START || call->kind==BP_INSTANCE_CANCEL) {
     call->error=br_instance_decision(call);
     return;
@@ -3977,7 +3981,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
        call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED) value=(Term)call->handle;
     else if(call->kind==BP_INPUT_CLOSED) value=(Term)call->signal;
     else if(call->kind==BP_WAIT) value=io_str(e,call->text,call->length);
-    else if(call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_JOB ||
+    else if(call->kind==BP_INSTANCE_STATE || call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_JOB ||
             call->kind==BP_INSTANCE_NOTICE || call->kind==BP_INSTANCE_OWNER_WITNESS)
       value=io_str(e,call->text?call->text:"",call->length);
     else if(call->kind==BP_INSTANCE_PREPARE || call->kind==BP_INSTANCE_PREPARE_WITH_FILE || call->kind==BP_INSTANCE_PREPARE_WITH_FILE_BOUNDED)
@@ -4245,6 +4249,9 @@ BP_EFFECT(baton_instance_start,CID_INSTANCE_START,BP_INSTANCE_START)
 #endif
 #ifdef CID_INSTANCE_CANCEL
 BP_EFFECT(baton_instance_cancel,CID_INSTANCE_CANCEL,BP_INSTANCE_CANCEL)
+#endif
+#ifdef CID_INSTANCE_STATE
+BP_EFFECT(baton_instance_state,CID_INSTANCE_STATE,BP_INSTANCE_STATE)
 #endif
 #ifdef CID_INSTANCE_ATTACH
 BP_EFFECT(baton_instance_attach,CID_INSTANCE_ATTACH,BP_INSTANCE_ATTACH)

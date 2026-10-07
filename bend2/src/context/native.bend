@@ -190,8 +190,10 @@ type BoundaryPath is Data:
 def owner_workspace_sql(owner: String) -> String:
   "SELECT workspace FROM sessions WHERE id=" ++ ContextCommands.q(owner) ++ ";"
 
-# The query records the owner's current active attempt as provenance. An owner
-# with no active attempt keeps SQL NULL through the bootstrap's nullable field.
+# The query captures the owner's active attempt once before keeper preparation.
+# That exact value enters the sealed bootstrap and first Core admission; later
+# attempts do not replace launch provenance. An owner with no active attempt
+# keeps SQL NULL through the bootstrap's nullable field.
 def origin_attempt_sql(owner: String) -> String:
   "SELECT coalesce((SELECT id FROM executions WHERE session=" ++ ContextCommands.q(owner)
   ++ " AND phase<>'exited' ORDER BY rowid DESC LIMIT 1),'');"
@@ -605,13 +607,13 @@ def managed_store_result(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
     case Fail{error}: IO.die(Unit, 3, "managedOutcomeStore")
     case Done{+rows}: IO.write(rows)
 
-def store_managed_output(+db: String, +binding: String, +query: String,
+def store_managed_output(+db: String, +binding: String, +query: String, +owner: String,
                          output: ManagedOutput) -> IO(Unit):
   match output:
     case ManagedOutput{event_frame, error_json, exit_status, complete}:
       do IO<Unit>:
         result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
-          ContextStore.state_publish_sql(query,
+          ContextStore.state_publish_managed_sql(query, owner,
             Bool.pick(String, complete, "complete", "failed"),
             Bool.pick(String, complete, event_frame, SNil{}),
             Bool.pick(String, complete, SNil{}, error_json)))
@@ -634,7 +636,8 @@ def managed_observe_complete(+db: String, +binding: String,
           ManagedQuery.bootstrap_owner(bootstrap), worktree,
           ManagedQuery.bootstrap_query(bootstrap), bootstrap_digest, output)
         store_managed_output(db, binding,
-          ManagedQuery.bootstrap_query(bootstrap), persisted)
+          ManagedQuery.bootstrap_query(bootstrap),
+          ManagedQuery.bootstrap_owner(bootstrap), persisted)
 
 def managed_start_decision(+db: String, +binding: String, +launch: ManagedLaunch,
                            handle: U32,
@@ -736,17 +739,51 @@ def managed_recovery_association(+db: String, +binding: String,
     case Done{+association}: IO.pure(Bool,
       managed_recovery_association_ok(bootstrap, admission, association))
 
+def managed_recovery_readiness_rows(+bootstrap: ManagedQuery.Bootstrap,
+                                    +expected_binding: String,
+                                    result: Result<&1,&1,U32 & String,String>) -> IO(ManagedQuery.KeeperReadiness):
+  match result:
+    case Fail{error}: IO.pure(ManagedQuery.KeeperReadiness,
+      ManagedQuery.KeeperObserverUnavailable{"recoveryStateDecode"})
+    case Done{+rows}:
+      match project_policy_json_rows(rows):
+        case ProjectPolicyJsonRefused{reason}:
+          IO.pure(ManagedQuery.KeeperReadiness,
+            ManagedQuery.KeeperObserverUnavailable{"recoveryStateJson:" ++ reason})
+        case ProjectPolicyJsonReady{+value}:
+          IO.pure(ManagedQuery.KeeperReadiness,
+            ManagedQuery.keeper_recovery_readiness_from_host(bootstrap,
+              expected_binding, ManagedQuery.bootstrap_owner_witness(bootstrap), value))
+
+def decode_managed_recovery_readiness(+db: String, +binding: String,
+                                      +bootstrap: ManagedQuery.Bootstrap,
+                                      +host_json: String) -> IO(ManagedQuery.KeeperReadiness):
+  do IO<ManagedQuery.KeeperReadiness>:
+    expected_binding : String <- IO.try(String,
+      ContextIdentity.role_guard_key(ManagedQuery.bootstrap_text(bootstrap)))
+    rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+      Req.json_tree_sql(host_json))
+    managed_recovery_readiness_rows(bootstrap, expected_binding, rows)
+
 def managed_recovery_admission(+db: String, +binding: String,
                                +bootstrap: ManagedQuery.Bootstrap,
                                result: Result<&1,&1,U32 & String,ContextAdmit.Admission>) -> IO(Bool):
   match result:
     case Fail{error}: IO.pure(Bool, False{})
     case Done{+admission}:
+      Bool.pick(IO(Bool), ManagedQuery.rejection_identity_match(
+        ManagedQuery.bootstrap_owner(bootstrap),
+        ManagedQuery.bootstrap_request(bootstrap),
+        ManagedQuery.bootstrap_keeper_path(bootstrap),
+        ManagedQuery.bootstrap_cwd(bootstrap),
+        ManagedQuery.bootstrap_attempt(bootstrap),
+        ManagedQuery.bootstrap_artifact_path(bootstrap), admission),
+        IO.pure(Bool, True{}),
       do IO<Bool>:
         association : Result<&1,&1,U32 & String,ContextAdmit.ManagedAssociation> <-
           ContextAdmit.readback_managed_association(db, binding,
             ManagedQuery.bootstrap_query(bootstrap))
-        managed_recovery_association(db, binding, bootstrap, admission, association)
+        managed_recovery_association(db, binding, bootstrap, admission, association))
 
 def managed_recovery_binding(+db: String, +bootstrap: ManagedQuery.Bootstrap,
                              result: Result<&1,&1,U32 & String,String>) -> IO(Bool):
@@ -768,10 +805,12 @@ def managed_recovery_attach(+db: String, +executable: String,
                             bootstrap_digest: String) -> IO(Unit):
   do IO<Unit>:
     verified : Bool <- recovery_file_verified(db,
-      ManagedQuery.bootstrap_database_binding(bootstrap), executable,
-      runtime_path, ManagedQuery.bootstrap_cwd(bootstrap),
-      ManagedQuery.bootstrap_keeper_path(bootstrap) ++ "/invocation.json",
-      ManagedQuery.bootstrap_artifact_sha256(bootstrap))
+      ManagedQuery.bootstrap_database_binding(bootstrap),
+      ManagedQuery.bootstrap_executable_path(bootstrap),
+      ManagedQuery.bootstrap_runtime_path(bootstrap),
+      ManagedQuery.bootstrap_cwd(bootstrap),
+      ManagedQuery.bootstrap_invocation_path(bootstrap),
+      ManagedQuery.bootstrap_invocation_sha256(bootstrap))
     Bool.pick(IO(Unit), verified,
       do IO<Unit>:
         binding_ok : Bool <- managed_recovery_binding(db, bootstrap,
@@ -783,15 +822,32 @@ def managed_recovery_attach(+db: String, +executable: String,
             match attached:
               case Fail{error}: IO.die(Unit, 3, "managedRecoveryAttachUnavailable")
               case Done{+handle}:
-                launch = ManagedLaunch{bootstrap, SNil{}, executable,
-                  runtime_path, worktree, bootstrap_digest}
-                readiness = ManagedQuery.KeeperObserverReady{
-                  ManagedQuery.bootstrap_query(bootstrap),
-                  ManagedQuery.bootstrap_owner(bootstrap),
-                  ManagedQuery.bootstrap_keeper_path(bootstrap), "starter", "0"}
-                managed_submit_start(db,
-                  ManagedQuery.bootstrap_database_binding(bootstrap), launch,
-                  handle, readiness),
+                do IO<Unit>:
+                  state : Result<&1,&1,U32 & String,String> <- Instance.state(handle)
+                  match state:
+                    case Fail{error}: IO.die(Unit, 3, "managedRecoveryStateUnavailable")
+                    case Done{+host_json}:
+                      do IO<Unit>:
+                        readiness : ManagedQuery.KeeperReadiness <-
+                          decode_managed_recovery_readiness(db,
+                            ManagedQuery.bootstrap_database_binding(bootstrap),
+                            bootstrap, host_json)
+                        match readiness:
+                          case ManagedQuery.KeeperObserverUnavailable{reason}:
+                            IO.die(Unit, 3, "managedRecoveryReadinessUnavailable:" ++ reason)
+                          case ManagedQuery.KeeperObserverReady{query, owner,
+                              keeper_path, role, incarnation}:
+                            do IO<Unit>:
+                              launch = ManagedLaunch{bootstrap, SNil{},
+                                ManagedQuery.bootstrap_executable_path(bootstrap),
+                                ManagedQuery.bootstrap_runtime_path(bootstrap),
+                                worktree, bootstrap_digest}
+                              decision : ManagedQuery.StartDecision <-
+                                ManagedQuery.reconcile_committed_admission(bootstrap,
+                                  "starter", "0", db)
+                              managed_start_decision(db,
+                                ManagedQuery.bootstrap_database_binding(bootstrap),
+                                launch, handle, decision),
           IO.die(Unit, 3, "managedRecoveryBindingMismatch")),
       IO.die(Unit, 3, "managedRecoveryInvocationMismatch"))
 
@@ -819,15 +875,21 @@ def managed_recovery_bootstrap(+db: String, +owner: String, +query: String,
           case ManagedQuery.BootstrapDecoded{+bootstrap}:
             Bool.pick(IO(Unit), Bool.and(
               String.eq(bootstrap_text, ManagedQuery.bootstrap_text(bootstrap)),
-              Bool.and(String.eq(ManagedQuery.bootstrap_keeper_path(bootstrap), directory),
-              Bool.and(String.eq(directory, ContextIdentity.role_directory(
+        Bool.and(String.eq(ManagedQuery.bootstrap_keeper_path(bootstrap), directory),
+        Bool.and(String.eq(directory, ContextIdentity.role_directory(
                   ManagedQuery.bootstrap_artifact_path(bootstrap),
                   ManagedQuery.bootstrap_guard_key(bootstrap))),
-              Bool.and(String.eq(ManagedQuery.bootstrap_artifact_path(bootstrap) ++ "/bootstrap.json",
+        Bool.and(String.eq(ManagedQuery.bootstrap_executable_path(bootstrap), executable),
+        Bool.and(String.eq(ManagedQuery.bootstrap_runtime_path(bootstrap), runtime_path),
+        Bool.and(String.eq(ManagedQuery.bootstrap_provider_path(bootstrap),
+          installed_provider_path(executable)),
+        Bool.and(String.eq(ManagedQuery.bootstrap_invocation_path(bootstrap),
+          directory ++ "/invocation.json"),
+        Bool.and(String.eq(ManagedQuery.bootstrap_artifact_path(bootstrap) ++ "/bootstrap.json",
                   bootstrap_file),
                 String.eq(ManagedQuery.bootstrap_recovery_argv(bootstrap),
                   Process.argv([executable, "--recover-context-query", db, owner,
-                    query, directory, worktree, bootstrap_file]))))))),
+                    query, directory, worktree, bootstrap_file]))))))))))),
               managed_recovery_attach(db, executable, runtime_path, worktree,
                 bootstrap, bootstrap_digest),
               IO.die(Unit, 3, "managedRecoveryBootstrapPathMismatch")),
@@ -894,6 +956,10 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
       ContextIdentity.physical_role_key(physical_identity))
     +keeper_path = ContextIdentity.role_directory(artifact_path, guard_key)
     bootstrap_file = artifact_path ++ "/bootstrap.json"
+    invocation_path = keeper_path ++ "/invocation.json"
+    provider_path = installed_provider_path(executable)
+    invocation_sha256 : String <- IO.try(String,
+      ContextIdentity.role_guard_key(invocation_text))
     canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
     +recovery_argv = Process.argv([executable, "--recover-context-query", canonical_database,
       owner, query, keeper_path, worktree, bootstrap_file])
@@ -901,7 +967,8 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
       origin_attempt, ManagedQuery.ArtifactEvidence{source_identity, artifact_sha256},
       EnginesWire.plan_value(plan), EnginesWire.plan_identity(plan), result_schema,
       artifact_path, keeper_path, guard_key, physical_role_key, owner_witness,
-      recovery_argv)
+      recovery_argv, executable, runtime_path, provider_path, invocation_path,
+      invocation_sha256)
     +bootstrap_text = ManagedQuery.bootstrap_text(bootstrap)
     bootstrap_digest : String <- persist_managed_bootstrap(executable, runtime_path,
       cwd, owner, worktree, query, bootstrap_file, bootstrap)

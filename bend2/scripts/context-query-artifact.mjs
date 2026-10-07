@@ -3,7 +3,7 @@
 // owner and worktree before native admission records it.
 import { closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync, fsyncSync, fchmodSync, unlinkSync, rmdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createRetainedWorktreeCapture } from './context-worktree-capture.mjs';
 
@@ -71,7 +71,8 @@ function decodeBootstrap(bytes, { owner, worktree, query, artifactPath }) {
     const fields = ['schema', 'query', 'owner', 'databaseBinding', 'request', 'cwd',
       'originAttempt', 'planValue', 'planIdentity', 'resultSchema', 'artifactPath',
       'artifactSha256', 'keeperPath', 'guardIdentity', 'guardKey', 'physicalRoleKey',
-      'ownerWitness', 'sourceIdentity', 'recoveryArgv'];
+      'ownerWitness', 'sourceIdentity', 'recoveryArgv', 'executablePath',
+      'runtimePath', 'providerPath', 'invocationPath', 'invocationSha256'];
     if (!exactKeys(value, fields) || value.schema !== 'baton2-managed-context-bootstrap-v1'
         || value.query !== query || value.owner !== owner || value.artifactPath !== artifactPath
         || typeof value.databaseBinding !== 'string' || value.databaseBinding.length === 0
@@ -91,6 +92,13 @@ function decodeBootstrap(bytes, { owner, worktree, query, artifactPath }) {
         || typeof value.ownerWitness !== 'string'
         || !/^[1-9][0-9]*:[1-9][0-9]*$/.test(value.ownerWitness)
         || typeof value.sourceIdentity !== 'string' || value.sourceIdentity.length === 0
+        || typeof value.executablePath !== 'string' || !isAbsolute(value.executablePath)
+        || typeof value.runtimePath !== 'string' || !isAbsolute(value.runtimePath)
+        || typeof value.providerPath !== 'string' || !isAbsolute(value.providerPath)
+        || resolve(value.providerPath)
+          !== resolve(dirname(value.executablePath), '../libexec/baton2/context-provider.mjs')
+        || value.invocationPath !== join(value.keeperPath, 'invocation.json')
+        || !/^[0-9a-f]{64}$/.test(value.invocationSha256)
         || sha256(Buffer.from(value.guardIdentity, 'utf8')) !== value.guardKey
         || JSON.stringify(JSON.parse(value.guardIdentity))
           !== JSON.stringify(['context-role', value.databaseBinding, 'query', query, 'starter', '0'])) {

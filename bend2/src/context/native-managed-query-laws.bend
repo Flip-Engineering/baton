@@ -11,7 +11,10 @@ def managed_bootstrap() -> Managed.Bootstrap:
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
     "[]", "plan-identity", "result-v1", "/work/.baton/context-artifacts/q",
     "/logs/keeper-q", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "owner-token:1", "native-recover-argv")
+    "owner-token:1", "native-recover-argv", "/opt/baton2/bin/baton2",
+    "/usr/bin/node", "/opt/baton2/libexec/baton2/context-provider.mjs",
+    "/logs/keeper-q/invocation.json",
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
 
 law sealed_bootstrap_recovery_preserves_the_original_owner_witness_and_artifact:
   {Managed.bootstrap_from_json(Managed.bootstrap_json(managed_bootstrap()),
@@ -24,6 +27,23 @@ law an_absent_origin_attempt_serializes_as_null:
   {Managed.nullable_text("") == J.Jnil{} : J.Json}
 
 def an_absent_origin_attempt_serializes_as_null():
+  {==}
+
+law the_captured_active_attempt_remains_the_launch_provenance:
+  {Managed.bootstrap_attempt(managed_bootstrap()) == "0" : String}
+
+def the_captured_active_attempt_remains_the_launch_provenance():
+  {==}
+
+law the_sealed_bootstrap_retains_the_executable_runtime_and_invocation_identity:
+  {Managed.bootstrap_executable_path(managed_bootstrap()) ++ "\n"
+    ++ Managed.bootstrap_runtime_path(managed_bootstrap()) ++ "\n"
+    ++ Managed.bootstrap_provider_path(managed_bootstrap()) ++ "\n"
+    ++ Managed.bootstrap_invocation_path(managed_bootstrap()) ++ "\n"
+    ++ Managed.bootstrap_invocation_sha256(managed_bootstrap()) ==
+    "/opt/baton2/bin/baton2\n/usr/bin/node\n/opt/baton2/libexec/baton2/context-provider.mjs\n/logs/keeper-q/invocation.json\ncccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" : String}
+
+def the_sealed_bootstrap_retains_the_executable_runtime_and_invocation_identity():
   {==}
 
 law a_granted_start_has_a_canonical_core_decision_document:
