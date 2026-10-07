@@ -5,11 +5,13 @@ These tests exercise concurrent attempts, an owner that starts once per
 database, observer loss with the owner alive, database-binding refusals, the
 retired-capability refusal and owner shutdown.
 """
+import fcntl
 import json
 import os
 import pathlib
 import queue
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
@@ -41,19 +43,72 @@ class SharedInstance(unittest.TestCase):
         self.children = []
         self.addCleanup(self.cleanup)
 
+    def ipc_directory(self):
+        runtime = os.environ.get('XDG_RUNTIME_DIR')
+        for candidate in [f'{runtime}/baton2' if runtime else None,
+                          f'/tmp/baton2-{os.geteuid()}',
+                          f"{os.environ.get('HOME')}/.local/state/baton2"]:
+            if not candidate:
+                continue
+            path = pathlib.Path(candidate)
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                continue
+            if path.is_dir() and not path.is_symlink() and path.stat().st_uid == os.geteuid():
+                return path
+        self.fail('no per-user IPC directory')
+
+    def election_paths(self, database=None):
+        info = os.stat(database or self.db)
+        key = f'owner-{info.st_dev:x}-{info.st_ino:x}'
+        directory = self.ipc_directory()
+        return directory, key, directory / f'{key}.lock', directory / f'{key}.record', directory / f'{key}.sock'
+
+    def election_held(self, database=None):
+        _, _, lock, _, _ = self.election_paths(database)
+        if not lock.exists():
+            return False
+        handle = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle, fcntl.LOCK_UN)
+            return False
+        except BlockingIOError:
+            return True
+        finally:
+            os.close(handle)
+
     def cleanup(self):
         subprocess.run([str(EXE), 'shutdown', str(self.db)], capture_output=True,
                        text=True, timeout=10)
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and self.owner_processes():
-            time.sleep(.02)
-        for line in self.owner_processes():
-            pid = int(line.split()[0])
-            for sig in [signal.SIGKILL]:
+        # Every owner this test started must be gone and the election free before
+        # the next test runs, so one test's custody cannot answer for another's
+        # database when the filesystem reuses an inode.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            for line in self.owner_processes():
                 try:
-                    os.kill(pid, sig)
+                    os.kill(int(line.split()[0]), signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+            _, _, _, record, _ = self.election_paths()
+            if self.election_held() and record.exists():
+                raw = record.read_bytes()
+                if len(raw) == 144:
+                    incumbent = struct.unpack_from('=i', raw, 36)[0]
+                    try:
+                        os.kill(incumbent, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            if not self.election_held():
+                break
+            time.sleep(.05)
+        self.assertFalse(self.election_held(), 'the election lock stayed held after cleanup')
+        _, key, _, record, socket_path = self.election_paths()
+        for path in (record, socket_path, self.ipc_directory() / f'{key}.log'):
+            if path.exists():
+                path.unlink()
         for child in self.children:
             if child.poll() is None:
                 child.kill()
@@ -250,6 +305,25 @@ class SharedInstance(unittest.TestCase):
         child.wait(timeout=10)
         marker = self.hold(directory / 'cursor-error', 'unreadable observation checkpoint')
         print('evidence corrupt-checkpoint', marker.strip())
+
+    def test_election_directory_binds_the_physical_database(self):
+        directory, child = self.begin('layout', payload='layout\n')
+        self.assertIn('echo:layout', self.wait_run(child))
+        ipc, key, lock, record, socket_path = self.election_paths()
+        self.assertTrue(lock.exists())
+        self.assertTrue(socket_path.exists())
+        self.assertTrue(record.exists())
+        mode = ipc.stat().st_mode & 0o777
+        self.assertEqual(mode, 0o700, oct(mode))
+        self.assertEqual(ipc.stat().st_uid, os.geteuid())
+        token, epoch, device, inode, pid, _ = struct.unpack_from('=QQQQii', record.read_bytes(), 0)
+        info = os.stat(self.db)
+        self.assertEqual(device, info.st_dev)
+        self.assertEqual(inode, info.st_ino)
+        self.assertGreaterEqual(epoch, 1)
+        self.assertGreater(token, 0)
+        self.assertEqual(record.read_bytes()[40:].split(b'\0')[0].decode(), str(socket_path))
+        print('evidence election', str(ipc), key, 'epoch', epoch, 'pid', pid)
 
     def test_shutdown_releases_the_database_for_a_new_owner(self):
         directory, child = self.begin('a0')
