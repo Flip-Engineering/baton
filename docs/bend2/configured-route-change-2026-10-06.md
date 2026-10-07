@@ -138,13 +138,29 @@ exist), and clang-19 rejects one generated C fixture during register allocation
 (`retained-control.py:364`).
 
 `bend2/scripts/laws-check.mjs` ran to completion on the same Linux runner against
-the same tree: `laws-check: green - 583 laws, 173 mutations, 757 compiles, 0
-failures` (exit 0). That is the summary the packaged gate reads, so the
-proof-removal control over every law in the tree, including the five laws this
-change adds, is discharged here rather than claimed from the CI runner. The
-registered mutation `configure-parser-drops-expected-harness` is one of the 173
-controls; its row reports `"mutation":"configure-parser-drops-expected-harness"`,
-`"gate":"refuses"`, `"passed":true`.
+the candidate tip `f6fcd89a` before it was integrated with the moved base:
+`laws-check: green - 583 laws, 173 mutations, 757 compiles, 0 failures` (exit 0).
+That is the summary the packaged gate reads, so the proof-removal control over
+every law in the tree, including the five laws this change adds, is discharged
+here rather than claimed from the CI runner. The registered mutation
+`configure-parser-drops-expected-harness` is one of the 173 controls; its row
+reports `"mutation":"configure-parser-drops-expected-harness"`,
+`"gate":"refuses"`, `"passed":true`. The integrated tree adds the base's own laws
+to that count, so its packaged gate runs on the CI runner.
+
+## Integration
+
+`bend2-rewrite` advanced from `2cc57690` to `ecfbdd0b` while this candidate was
+open, so the candidate was merged with the new tip. The merge conflicted only in
+`usage()` in `bend2/src/coordinator/main.bend`, where the base added the `logs`,
+`logs-storage` and `logs-clean` lines and this change adds the `configure` line
+and its explanation. The resolution keeps both sets of lines and keeps the base's
+`log_answer_step` and `log_answer` dispatch helpers. Every other file merged
+automatically.
+
+The merge is also what restores this pull request's `pull_request` workflow: a
+pull request whose merge state is `CONFLICTING` produces no workflow run, which
+is why no run appeared for the heads pushed after the base moved.
 
 ## Remaining
 

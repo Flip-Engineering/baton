@@ -247,7 +247,7 @@ primitive the target architecture owes before the application proof can exist.
 |---|---|
 | M-1 | Blocked: LANG-CAP-01. The pin has no durable sync, atomic rename or metadata operation, and `lang-cap-durability.evidence.md` measures write and close with no durability receipt in the result. Model only until an authored C effect family exists. |
 | M-2 | Blocked: LANG-CAP-08 (no HTTP or TLS library) and LANG-CAP-01 (no durable attempt record). |
-| M-3a | Blocked: LANG-CAP-07 (git runs as a subprocess, which needs the LANG-CAP-05 process family) and the host's compare-and-swap. The publication argv and the invocation that runs it are checked at the pin, and so is the checked landing's stage composition; the git process, its atomic old-value comparison and the host's report of its exit status remain host assumptions. |
+| M-3a | Blocked: LANG-CAP-07 (git runs as a subprocess, which needs the LANG-CAP-05 process family) and the host's compare-and-swap. The target-commit read, the publication argv and the invocation that runs it are checked at the pin, and so are the checked landing's stage composition, the holder the worktree listing names, the fast-forward a held target advances through and the answer each advance outcome produces; the git process, its atomic old-value comparison, its two-way worktree update with its refusal of an overlapping uncommitted change, and the host's report of each exit status remain host assumptions. |
 | M-3b | Blocked: LANG-CAP-01 (no atomic rename, so no durable idempotency disposition). |
 | M-3c | Checkable: given an injected prior outcome, truthful replay is a pure relation. The checked landing's answer mapping is checked over the real pipeline; each stage's exit report remains a host assumption. |
 | M-4 | Blocked: LANG-CAP-01 (no stat metadata, directory traversal, permissions or atomic publication). |
@@ -255,7 +255,7 @@ primitive the target architecture owes before the application proof can exist.
 | M-7 | Blocked: LANG-CAP-10 (no hashing, HMAC, constant-time comparison or secure random bytes) and the authority store's durability. |
 | M-8 | Partly checkable: the no-elevation-by-delegation subset invariant is expressible over the permission set; the instance, revocation and atomic-check halves are blocked by LANG-CAP-10 and LANG-CAP-01. |
 | M-10 | Checked: one model obligation discharged, and the real admission decision is read by the transition witness. The check execution is checked over the real pipeline: the check dispatch, the trees the checks run on, the tree stage 6 prepares and the pairs the verdict judges are equated with the production functions. The check subprocess, git's creation of the checked trees and the filesystem effects remain host assumptions, and the cancellation and retention clauses are blocked by LANG-CAP-09. |
-| M-11 | Partly checkable: the caller/driver kind disjointness. Driver provenance is blocked by LANG-CAP-06 (no JSON codec) and LANG-CAP-05. |
+| M-11 | Partly checkable: the caller/driver kind disjointness, and the target's holder, which the landing reads from Git's own worktree listing. Driver provenance is blocked by LANG-CAP-06 (no JSON codec) and LANG-CAP-05. |
 | M-12 | Blocked: LANG-CAP-05 (no process family) and LANG-CAP-01 (no durable intent). |
 | M-13 | Blocked: LANG-CAP-09 (no name cancels a computation, races two or sets a deadline). |
 | M-14 | Checked: four model obligations discharged over the refusal vocabulary. The application's own refusal rows are not imported. |

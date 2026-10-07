@@ -343,9 +343,18 @@ A later turn resumes the recorded
 native session. The logical Player and its workspace remain available.
 
 The supervisor retains stdout at `OUTPUT_LOG` and stderr at `OUTPUT_LOG.stderr`.
-For OMP, stdout logging omits cumulative `message_update` frames and retains
-every other frame, including complete `message_end` messages, tool output and
-terminal events. Log size grows with the retained output. New supervisors use
+The public log keeps the frames that carry a session, actor, turn, message, tool,
+error, exit, delivery or validation identifier. At the default level it drops
+the cumulative `message_update` and `tool_execution_update` snapshots the
+provider resends while a message or a tool call is running, and holds the newest
+`tool_execution_update` of each open call and the newest `message_start` of each
+message until its `tool_execution_end` or `message_end` arrives. The log rotates
+at the session's byte budget and retains the segments the session's retention
+count covers. `logs`, `logs-storage` and `logs-clean` read and set that policy,
+report the storage each producer uses, and remove eligible rotated segments;
+[the log policy](../docs/bend2/logging.md) describes the levels, the defaults
+and the ownership boundaries.
+New supervisors use
 the selected coordinator executable. Keep existing logs at their recorded paths
 when changing the installed coordinator between lanes.
 Native result events create pending parent reports. Process-start failures and
