@@ -19,3 +19,4 @@ for test in bend2/test/*.py; do
   "$PYTHON3" "$test"
 done
 node --test bend2/test/git-series.mjs
+node --test bend2/test/provider-availability.mjs
