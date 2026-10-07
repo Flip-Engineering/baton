@@ -257,14 +257,22 @@ def cands_of_ops(+decl: Decl.Decl, +ops: Decl.Ops, +digest: String,
         cand_of_op(decl, head, digest, available, preferred, common),
         cands_of_ops(decl, rest, digest, available, preferred, common))
 
+# A declaration contributes to the pass its configured preference names, and the
+# candidate it produces carries that same preference.
+def decl_in_pass(+decl: Decl.Decl, +inputs: SelInputs, +preferred: Bool) -> Bool:
+  Bool.pick(Bool, decl_preferred(decl, inputs), preferred, Bool.not(preferred))
+
 # A declaration contributes candidates only when it is enabled and applicable.
 def cands_of_decl(+decl: Decl.Decl, +inputs: SelInputs, +inv: Decl.Inv,
                   +preferred: Bool, +common: String) -> Cands:
   Bool.pick(Cands, decl_enabled(decl, inputs),
     Bool.pick(Cands, decl_applicable(decl, inputs),
-      cands_of_ops(decl, Decl.decl_operations(decl),
-                   digest_at(inv, Decl.decl_module_id(decl)),
-                   decl_installed(decl, inputs), preferred, common),
+      Bool.pick(Cands, decl_in_pass(decl, inputs, preferred),
+        cands_of_ops(decl, Decl.decl_operations(decl),
+                     digest_at(inv, Decl.decl_module_id(decl)),
+                     decl_installed(decl, inputs),
+                     decl_preferred(decl, inputs), common),
+        CandsNil{}),
       CandsNil{}),
     CandsNil{})
 

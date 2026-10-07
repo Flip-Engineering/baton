@@ -252,7 +252,15 @@ def wire_invocation_kinds_go(+members: Codec.RawValue) -> Bool:
             Bool.pick(Bool, wire_kind_is("object", "moduleBinding", members),
               Bool.pick(Bool, wire_kind_is("object", "request", members),
                 Bool.pick(Bool, wire_kind_is("array", "inputIdentities", members),
-                  wire_kind_is("array", "operationPlan", members), False{}), False{}), False{}), False{}), False{}), False{}), False{}))
+                  wire_kind_is("array", "operationPlan", members),
+                  False{}),
+                False{}),
+              False{}),
+            False{}),
+          False{}),
+        False{}),
+      False{}),
+    False{})
 
 def wire_invocation_kinds_ok(+members: Codec.RawValue) -> Bool:
   Bool.pick(Bool, Codec.raw_keys_ok(wire_invocation_names(), members), wire_invocation_kinds_go(members), False{})
@@ -267,7 +275,16 @@ def wire_event_kinds_go(+members: Codec.RawValue) -> Bool:
               Bool.pick(Bool, wire_kind_is("object", "moduleBinding", members),
                 Bool.pick(Bool, wire_sequence_ok(wire_sequence_member(members)),
                   Bool.pick(Bool, wire_frame_type_ok(members),
-                    wire_kind_is("any", "payload", members), False{}), False{}), False{}), False{}), False{}), False{}), False{})))
+                    wire_kind_is("any", "payload", members),
+                    False{}),
+                  False{}),
+                False{}),
+              False{}),
+            False{}),
+          False{}),
+        False{}),
+      False{}),
+    False{})
 
 def wire_event_kinds_ok(+members: Codec.RawValue) -> Bool:
   Bool.pick(Bool, Codec.raw_keys_ok(wire_event_names(), members), wire_event_kinds_go(members), False{})

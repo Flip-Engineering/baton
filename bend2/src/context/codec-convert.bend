@@ -134,7 +134,14 @@ def wc_binding_body_ok(+members: Codec.RawValue) -> Bool:
           Bool.pick(Bool, wc_text_member_ok("protocolVersion", members),
             Bool.pick(Bool, wc_text_member_ok("operation", members),
               Bool.pick(Bool, wc_artifacts_ok(wc_value_member("artifactIdentities", members)),
-                wc_schemas_ok(wc_value_member("schemaIdentities", members)), False{}), False{}), False{}), False{}), False{}), False{}))
+                wc_schemas_ok(wc_value_member("schemaIdentities", members)),
+                False{}),
+              False{}),
+            False{}),
+          False{}),
+        False{}),
+      False{}),
+    False{})
 
 def wc_binding_build(+members: Codec.RawValue) -> Sel.MBind:
   Sel.MBind{wc_text_member("id", members), wc_text_member("revision", members),
