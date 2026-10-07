@@ -488,18 +488,21 @@ def boundary_member(+object: J.Json, +key: String) -> J.Json:
 def boundary_text(+object: J.Json, +key: String) -> String:
   Req.text_of(boundary_member(object, key))
 
+def managed_exit_code(+kind: String, parsed: Maybe<U32>) -> ManagedExit:
+  match parsed:
+    case Some{code}:
+      Bool.pick(ManagedExit, String.eq(kind, "exit"),
+        ManagedExit{code, U32.is_eq(code, 0)},
+        Bool.pick(ManagedExit, String.eq(kind, "signal"),
+          Bool.pick(ManagedExit, U32.is_lt(code, 128),
+            ManagedExit{U32.add(code, 128), False{}},
+            ManagedExit{255, False{}}), ManagedExitRefused{}))
+    case None{}: ManagedExitRefused{}
+
 def managed_exit_fields(fields: List<String>) -> ManagedExit:
   match fields:
     case +kind <> +code_text <> Nil{}:
-      match U32.read(code_text):
-        case Some{code}:
-          Bool.pick(ManagedExit, String.eq(kind, "exit"),
-            ManagedExit{code, U32.is_eq(code, 0)},
-            Bool.pick(ManagedExit, String.eq(kind, "signal"),
-              Bool.pick(ManagedExit, U32.is_lt(code, 128),
-                ManagedExit{U32.add(code, 128), False{}},
-                ManagedExit{255, False{}}), ManagedExitRefused{}))
-        case None{}: ManagedExitRefused{}
+      managed_exit_code(kind, U32.read(code_text))
     case other: ManagedExitRefused{}
 
 def managed_exit_status(+status: String) -> ManagedExit:
@@ -696,15 +699,21 @@ def recovery_file_verify_sql(+output: String) -> String:
   "SELECT coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.status'),''),"
   ++ "coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.artifactSha256'),'');"
 
-def recovery_file_digest(+rows: String) -> String:
-  match Tx.split_lines(rows):
-    case +line <> Nil{}:
-      match Tx.split_tabs(line):
-        case +status <> +digest <> Nil{}:
-          Bool.pick(String, Bool.and(String.eq(status, "verified"),
-            Nat.is_eq(String.length(digest), 64n)), digest, SNil{})
-        case other: SNil{}
+def recovery_file_digest_fields(fields: List<String>) -> String:
+  match fields:
+    case +status <> +digest <> Nil{}:
+      Bool.pick(String, Bool.and(String.eq(status, "verified"),
+        Nat.is_eq(String.length(digest), 64n)), digest, SNil{})
     case other: SNil{}
+
+def recovery_file_digest_lines(lines: List<String>) -> String:
+  match lines:
+    case +line <> Nil{}:
+      recovery_file_digest_fields(Tx.split_tabs(line))
+    case other: SNil{}
+
+def recovery_file_digest(+rows: String) -> String:
+  recovery_file_digest_lines(Tx.split_lines(rows))
 
 def recovery_file_verified(+db: String, +binding: String, +executable: String,
                            +runtime_path: String, +cwd: String,
@@ -759,21 +768,26 @@ def managed_recovery_association(+db: String, +binding: String,
     case Done{+association}: IO.pure(Bool,
       managed_recovery_association_ok(bootstrap, admission, association))
 
+def managed_recovery_readiness_json(+bootstrap: ManagedQuery.Bootstrap,
+                                    +expected_binding: String,
+                                    decoded: ProjectPolicyJson) -> IO(ManagedQuery.KeeperReadiness):
+  match decoded:
+    case ProjectPolicyJsonRefused{reason}:
+      IO.pure(ManagedQuery.KeeperReadiness,
+        ManagedQuery.KeeperObserverUnavailable{"recoveryStateJson:" ++ reason})
+    case ProjectPolicyJsonReady{+value}:
+      IO.pure(ManagedQuery.KeeperReadiness,
+        ManagedQuery.keeper_recovery_readiness_from_host(bootstrap,
+          expected_binding, ManagedQuery.bootstrap_owner_witness(bootstrap), value))
+
 def managed_recovery_readiness_rows(+bootstrap: ManagedQuery.Bootstrap,
                                     +expected_binding: String,
                                     result: Result<&1,&1,U32 & String,String>) -> IO(ManagedQuery.KeeperReadiness):
   match result:
     case Fail{error}: IO.pure(ManagedQuery.KeeperReadiness,
       ManagedQuery.KeeperObserverUnavailable{"recoveryStateDecode"})
-    case Done{+rows}:
-      match project_policy_json_rows(rows):
-        case ProjectPolicyJsonRefused{reason}:
-          IO.pure(ManagedQuery.KeeperReadiness,
-            ManagedQuery.KeeperObserverUnavailable{"recoveryStateJson:" ++ reason})
-        case ProjectPolicyJsonReady{+value}:
-          IO.pure(ManagedQuery.KeeperReadiness,
-            ManagedQuery.keeper_recovery_readiness_from_host(bootstrap,
-              expected_binding, ManagedQuery.bootstrap_owner_witness(bootstrap), value))
+    case Done{+rows}: managed_recovery_readiness_json(bootstrap,
+      expected_binding, project_policy_json_rows(rows))
 
 def decode_managed_recovery_readiness(+db: String, +binding: String,
                                       +bootstrap: ManagedQuery.Bootstrap,
@@ -871,30 +885,17 @@ def managed_recovery_attach(+db: String, +executable: String,
           IO.die(Unit, 3, "managedRecoveryBindingMismatch")),
       IO.die(Unit, 3, "managedRecoveryInvocationMismatch"))
 
-def managed_recovery_bootstrap(+db: String, +owner: String, +query: String,
-                              +directory: String, +worktree: String,
-                              +bootstrap_file: String, +executable: String,
-                              +runtime_path: String,
-                              decoded: ProjectPolicyJson) -> IO(Unit):
+def managed_recovery_bootstrap_decoded(+db: String, +owner: String, +query: String,
+    +directory: String, +worktree: String, +bootstrap_file: String,
+    +executable: String, +runtime_path: String, +bootstrap_text: String,
+    +bootstrap_digest: String,
+    decoded: ManagedQuery.BootstrapDecode) -> IO(Unit):
   match decoded:
-    case ProjectPolicyJsonRefused{reason}: IO.die(Unit, 3, "managedRecoveryBootstrapJson")
-    case ProjectPolicyJsonReady{+envelope}:
-      +value = boundary_member(envelope, "value")
-      bootstrap_text = J.json_text(value)
-      bootstrap_digest = boundary_text(envelope, "sha256")
+    case ManagedQuery.BootstrapDecodeRefused{reason}:
+      IO.die(Unit, 3, "managedRecoveryBootstrapIdentity")
+    case ManagedQuery.BootstrapDecoded{+bootstrap}:
       Bool.pick(IO(Unit), Bool.and(
-        String.eq(boundary_text(envelope, "status"), "loaded"),
-        Bool.and(String.eq(boundary_text(envelope, "owner"), owner),
-        Bool.and(String.eq(boundary_text(envelope, "worktree"), worktree),
-        Bool.and(String.eq(boundary_text(envelope, "query"), query),
-        Bool.and(String.eq(boundary_text(envelope, "path"), bootstrap_file),
-          Nat.is_eq(String.length(bootstrap_digest), 64n))))),
-        match ManagedQuery.bootstrap_from_json(value, owner, query):
-          case ManagedQuery.BootstrapDecodeRefused{reason}:
-            IO.die(Unit, 3, "managedRecoveryBootstrapIdentity")
-          case ManagedQuery.BootstrapDecoded{+bootstrap}:
-            Bool.pick(IO(Unit), Bool.and(
-              String.eq(bootstrap_text, ManagedQuery.bootstrap_text(bootstrap)),
+        String.eq(bootstrap_text, ManagedQuery.bootstrap_text(bootstrap)),
         Bool.and(String.eq(ManagedQuery.bootstrap_keeper_path(bootstrap), directory),
         Bool.and(String.eq(directory, ContextIdentity.role_directory(
                   ManagedQuery.bootstrap_artifact_path(bootstrap),
@@ -909,10 +910,32 @@ def managed_recovery_bootstrap(+db: String, +owner: String, +query: String,
                   bootstrap_file),
                 String.eq(ManagedQuery.bootstrap_recovery_argv(bootstrap),
                   Process.argv([executable, "--recover-context-query", db, owner,
-                    query, directory, worktree, bootstrap_file]))))))))))),
-              managed_recovery_attach(db, executable, runtime_path, worktree,
-                bootstrap, bootstrap_digest),
-              IO.die(Unit, 3, "managedRecoveryBootstrapPathMismatch")),
+                    query, directory, worktree, bootstrap_file])))))))))),
+        managed_recovery_attach(db, executable, runtime_path, worktree,
+          bootstrap, bootstrap_digest),
+        IO.die(Unit, 3, "managedRecoveryBootstrapPathMismatch"))
+
+def managed_recovery_bootstrap_json(+db: String, +owner: String, +query: String,
+    +directory: String, +worktree: String, +bootstrap_file: String,
+    +executable: String, +runtime_path: String,
+    decoded: ProjectPolicyJson) -> IO(Unit):
+  match decoded:
+    case ProjectPolicyJsonRefused{reason}:
+      IO.die(Unit, 3, "managedRecoveryBootstrapJson")
+    case ProjectPolicyJsonReady{+envelope}:
+      +value = boundary_member(envelope, "value")
+      bootstrap_text = J.json_text(value)
+      bootstrap_digest = boundary_text(envelope, "sha256")
+      Bool.pick(IO(Unit), Bool.and(
+        String.eq(boundary_text(envelope, "status"), "loaded"),
+        Bool.and(String.eq(boundary_text(envelope, "owner"), owner),
+        Bool.and(String.eq(boundary_text(envelope, "worktree"), worktree),
+        Bool.and(String.eq(boundary_text(envelope, "query"), query),
+        Bool.and(String.eq(boundary_text(envelope, "path"), bootstrap_file),
+          Nat.is_eq(String.length(bootstrap_digest), 64n)))))),
+        managed_recovery_bootstrap_decoded(db, owner, query, directory,
+          worktree, bootstrap_file, executable, runtime_path, bootstrap_text,
+          bootstrap_digest, ManagedQuery.bootstrap_from_json(value, owner, query)),
         IO.die(Unit, 3, "managedRecoveryBootstrapEnvelope"))
 
 def managed_recovery_provider(+db: String, +owner: String, +query: String,
@@ -1166,21 +1189,26 @@ def project_policy_json_decoded(raw: NativeRequest.RawDecode) -> ProjectPolicyJs
 def project_policy_json_rows(+rows: String) -> ProjectPolicyJson:
   project_policy_json_decoded(NativeRequest.raw_rows(rows))
 
+def managed_readiness_json(+bootstrap: ManagedQuery.Bootstrap,
+                           +expected_binding: String,
+                           decoded: ProjectPolicyJson) -> IO(ManagedQuery.KeeperReadiness):
+  match decoded:
+    case ProjectPolicyJsonRefused{reason}:
+      IO.pure(ManagedQuery.KeeperReadiness,
+        ManagedQuery.KeeperObserverUnavailable{"readinessJson:" ++ reason})
+    case ProjectPolicyJsonReady{+value}:
+      IO.pure(ManagedQuery.KeeperReadiness,
+        ManagedQuery.keeper_readiness_from_host(bootstrap, expected_binding,
+          ManagedQuery.bootstrap_owner_witness(bootstrap), value))
+
 def managed_readiness_rows(+bootstrap: ManagedQuery.Bootstrap,
                            +expected_binding: String,
                            result: Result<&1,&1,U32 & String,String>) -> IO(ManagedQuery.KeeperReadiness):
   match result:
     case Fail{error}: IO.pure(ManagedQuery.KeeperReadiness,
       ManagedQuery.KeeperObserverUnavailable{"readinessDecode"})
-    case Done{+rows}:
-      match project_policy_json_rows(rows):
-        case ProjectPolicyJsonRefused{reason}:
-          IO.pure(ManagedQuery.KeeperReadiness,
-            ManagedQuery.KeeperObserverUnavailable{"readinessJson:" ++ reason})
-        case ProjectPolicyJsonReady{+value}:
-          IO.pure(ManagedQuery.KeeperReadiness,
-            ManagedQuery.keeper_readiness_from_host(bootstrap, expected_binding,
-              ManagedQuery.bootstrap_owner_witness(bootstrap), value))
+    case Done{+rows}: managed_readiness_json(bootstrap, expected_binding,
+      project_policy_json_rows(rows))
 
 def managed_readiness_digest(+db: String, +binding: String,
                              +bootstrap: ManagedQuery.Bootstrap,
