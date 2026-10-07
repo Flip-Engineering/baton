@@ -12,11 +12,14 @@ import ./native-request.bend as NativeRequest
 import ./native-catalog.bend as NativeCatalog
 import ./native-project-policy.bend as NativePolicy
 import ./service.bend as ContextService
+import ./native-managed-query.bend as ManagedQuery
+import ./identity.bend as ContextIdentity
 import ../json/canonical.bend as J
 import ./request.bend as Req
 import ../coordinator/commands.bend as ContextCommands
 import ../host/sqlite.bend as DB
 import ../host/process.bend as Process
+import ../host/instance.bend as Instance
 import ../host/session-lock.bend as Host
 import ../git/process.bend as Git
 import ../git/types.bend as G
@@ -29,6 +32,10 @@ type InvocationFrame is Data:
 type StepInvocationFrame is Data:
   NativeStepFrame{frame: InvocationFrame}
   NativeStepRefused{module_id: String, declaration_digest: String, operation: String}
+
+type InvocationVerification is Data:
+  InvocationVerified{artifact_sha256: String}
+  InvocationVerificationRefused{reason: String}
 
 def invocation_frame(+invocation: Sel.Invocation) -> InvocationFrame:
   match invocation:
@@ -96,6 +103,10 @@ def query_outcome_argv(+runtime_path: String, +executable: String) -> String:
 def query_source_argv(+runtime_path: String, +executable: String) -> String:
   Process.argv([runtime_path, "--experimental-strip-types",
     installed_provider_path(executable), "--examine-query-source"])
+
+def verify_invocation_argv(+runtime_path: String, +executable: String) -> String:
+  Process.argv([runtime_path, "--experimental-strip-types",
+    installed_provider_path(executable), "--verify-invocation"])
 
 def query_artifact_request(+owner: String, +worktree: String, +query: String) -> String:
   J.json_text(J.Jobj{J.Jpair{"owner", J.Jstr{owner},
@@ -343,6 +354,76 @@ def provider_spawn(+path: String, +cwd: String, +frame: String, result: Result<&
       do IO<ProviderAnswer>:
         written : Result<&1,&1,U32 & String,Unit> <- Process.ProcessChild.write(handle, frame ++ "\n")
         provider_write(handle, written)
+
+def invocation_verify_sql(+output: String) -> String:
+  "SELECT coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.status'),''),"
+  ++ "coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.query'),''),"
+  ++ "coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.owner'),''),"
+  ++ "coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.moduleId'),''),"
+  ++ "coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.declarationDigest'),''),"
+  ++ "coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.artifactSha256'),'');"
+
+def invocation_verify_fields(fields: List<String>, +query: String, +owner: String,
+                             +module_id: String, +digest: String) -> InvocationVerification:
+  match fields:
+    case +status <> +seen_query <> +seen_owner <> +seen_module <> +seen_digest <> +artifact_sha <> Nil{}:
+      Bool.pick(InvocationVerification,
+        Bool.and(String.eq(status ++ "\t" ++ seen_query ++ "\t" ++ seen_owner
+          ++ "\t" ++ seen_module ++ "\t" ++ seen_digest,
+          "verified\t" ++ query ++ "\t" ++ owner ++ "\t" ++ module_id ++ "\t" ++ digest),
+          Nat.is_eq(String.length(artifact_sha), 64n)),
+        InvocationVerified{artifact_sha}, InvocationVerificationRefused{"invocationVerificationMismatch"})
+    case _: InvocationVerificationRefused{"invocationVerificationShape"}
+
+def invocation_verify_rows(+rows: String, +query: String, +owner: String,
+                           +module_id: String, +digest: String) -> InvocationVerification:
+  invocation_verify_lines(Tx.split_lines(rows), query, owner, module_id, digest)
+
+def invocation_verify_lines(lines: List<String>, +query: String, +owner: String,
+                             +module_id: String, +digest: String) -> InvocationVerification:
+  match lines:
+    case +line <> Nil{}:
+      invocation_verify_fields(Tx.split_tabs(line), query, owner, module_id, digest)
+    case _: InvocationVerificationRefused{"invocationVerificationRows"}
+
+def invocation_verify_result(result: Result<&1,&1,U32 & String,String>,
+                             +query: String, +owner: String,
+                             +module_id: String, +digest: String) -> IO(InvocationVerification):
+  match result:
+    case Fail{error}: IO.pure(InvocationVerification, InvocationVerificationRefused{"invocationVerificationDecode"})
+    case Done{+rows}: IO.pure(InvocationVerification,
+      invocation_verify_rows(rows, query, owner, module_id, digest))
+
+def invocation_verification_output(+db: String, +binding: String,
+                                   +query: String, +owner: String,
+                                   +module_id: String, +digest: String,
+                                   answer: ProviderAnswer) -> IO(InvocationVerification):
+  match answer:
+    case ProviderRefused{reason}: IO.pure(InvocationVerification, InvocationVerificationRefused{reason})
+    case ProviderRuntime{path, version}: IO.pure(InvocationVerification, InvocationVerificationRefused{"invocationVerifierMalformed"})
+    case ProviderOutput{+value, +status}:
+      Bool.pick(IO(InvocationVerification), String.eq(status, "exit 0"),
+        do IO<InvocationVerification>:
+          result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+            invocation_verify_sql(value))
+          invocation_verify_result(result, query, owner, module_id, digest),
+        IO.pure(InvocationVerification, InvocationVerificationRefused{"invocationVerifierExit"}))
+
+def verify_invocation_frame(+db: String, +binding: String, +query: String,
+                            +owner: String, +cwd: String, +executable: String,
+                            +runtime_path: String, +module_id: String,
+                            +digest: String, frame: InvocationFrame) -> IO(InvocationVerification):
+  match frame:
+    case NativeFrameRefused{reason}:
+      IO.pure(InvocationVerification, InvocationVerificationRefused{reason})
+    case NativeFrameReady{+value}:
+      do IO<InvocationVerification>:
+        spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
+          verify_invocation_argv(runtime_path, executable), cwd, "/dev/null")
+        answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable), cwd,
+          value, spawned)
+        invocation_verification_output(db, binding, query, owner, module_id,
+          digest, answer)
 
 def project_policy_runtime_answer(+executable: String, +cwd: String,
                                   +owner: String, +worktree: String,
@@ -652,13 +733,78 @@ def observe_project_policy(+db: String, +binding: String, +executable: String,
       owner, worktree, runtime)
     project_policy_output(db, binding, owner, worktree, answer)
 
-def query_selection_answer(+verdict: Sel.Verdict) -> IO(Unit):
+def selected_plan_frame(+plan: Sel.Plan, +query: String, +owner: String,
+                        +canonical: String) -> StepInvocationFrame:
+  match plan:
+    case Sel.Plan{primary, common, steps, effective_effects, inputs, available,
+        policy_identity}:
+      invocation_for_step(plan, Sel.bind_module(primary),
+        Sel.bind_digest(primary), Sel.bind_operation(primary), query, owner,
+        canonical, "starter", "0")
+
+def verification_result(+plan: Sel.Plan, +result_schema: String,
+                        +db: String, +binding: String, +owner: String,
+                        +query: String, +canonical: String, +cwd: String,
+                        +source_identity: String, +artifact_path: String,
+                        +invocation_text: String, +executable: String,
+                        +runtime_path: String,
+                        verification: InvocationVerification) -> IO(Unit):
+  match verification:
+    case InvocationVerificationRefused{reason}:
+      IO.die(Unit, 3, "invocationVerification:" ++ reason)
+    case InvocationVerified{artifact_sha256}:
+      IO.die(Unit, 3, "managedPreparationRequiresLifecycleBinding")
+
+def verify_selected_plan(+plan: Sel.Plan, +result_schema: String,
+                         +db: String, +binding: String, +owner: String,
+                         +query: String, +canonical: String, +cwd: String,
+                         +source_identity: String, +artifact_path: String,
+                         +executable: String, +runtime_path: String) -> IO(Unit):
+  match plan:
+    case Sel.Plan{primary, common, steps, effective_effects, inputs, available,
+        policy_identity}:
+      verify_selected_plan_frame(plan, result_schema, db, binding, owner,
+        query, canonical, cwd, source_identity, artifact_path,
+        executable, runtime_path,
+        selected_plan_frame(plan, query, owner, canonical))
+
+def verify_selected_plan_frame(+plan: Sel.Plan, +result_schema: String,
+                               +db: String, +binding: String, +owner: String,
+                               +query: String, +canonical: String, +cwd: String,
+                               +source_identity: String, +artifact_path: String,
+                               +executable: String, +runtime_path: String,
+                               step_frame: StepInvocationFrame) -> IO(Unit):
+  match plan:
+    case Sel.Plan{primary, common, steps, effective_effects, inputs, available,
+        policy_identity}:
+      match step_frame:
+        case NativeStepRefused{module_id, declaration_digest, operation}:
+          IO.die(Unit, 3, "stepInvocationUnavailable:" ++ module_id ++ ":" ++ operation)
+        case NativeStepFrame{frame}:
+          match frame:
+            case NativeFrameRefused{reason}: IO.die(Unit, 3, reason)
+            case NativeFrameReady{+value}:
+              do IO<Unit>:
+                verification : InvocationVerification <- verify_invocation_frame(db,
+                  binding, query, owner, cwd, executable, runtime_path,
+                  Sel.bind_module(primary), Sel.bind_digest(primary), NativeFrameReady{value})
+                verification_result(plan, result_schema, db, binding, owner, query,
+                  canonical, cwd, source_identity, artifact_path, value,
+                  executable, runtime_path, verification)
+
+def query_selection_answer(+db: String, +binding: String, +owner: String,
+                           +query: String, +canonical: String, +cwd: String,
+                           identity: Sel.ProjectPolicyIdentity,
+                           +source_identity: String, +artifact_path: String,
+                           +executable: String, +runtime_path: String,
+                           +verdict: Sel.Verdict) -> IO(Unit):
   match verdict:
     case Sel.VerdictRefused{stage, +reason}:
       IO.die(Unit, 3, "selection:" ++ stage ++ ":" ++ Sel.rq_code(reason)
         ++ ":" ++ Sel.rq_detail(reason))
     case Sel.VerdictAdmitted{plan, result_schema}:
-      IO.die(Unit, 3, "selectedPlanRequiresPreparedExecutionLifecycle")
+      verify_selected_plan(plan, result_schema, db, binding, owner, query,
+        canonical, cwd, source_identity, artifact_path, executable, runtime_path)
 
 def project_selection(+db: String, +binding: String, +owner: String, +query: String,
                       +canonical: String, +cwd: String, +catalog: Decl.Cat,
@@ -666,8 +812,11 @@ def project_selection(+db: String, +binding: String, +owner: String, +query: Str
                       +operands: Sel.RequestOperands, +installed: Eng.SS,
                       +disabled: Eng.SS, +preferred: Eng.SS,
                       +identity: Sel.ProjectPolicyIdentity,
-                      +source_path: String) -> IO(Unit):
-  query_selection_answer(Sel.request_verdict(catalog,
+                      +source_path: String, +artifact_path: String,
+                      +executable: String, +runtime_path: String) -> IO(Unit):
+  query_selection_answer(db, binding, owner, query, canonical, cwd,
+    identity, source_path, artifact_path, executable, runtime_path,
+    Sel.request_verdict(catalog,
     Sel.sel_inputs(operands, Sel.ProjectState{Eng.ss_one(source_path), Eng.ss_empty(),
       installed, disabled, preferred, identity}), inventory, Sel.CapNil{}))
 
@@ -677,18 +826,22 @@ def project_selection_policy(+db: String, +binding: String, +owner: String,
                              +operands: Sel.RequestOperands, +installed: Eng.SS,
                              +identity: Sel.ProjectPolicyIdentity,
                              +source_path: String,
+                             +artifact_path: String, +executable: String,
+                             +runtime_path: String,
                              project_policy: NativePolicy.ProjectPolicy) -> IO(Unit):
   match project_policy:
     case NativePolicy.ProjectPolicy{disabled, preferred}:
       project_selection(db, binding, owner, query, canonical, cwd, catalog,
-        inventory, operands, installed, disabled, preferred, identity, source_path)
+        inventory, operands, installed, disabled, preferred, identity, source_path,
+        artifact_path, executable, runtime_path)
 
 def query_catalog_admitted(+db: String, +binding: String, +owner: String, +query: String,
                            catalog: NativeCatalog.CatalogDecode,
                            +canonical: String, +cwd: String,
                            operands: Sel.RequestOperands,
                            policy: ProjectPolicyAnswer,
-                           source: BoundaryPath) -> IO(Unit):
+                           source: BoundaryPath, artifact: BoundaryPath,
+                           +executable: String, +runtime_path: String) -> IO(Unit):
   match catalog:
     case NativeCatalog.CatalogRefused{condition}:
       IO.die(Unit, 3, "catalog:" ++ condition)
@@ -699,26 +852,31 @@ def query_catalog_admitted(+db: String, +binding: String, +owner: String, +query
           match source:
             case BoundaryPathRefused{reason}: IO.die(Unit, 3, reason)
             case BoundaryPathReady{+verified_path}:
-              project_selection_policy(db, binding, owner, query, canonical,
-                cwd, catalog, inventory, operands, installed, identity,
-                verified_path, project_policy)
+              match artifact:
+                case BoundaryPathRefused{reason}: IO.die(Unit, 3, reason)
+                case BoundaryPathReady{+artifact_path}:
+                  project_selection_policy(db, binding, owner, query, canonical,
+                    cwd, catalog, inventory, operands, installed, identity,
+                    verified_path, artifact_path, executable, runtime_path, project_policy)
 
 def query_catalog_decoded(+db: String, +binding: String, +owner: String, +query: String,
                           catalog: NativeCatalog.CatalogDecode,
                           request: NativeRequest.RequestDecode,
                           policy: ProjectPolicyAnswer,
-                          source: BoundaryPath) -> IO(Unit):
+                          source: BoundaryPath, artifact: BoundaryPath,
+                          +executable: String, +runtime_path: String) -> IO(Unit):
   match request:
     case NativeRequest.RequestDecodeRefused{condition}:
       IO.die(Unit, 3, "request:" ++ condition)
     case NativeRequest.RequestDecoded{canonical, operands, operation_chain, cwd, source_path}:
       query_catalog_admitted(db, binding, owner, query, catalog, canonical,
-        cwd, operands, policy, source)
+        cwd, operands, policy, source, artifact, executable, runtime_path)
 
 def query_catalog_rows_result(+db: String, +binding: String, +owner: String, +query: String,
                               request: NativeRequest.RequestDecode,
                               policy: ProjectPolicyAnswer,
-                              source: BoundaryPath,
+                              source: BoundaryPath, artifact: BoundaryPath,
+                              +executable: String, +runtime_path: String,
                               result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Fail{error}:
@@ -726,38 +884,42 @@ def query_catalog_rows_result(+db: String, +binding: String, +owner: String, +qu
         case (code, detail): IO.die(Unit, 3, "providerInventoryDecodeRead")
     case Done{+rows}:
       query_catalog_decoded(db, binding, owner, query,
-        NativeCatalog.inventory_rows(rows), request, policy, source)
+        NativeCatalog.inventory_rows(rows), request, policy, source, artifact,
+        executable, runtime_path)
 
 def query_catalog_rows(+db: String, +binding: String, +owner: String, +query: String,
                        +value: String,
                        request: NativeRequest.RequestDecode,
                        policy: ProjectPolicyAnswer,
-                       source: BoundaryPath) -> IO(Unit):
+                       source: BoundaryPath, artifact: BoundaryPath,
+                       +executable: String, +runtime_path: String) -> IO(Unit):
   do IO<Unit>:
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
       Req.json_tree_sql(value))
     query_catalog_rows_result(db, binding, owner, query, request, policy,
-      source, result)
+      source, artifact, executable, runtime_path, result)
 
 def query_catalog_output(+db: String, +binding: String, +owner: String, +query: String,
                          request: NativeRequest.RequestDecode,
                          policy: ProjectPolicyAnswer, status: String,
-                         value: String, source: BoundaryPath) -> IO(Unit):
+                         value: String, source: BoundaryPath, artifact: BoundaryPath,
+                         +executable: String, +runtime_path: String) -> IO(Unit):
   match status:
     case "exit 0": query_catalog_rows(db, binding, owner, query, value,
-      request, policy, source)
+      request, policy, source, artifact, executable, runtime_path)
     case other: IO.die(Unit, 3, "providerInventory:" ++ value)
 
 def query_catalog_result(+db: String, +binding: String, +owner: String, +query: String,
                          policy: ProjectPolicyAnswer,
                          answer: ProviderAnswer,
                          request: NativeRequest.RequestDecode,
-                         source: BoundaryPath) -> IO(Unit):
+                         source: BoundaryPath, artifact: BoundaryPath,
+                         +executable: String, +runtime_path: String) -> IO(Unit):
   match answer:
     case ProviderRefused{reason}: IO.die(Unit, 3, "providerInventory:" ++ reason)
     case ProviderRuntime{path, version}: IO.die(Unit, 3, "providerInventoryMalformed")
     case ProviderOutput{value, status}: query_catalog_output(db, binding, owner,
-      query, request, policy, status, value, source)
+      query, request, policy, status, value, source, artifact, executable, runtime_path)
 
 def query_environment_runtime(+db: String, +binding: String, +owner: String,
                               +query: String, +cwd: String, +worktree: String,
@@ -776,8 +938,11 @@ def query_environment_runtime(+db: String, +binding: String, +owner: String,
           owner, worktree, query, True{},
           query_source_request(owner, worktree, NativeRequest.decoded_cwd(request),
             NativeRequest.decoded_subject_path(request)), ProviderRuntime{path, version})
+        artifact : BoundaryPath <- query_boundary(db, binding, executable, cwd,
+          owner, worktree, query, False{},
+          query_artifact_request(owner, worktree, query), ProviderRuntime{path, version})
         query_catalog_result(db, binding, owner, query, policy, answer,
-          request, source)
+          request, source, artifact, executable, path)
 
 def query_request_environment(db: String, binding: String, owner: String, query: String,
                               cwd: String, worktree: String,
