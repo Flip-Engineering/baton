@@ -241,7 +241,7 @@ class Land(unittest.TestCase):
         ).stdout.strip()
         observed = (
             result['status'],
-            'changed away from target branch main' in result['reason'],
+            'changed away from target branch main' in result.get('reason', ''),
             self.git('rev-parse', 'main').strip(),
             self.git('rev-parse', 'other').strip(),
             self.git('rev-parse', 'w1-branch').strip(),
@@ -264,7 +264,7 @@ class Land(unittest.TestCase):
         ).stdout.strip()
         observed = (
             result['status'],
-            'changed away from target branch main' in result['reason'],
+            'changed away from target branch main' in result.get('reason', ''),
             self.git('rev-parse', 'main').strip(),
             self.git('rev-parse', 'other').strip(),
             self.git('rev-parse', 'w1-branch').strip(),
@@ -290,7 +290,7 @@ class Land(unittest.TestCase):
         result = self.call('land', 'w1', self.repo, 'main', env=env)
         observed = (
             result['status'],
-            'target moved during landing' in result['reason'],
+            'target moved during landing' in result.get('reason', ''),
             self.git('rev-parse', 'main').strip(),
             self.git('rev-parse', 'w1-branch').strip(),
             subprocess.run(
