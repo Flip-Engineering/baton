@@ -622,7 +622,7 @@ def ff_stage5_landed(target: String, candidate: String) -> IO(FFLD):
 
 def ff_stage5_blocked(detail: String) -> IO(FFLD):
   +d = detail
-  IO.pure(FFLD, FFDone{T.LBlocked{d}}}
+  IO.pure(FFLD, FFDone{T.LBlocked{d}})
 
 def ff_stage5_captured(target: String, candidate: String, artifact: String, observed: Result<&1,&1,U32 & String,String & String>) -> IO(FFLD):
   +tg = target
@@ -631,23 +631,23 @@ def ff_stage5_captured(target: String, candidate: String, artifact: String, obse
   match observed:
     case Fail{error}:
       match error:
-        case (code, detail): ff_stage5_blocked(Tx.str_cat("capture failed: ", detail))
+        case (code, detail): ff_stage5_blocked(Tx.str_cat("capture failed; stderr at ", Tx.str_cat(art, Tx.str_cat("; ", detail))))
     case Done{pair}:
       match pair:
-        case (framing, diagnostics):
-          ff_stage5_framing(tg, cand, art, framing)
+        case (framing, diagnostics): ff_stage5_framing(tg, cand, art, framing, diagnostics)
 
-def ff_stage5_framing(target: String, candidate: String, artifact: String, framing: String) -> IO(FFLD):
+def ff_stage5_framing(target: String, candidate: String, artifact: String, framing: String, diagnostics: String) -> IO(FFLD):
   +tg = target
   +cand = candidate
   +art = artifact
   +framed = framing
-  match Tx.run_res(framed):
+  +diag = diagnostics
+  match Tx.run_res(Done{framed}):
     case T.RRun{T.SExit{code}, out}:
       match U32.is_eq(code, 0):
         case True{}: ff_stage5_landed(tg, cand)
-        case False{}: ff_stage5_blocked(Tx.str_cat("mutation exited nonzero; evidence at ", art))
-    case T.RRun{T.SSignal{signal}, out}: ff_stage5_blocked(Tx.str_cat("mutation signalled; evidence at ", art))
+        case False{}: ff_stage5_blocked(Tx.str_cat("mutation exited nonzero; stderr bytes ", Tx.str_cat(diag, Tx.str_cat("; artifact ", art)))
+    case T.RRun{T.SSignal{signal}, out}: ff_stage5_blocked(Tx.str_cat("mutation signalled; stderr at ", art))
 
 def ff_stage5_outcome(target: String, candidate: String, artifact: String, outcome: Lg.Landing) -> IO(FFLD):
   +tg = target
@@ -672,9 +672,11 @@ def ff_stage5_guarded_now(candidate: String, old: String, repo: String, target: 
   +tg = target
   +cm = common
   +gd = guard
-  +art = Lg.attempt_artifact_for(cm, Tx.str_cat("ff-", Tx.str_cat(tg, Tx.str_cat("-", tb))))
-  +intent = It.IntentRequested{Tx.str_cat("ff-", Tx.str_cat(tg, Tx.str_cat("-", tb))), cm, tg, rp, cand, tb, cm, rp, tb}
-  +request = Lg.LandingRequested{intent, "intent", tb, "", gd, art, Lg.attempt_directory_for(cm, Tx.str_cat("ff-", Tx.str_cat(tg, Tx.str_cat("-", tb)))), rp}
+  +name = Tx.str_cat(cand, Tx.str_cat("-", tb))
+  +scratch = Lg.attempt_directory_for(cm, name)
+  +art = Lg.attempt_artifact_for(cm, name)
+  +intent = It.IntentRequested{name, cm, tg, rp, cand, tb, Lg.intent_path(scratch, "intent"), rp, tb}
+  +request = Lg.LandingRequested{intent, "intent", tb, "", gd, art, scratch, rp}
   do IO<FFLD>:
     outcome : Lg.Landing <- Lg.Landing.run(request)
     ff_stage5_outcome(tg, cand, art, outcome)
@@ -710,7 +712,7 @@ def ff_stage5_guardpath(cand: String, old: String, repo: String, target: String,
     guard_g : Result<U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
     ff_stage5_guard_observed(candidate, tb, rp, tg, cm, guard_g)
 
-def ff_stage5_guard_observed(cand: String, old: String, repo: String, target: String, common: String, observed: Result<U32 & String, String>) -> IO<FFLD>:
+def ff_stage5_guard_observed(cand: String, old: String, repo: String, target: String, common: String, observed: Result<U32 & String, String>) -> IO(FFLD):
   +candidate = cand
   +tb = old
   +rp = repo
