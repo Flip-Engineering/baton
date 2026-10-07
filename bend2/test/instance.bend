@@ -487,7 +487,7 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"subscribe"),15,Bool.pick(U32,String.eq(mode,"publish"),16,
   Bool.pick(U32,String.eq(mode,"state"),17,Bool.pick(U32,String.eq(mode,"admit-nolock"),18,
   Bool.pick(U32,String.eq(mode,"prepare"),19,Bool.pick(U32,String.eq(mode,"admit-recovery"),20,
-  Bool.pick(U32,String.eq(mode,"attach-complete"),21,0))))))))))))))))))))
+  Bool.pick(U32,String.eq(mode,"attach-complete"),21,0)))))))))))))))))))))
 
 # Admits under the shared owner while holding no session guard, so the record
 # states no guard binding.
