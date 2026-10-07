@@ -234,6 +234,7 @@ class Matrix(unittest.TestCase):
     def start_sampler(self):
         self._rss_stop.clear()
         self._rss_peak = {}
+        self._count_peak = {}
         directory = str(self.directory)
 
         def sample():
