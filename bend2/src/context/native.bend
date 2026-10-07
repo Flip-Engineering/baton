@@ -337,7 +337,7 @@ def query_request_result(db: String, binding: String, owner: String, query: Stri
   match result:
     case NativeRequest.RequestDecodeRefused{condition}:
       IO.die(Unit, 3, "request:" ++ condition)
-    case NativeRequest.RequestDecoded{canonical, operands, operation_chain, cwd, source_path}:
+    case NativeRequest.RequestDecoded{canonical, operands, operation_chain, +cwd, source_path}:
       do IO<Unit>:
         executable : String <- IO.try(String, Host.SessionLock.executable())
         runtime : ProviderAnswer <- resolve_node_runtime(cwd)
