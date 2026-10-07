@@ -401,7 +401,7 @@ def parse(args: List<String>) -> Command:
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
       Bool.pick(Command,String.eq(verb,"context-query-file"),ContextQueryFile{id,one,two},
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,one,two,three},
-      Bool.pick(Command,String.eq(verb,"section"),Section{id,one,two,three},Bool.pick(Command, String.eq(verb,"ensemble-member"),EnsembleMember{id,one,two,three},Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{}))))
+      Bool.pick(Command,String.eq(verb,"section"),Section{id,one,two,three},Bool.pick(Command, String.eq(verb,"ensemble-member"),EnsembleMember{id,one,two,three},Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{})))))
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
       Bool.pick(Command,String.eq(verb,"dispatch-turn"),DispatchTurn{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"dispatch-file"),DispatchFile{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"section-member"),SectionMember{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"land-checked"),LandChecked{id,one,two,three,four},
       Bool.pick(Command, String.eq(verb,"bind"),Bind{id,one,two,three,four},
