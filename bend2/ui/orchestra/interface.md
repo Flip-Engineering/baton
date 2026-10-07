@@ -116,10 +116,11 @@ from the next event after a reconnect. Event types:
   cursor travels in the frame id. The page advances its stored
   cursor from each frame id (or from `data.cursor` when present).
 - `gap`: `{"reason": ..., "generation": "<owner generation>"}` with
-  reason `cursor-gap`, `reader-scope-changed`,
-  `owner-generation-changed`, `owner-notification-lost`, or
-  `event-read-failed`. The server sends it when the durable
-  cursor can no longer be honored and then closes the stream.
+  reason `cursor-gap`, `reader-scope-changed`, `ensemble-removed`,
+  `entity-removed`, `owner-generation-changed`,
+  `owner-notification-lost`, or `event-read-failed`. The server sends
+  it when the durable cursor can no longer be honored and then closes
+  the stream.
   The page stores the generation, shows the matching notice,
   re-reads the snapshot immediately with `since=<last cursor>`,
   renders it as authoritative current state, and reopens the
@@ -129,8 +130,8 @@ from the next event after a reconnect. Event types:
 - `transition`: one transition object, prepended to the list.
   Transitions carry no message bodies.
 - `pending`: `{"session": "<player id>",
-  "pendingCount": n, "unacknowledgedCount": n}` with optional
-  `lastTurnId`, `latestReportId`, and `inputRead`. The backend
+  "pendingCount": n, "unacknowledgedCount": n,
+  "lastTurnId": "...", "latestReportId": "..."}`. The backend
   emits `pending` for message inserts, receipt updates, and
   turn/stop/execution/role changes, applied to any session.
 

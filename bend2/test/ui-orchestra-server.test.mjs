@@ -295,7 +295,7 @@ test('removing a visible ensemble emits a gap for an authoritative snapshot', as
   writer.exec("DELETE FROM ensembles WHERE id='shared-ensemble';");
   notifications.committed();
   const frame = decoder.decode((await reader.read()).value);
-  assert.match(frame, /event: gap[\s\S]*reader-scope-changed/);
+  assert.match(frame, /event: gap[\s\S]*ensemble-removed/);
   writer.close();
   await reader.cancel();
 });

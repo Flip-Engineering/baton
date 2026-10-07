@@ -535,6 +535,8 @@ function connectEvents() {
     if (typeof g.generation === "string" && g.generation) setGeneration(g.generation);
     if (g.reason === "reader-scope-changed") {
       holdGapNotice("Reader scope changed. Re-reading current state.");
+    } else if (g.reason === "ensemble-removed" || g.reason === "entity-removed") {
+      holdGapNotice("A tracked entry was removed. Re-reading current state.");
     } else if (g.reason === "owner-generation-changed") {
       holdGapNotice("Owner generation changed. Re-reading current state.");
     } else if (g.reason === "owner-notification-lost" || g.reason === "event-read-failed") {
@@ -599,7 +601,6 @@ function connectEvents() {
       if (typeof m.unacknowledgedCount === "number") p.unacknowledgedCount = m.unacknowledgedCount;
       if (typeof m.lastTurnId === "string") p.lastTurnId = m.lastTurnId;
       if (typeof m.latestReportId === "string") p.latestReportId = m.latestReportId;
-      if (Array.isArray(m.inputRead)) p.inputRead = m.inputRead;
       renderTree();
       if (state.selectionId === m.session) renderDetail();
       flashRow(m.session);
@@ -644,8 +645,21 @@ function scheduleEventsRetry() {
   state.reconnectDelay = Math.min(state.reconnectDelay * 2, 30000);
   setConn("retrying");
   setNotice("Event stream unavailable before first hello. Retrying events in " + Math.round(wait / 1000) + "s.");
-  setTimeout(() => {
+  setTimeout(async () => {
     if (state.opened) return;
+    // A 503 native-owner-subscription-unavailable is a permanent condition of this
+    // server, not a transient failure: stop retrying (no browser polling loop) until
+    // the operator asks with Reconnect.
+    try {
+      const probe = await fetch(state.apiBase + "/orchestra/events" + queryString());
+      const body = await probe.json().catch(() => ({}));
+      if (probe.status === 503 && body && body.error === "native-owner-subscription-unavailable") {
+        setConn("unavailable");
+        setNotice("Live stream unavailable: the shared owner subscription is not installed yet (#676). The snapshot still updates on Reconnect.");
+        return;
+      }
+      if (probe.body) probe.body.cancel();
+    } catch (e) { /* endpoint unreachable: keep the retry path */ }
     connectEvents();
   }, wait);
 }

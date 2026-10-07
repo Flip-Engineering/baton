@@ -290,14 +290,16 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
               const player = change.entity === 'membership' && visible.has(change.session)
                 ? playerSnapshot(db, change.session) : null;
               return { id, type: 'ensemble', data: value ? JSON.parse(value) : null,
-                player, transition: change };
+                player, transition: change, sessionVisible: visible.has(change.session) };
             }
             const player = playerSnapshot(db, change.session);
             return { id, type: 'player', data: player, transition: change,
+              sessionVisible: visible.has(change.session),
               pending: player && (change.kind.startsWith('message:')
                 || ['receipt', 'report', 'stop', 'execution', 'role'].includes(change.kind))
                 ? { session: player.id, pendingCount: player.pendingCount,
-                  unacknowledgedCount: player.unacknowledgedCount } : null };
+                  unacknowledgedCount: player.unacknowledgedCount,
+                  lastTurnId: player.lastTurnId, latestReportId: player.latestReportId } : null };
           });
           return { refused: false, gap, scope, rows: frames };
         });
@@ -315,7 +317,7 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
             writeEvent(response, 'cursor', String(cursor), {});
             continue;
           }
-          if (!frame.data) return endWithGap('reader-scope-changed');
+          if (!frame.data) return endWithGap(frame.type === 'ensemble' ? 'ensemble-removed' : 'entity-removed');
           writeEvent(response, frame.type, String(cursor), frame.data);
           if (frame.player) writeEvent(response, 'player', String(cursor), frame.player);
           if (frame.pending) writeEvent(response, 'pending', String(cursor), frame.pending);
@@ -323,7 +325,7 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
           writeEvent(response, 'transition', String(cursor), {
             seq: cursor,
             at: change.at,
-            session: change.session,
+            session: frame.sessionVisible === false ? '' : change.session,
             kind: change.kind,
             summary: change.summary,
           });
@@ -362,7 +364,14 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
 }
 
 function serveAsset(response, assetRoot, pathname) {
-  const candidate = resolve(assetRoot, `.${decodeURIComponent(pathname)}`);
+  let decoded;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    response.writeHead(400).end();
+    return;
+  }
+  const candidate = resolve(assetRoot, `.${decoded}`);
   if (candidate !== assetRoot && !candidate.startsWith(assetRoot + sep)) {
     response.writeHead(404).end();
     return;
@@ -436,6 +445,9 @@ function cli(args) {
   for (let i = 0; i < args.length; i += 2) values.set(args[i], args[i + 1]);
   if (!values.get('--database') || !values.get('--reader')) {
     throw new Error('usage: server.mjs --database PATH --reader SESSION [--subject SESSION] [--host 127.0.0.1] [--port 0]');
+  }
+  if (!/^[0-9]+$/.test(values.get('--port') || '0')) {
+    throw new Error('usage: --port must be a decimal port number (0 selects an ephemeral port)');
   }
   return {
     databasePath: values.get('--database'),

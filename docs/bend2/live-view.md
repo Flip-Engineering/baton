@@ -22,21 +22,26 @@ most recent committed transitions with their recorded times.
 
 The server reads the same coordinator database as the CLI. It never writes to it.
 
-- A SQLite trigger set (`native_changes`, installed by the coordinator's write path)
-  appends one row per committed mutation of sessions, roles, executions, stops,
-  messages (including receipts), turns, ensembles, memberships, sections, and native
-  requests, inside the same transaction as the mutation. `recorded_at` is the trigger
-  record time.
+- A SQLite trigger set (`native_changes`) appends one row per committed mutation of
+  sessions, roles, executions, stops, messages (including receipts), turns, ensembles,
+  memberships, sections, and native requests, inside the same transaction as the
+  mutation. `recorded_at` is the trigger record time. The triggers are installed by
+  `Sql.ensure_projection`, called from the native-request commit paths and, once the
+  pending store hunk lands (native685 owns `store.bend`), from `Store.commit`, the
+  funnel for every ordinary CLI write. A database that has not yet seen either path has
+  no `native_changes` table and the snapshot endpoint answers `503 snapshot-unavailable`.
 - A snapshot is one read transaction: the scoped state plus the `native_changes`
   high-water cursor, so the snapshot is exactly the state at that cursor.
 - The event stream (Server-Sent Events) replays durable `native_changes` rows after the
   client's cursor and pushes player/ensemble/pending/transition frames. The browser
   holds an `EventSource`; it does not poll.
+- Live push requires a committed-change notification from the shared per-DB native
+  owner (#676). That subscription interface is not yet implemented, so the events
+  endpoint currently answers `503 native-owner-subscription-unavailable` and the page
+  reports the stream as unavailable instead of retrying it on a loop. Snapshot reads
+  work without the subscription.
 - On reconnect the browser re-reads the snapshot and resumes the stream at the snapshot
-  cursor. A committed-change notification from the shared per-DB native owner (#676)
-  wakes the stream promptly; the durable cursor determines correctness when a
-  notification is lost, and a stale or pruned cursor answers `gap`, which forces a fresh
-  snapshot.
+  cursor. A stale or pruned cursor answers `gap`, which forces a fresh snapshot.
 - The projection keeps the newest 10,000 change rows as diagnostic retention. A client
   whose cursor falls behind the retained minimum gets a `gap` event and re-snapshots.
 

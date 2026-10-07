@@ -20,6 +20,12 @@ owner subscription supplies commit wake hints and an owner generation. The serve
 re-reads committed rows after each hint. A generation change or cursor outside the
 retained range emits `gap` so the browser fetches a fresh snapshot.
 
+The trigger definitions are frozen for contract v1: they install with
+`CREATE TRIGGER IF NOT EXISTS`, so a corrected definition does not replace an
+installed one. Any future change to a trigger body requires an explicit
+DROP-and-recreate migration keyed to a recorded projection version, not an edit
+to the install text alone.
+
 The server consumes this source through the `subscribeCommittedChanges` option.
 The command-line event route returns
 `native-owner-subscription-unavailable` until startup supplies the canonical
