@@ -1015,6 +1015,7 @@ def ld_adv_cas_qualified(target: String, cand: String, capture: Result<&1,&1,U32
             ld_adv_cas_readback(t2, c2, cp, after)
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(st), cp))
 
+# The compare-and-swap where no worktree holds the target.
 def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +r2 = repo
   +t2 = target
@@ -1162,7 +1163,6 @@ def ld_adv_wt_target_pick(g: T.GitOut, path: String, repo: String, target: Strin
       +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), b2), False{})
       ld_adv_wt_target_same(same, path, repo, target, cand, b2, cx)
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
-# The compare-and-swap where no worktree holds the target.
 def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +p2 = path
   +r2 = repo
