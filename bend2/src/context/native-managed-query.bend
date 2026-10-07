@@ -178,6 +178,15 @@ def start_from_submission(+bootstrap: Bootstrap, readiness: KeeperReadiness,
 # The admission effect runs only after the prepared keeper is attached to the original
 # observer with the frozen starter identity. The transaction then binds the same owner,
 # canonical request, workspace, attempt, keeper, artifact, and plan to its read-back.
+def submit_associated_admission(+bootstrap: Bootstrap, +db: String) -> IO(ContextService.Submission):
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd,
+        origin_attempt, plan_value, plan_identity, result_schema,
+        artifact_path, keeper_path, guard_identity, guard_key, recovery_argv}:
+      ContextService.admitted_associated(db, database_binding, query,
+        owner, request, keeper_path, cwd, origin_attempt, artifact_path,
+        plan_value, plan_identity, result_schema)
+
 def submit_after_observer_ready(+bootstrap: Bootstrap, readiness: KeeperReadiness,
                                 +db: String) -> IO(StartDecision):
   match readiness:
@@ -190,16 +199,9 @@ def submit_after_observer_ready(+bootstrap: Bootstrap, readiness: KeeperReadines
         Bool.and(String.eq(keeper_path, bootstrap_keeper_path(bootstrap)),
         Bool.and(String.eq(role, "starter"), String.eq(incarnation, "0"))))),
         do IO<StartDecision>:
-          match bootstrap:
-            case QueryBootstrap{query, owner, database_binding, request, cwd,
-                origin_attempt, plan_value, plan_identity, result_schema,
-                artifact_path, keeper_path, guard_identity, guard_key, recovery_argv}:
-              submission : ContextService.Submission <-
-                ContextService.admitted_associated(db, database_binding, query,
-                  owner, request, keeper_path, cwd, origin_attempt, artifact_path,
-                  plan_value, plan_identity, result_schema)
-              IO.pure(StartDecision, submission_decision(bootstrap, role,
-                incarnation, submission)),
+          submission : ContextService.Submission <- submit_associated_admission(bootstrap, db)
+          IO.pure(StartDecision, submission_decision(bootstrap, role,
+            incarnation, submission)),
         IO.pure(StartDecision, StartHeld{"observerIdentityMismatch"}))
 
 def rejection_identity_match(+expected_owner: String, +expected_request: String,
