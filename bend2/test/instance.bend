@@ -128,7 +128,7 @@ def cycle_lines(+handle: U32, line: Maybe<String>) -> IO(Unit):
 def cycle_started(start: P.RetainedStart, payload: String) -> IO(Unit):
   match start:
     case P.Unstarted{error}: IO.die(Unit,1,error)
-    case P.Retained{handle}: do IO<Unit>:
+    case P.Retained{+handle}: do IO<Unit>:
       printed : Unit <- IO.print("admitted")
       written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,payload))
       closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
@@ -141,7 +141,7 @@ def cycle_started(start: P.RetainedStart, payload: String) -> IO(Unit):
 def hold_started(start: P.RetainedStart, payload: String) -> IO(Unit):
   match start:
     case P.Unstarted{error}: IO.die(Unit,1,error)
-    case P.Retained{handle}: do IO<Unit>:
+    case P.Retained{+handle}: do IO<Unit>:
       printed : Unit <- IO.print("admitted")
       written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,payload))
       gate : String <- IO.try(String,Text.Text.read("-"))
