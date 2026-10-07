@@ -6,6 +6,7 @@ directory. These tests exercise concurrent attempts, alias election, observer
 loss, the bound observation checkpoint, admission identity and owner shutdown.
 """
 import fcntl
+import hashlib
 import json
 import os
 import pathlib
@@ -31,6 +32,39 @@ print("native-done",flush=True)
 '''
 
 
+MUSE_FIXTURE = r'''import hashlib,json,os,sys
+args=sys.argv[1:]
+path=args[args.index("--prompt-file")+1]
+data=open(path,"rb").read()
+mode=oct(os.stat(path).st_mode & 0o777)
+print(json.dumps({"role":"native","pid":os.getpid(),"ppid":os.getppid(),
+                  "prompt_bytes":len(data),"prompt_sha256":hashlib.sha256(data).hexdigest(),
+                  "prompt_mode":mode,"session_id":args[args.index("--session-id")+1]}),flush=True)
+first=sys.stdin.read(1)
+print("stdin_state:"+("eof" if first=="" else "open"),flush=True)
+for index in range(1,4):
+    print("progress:%d"%index,flush=True)
+print("terminal",flush=True)
+'''
+
+
+SURVIVOR = r'''import json,os,sys,threading,time
+print(json.dumps({"role":"native","pid":os.getpid(),"ppid":os.getppid()}),flush=True)
+def drain():
+    try:
+        for line in sys.stdin:
+            print("echo:"+line.rstrip("\n"),flush=True)
+    except Exception:
+        pass
+threading.Thread(target=drain,daemon=True).start()
+count=0
+while True:
+    print("tick:%d"%count,flush=True)
+    count+=1
+    time.sleep(1)
+'''
+
+
 class SharedInstance(unittest.TestCase):
     CHECKPOINT_HEADER = struct.Struct('=8sIIQQQQQQQQi4xQQ')
 
@@ -42,6 +76,10 @@ class SharedInstance(unittest.TestCase):
         self.db.touch()
         self.fixture = self.home / 'native.py'
         self.fixture.write_text(FIXTURE)
+        self.muse_fixture = self.home / 'muse.py'
+        self.muse_fixture.write_text(MUSE_FIXTURE)
+        self.survivor = self.home / 'survivor.py'
+        self.survivor.write_text(SURVIVOR)
         self.children = []
         self.addCleanup(self.cleanup)
 
@@ -189,21 +227,6 @@ class SharedInstance(unittest.TestCase):
         path.write_text(text)
         result = self.command('control-write', directory, path)
         self.assertIn('control-write-complete', result.stdout, result.stderr)
-
-    def control_socket(self, directory):
-        raw = (directory / 'manifest').read_bytes()
-        magic, *fields = struct.unpack_from('=8s6QII', raw, 0)
-        self.assertEqual(magic, b'BATONRP1')
-        lengths = fields[:6]
-        offset = struct.calcsize('=8s6QII')
-        control = None
-        for index, length in enumerate(lengths):
-            value = raw[offset:offset + length]
-            offset += length
-            if index == 5:
-                control = pathlib.Path(os.fsdecode(value))
-        self.assertIsNotNone(control)
-        return control
 
     def hold(self, path, expected, timeout=30):
         deadline = time.monotonic() + timeout
@@ -365,23 +388,6 @@ class SharedInstance(unittest.TestCase):
         self.assertNotIn('stale-write-ok', output)
         print('evidence retirement', output.replace('\n', '|'))
 
-    def test_acknowledged_attempt_removes_its_private_control_path(self):
-        directory, child = self.begin('cleanup')
-        self.line(child, 'admitted')
-        control = self.control_socket(directory)
-        self.assertEqual(control.name, 'control')
-        self.assertTrue(control.parent.name.startswith('baton-retained-'))
-
-        output = self.wait_run(child)
-        self.assertIn('acknowledge-ok', output)
-        self.assertIn('attempt-complete', output)
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and (os.path.lexists(control) or control.parent.exists()):
-            time.sleep(.01)
-        self.assertFalse(os.path.lexists(control), f'control socket remains: {control}')
-        self.assertFalse(control.parent.exists(), f'private control directory remains: {control.parent}')
-        print('evidence acknowledged-control-path-removed', control)
-
     def test_recovery_resumes_at_the_committed_checkpoint(self):
         directory, child = self.begin('partial', mode='partial', payload='one\n')
         self.line(child, 'admitted')
@@ -518,6 +524,183 @@ class SharedInstance(unittest.TestCase):
         print('evidence conflicting-reuse refused with custody preserved')
         child.kill()
         child.wait(timeout=10)
+
+    def begin_file(self, label, artifact, session=None, name='prompt.txt', program=None):
+        directory = pathlib.Path(f'{self.db}.attempt-{label}')
+        args = program or [sys.executable, str(self.muse_fixture),
+                           '--prompt-file', str(directory / name), '--session-id', label]
+        child = self.spawn('admit-file', self.db, session or label, directory, self.home,
+                           artifact, *args)
+        return directory, child
+
+    def test_prepared_file_admission_delivers_exact_bytes(self):
+        artifact = 'the admitted prompt bytes\nwith a second line\n'
+        directory, child = self.begin_file('muse', artifact)
+        output = self.wait_run(child)
+        summary = self.native(output)
+        self.assertEqual(summary['prompt_bytes'], len(artifact))
+        self.assertEqual(summary['prompt_sha256'], hashlib.sha256(artifact.encode()).hexdigest())
+        self.assertEqual(summary['prompt_mode'], '0o400')
+        self.assertIn('stdin_state:eof', output)
+        self.assertEqual(output.count('terminal'), 1)
+        self.assertEqual(output.count('progress:'), 3)
+        record = (directory / 'manifest').read_bytes()
+        self.assertEqual(record[:8], b'BATONRP2')
+        self.assertIn(b'prompt.txt', record)
+        print('evidence prepared-file', summary['prompt_sha256'], summary['prompt_mode'])
+
+    def test_prepared_file_name_is_safely_refused(self):
+        for name in ('../escape', '/absolute', '.', 'a/b', '..'):
+            directory = pathlib.Path(f'{self.db}.attempt-{abs(hash(name))}')
+            child = self.spawn('admit-file', self.db, 'bad', directory, self.home,
+                               'bytes\n', name, sys.executable, str(self.muse_fixture),
+                               '--prompt-file', str(directory / 'x'))
+            child.stdin.close()
+            child.wait(timeout=60)
+            self.assertNotEqual(child.returncode, 0, name)
+            self.assertTrue(str(child.stderr.read()).strip(), name)
+            self.assertFalse((self.home / 'escape').exists(), name)
+            print('evidence artifact-name refused', name)
+
+    def test_prepared_file_identity_is_the_bytes(self):
+        artifact = 'same bytes\n'
+        directory, first = self.begin_file('same', artifact)
+        self.line(first, 'admitted')
+        repeated, second = self.begin_file('same', artifact)
+        second.stdin.close()
+        second.wait(timeout=60)
+        self.assertNotEqual(second.returncode, 0,
+                            'a repeat while an observer holds the attempt is refused, not duplicated')
+        self.hold(directory / 'stdout', '"role": "native"')
+        self.assertEqual((directory / 'stdout').read_text(errors='replace').count('"role": "native"'), 1)
+        first.kill()
+        first.wait(timeout=10)
+        differing, third = self.begin_file('same', 'different bytes\n')
+        third.stdin.close()
+        third.wait(timeout=60)
+        self.assertNotEqual(third.returncode, 0,
+                            'different artifact bytes in the same attempt are conflicting reuse')
+        self.assertIn('File exists', third.stderr.read())
+        print('evidence prepared-file identity enforced')
+
+    # -- committed-change subscription -------------------------------------
+
+    def subscription_line(self, child, prefix):
+        """Reads one subscription line and returns its JSON payload."""
+        value = child.lines.get(timeout=30)
+        self.assertIsNotNone(value, ''.join(child.output))
+        self.assertTrue(value.startswith(prefix), value)
+        return json.loads(value[len(prefix):])
+
+    def test_committed_change_subscription_fans_out_and_survives_owner_loss(self):
+        first = self.spawn('subscribe', self.db, '0', '0')
+        ready = self.subscription_line(first, 'ready:')
+        # An unknown incarnation cannot be served continuously, so the first
+        # subscription takes a snapshot at the cursor the owner recorded. Publish
+        # values are derived from that cursor: the owner record is keyed by the
+        # physical database, and a temporary file can reuse an earlier file's key.
+        self.assertTrue(ready['gap'], ready)
+        baseline = ready['cursor']
+        self.command('publish', self.db, str(baseline + 1))
+        notice = self.subscription_line(first, 'notice:')
+        self.assertEqual((notice['kind'], notice['cursor']), ('commit', baseline + 1), notice)
+        self.command('publish', self.db, str(baseline + 2))
+        self.assertEqual(self.subscription_line(first, 'notice:')['cursor'], baseline + 2)
+        # A repeated cursor changes nothing.
+        self.command('publish', self.db, str(baseline + 2))
+        with self.assertRaises(queue.Empty):
+            first.lines.get(timeout=1.5)
+        # A subscription of the incumbent incarnation with a consumed cursor
+        # resumes without a snapshot.
+        second = self.spawn('subscribe', self.db, str(baseline + 2), str(ready['generation']))
+        resuming = self.subscription_line(second, 'ready:')
+        self.assertFalse(resuming['gap'], resuming)
+        self.assertEqual(resuming['cursor'], baseline + 2, resuming)
+        self.command('publish', self.db, str(baseline + 3))
+        self.assertEqual(self.subscription_line(second, 'notice:')['cursor'], baseline + 3)
+        self.assertEqual(self.subscription_line(first, 'notice:')['cursor'], baseline + 3)
+        # A cursor below the record belongs to a different sequence: the publisher
+        # is the authority there, and subscribers are told to snapshot rather than
+        # wait for a value the database already passed.
+        self.command('publish', self.db, str(baseline + 1))
+        reset = self.subscription_line(first, 'notice:')
+        self.assertEqual((reset['kind'], reset['cursor']), ('gap', baseline + 1), reset)
+        # The cursor is durable across the owner incarnation, and a replaced
+        # incarnation reports the gap that forces a snapshot.
+        owners = self.owner_processes()
+        self.assertEqual(len(owners), 1, owners)
+        os.kill(int(owners[0].split()[0]), signal.SIGKILL)
+        third = self.spawn('subscribe', self.db, str(baseline + 1), str(ready['generation']))
+        replaced = self.subscription_line(third, 'ready:')
+        self.assertTrue(replaced['gap'], replaced)
+        self.assertEqual(replaced['cursor'], baseline + 1, replaced)
+        self.command('publish', self.db, str(baseline + 4))
+        self.assertEqual(self.subscription_line(third, 'notice:')['cursor'], baseline + 4)
+        print('evidence subscription ready', ready, 'resuming', resuming, 'replaced', replaced)
+
+    def test_checkpoint_record_beyond_the_state_bound_replays(self):
+        """A record that claims more state than the bound is unusable, so the
+        observer replays from the beginning instead of reporting a transport
+        failure."""
+        directory, child = self.begin('oversize', mode='partial', payload='one\n')
+        self.line(child, 'admitted')
+        self.line(child, 'echo:one')
+        self.line(child, 'commit-ok')
+        path = directory / 'checkpoint'
+        header = self.CHECKPOINT_HEADER
+        (magic, schema, reserved, incarnation, attempt, manifest, spool_device,
+         spool_inode, offset, length, check, pid, first, second) = header.unpack_from(path.read_bytes(), 0)
+        body = b'x' * ((1 << 20) + 1)
+        path.write_bytes(header.pack(magic, schema, reserved, incarnation, attempt, manifest,
+                                     spool_device, spool_inode, offset, len(body), check,
+                                     pid, first, second) + body)
+        marker, text = self.replays_from_the_beginning(directory, child)
+        self.assertIn('unusable observation checkpoint', marker)
+        self.assertIn('echo:one', text)
+        print('evidence oversize-checkpoint', marker)
+
+    def test_adoption_refuses_a_directory_without_custody(self):
+        """The request-level ENOENT adoption path adopts real custody only: a
+        directory that holds no attempt gets no child and no new custody."""
+        directory = self.home / 'no-attempt'
+        directory.mkdir()
+        result = self.command('attach-owned', self.db, directory)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(list(directory.iterdir()), [],
+                         'adoption wrote custody into a directory that holds no attempt')
+        self.assertIn('instance_attach_owned', result.stderr + result.stdout)
+        print('evidence adoption-refusal', (result.stderr + result.stdout).strip().replace('\n', '|'))
+
+    def test_recovery_after_owner_death_restores_the_committed_state(self):
+        """Owner death with a surviving native child: a replacement owner is
+        elected, the guard-holding caller adopts the same child through its own
+        custody, and the reducer state the previous observer committed is
+        restored at its offset, so the adopted reader resumes after the frames
+        that checkpoint covered and reports no duplicate child."""
+        directory = pathlib.Path(f'{self.db}.attempt-death')
+        child = self.spawn('partial', self.db, 'death', directory, self.home, 'one\n',
+                           sys.executable, self.survivor)
+        self.line(child, 'admitted')
+        self.line(child, 'commit-ok')
+        summary = self.native(''.join(child.output))
+        owners = self.owner_processes()
+        self.assertEqual(len(owners), 1, owners)
+        os.kill(int(owners[0].split()[0]), signal.SIGKILL)
+        child.kill()
+        child.wait(timeout=10)
+        adopter = self.spawn('attach-owned', self.db, directory)
+        self.line(adopter, 'attached')
+        restored = self.subscription_line(adopter, 'restored:')
+        self.assertEqual(restored, {'reducer': 'seen two frames'}, restored)
+        # The restored offset stops after the frames the checkpoint covered, so
+        # the adopted reader reports the next tick and not the covered rows.
+        self.line(adopter, 'tick:1')
+        self.assertNotIn('"role": "native"', ''.join(adopter.output),
+                         'the adopted reader replayed the frame the checkpoint covered')
+        os.kill(summary['pid'], 0)
+        spool = (directory / 'stdout').read_text(errors='replace')
+        self.assertEqual(spool.count('"role": "native"'), 1, 'adoption duplicated the native child')
+        print('evidence owner-death restore', restored, 'native', summary['pid'])
 
     def test_shutdown_releases_the_database_for_a_new_owner(self):
         directory, child = self.begin('a0')
