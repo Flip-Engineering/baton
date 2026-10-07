@@ -27,6 +27,7 @@ type Command is Data:
   Observe{id: String, player: String, event: String, sealed: Bool}
   ObserveFile{id: String, player: String, path: String}
   Report{id: String, sender: String, body: String}
+  ReportFile{id: String, sender: String, path: String}
   Ask{id: String, player: String, body: String}
   AskFile{id: String, player: String, path: String}
   NativeReply{parent: String, id: String, response: String}
@@ -377,6 +378,7 @@ def sql(command: Command) -> String:
     case Turns{id}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',t.id,'player',t.worker,'eventType',coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')),'reportBody',m.body,'receipt',m.receipt) AS item FROM turns t JOIN messages m ON m.id=t.id WHERE t.worker=" ++ q(id) ++ " ORDER BY m.seq);"
     case ObserveFile{id,player,path}: ""
+    case ReportFile{id,sender,path}: ""
     case MessageFile{id,sender,recipient,kind,path}: ""
     case AskFile{id,player,path}: ""
     case NativeReply{parent,id,response}: ""
@@ -438,13 +440,14 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"native-reply-file"),NativeReplyFile{id,one,two},
       Bool.pick(Command, String.eq(verb,"stop"),Stop{id,one,two},
       Bool.pick(Command, String.eq(verb,"report"),Report{id,one,two},
+      Bool.pick(Command, String.eq(verb,"report-file"),ReportFile{id,one,two},
       Bool.pick(Command, String.eq(verb,"ack"),Ack{id,one,two},
       Bool.pick(Command, String.eq(verb,"observe-file"),ObserveFile{id,one,two},
       Bool.pick(Command, String.eq(verb,"connect"),Connect{id,one,two},
       Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},
       Bool.pick(Command, String.eq(verb,"push"),Push{id,one,two},
       Bool.pick(Command, String.eq(verb,"ask"),Ask{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Bool.pick(Command, String.eq(verb,"remote-tip"),RemoteTip{id,one,two},Invalid{})))))))))))))))
+      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Bool.pick(Command, String.eq(verb,"remote-tip"),RemoteTip{id,one,two},Invalid{}))))))))))))))))
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,one,two,three},
       Bool.pick(Command,String.eq(verb,"section"),Section{id,one,two,three},Bool.pick(Command, String.eq(verb,"ensemble-member"),EnsembleMember{id,one,two,three},Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{}))))

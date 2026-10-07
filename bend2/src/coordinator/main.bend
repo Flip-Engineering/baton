@@ -166,6 +166,10 @@ def execute(db: String, command: C.Command) -> IO(Unit):
       do IO<Unit>:
         response : String <- IO.try(String,T.Text.read(path))
         NativeRequests.reply(db,parent,id,response)
+    case C.ReportFile{id,sender,path}:
+      do IO<Unit>:
+        body : String <- IO.try(String,T.Text.read(path))
+        run(db,C.Report{id,sender,body})
     case C.AskFile{id,player,path}:
       do IO<Unit>:
         body : String <- IO.try(String,T.Text.read(path))
