@@ -1,0 +1,60 @@
+{"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":0},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"."},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"."},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":1},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":""},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"{"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"\""},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"i"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"\""},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":": "},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"\""},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"Up"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"dating"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" the"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" law"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" for"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" the"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" guarded"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" content"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" filter"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"\""},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":", "},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"\""},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"new"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"_string"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"\""},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":": "},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"\""},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"WHERE"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" CASE"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" WHEN"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" c"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":".type"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"='"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"object"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"'"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" THEN"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" json"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"_ext"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"ract"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"(c"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":".value"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":",'"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"$."},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"type"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"')"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" END"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"='"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"text"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"'"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"\""},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":", "},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"\""},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"old"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"_string"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"\""},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":": "},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"\""},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"WHERE"},"message":{"role":"assistant"},"messageId":"msg-21"}
+{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" json"},"message":{"role":"assistant"},"messageId":"msg-21"}
