@@ -18,6 +18,7 @@ import { availableParallelism, freemem, hostname, loadavg, totalmem } from 'node
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createProcessGroupSampler } from './laws-check-resources.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const SRC = join(ROOT, 'bend2', 'src');
@@ -25,15 +26,18 @@ const ENTRY = join('bend2', 'src', 'coordinator', 'main.bend');
 const SCRATCH = join(ROOT, '.scratch', 'bend2-laws-check');
 const ENV = { ...process.env, BEND_NO_TELEMETRY: '1' };
 const EXCERPT_BYTES = 512;
+const SAMPLE_INTERVAL_MS = 50;
 const MINIMUM_NODE_VERSION = [22, 15, 0];
+let PROCESS_SAMPLER;
 
 export function supportedNodeVersion(version) {
   const match = /^v(\d+)\.(\d+)\.(\d+)$/.exec(version);
   if (!match) return false;
   const actual = match.slice(1).map(Number);
-  return actual[0] === MINIMUM_NODE_VERSION[0] &&
-    (actual[1] > MINIMUM_NODE_VERSION[1] ||
-      (actual[1] === MINIMUM_NODE_VERSION[1] && actual[2] >= MINIMUM_NODE_VERSION[2]));
+  for (let index = 0; index < MINIMUM_NODE_VERSION.length; index++) {
+    if (actual[index] !== MINIMUM_NODE_VERSION[index]) return actual[index] > MINIMUM_NODE_VERSION[index];
+  }
+  return true;
 }
 
 function resolveBend() {
@@ -181,35 +185,6 @@ function readCpuLoadAverage() {
   return Number(loadavg()[0]) || 0;
 }
 
-let cachedCpuTicksPerSecond;
-
-function cpuTicksPerSecond() {
-  if (cachedCpuTicksPerSecond !== undefined) return cachedCpuTicksPerSecond;
-  const result = spawnSync('getconf', ['CLK_TCK'], { encoding: 'utf8', maxBuffer: 1024 });
-  cachedCpuTicksPerSecond = result.status === 0 && Number(result.stdout) > 0 ? Number(result.stdout) : 0;
-  return cachedCpuTicksPerSecond;
-}
-
-function processGroupUsage(processGroup) {
-  if (!processGroup || process.platform !== 'linux') return { rssBytes: 0, cpuTicksByPid: new Map(), processCount: 0 };
-  const cpuTicksByPid = new Map();
-  let rssBytes = 0;
-  for (const entry of readdirSync('/proc')) {
-    if (!/^\d+$/.test(entry)) continue;
-    try {
-      const stat = readFileSync(`/proc/${entry}/stat`, 'utf8');
-      const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
-      if (Number(fields[2]) !== processGroup) continue;
-      cpuTicksByPid.set(Number(entry), Number(fields[11]) + Number(fields[12]));
-      const status = readFileSync(`/proc/${entry}/status`, 'utf8').match(/^VmRSS:\s+(\d+)\s+kB/m);
-      if (status) rssBytes += Number(status[1]) * 1024;
-    } catch {
-      // A process can exit between listing /proc and reading its stat.
-    }
-  }
-  return { rssBytes, cpuTicksByPid, processCount: cpuTicksByPid.size };
-}
-
 function excerpt(path) {
   const fd = openSync(path, 'r');
   try {
@@ -242,42 +217,54 @@ function runCompiler(args, cwd, stdoutPath, stderrPath) {
     const stderrFd = openSync(stderrPath, 'w');
     const child = spawn(BEND, args, { cwd, env: ENV, stdio: ['ignore', stdoutFd, stderrFd], detached: process.platform !== 'win32' });
     const processId = child.pid ?? null;
+    let processGroup;
+    let samplingError = null;
     let maxRssBytes = 0;
     let maxProcessCount = 0;
     let maxCpuCores = 0;
-    const ticksPerSecond = cpuTicksPerSecond();
-    let previousCpuTicksByPid = new Map();
+    let previousCpuSecondsByPid = new Map();
     let previousSampleAt = null;
     let startupError = null;
+    try {
+      if (!processId) throw new Error('compiler process ID is unavailable');
+      processGroup = PROCESS_SAMPLER.track(processId);
+    } catch (error) {
+      samplingError = `${error.name}: ${error.message}`;
+    }
     const recordUsage = () => {
       const sampledAt = process.hrtime.bigint();
-      const usage = processGroupUsage(child.pid);
-      maxRssBytes = Math.max(maxRssBytes, usage.rssBytes);
-      maxProcessCount = Math.max(maxProcessCount, usage.processCount);
-      if (previousSampleAt && ticksPerSecond > 0) {
-        const elapsedSeconds = Number(sampledAt - previousSampleAt) / 1e9;
-        let cpuTicks = 0;
-        for (const [process, currentTicks] of usage.cpuTicksByPid) {
-          const previousTicks = previousCpuTicksByPid.get(process);
-          if (previousTicks !== undefined && currentTicks >= previousTicks) cpuTicks += currentTicks - previousTicks;
+      if (!processGroup) return;
+      try {
+        const usage = processGroup.usage();
+        maxRssBytes = Math.max(maxRssBytes, usage.rssBytes);
+        maxProcessCount = Math.max(maxProcessCount, usage.processCount);
+        if (previousSampleAt) {
+          const elapsedSeconds = Number(sampledAt - previousSampleAt) / 1e9;
+          let cpuSeconds = 0;
+          for (const [process, currentSeconds] of usage.cpuSecondsByPid) {
+            const previousSeconds = previousCpuSecondsByPid.get(process);
+            if (previousSeconds !== undefined && currentSeconds >= previousSeconds) cpuSeconds += currentSeconds - previousSeconds;
+          }
+          if (elapsedSeconds > 0) maxCpuCores = Math.max(maxCpuCores, cpuSeconds / elapsedSeconds);
         }
-        const cpuSeconds = cpuTicks / ticksPerSecond;
-        if (elapsedSeconds > 0) maxCpuCores = Math.max(maxCpuCores, cpuSeconds / elapsedSeconds);
+        previousCpuSecondsByPid = new Map(usage.cpuSecondsByPid);
+        previousSampleAt = sampledAt;
+      } catch (error) {
+        samplingError ??= `${error.name}: ${error.message}`;
       }
-      previousCpuTicksByPid = usage.cpuTicksByPid;
-      previousSampleAt = sampledAt;
     };
     recordUsage();
-    const sample = setInterval(recordUsage, 50);
+    const sample = setInterval(recordUsage, SAMPLE_INTERVAL_MS);
     child.on('error', (error) => { startupError = `${error.name}: ${error.message}`; });
     child.on('close', (code, signal) => {
       clearInterval(sample);
       recordUsage();
+      processGroup?.close();
       fsyncSync(stdoutFd);
       fsyncSync(stderrFd);
       closeSync(stdoutFd);
       closeSync(stderrFd);
-      resolveResult({ processId, completedAt: new Date().toISOString(), exitCode: code, signal, startupError, maxRssBytes, maxProcessCount, maxCpuCores, cpuTicksPerSecond: ticksPerSecond });
+      resolveResult({ processId, completedAt: new Date().toISOString(), exitCode: code, signal, startupError, samplingError, maxRssBytes, maxProcessCount, maxCpuCores, cpuSampleIntervalMs: SAMPLE_INTERVAL_MS });
     });
   });
 }
@@ -376,7 +363,7 @@ export async function verifyResults(expected, results) {
     if (!Number.isFinite(result.peakRssBytes) || result.peakRssBytes <= 0 ||
         !Number.isInteger(result.peakProcessCount) || result.peakProcessCount < 1 ||
         !Number.isFinite(result.peakCpuCores) || result.peakCpuCores <= 0 ||
-        !Number.isInteger(result.cpuTicksPerSecond) || result.cpuTicksPerSecond <= 0) {
+        !Number.isInteger(result.cpuSampleIntervalMs) || result.cpuSampleIntervalMs < 10 || result.samplingError !== null) {
       failures.push({ id: result.id, reason: 'compiler process-tree resource evidence is missing' });
     }
     if (!Number.isInteger(result.exitCode) || result.signal !== null || result.startupError !== null) {
@@ -496,7 +483,8 @@ async function runControl(control, runRoot) {
     peakRssBytes: outcome.maxRssBytes,
     peakProcessCount: outcome.maxProcessCount,
     peakCpuCores: outcome.maxCpuCores,
-    cpuTicksPerSecond: outcome.cpuTicksPerSecond,
+    samplingError: outcome.samplingError,
+    cpuSampleIntervalMs: outcome.cpuSampleIntervalMs,
     outputs,
   };
 }
@@ -542,8 +530,12 @@ async function runPool(controls, concurrency, runRoot) {
         exitCode: row.exitCode,
         signal: row.signal,
         startupError: row.startupError,
+        samplingError: row.samplingError,
         elapsedMs: row.elapsedMs,
         peakRssBytes: row.peakRssBytes,
+        peakProcessCount: row.peakProcessCount,
+        peakCpuCores: row.peakCpuCores,
+        cpuSampleIntervalMs: row.cpuSampleIntervalMs,
         stdout: row.outputs?.stdout && { bytes: row.outputs.stdout.bytes, sha256: row.outputs.stdout.sha256, artifact: row.outputs.stdout.artifact },
         stderr: row.outputs?.stderr && { bytes: row.outputs.stderr.bytes, sha256: row.outputs.stderr.sha256, artifact: row.outputs.stderr.artifact },
         excerpts: row.passed ? undefined : {
@@ -1634,14 +1626,20 @@ async function runGate() {
     console.error(`expected Node >=22.15.0 and bend 2.0.25, got Node ${process.version}, Bend ${version || toolchain.versionError || `exit ${versionRun.status}`}`);
     return 1;
   }
-  if (process.platform !== 'linux') {
+  if (!['linux', 'darwin'].includes(process.platform)) {
     metadata.status = 'red';
     metadata.finishedAt = new Date().toISOString();
-    metadata.failure = 'compiler resource admission requires Linux process-group accounting';
+    metadata.failure = `compiler resource admission is unsupported on ${process.platform}`;
     writeJson(join(runRoot, 'run.json'), metadata);
     console.error(metadata.failure);
     return 1;
   }
+  PROCESS_SAMPLER = createProcessGroupSampler({ intervalMs: SAMPLE_INTERVAL_MS });
+  metadata.resourceAccounting = {
+    sampler: 'shared process-group snapshots',
+    cpuUnit: 'process CPU seconds per wall second',
+    intervalMs: SAMPLE_INTERVAL_MS,
+  };
 
   const baselineCwd = join(runRoot, 'workspaces', 'entry-baseline');
   mkdirSync(dirname(baselineCwd), { recursive: true });
@@ -1672,10 +1670,12 @@ async function runGate() {
     exitCode: baseline.exitCode,
     signal: baseline.signal,
     startupError: baseline.startupError,
+    samplingError: baseline.samplingError,
     elapsedMs: baselineElapsedMs,
     peakRssBytes: baseline.maxRssBytes,
     peakProcessCount: baseline.maxProcessCount,
     peakCpuCores: baseline.maxCpuCores,
+    cpuSampleIntervalMs: baseline.cpuSampleIntervalMs,
     stdout: { bytes: baseline.stdout.bytes, sha256: baseline.stdout.sha256, artifact: baseline.stdout.artifact },
     stderr: { bytes: baseline.stderr.bytes, sha256: baseline.stderr.sha256, artifact: baseline.stderr.artifact },
   }));
@@ -1685,14 +1685,16 @@ async function runGate() {
     metadata.finishedAt = new Date().toISOString();
     metadata.elapsedMs = baselineElapsedMs;
     writeJson(join(runRoot, 'run.json'), metadata);
+    PROCESS_SAMPLER.close();
     return 1;
   }
-  if (baseline.maxRssBytes === 0 || baseline.maxProcessCount === 0 || baseline.maxCpuCores <= 0) {
+  if (baseline.samplingError !== null || baseline.maxRssBytes === 0 || baseline.maxProcessCount === 0 || baseline.maxCpuCores <= 0) {
     metadata.status = 'red';
     metadata.finishedAt = new Date().toISOString();
     metadata.failure = 'baseline compiler process-tree memory or CPU demand could not be measured';
     writeJson(join(runRoot, 'run.json'), metadata);
     console.error(metadata.failure);
+    PROCESS_SAMPLER.close();
     return 1;
   }
 
@@ -1706,6 +1708,7 @@ async function runGate() {
     metadata.failure = 'no measured CPU and memory capacity is available for compiler controls';
     writeJson(join(runRoot, 'run.json'), metadata);
     console.error(metadata.failure);
+    PROCESS_SAMPLER.close();
     return 1;
   }
   const controlsStarted = process.hrtime.bigint();
@@ -1738,6 +1741,7 @@ async function runGate() {
   writeJson(join(runRoot, 'run.json'), metadata);
   console.log(`laws-check: ${passed ? 'green' : 'red'} - ${rows.length} laws, ${MUTATIONS.length} mutations, ${rows.length + MUTATIONS.length + 1} compiles, ${integrityFailures.length} failures`);
   if (!passed) console.error(JSON.stringify({ integrityFailures }));
+  PROCESS_SAMPLER.close();
   return passed ? 0 : 1;
 }
 
@@ -1745,6 +1749,7 @@ export { runGate };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   runGate().then((status) => { process.exitCode = status; }).catch((error) => {
+    PROCESS_SAMPLER?.close();
     console.error(`laws-check: red - ${error.stack ?? error}`);
     process.exitCode = 1;
   });

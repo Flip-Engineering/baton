@@ -48,7 +48,8 @@ const complete = dispatched.map((control, index) => {
     peakRssBytes: 1200 + index,
     peakProcessCount: 3 + index,
     peakCpuCores: 2 + index,
-    cpuTicksPerSecond: 100,
+    cpuSampleIntervalMs: 50,
+    samplingError: null,
     outputs: { stdout: receipt(stdoutPath), stderr: receipt(stderrPath) },
   };
 });
@@ -86,7 +87,7 @@ test('Node support follows the published minimum and preserves exact runtime ide
   assert.equal(supportedNodeVersion('v22.14.9'), false);
   assert.equal(supportedNodeVersion('v22.15.0'), true);
   assert.equal(supportedNodeVersion('v22.23.3'), true);
-  assert.equal(supportedNodeVersion('v23.0.0'), false);
+  assert.equal(supportedNodeVersion('v23.0.0'), true);
   assert.equal(supportedNodeVersion('v22'), false);
 });
 
@@ -252,7 +253,14 @@ test('aggregation rejects a result without actual process completion evidence', 
 
 test('aggregation rejects a result without compiler process-tree resource evidence', async () => {
   const results = complete.map((result, index) => index === 0
-    ? { ...result, peakRssBytes: 0, peakProcessCount: 0, peakCpuCores: 0 }
+    ? { ...result, peakRssBytes: 0, peakProcessCount: 0, peakCpuCores: 0, cpuSampleIntervalMs: 0 }
+    : result);
+  assert.ok((await verifyResults(dispatched, results)).some(({ reason }) => reason === 'compiler process-tree resource evidence is missing'));
+});
+
+test('aggregation rejects failed process sampling', async () => {
+  const results = complete.map((result, index) => index === 0
+    ? { ...result, samplingError: 'Error: process snapshot unavailable' }
     : result);
   assert.ok((await verifyResults(dispatched, results)).some(({ reason }) => reason === 'compiler process-tree resource evidence is missing'));
 });
