@@ -282,6 +282,43 @@ def admit_file_cli(args: List<String>) -> IO(Unit):
       Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => file_locked(directory,canonical,cwd,payload,program,lock))
     case _: IO.die(Unit,2,"admit-file DATABASE SESSION ATTEMPT CWD ARTIFACT PROGRAM ARGS...")
 
+# Prints each committed-change notice. The subscription stays open until the
+# owner is gone or this process is killed.
+@unsafe
+def notice_lines(+handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    notice : String <- IO.try(String,Custody.Instance.notice(handle))
+    printed : Unit <- IO.print("notice:" ++ notice)
+    notice_lines(handle)
+
+def subscribed(result: Result<&1,&1,U32 & String,U32 & String>) -> IO(Unit):
+  match result:
+    case Done{(handle,ready)}: do IO<Unit>:
+      printed : Unit <- IO.print("ready:" ++ ready)
+      notice_lines(handle)
+    case Fail{(code,text)}: IO.print("subscribe-failed:" ++ U32.show(code) ++ ": " ++ text)
+
+def subscribe_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case +database <> after <> generation <> Nil{}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,U32 & String> <- Custody.Instance.subscribe(database,after,generation)
+      printed : Unit <- subscribed(result)
+      IO.pure(Unit,Unit{})
+    case _: IO.die(Unit,2,"subscribe DATABASE AFTER_CURSOR GENERATION")
+
+def published(result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match result:
+    case Done{unit}: IO.print("published")
+    case Fail{(code,text)}: IO.print("publish-failed:" ++ U32.show(code) ++ ": " ++ text)
+
+def publish_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case +database <> cursor <> Nil{}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.publish_commit(database,cursor)
+      printed : Unit <- published(result)
+      IO.pure(Unit,Unit{})
+    case _: IO.die(Unit,2,"publish DATABASE CURSOR")
+
 def mode_number(+mode: String) -> U32:
   Bool.pick(U32,Bool.or(String.eq(mode,"--instance-owner"),String.eq(mode,"owner")),1,
   Bool.pick(U32,String.eq(mode,"admit"),2,
@@ -295,7 +332,8 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"owner-try"),10,
   Bool.pick(U32,String.eq(mode,"recover-retained"),11,
   Bool.pick(U32,String.eq(mode,"partial"),12,
-  Bool.pick(U32,String.eq(mode,"partial-uncommitted"),13,Bool.pick(U32,String.eq(mode,"admit-file"),14,0))))))))))))))
+  Bool.pick(U32,String.eq(mode,"partial-uncommitted"),13,Bool.pick(U32,String.eq(mode,"admit-file"),14,
+  Bool.pick(U32,String.eq(mode,"subscribe"),15,Bool.pick(U32,String.eq(mode,"publish"),16,0)))))))))))))))
 
 def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
   match mode:
@@ -313,6 +351,8 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 12: admit_cli(rest,3)
     case 13: admit_cli(rest,4)
     case 14: admit_file_cli(rest)
+    case 15: subscribe_cli(rest)
+    case 16: publish_cli(rest)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):
