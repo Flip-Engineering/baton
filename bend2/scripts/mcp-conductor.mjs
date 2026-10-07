@@ -224,6 +224,11 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
+    name: 'baton2_owner',
+    description: 'Read the elected database owner readiness: generation, committed cursor and gap flag.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'baton2_inbox',
     description: 'Show pending unacknowledged messages for the attached Conductor.',
     inputSchema: {
@@ -527,6 +532,9 @@ function handleToolCall(msg) {
         break;
       case 'baton2_status':
         result = coord('status');
+        break;
+      case 'baton2_owner':
+        result = coord('owner-status');
         break;
       case 'baton2_inbox':
         result = coord('inbox', args?.recipient ?? sessionId);

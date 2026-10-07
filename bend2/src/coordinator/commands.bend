@@ -57,6 +57,8 @@ type Command is Data:
   KnowledgeRead{reader: String}
   KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
   UiSubscribe{after_cursor: String, generation: String}
+  Serve{}
+  OwnerStatus{}
   Help{}
   Invalid{}
 
@@ -350,6 +352,8 @@ def sql(command: Command) -> String:
     case KnowledgeRead{reader}: ""
     case KnowledgePromote{id,promoter,source,destination,finding}: ""
     case UiSubscribe{after_cursor,generation}: ""
+    case Serve{}: ""
+    case OwnerStatus{}: ""
     case Help{}: ""
     case Invalid{}: ""
 
@@ -365,7 +369,9 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"workers"),LegacySubordinates{},
       Bool.pick(Command, String.eq(verb,"players"),Players{},
       Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},
-      Bool.pick(Command, String.eq(verb,"pending"),Pending{},Invalid{})))))))
+      Bool.pick(Command, String.eq(verb,"pending"),Pending{},
+      Bool.pick(Command, String.eq(verb,"serve"),Serve{},
+      Bool.pick(Command, String.eq(verb,"owner-status"),OwnerStatus{},Invalid{})))))))))
     case +verb <> +id <> Nil{}:
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,"","",""},
       Bool.pick(Command,String.eq(verb,"logs-clean"),LogsClean{id},
@@ -462,4 +468,30 @@ law ui_subscription_parser_rejects_extra_arguments:
   {parse(["ui-subscribe",after_cursor,generation,extra]) == Invalid{} : Command}
 
 def ui_subscription_parser_rejects_extra_arguments(after_cursor,generation,extra):
+  {==}
+
+law serve_parser_selects_the_fixed_coordinator:
+  {parse(["serve"]) == Serve{} : Command}
+
+def serve_parser_selects_the_fixed_coordinator():
+  {==}
+
+law serve_parser_rejects_extra_arguments:
+  for +extra: String
+  {parse(["serve",extra]) == Invalid{} : Command}
+
+def serve_parser_rejects_extra_arguments(extra):
+  {==}
+
+law owner_status_parser_selects_the_readiness_check:
+  {parse(["owner-status"]) == OwnerStatus{} : Command}
+
+def owner_status_parser_selects_the_readiness_check():
+  {==}
+
+law owner_status_parser_rejects_extra_arguments:
+  for +extra: String
+  {parse(["owner-status",extra]) == Invalid{} : Command}
+
+def owner_status_parser_rejects_extra_arguments(extra):
   {==}
