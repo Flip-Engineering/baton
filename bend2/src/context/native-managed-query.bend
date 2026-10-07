@@ -615,34 +615,32 @@ def reconciled_admission_decision(+bootstrap: Bootstrap, +role: String,
     reconcile_admission_association(bootstrap, role, incarnation, admission,
       association))
 
+def reconcile_stored_admission(+bootstrap: Bootstrap, +role: String,
+                               +incarnation: String, +db: String,
+                               +admission: Admission.Admission) -> IO(StartDecision):
+  do IO<StartDecision>:
+    association : Result<&1,&1,U32 & String,Admission.ManagedAssociation> <-
+      Admission.readback_managed_association(db,
+        bootstrap_database_binding(bootstrap), bootstrap_query(bootstrap))
+    IO.pure(StartDecision, reconciled_admission_decision(bootstrap,
+      role, incarnation, admission, association))
+
+def reconcile_admission_result(+bootstrap: Bootstrap, +role: String,
+                               +incarnation: String, +db: String,
+                               result: Result<&1,&1,U32 & String,Admission.Admission>) -> IO(StartDecision):
+  match result:
+    case Fail{error}: IO.pure(StartDecision,
+      StartHeld{"committedDecisionReadbackUnavailable"})
+    case Done{+admission}: reconcile_stored_admission(bootstrap, role,
+      incarnation, db, admission)
+
 def reconcile_committed_admission(+bootstrap: Bootstrap, +role: String,
                                  +incarnation: String, +db: String) -> IO(StartDecision):
   do IO<StartDecision>:
     admission : Result<&1,&1,U32 & String,Admission.Admission> <-
       Admission.readback(db, bootstrap_database_binding(bootstrap),
         bootstrap_query(bootstrap))
-    match admission:
-      case Fail{error}: IO.pure(StartDecision,
-        StartHeld{"committedDecisionReadbackUnavailable"})
-      case Done{+stored_admission}:
-        match stored_admission:
-          case Admission.AdmissionCreated{owner, request, decision, state,
-              attempt, keeperPath, cwd, artifactPath}:
-            do IO<StartDecision>:
-              association : Result<&1,&1,U32 & String,Admission.ManagedAssociation> <-
-                Admission.readback_managed_association(db,
-                  bootstrap_database_binding(bootstrap), bootstrap_query(bootstrap))
-              IO.pure(StartDecision, reconciled_admission_decision(bootstrap,
-                role, incarnation, stored_admission, association))
-          case Admission.AdmissionRetained{owner, request, decision, state,
-              attempt, keeperPath, cwd, artifactPath}:
-            do IO<StartDecision>:
-              association : Result<&1,&1,U32 & String,Admission.ManagedAssociation> <-
-                Admission.readback_managed_association(db,
-                  bootstrap_database_binding(bootstrap), bootstrap_query(bootstrap))
-              IO.pure(StartDecision, reconciled_admission_decision(bootstrap,
-                role, incarnation, stored_admission, association))
-          case other: IO.pure(StartDecision, StartHeld{"committedDecisionAbsentOrUncertain"})
+    reconcile_admission_result(bootstrap, role, incarnation, db, admission)
 
 def reconcile_unresolved_decision(+bootstrap: Bootstrap, +role: String,
                                   +incarnation: String, +db: String,
