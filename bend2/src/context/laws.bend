@@ -1104,19 +1104,19 @@ def a_custody_under_another_binding_is_a_mismatch():
   {==}
 
 law a_release_without_custody_names_the_missing_operand:
-  {ContextObserver.release_refusal("b1","k1",None{}) == Some{ContextObserver.ReleaseMissingCustody{"keeper under admitted custody"}} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+  {ContextObserver.release_refusal("b1","k1",None{}) == Some{ContextObserver.ReleaseMissingCustody{"keeper under admitted custody"}} : Maybe<ContextObserver.ReleaseOutcome>}
 
 def a_release_without_custody_names_the_missing_operand():
   {==}
 
 law a_release_under_another_binding_names_both_bindings:
-  {ContextObserver.release_refusal("b1","k1",Some{ContextObserver.Custody{"k1","b2","h"}}) == Some{ContextObserver.ReleaseCustodyMismatch{"b1","b2"}} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+  {ContextObserver.release_refusal("b1","k1",Some{ContextObserver.Custody{"k1","b2","h"}}) == Some{ContextObserver.ReleaseCustodyMismatch{"b1","b2"}} : Maybe<ContextObserver.ReleaseOutcome>}
 
 def a_release_under_another_binding_names_both_bindings():
   {==}
 
 law a_release_with_matching_custody_has_no_refusal:
-  {ContextObserver.release_refusal("b1","k1",Some{ContextObserver.Custody{"k1","b1","h"}}) == None{} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+  {ContextObserver.release_refusal("b1","k1",Some{ContextObserver.Custody{"k1","b1","h"}}) == None{} : Maybe<ContextObserver.ReleaseOutcome>}
 
 def a_release_with_matching_custody_has_no_refusal():
   {==}
@@ -1206,13 +1206,13 @@ def a_completion_claim_matches_the_attempt_state():
   {==}
 
 law a_release_refusal_of_a_mismatched_binding_names_both:
-  {ContextObserver.release_refusal_of("b1",ContextObserver.CustodyMismatch{"b1","b2"}) == Some{ContextObserver.ReleaseCustodyMismatch{"b1","b2"}} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+  {ContextObserver.release_refusal_of("b1",ContextObserver.CustodyMismatch{"b1","b2"}) == Some{ContextObserver.ReleaseCustodyMismatch{"b1","b2"}} : Maybe<ContextObserver.ReleaseOutcome>}
 
 def a_release_refusal_of_a_mismatched_binding_names_both():
   {==}
 
 law a_release_refusal_of_an_admitted_custody_is_absent:
-  {ContextObserver.release_refusal_of("b1",ContextObserver.CustodyAdmitted{"b1"}) == None{} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+  {ContextObserver.release_refusal_of("b1",ContextObserver.CustodyAdmitted{"b1"}) == None{} : Maybe<ContextObserver.ReleaseOutcome>}
 
 def a_release_refusal_of_an_admitted_custody_is_absent():
   {==}
