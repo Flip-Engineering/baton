@@ -19,7 +19,7 @@ typedef struct {
   char *args, *cwd, *log, *text;
   size_t length;
   u32 handle, signal, index;
-  int kind, error, eof, unstarted;
+  int kind, error, eof, unstarted, fresh;
   char *directory, *initial, *recovery, *detail, *database;
   size_t initial_length, recovery_length;
   u32 keep_stdin, lock;
@@ -702,6 +702,15 @@ static void baton_retained_call(BatonProcessCall *call) {
        committed after its own durable store and reducer effects for that frame.
        It is bound to this attempt's manifest, native process and spool file. */
     if(retained->spool<0) {call->error=EBADF;return;}
+    /* A state too large to checkpoint is a degraded checkpoint, not a task
+       failure: the previous checkpoint stands, the diagnostic is recorded, and
+       the native result and its source bytes are untouched, so the observer
+       replays with its own deduplication. Nothing is truncated. */
+    if(call->length>BR_CHECKPOINT_STATE_MAX) {
+      br_file(retained->directory,"checkpoint-error",
+        "state exceeds the checkpoint bound; the previous checkpoint stands\n",67,1);
+      return;
+    }
     pthread_mutex_lock(&retained->reader);
     call->error=br_checkpoint_store(retained->directory,retained->spool,(uint32_t)call->signal,
       retained->incarnation,(uint64_t)retained->offset,call->text,call->length);
@@ -739,7 +748,7 @@ static void baton_retained_call(BatonProcessCall *call) {
     retained->offset=0;retained->offset_stored=0;
     pthread_mutex_unlock(&retained->reader);
     br_file(retained->directory,"checkpoint-error",
-      "state rejected by the observer; replaying from the beginning\n",57,1);
+      "state rejected by the observer; replaying from the beginning\n",61,1);
     return;
   }
   if(call->kind==BP_INPUT_CLOSED) {
@@ -1335,7 +1344,48 @@ static int br_checkpoint_offset(const char *directory,uint64_t *offset) {
   *offset=checkpoint.offset;
   return 0;
 }
-/* The durable attempt identity: a digest of the attempt's canonical directory.
+/* The recorded offset only when the whole record verifies against this attempt's
+   custody: structure, checksum over header and state bytes, attempt identity,
+   native birth, manifest, spool identity and offset bounds. The caller's schema
+   is not required to validate an offset, so it is not compared here. */
+static int br_checkpoint_verified_offset(const char *directory,int spool_fd,uint64_t *offset) {
+  *offset=0;
+  char *path=br_checkpoint_path(directory);
+  if(!path)return ENOMEM;
+  int fd=open(path,O_RDONLY|O_CLOEXEC);
+  if(fd<0){int error=errno;free(path);return error==ENOENT?ENOENT:error;}
+  BrCheckpoint checkpoint,stored;
+  int error=br_read_all(fd,&stored,sizeof(stored));
+  if(error==EPIPE)error=EINVAL;
+  struct stat info;
+  if(!error && fstat(fd,&info))error=errno;
+  if(!error && memcmp(stored.magic,BR_CHECKPOINT_MAGIC,8))error=EINVAL;
+  if(!error && stored.length>BR_CHECKPOINT_STATE_MAX)error=EOVERFLOW;
+  if(!error && (size_t)info.st_size!=sizeof(stored)+stored.length)error=EINVAL;
+  BrBirth birth;uint64_t manifest,spool_device,spool_inode;
+  if(!error)error=br_checkpoint_custody(directory,spool_fd,&birth,&manifest,&spool_device,&spool_inode);
+  if(!error && (stored.birth.pid!=birth.pid || stored.birth.first!=birth.first ||
+                stored.birth.second!=birth.second))error=EINVAL;
+  if(!error && (stored.manifest!=manifest || stored.attempt!=br_attempt_identity(directory)))error=EINVAL;
+  if(!error && (stored.spool_device!=spool_device || stored.spool_inode!=spool_inode))error=EINVAL;
+  if(!error && fstat(spool_fd,&info))error=errno;
+  if(!error && stored.offset>(uint64_t)info.st_size)error=EINVAL;
+  char *state=NULL;
+  if(!error && stored.length) {
+    state=malloc((size_t)stored.length+1);
+    if(!state)error=ENOMEM;
+    else if((error=br_read_all(fd,state,(size_t)stored.length))) {free(state);state=NULL;if(error==EPIPE)error=EINVAL;}
+    else state[stored.length]=0;
+  }
+  checkpoint=stored;
+  if(!error && checkpoint.check!=br_checkpoint_check(&checkpoint,state?state:"",(size_t)checkpoint.length))
+    error=EINVAL;
+  free(state);close(fd);free(path);
+  if(error)return error;
+  *offset=stored.offset;
+  return 0;
+}
+ /* The durable attempt identity: a digest of the attempt's canonical directory.
    An owner-local attempt number is not durable across an owner restart, so the
    checkpoint binds this value instead. */
 static uint64_t br_attempt_identity(const char *directory) {
@@ -1942,10 +1992,14 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
     if(!error && !address)error=ENOMEM;
     if(error){free(address);free(existing);return error;}
     call->unstarted=1;
+    /* This call reused custody that already existed; it must never be discarded
+       by a later refusal. */
+    call->fresh=0;
     *directory_out=existing;*address_out=address;
     return 0;
   }
   call->unstarted=1;
+  call->fresh=1;
   char *directory=realpath(call->directory,NULL);
   if(!directory)return errno;
   char temporary[]="/tmp/baton-retained-XXXXXX";
@@ -2241,7 +2295,10 @@ static int br_instance_admit(BatonProcessCall *call) {
       call->lock?(int)call->lock:-1,&reply);
     if(!error && reply.attempt)call->unstarted=0;
     if(error==EINVAL || error==ESTALE || error==ENOENT || error==ENOMEM) {
-      br_attempt_discard(directory,address);
+      /* Only custody this call created and that never reached a native child is
+         discarded. A reused attempt keeps its manifest, control socket, spool
+         and birth, whatever the owner refused. */
+      if(call->fresh)br_attempt_discard(directory,address);
       free(address);free(directory);
       return error;
     }
@@ -2294,31 +2351,45 @@ static int br_instance_job(BatonProcessCall *call) {
     if(!error && !reply.error && reply.length==sizeof(state)) {
       error=br_read_all(socket_fd,&state,sizeof(state));
       owner_known=!error;
+    } else if(!error) {
+      /* The owner answered with a refusal: a transport or owner-generation
+         failure is reported, an absent attempt is a fact to report. */
+      if(reply.error!=ENOENT)error=reply.error;
     }
     close(socket_fd);
+  } else if(error!=ENOENT && error!=ECONNREFUSED && error!=EINVAL) {
+    /* A transport failure is a typed error, never a silently empty reference. */
+    free(directory);
+    return error;
   }
   error=0;
   uint64_t spool_bytes=0,checkpoint_offset=0;
+  int checkpoint_verified=0;
   int status=0,status_known=0;
   char *spool=br_path(directory,"stdout");
   struct stat info;
-  if(spool && !stat(spool,&info))spool_bytes=(uint64_t)info.st_size;
+  int spool_fd=spool?open(spool,O_RDONLY|O_CLOEXEC):-1;
+  if(spool_fd>=0 && !fstat(spool_fd,&info))spool_bytes=(uint64_t)info.st_size;
+  if(spool_fd>=0 && !br_checkpoint_verified_offset(directory,spool_fd,&checkpoint_offset))
+    checkpoint_verified=1;
+  if(spool_fd>=0)close(spool_fd);
   free(spool);
-  br_checkpoint_offset(directory,&checkpoint_offset);
   char *status_path=br_path(directory,"status");
   FILE *file=status_path?fopen(status_path,"r"):NULL;
   if(file) {if(fscanf(file,"%d",&status)==1)status_known=1;fclose(file);}
   free(status_path);
   if(!spool_bytes && owner_known)spool_bytes=state.spool_bytes;
-  if(!checkpoint_offset && owner_known)checkpoint_offset=state.checkpoint_offset;
+  if(!checkpoint_verified && owner_known)checkpoint_offset=state.checkpoint_offset;
   if(!status_known && owner_known) {status=state.status;status_known=(int)state.status_known;}
-  char text[256];
+  char text[288];
   int written=snprintf(text,sizeof(text),
     "{\"attempt\":%llu,\"generation\":%llu,\"spool_bytes\":%llu,\"checkpoint_offset\":%llu,"
-    "\"status\":%d,\"status_known\":%s,\"observing\":%s,\"owner_known\":%s}",
+    "\"checkpoint_verified\":%s,\"status\":%d,\"status_known\":%s,\"observing\":%s,"
+    "\"owner_known\":%s}",
     (unsigned long long)(owner_known?state.attempt:0),
     (unsigned long long)(owner_known?state.generation:0),
-    (unsigned long long)spool_bytes,(unsigned long long)checkpoint_offset,status,
+    (unsigned long long)spool_bytes,(unsigned long long)checkpoint_offset,
+    checkpoint_verified?"true":"false",status,
     status_known?"true":"false",
     owner_known&&state.observing?"true":"false",
     owner_known?"true":"false");
