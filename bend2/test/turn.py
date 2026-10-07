@@ -159,12 +159,12 @@ assert sys.stdin.read()==''
         self.assertEqual([f for f in frames if f.get('type')=='message_update'], [])
         self.assertEqual([f['partialResult']['content'][0]['text'] for f in frames if f.get('type')=='tool_execution_update'], [self.task.read_text()])
         self.assertEqual([f['type'] for f in frames], ['response','message_end','agent_end','agent_end','tool_execution_update','baton_event_filter'])
-        terminal_line=next(line for line in event_lines if json.loads(line).get('type')=='agent_end' and json.loads(line).get('isTerminal'))
         with sqlite3.connect(self.db) as connection:
             projection=connection.execute('SELECT event_sha256,projection,artifact_refs FROM log_terminal_observations WHERE session=? AND turn_id=?',('omp-worker','omp-turn')).fetchone()
+            stored_event=connection.execute('SELECT event FROM turns WHERE id=?',('omp-turn',)).fetchone()[0]
         self.assertIsNotNone(projection)
         digest,projection_json,artifact_json=projection
-        self.assertEqual(digest,hashlib.sha256(terminal_line.encode()).hexdigest())
+        self.assertEqual(digest,hashlib.sha256(stored_event.encode()).hexdigest())
         summary=json.loads(projection_json)
         self.assertEqual(summary['messageCount'],2)
         self.assertEqual(summary['roleCharacters']['assistant'],len('First answerFull final answer λ'))
