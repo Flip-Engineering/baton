@@ -2837,13 +2837,13 @@ def a_refused_pick_and_decision_retain_the_read():
 # Receipt admission gates the landed answer. A missing admission refuses even a landed advance with a
 # successful release, and a complete admitted record reaches the existing landed answer.
 law a_missing_admission_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}, MutationHeld{"/holder"}), T.ReleaseDone{}, "g", "r", AdmissionRefused{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"exit 0\n", "diag"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityMissing{}, AssociationMissing{}, IntentMissing{}}, StageUnperformed{}, StageUnperformed{}, StageUnperformed{}}, "the attempt record was not freshly created"}}, "t", "c") == FFDone{T.LBlocked{Tx.str_cat("the attempt record was not admitted: ", "the attempt record was not freshly created")}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{fixture_held_obs("cand", "tgt"), T.ReleaseDone{}, "g", "r", admission_of(fixture_stages("r", fixture_held_evidence("r", "/common", "tgt", "cand", "base"), StageFailed{13, "i/o error"}, StageUnperformed{}, StageUnperformed{}))}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt record was not published"}} : FFLD}
 
 def a_missing_admission_refuses_the_fast_forward():
   {==}
 
 law a_missing_admission_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}, MutationHeld{"/holder"}), T.ReleaseDone{}, "g", "r", AdmissionRefused{Attestation{"r", AttemptEvidence{"r", "repo", "tgt", "cand", "base", "g", "art", AdvLanded{}, T.CapturedDone{"exit 0\n", "diag"}, QualDecided{MutationUnknown{}, ReadSkipped{}, ReadSkipped{}}, T.ReleaseDone{}, IdentityMissing{}, AssociationMissing{}, IntentMissing{}}, StageUnperformed{}, StageUnperformed{}, StageUnperformed{}}, "the attempt record does not read back as published"}}, "t", "c") == LdFail{T.FCmd{"land", Tx.str_cat("the attempt record was not admitted: ", "the attempt record does not read back as published")}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{fixture_held_obs("cand", "tgt"), T.ReleaseDone{}, "g", "r", admission_of(fixture_stages("r", fixture_held_evidence("r", "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path("r"), "0")}, StageSucceeded{"other bytes"}))}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record does not read back as published"}} : Ld}
 
 def a_missing_admission_refuses_the_advance():
   {==}
