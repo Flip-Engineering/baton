@@ -1,0 +1,113 @@
+name: Issue 686 focused logging C-host gate
+
+on:
+  push:
+    branches:
+      - codex/validate-issue686-c-host-20261007
+
+permissions:
+  contents: read
+
+jobs:
+  logging-c-host:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - name: Check out validation driver
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Check out immutable logging source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: 84815e35d93e9c85c6d1b65dcf867c56f6c124d9
+          path: candidate
+      - name: Prepare evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          run="$RUNNER_TEMP/issue686-logging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          mkdir -p "$run/toolchain" "$run/evidence"
+          printf 'ISSUE686_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          printf '%s\n' "$run" > "$run/evidence/run-directory.txt"
+      - name: Verify source pin and record source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C candidate rev-parse HEAD | tee "$ISSUE686_RUN/evidence/source-commit.txt"
+          git -C candidate rev-parse HEAD^{tree} | tee "$ISSUE686_RUN/evidence/source-tree.txt"
+          test "$(cat "$ISSUE686_RUN/evidence/source-commit.txt")" = 84815e35d93e9c85c6d1b65dcf867c56f6c124d9
+          test "$(cat "$ISSUE686_RUN/evidence/source-tree.txt")" = b1aa1cd8f4e3541cde39e61b4a81c87101aa756e
+          git -C candidate status --short --branch > "$ISSUE686_RUN/evidence/source-status.txt"
+          shasum -a 256 \
+            candidate/bend2/src/host/process-spawn.c \
+            candidate/bend2/src/host/files.c \
+            candidate/bend2/src/host/native-entry.c \
+            candidate/bend2/src/host/process.bend \
+            candidate/bend2/src/coordinator/main.bend \
+            candidate/bend2/test/logs.py \
+            candidate/bend2/scripts/build-native.sh \
+            > "$ISSUE686_RUN/evidence/source-files.sha256"
+      - name: Capture remote compiler runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            uname -a
+            uname -m
+            xcodebuild -version
+            xcrun --find clang
+            clang --version
+            python3 --version
+            git --version
+            sqlite3 --version
+          } > "$ISSUE686_RUN/evidence/runtime.txt" 2>&1
+          clang_path="$(xcrun --find clang)"
+          shasum -a 256 "$clang_path" > "$ISSUE686_RUN/evidence/clang-binary.sha256"
+          shasum -a 256 "$(command -v python3)" > "$ISSUE686_RUN/evidence/python-binary.sha256"
+      - name: Install pinned Bend 2.0.25 toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$ISSUE686_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
+            -o "$archive" > "$ISSUE686_RUN/toolchain/download.log" 2>&1
+          printf 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31  %s\n' "$archive" | \
+            shasum -a 256 -c - > "$ISSUE686_RUN/toolchain/archive-check.log" 2>&1
+          tar -tzf "$archive" > "$ISSUE686_RUN/toolchain/archive-members.txt"
+          BEND_HOME="$ISSUE686_RUN/toolchain-home" sh candidate/docs/bend2/reference/toolchain/install-2.0.25.sh \
+            > "$ISSUE686_RUN/toolchain/install.log" 2>&1
+          bend="$ISSUE686_RUN/toolchain-home/bin/bend"
+          "$bend" version | tee "$ISSUE686_RUN/toolchain/version.txt"
+          test "$("$bend" version)" = 'bend 2.0.25'
+          shasum -a 256 "$bend" > "$ISSUE686_RUN/toolchain/bend-binary.sha256"
+          shasum -a 256 "$archive" > "$ISSUE686_RUN/toolchain/archive.sha256"
+      - name: Build production Main with the candidate host C
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p candidate/.scratch/bend2
+          cd candidate
+          BEND="$ISSUE686_RUN/toolchain-home/bin/bend" CC=clang \
+            sh bend2/scripts/build-native.sh bend2/src/coordinator/main.bend .scratch/bend2/baton2 \
+            2>&1 | tee "$ISSUE686_RUN/evidence/main-build.log"
+          shasum -a 256 .scratch/bend2/baton2 .scratch/bend2/baton2.c \
+            > "$ISSUE686_RUN/evidence/main-artifacts.sha256"
+      - name: Run focused production Logs suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd candidate
+          python3 bend2/test/logs.py 2>&1 | tee "$ISSUE686_RUN/evidence/logs-suite.log"
+      - name: Retain exact-source C-host evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: issue686-logging-c-host-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.ISSUE686_RUN }}/evidence/
+            ${{ env.ISSUE686_RUN }}/toolchain/
+          if-no-files-found: error
+          retention-days: 30
