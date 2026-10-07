@@ -215,13 +215,9 @@ def primary_command(db: String, +event: String, previous: String, muse: Bool) ->
   match muse:
     case False{}: IO.pure(String,previous)
     case True{}: do IO<String>:
-      +empty : Bool <- IO.pure(Bool,String.is_empty(previous))
-      match empty:
-        case False{}: IO.pure(String,previous)
-        case True{}:
-          found : String <- IO.try(String,DB.Sql.query(db,primary_command_sql(event)))
-          selected : String <- IO.pure(String,Tx.trim_nl(found))
-          IO.pure(String,Bool.pick(String,String.is_empty(selected),previous,selected))
+      found : String <- IO.try(String,DB.Sql.query(db,primary_command_sql(event)))
+      selected : String <- IO.pure(String,Tx.trim_nl(found))
+      IO.pure(String,Bool.pick(String,String.is_empty(previous),selected,previous))
 
 def current_command(db: String, +event: String, previous: String, muse: Bool) -> IO(String):
   match muse:
