@@ -26,6 +26,12 @@ def Instance.prepare_start(database: String, directory: String, argv: String, cw
 def Instance.prepare_with_file_start(database: String, directory: String, argv: String, cwd: String, stderr: String, artifact_name: String, artifact_bytes: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String, bootstrap: String, owner_witness: String) -> IO(Result<&1,&1,U32 & String,U32 & String & String>):
   import "./process-spawn.c"
 
+# The configured stderr bound is persisted in the attempt manifest. The complete
+# stream remains in stderr.full and stderr.meta reports the final byte counts after
+# native exit. The bound must be positive.
+def Instance.prepare_with_file_bounded_start(database: String, directory: String, argv: String, cwd: String, stderr: String, stderr_limit: U32, artifact_name: String, artifact_bytes: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String, bootstrap: String, owner_witness: String) -> IO(Result<&1,&1,U32 & String,U32 & String & String>):
+  import "./process-spawn.c"
+
 # Applies an accepted Core decision that the managed caller matched to the bootstrap.
 def Instance.start(handle: U32, bootstrap: String, decision: String, owner_witness: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
@@ -91,6 +97,9 @@ def Instance.started(result: Result<&1,&1,U32 & String,Maybe<U32> & String>) -> 
 def Instance.admit_with_file_start(database: String, directory: String, argv: String, cwd: String, stderr: String, artifact_name: String, artifact_bytes: String, initial_stdin: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32> & String>):
   import "./process-spawn.c"
 
+def Instance.admit_with_file_bounded_start(database: String, directory: String, argv: String, cwd: String, stderr: String, stderr_limit: U32, artifact_name: String, artifact_bytes: String, initial_stdin: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32> & String>):
+  import "./process-spawn.c"
+
 # The prepared file-input variant on the shared owner: the same private artifact
 # preparation and identity binding as ProcessChild.retain_with_file, with the
 # owner elected for the database instead of a keeper per attempt.
@@ -101,6 +110,15 @@ def Instance.admit_with_file(database: String, directory: String, argv: String, 
       IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Instance.started(result))
     case Some{value_lock}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
       result : Result<&1,&1,U32 & String,Maybe<U32> & String> <- Instance.admit_with_file_start(database,directory,argv,cwd,stderr,artifact_name,artifact_bytes,initial_stdin,keep_stdin,value_lock,recovery_argv)
+      IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Instance.started(result))
+
+def Instance.admit_with_file_bounded(database: String, directory: String, argv: String, cwd: String, stderr: String, stderr_limit: U32, artifact_name: String, artifact_bytes: String, initial_stdin: String, keep_stdin: U32, lock: Maybe<U32>, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+  match lock:
+    case None{}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
+      result : Result<&1,&1,U32 & String,Maybe<U32> & String> <- Instance.admit_with_file_bounded_start(database,directory,argv,cwd,stderr,stderr_limit,artifact_name,artifact_bytes,initial_stdin,keep_stdin,0,recovery_argv)
+      IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Instance.started(result))
+    case Some{value_lock}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
+      result : Result<&1,&1,U32 & String,Maybe<U32> & String> <- Instance.admit_with_file_bounded_start(database,directory,argv,cwd,stderr,stderr_limit,artifact_name,artifact_bytes,initial_stdin,keep_stdin,value_lock,recovery_argv)
       IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Instance.started(result))
 
 # Opens a committed-change subscription on the elected owner for this database.
