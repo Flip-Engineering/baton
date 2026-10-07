@@ -188,8 +188,10 @@ def validation_query_result(+db: String, +binding: String, +text: String,
       match error:
         case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"requestValidationRead"})
     case Done{+report_rows}:
-      validation_tree_result(db, binding, text,
-        DB.Sql.query_bound(db, binding, Req.json_tree_sql(Tx.trim_nl(report_rows))))
+      do IO<RequestDecode>:
+        tree : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+          Req.json_tree_sql(Tx.trim_nl(report_rows)))
+        validation_tree_result(db, binding, text, tree)
 
 def validation_report_row(+db: String, +binding: String, +text: String,
                           +row: String) -> IO(RequestDecode):
