@@ -391,7 +391,7 @@ class SharedInstance(unittest.TestCase):
             '#!/bin/sh\n'
             f'echo started >> {shlex.quote(str(started))}\n'
             f'count=$(wc -l < {shlex.quote(str(started))})\n'
-            'if [ "$count" -eq 1 ]; then sleep 3; else sleep 5; fi\n'
+            'if [ "$count" -eq 1 ]; then sleep 4; else sleep 6; fi\n'
             f'{shlex.quote(str(EXE))} recover-retained {shlex.quote(str(self.db))} {shlex.quote(str(directory))}\n'
             'status=$?\n'
             f'echo "$status" >> {shlex.quote(str(finished))}\n'
@@ -414,19 +414,42 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn('acknowledge-ok', completed.stdout)
         self.assertFalse(finished.exists(), 'the delayed recovery child should still be running')
+        raw_manifest = (directory / 'manifest').read_bytes()
+        manifest_lengths = struct.unpack_from('=8s8QII', raw_manifest)[1:9]
+        cursor = struct.calcsize('=8s8QII')
+        fields = []
+        for length in manifest_lengths[:6]:
+            fields.append(raw_manifest[cursor:cursor + length])
+            cursor += length
+        recovery_socket = pathlib.Path(fields[5].decode())
+        self.assertTrue(recovery_socket.exists(),
+                        'acknowledgment must retain the control socket while recovery children run')
         deadline = time.monotonic() + 15
-        while time.monotonic() < deadline and (not finished.exists() or len(finished.read_text().splitlines()) < 2):
+        while time.monotonic() < deadline and (not finished.exists() or len(finished.read_text().splitlines()) < 1):
             time.sleep(.05)
-        statuses = finished.read_text().splitlines() if finished.exists() else []
-        observer_log = (directory / 'observer.log').read_text(errors='replace') if (directory / 'observer.log').exists() else ''
-        if statuses != ['0', '0']:
+        first_status = finished.read_text().splitlines()[:1] if finished.exists() else []
+        if len(first_status) != 1:
             saved = ROOT / '.scratch' / 'shared-instance-failures' / f'recovery-child-{os.getpid()}'
             saved.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(self.home, saved, dirs_exist_ok=True)
-            self.fail(f'every tracked recovery observer must attach before retirement; statuses={statuses}; '
-                      f'observer.log={observer_log!r}; preserved={saved}')
+            self.fail(f'first recovery child did not exit; preserved={saved}')
+        self.assertTrue(recovery_socket.exists(),
+                        'the second recovery child must keep the acknowledged attempt retained')
+        while time.monotonic() < deadline and (len(finished.read_text().splitlines()) < 2):
+            time.sleep(.05)
+        statuses = finished.read_text().splitlines() if finished.exists() else []
+        if len(statuses) != 2:
+            saved = ROOT / '.scratch' / 'shared-instance-failures' / f'recovery-child-{os.getpid()}'
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(self.home, saved, dirs_exist_ok=True)
+            self.fail(f'second recovery child did not exit; statuses={statuses}; preserved={saved}')
+        while time.monotonic() < deadline and recovery_socket.exists():
+            time.sleep(.05)
+        self.assertFalse(recovery_socket.exists(),
+                         'the attempt control socket remains until every recovery child is reaped')
+        observer_log = (directory / 'observer.log').read_text(errors='replace') if (directory / 'observer.log').exists() else ''
         print('evidence recovery-child-retained', completed.stdout.replace('\n', '|'),
-              'recovery-exits', statuses)
+              'recovery-exits', statuses, 'observer-log', observer_log.replace('\n', '|'))
 
     def test_retired_capability_refuses_the_old_generation(self):
         directory, child = self.begin('cycle')
