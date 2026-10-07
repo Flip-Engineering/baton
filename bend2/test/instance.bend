@@ -105,9 +105,12 @@ def recovery_complete_lines(+handle: U32, line: Maybe<String>) -> IO(Unit):
     case None{}: do IO<Unit>:
       status : String <- IO.try(String,P.ProcessChild.wait(handle))
       printed : Unit <- IO.print("native-" ++ status)
-      released : Unit <- operation("release",P.ProcessChild.release(handle))
-      acknowledged : Unit <- operation("acknowledge",P.ProcessChild.acknowledge(handle))
-      retired : Unit <- operation("retire",Custody.Instance.retire(handle))
+      release_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.release(handle)
+      released : Unit <- operation("release",release_result)
+      ack_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.acknowledge(handle)
+      acknowledged : Unit <- operation("acknowledge",ack_result)
+      retire_result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.retire(handle)
+      retired : Unit <- operation("retire",retire_result)
       IO.print("attempt-complete")
     case Some{text}: do IO<Unit>:
       printed : Unit <- IO.print(text)
