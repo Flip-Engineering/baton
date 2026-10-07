@@ -99,7 +99,7 @@ test('snapshot binds a selected subtree to the reader and preserves recorded unk
   assert.equal(snapshot.ensembles[0].owner, null);
   assert.deepEqual(snapshot.ensembles[0].sections[0].members, ['child']);
 
-  const denied = await fetch(`${base}/orchestra/snapshot?subject=sibling&since=0`);
+  const denied = await fetch(`${base}/orchestra/snapshot?subject=external&since=0`);
   assert.equal(denied.status, 403);
 });
 
