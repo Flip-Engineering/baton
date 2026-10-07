@@ -128,9 +128,49 @@ class NativeObservation(RECEIVE.Receive):
         self.assertIn('Changed primary output.', log.read_text())
         self.assertIn('Later lifecycle completion.', log.read_text())
 
+    def test_omp_fallback_message_survives_observer_reattach_at_saved_cursor(self):
+        self.player(harness='omp')
+        self.coord('message', 'checkpoint-task', 'root', 'parent', 'task', 'Retain the assistant message before the terminal.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept('parent')
+
+        assistant = {'type': 'message_end', 'message': {
+            'id': 'checkpoint-assistant', 'role': 'assistant', 'provider': 'fixture',
+            'content': [{'type': 'text', 'text': 'Recovered from the saved assistant message.'}]}}
+        self.action(stream, native_frame=assistant)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.eventually(lambda: (self.directory / 'parent.jsonl').exists() and
+                        'checkpoint-assistant' in (self.directory / 'parent.jsonl').read_text(),
+                        'the assistant frame was not durably observed')
+        barrier = {'type': 'checkpoint-barrier'}
+        self.action(stream, native_frame=barrier)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.eventually(lambda: 'checkpoint-barrier' in
+                        (self.directory / 'parent.jsonl').read_text(),
+                        'the observer did not finish the assistant checkpoint before the barrier')
+
+        observer.kill()
+        observer.wait(timeout=5)
+        resumed = self.spawn(*self.receive_args('parent'))
+        self.action(stream, native_frame={'type': 'agent_end', 'isTerminal': True,
+                                          'is_error': False, 'messages': []})
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.action(stream, exit_fixture=True)
+        self.finish(resumed)
+
+        self.assertEqual([row['reportBody'] for row in self.coord('turns', 'parent')],
+                         ['Recovered from the saved assistant message.'])
+        log = (self.directory / 'parent.jsonl').read_text()
+        self.assertEqual(log.count('checkpoint-assistant'), 1)
+        self.assertIn('agent_end', log)
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
+        self.assertFalse(any('Native output observation failed' in row['body']
+                             for row in self.coord('inbox', 'root')))
+        self.eventually(lambda: not self.owned_processes(), 'reattached OMP fixture did not exit')
 
 if __name__ == '__main__':
     unittest.main(defaultTest=[
         'NativeObservation.test_mixed_agent_end_members_preserve_completion_and_raw_frame',
         'NativeObservation.test_muse_uses_admitted_turn_terminal_and_keeps_later_lifecycle_separate',
+        'NativeObservation.test_omp_fallback_message_survives_observer_reattach_at_saved_cursor',
     ])

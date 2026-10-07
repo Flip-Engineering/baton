@@ -89,6 +89,7 @@ import ./stop-laws.bend as StopLaws
 import ./native-request-laws.bend as NativeRequestLaws
 import ./knowledge-laws.bend as KnowledgeLaws
 import ./observation-laws.bend as ObservationLaws
+import ./observer-checkpoint-laws.bend as ObserverCheckpointLaws
 import ./messaging-laws.bend as MessagingLaws
 import ./connect-laws.bend as ConnectLaws
 import ./naming-laws.bend as NamingLaws
