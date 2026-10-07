@@ -1,0 +1,39 @@
+{
+  "schema": "baton2-native-module-declaration-v1",
+  "moduleId": "bend2",
+  "revision": "development",
+  "protocolVersion": "2",
+  "entry": {
+    "artifact": "native-provider.mjs",
+    "argv": []
+  },
+  "artifactIdentities": [
+    {
+      "packagePath": "native-provider.mjs",
+      "sha256": "1416aff00609dd4d85264e842d32c3234fecf90f319bcadb637c51c61fd7a223",
+      "role": "provider"
+    }
+  ],
+  "schemaIdentities": [
+    "baton2.context.bend2.source-analysis.result.v1",
+    "baton2.context.bend2.source-analysis.event.v1"
+  ],
+  "runtime": {
+    "name": "node",
+    "minimumVersion": "22"
+  },
+  "readiness": {
+    "status": "unavailable",
+    "reason": "selectedFrontendInvocationUnavailable"
+  },
+  "operations": [
+    {
+      "operation": "sourceAnalysis",
+      "implements": "sourceAnalysis",
+      "effects": [],
+      "execution": "managed",
+      "resultSchema": "baton2.context.bend2.source-analysis.result.v1",
+      "eventSchema": "baton2.context.bend2.source-analysis.event.v1"
+    }
+  ]
+}

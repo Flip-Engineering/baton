@@ -28,3 +28,4 @@ for test in bend2/test/*.py; do
   esac
 done
 node --test bend2/test/git-series.mjs
+node --test bend2/context/bend2/native-provider.test.mjs

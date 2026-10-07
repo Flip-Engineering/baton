@@ -243,6 +243,104 @@ def stage_adapters(payload):
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
 
 
+def stage_selected_context_payload(payload):
+    source_root = ROOT / 'bend2/context/bend2'
+    declaration_path = source_root / 'selected-module.json'
+    require(declaration_path.is_file() and not declaration_path.is_symlink(),
+            'The selected Bend2 module manifest is unavailable')
+    declaration = json.loads(declaration_path.read_text())
+    require(set(declaration) == {'schema', 'moduleId', 'protocolVersion', 'files'},
+            'The selected Bend2 module manifest has an unsupported shape')
+    require(declaration['schema'] == 'baton2-selected-context-payload-v1'
+            and declaration['moduleId'] == 'bend2'
+            and declaration['protocolVersion'] == '2',
+            'The selected Bend2 module manifest identity is unsupported')
+    require(isinstance(declaration['files'], list) and declaration['files'],
+            'The selected Bend2 module manifest has no artifacts')
+
+    module_root = payload / 'lib/context/modules' / declaration['moduleId']
+    module_root.mkdir(parents=True)
+    staged_files = []
+    seen = set()
+    for entry in declaration['files']:
+        require(isinstance(entry, dict) and set(entry) == {'path', 'bytes', 'sha256'},
+                'A selected Bend2 artifact entry has an unsupported shape')
+        relative = PurePosixPath(entry['path'])
+        require(not relative.is_absolute() and relative.parts
+                and '..' not in relative.parts and '.' not in relative.parts,
+                'Unsafe selected Bend2 artifact path: ' + str(relative))
+        name = relative.as_posix()
+        require(name not in seen, 'Duplicate selected Bend2 artifact: ' + name)
+        seen.add(name)
+        source = source_root.joinpath(*relative.parts)
+        resolved = source.resolve()
+        require(resolved.is_relative_to(source_root.resolve()) and source.is_file()
+                and not source.is_symlink(),
+                'Selected Bend2 artifact is missing or outside its module root: ' + name)
+        observed = file_info(source)
+        require(observed['bytes'] == entry['bytes']
+                and observed['sha256'] == entry['sha256'],
+                'Selected Bend2 artifact differs from its manifest: ' + name)
+        destination = module_root.joinpath(*relative.parts)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        staged_files.append({'path': destination.relative_to(payload).as_posix(), **file_info(destination)})
+
+    provider_path = module_root / 'native-provider.declaration.json'
+    require(provider_path.is_file(), 'The selected Bend2 provider declaration is not staged')
+    provider = json.loads(provider_path.read_text())
+    require(provider.get('schema') == 'baton2-native-module-declaration-v1'
+            and provider.get('moduleId') == declaration['moduleId']
+            and provider.get('protocolVersion') == declaration['protocolVersion'],
+            'The selected Bend2 provider declaration does not match its package manifest')
+    entry = provider.get('entry')
+    require(isinstance(entry, dict) and isinstance(entry.get('artifact'), str)
+            and entry['artifact'] in seen and isinstance(entry.get('argv'), list)
+            and all(isinstance(arg, str) for arg in entry['argv']),
+            'The selected Bend2 provider entry is not in the manifested artifact set')
+    artifact_identities = provider.get('artifactIdentities')
+    require(isinstance(artifact_identities, list) and artifact_identities,
+            'The selected Bend2 provider has no artifact identities')
+    for artifact in artifact_identities:
+        require(isinstance(artifact, dict)
+                and set(artifact) == {'packagePath', 'sha256', 'role'}
+                and artifact['packagePath'] in seen
+                and isinstance(artifact['sha256'], str)
+                and isinstance(artifact['role'], str),
+                'The selected Bend2 provider artifact identity is incomplete')
+        staged = module_root / artifact['packagePath']
+        require(PurePosixPath(artifact['packagePath']).as_posix() == artifact['packagePath']
+                and staged.is_file() and sha256(staged) == artifact['sha256'],
+                'The selected Bend2 provider artifact identity differs from staged bytes')
+    schemas = provider.get('schemaIdentities')
+    require(isinstance(schemas, list) and schemas
+            and all(isinstance(schema, str) for schema in schemas),
+            'The selected Bend2 provider has no schema identities')
+    require(isinstance(provider.get('operations'), list) and provider['operations']
+            and all(isinstance(operation, dict)
+                    and isinstance(operation.get('operation'), str)
+                    and isinstance(operation.get('implements'), str)
+                    and operation.get('resultSchema') in schemas
+                    and operation.get('eventSchema') in schemas
+                    for operation in provider['operations']),
+            'The selected Bend2 provider operation declaration is incomplete')
+
+    module_manifest = {
+        'schema': 'baton2-selected-module-artifact-v1',
+        'moduleId': declaration['moduleId'],
+        'protocolVersion': declaration['protocolVersion'],
+        'sourceManifest': {'path': 'selected-module.source.json', **file_info(declaration_path)},
+        'files': staged_files,
+    }
+    shutil.copyfile(declaration_path, module_root / 'selected-module.source.json')
+    write_json(module_root / 'manifest.json', module_manifest)
+    module_manifest['manifest'] = {
+        'path': (module_root / 'manifest.json').relative_to(payload).as_posix(),
+        **file_info(module_root / 'manifest.json'),
+    }
+    return module_manifest
+
+
 def stage_notices(payload, archive_notices, kind='development'):
     directory = payload / 'notices'
     directory.mkdir()
@@ -354,6 +452,7 @@ def package(args):
         shutil.copyfile(binary, payload / 'bin/baton2')
         (payload / 'bin/baton2').chmod(0o755)
         stage_adapters(payload)
+        selected_context = stage_selected_context_payload(payload)
         shutil.copytree(logs, payload / 'logs')
         terms = stage_notices(payload, notices, identity['kind'])
         generated_dir = output / 'generated'
@@ -373,6 +472,7 @@ def package(args):
             'source': {'commit': final['head'], 'tree': final['tree'], 'bend2_tree': final['bend2_tree'],
                        'directory': str(ROOT), 'status': final['status'], 'files': source_files},
             'binary': {'path': 'bin/baton2', **file_info(binary)}, 'files': files,
+            'selected_modules': [selected_context],
             'build': {'inputs_before': before_inputs, 'inputs_after': after_inputs,
                       'input_capture_boundary': input_boundary, 'compiler_archive': archive,
                       'generated_c': {'path': str(generated), **file_info(generated)},

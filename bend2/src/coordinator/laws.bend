@@ -84,6 +84,7 @@
 # clauses laws-trace.md records as host assumptions - durability, crash windows, provider
 # idempotency, interface delivery and process lifetime - are outside what a Bend term decides.
 import Base
+import ../context/native-laws.bend as ContextNativeLaws
 import ./receive-laws.bend as ReceiveLaws
 import ./stop-laws.bend as StopLaws
 import ./native-request-laws.bend as NativeRequestLaws

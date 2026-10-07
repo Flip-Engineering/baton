@@ -1,0 +1,17 @@
+{
+  "schema": "baton2-selected-context-payload-v1",
+  "moduleId": "bend2",
+  "protocolVersion": "2",
+  "files": [
+    {
+      "path": "native-provider.declaration.json",
+      "bytes": 1009,
+      "sha256": "8370b5d9eba910835619b631f25bc80a857d10331df0193f8575470904a9e527"
+    },
+    {
+      "path": "native-provider.mjs",
+      "bytes": 2730,
+      "sha256": "1416aff00609dd4d85264e842d32c3234fecf90f319bcadb637c51c61fd7a223"
+    }
+  ]
+}
