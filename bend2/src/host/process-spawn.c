@@ -72,7 +72,7 @@ static int baton_child_allocate(BatonProcessCall *call) {
     child=calloc(1,sizeof(*child));
     if(!child) return ENOMEM;
     child->input=-1;
-    child->generation=baton_child_next_generation++;
+    child->generation=baton_child_next_generation++&BATCHILD_GENERATION_MAX;
     if(!child->generation)child->generation=1;
     baton_children[index]=child;
   } else {
@@ -219,7 +219,7 @@ typedef struct BrOwnerControl {
 /* A database-level reply payload: the owner token and its open attempt count. */
 typedef struct { uint64_t owner,attempts; } BrOwnerState;
 typedef struct {
-  int listener,lock,finishing;
+  int listener,lock,finishing,single;
   uint64_t token,device,inode;
   char *database,*socket_path;
   BrKeeper *attempts;
@@ -1550,12 +1550,13 @@ static int br_instance_connect(const char *database,int spawn,uint64_t *token,in
     if(!connect(socket_fd,(struct sockaddr *)&address,sizeof(address)))break;
     error=errno;close(socket_fd);socket_fd=-1;
     if(error!=ENOENT && error!=ECONNREFUSED)break;
-    if(spawn && !started) {
+    if(!spawn)break;
+    if(!started) {
       pid_t pid;
       if((error=br_instance_spawn(canonical,&pid)))break;
       started=1;
     }
-    error=spawn?0:ENOENT;
+    error=0;
     if(attempt==599)error=ETIMEDOUT;
   }
   if(!error)error=br_instance_token(canonical,token);
@@ -1635,7 +1636,7 @@ static int br_instance_admit(BatonProcessCall *call) {
     BrInstanceFrame reply;
     error=br_instance_request(call->database,
       (BrInstanceFrame){.op=BI_ADMIT,.length=strlen(directory)+1},directory,
-      call->lock<0?-1:(int)call->lock,&reply);
+      call->lock?(int)call->lock:-1,&reply);
     if(!error && reply.attempt)call->unstarted=0;
   }
   if(!error)error=br_instance_join(call,directory);

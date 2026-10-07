@@ -16,6 +16,21 @@ def shutdown_cli(args: List<String>) -> IO(Unit):
     case +database <> Nil{}: answer(Instance.shutdown(database))
     case _: IO.die(Unit,2,"shutdown DATABASE")
 
+# States the binding outcome as a value instead of halting, so a test can read
+# a refusal (a second owner, a multiply-linked database) as its own result.
+def owner_try_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case +database <> Nil{}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,Unit> <- Instance.owner(database)
+      printed : Unit <- owner_answer(result)
+      IO.pure(Unit,Unit{})
+    case _: IO.die(Unit,2,"owner-try DATABASE")
+
+def owner_answer(result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match result:
+    case Done{unit}: IO.print("owner-ok")
+    case Fail{error}: IO.print("owner-refused:" ++ error)
+
 def answer(result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match result:
     case Done{unit}: IO.print("shutdown-ok")
@@ -66,6 +81,13 @@ def observe_attached(result: Result<&1,&1,U32 & String,U32>) -> IO<Unit>:
       line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       attached_lines(handle,line)
     case Fail{error}: IO.die(Unit,1,error)
+
+# The observer the owner launches when it loses a client. It reattaches and
+# reads the attempt's retained output from the beginning of its spool.
+def recover_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case database <> directory <> Nil{}: observe_attached(Instance.attach(database,directory))
+    case _: IO.die(Unit,2,"recover-retained DATABASE ATTEMPT")
 
 def attached_locked(database: String, directory: String, lock: Maybe<U32>) -> IO(Unit):
   match lock:
@@ -138,7 +160,7 @@ def closed_step(+handle: U32, mode: String) -> IO<Unit>:
 def admitted_locked(database: String, directory: String, cwd: String, payload: String, mode: String, program: List<String>, lock: Maybe<U32>) -> IO<Unit>:
   do IO<Unit>:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
-    start : P.RetainedStart <- IO.try(P.RetainedStart,Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr",payload,1,lock,P.argv([executable,"recover-retained",directory])))
+    start : P.RetainedStart <- IO.try(P.RetainedStart,Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr",payload,1,lock,P.argv([executable,"recover-retained",database,directory])))
     admitted_started(start,payload,mode)
 
 def admit_cli(args: List<String>) -> IO<Unit>:
@@ -188,7 +210,9 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"control-write"),5,
   Bool.pick(U32,String.eq(mode,"control-signal"),6,
   Bool.pick(U32,String.eq(mode,"shutdown"),7,
-  Bool.pick(U32,String.eq(mode,"lock-try"),8,0))))))))
+  Bool.pick(U32,String.eq(mode,"lock-try"),8,
+  Bool.pick(U32,String.eq(mode,"owner-try"),9,
+  Bool.pick(U32,String.eq(mode,"recover-retained"),10,0))))))))))
 
 def dispatch(mode: U32, original: String, rest: List<String>) -> IO(Unit):
   match mode:
@@ -200,6 +224,8 @@ def dispatch(mode: U32, original: String, rest: List<String>) -> IO(Unit):
     case 6: signal_cli(rest)
     case 7: shutdown_cli(rest)
     case 8: lock_cli(rest)
+    case 9: owner_try_cli(rest)
+    case 10: recover_cli(rest)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):
