@@ -64,9 +64,13 @@ def accepted_submission() -> Service.Submission:
 def ready_keeper() -> Managed.KeeperReadiness:
   Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"}
 
-def ready_host_json(+binding: String, +incarnation: U32, +epoch: U32) -> J.Json:
+def json_bool(value: Bool) -> J.Json:
+  Bool.pick(J.Json, value, J.Jtrue{}, J.Jfalse{})
+
+def ready_host_json(+state: String, +binding: String, +incarnation: U32, +epoch: U32,
+                    latched: Bool, status_known: Bool, cancelled: Bool) -> J.Json:
   J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-host-ready-v1"},
-  J.Jpair{"state", J.Jstr{"ready"},
+  J.Jpair{"state", J.Jstr{state},
   J.Jpair{"handle", J.Jint{1},
   J.Jpair{"directory", J.Jstr{"/logs/keeper-q"},
   J.Jpair{"ownerAttempt", J.Jint{1},
@@ -80,15 +84,15 @@ def ready_host_json(+binding: String, +incarnation: U32, +epoch: U32) -> J.Json:
   J.Jpair{"expectedBinding", J.Jstr{binding},
   J.Jpair{"ownerIncarnation", J.Jint{incarnation},
   J.Jpair{"ownerEpoch", J.Jint{epoch},
-  J.Jpair{"spawn_latched", J.Jfalse{},
-  J.Jpair{"cancelled", J.Jfalse{},
+  J.Jpair{"spawn_latched", json_bool(latched),
+  J.Jpair{"cancelled", json_bool(cancelled),
   J.Jpair{"grant", J.Jstr{""},
   J.Jpair{"rejection", J.Jstr{""},
-  J.Jpair{"status_known", J.Jfalse{}, J.Jnil{}}}}}}}}}}}}}}}}}}}}}}
+  J.Jpair{"status_known", json_bool(status_known), J.Jnil{}}}}}}}}}}}}}}}}}}}}}}
 
 law host_readiness_requires_the_bootstrap_digest_and_current_owner_witness:
   {Managed.keeper_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
-    ready_host_json("binding-digest", 7, 1)) ==
+    ready_host_json("ready", "binding-digest", 7, 1, False{}, False{}, False{})) ==
     Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
 
 def host_readiness_requires_the_bootstrap_digest_and_current_owner_witness():
@@ -96,10 +100,82 @@ def host_readiness_requires_the_bootstrap_digest_and_current_owner_witness():
 
 law changed_host_owner_witness_holds_managed_start:
   {Managed.keeper_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
-    ready_host_json("binding-digest", 8, 1)) ==
+    ready_host_json("ready", "binding-digest", 8, 1, False{}, False{}, False{})) ==
     Managed.KeeperObserverUnavailable{"hostReadinessMismatch"} : Managed.KeeperReadiness}
 
 def changed_host_owner_witness_holds_managed_start():
+  {==}
+
+law recovery_accepts_attached_ready_process_state:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    ready_host_json("ready", "binding-digest", 7, 1, False{}, False{}, False{})) ==
+    Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
+
+def recovery_accepts_attached_ready_process_state():
+  {==}
+
+law recovery_accepts_attached_running_process_state:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    ready_host_json("running", "binding-digest", 7, 1, True{}, False{}, False{})) ==
+    Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
+
+def recovery_accepts_attached_running_process_state():
+  {==}
+
+law recovery_requires_a_latched_running_process:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    ready_host_json("running", "binding-digest", 7, 1, False{}, False{}, False{})) ==
+    Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
+
+def recovery_requires_a_latched_running_process():
+  {==}
+
+law recovery_refuses_a_cancelled_attached_keeper:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    ready_host_json("running", "binding-digest", 7, 1, True{}, False{}, True{})) ==
+    Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
+
+def recovery_refuses_a_cancelled_attached_keeper():
+  {==}
+
+law recovery_accepts_attached_exited_process_state:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    ready_host_json("exited", "binding-digest", 7, 1, True{}, True{}, False{})) ==
+    Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
+
+def recovery_accepts_attached_exited_process_state():
+  {==}
+
+law recovery_requires_a_known_exit_status:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    ready_host_json("exited", "binding-digest", 7, 1, True{}, False{}, False{})) ==
+    Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
+
+def recovery_requires_a_known_exit_status():
+  {==}
+
+law recovery_accepts_attached_uncertain_process_state:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    ready_host_json("uncertain", "binding-digest", 7, 1, True{}, False{}, False{})) ==
+    Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
+
+def recovery_accepts_attached_uncertain_process_state():
+  {==}
+
+law recovery_accepts_attached_failed_process_state:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    ready_host_json("failed", "binding-digest", 7, 1, True{}, False{}, False{})) ==
+    Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
+
+def recovery_accepts_attached_failed_process_state():
+  {==}
+
+law recovery_requires_the_original_owner_witness:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    ready_host_json("running", "binding-digest", 8, 1, True{}, False{}, False{})) ==
+    Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
+
+def recovery_requires_the_original_owner_witness():
   {==}
 
 def managed_submission() -> Service.Submission:
@@ -143,6 +219,38 @@ law recovery_replays_the_original_grant_after_terminal_publication:
       "/logs/keeper-q", "/work/.baton/context-artifacts/q", "[]", "result-v1"} : Managed.StartDecision}
 
 def recovery_replays_the_original_grant_after_terminal_publication():
+  {==}
+
+law recovery_replays_only_the_captured_origin_attempt:
+  {Managed.accepted_recovery_managed_admission(managed_bootstrap(), "starter", "0",
+    Admission.AdmissionRetained{"owner-1", "{}", "accepted", "running", "later-attempt",
+      "/logs/keeper-q", "/work", "/work/.baton/context-artifacts/q"},
+    "[]", "plan-identity", "result-v1",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    Managed.bootstrap_text(managed_bootstrap())) ==
+    Managed.StartHeld{"recoveryManagedAdmissionMismatch"} : Managed.StartDecision}
+
+def recovery_replays_only_the_captured_origin_attempt():
+  {==}
+
+law recovery_refusal_readback_cancels_the_prepared_keeper:
+  {Managed.reconciled_admission_decision(managed_bootstrap(), "starter", "0",
+    Admission.AdmissionRetained{"owner-1", "{}", "rejected", "refused", "0",
+      "/logs/keeper-q", "/work", "/work/.baton/context-artifacts/q"}, True{},
+    Done{Admission.ManagedAssociationMissing{}}) ==
+    Managed.StartCancelled{"q-1", "owner-1", "admissionRejected", "/logs/keeper-q"} : Managed.StartDecision}
+
+def recovery_refusal_readback_cancels_the_prepared_keeper():
+  {==}
+
+law recovery_plan_mismatch_holds_the_existing_keeper:
+  {Managed.accepted_recovery_managed_admission(managed_bootstrap(), "starter", "0",
+    accepted_admission(), "different-plan", "plan-identity", "result-v1",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    Managed.bootstrap_text(managed_bootstrap())) ==
+    Managed.StartHeld{"recoveryManagedAdmissionMismatch"} : Managed.StartDecision}
+
+def recovery_plan_mismatch_holds_the_existing_keeper():
   {==}
 
 law an_unavailable_original_observer_never_grants_a_start:
@@ -270,6 +378,20 @@ law an_unreadable_admission_does_not_start_or_cancel_the_keeper:
     Managed.StartHeld{"admissionUncertain:readback"} : Managed.StartDecision}
 
 def an_unreadable_admission_does_not_start_or_cancel_the_keeper():
+  {==}
+
+law an_absent_admission_keeps_the_prepared_keeper_for_recovery:
+  {Managed.submission_decision(managed_bootstrap(), "starter", "0",
+    Service.SubmissionAbsent{}) == Managed.StartHeld{"admissionAbsent"} : Managed.StartDecision}
+
+def an_absent_admission_keeps_the_prepared_keeper_for_recovery():
+  {==}
+
+law a_foreign_admission_keeps_the_prepared_keeper_for_recovery:
+  {Managed.submission_decision(managed_bootstrap(), "starter", "0",
+    Service.SubmissionForeign{"other-owner", "{}"}) == Managed.StartHeld{"admissionForeign"} : Managed.StartDecision}
+
+def a_foreign_admission_keeps_the_prepared_keeper_for_recovery():
   {==}
 
 law no_admission_effect_runs_before_original_observer_readiness:

@@ -49,6 +49,11 @@ type ManagedOutput is Data:
   ManagedOutput{event_frame: String, error_json: String, exit_status: U32,
     complete: Bool}
 
+type ManagedStoreDisposition is Data:
+  ManagedStatePublished{}
+  ManagedInterruptedRetained{}
+  ManagedStoreRefused{reason: String}
+
 type ManagedExit is Data:
   ManagedExit{code: U32, complete: Bool}
   ManagedExitRefused{}
@@ -617,18 +622,43 @@ def managed_store_cursor(+db: String,
     case Done{+rows}:
       managed_store_publish_result(Instance.publish_commit(db, Tx.trim_nl(rows)))
 
-def managed_store_rows(+db: String, +binding: String, +rows: String) -> IO(Unit):
+def managed_store_disposition(+requested_state: String,
+                              decoded: ProjectPolicyJson) -> ManagedStoreDisposition:
+  match decoded:
+    case ProjectPolicyJsonRefused{reason}: ManagedStoreRefused{"managedOutcomeReadback"}
+    case ProjectPolicyJsonReady{+value}:
+      Bool.pick(ManagedStoreDisposition,
+        String.eq(boundary_text(value, "state"), requested_state),
+        ManagedStatePublished{},
+        Bool.pick(ManagedStoreDisposition,
+          Bool.and(String.eq(boundary_text(value, "state"), "interrupted"),
+          Bool.or(String.eq(requested_state, "complete"),
+                  String.eq(requested_state, "failed"))),
+          ManagedInterruptedRetained{}, ManagedStoreRefused{"managedOutcomeConflict"}))
+
+def managed_store_disposition_result(disposition: ManagedStoreDisposition) -> IO(Unit):
+  match disposition:
+    case ManagedStatePublished{}: IO.pure(Unit, Unit{})
+    case ManagedInterruptedRetained{}: IO.pure(Unit, Unit{})
+    case ManagedStoreRefused{reason}: IO.die(Unit, 3, reason)
+
+def managed_store_rows(+db: String, +binding: String, +requested_state: String,
+                       +rows: String) -> IO(Unit):
   do IO<Unit>:
+    disposition : ManagedStoreDisposition <- IO.pure(ManagedStoreDisposition,
+      managed_store_disposition(requested_state, project_policy_json_rows(rows)))
+    checked : Unit <- managed_store_disposition_result(disposition)
     written : Unit <- IO.write(rows)
     cursor : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db,
       binding, "SELECT CAST(coalesce(max(change_id),0) AS TEXT) FROM native_changes;")
     managed_store_cursor(db, cursor)
 
 def managed_store_result(+db: String, +binding: String,
+                         +requested_state: String,
                          result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Fail{error}: IO.die(Unit, 3, "managedOutcomeStore")
-    case Done{+rows}: managed_store_rows(db, binding, rows)
+    case Done{+rows}: managed_store_rows(db, binding, requested_state, rows)
 
 def store_managed_output(+db: String, +binding: String, +query: String, +owner: String,
                          output: ManagedOutput) -> IO(Unit):
@@ -640,7 +670,8 @@ def store_managed_output(+db: String, +binding: String, +query: String, +owner: 
             Bool.pick(String, complete, "complete", "failed"),
             Bool.pick(String, complete, event_frame, SNil{}),
             Bool.pick(String, complete, SNil{}, error_json)))
-        managed_store_result(db, binding, result)
+        managed_store_result(db, binding,
+          Bool.pick(String, complete, "complete", "failed"), result)
 
 def launch_bootstrap(launch: ManagedLaunch) -> ManagedQuery.Bootstrap:
   match launch:

@@ -180,6 +180,15 @@ def store_surfaces(+db: String, +binding: String) -> IO(Unit):
     show("managed.conflict", managed_conflict)
     managed_notice : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT body FROM messages WHERE id='context-query:q-managed:terminal';")
     show("managed.notice", managed_notice)
+    interrupted_accept : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.accept_sql("q-interrupted", "root", "{\"version\":1}", "/work", "attempt-1", "/log/q-interrupted", "/art/q-interrupted"))
+    interrupted_publish : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.state_publish_managed_sql("q-interrupted", "root", "interrupted", "", "{\"kind\":\"ownerStopped\"}"))
+    show("interrupted.publish", interrupted_publish)
+    interrupted_late : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.state_publish_managed_sql("q-interrupted", "root", "complete", "{\"answer\":42}", ""))
+    show("interrupted.late", interrupted_late)
+    interrupted_kept : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.envelope_sql("q-interrupted"))
+    show("interrupted.kept", interrupted_kept)
+    interrupted_notice : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT body FROM messages WHERE id='context-query:q-interrupted:terminal';")
+    show("interrupted.notice", interrupted_notice)
     IO.pure(Unit, Unit{})
 
 def rejection_surfaces(+db: String, +binding: String) -> IO(Unit):

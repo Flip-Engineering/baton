@@ -226,6 +226,13 @@ def check_store(values):
     check(values.get("managed.conflict.error", "") != "", "managed.conflict", values.get("managed.conflict"))
     check(values.get("managed.notice", "") == '{"query":"q-managed","state":"complete"}',
           "managed.notice", values.get("managed.notice"))
+    interrupted = json.loads(values.get("interrupted.kept", "{}"))
+    check(interrupted.get("state") == "interrupted", "interrupted.kept.state", interrupted)
+    check(interrupted.get("result") is None, "interrupted.kept.result", interrupted)
+    check(interrupted.get("error", {}).get("kind") == "ownerStopped",
+          "interrupted.kept.error", interrupted)
+    check(values.get("interrupted.notice") == '{"query":"q-interrupted","state":"interrupted"}',
+          "interrupted.notice", values.get("interrupted.notice"))
     refused = json.loads(values.get("reject.envelope", "{}"))
     check(refused.get("state") == "refused", "reject.envelope", refused)
     check(refused.get("result") is None, "reject.envelope.result", refused)

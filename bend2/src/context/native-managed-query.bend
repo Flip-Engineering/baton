@@ -319,6 +319,18 @@ def recovery_state_supported(+state: String) -> Bool:
   Bool.or(String.eq(state, "exited"), Bool.or(String.eq(state, "uncertain"),
     String.eq(state, "failed")))))
 
+def recovery_state_latch_matches(+state: String, +value: J.Json) -> Bool:
+  Bool.pick(Bool, String.eq(state, "ready"),
+    readiness_false(value, "spawn_latched"),
+    Bool.and(recovery_state_supported(state), readiness_true(value, "spawn_latched")))
+
+def recovery_state_status_matches(+state: String, +value: J.Json) -> Bool:
+  Bool.pick(Bool, String.eq(state, "exited"), readiness_true(value, "status_known"),
+    Bool.pick(Bool, Bool.or(String.eq(state, "ready"), String.eq(state, "running")),
+      readiness_false(value, "status_known"),
+      Bool.pick(Bool, String.eq(state, "failed"), readiness_false(value, "status_known"),
+        recovery_state_supported(state))))
+
 # Recovery readiness is derived from the attached keeper's closed host record.
 # It accepts each recorded process phase because recovery may attach before or
 # after the original child exits, while keeping the original owner witness.
@@ -329,14 +341,15 @@ def keeper_recovery_readiness_from_host(+bootstrap: Bootstrap,
   Bool.pick(KeeperReadiness,
     Bool.and(readiness_closed(value),
     Bool.and(String.eq(readiness_text(value, "schema"), "baton2-host-ready-v1"),
-    Bool.and(recovery_state_supported(readiness_text(value, "state")),
+    Bool.and(recovery_state_latch_matches(readiness_text(value, "state"), value),
+    Bool.and(recovery_state_status_matches(readiness_text(value, "state"), value),
     Bool.and(String.eq(readiness_text(value, "directory"), bootstrap_keeper_path(bootstrap)),
     Bool.and(readiness_true(value, "observer_ready"),
     Bool.and(String.eq(readiness_text(value, "identity"), "fixed"),
     Bool.and(String.eq(readiness_text(value, "expectedBinding"), expected_binding),
     Bool.and(String.eq(readiness_json_text(value, "ownerIncarnation") ++ ":"
       ++ readiness_json_text(value, "ownerEpoch"), owner_witness),
-    readiness_false(value, "cancelled"))))))))),
+    readiness_false(value, "cancelled")))))))))),
     KeeperObserverReady{bootstrap_query(bootstrap), bootstrap_owner(bootstrap),
       bootstrap_keeper_path(bootstrap), "starter", "0"},
     KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"})

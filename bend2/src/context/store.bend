@@ -370,22 +370,22 @@ def state_publish_sql(+id: String, +next: String, +resultJson: String, +errorJso
   ++ "error_json=CASE WHEN " ++ terminal_recorded() ++ " THEN error_json ELSE " ++ json_or_null(errorJson) ++ " END "
   ++ "WHERE id=" ++ C.q(id) ++ ";" ++ envelope_sql(id) ++ "COMMIT;"
 
-# A terminal provider artifact is published to the query row and its durable
-# owner notice in one transaction. Replaying the same event preserves the notice;
-# a changed terminal state or notice body aborts the transaction.
-def state_notice_sql(+id: String, +owner: String, +next: String) -> String:
+# A terminal provider artifact and the first terminal owner notice are published
+# in one transaction. An observed completion or failure after owner interruption
+# retains the interruption facts and replays its notice identity and body.
+def state_notice_sql(+id: String, +owner: String) -> String:
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT "
   ++ C.q("context-query:" ++ id ++ ":terminal") ++ ",s.id,s.id,'report',json_object('query',"
-  ++ C.q(id) ++ ",'state'," ++ C.q(next) ++ ") FROM sessions s WHERE s.id="
-  ++ C.q(owner) ++ " AND EXISTS(SELECT 1 FROM semantic_queries q WHERE q.id="
-  ++ C.q(id) ++ " AND q.owner=" ++ C.q(owner) ++ " AND q.state=" ++ C.q(next) ++ ")"
+  ++ C.q(id) ++ ",'state',q.state) FROM sessions s JOIN semantic_queries q ON q.owner=s.id WHERE s.id="
+  ++ C.q(owner) ++ " AND q.id=" ++ C.q(id) ++ " AND " ++ terminal_recorded()
   ++ C.message_upsert()
 
 def state_publish_managed_sql(+id: String, +owner: String, +next: String,
                               +resultJson: String, +errorJson: String) -> String:
   "BEGIN IMMEDIATE;" ++ schema()
   ++ "UPDATE semantic_queries SET state=CASE WHEN " ++ terminal_recorded()
-  ++ " THEN CASE WHEN state=" ++ C.q(next)
+  ++ " THEN CASE WHEN state=" ++ C.q("interrupted") ++ " AND "
+  ++ C.q(next) ++ " IN ('complete','failed') THEN state WHEN state=" ++ C.q(next)
   ++ " AND coalesce(result_json,'')=coalesce(" ++ json_or_null(resultJson)
   ++ ", '') AND coalesce(error_json,'')=coalesce(" ++ json_or_null(errorJson)
   ++ ", '') THEN state ELSE NULL END ELSE "
@@ -393,7 +393,7 @@ def state_publish_managed_sql(+id: String, +owner: String, +next: String,
   ++ " THEN result_json ELSE " ++ json_or_null(resultJson)
   ++ " END,error_json=CASE WHEN " ++ terminal_recorded() ++ " THEN error_json ELSE "
   ++ json_or_null(errorJson) ++ " END WHERE id=" ++ C.q(id) ++ " AND owner="
-  ++ C.q(owner) ++ ";" ++ state_notice_sql(id, owner, next)
+  ++ C.q(owner) ++ ";" ++ state_notice_sql(id, owner)
   ++ envelope_sql(id) ++ "COMMIT;"
 
 def progress_body_sql(+id: String, +owner: String, +progressJson: String, +noticeId: String, +noticeBody: String) -> String:
