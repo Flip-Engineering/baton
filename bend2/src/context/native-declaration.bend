@@ -17,7 +17,9 @@ def member_value(found: Maybe<&2, J.Json>) -> J.Json:
     case Some{+value}: value
 
 def member(+object: J.Json, +key: String) -> J.Json:
-  member_value(Req.member_lookup(key, object))
+  match object:
+    case J.Jobj{+members}: member_value(Req.member_lookup(key, members))
+    case other: J.Jnil{}
 
 def text_field(+object: J.Json, +key: String) -> String:
   Req.text_of(member(object, key))
