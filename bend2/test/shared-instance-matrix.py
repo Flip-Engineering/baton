@@ -228,6 +228,18 @@ class Matrix(unittest.TestCase):
     def inbox(self, recipient):
         return self.coord('inbox', recipient)
 
+    def await_inbox(self, recipient, predicate, description, timeout=60):
+        # Reports land in a session inbox through the keeper's observe
+        # pipeline, which runs after the serve exits. Poll for them;
+        # a one-shot read after serve exit races keeper delivery.
+        deadline = time.monotonic() + timeout
+        while True:
+            found = predicate(self.inbox(recipient))
+            if found:
+                return found
+            self.assertLess(time.monotonic(), deadline, description)
+            time.sleep(.5)
+
     def pending(self):
         return self.coord('pending')
 
@@ -336,8 +348,15 @@ class Matrix(unittest.TestCase):
         self.assertEqual(len(natives_w2), 1)
         turns_w1 = self.coord('turns', 'w1')
         self.assertGreaterEqual(len(turns_w1), 1)
-        bodies = self.coord('inbox', 'root')
-        texts = [message['body'] for message in bodies]
+        def all_reported(messages):
+            texts = [message['body'] for message in messages]
+            if (any('w1 turn one complete' in text for text in texts)
+                    and any('w1 guidance turn complete' in text for text in texts)
+                    and any('w2 turn one complete' in text for text in texts)):
+                return texts
+            return None
+        texts = self.await_inbox('root', all_reported,
+                                 'concurrent turn reports never reached the root inbox')
         self.assertTrue(any('w1 turn one complete' in text for text in texts))
         self.assertTrue(any('w1 guidance turn complete' in text for text in texts))
         self.assertTrue(any('w2 turn one complete' in text for text in texts))
@@ -385,7 +404,10 @@ class Matrix(unittest.TestCase):
         self.release('w3')
         stdout, stderr = first.communicate(timeout=90)
         self.assertEqual(first.returncode, 0, stderr)
-        texts = [message['body'] for message in self.inbox('root')]
+        texts = self.await_inbox(
+            'root',
+            lambda messages: ([message['body'] for message in messages] or None),
+            'held turn report never reached the root inbox')
         self.assertTrue(any('w3 held turn complete' in text for text in texts))
         self.assertIsNone(self.coord('owner-status'))
 
@@ -418,6 +440,12 @@ class Matrix(unittest.TestCase):
         self.release('w7')
         stdout, stderr = second.communicate(timeout=90)
         self.assertEqual(second.returncode, 0, stderr)
+        self.await_inbox(
+            'root',
+            lambda messages: ([m['body'] for m in messages if m['sender'] == 'w7'
+                               and 'w7 adopted turn complete' in m['body']] or None),
+            'adopted report never reached the root inbox')
+        time.sleep(3)
         bodies = [m['body'] for m in self.inbox('root') if m['sender'] == 'w7']
         self.assertEqual(len([b for b in bodies if 'w7 adopted turn complete' in b]), 1)
         row = self.query("SELECT receipt FROM messages WHERE id='t7'")
