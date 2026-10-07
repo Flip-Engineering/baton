@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """Fixed-coordinator gate for the shared native runtime.
 
-One owner plus one serve holds each database. The serve subscribes before its
-first snapshot, drives every session with actionable pending input as a
-concurrent native task, re-snapshots after every joined task, and blocks on
-the owner notice while idle. These legs gate that contract through ordinary
-CLI verbs against the elected owner; they do not depend on Store publication.
+One owner plus one serve holds each database. The serve takes the physical
+coordinator role before subscribing, drives every session with actionable
+pending input as a concurrent native task through one event channel, and
+replays the full snapshot on every task completion and every owner notice.
+These legs gate that contract through ordinary CLI verbs against the elected
+owner; they do not depend on Store publication. A failed leg retains its
+fixture database, serve and owner outputs, and source pins under /tmp.
 """
+import hashlib
 import json
 import os
 import pathlib
+import shutil
 import signal
 import socket
 import sqlite3
@@ -142,6 +146,53 @@ class FixedCoordinator(unittest.TestCase):
     def is_serve(self, process):
         return process['command'].endswith(' serve') or ' serve ' in process['command']
 
+    def is_owner(self, process):
+        return '--instance-owner' in process['command']
+
+    def tearDown(self):
+        outcome = getattr(self, '_outcome', None)
+        failed = False
+        if outcome is not None:
+            for _, error in getattr(outcome, 'errors', []):
+                if error is not None:
+                    failed = True
+        if failed and hasattr(self, 'directory'):
+            keep = (pathlib.Path(tempfile.gettempdir())
+                    / f'fixed676-{self._testMethodName}-{int(time.time())}')
+            keep.mkdir(parents=True)
+            shutil.copytree(self.directory, keep / 'fixture')
+            for name, process in (('serve', self.serve_proc),
+                                  ('owner', self.owner_proc)):
+                if process is None:
+                    continue
+                try:
+                    if process.poll() is None:
+                        process.kill()
+                    out, err = process.communicate(timeout=10)
+                except Exception as exc:
+                    out, err = '', f'collect-failed: {exc}'
+                (keep / f'{name}.stdout').write_text(out or '')
+                (keep / f'{name}.stderr').write_text(err or '')
+            try:
+                owned = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                       capture_output=True, text=True,
+                                       timeout=10).stdout
+            except Exception as exc:
+                owned = f'ps-failed: {exc}'
+            (keep / 'processes.txt').write_text(owned)
+            digest = hashlib.sha256(EXE.read_bytes()).hexdigest()
+            try:
+                bend_version = subprocess.run(
+                    [str(EXE), '--help'], capture_output=True, text=True,
+                    timeout=10).stderr.splitlines()[0:1]
+            except Exception as exc:
+                bend_version = [f'help-failed: {exc}']
+            (keep / 'pins.txt').write_text(
+                '\n'.join([f'exe={EXE}', f'sha256={digest}',
+                           f'version={bend_version}',
+                           f'sqlite={sqlite3.sqlite_version}']) + '\n')
+            print(f'\nRETAINED-FAILURE {keep}')
+
     def owned_processes(self):
         result = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
                                 capture_output=True, text=True, check=True)
@@ -233,8 +284,8 @@ class FixedCoordinator(unittest.TestCase):
             return json.loads(result.stdout)
         self.eventually(ready, 'no elected owner', timeout=30)
 
-    def start_serve(self):
-        self.serve_proc = subprocess.Popen([str(EXE), str(self.db), 'serve'],
+    def start_serve(self, db=None):
+        self.serve_proc = subprocess.Popen([str(EXE), str(db or self.db), 'serve'],
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.children.append(self.serve_proc)
 
@@ -247,8 +298,8 @@ class FixedCoordinator(unittest.TestCase):
                                timeout=30)
         return json.loads(line)
 
-    def shutdown(self, expect_serve=0):
-        result = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+    def shutdown(self, expect_serve=0, db=None):
+        result = subprocess.run([str(EXE), '--instance-shutdown', str(db or self.db)],
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         if self.serve_proc is not None:
@@ -344,6 +395,12 @@ class FixedCoordinator(unittest.TestCase):
         self.assertEqual(len([b for b in bodies if 'w7 adopted turn complete' in b]), 1)
         row = self.query("SELECT receipt FROM messages WHERE id='t7'")
         self.assertNotEqual(row, [(None,)], 'adopted input was lost')
+        owners = [p for p in self.owned_processes() if self.is_owner(p)]
+        self.assertEqual(len(owners), 1, 'adoption keeps exactly one shared owner')
+        attempt = self.query("SELECT directory, mode FROM executions WHERE session='w7'")
+        self.assertEqual(len(attempt), 1, 'adoption keeps one admitted attempt')
+        self.assertTrue(attempt[0][0], 'adopted attempt lost its directory')
+        self.assertEqual(attempt[0][1], 'retained', 'adopted attempt lost its mode')
         self.shutdown()
 
     def test_04_owner_loss_preserves_live_native_and_receipted_input(self):
@@ -371,6 +428,8 @@ class FixedCoordinator(unittest.TestCase):
         self.assertNotEqual(row, [(None,)], 'owner-loss input was lost')
         rows = self.query("SELECT phase FROM executions WHERE session='w8'")
         self.assertTrue(rows, 'owner-loss execution record was lost')
+        owners = [p for p in self.owned_processes() if self.is_owner(p)]
+        self.assertEqual(owners, [], 'the killed owner stayed resident')
         # The stranded serve joined its task through the keeper death and only
         # returns when that join does; the supervisor restarts the generation.
         self.serve_proc.kill()
@@ -431,6 +490,128 @@ class FixedCoordinator(unittest.TestCase):
         owner_json = json.loads(by_id[3]['result']['content'][0]['text'])
         self.assertEqual(owner_json['generation'], status['generation'])
         self.assertEqual(owner_json['cursor'], status['cursor'])
+        self.shutdown()
+
+    def test_07_late_commit_served_while_first_task_held(self):
+        self.recruit('w1', 'codex')
+        self.recruit('w2', 'omp')
+        self.recruit('w3', 'codex')
+        self.queue('w1', {'body': 'w1 held turn', 'hold_exit': True})
+        self.queue('w2', {'body': 'w2 quick turn'})
+        self.queue('w3', {'body': 'w3 late turn'})
+        self.dispatch('t1', 'w1', 'First task, held.')
+        self.dispatch('t2', 'w2', 'Second task, quick.')
+        self.receiver('w1')
+        self.receiver('w2')
+        self.receiver('w3')
+        self.start_owner()
+        self.start_serve()
+        first_w1, _ = self.stream_for('w1')
+        self.assertEqual(json.loads(first_w1.readline()), {'terminal_written': True})
+        first_w2, _ = self.stream_for('w2')
+        self.assertEqual(json.loads(first_w2.readline()), {'terminal_written': True})
+        self.dispatch('c1', 'w3', 'Late task, older pending one.')
+        self.dispatch('c2', 'w3', 'Late task, older pending two.')
+        first_w3, _ = self.stream_for('w3')
+        self.assertEqual(json.loads(first_w3.readline()), {'terminal_written': True},
+                         'late work never started while the first task was held')
+        self.await_inbox('root', lambda messages: (
+            [m['body'] for m in messages]
+            if any('w2 quick turn' in m['body'] for m in messages)
+            and any('w3 late turn' in m['body'] for m in messages) else None),
+            'late work never finished while the first task was held')
+        bodies = [m['body'] for m in self.inbox('root')]
+        self.assertFalse(any('w1 held turn' in body for body in bodies),
+                         'the held task reported before its release')
+        for ident in ('c1', 'c2'):
+            row = self.query(f"SELECT receipt FROM messages WHERE id='{ident}'")
+            self.assertNotEqual(row, [(None,)], f'{ident} was not acknowledged')
+        self.release('w1')
+        self.await_inbox('root', lambda messages: (
+            [m['body'] for m in messages]
+            if any('w1 held turn' in m['body'] for m in messages) else None),
+            'held turn report never reached the root inbox')
+        for ident in ('t1', 't2'):
+            row = self.query(f"SELECT receipt FROM messages WHERE id='{ident}'")
+            self.assertNotEqual(row, [(None,)], f'{ident} was not acknowledged')
+        self.shutdown()
+
+    def test_08_second_serve_on_alias_is_refused_short(self):
+        self.recruit('w9', 'codex')
+        self.queue('w9', {'body': 'w9 held turn', 'hold_exit': True})
+        self.dispatch('t9', 'w9', 'Task holding the first serve.')
+        self.receiver('w9')
+        self.start_owner()
+        self.start_serve()
+        held, _ = self.stream_for('w9')
+        self.assertEqual(json.loads(held.readline()), {'terminal_written': True})
+        alias = self.directory / 'state-alias.db'
+        os.link(self.db, alias)
+        second = subprocess.Popen([str(EXE), str(alias), 'serve'],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True)
+        self.children.append(second)
+        try:
+            stdout, stderr = second.communicate(timeout=20)
+        except subprocess.TimeoutExpired:
+            second.kill()
+            second.communicate()
+            self.fail('the second serve stayed resident instead of exiting short')
+        self.assertNotEqual(second.returncode, 0,
+                            f'second serve exited {second.returncode}: {stdout} {stderr}')
+        self.assertIn('coordinator-held', stderr,
+                      f'second serve refusal names no role: {stdout} {stderr}')
+        residents = [p for p in self.owned_processes() if self.is_serve(p)]
+        self.assertEqual(len(residents), 1, 'two serves hold one database')
+        owners = [p for p in self.owned_processes() if self.is_owner(p)]
+        self.assertEqual(len(owners), 1, 'two serve paths elect two owners')
+        status_main = self.coord('owner-status')
+        status_alias = subprocess.run([str(EXE), str(alias), 'owner-status'],
+                                      capture_output=True, text=True, timeout=30)
+        self.assertEqual(status_alias.returncode, 0, status_alias.stderr)
+        self.assertEqual(json.loads(status_alias.stdout)['generation'],
+                         status_main['generation'],
+                         'alias path sees a different owner')
+        self.release('w9')
+        self.shutdown()
+        self.start_owner()
+        self.start_serve(db=alias)
+        self.queue('w9', {'body': 'w9 alias second task'})
+        self.dispatch('t9b', 'w9', 'Second task through the alias serve.')
+        self.await_inbox('root', lambda messages: (
+            [m['body'] for m in messages]
+            if any('w9 alias second task' in m['body'] for m in messages)
+            else None),
+            'serve on the alias never serviced the database after release')
+        self.shutdown()
+
+    def test_09_muse_session_is_refused_with_its_turn_route(self):
+        self.recruit('m1', 'muse')
+        self.dispatch('tm1', 'm1', 'Task for a Muse session.')
+        self.receiver('m1')
+        self.start_owner()
+        self.start_serve()
+        os.set_blocking(self.serve_proc.stdout.fileno(), False)
+
+        def refusal():
+            try:
+                chunk = self.serve_proc.stdout.read()
+            except (OSError, ValueError):
+                return None
+            if not chunk:
+                return None
+            self._refusal_log = getattr(self, '_refusal_log', '') + chunk
+            if 'serve-refused m1 muse' in self._refusal_log:
+                return self._refusal_log
+            return None
+        log = self.eventually(refusal, 'serve never refused the Muse session', timeout=30)
+        self.assertIn('dispatch-turn', log, 'refusal names no Turn route')
+        self.assertEqual(self.connections('m1'), [],
+                         'the serve started a native for a refused session')
+        time.sleep(3)
+        self.assertIsNone(self.serve_proc.poll(), 'serve died on a refused session')
+        row = self.query("SELECT receipt FROM messages WHERE id='tm1'")
+        self.assertEqual(row, [(None,)], 'refused input was consumed or lost')
         self.shutdown()
 
 
