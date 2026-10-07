@@ -22,8 +22,16 @@ type GitOut is Data:
 # A capture outcome kept as data: the affine host Result is consumed once and every
 # code and byte is preserved, with host failure and observed success kept distinct.
 type CapturedRaw is Data:
+  CapturedAbsent{}
   CapturedFailed{code: U32, detail: String}
   CapturedDone{framing: String, diagnostics: String}
+
+def captured_failed(host: Result<&1, &1, U32 & String, String & String>) -> String:
+  match host:
+    case Fail{error}:
+      match error:
+        case (code, detail): detail
+    case Done{pair}: ""
 
 def captured_raw_of(host: Result<&1, &1, U32 & String, String & String>) -> CapturedRaw:
   match host:

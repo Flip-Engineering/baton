@@ -38,6 +38,7 @@
 # that worker's next attempt drops them.
 
 import Base
+import ../host/text.bend as Text
 import ./landing.bend as Lg
 import ./intent.bend as It
 import ../host/receipt.bend as Rec
@@ -789,13 +790,62 @@ type LdAdvObs is Data:
 # claim is taken around the holder selection and the selected advance, and the release runs for
 # every returned advance outcome with its own Result preserved beside the advance observation.
 # A release failure is therefore visible to both adapters and can never read as a landing.
+
+# Receipt admission: the published record was freshly created, durable, and reads back byte for byte.
+type Admission is Data:
+  AdmissionMissing{reason: String}
+  AdmissionAdmitted{record: String, path: String}
+
+# The complete attempt evidence. Every operand the attempt fixed at admission is carried here, so a
+# later step cannot re-resolve or substitute one for receipt convenience.
+type AttemptEvidence is Data:
+  AttemptEvidence{reserved: String, repo: String, target: String, candidate: String, basis: String,
+                  guard: String, artifact: String, capture: T.CapturedRaw, qualification: LdQualified, release: T.ReleaseRaw}
+
+# The record bytes, encoded as an argv list so arbitrary tabs, newlines and content stay unambiguous,
+# with the numeric codes rendered by U32.show.
+def release_fields(release: T.ReleaseRaw, rest: List<String>) -> List<String>:
+  match release:
+    case T.ReleaseUnperformed{}: Con{"unperformed", rest}
+    case T.ReleaseFailed{code, detail}: Con{"release-failed", Con{U32.show(code), Con{detail, rest}}}
+    case T.ReleaseDone{}: Con{"released", rest}
+
+def observation_fields(observation: T.GitOut, rest: List<String>) -> List<String>:
+  match observation:
+    case T.GRun{code, out}: Con{"run", Con{U32.show(code), Con{out, rest}}}
+    case T.GBroken{detail}: Con{"broken", rest}
+
+def read_fields(read: LdRead, rest: List<String>) -> List<String>:
+  match read:
+    case ReadSkipped{}: Con{"skipped", rest}
+    case ReadObserved{observation}: observation_fields(observation, rest)
+
+def qualification_fields(qualification: LdQualified, rest: List<String>) -> List<String>:
+  match qualification:
+    case QualDecided{target_ref, head_ref}: read_fields(target_ref, read_fields(head_ref, rest))
+
+def capture_fields(capture: T.CapturedRaw, rest: List<String>) -> List<String>:
+  match capture:
+    case T.CapturedAbsent{}: Con{"absent", rest}
+    case T.CapturedFailed{code, detail}: Con{"capture-failed", Con{U32.show(code), Con{detail, rest}}}
+    case T.CapturedDone{framing, diagnostics}: Con{"capture-done", Con{framing, Con{diagnostics, rest}}}
+
+def attempt_fields(evidence: AttemptEvidence) -> List<String>:
+  match evidence:
+    case AttemptEvidence{reserved, repo, target, candidate, basis, guard, artifact, capture, qualification, release}:
+      Con{"attempt", Con{reserved, Con{repo, Con{target, Con{candidate, Con{basis, Con{guard, Con{artifact,
+        capture_fields(capture, qualification_fields(qualification, release_fields(release, Nil{})))}}}}}}}}
+
+def attempt_record(evidence: AttemptEvidence) -> String:
+  Tx.enc_argv(attempt_fields(evidence))
+
 type SharedLanding is Data:
   SharedCommonUnreadable{observation: T.GitOut}
   SharedClaimFailed{error: T.HostError}
   SharedGuardBusy{target: String}
   SharedStepFailed{step: String, error: T.HostError, released: T.ReleaseRaw}
   SharedStepRecordFailed{step: String, record: String, released: T.ReleaseRaw}
-  SharedAdvanced{obs: LdAdvObs, released: T.ReleaseRaw, guard: String, reserved: String}
+  SharedAdvanced{obs: LdAdvObs, released: T.ReleaseRaw, guard: String, reserved: String, admitted: Admission}
 
 # Every step failure releases the acquired descriptor and keeps its own stage, its complete
 # error or raw record, and the actual release Result.
@@ -962,6 +1012,28 @@ def ld_adv_cas(g: T.GitOut) -> LAdv:
   match g:
     case T.GRun{code, out}: Bool.pick(LAdv, U32.is_eq(code, 0), AdvLanded{}, AdvRefused{})
     case T.GBroken{detail}: AdvBroken{detail}
+
+def ld_adv_capture(obs: LdAdvObs) -> T.CapturedRaw:
+  match obs:
+    case LdAdvNoCapture{advance}: T.CapturedAbsent{}
+    case LdAdvCaptured{advance, capture}: capture
+    case LdAdvQualified{advance, capture, qualification}: capture
+
+def ld_adv_qualification(obs: LdAdvObs) -> LdQualified:
+  match obs:
+    case LdAdvNoCapture{advance}: QualDecided{ReadSkipped{}, ReadSkipped{}}
+    case LdAdvCaptured{advance, capture}: QualDecided{ReadSkipped{}, ReadSkipped{}}
+    case LdAdvQualified{advance, capture, qualification}: qualification
+
+def ld_admitted(admission: Admission) -> Bool:
+  match admission:
+    case AdmissionAdmitted{record, path}: True{}
+    case AdmissionMissing{reason}: False{}
+
+def ld_admission(admission: Admission) -> String:
+  match admission:
+    case AdmissionAdmitted{record, path}: path
+    case AdmissionMissing{reason}: reason
 
 def ld_adv_qualified_with(advance: LAdv, +capture: T.CapturedRaw, qualification: LdQualified) -> LdAdvObs:
   LdAdvQualified{advance, capture, qualification}
@@ -1190,6 +1262,67 @@ def ld_adv_run(repo: String, target: String, cand: String, basis: String, ctx: L
     ld_adv_pick(g, r2, t2, c2, b2, cx)
 # Admission runs the advance for the reserved directory and releases, carrying the guard and
 # the reserved path forward for the capture sites.
+
+# The complete attempt evidence is published once, after the release, and admitted only when the
+# record was freshly created, is durable, and reads back byte for byte.
+def ld_attest_bytes(evidence: AttemptEvidence, path: String, seen: Result<&1, &1, U32 & String, String>) -> IO(Admission):
+  +ev = evidence
+  +p = path
+  match seen:
+    case Fail{error}: IO.pure(Admission, AdmissionMissing{"the attempt record could not be read back"})
+    case Done{raw}:
+      Bool.pick(IO(Admission), String.eq(raw, attempt_record(ev)),
+        IO.pure(Admission, AdmissionAdmitted{attempt_record(ev), p}),
+        IO.pure(Admission, AdmissionMissing{"the attempt record does not read back as published"}))
+
+def ld_attest_read(evidence: AttemptEvidence, path: String) -> IO(Admission):
+  +ev = evidence
+  +p = path
+  do IO<Admission>:
+    seen : Result<&1, &1, U32 & String, String> <- Text.Text.read(p)
+    ld_attest_bytes(ev, p, seen)
+
+def ld_attest_qualified(evidence: AttemptEvidence, path: String, qualified: Result<&1, &1, U32 & String, String>) -> IO(Admission):
+  +ev = evidence
+  +p = path
+  match qualified:
+    case Fail{error}: IO.pure(Admission, AdmissionMissing{"the attempt record is not durable"})
+    case Done{raw}:
+      Bool.pick(IO(Admission), Tx.starts_with(raw, "qualified"),
+        ld_attest_read(ev, p),
+        IO.pure(Admission, AdmissionMissing{"the attempt record is not durable"}))
+
+def ld_attest_durable(evidence: AttemptEvidence, path: String) -> IO(Admission):
+  +ev = evidence
+  +p = path
+  do IO<Admission>:
+    qualified : Result<&1, &1, U32 & String, String> <- Rec.Receipt.qualify(p)
+    ld_attest_qualified(ev, p, qualified)
+
+def ld_attest_path(evidence: AttemptEvidence, parts: List<String>) -> IO(Admission):
+  match parts:
+    case Nil{}: IO.pure(Admission, AdmissionMissing{"the publication record carried no path"})
+    case Con{tag, rest}:
+      match rest:
+        case Nil{}: IO.pure(Admission, AdmissionMissing{"the publication record carried no path"})
+        case Con{path, more}: ld_attest_durable(evidence, path)
+
+def ld_attest_seen(evidence: AttemptEvidence, published: Result<&1, &1, U32 & String, String>) -> IO(Admission):
+  +ev = evidence
+  match published:
+    case Fail{error}: IO.pure(Admission, AdmissionMissing{"the attempt record could not be published"})
+    case Done{raw}:
+      Bool.pick(IO(Admission), Tx.starts_with(raw, "created"),
+        ld_attest_path(ev, Tx.split_tabs(raw)),
+        IO.pure(Admission, AdmissionMissing{"the attempt record was not freshly created"}))
+
+def ld_attest(reserved: String, evidence: AttemptEvidence) -> IO(Admission):
+  +rv = reserved
+  +ev = evidence
+  do IO<Admission>:
+    published : Result<&1, &1, U32 & String, String> <- Rec.Receipt.publish(rv, "landing-record", attempt_record(ev))
+    ld_attest_seen(ev, published)
+
 def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, reserved: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
@@ -1200,9 +1333,11 @@ def shared_reserved_continue(handle: U32, repo: String, target: String, cand: St
   +rv = reserved
   +cx = LdAdvContext{h, gd, shared_parent_path(rv, "stderr")}
   do IO<SharedLanding>:
-    o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
+    +o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
     released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(h)
-    IO.pure(SharedLanding, SharedAdvanced{o, T.release_raw_of(released), gd, rv})
+    +rel = T.release_raw_of(released)
+    admitted : Admission <- ld_attest(rv, AttemptEvidence{rv, rp, tg, c, b, gd, shared_parent_path(rv, "stderr"), ld_adv_capture(o), ld_adv_qualification(o), rel})
+    IO.pure(SharedLanding, SharedAdvanced{o, rel, gd, rv, admitted})
 
 # The attempt name: the bare base for the first attempt, then the base extended with the
 # counter rendered by U32.show. The only refusal past a collision is the U32 maximum, checked
@@ -1356,9 +1491,11 @@ def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String)
     case SharedGuardBusy{target}: FFDone{T.LBlocked{"another landing holds the target"}}
     case SharedStepFailed{step, error, released}: FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " failed: "), T.host_detail(error))}}
     case SharedStepRecordFailed{step, record, released}: FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " refused: "), record)}}
-    case SharedAdvanced{obs, +released, guard, reserved}:
+    case SharedAdvanced{obs, +released, guard, reserved, +admitted}:
       Bool.pick(FFLD, T.release_done(released),
-        ff_stage5_adv_answer(ld_adv_of(obs), target, cand),
+        Bool.pick(FFLD, ld_admitted(admitted),
+          ff_stage5_adv_answer(ld_adv_of(obs), target, cand),
+          FFDone{T.LBlocked{Tx.str_cat("the attempt record was not admitted: ", ld_admission(admitted))}}),
         Bool.pick(FFLD, T.release_unperformed(released),
           FFDone{T.LBlocked{"the advance ran but its release was not performed"}},
           FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", T.release_detail(released))}}))
@@ -1704,18 +1841,14 @@ def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String
     case SharedGuardBusy{target}: LdFail{T.FCmd{"land", "another landing holds the target; rerun land-checked to prepare and check against the current target"}}
     case SharedStepFailed{step, error, released}: LdFail{T.FCmd{"land", T.host_detail(error)}}
     case SharedStepRecordFailed{step, record, released}: LdFail{T.FCmd{"land", record}}
-    case SharedAdvanced{obs, +released, guard, reserved}:
+    case SharedAdvanced{obs, +released, guard, reserved, +admitted}:
       Bool.pick(Ld, T.release_done(released),
-        ld_adv_answer(ld_adv_of(obs), target, cand),
+        Bool.pick(Ld, ld_admitted(admitted),
+          ld_adv_answer(ld_adv_of(obs), target, cand),
+          LdFail{T.FCmd{"land", Tx.str_cat("the attempt record was not admitted: ", ld_admission(admitted))}}),
         Bool.pick(Ld, T.release_unperformed(released),
           LdFail{T.FCmd{"land", "the advance ran but its release was not performed"}},
           LdFail{T.FCmd{"land", Tx.str_cat("the advance ran but its release failed: ", T.release_detail(released))}}))
-def ld_advance(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
-  +t2 = target
-  +c2 = cand
-  do IO<Ld>:
-    shared : SharedLanding <- shared_landing_run(repo, t2, c2, basis)
-    IO.pure(Ld, ld_advance_shared_answer(shared, t2, c2))
 
 # Stage 1 resolves the worker commit; the pipeline carries the resolved sha
 # so the LAlready answer names the worker commit.
@@ -2351,25 +2484,25 @@ def an_empty_prefix_leaves_the_whole_line():
   {==}
 
 law an_unperformed_release_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseUnperformed{}, "g", "r"}, "t", "c") == FFDone{T.LBlocked{"the advance ran but its release was not performed"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseUnperformed{}, "g", "r", AdmissionAdmitted{"record bytes", "/attempt/landing-record"}}, "t", "c") == FFDone{T.LBlocked{"the advance ran but its release was not performed"}} : FFLD}
 
 def an_unperformed_release_refuses_the_fast_forward():
   {==}
 
 law a_failed_release_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseFailed{13, "release failed"}, "g", "r"}, "t", "c") == FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseFailed{13, "release failed"}, "g", "r", AdmissionAdmitted{"record bytes", "/attempt/landing-record"}}, "t", "c") == FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : FFLD}
 
 def a_failed_release_refuses_the_fast_forward():
   {==}
 
 law an_unperformed_release_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseUnperformed{}, "g", "r"}, "t", "c") == LdFail{T.FCmd{"land", "the advance ran but its release was not performed"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseUnperformed{}, "g", "r", AdmissionAdmitted{"record bytes", "/attempt/landing-record"}}, "t", "c") == LdFail{T.FCmd{"land", "the advance ran but its release was not performed"}} : Ld}
 
 def an_unperformed_release_refuses_the_advance():
   {==}
 
 law a_failed_release_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseFailed{13, "release failed"}, "g", "r"}, "t", "c") == LdFail{T.FCmd{"land", Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseFailed{13, "release failed"}, "g", "r", AdmissionAdmitted{"record bytes", "/attempt/landing-record"}}, "t", "c") == LdFail{T.FCmd{"land", Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : Ld}
 
 def a_failed_release_refuses_the_advance():
   {==}
@@ -2436,4 +2569,30 @@ law a_refused_pick_and_decision_retain_the_read:
   {ld_adv_wt_refused_decided(ld_adv_refused_pick(T.GRun{0, "tip\n"}, "/p", "tip"), T.GRun{0, "tip\n"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvHeld{"/p"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
 
 def a_refused_pick_and_decision_retain_the_read():
+  {==}
+
+# Receipt admission gates the landed answer. A missing admission refuses even a landed advance with a
+# successful release, and a complete admitted record reaches the existing landed answer.
+law a_missing_admission_refuses_the_fast_forward:
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionMissing{"the attempt record was not freshly created"}}, "t", "c") == FFDone{T.LBlocked{Tx.str_cat("the attempt record was not admitted: ", "the attempt record was not freshly created")}} : FFLD}
+
+def a_missing_admission_refuses_the_fast_forward():
+  {==}
+
+law a_missing_admission_refuses_the_advance:
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionMissing{"the attempt record does not read back as published"}}, "t", "c") == LdFail{T.FCmd{"land", Tx.str_cat("the attempt record was not admitted: ", "the attempt record does not read back as published")}} : Ld}
+
+def a_missing_admission_refuses_the_advance():
+  {==}
+
+law an_admitted_landed_advance_answers_landed:
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionAdmitted{"record bytes", "/attempt/landing-record"}}, "t", "c") == FFDone{T.LLanded{"t", "c"}} : FFLD}
+
+def an_admitted_landed_advance_answers_landed():
+  {==}
+
+law an_admitted_landed_advance_answers_the_landed_commit:
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseDone{}, "g", "r", AdmissionAdmitted{"record bytes", "/attempt/landing-record"}}, "t", "c") == LdDone{T.LLanded{"t", "c"}} : Ld}
+
+def an_admitted_landed_advance_answers_the_landed_commit():
   {==}
