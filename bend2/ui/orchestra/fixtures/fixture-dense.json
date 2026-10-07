@@ -2,7 +2,7 @@
  "contractVersion": 1,
  "version": 1,
  "cursor": "fixture-dense-20",
- "capturedAt": "2026-10-06 20:00:00 UTC (DOM behavior fixture, not live state)",
+ "capturedAt": "2026-10-06 20:00:00 UTC",
  "subject": null,
  "selection": {
   "mode": "all",

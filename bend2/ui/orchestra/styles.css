@@ -31,6 +31,7 @@ body {
 
 .page-head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
@@ -49,6 +50,7 @@ h1 {
 
 .conn {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   margin: 0;
   font-size: 12px;
@@ -142,6 +144,7 @@ button:hover { border-color: var(--accent); color: var(--accent); }
 
 .node-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 6px;
   padding: 2px 4px;
