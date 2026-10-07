@@ -355,7 +355,7 @@ def query_binding_result(+db: String, +owner: String, +query: String, path: Stri
         request : NativeRequest.RequestDecode <- NativeRequest.read_file(db, binding, path)
         query_request_result(db, binding, owner, query, request)
 
-def query_file(db: String, owner: String, query: String, path: String) -> IO(Unit):
+def query_file(+db: String, +owner: String, +query: String, path: String) -> IO(Unit):
   do IO<Unit>:
     binding : Result<&1,&1,U32 & String,String> <- DB.Sql.binding(db)
     query_binding_result(db, owner, query, path, binding)
