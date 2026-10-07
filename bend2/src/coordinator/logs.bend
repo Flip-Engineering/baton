@@ -783,7 +783,7 @@ def attempt_cleanup_file(db: String, +directory: String, +name: String) -> IO(St
     result : Result<&1,&1,U32 & String,String> <- F.Files.remove_attempt_file(db,directory,name)
     IO.pure(String,attempt_cleanup_result(name,size,result))
 
-def attempt_cleanup_files(db: String, +directory: String) -> IO(String):
+def attempt_cleanup_files(+db: String, +directory: String) -> IO(String):
   do IO<String>:
     stdout : String <- attempt_cleanup_file(db,directory,"stdout")
     stderr : String <- attempt_cleanup_file(db,directory,"native.stderr")
