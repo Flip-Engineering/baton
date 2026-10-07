@@ -18,6 +18,7 @@ import Base
 import ./receive.bend as Receive
 import ./stop.bend as Stop
 import ../host/process.bend as P
+import ../host/instance.bend as Custody
 import ../host/session-lock.bend as Lock
 import ./turn.bend as Turn
 import ./delivery.bend as Delivery
@@ -156,17 +157,18 @@ def busy_receive_only_reports_queued(db,session,cmd,model,effort,cwd,log,again):
 # The recovery attachment boundary opens the supplied attempt directory and
 # passes the returned handle to its continuation. Receive.recover supplies its
 # retained-output observation continuation.
-def attached_recovery(directory: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def attached_recovery(+db: String, directory: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    handle : U32 <- IO.try(U32,P.ProcessChild.attach(directory))
+    handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
     next(handle)
 
 law recovery_attaches_recorded_attempt:
+  for +db: String
   for +directory: String
   for -next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.attach_recorded(directory,next) == attached_recovery(directory,next) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.attach_recorded(db,directory,next) == attached_recovery(db,directory,next) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def recovery_attaches_recorded_attempt(directory,next):
+def recovery_attaches_recorded_attempt(db,directory,next):
   {==}
 
 # Both native entry paths use this acquisition helper. Its continuation receives
@@ -273,8 +275,9 @@ def m17_the_observed_dispatch_is_the_refusal_it_read(db,session,id,log,cursor,na
 
 # M-17: the restart reads the recovery-input row, records the recovery, and
 # only then releases the observer and the native process, delivers the wake
-# and settles question deliveries before acknowledging it. The written-out order is the whole obligation: a
-# reordering of any two steps breaks this proof.
+# and settles question deliveries before acknowledging and retiring it. The
+# written-out order is the whole obligation: a reordering of any two steps
+# breaks this proof.
 def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, +cursor: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":recovery-input") ++ ");"))
@@ -287,6 +290,7 @@ def restart_records_before_releasing_and_waking(+db: String, +session: String, +
     delivered : Result<&1,&1,U32 & String,String> <- IO.join(Result<&1,&1,U32 & String,String>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     acknowledged : Unit <- IO.try(Unit,P.ProcessChild.acknowledge(handle))
+    retired : Unit <- IO.try(Unit,Custody.Instance.retire(handle))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Delivery.wake_result(delivered),Turn.combine(questions,Turn.combine(next,woken))))
 
 law m17_restart_records_before_releasing_and_waking:
@@ -423,7 +427,7 @@ def completion_prepares_before_owner_release(+db: String, +session: String, +id:
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- Receive.release_observer(lock)
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
-    finished : Result<&1,&1,U32 & String,Unit> <- Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => P.ProcessChild.acknowledge(handle))
+    finished : Result<&1,&1,U32 & String,Unit> <- Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => Receive.ack_then_retire(handle))
     woken : Result<&1,&1,U32 & String,Unit> <- Receive.wake_due(db,session,cursor,target => Receive.wake_launch(db,target))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,woken))
 
@@ -473,6 +477,22 @@ law completed_attempt_settles_before_continuation_joins:
   {Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,acknowledge) == settle_attempt_before_joining_continuation(db,session,id,log,cursor,outcome,deliveries,again,acknowledge) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def completed_attempt_settles_before_continuation_joins(db,session,id,log,cursor,outcome,deliveries,again,acknowledge):
+  {==}
+
+# Retirement follows acknowledgment on the same attempt handle: the shared
+# owner frees the attempt slot and advances its generation. The combined
+# result keeps an acknowledgment failure first.
+def retired_after_acknowledgement(+handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    acked : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.acknowledge(handle)
+    retired : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.retire(handle)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(acked,retired))
+
+law retired_slot_advances_only_after_acknowledgement:
+  for +handle: U32
+  {Receive.ack_then_retire(handle) == retired_after_acknowledgement(handle) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def retired_slot_advances_only_after_acknowledgement(handle):
   {==}
 
 # Direct turns share the guard and check the retained attempt before Stop.admit
@@ -609,7 +629,7 @@ def newly_started_process_uses_fresh_observation(db,session,id,log,cursor,native
 def owned_attempt_observation(+db: String, +session: String, +directory: String, +lock: U32, id: String, cursor: String, cmd: String, model: String, effort: String, cwd: String, log: String, harness: String, native: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     valid : Unit <- Stop.error_result("Recorded native recovery arguments differ from the current session; retain the attempt and inspect its manifest.",Bool.and(String.eq("--recover-receive","--recover-receive"),Bool.and(String.eq(db,db),Bool.and(String.eq(session,session),String.eq(directory,directory)))))
-    handle : U32 <- IO.try(U32,P.ProcessChild.attach_owned(directory,lock))
+    handle : U32 <- IO.try(U32,Custody.Instance.attach_owned(db,directory,lock))
     Receive.observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again,True{})
 
 law recorded_owner_uses_adopted_observation:

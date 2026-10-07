@@ -8,6 +8,7 @@ import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 import ../host/session-lock.bend as Lock
 import ../host/process.bend as P
+import ../host/instance.bend as Custody
 import ../host/files.bend as F
 import ../host/control.bend as Host
 import ../git/text.bend as Tx
@@ -318,12 +319,22 @@ def finish_pending(+db: String, +session: String, id: String, log: String, curso
     next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))
 
+# Retirement follows acknowledgment on the same attempt handle: the shared
+# owner frees the attempt slot and advances its generation once the attempt
+# is acknowledged. The combined result keeps an acknowledgment failure
+# first, so a failed marker write still reports its own error.
+def ack_then_retire(+handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    acked : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.acknowledge(handle)
+    retired : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.retire(handle)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(acked,retired))
+
 def completed(+db: String, +session: String, +id: String, +log: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- release_observer(lock)
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
-    finished : Result<&1,&1,U32 & String,Unit> <- finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => P.ProcessChild.acknowledge(handle))
+    finished : Result<&1,&1,U32 & String,Unit> <- finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => ack_then_retire(handle))
     woken : Result<&1,&1,U32 & String,Unit> <- wake_due(db,session,cursor,target => wake_launch(db,target))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,woken))
 
@@ -356,6 +367,7 @@ def restart_pending(+db: String, +session: String, +id: String, +cursor: String,
     delivered : Result<&1,&1,U32 & String,String> <- IO.join(Result<&1,&1,U32 & String,String>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     acknowledged : Unit <- IO.try(Unit,P.ProcessChild.acknowledge(handle))
+    retired : Unit <- IO.try(Unit,Custody.Instance.retire(handle))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Delivery.wake_result(delivered),Turn.combine(questions,Turn.combine(next,woken))))
 
 def complete_or_restart(db: String, session: String, id: String, log: String, stderr: String, cursor: String, native: String, cwd: String, handle: U32, lock: Maybe<U32>, outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), gone: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -450,7 +462,7 @@ def recover_owned(+db: String, +session: String, +directory: String, +lock: U32,
     case executable <> flag <> saved_db <> saved_session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> saved_directory <> native <> Nil{}:
       do IO<Result<&1,&1,U32 & String,Unit>>:
         valid : Unit <- Stop.error_result("Recorded native recovery arguments differ from the current session; retain the attempt and inspect its manifest.",Bool.and(String.eq(flag,"--recover-receive"),Bool.and(String.eq(db,saved_db),Bool.and(String.eq(session,saved_session),String.eq(directory,saved_directory)))))
-        handle : U32 <- IO.try(U32,P.ProcessChild.attach_owned(directory,lock))
+        handle : U32 <- IO.try(U32,Custody.Instance.attach_owned(db,directory,lock))
         observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again,True{})
     case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Recorded native recovery arguments are invalid; retain the attempt and inspect its manifest.")})
 
@@ -494,9 +506,9 @@ def run(+db: String, +session: String, +cmd: String, +model: String, +effort: St
     settled : Unit <- claim_left(db,session)
     IO.pure(Result<&1,&1,U32 & String,Unit>,result)
 
-def attach_recorded(directory: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def attach_recorded(+db: String, directory: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    handle : U32 <- IO.try(U32,P.ProcessChild.attach(directory))
+    handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
     next(handle)
 
 def observe_attached(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, directory: String, native: String, +handle: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -505,4 +517,4 @@ def observe_attached(+db: String, +session: String, id: String, cursor: String, 
 # The keeper invokes this with the original attempt and inbox cutoff after the
 # observer exits. Attachment never launches a native process or sends its prompt.
 def recover(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  attach_recorded(directory,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,u => run(db,session,cmd,model,effort,cwd,log,"")))
+  attach_recorded(db,directory,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,u => run(db,session,cmd,model,effort,cwd,log,"")))
