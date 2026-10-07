@@ -226,19 +226,22 @@ def ld_adv_wt_observed_holder_pick(g: T.GitOut, path: String, target: String) ->
       IO.pure(LAdv, ld_adv_wt_observed(True{}, same, path))
     case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
 
+def ld_adv_wt_observed_target_same(same: Bool, path: String, target: String) -> IO(LAdv):
+  match same:
+    case False{}: IO.pure(LAdv, AdvMoved{})
+    case True{}:
+      +p2 = path
+      +t2 = target
+      do IO<LAdv>:
+        holder : T.GitOut <- Git.runGit(p2, ld_head_argv())
+        ld_adv_wt_observed_holder_pick(holder, p2, t2)
+
 def ld_adv_wt_observed_target_pick(g: T.GitOut, path: String, target: String, cand: String) -> IO(LAdv):
   match g:
     case T.GRun{code, out}:
       +status_ok = U32.is_eq(code, 0)
       +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})
-      match same:
-        case False{}: IO.pure(LAdv, AdvMoved{})
-        case True{}:
-          +p2 = path
-          +t2 = target
-          do IO<LAdv>:
-            holder : T.GitOut <- Git.runGit(p2, ld_head_argv())
-            ld_adv_wt_observed_holder_pick(holder, p2, t2)
+      ld_adv_wt_observed_target_same(same, path, target)
     case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
 
 # Read the exact target ref after the held fast-forward and require its tip to
@@ -260,42 +263,49 @@ def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand
         ld_adv_wt_refused(path, repo, target, basis))
     case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
 
+def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+  match same:
+    case False{}: IO.pure(LAdv, AdvHolderChanged{path})
+    case True{}:
+      +p2 = path
+      +r2 = repo
+      +t2 = target
+      +c2 = cand
+      +b2 = basis
+      do IO<LAdv>:
+        merged : T.GitOut <- Git.runGit(p2, ["merge", "--ff-only", c2])
+        ld_adv_wt_pick(merged, p2, r2, t2, c2, b2)
+
 def ld_adv_wt_head_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
   match g:
     case T.GRun{code, out}:
       +status_ok = U32.is_eq(code, 0)
       +same = Bool.pick(Bool, status_ok,
         Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)), False{})
-      match same:
-        case False{}: IO.pure(LAdv, AdvHolderChanged{path})
-        case True{}:
-          +p2 = path
-          +r2 = repo
-          +t2 = target
-          +c2 = cand
-          +b2 = basis
-          do IO<LAdv>:
-            merged : T.GitOut <- Git.runGit(p2, ["merge", "--ff-only", c2])
-            ld_adv_wt_pick(merged, p2, r2, t2, c2, b2)
+      ld_adv_wt_head_same(same, path, repo, target, cand, basis)
     case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
+
+def ld_adv_wt_target_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+  match same:
+    case False{}: IO.pure(LAdv, AdvMoved{})
+    case True{}:
+      +p2 = path
+      +r2 = repo
+      +t2 = target
+      +c2 = cand
+      +b2 = basis
+      do IO<LAdv>:
+        holder : T.GitOut <- Git.runGit(p2, ld_head_argv())
+        ld_adv_wt_head_pick(holder, p2, r2, t2, c2, b2)
 
 def ld_adv_wt_target_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
   match g:
     case T.GRun{code, out}:
       +status_ok = U32.is_eq(code, 0)
       +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), basis), False{})
-      match same:
-        case False{}: IO.pure(LAdv, AdvMoved{})
-        case True{}:
-          +p2 = path
-          +r2 = repo
-          +t2 = target
-          +c2 = cand
-          +b2 = basis
-          do IO<LAdv>:
-            holder : T.GitOut <- Git.runGit(p2, ld_head_argv())
-            ld_adv_wt_head_pick(holder, p2, r2, t2, c2, b2)
+      ld_adv_wt_target_same(same, path, repo, target, cand, basis)
     case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
+
 
 def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
   +p2 = path

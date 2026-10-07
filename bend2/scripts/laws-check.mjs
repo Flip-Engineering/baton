@@ -1084,8 +1084,8 @@ MUTATIONS.push(
   {
     name: 'held-success-arm-accepts-a-different-target-tip',
     file: join('bend2', 'src', 'git', 'land.bend'),
-    find: '+same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})\n      match same:\n        case False{}: IO.pure(LAdv, AdvMoved{})',
-    replace: '+same = True{}\n      match same:\n        case False{}: IO.pure(LAdv, AdvMoved{})',
+    find: '+same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})\n      ld_adv_wt_observed_target_same(same, path, target)',
+    replace: '+same = True{}\n      ld_adv_wt_observed_target_same(same, path, target)',
     law: 'm3a_held_target_observation_requires_the_candidate_tip',
   },
 );

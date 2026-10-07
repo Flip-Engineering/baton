@@ -1156,19 +1156,22 @@ law m3a_held_success_observation_reads_the_target_ref:
 def m3a_held_success_observation_reads_the_target_ref(path, repo, target, cand):
   {==}
 
+def held_target_observation_same(same: Bool, path: String, target: String) -> IO(L.LAdv):
+  match same:
+    case False{}: IO.pure(L.LAdv, L.AdvMoved{})
+    case True{}:
+      +p2 = path
+      +t2 = target
+      do IO<L.LAdv>:
+        holder : T.GitOut <- P.runGit(p2, L.ld_head_argv())
+        L.ld_adv_wt_observed_holder_pick(holder, p2, t2)
+
 def held_target_observation(g: T.GitOut, path: String, target: String, cand: String) -> IO(L.LAdv):
   match g:
     case T.GRun{code, out}:
       +status_ok = U32.is_eq(code, 0)
       +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})
-      match same:
-        case False{}: IO.pure(L.LAdv, L.AdvMoved{})
-        case True{}:
-          +p2 = path
-          +t2 = target
-          do IO<L.LAdv>:
-            holder : T.GitOut <- P.runGit(p2, L.ld_head_argv())
-            L.ld_adv_wt_observed_holder_pick(holder, p2, t2)
+      held_target_observation_same(same, path, target)
     case T.GBroken{detail}: IO.pure(L.LAdv, L.AdvBroken{detail})
 
 law m3a_held_target_observation_requires_the_candidate_tip:
