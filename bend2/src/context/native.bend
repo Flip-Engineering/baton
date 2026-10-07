@@ -295,7 +295,7 @@ def provider_spawn(+path: String, +cwd: String, +frame: String, result: Result<&
 
 def project_policy_runtime_answer(+executable: String, +cwd: String,
                                   +owner: String, +worktree: String,
-                                  runtime: ProviderAnswer) -> IO(ProviderAnswer):
+                                  +runtime: ProviderAnswer) -> IO(ProviderAnswer):
   match runtime:
     case ProviderRefused{reason}: IO.pure(ProviderAnswer, ProviderRefused{reason})
     case ProviderOutput{value, status}: IO.pure(ProviderAnswer, ProviderRefused{"nodeRuntimeProbeMalformed"})
@@ -342,7 +342,7 @@ def inventory_answer(answer: ProviderAnswer) -> IO(Unit):
     case ProviderRuntime{path, version}: IO.die(Unit, 3, "nodeRuntimeProbeMalformed")
 
 def inventory_runtime_answer(+executable: String, +cwd: String,
-                             runtime: ProviderAnswer) -> IO(ProviderAnswer):
+                             +runtime: ProviderAnswer) -> IO(ProviderAnswer):
   match runtime:
     case ProviderRefused{reason}: IO.pure(ProviderAnswer, ProviderRefused{reason})
     case ProviderOutput{value, status}: IO.pure(ProviderAnswer, ProviderRefused{"nodeRuntimeProbeMalformed"})
