@@ -187,7 +187,8 @@ class SharedInstance(unittest.TestCase):
         summary = self.native(spool.read_text(errors='replace'))
         child.kill()
         child.wait(timeout=10)
-        os.kill(summary['pid'], 0)
+        alive = os.kill(summary['pid'], 0) is None
+        self.assertTrue(alive, 'the native child ended with its observer')
         log = directory / 'observer.log'
         text = self.hold(log, 'echo:one')
         self.assertIn('"role": "native"', text)
@@ -195,7 +196,7 @@ class SharedInstance(unittest.TestCase):
         self.hold(log, 'echo:two')
         self.write(directory, 'exit\n')
         self.hold(log, 'native-exit 0')
-        print('evidence native-pid', summary['pid'], 'alive-after-observer-kill', True)
+        print('evidence native-pid', summary['pid'], 'survived-observer-kill', alive)
         print('evidence recovery-log', text.replace('\n', '|'))
 
     def test_retired_capability_refuses_the_old_generation(self):
