@@ -729,6 +729,13 @@ class SharedInstance(unittest.TestCase):
         self.assertNotIn('busy', detail.lower(), detail)
         return detail
 
+    def overwrite(self, path, data, mode=0o400):
+        """Replaces a file the host wrote read-only, which is what an attempt's
+        manifest and prepared artifact are."""
+        os.chmod(path, 0o600)
+        path.write_bytes(data)
+        os.chmod(path, mode)
+
     def test_adoption_requires_durable_attempt_authority(self):
         """An attempt whose owner is gone is adopted from durable evidence: the
         admission record binding the directory, the database and the caller's
@@ -756,16 +763,16 @@ class SharedInstance(unittest.TestCase):
                          'the refused adoption wrote into the decoy')
 
         # A prepared artifact whose bytes were changed after the launch.
-        (directory / 'prompt.txt').write_bytes(b'BRAVO-01\n')
+        self.overwrite(directory / 'prompt.txt', b'BRAVO-01\n')
         detail = self.adoption_refusal(directory)
         self.assertIn('Invalid argument', detail, detail)
-        (directory / 'prompt.txt').write_bytes(original['prompt.txt'])
+        self.overwrite(directory / 'prompt.txt', original['prompt.txt'])
 
         # A manifest whose first byte was flipped after the launch.
-        (directory / 'manifest').write_bytes(b'X' + original['manifest'][1:])
+        self.overwrite(directory / 'manifest', b'X' + original['manifest'][1:])
         detail = self.adoption_refusal(directory)
         self.assertNotIn('attached', detail, detail)
-        (directory / 'manifest').write_bytes(original['manifest'])
+        self.overwrite(directory / 'manifest', original['manifest'])
 
         # A missing launch marker.
         (directory / 'launch').unlink()
