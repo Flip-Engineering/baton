@@ -282,7 +282,7 @@ sys.exit(%d)
         self.call('logs', 'omp-worker', 'default', '65536', '2')
         pads = [json.dumps({'type': 'response', 'id': 'p%d' % i, 'command': 'probe',
                             'pad': 'y' * 32000}) for i in range(3)]
-        self.stream([self.terminal()] + pads, turn='turn-1')
+        self.log.write_text('\n'.join(pads) + '\n')
         self.assertGreater(self.log.stat().st_size, 65536)
         self.assertFalse((self.cwd / 'turn.jsonl.1').exists())
         update = json.dumps({'type': 'tool_execution_update', 'toolCallId': 'tool-0',
@@ -290,7 +290,7 @@ sys.exit(%d)
                              'partialResult': {'content': [{'type': 'text', 'text': 'x' * 2000}]}})
         end = json.dumps({'type': 'tool_execution_end', 'toolCallId': 'tool-0', 'toolName': 'bash',
                           'result': {'content': [{'type': 'text', 'text': 'done'}]}})
-        self.stream([update, update, end], turn='turn-2')
+        self.stream([update, update, end, self.terminal()])
         retained = self.rotated_frames()
         notes = [line for line in retained if '"moved"' in line]
         self.assertEqual(len(notes), 1)
