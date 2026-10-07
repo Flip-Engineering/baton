@@ -12,7 +12,7 @@
   "artifactIdentities": [
     {
       "packagePath": "native-provider.mjs",
-      "sha256": "48c29f8d7745989f9ac3b83fca9f70cdc046cdf3e675d8cc480f424558bd1e44",
+      "sha256": "6c37c48265e99d0d732bee1aa96d78494d1b42808bdda49dfd4d4e4ad3e6114f",
       "role": "provider"
     },
     {

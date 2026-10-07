@@ -6,7 +6,7 @@
   "providerArtifacts": [
     {
       "packagePath": "native-provider.mjs",
-      "sha256": "48c29f8d7745989f9ac3b83fca9f70cdc046cdf3e675d8cc480f424558bd1e44",
+      "sha256": "6c37c48265e99d0d732bee1aa96d78494d1b42808bdda49dfd4d4e4ad3e6114f",
       "role": "provider"
     },
     {
@@ -89,12 +89,12 @@
     {
       "path": "native-provider.declaration.json",
       "bytes": 2949,
-      "sha256": "b6448a9e7aefb02e942bec289094ef350e99242fba6bd18ad026ef422533c139"
+      "sha256": "cb02cba4f60493685327fd17893026dc63c278488e504853a5a0df20bc1ae8d3"
     },
     {
       "path": "native-provider.mjs",
-      "bytes": 16861,
-      "sha256": "48c29f8d7745989f9ac3b83fca9f70cdc046cdf3e675d8cc480f424558bd1e44"
+      "bytes": 17197,
+      "sha256": "6c37c48265e99d0d732bee1aa96d78494d1b42808bdda49dfd4d4e4ad3e6114f"
     },
     {
       "path": "source-binding.mjs",
