@@ -415,8 +415,10 @@ class SharedInstance(unittest.TestCase):
         self.assertIn('acknowledge-ok', completed.stdout)
         self.assertFalse(finished.exists(), 'the delayed recovery child should still be running')
         raw_manifest = (directory / 'manifest').read_bytes()
-        manifest_lengths = struct.unpack_from('=8s8QII', raw_manifest)[1:9]
-        cursor = struct.calcsize('=8s8QII')
+        manifest_count = 8 if raw_manifest[:8] == b'BATONRP2' else 6
+        manifest_format = '=8s' + str(manifest_count) + 'QII'
+        manifest_lengths = struct.unpack_from(manifest_format, raw_manifest)[1:1 + manifest_count]
+        cursor = struct.calcsize(manifest_format)
         fields = []
         for length in manifest_lengths[:6]:
             fields.append(raw_manifest[cursor:cursor + length])
