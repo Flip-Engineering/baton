@@ -140,8 +140,9 @@ record that still binds a superseded generation to its attempt after a later
 turn replaces the row. `Logs.attempt_code` percent-encodes the file-name form
 of an attempt id: letters, digits, dash and underscore pass through, and every
 other codepoint becomes a percent hex escape. `Logs.attempt_of` parses the
-file name only, so a `.attempt-` marker in a parent directory names no
-attempt. Consumers reading `OUTPUT_LOG` keep reading the base path;
+file name only and uses the final `.attempt-` marker, so markers in a parent
+directory or base name do not change the registered attempt identity.
+Consumers reading `OUTPUT_LOG` keep reading the base path;
 generation files are additional, and cleanup removes only eligible
 generations. `Logs.open_attempt` has no Turn caller in this tree.
 

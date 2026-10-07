@@ -677,18 +677,18 @@ def after_here(s: String, m: String) -> String:
     case SCon{c, rest} SNil{}: SCon{c, rest}
     case SCon{c, rest} SCon{mc, mrest}: Bool.pick(String,Char.is_eq(c,mc),after_here(rest,mrest),"")
 
-def attempt_of_go(s: String) -> String:
+def attempt_of_go(s: String, found: String) -> String:
   match s:
-    case SNil{}: ""
+    case SNil{}: found
     case SCon{c, +rest}:
       +here = after_here(SCon{c, rest},".attempt-")
-      Bool.pick(String,String.is_empty(here),attempt_of_go(rest),here)
+      Bool.pick(String,String.is_empty(here),attempt_of_go(rest,found),attempt_of_go(here,here))
 
 # The attempt code a generation file name carries, or empty for the base log
 # and for any other name. Scoped to the file name; the registry binds
 # registered files to their attempt authority.
 def attempt_of(+log: String) -> String:
-  attempt_of_go(base_name(log))
+  attempt_of_go(base_name(log),"")
 
 def segment_json(log: String, +index: U32, keep: U32, +size: U32, pending: String) -> String:
   Bool.pick(String,U32.is_eq(size,0),"",

@@ -835,6 +835,22 @@ while True: time.sleep(1)
         self.assertTrue(removed[0]["removed"], answer)
         self.assertFalse(first.exists())
 
+    def test_generation_identity_uses_marker_after_base_name_marker(self):
+        import sqlite3
+        self.stream([self.terminal()])
+        base = self.cwd / "turn.attempt-base.jsonl"
+        generation = pathlib.Path(str(base) + ".attempt-v1%2E2")
+        generation.write_text("generation view\n")
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("INSERT OR IGNORE INTO log_files(session,log) VALUES(?,?)",
+                               ("omp-worker", str(generation)))
+            connection.executescript("CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt));CREATE UNIQUE INDEX IF NOT EXISTS log_generations_log ON log_generations(log);")
+            connection.execute("INSERT OR IGNORE INTO log_generations(session,attempt,log,base) VALUES(?,?,?,?)",
+                               ("omp-worker", "v1.2", str(generation), str(base)))
+        logs = json.loads(self.call("logs-storage"))["logs"]
+        entry = next(row for row in logs if row["path"] == str(generation))
+        self.assertEqual(entry["attempt"], "v1%2E2")
+
     def test_unacknowledged_failed_generation_stays(self):
         import sqlite3
         self.stream([self.terminal()], exit_code=1)
