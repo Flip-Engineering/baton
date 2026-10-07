@@ -373,7 +373,7 @@ type HolderRequest is Data:
 # The accumulator keeps the block being read and the selected match separately, so a
 # later worktree cannot replace the target path that was already matched.
 type HolderScan is Data:
-  ScanState{block: HolderBlock, matched: Maybe<String>, seen: U32, bad: U32, blocks: U32}
+  ScanState{block: HolderBlock, matched: Maybe<&2, String>, seen: U32, bad: U32, blocks: U32}
 
 type HolderDiscovery is Data:
   DiscoverRead{request: HolderRequest, code: U32, out: String}
@@ -392,20 +392,13 @@ type HolderObservation is Data:
   HolderObserved{request: HolderRequest, code: U32, out: String, verdict: HolderVerdict}
   HolderObservedBroken{request: HolderRequest, detail: String, verdict: HolderVerdict}
 
-def prefix_drop_go(rest: String, prefix: String, whole: String) -> Maybe<String>:
-  match rest:
-    case SNil{}:
-      match prefix:
-        case SNil{}: Some{whole}
-        case SCon{pc, pr}: None{}
-    case SCon{lc, lr}:
-      match prefix:
-        case SNil{}: Some{whole}
-        case SCon{pc, pr}:
-          Bool.pick(Maybe<String>, Char.is_eq(lc, pc), prefix_drop_go(lr, pr, whole), None{})
-
-def prefix_drop(+line: String, prefix: String) -> Maybe<String>:
-  prefix_drop_go(line, prefix, line)
+def prefix_drop(line: String, prefix: String) -> Maybe<String>:
+  match line prefix:
+    case SNil{} SNil{}: Some{SNil{}}
+    case SNil{} SCon{pc, pr}: None{}
+    case SCon{lc, lr} SNil{}: Some{SCon{lc, lr}}
+    case SCon{lc, lr} SCon{pc, pr}:
+      Bool.pick(Maybe<String>, Char.is_eq(lc, pc), prefix_drop(lr, pr), None{})
 
 def holder_path_of(+line: String) -> Maybe<String>:
   prefix_drop(line, "worktree ")
@@ -446,7 +439,7 @@ def holder_close(acc: HolderScan, +request: String) -> HolderScan:
             ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks})
         case NoBlock{}: ScanState{NoBlock{}, matched, seen, bad, blocks}
 
-def holder_open_fresh_path(block: HolderBlock, matched: Maybe<String>, seen: U32, bad: U32, blocks: U32, path: Maybe<String>) -> HolderScan:
+def holder_open_fresh_path(block: HolderBlock, matched: Maybe<&2, String>, seen: U32, bad: U32, blocks: U32, path: Maybe<String>) -> HolderScan:
   match path:
     case Some{+value}:
       Bool.pick(HolderScan, holder_path_ok(value),
@@ -481,7 +474,7 @@ def holder_state_seen(+acc: HolderScan, +request: String) -> HolderScan:
         case InBlock{path, has_state, branches}: ScanState{InBlock{path, True{}, branches}, matched, seen, bad, blocks}
         case NoBlock{}: ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks}
 
-def holder_match_first(+path: String, has_state: Bool, branches: U32, +acc: HolderScan, matched: Maybe<String>) -> HolderScan:
+def holder_match_first(+path: String, has_state: Bool, branches: U32, +acc: HolderScan, matched: Maybe<&2, String>) -> HolderScan:
   match acc:
     case ScanState{block, prior, +seen, +bad, +blocks}:
       match prior:
@@ -508,7 +501,7 @@ def holder_branch_ok(+acc: HolderScan, +request: String) -> HolderScan:
             ScanState{InBlock{path, has_state, U32.add(branches, 1)}, matched, seen, bad, blocks})
         case NoBlock{}: ScanState{NoBlock{}, matched, seen, U32.add(bad, 1), blocks}
 
-def holder_verdict_of(matched: Maybe<String>, seen: U32, +request: HolderRequest) -> HolderVerdict:
+def holder_verdict_of(matched: Maybe<&2, String>, seen: U32, +request: HolderRequest) -> HolderVerdict:
   match matched:
     case Some{value}: VerdictFound{request, value}
     case None{}: Bool.pick(HolderVerdict, U32.is_eq(seen, 0), VerdictNone{request}, VerdictAmbiguous{request, "the target branch has no valid block"})
