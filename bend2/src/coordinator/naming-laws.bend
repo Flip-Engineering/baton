@@ -2,7 +2,7 @@
 # SQLite evaluates the SQL predicates and foreign keys. Native tests exercise
 # those host semantics with retained identities, messages and Git worktrees.
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
 

@@ -95,7 +95,7 @@ import ./connect-laws.bend as ConnectLaws
 import ./naming-laws.bend as NamingLaws
 import ./delivery.bend as Delivery
 import ./turn.bend as Turn
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./receive.bend as Receive
 import ./guidance.bend as Guidance
 import ./land.bend as Land

@@ -9,7 +9,7 @@
 # These laws claim no authentication boundary and no confidentiality against a
 # party that can write that database.
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./knowledge.bend as K
 import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB

@@ -3,7 +3,7 @@ import ./native-requests.bend as Requests
 import ../host/process.bend as P
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ../host/text.bend as Text
 
 law parentless_request_preserves_its_error_after_control_output:

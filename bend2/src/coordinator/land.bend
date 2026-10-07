@@ -2,7 +2,7 @@
 # its committed tip onto a target branch with a fast-forward update-ref.
 
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
 import ../git/land.bend as GitLand
