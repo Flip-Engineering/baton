@@ -28,6 +28,10 @@ function parseCursor(value) {
   return Number.isSafeInteger(cursor) ? cursor : null;
 }
 
+function addressHost(address) {
+  return address.family === 'IPv6' ? `[${address.address}]` : address.address;
+}
+
 function rows(db, sql, ...args) {
   return db.prepare(sql).all(...args);
 }
@@ -85,8 +89,8 @@ function playerSnapshot(db, session) {
            (SELECT m.id FROM messages m WHERE m.sender = s.id AND m.kind = 'report' ORDER BY m.seq DESC LIMIT 1) AS latestReportId,
            (SELECT count(*) FROM messages m WHERE m.recipient = s.id AND m.receipt IS NULL) AS unacknowledgedCount,
            (SELECT count(*) FROM messages m WHERE m.recipient = s.id AND m.receipt IS NULL
-             AND NOT (EXISTS(SELECT 1 FROM session_stops stop WHERE stop.session = s.id)
-               AND m.kind IN ('task', 'guidance', 'recovery'))) AS pendingCount,
+             AND m.kind IN ('task', 'guidance', 'recovery')
+             AND NOT EXISTS(SELECT 1 FROM session_stops stop WHERE stop.session = s.id)) AS pendingCount,
            (SELECT json_group_array(e.id) FROM ensembles e WHERE e.owner = s.id) AS ownedEnsemblesJson,
            (SELECT json_group_array(em.ensemble) FROM ensemble_members em WHERE em.session = s.id) AS memberEnsemblesJson,
            (s.endpoint <> '') AS endpointRegistered
@@ -218,15 +222,19 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
   try {
     subscription = await subscribeCommittedChanges({
       databasePath,
-      reader,
-      subject,
+      afterCursor: String(initialCursor),
+      expectedGeneration,
       onNotice: (notice) => subscription ? onNotice(notice) : earlyNotices.push(notice),
     });
   } catch {
     return json(response, 503, { error: 'native-owner-subscription-unavailable' });
   }
-  if (!subscription || typeof subscription.generation !== 'string'
+  if (!subscription || subscription.ready !== true
+      || typeof subscription.generation !== 'string' || !subscription.generation
+      || typeof subscription.cursor !== 'string'
+      || parseCursor(subscription.cursor) === null
       || typeof subscription.close !== 'function') {
+    try { subscription?.close?.(); } catch {}
     return json(response, 503, { error: 'native-owner-subscription-unavailable' });
   }
   let cursor = initialCursor;
@@ -344,6 +352,7 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
       return endWithGap('owner-generation-changed');
     }
     if (notice.kind === 'commit') pump();
+    if (notice.kind === 'gap') endWithGap(notice.reason || 'cursor-gap');
     if (notice.kind === 'lost' || notice.kind === 'unavailable') endWithGap('owner-notification-lost');
   };
   response.on('close', () => {
@@ -359,6 +368,10 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
     cursor: String(cursor),
     generation: subscription.generation,
   });
+  if (subscription.gap) {
+    endWithGap('cursor-gap');
+    return;
+  }
   for (const notice of earlyNotices) onNotice(notice);
   pump();
 }
@@ -428,7 +441,7 @@ export function createOrchestraServer({ databasePath, reader, subject = reader,
     if (url.pathname.startsWith('/orchestra/')) return json(response, 404, { error: 'not-found' });
     if (url.pathname === '/' && !url.searchParams.has('api') && !url.searchParams.has('fixture')) {
       const address = server.address();
-      const apiBase = `http://127.0.0.1:${address.port}`;
+      const apiBase = `http://${addressHost(address)}:${address.port}`;
       response.writeHead(302, { location: `/?api=${encodeURIComponent(apiBase)}&subject=${encodeURIComponent(subject)}`, 'cache-control': 'no-store' });
       response.end();
       return;
@@ -463,9 +476,8 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.
     const server = createOrchestraServer(cli(process.argv.slice(2)));
     server.on('listening', () => {
       const address = server.address();
-      const host = address.family === 'IPv6' ? `[${address.address}]` : address.address;
       process.stdout.write(JSON.stringify({ host: address.address, port: address.port, readOnly: true }) + '\n');
-      process.stdout.write(`http://${host}:${address.port}/\n`);
+      process.stdout.write(`http://${addressHost(address)}:${address.port}/\n`);
     });
     let closing = false;
     const close = () => {

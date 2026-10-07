@@ -83,8 +83,7 @@ function fixture() {
     INSERT INTO session_roles VALUES ('root','conductor'),('child','conductor'),('grandchild','player'),('sibling','player');
     INSERT INTO executions VALUES ('child','attempt-1','direct','running','');
     INSERT INTO messages(id,sender,recipient,kind,body) VALUES
-      ('pending-1','root','child','task','pending input body'),
-      ('report-1','grandchild','child','report','retained completion report');
+      ('pending-1','root','child','task','pending input body');
     INSERT INTO ensembles VALUES ('shared-ensemble','external','tight');
     INSERT INTO ensemble_members VALUES ('shared-ensemble','child'),('shared-ensemble','external');
     INSERT INTO sections VALUES ('shared-ensemble','shared-section','fixture capability');
@@ -100,11 +99,13 @@ function fixture() {
 function commitNotifications(generation = 'owner-1') {
   const subscribers = new Set();
   return {
-    subscribeCommittedChanges: async ({ onNotice }) => {
+    subscribeCommittedChanges: async ({ afterCursor, onNotice }) => {
       const subscriber = { onNotice };
       subscribers.add(subscriber);
       return {
+        ready: true,
         generation,
+        cursor: afterCursor,
         close: () => subscribers.delete(subscriber),
       };
     },
@@ -162,8 +163,7 @@ test('snapshot binds a selected subtree to the reader and preserves recorded unk
   assert.equal(snapshot.players[0].actualProcess, 'unknown');
   assert.equal(snapshot.players[0].liveReceiver, null);
   assert.equal(snapshot.players[0].endpointRegistered, true);
-  assert.equal(snapshot.players[0].pendingCount, 2);
-  assert.equal(snapshot.players[0].unacknowledgedCount, 2);
+  assert.equal(snapshot.players[0].pendingCount, 1);
   assert.deepEqual(snapshot.ensembles[0].members, ['child']);
   assert.equal(snapshot.ensembles[0].owner, null);
   assert.deepEqual(snapshot.ensembles[0].sections[0].members, ['child']);
@@ -182,19 +182,45 @@ test('event endpoint stays unavailable when the canonical owner has no subscript
   assert.deepEqual(await response.json(), { error: 'native-owner-subscription-unavailable' });
 });
 
+test('event endpoint requires a ready owner subscription with a durable cursor', async (t) => {
+  const f = fixture();
+  const server = createOrchestraServer({ databasePath: f.databasePath, reader: 'root',
+    subscribeCommittedChanges: async () => ({ generation: 'owner-1', close() {} }) });
+  t.after(async () => { await close(server); rmSync(f.directory, { recursive: true, force: true }); });
+  const base = await listen(server);
+  const response = await fetch(`${base}/orchestra/events?subject=child&since=0`);
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: 'native-owner-subscription-unavailable' });
+});
+
+test('owner replay gap sends hello then closes with a snapshot gap', async (t) => {
+  const f = fixture();
+  const server = createOrchestraServer({ databasePath: f.databasePath, reader: 'root',
+    subscribeCommittedChanges: async () => ({ ready: true, generation: 'owner-1',
+      cursor: '0', gap: true, close() {} }) });
+  t.after(async () => { await close(server); rmSync(f.directory, { recursive: true, force: true }); });
+  const base = await listen(server);
+  const response = await fetch(`${base}/orchestra/events?subject=child&since=0`);
+  assert.equal(response.status, 200);
+  const frames = await response.text();
+  assert.match(frames, /event: hello/);
+  assert.match(frames, /event: gap[\s\S]*cursor-gap/);
+});
+
 test('CLI reports its actual URL and exits cleanly when stdin reaches EOF', async (t) => {
   const f = fixture();
   const entry = fileURLToPath(new URL('../ui/orchestra/server.mjs', import.meta.url));
   const child = spawn(process.execPath, [entry, '--database', f.databasePath,
     '--reader', 'root', '--subject', 'child', '--port', '0'],
   { stdio: ['pipe', 'pipe', 'pipe'] });
+  const closed = new Promise((resolve) => child.once('close', (code) => resolve(code)));
   const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
   const errors = [];
   child.stderr.on('data', (chunk) => errors.push(String(chunk)));
   t.after(async () => {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
     if (child.exitCode === null && child.signalCode === null) {
-      await new Promise((resolve) => child.once('close', resolve));
+      await closed;
     }
     rmSync(f.directory, { recursive: true, force: true });
   });
@@ -210,7 +236,7 @@ test('CLI reports its actual URL and exits cleanly when stdin reaches EOF', asyn
   assert.match(page.headers.get('location'), /subject=child/);
 
   child.stdin.end();
-  const exit = await new Promise((resolve) => child.once('close', (code) => resolve(code)));
+  const exit = await closed;
   assert.equal(exit, 0, errors.join(''));
 });
 

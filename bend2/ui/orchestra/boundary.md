@@ -30,6 +30,10 @@ The server consumes this source through the `subscribeCommittedChanges` option.
 The command-line event route returns
 `native-owner-subscription-unavailable` until startup supplies the canonical
 shared-owner client through this option. Snapshot requests remain available.
+The client receives the database path, snapshot cursor, expected generation,
+and a notice callback. It returns a ready flag, owner generation, committed
+database cursor, retained-ring gap state, and a close function. Notices carry
+commit cursors or owner gap/loss state; row data always comes from SQLite.
 
 The CLI accepts `--reader` and `--subject`; the reader remains bound for the
 server lifetime and the selected subject is checked against that reader for each
