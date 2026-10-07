@@ -595,37 +595,21 @@ def open_attempt(+db: String, +session: String, +base: String, +attempt: String)
   open(db,session,attempt_log(base,attempt))
 
 # The attempt identity a generation path names, or empty for the base log and
-# for any other path. The last marker wins, so a base name that already holds
-# the marker still resolves to the newest generation.
-def marker_rest(s: String, marker: String) -> Maybe<String>:
-  match marker:
-    case SNil{}: Some{s}
-    case SCon{mc, mrest}:
-      match s:
-        case SNil{}: None{}
-        case SCon{c, rest}:
-          match Char.is_eq(c,mc):
-            case True{}: marker_rest(rest,mrest)
-            case False{}: None{}
-
-def has_marker(s: String) -> Bool:
-  match s:
-    case SNil{}: False{}
-    case SCon{c, rest}:
-      match marker_rest(s,".attempt-"):
-        case Some{tail}: True{}
-        case None{}: has_marker(rest)
-
-def attempt_tail(+tail: String, +rest: String) -> String:
-  Bool.pick(String,Bool.or(String.is_empty(tail),has_marker(tail)),attempt_of_go(rest),tail)
+# for any other path. The marker match starts at each position in turn; the
+# Turn passes its configured base once, so a generation path holds one marker.
+def after_here(s: String, m: String) -> String:
+  match s m:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{mc, mrest}: ""
+    case SCon{c, rest} SNil{}: SCon{c, rest}
+    case SCon{c, rest} SCon{mc, mrest}: Bool.pick(String,Char.is_eq(c,mc),after_here(rest,mrest),"")
 
 def attempt_of_go(s: String) -> String:
   match s:
     case SNil{}: ""
-    case SCon{c, rest}:
-      match marker_rest(s,".attempt-"):
-        case None{}: attempt_of_go(rest)
-        case Some{tail}: attempt_tail(tail,rest)
+    case SCon{c, +rest}:
+      +here = after_here(SCon{c, rest},".attempt-")
+      Bool.pick(String,String.is_empty(here),attempt_of_go(rest),here)
 
 def attempt_of(+log: String) -> String:
   attempt_of_go(log)
@@ -855,22 +839,28 @@ def clean_json(session: String, removed: String, attempt_files: String, attempt_
 # lane.
 def attempt_first(first: AttemptDecision, rest: AttemptDecision) -> AttemptDecision:
   match first:
-    case AttemptDecision{reason, eligible}: Bool.pick(AttemptDecision,String.eq(reason,"unknown-attempt"),rest,first)
+    case AttemptDecision{+reason, eligible}: Bool.pick(AttemptDecision,String.eq(reason,"unknown-attempt"),rest,AttemptDecision{reason, eligible})
 
-def attempt_log_row(+db: String, row: String, +attempt: String, live: U32) -> IO(AttemptDecision):
-  match Tx.split_tabs(row):
+def attempt_log_matched(matched: Bool, +phase: String, +status: String, +directory: String, +pending: String, +level: String, +reported: String, +path: String, live: U32) -> IO(AttemptDecision):
+  match matched:
+    case True{}: do IO<AttemptDecision>:
+      released_file : String <- IO.try(String,F.Files.regular(directory ++ "/released"))
+      acknowledged_file : String <- IO.try(String,F.Files.regular(directory ++ "/acknowledged"))
+      released : String = Bool.pick(String,String.eq(released_file,"1"),"1","0")
+      acknowledged : String = Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")
+      IO.pure(AttemptDecision,attempt_decision(phase,status,released,acknowledged,reported,pending,level,path,live))
+    case False{}: IO.pure(AttemptDecision,AttemptDecision{"unknown-attempt",False{}})
+
+def attempt_log_fields(+db: String, fields: List<String>, +attempt: String, live: U32) -> IO(AttemptDecision):
+  match fields:
     case session <> id <> mode <> phase <> status <> +directory <> pending <> level <> reported <> path <> rest:
-      match String.eq(id,attempt):
-        case True{}: do IO<AttemptDecision>:
-          released_file : String <- IO.try(String,F.Files.regular(directory ++ "/released"))
-          acknowledged_file : String <- IO.try(String,F.Files.regular(directory ++ "/acknowledged"))
-          released : String = Bool.pick(String,String.eq(released_file,"1"),"1","0")
-          acknowledged : String = Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")
-          IO.pure(AttemptDecision,attempt_decision(phase,status,released,acknowledged,reported,pending,level,path,live))
-        case False{}: IO.pure(AttemptDecision,AttemptDecision{"unknown-attempt",False{}})
+      attempt_log_matched(String.eq(id,attempt),phase,status,directory,pending,level,reported,path,live)
     case other: IO.pure(AttemptDecision,AttemptDecision{"unknown-attempt",False{}})
 
-def attempt_log_rows(+db: String, rows: List<String>, +attempt: String, live: U32) -> IO(AttemptDecision):
+def attempt_log_row(+db: String, row: String, +attempt: String, live: U32) -> IO(AttemptDecision):
+  attempt_log_fields(db,Tx.split_tabs(row),attempt,live)
+
+def attempt_log_rows(+db: String, rows: List<String>, +attempt: String, +live: U32) -> IO(AttemptDecision):
   match rows:
     case Nil{}: IO.pure(AttemptDecision,AttemptDecision{"unknown-attempt",False{}})
     case head <> tail: do IO<AttemptDecision>:
@@ -911,20 +901,26 @@ def clean_attempt_log_decided(+log: String, +attempt: String, size: U32, decisio
   match decision:
     case AttemptDecision{reason, eligible}: clean_attempt_log_eligible(eligible,log,attempt,size)
 
-def clean_attempt_log(+db: String, +session: String, +log: String, +attempt: String) -> IO(String):
-  match String.is_empty(attempt):
+def clean_attempt_log_empty(empty: Bool, +db: String, +session: String, +log: String, +attempt: String) -> IO(String):
+  match empty:
     case True{}: IO.pure(String,"")
     case False{}: do IO<String>:
-      live : U32 <- IO.try(U32,F.Files.size(log))
+      +live : U32 <- IO.try(U32,F.Files.size(log))
       rows : String <- IO.try(String,DB.Sql.query(db,attempt_rows_sql(db,session)))
       decision : AttemptDecision <- attempt_log_rows(db,Tx.split_lines(rows),attempt,live)
       answer : String <- clean_attempt_log_decided(log,attempt,live,decision)
       IO.pure(String,answer)
 
-def clean_attempt_log_row(+db: String, +session: String, row: String) -> IO(String):
-  match Tx.split_tabs(row):
-    case log <> keep <> rest: clean_attempt_log(db,session,log,attempt_of(log))
+def clean_attempt_log(+db: String, +session: String, +log: String, +attempt: String) -> IO(String):
+  clean_attempt_log_empty(String.is_empty(attempt),db,session,log,attempt)
+
+def clean_attempt_log_fields(+db: String, +session: String, fields: List<String>) -> IO(String):
+  match fields:
+    case +log <> keep <> rest: clean_attempt_log(db,session,log,attempt_of(log))
     case other: IO.pure(String,"")
+
+def clean_attempt_log_row(+db: String, +session: String, row: String) -> IO(String):
+  clean_attempt_log_fields(db,session,Tx.split_tabs(row))
 
 def clean_attempt_log_rows(+db: String, +session: String, rows: List<String>, acc: String) -> IO(String):
   match rows:
