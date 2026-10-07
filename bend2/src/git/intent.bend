@@ -153,10 +153,9 @@ def Intent.record_observed(request: IntentInput, host: Result<&1, &1, U32 & Stri
     case Done{raw}: Intent.recorded(request, raw)
 
 def Intent.read_observed(request: IntentInput, host: Result<&1, &1, U32 & String, String>) -> IO(IntentPrepared):
-  +req = request
   match host:
-    case Fail{error}: IO.pure(IntentPrepared, IntentHostFailed{"qualify", req, error})
-    case Done{raw}: Intent.record_observed(req, Done{raw})
+    case Fail{error}: IO.pure(IntentPrepared, IntentHostFailed{"qualify", request, error})
+    case Done{raw}: Intent.record_observed(request, Done{raw})
 
 def Intent.prepare(request: IntentInput) -> IO(IntentPrepared):
   +req = request
