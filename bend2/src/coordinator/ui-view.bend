@@ -125,7 +125,7 @@ def run_started(db: String, reader: String, url: String, spawned: Result<&1,&1,U
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
         serve(db,reader,url,handle,first)
 
-def run_body(db: String, subject: String, reader: String, port: String, canonical: String) -> IO(Unit):
+def run_body(db: String, subject: String, +reader: String, +port: String, +canonical: String) -> IO(Unit):
   do IO<Unit>:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     node : String <- IO.try(String,Host.Control.command("node"))
@@ -133,7 +133,7 @@ def run_body(db: String, subject: String, reader: String, port: String, canonica
     spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([node,server,"--database",canonical,"--reader",reader,"--subject",subject,"--host","127.0.0.1","--port",port]),".",canonical ++ ".view.stderr")
     run_started(canonical,reader,"http://127.0.0.1:" ++ port ++ "/",spawned)
 
-def run(db: String, subject: String, reader: String, port: String) -> IO(Unit):
+def run(+db: String, subject: String, reader: String, port: String) -> IO(Unit):
   do IO<Unit>:
     canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     run_body(db,subject,reader,port,canonical)
