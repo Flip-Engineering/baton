@@ -1206,7 +1206,7 @@ def ld_adv_wt_refused(path: String, repo: String, target: String, basis: String,
     ld_adv_wt_refused_decided(ld_adv_refused_pick(g, p2, b2), p2, g, capture)
 
 # The target read decides movement and failure; only a successful matching tip goes on to HEAD.
-def ld_adv_wt_head_decided(path: String, target: String, +capture: T.CapturedRaw, +tip: T.GitOut, +head: T.GitOut) -> IO(LdAdvObs):
+def ld_adv_wt_head_decided(+path: String, +target: String, +capture: T.CapturedRaw, +tip: T.GitOut, +head: T.GitOut) -> IO(LdAdvObs):
   match head:
     case T.GBroken{detail}:
       IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{detail}, capture, QualDecided{MutationHeld{path}, ld_adv_read(tip), ld_adv_read(head)}))
@@ -1223,7 +1223,7 @@ def ld_adv_wt_head_read(path: String, repo: String, target: String, +capture: T.
     +head : T.GitOut <- Git.runGit(p2, ld_head_argv())
     ld_adv_wt_head_decided(p2, target, capture, tip, head)
 
-def ld_adv_wt_target_decided(path: String, repo: String, target: String, cand: String, +capture: T.CapturedRaw, +tip: T.GitOut) -> IO(LdAdvObs):
+def ld_adv_wt_target_decided(+path: String, repo: String, +target: String, +cand: String, +capture: T.CapturedRaw, +tip: T.GitOut) -> IO(LdAdvObs):
   match tip:
     case T.GBroken{detail}:
       IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{detail}, capture, QualDecided{MutationHeld{path}, ld_adv_read(tip), ReadSkipped{}}))
@@ -1480,13 +1480,13 @@ def read_absent(read: LdRead) -> Bool:
     case ReadSkipped{}: True{}
     case ReadObserved{observation}: False{}
 
-def mode_head_ok(mode: MutationMode, head_ref: LdRead, target: String) -> Bool:
+def mode_head_ok(mode: MutationMode, +head_ref: LdRead, target: String) -> Bool:
   match mode:
     case MutationUnheld{}: read_absent(head_ref)
     case MutationHeld{path}: Bool.pick(Bool, read_observed(head_ref), Tx.str_eq(read_value(head_ref), ld_hold_ref(target)), False{})
     case MutationUnknown{}: False{}
 
-def qualification_landed(mode: MutationMode, target_ref: LdRead, head_ref: LdRead, candidate: String, target: String) -> Bool:
+def qualification_landed(mode: MutationMode, +target_ref: LdRead, head_ref: LdRead, candidate: String, target: String) -> Bool:
   Bool.pick(Bool, read_observed(target_ref),
     Bool.pick(Bool, Tx.str_eq(read_value(target_ref), candidate), mode_head_ok(mode, head_ref, target), False{}),
     False{})
@@ -1512,7 +1512,7 @@ def intent_bound(intent: IntentEvidence, reserved: String) -> Bool:
 
 def evidence_complete(evidence: AttemptEvidence) -> Bool:
   match evidence:
-    case AttemptEvidence{reserved, repo, target, candidate, basis, guard, artifact, decision, capture, qualification, release, identity, association, intent}:
+    case AttemptEvidence{reserved, repo, +target, +candidate, +basis, guard, artifact, decision, capture, qualification, release, identity, association, intent}:
       Bool.pick(Bool, decision_landed(decision),
         Bool.pick(Bool, capture_landed(capture),
           Bool.pick(Bool, qualification_landed_of(qualification, candidate, target),
@@ -1527,7 +1527,7 @@ def evidence_complete(evidence: AttemptEvidence) -> Bool:
           False{}),
         False{})
 
-def admission_stages(attestation: Attestation, reserved: String, evidence: AttemptEvidence) -> Admission:
+def admission_stages(+attestation: Attestation) -> Admission:
   match attestation:
     case Attestation{reserved, evidence, publication, qualification, readback}:
       Bool.pick(Admission, stage_publishes(publication, landing_record_path(reserved)),
@@ -1540,9 +1540,9 @@ def admission_stages(attestation: Attestation, reserved: String, evidence: Attem
           AdmissionRefused{attestation, "the attempt record is not durable"}),
         AdmissionRefused{attestation, "the attempt record was not published"})
 
-def admission_reserved(attestation: Attestation, reserved: String, evidence: AttemptEvidence) -> Admission:
+def admission_reserved(+attestation: Attestation, +reserved: String, +evidence: AttemptEvidence) -> Admission:
   Bool.pick(Admission, reserved_matches(reserved, evidence),
-    admission_stages(attestation, reserved, evidence),
+    admission_stages(attestation),
     AdmissionRefused{attestation, "the receipt does not name this attempt"})
 
 def admission_of(+attestation: Attestation) -> Admission:
