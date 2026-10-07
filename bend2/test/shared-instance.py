@@ -667,7 +667,7 @@ class SharedInstance(unittest.TestCase):
         os.kill(int(owners[0].split()[0]), signal.SIGKILL)
         child.kill()
         child.wait(timeout=10)
-        adopter = self.spawn('attach', self.db, directory)
+        adopter = self.spawn('attach-owned', self.db, directory)
         self.line(adopter, 'attached')
         restored = self.subscription_line(adopter, 'restored:')
         self.assertEqual(restored, {'reducer': 'seen two frames'}, restored)
