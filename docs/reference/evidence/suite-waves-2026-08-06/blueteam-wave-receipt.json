@@ -1,0 +1,66 @@
+{
+  "attempt": "2026-08-06T20:17:48.311Z",
+  "salt": "bt20260806201748",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-99aabbea1a04185e61b900d53cf60b20",
+          "run-bf02f82390eded1a864e0aafa1ff4673",
+          "run-ae9ad0676a593b8133bd83af3c5b0095",
+          "run-d93eeb91ae27fc9b014b6135eda69f90"
+        ]
+      }
+    },
+    {
+      "step": "terminal:waiting-blue",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:cell-blue",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:nested-blue",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:harvest-blue",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "harvest-blue": {
+      "pin": "cf33aec2dd8fcf0cfd104367262d82a570fe30cd",
+      "bytes": 21035
+    },
+    "nested-blue": {
+      "pin": "fbddbbc285ba268e98a98189e5fe728b1823123d",
+      "bytes": 28305
+    },
+    "cell-blue": {
+      "pin": "4c2f7547706f82112fed77be20711d5091f95fc8",
+      "bytes": 31451
+    },
+    "waiting-blue": {
+      "pin": "1758db47629b8a24a802c14d184793ce269e3a1c",
+      "bytes": 24133
+    }
+  },
+  "verdict": "BLUE-WAVE-OK"
+}

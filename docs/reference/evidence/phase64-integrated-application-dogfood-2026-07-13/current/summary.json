@@ -1,0 +1,338 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "runtimeHeadSha": "fa668c292e3cd5479dd0236a9b8a5b084d292a21",
+    "targetSha": "b014b76d159b7f88e305886eb70077a9ab5287f1",
+    "runtimeDigest": "2b5b19ff9e2520bc998cb920cc0c28da772100d0e5e1934d62dadb75b0a1723d",
+    "targetRuntimeDigest": "2b5b19ff9e2520bc998cb920cc0c28da772100d0e5e1934d62dadb75b0a1723d"
+  },
+  "applicationCommands": [
+    "run.start",
+    "run.status",
+    "run.approve",
+    "run.wait",
+    "run.answer",
+    "run.steer",
+    "run.stop",
+    "run.evidence",
+    "run.adopt",
+    "application.shutdown"
+  ],
+  "routes": [
+    {
+      "name": "codex",
+      "runId": "phase64-codex",
+      "phase": "failed",
+      "requested": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "low"
+      },
+      "resolved": {
+        "harness": "codex@codex-cli 0.144.3",
+        "model": "gpt-5.6-sol",
+        "effort": "low"
+      },
+      "observed": {
+        "harness": "codex@codex-cli 0.144.3",
+        "model": "gpt-5.6-sol",
+        "effort": null
+      },
+      "stop": null,
+      "ownership": {
+        "workers": 1,
+        "workerIds": [
+          "w-1"
+        ],
+        "closed": false
+      },
+      "result": null,
+      "evidenceDigest": "e91cecda4a0b4b0dd037cfca4e7cdffd99b7b01e70fbd78a8c5b2da9c4c6cb8b"
+    },
+    {
+      "name": "claude",
+      "runId": "phase64-claude",
+      "phase": "failed",
+      "requested": {
+        "harness": "claude",
+        "model": "claude-opus-4-6",
+        "effort": "low"
+      },
+      "resolved": {
+        "harness": "claude-code@2.1.206",
+        "model": "claude-opus-4-6",
+        "effort": "low"
+      },
+      "observed": {
+        "harness": "claude-code@2.1.206",
+        "model": "claude-opus-4-6",
+        "effort": null
+      },
+      "stop": null,
+      "ownership": {
+        "workers": 1,
+        "workerIds": [
+          "w-2"
+        ],
+        "closed": false
+      },
+      "result": null,
+      "evidenceDigest": "fc18d44eeb952846187991e0d4a9a74633dc7d6cd34af516dc36ff358e4c530f"
+    },
+    {
+      "name": "glm",
+      "runId": "phase64-glm",
+      "phase": "completed",
+      "requested": {
+        "harness": "glm",
+        "model": "glm-4.7",
+        "effort": "low"
+      },
+      "resolved": {
+        "harness": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "model": "glm-4.7",
+        "effort": "low"
+      },
+      "observed": {
+        "harness": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "model": "glm-4.7",
+        "effort": null
+      },
+      "stop": null,
+      "ownership": {
+        "workers": 1,
+        "workerIds": [
+          "w-3"
+        ],
+        "closed": false
+      },
+      "result": {
+        "state": "adopted",
+        "nodeKey": "work",
+        "sha": "f394d08cee4e8114f64f4ad5aa60c385be9918d7",
+        "commitArtifact": {
+          "id": "artifact:e4df8451be7403a7eaa1336413cd4d57d65ddb6f64240c0ccbf7402f12dad43e",
+          "digest": "e4df8451be7403a7eaa1336413cd4d57d65ddb6f64240c0ccbf7402f12dad43e"
+        },
+        "verificationArtifact": {
+          "id": "artifact:474fe41ebfb9975516d90e513872a8505d1f9e39cb0c73ed55df0c7248a2e8c2",
+          "digest": "474fe41ebfb9975516d90e513872a8505d1f9e39cb0c73ed55df0c7248a2e8c2"
+        },
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": {
+          "state": "adopted",
+          "receiptDigest": "535f17f850893e056a670c2ed29e33e25929f46723736dfc6e3ca81ad01d438c"
+        }
+      },
+      "evidenceDigest": "87ae1caaeaa9612cedc672ed7dc136f7dc21bf3801146b7abbd7fa84c1c4c531"
+    },
+    {
+      "name": "grok45",
+      "runId": "phase64-grok45",
+      "phase": "stopped",
+      "requested": {
+        "harness": "grok",
+        "model": "grok-4.5",
+        "effort": "low"
+      },
+      "resolved": {
+        "harness": "grok@grok 0.2.99 (b1b49ccb71a7) [stable]",
+        "model": "grok-4.5",
+        "effort": "low"
+      },
+      "observed": null,
+      "stop": {
+        "state": "stopped",
+        "admittedAt": "2026-07-14T03:53:47.487Z",
+        "completedAt": "2026-07-14T03:53:47.714Z",
+        "targetCount": 1,
+        "targetDigest": "05c8368630b236217fec8111ef85321130d202fe4745b8a48b72ac32cbd2be9f",
+        "receipt": {
+          "schemaVersion": 1,
+          "state": "stopped",
+          "scope": "run",
+          "repoId": "baton-phase64-dogfood",
+          "runId": "phase64-grok45",
+          "targetCount": 1,
+          "remainingCount": 0,
+          "targetDigest": "05c8368630b236217fec8111ef85321130d202fe4745b8a48b72ac32cbd2be9f",
+          "counts": {
+            "pendingCancelled": 0,
+            "killConfirmed": 1,
+            "alreadyTerminal": 0,
+            "processesObserved": 1,
+            "processesClosed": 1
+          },
+          "checks": {
+            "dispatchClosed": true,
+            "interactionsResolved": true,
+            "runAuthorityReleased": true
+          },
+          "effects": {
+            "coordinatorClosed": false,
+            "writerReleased": false,
+            "transportsClosed": false
+          },
+          "receiptDigest": "3f7dab3e55553835ccc5bfa58e98b03677913990d986e31d031a24b8d5d0ad89"
+        }
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      },
+      "result": null,
+      "evidenceDigest": "07966cf810e98a4ca2e0dd59a2117ca5c4b0f9866f22891881ff0bb8affa5b04"
+    },
+    {
+      "name": "grokbuild",
+      "runId": "phase64-grokbuild",
+      "phase": "stopped",
+      "requested": {
+        "harness": "grok",
+        "model": "grok-build",
+        "effort": "low"
+      },
+      "resolved": {
+        "harness": "grok@grok 0.2.99 (b1b49ccb71a7) [stable]",
+        "model": "grok-build",
+        "effort": "low"
+      },
+      "observed": null,
+      "stop": {
+        "state": "stopped",
+        "admittedAt": "2026-07-14T03:53:47.487Z",
+        "completedAt": "2026-07-14T03:53:47.589Z",
+        "targetCount": 1,
+        "targetDigest": "a5aba9ab33db9c9f3f6e54693e853a8b6d466dd999ca44125ca929c900e6dc09",
+        "receipt": {
+          "schemaVersion": 1,
+          "state": "stopped",
+          "scope": "run",
+          "repoId": "baton-phase64-dogfood",
+          "runId": "phase64-grokbuild",
+          "targetCount": 1,
+          "remainingCount": 0,
+          "targetDigest": "a5aba9ab33db9c9f3f6e54693e853a8b6d466dd999ca44125ca929c900e6dc09",
+          "counts": {
+            "pendingCancelled": 0,
+            "killConfirmed": 1,
+            "alreadyTerminal": 0,
+            "processesObserved": 1,
+            "processesClosed": 1
+          },
+          "checks": {
+            "dispatchClosed": true,
+            "interactionsResolved": true,
+            "runAuthorityReleased": true
+          },
+          "effects": {
+            "coordinatorClosed": false,
+            "writerReleased": false,
+            "transportsClosed": false
+          },
+          "receiptDigest": "0f024c34b8c7a117ab0e23b33ef3d44cdeaf1d46bfd0d589284d7621e349b869"
+        }
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      },
+      "result": null,
+      "evidenceDigest": "3289981ac5e7f2351d6671b6576a78b29d75e267536f8227802a41adc9790d03"
+    }
+  ],
+  "grok": {
+    "simultaneousLiveProcessesObserved": true,
+    "starts": [
+      {
+        "workerId": "w-4",
+        "kind": "lifecycle.process_started",
+        "generation": 1,
+        "pid": 77157,
+        "processGroupId": 77157
+      },
+      {
+        "workerId": "w-5",
+        "kind": "lifecycle.process_started",
+        "generation": 1,
+        "pid": 77161,
+        "processGroupId": 77161
+      }
+    ]
+  },
+  "exportedReviews": [
+    {
+      "route": "glm",
+      "source": "adopted-content-addressed-result",
+      "file": "glm-review.md",
+      "digest": "1d58034debcf92069125c2bf4bddf0dc7bb3b8d307064650651188ddec59f888",
+      "capturedSha": "f394d08cee4e8114f64f4ad5aa60c385be9918d7",
+      "evidenceDigest": "87ae1caaeaa9612cedc672ed7dc136f7dc21bf3801146b7abbd7fa84c1c4c531",
+      "adoptionReceiptDigest": "535f17f850893e056a670c2ed29e33e25929f46723736dfc6e3ca81ad01d438c"
+    }
+  ],
+  "processes": {
+    "started": 5,
+    "closed": 5,
+    "reapUnconfirmed": [],
+    "unreaped": [],
+    "stillAlive": []
+  },
+  "preShutdownWorkers": 5,
+  "shutdown": {
+    "schemaVersion": 1,
+    "state": "closed",
+    "ownership": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    },
+    "receipt": {
+      "schemaVersion": 1,
+      "state": "closed",
+      "fleet": {
+        "schemaVersion": 1,
+        "state": "drained",
+        "scope": "local-controller",
+        "repoId": "baton-phase64-dogfood",
+        "targetCount": 2,
+        "remainingCount": 0,
+        "targetDigest": "5d3219cc113dacd0b04507858aab47afe2ba5b1e6d8acd0b33c92ef9dabd675c",
+        "counts": {
+          "pendingCancelled": 0,
+          "killConfirmed": 2,
+          "alreadyTerminal": 0,
+          "processesObserved": 2,
+          "processesClosed": 2
+        },
+        "checks": {
+          "admissionClosed": true,
+          "authorityOpsDrained": true,
+          "stopWaitersDrained": true,
+          "cleanupDrained": true,
+          "localWorkerAuthorityReleased": true
+        },
+        "effects": {
+          "coordinatorClosed": false,
+          "writerReleased": false,
+          "transportsClosed": false
+        },
+        "receiptDigest": "b93e291076d4f3c880b79d9208ea72047ed0a094c5f72458d5de5279aa39b577"
+      },
+      "supervisors": {
+        "sessionRecovery": "absent",
+        "providerProcessing": "absent",
+        "providerPolling": "absent"
+      },
+      "authority": {
+        "coordinatorClosed": true,
+        "writerReleased": true
+      },
+      "receiptDigest": "56c6a0344f994325f116f5c114afee7bc6e9a5dc2340aa5b7d3401561e347dd1"
+    }
+  }
+}

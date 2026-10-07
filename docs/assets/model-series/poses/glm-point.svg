@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Flip smiling and pointing upward">
+  <title>Flip smiling and pointing upward</title>
+  <g id="eyebrows" data-replaces="eyebrows"><path d="M27 32 Q34 30 41 32 M55 32 Q64 30 73 32" fill="none" stroke="var(--flip-ink)" stroke-width="3.2" stroke-linecap="round"/></g>
+  <g id="eyes" data-replaces="eyes"><path d="M29 46a7 7 0 1 0 14 0a7 7 0 1 0 -14 0Z M57 46a7 7 0 1 0 14 0a7 7 0 1 0 -14 0Z" fill="var(--flip-eye-white)"/><path d="M33.5 47a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0Z M61.5 47a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0Z" fill="var(--flip-ink)"/><path d="M38 45.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0Z M66 45.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0Z" fill="var(--flip-eye-white)"/></g>
+  <g id="mouth" data-replaces="mouth"><path d="M40 64 Q51 68 62 61" fill="none" stroke="var(--flip-ink)" stroke-width="3.3" stroke-linecap="round"/></g>
+  <g id="hand" data-replaces="hand" data-layer="foreground">
+    <path d="M76 74 C74 71 76 68 79 67 L79 54 C79 51 83 51 83 54 V64 C87 64 91 66 91 71 C91 77 85 79 80 78 Z" fill="var(--flip-pink)" stroke="var(--flip-ink)" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M82 69 L86 69" fill="none" stroke="var(--flip-ink)" stroke-width="1.8" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-07-31T23:24:00.074Z",
+  "members": [
+    "semantic-progress-implementer-deepseek"
+  ],
+  "outcomes": [
+    {
+      "role": "semantic-progress-implementer-deepseek",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "4fc3852778745e427c5becc64e6954b30ee0c025"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "semantic-progress-implementer-deepseek",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "semantic-progress-implementer-deepseek",
+      "requestId": "pause:baton-aa818e7ecc4c2a1692c4cbf7-work:856",
+      "at": "2026-08-01T00:27:13.264Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "semantic-progress-implementer-deepseek",
+      "requestId": "pause:baton-aa818e7ecc4c2a1692c4cbf7-work:876",
+      "at": "2026-08-01T00:28:28.877Z",
+      "code": "claimed"
+    }
+  ],
+  "salt": null
+}

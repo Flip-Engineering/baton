@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "waveId": "wave:f0f8da3d04db77d0caf66b56b581af16",
+  "idempotencyKey": "atlas-impl-2026-08-01",
+  "recipeDigest": "658bed41157c96e83b29f5f5f71378fc081d81d2ced48fe84534568e8ba4d602",
+  "salt": "32c4e325-5034-4669-87f0-3c0138bb0fc3",
+  "renderedMembers": [
+    {
+      "role": "implementer",
+      "objective": "Implement the assigned contract rung. The task that follows is your sole work authority.\n\nImplement the ATLAS contract v2, rungs AT-1 + AT-2 + AT-3: docs/reference/evidence/atlas-2026-07-31/atlas-decisions.md — the v2 section at the top is your ONLY authority. AT-1: orientWorker gains a symbol-focus shape AND the registry invocation context carries per-call worktreeRoot (the registry authority-shape change). AT-2: the opted-in Atlas capability set {atlas-index, atlas-structural, cartographer} registers through createDriver real assembly path with budgets + ceilings, honest-empty for non-JS/TS repos. AT-3: on gate verification, diff.structural (R1) class via content-addressed artifact + ledger event, cited by run.evidence on read (NEVER written into it), verdict unchanged. COORDINATES (pre-digested): orientWorker push lane: coordinator.mjs:6359-6416 + knowledge.map_served event :6543-6550. Cartographer orientation.slice + epoch/overlay: cartographer-quartermaster.mjs:361-369. atlas-index carded ops + language ceiling: atlas-index.mjs:11-17/247-255 + overlay :172/:339. Producer mapping + the cards() single-card gate: atlas-representation-producer.mjs:13-17/143-145/289. capabilityFactories wiring: index.mjs:1256-1284. Registry invocation context to extend with worktreeRoot: capability-registry.mjs:54 + spec/capability-plane.md. atlas-structural (to register, currently test-only): atlas-structural.mjs:153/164-165. Enforcing ceiling: atlas-representation-ceiling.mjs:56-72. run.evidence read model (cite, never write): application.mjs:4428-4456. Fixture pattern for tiny JS repos: search impl/test/phase13* and impl/test/phase29* for the atlas fixtures. METHOD (red-first, skeleton FIRST): (1) your FIRST file action writes impl/test/atlas-orientation-red.test.mjs with the AT-1..AT-4 rows exactly as the v2 contract pins them (worktreeRoot in the registry context; composed NOT hand-wired deployment; cards() contains atlas-structural before any gate run; artifact+ledger with run.evidence citing the digest on read; honest empty ceiling). Run it; watch it fail for the right reasons. (2) Implement until green. (3) VERIFY: node --test impl/test/atlas-orientation-red.test.mjs and node impl/scripts/run-suite.mjs FROM THE REPO ROOT — all green.\nWork red-first: write the failing test first, then implement until green.\nHARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.\nDo NOT git commit — the orchestrator harvests your worktree.\nMatch existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.\n[attempt: 32c4e325-5034-4669-87f0-3c0138bb0fc3 implementer]",
+      "exact": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/**"
+      ]
+    }
+  ]
+}

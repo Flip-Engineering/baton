@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-02T23:56:39.280Z",
+  "members": [
+    "worker-experience-reviewer",
+    "orchestrator-experience-reviewer",
+    "frontier-features-reviewer"
+  ],
+  "outcomes": [
+    {
+      "role": "worker-experience-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "5d1d6ef36de449d24214b8e85cb0474957d9f846"
+    },
+    {
+      "role": "orchestrator-experience-reviewer",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "Run terminated: authentication_refresh_required.",
+      "resultSha": null
+    },
+    {
+      "role": "frontier-features-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "ef76dbf78ef7b378fe955b7f3a91e3759c9d526e"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "worker-experience-reviewer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "orchestrator-experience-reviewer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "frontier-features-reviewer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "frontier-features-reviewer",
+      "requestId": "pause:baton-25af6c03ff3f484192602d02-work:138",
+      "at": "2026-08-03T00:00:36.590Z"
+    },
+    {
+      "role": "worker-experience-reviewer",
+      "requestId": "pause:baton-b8bbc1f51a4080968a55e8bb-work:118",
+      "at": "2026-08-03T00:02:30.429Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "frontier-features-reviewer",
+      "requestId": "pause:baton-25af6c03ff3f484192602d02-work:148",
+      "at": "2026-08-03T00:00:51.289Z",
+      "code": "claimed"
+    },
+    {
+      "role": "worker-experience-reviewer",
+      "requestId": "pause:baton-b8bbc1f51a4080968a55e8bb-work:174",
+      "at": "2026-08-03T00:06:30.227Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 1,
+    "admittedThisRun": 0,
+    "candidatesAwaitingAdmission": 0,
+    "settlementRunId": null
+  },
+  "settlement": {
+    "errors": []
+  }
+}

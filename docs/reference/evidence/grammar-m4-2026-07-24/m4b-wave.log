@@ -1,0 +1,745 @@
+[m4b 2026-07-24T09:56:42.472Z] grammar M4b wave started through baton.waves (1 members, objectiveBytes=3856)
+[m4b 2026-07-24T09:57:02.479Z] progress 20s grammar-m4b-implementer=working
+[m4b 2026-07-24T09:57:22.497Z] progress 41s grammar-m4b-implementer=working
+[m4b 2026-07-24T09:57:42.504Z] progress 61s grammar-m4b-implementer=working
+[m4b 2026-07-24T09:58:02.520Z] progress 81s grammar-m4b-implementer=working
+[m4b 2026-07-24T09:58:22.528Z] progress 101s grammar-m4b-implementer=working
+[m4b 2026-07-24T09:58:42.534Z] progress 121s grammar-m4b-implementer=working
+[m4b 2026-07-24T09:59:02.547Z] progress 141s grammar-m4b-implementer=working
+[m4b 2026-07-24T09:59:22.554Z] progress 161s grammar-m4b-implementer=working
+[m4b 2026-07-24T09:59:42.562Z] progress 181s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:00:02.568Z] progress 201s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:00:22.576Z] progress 221s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:00:42.584Z] progress 241s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:01:02.591Z] progress 261s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:01:22.601Z] progress 281s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:01:42.608Z] progress 301s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:02:02.618Z] progress 321s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:02:22.624Z] progress 341s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:02:42.632Z] progress 361s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:03:02.641Z] progress 381s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:03:22.649Z] progress 401s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:03:42.663Z] progress 421s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:04:02.674Z] progress 441s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:04:22.683Z] progress 461s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:04:42.690Z] progress 481s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:05:02.700Z] progress 501s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:05:22.707Z] progress 521s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:05:42.717Z] progress 541s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:06:02.726Z] progress 561s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:06:22.737Z] progress 581s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:06:42.748Z] progress 601s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:07:02.759Z] progress 621s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:07:22.769Z] progress 641s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:07:42.778Z] progress 661s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:08:02.787Z] progress 681s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:08:22.797Z] progress 701s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:08:42.805Z] progress 721s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:09:02.814Z] progress 741s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:09:22.824Z] progress 761s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:09:42.833Z] progress 781s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:10:02.842Z] progress 801s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:10:22.851Z] progress 821s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:10:42.859Z] progress 841s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:11:02.869Z] progress 861s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:11:22.878Z] progress 881s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:11:42.886Z] progress 901s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:12:02.895Z] progress 921s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:12:22.905Z] progress 941s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:12:42.913Z] progress 961s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:13:02.923Z] progress 981s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:13:22.931Z] progress 1001s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:13:42.938Z] progress 1021s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:14:02.948Z] progress 1041s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:14:22.956Z] progress 1061s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:14:42.964Z] progress 1081s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:15:02.972Z] progress 1101s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:15:22.979Z] progress 1121s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:15:42.987Z] progress 1141s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:16:02.993Z] progress 1161s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:16:23.001Z] progress 1181s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:16:43.009Z] progress 1201s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:17:03.019Z] progress 1221s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:17:23.028Z] progress 1241s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:17:43.037Z] progress 1261s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:18:03.046Z] progress 1281s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:18:23.055Z] progress 1301s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:18:43.063Z] progress 1321s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:19:03.071Z] progress 1341s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:19:23.078Z] progress 1361s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:19:43.089Z] progress 1381s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:20:03.098Z] progress 1401s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:20:23.108Z] progress 1421s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:20:43.118Z] progress 1441s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:21:03.136Z] progress 1461s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:21:23.144Z] progress 1481s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:21:43.154Z] progress 1501s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:22:03.163Z] progress 1521s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:22:23.171Z] progress 1541s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:22:43.182Z] progress 1561s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:23:03.190Z] progress 1581s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:23:23.200Z] progress 1601s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:23:43.209Z] progress 1621s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:24:03.217Z] progress 1641s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:24:23.226Z] progress 1661s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:24:43.238Z] progress 1681s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:25:03.248Z] progress 1701s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:25:23.260Z] progress 1721s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:25:43.270Z] progress 1741s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:26:03.279Z] progress 1761s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:26:23.288Z] progress 1781s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:26:43.299Z] progress 1801s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:27:03.310Z] progress 1821s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:27:23.319Z] progress 1841s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:27:43.331Z] progress 1861s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:28:03.341Z] progress 1881s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:28:23.353Z] progress 1901s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:28:43.363Z] progress 1921s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:29:03.374Z] progress 1941s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:29:23.386Z] progress 1961s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:29:43.395Z] progress 1981s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:30:03.401Z] progress 2001s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:30:23.409Z] progress 2021s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:30:43.422Z] progress 2041s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:31:03.433Z] progress 2061s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:31:23.445Z] progress 2081s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:31:43.455Z] progress 2101s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:32:03.465Z] progress 2121s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:32:23.479Z] progress 2141s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:32:43.491Z] progress 2161s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:33:03.499Z] progress 2182s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:33:23.507Z] progress 2202s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:33:43.515Z] progress 2222s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:34:03.523Z] progress 2242s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:34:23.532Z] progress 2262s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:34:43.544Z] progress 2282s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:35:03.556Z] progress 2302s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:35:23.566Z] progress 2322s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:35:43.578Z] progress 2342s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:36:03.590Z] progress 2362s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:36:23.601Z] progress 2382s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:36:43.613Z] progress 2402s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:37:03.625Z] progress 2422s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:37:23.635Z] progress 2442s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:37:43.645Z] progress 2462s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:38:03.655Z] progress 2482s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:38:23.664Z] progress 2502s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:38:43.673Z] progress 2522s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:39:03.683Z] progress 2542s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:39:23.692Z] progress 2562s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:39:43.703Z] progress 2582s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:40:03.713Z] progress 2602s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:40:23.723Z] progress 2622s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:40:43.731Z] progress 2642s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:41:03.741Z] progress 2662s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:41:23.750Z] progress 2682s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:41:43.759Z] progress 2702s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:42:03.770Z] progress 2722s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:42:23.780Z] progress 2742s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:42:43.794Z] progress 2762s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:43:03.807Z] progress 2782s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:43:23.816Z] progress 2802s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:43:43.828Z] progress 2822s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:44:03.839Z] progress 2842s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:44:23.847Z] progress 2862s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:44:43.860Z] progress 2882s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:45:03.873Z] progress 2902s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:45:23.881Z] progress 2922s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:45:43.888Z] progress 2942s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:46:03.894Z] progress 2962s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:46:23.902Z] progress 2982s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:46:43.908Z] progress 3002s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:47:03.916Z] progress 3022s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:47:23.924Z] progress 3042s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:47:43.933Z] progress 3062s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:48:03.947Z] progress 3082s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:48:23.957Z] progress 3102s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:48:43.964Z] progress 3122s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:49:03.977Z] progress 3142s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:49:23.984Z] progress 3162s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:49:43.996Z] progress 3182s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:50:04.006Z] progress 3202s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:50:24.017Z] progress 3222s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:50:44.025Z] progress 3242s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:51:04.032Z] progress 3262s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:51:24.042Z] progress 3282s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:51:44.046Z] progress 3302s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:52:04.054Z] progress 3322s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:52:24.062Z] progress 3342s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:52:44.072Z] progress 3362s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:53:04.083Z] progress 3382s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:53:24.088Z] progress 3402s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:53:44.096Z] progress 3422s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:54:04.105Z] progress 3442s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:54:24.112Z] progress 3462s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:54:44.120Z] progress 3482s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:55:04.128Z] progress 3502s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:55:24.137Z] progress 3522s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:55:44.145Z] progress 3542s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:56:04.151Z] progress 3562s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:56:24.156Z] progress 3582s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:56:44.161Z] progress 3602s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:57:04.169Z] progress 3622s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:57:24.175Z] progress 3642s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:57:44.179Z] progress 3662s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:58:04.185Z] progress 3682s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:58:24.195Z] progress 3702s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:58:44.203Z] progress 3722s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:59:04.208Z] progress 3742s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:59:24.213Z] progress 3762s grammar-m4b-implementer=working
+[m4b 2026-07-24T10:59:44.221Z] progress 3782s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:00:04.227Z] progress 3802s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:00:24.232Z] progress 3822s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:00:44.238Z] progress 3842s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:01:04.247Z] progress 3862s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:01:24.255Z] progress 3882s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:01:44.265Z] progress 3902s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":1,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:718"}]]
+[m4b 2026-07-24T11:01:44.325Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:718 for grammar-m4b-implementer
+[m4b 2026-07-24T11:02:04.331Z] progress 3922s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:02:24.338Z] progress 3942s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:02:44.345Z] progress 3962s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:03:04.357Z] progress 3982s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:03:24.365Z] progress 4002s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:03:44.370Z] progress 4022s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:04:04.378Z] progress 4042s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:04:24.384Z] progress 4062s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:04:44.390Z] progress 4082s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:05:04.397Z] progress 4102s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:05:24.404Z] progress 4122s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:05:44.415Z] progress 4142s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:06:04.426Z] progress 4162s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":2,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:738"}]]
+[m4b 2026-07-24T11:06:04.490Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:738 for grammar-m4b-implementer
+[m4b 2026-07-24T11:06:24.494Z] progress 4182s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:06:44.504Z] progress 4203s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:07:04.514Z] progress 4223s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:07:24.522Z] progress 4243s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:07:44.532Z] progress 4263s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:08:04.541Z] progress 4283s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":3,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:750"}]]
+[m4b 2026-07-24T11:08:04.599Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:750 for grammar-m4b-implementer
+[m4b 2026-07-24T11:08:24.603Z] progress 4303s grammar-m4b-implementer=working
+[m4b 2026-07-24T11:08:44.612Z] progress 4323s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":4,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:762"}]]
+[m4b 2026-07-24T11:08:44.686Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:762 for grammar-m4b-implementer
+[m4b 2026-07-24T11:09:04.694Z] progress 4343s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":5,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:770"}]]
+[m4b 2026-07-24T11:09:04.763Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:770 for grammar-m4b-implementer
+[m4b 2026-07-24T11:09:24.768Z] progress 4363s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":6,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:778"}]]
+[m4b 2026-07-24T11:09:24.821Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:778 for grammar-m4b-implementer
+[m4b 2026-07-24T11:09:44.828Z] progress 4383s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":7,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:786"}]]
+[m4b 2026-07-24T11:09:44.887Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:786 for grammar-m4b-implementer
+[m4b 2026-07-24T11:10:04.894Z] progress 4403s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":8,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:794"}]]
+[m4b 2026-07-24T11:10:04.959Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:794 for grammar-m4b-implementer
+[m4b 2026-07-24T11:10:24.967Z] progress 4423s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":9,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:802"}]]
+[m4b 2026-07-24T11:10:25.036Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:802 for grammar-m4b-implementer
+[m4b 2026-07-24T11:10:45.043Z] progress 4443s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":10,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:810"}]]
+[m4b 2026-07-24T11:10:45.109Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:810 for grammar-m4b-implementer
+[m4b 2026-07-24T11:11:05.117Z] progress 4463s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":11,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:818"}]]
+[m4b 2026-07-24T11:11:05.190Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:818 for grammar-m4b-implementer
+[m4b 2026-07-24T11:11:25.196Z] progress 4483s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":12,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:826"}]]
+[m4b 2026-07-24T11:11:25.262Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:826 for grammar-m4b-implementer
+[m4b 2026-07-24T11:11:45.272Z] progress 4503s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":13,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:834"}]]
+[m4b 2026-07-24T11:11:45.350Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:834 for grammar-m4b-implementer
+[m4b 2026-07-24T11:12:05.357Z] progress 4523s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":14,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:842"}]]
+[m4b 2026-07-24T11:12:05.424Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:842 for grammar-m4b-implementer
+[m4b 2026-07-24T11:12:25.432Z] progress 4543s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":15,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:850"}]]
+[m4b 2026-07-24T11:12:25.510Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:850 for grammar-m4b-implementer
+[m4b 2026-07-24T11:12:45.517Z] progress 4564s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":16,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:858"}]]
+[m4b 2026-07-24T11:12:45.586Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:858 for grammar-m4b-implementer
+[m4b 2026-07-24T11:13:05.593Z] progress 4584s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":17,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:866"}]]
+[m4b 2026-07-24T11:13:05.666Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:866 for grammar-m4b-implementer
+[m4b 2026-07-24T11:13:25.674Z] progress 4604s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":18,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:874"}]]
+[m4b 2026-07-24T11:13:25.749Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:874 for grammar-m4b-implementer
+[m4b 2026-07-24T11:13:45.753Z] progress 4624s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":19,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:882"}]]
+[m4b 2026-07-24T11:13:45.809Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:882 for grammar-m4b-implementer
+[m4b 2026-07-24T11:14:05.816Z] progress 4644s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":20,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:890"}]]
+[m4b 2026-07-24T11:14:05.890Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:890 for grammar-m4b-implementer
+[m4b 2026-07-24T11:14:25.898Z] progress 4664s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":21,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:898"}]]
+[m4b 2026-07-24T11:14:25.969Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:898 for grammar-m4b-implementer
+[m4b 2026-07-24T11:14:45.973Z] progress 4684s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":22,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:907"}]]
+[m4b 2026-07-24T11:14:46.027Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:907 for grammar-m4b-implementer
+[m4b 2026-07-24T11:15:06.034Z] progress 4704s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":23,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:915"}]]
+[m4b 2026-07-24T11:15:06.101Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:915 for grammar-m4b-implementer
+[m4b 2026-07-24T11:15:26.109Z] progress 4724s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":24,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:923"}]]
+[m4b 2026-07-24T11:15:26.177Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:923 for grammar-m4b-implementer
+[m4b 2026-07-24T11:15:46.187Z] progress 4744s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":25,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:931"}]]
+[m4b 2026-07-24T11:15:46.253Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:931 for grammar-m4b-implementer
+[m4b 2026-07-24T11:16:06.266Z] progress 4764s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":26,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:939"}]]
+[m4b 2026-07-24T11:16:06.340Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:939 for grammar-m4b-implementer
+[m4b 2026-07-24T11:16:26.346Z] progress 4784s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":27,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:947"}]]
+[m4b 2026-07-24T11:16:26.410Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:947 for grammar-m4b-implementer
+[m4b 2026-07-24T11:16:46.421Z] progress 4804s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":28,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:955"}]]
+[m4b 2026-07-24T11:16:46.485Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:955 for grammar-m4b-implementer
+[m4b 2026-07-24T11:17:06.495Z] progress 4824s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":29,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:963"}]]
+[m4b 2026-07-24T11:17:06.562Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:963 for grammar-m4b-implementer
+[m4b 2026-07-24T11:17:26.574Z] progress 4845s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":30,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:972"}]]
+[m4b 2026-07-24T11:17:26.655Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:972 for grammar-m4b-implementer
+[m4b 2026-07-24T11:17:46.664Z] progress 4865s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":31,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:980"}]]
+[m4b 2026-07-24T11:17:46.742Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:980 for grammar-m4b-implementer
+[m4b 2026-07-24T11:18:06.750Z] progress 4885s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":32,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:988"}]]
+[m4b 2026-07-24T11:18:06.827Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:988 for grammar-m4b-implementer
+[m4b 2026-07-24T11:18:26.840Z] progress 4905s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":33,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:996"}]]
+[m4b 2026-07-24T11:18:26.927Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:996 for grammar-m4b-implementer
+[m4b 2026-07-24T11:18:46.936Z] progress 4925s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":34,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1005"}]]
+[m4b 2026-07-24T11:18:47.010Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1005 for grammar-m4b-implementer
+[m4b 2026-07-24T11:19:07.013Z] progress 4945s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":35,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1013"}]]
+[m4b 2026-07-24T11:19:07.073Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1013 for grammar-m4b-implementer
+[m4b 2026-07-24T11:19:27.079Z] progress 4965s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":36,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1021"}]]
+[m4b 2026-07-24T11:19:27.154Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1021 for grammar-m4b-implementer
+[m4b 2026-07-24T11:19:47.165Z] progress 4985s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":37,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1029"}]]
+[m4b 2026-07-24T11:19:47.243Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1029 for grammar-m4b-implementer
+[m4b 2026-07-24T11:20:07.246Z] progress 5005s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":38,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1037"}]]
+[m4b 2026-07-24T11:20:07.308Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1037 for grammar-m4b-implementer
+[m4b 2026-07-24T11:20:27.316Z] progress 5025s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":39,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1045"}]]
+[m4b 2026-07-24T11:20:27.388Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1045 for grammar-m4b-implementer
+[m4b 2026-07-24T11:20:47.398Z] progress 5045s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":40,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1053"}]]
+[m4b 2026-07-24T11:20:47.480Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1053 for grammar-m4b-implementer
+[m4b 2026-07-24T11:21:07.493Z] progress 5065s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":41,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1061"}]]
+[m4b 2026-07-24T11:21:07.561Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1061 for grammar-m4b-implementer
+[m4b 2026-07-24T11:21:27.574Z] progress 5086s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":42,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1069"}]]
+[m4b 2026-07-24T11:21:27.653Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1069 for grammar-m4b-implementer
+[m4b 2026-07-24T11:21:47.666Z] progress 5106s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":43,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1077"}]]
+[m4b 2026-07-24T11:21:47.745Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1077 for grammar-m4b-implementer
+[m4b 2026-07-24T11:22:07.755Z] progress 5126s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":44,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1085"}]]
+[m4b 2026-07-24T11:22:07.837Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1085 for grammar-m4b-implementer
+[m4b 2026-07-24T11:22:27.848Z] progress 5146s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":45,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1093"}]]
+[m4b 2026-07-24T11:22:27.922Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1093 for grammar-m4b-implementer
+[m4b 2026-07-24T11:22:47.932Z] progress 5166s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":46,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1101"}]]
+[m4b 2026-07-24T11:22:48.013Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1101 for grammar-m4b-implementer
+[m4b 2026-07-24T11:23:08.024Z] progress 5186s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":47,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1109"}]]
+[m4b 2026-07-24T11:23:08.108Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1109 for grammar-m4b-implementer
+[m4b 2026-07-24T11:23:28.116Z] progress 5206s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":48,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1117"}]]
+[m4b 2026-07-24T11:23:28.194Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1117 for grammar-m4b-implementer
+[m4b 2026-07-24T11:23:48.200Z] progress 5226s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":49,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1125"}]]
+[m4b 2026-07-24T11:23:48.267Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1125 for grammar-m4b-implementer
+[m4b 2026-07-24T11:24:08.276Z] progress 5246s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":50,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1133"}]]
+[m4b 2026-07-24T11:24:08.354Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1133 for grammar-m4b-implementer
+[m4b 2026-07-24T11:24:28.360Z] progress 5266s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":51,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1141"}]]
+[m4b 2026-07-24T11:24:28.422Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1141 for grammar-m4b-implementer
+[m4b 2026-07-24T11:24:48.430Z] progress 5286s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":52,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1149"}]]
+[m4b 2026-07-24T11:24:48.506Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1149 for grammar-m4b-implementer
+[m4b 2026-07-24T11:25:08.514Z] progress 5307s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":53,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1157"}]]
+[m4b 2026-07-24T11:25:08.595Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1157 for grammar-m4b-implementer
+[m4b 2026-07-24T11:25:28.603Z] progress 5327s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":54,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1165"}]]
+[m4b 2026-07-24T11:25:28.682Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1165 for grammar-m4b-implementer
+[m4b 2026-07-24T11:25:48.691Z] progress 5347s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":55,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1173"}]]
+[m4b 2026-07-24T11:25:48.777Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1173 for grammar-m4b-implementer
+[m4b 2026-07-24T11:26:08.784Z] progress 5367s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":56,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1181"}]]
+[m4b 2026-07-24T11:26:08.858Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1181 for grammar-m4b-implementer
+[m4b 2026-07-24T11:26:28.867Z] progress 5387s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":57,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1189"}]]
+[m4b 2026-07-24T11:26:28.952Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1189 for grammar-m4b-implementer
+[m4b 2026-07-24T11:26:48.958Z] progress 5407s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":58,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1197"}]]
+[m4b 2026-07-24T11:26:49.049Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1197 for grammar-m4b-implementer
+[m4b 2026-07-24T11:27:09.058Z] progress 5427s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":59,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1205"}]]
+[m4b 2026-07-24T11:27:09.140Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1205 for grammar-m4b-implementer
+[m4b 2026-07-24T11:27:29.146Z] progress 5447s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":60,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1213"}]]
+[m4b 2026-07-24T11:27:29.223Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1213 for grammar-m4b-implementer
+[m4b 2026-07-24T11:27:49.230Z] progress 5467s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":61,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1221"}]]
+[m4b 2026-07-24T11:27:49.362Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1221 for grammar-m4b-implementer
+[m4b 2026-07-24T11:28:09.366Z] progress 5487s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":62,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1229"}]]
+[m4b 2026-07-24T11:28:09.472Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1229 for grammar-m4b-implementer
+[m4b 2026-07-24T11:28:29.479Z] progress 5507s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":63,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1237"}]]
+[m4b 2026-07-24T11:28:29.605Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1237 for grammar-m4b-implementer
+[m4b 2026-07-24T11:28:49.612Z] progress 5528s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":64,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1245"}]]
+[m4b 2026-07-24T11:28:49.728Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1245 for grammar-m4b-implementer
+[m4b 2026-07-24T11:29:09.735Z] progress 5548s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":65,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1253"}]]
+[m4b 2026-07-24T11:29:09.804Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1253 for grammar-m4b-implementer
+[m4b 2026-07-24T11:29:29.817Z] progress 5568s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":66,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1261"}]]
+[m4b 2026-07-24T11:29:29.898Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1261 for grammar-m4b-implementer
+[m4b 2026-07-24T11:29:49.910Z] progress 5588s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":67,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1269"}]]
+[m4b 2026-07-24T11:29:50.001Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1269 for grammar-m4b-implementer
+[m4b 2026-07-24T11:30:10.013Z] progress 5608s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":68,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1277"}]]
+[m4b 2026-07-24T11:30:10.104Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1277 for grammar-m4b-implementer
+[m4b 2026-07-24T11:30:30.116Z] progress 5628s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":69,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1285"}]]
+[m4b 2026-07-24T11:30:30.207Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1285 for grammar-m4b-implementer
+[m4b 2026-07-24T11:30:50.214Z] progress 5648s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":70,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1293"}]]
+[m4b 2026-07-24T11:30:50.291Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1293 for grammar-m4b-implementer
+[m4b 2026-07-24T11:31:10.295Z] progress 5668s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":71,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1301"}]]
+[m4b 2026-07-24T11:31:10.366Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1301 for grammar-m4b-implementer
+[m4b 2026-07-24T11:31:30.372Z] progress 5688s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":72,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1309"}]]
+[m4b 2026-07-24T11:31:30.446Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1309 for grammar-m4b-implementer
+[m4b 2026-07-24T11:31:50.451Z] progress 5708s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":73,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1317"}]]
+[m4b 2026-07-24T11:31:50.521Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1317 for grammar-m4b-implementer
+[m4b 2026-07-24T11:32:10.526Z] progress 5729s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":74,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1325"}]]
+[m4b 2026-07-24T11:32:10.593Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1325 for grammar-m4b-implementer
+[m4b 2026-07-24T11:32:30.601Z] progress 5749s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":75,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1333"}]]
+[m4b 2026-07-24T11:32:30.674Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1333 for grammar-m4b-implementer
+[m4b 2026-07-24T11:32:50.682Z] progress 5769s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":76,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1341"}]]
+[m4b 2026-07-24T11:32:50.771Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1341 for grammar-m4b-implementer
+[m4b 2026-07-24T11:33:10.777Z] progress 5789s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":77,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1349"}]]
+[m4b 2026-07-24T11:33:10.856Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1349 for grammar-m4b-implementer
+[m4b 2026-07-24T11:33:30.868Z] progress 5809s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":78,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1357"}]]
+[m4b 2026-07-24T11:33:30.964Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1357 for grammar-m4b-implementer
+[m4b 2026-07-24T11:33:50.976Z] progress 5829s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":79,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1365"}]]
+[m4b 2026-07-24T11:33:51.061Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1365 for grammar-m4b-implementer
+[m4b 2026-07-24T11:34:11.065Z] progress 5849s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":80,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1373"}]]
+[m4b 2026-07-24T11:34:11.134Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1373 for grammar-m4b-implementer
+[m4b 2026-07-24T11:34:31.146Z] progress 5869s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":81,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1381"}]]
+[m4b 2026-07-24T11:34:31.232Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1381 for grammar-m4b-implementer
+[m4b 2026-07-24T11:34:51.242Z] progress 5889s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":82,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1389"}]]
+[m4b 2026-07-24T11:34:51.337Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1389 for grammar-m4b-implementer
+[m4b 2026-07-24T11:35:11.345Z] progress 5909s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":83,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1397"}]]
+[m4b 2026-07-24T11:35:11.432Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1397 for grammar-m4b-implementer
+[m4b 2026-07-24T11:35:31.441Z] progress 5929s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":84,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1405"}]]
+[m4b 2026-07-24T11:35:31.528Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1405 for grammar-m4b-implementer
+[m4b 2026-07-24T11:35:51.540Z] progress 5950s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":85,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1413"}]]
+[m4b 2026-07-24T11:35:51.637Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1413 for grammar-m4b-implementer
+[m4b 2026-07-24T11:36:11.646Z] progress 5970s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":86,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1421"}]]
+[m4b 2026-07-24T11:36:11.736Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1421 for grammar-m4b-implementer
+[m4b 2026-07-24T11:36:31.743Z] progress 5990s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":87,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1429"}]]
+[m4b 2026-07-24T11:36:31.856Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1429 for grammar-m4b-implementer
+[m4b 2026-07-24T11:36:51.862Z] progress 6010s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":88,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1437"}]]
+[m4b 2026-07-24T11:36:52.005Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1437 for grammar-m4b-implementer
+[m4b 2026-07-24T11:37:12.012Z] progress 6030s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":89,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1445"}]]
+[m4b 2026-07-24T11:37:12.117Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1445 for grammar-m4b-implementer
+[m4b 2026-07-24T11:37:32.125Z] progress 6050s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":90,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1453"}]]
+[m4b 2026-07-24T11:37:32.226Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1453 for grammar-m4b-implementer
+[m4b 2026-07-24T11:37:52.233Z] progress 6070s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":91,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1461"}]]
+[m4b 2026-07-24T11:37:52.329Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1461 for grammar-m4b-implementer
+[m4b 2026-07-24T11:38:12.337Z] progress 6090s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":92,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1469"}]]
+[m4b 2026-07-24T11:38:12.429Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1469 for grammar-m4b-implementer
+[m4b 2026-07-24T11:38:32.438Z] progress 6110s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":93,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1477"}]]
+[m4b 2026-07-24T11:38:32.526Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1477 for grammar-m4b-implementer
+[m4b 2026-07-24T11:38:52.538Z] progress 6131s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":94,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1485"}]]
+[m4b 2026-07-24T11:38:52.633Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1485 for grammar-m4b-implementer
+[m4b 2026-07-24T11:39:12.646Z] progress 6151s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":95,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1493"}]]
+[m4b 2026-07-24T11:39:12.746Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1493 for grammar-m4b-implementer
+[m4b 2026-07-24T11:39:32.755Z] progress 6171s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":96,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1501"}]]
+[m4b 2026-07-24T11:39:32.882Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1501 for grammar-m4b-implementer
+[m4b 2026-07-24T11:39:52.885Z] progress 6191s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":97,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1509"}]]
+[m4b 2026-07-24T11:39:52.958Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1509 for grammar-m4b-implementer
+[m4b 2026-07-24T11:40:12.966Z] progress 6211s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":98,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1517"}]]
+[m4b 2026-07-24T11:40:13.055Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1517 for grammar-m4b-implementer
+[m4b 2026-07-24T11:40:33.066Z] progress 6231s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":99,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1525"}]]
+[m4b 2026-07-24T11:40:33.159Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1525 for grammar-m4b-implementer
+[m4b 2026-07-24T11:40:53.170Z] progress 6251s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":100,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1533"}]]
+[m4b 2026-07-24T11:40:53.271Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1533 for grammar-m4b-implementer
+[m4b 2026-07-24T11:41:13.281Z] progress 6271s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":101,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1541"}]]
+[m4b 2026-07-24T11:41:13.379Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1541 for grammar-m4b-implementer
+[m4b 2026-07-24T11:41:33.389Z] progress 6291s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":102,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1549"}]]
+[m4b 2026-07-24T11:41:33.486Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1549 for grammar-m4b-implementer
+[m4b 2026-07-24T11:41:53.500Z] progress 6312s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":103,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1557"}]]
+[m4b 2026-07-24T11:41:53.601Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1557 for grammar-m4b-implementer
+[m4b 2026-07-24T11:42:13.611Z] progress 6332s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":104,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1565"}]]
+[m4b 2026-07-24T11:42:13.709Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1565 for grammar-m4b-implementer
+[m4b 2026-07-24T11:42:33.718Z] progress 6352s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":105,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1573"}]]
+[m4b 2026-07-24T11:42:33.814Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1573 for grammar-m4b-implementer
+[m4b 2026-07-24T11:42:53.824Z] progress 6372s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":106,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1581"}]]
+[m4b 2026-07-24T11:42:53.921Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1581 for grammar-m4b-implementer
+[m4b 2026-07-24T11:43:13.929Z] progress 6392s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":107,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1589"}]]
+[m4b 2026-07-24T11:43:14.018Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1589 for grammar-m4b-implementer
+[m4b 2026-07-24T11:43:34.030Z] progress 6412s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":108,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1597"}]]
+[m4b 2026-07-24T11:43:34.136Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1597 for grammar-m4b-implementer
+[m4b 2026-07-24T11:43:54.146Z] progress 6432s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":109,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1605"}]]
+[m4b 2026-07-24T11:43:54.244Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1605 for grammar-m4b-implementer
+[m4b 2026-07-24T11:44:14.255Z] progress 6452s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":110,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1613"}]]
+[m4b 2026-07-24T11:44:14.352Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1613 for grammar-m4b-implementer
+[m4b 2026-07-24T11:44:34.362Z] progress 6472s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":111,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1621"}]]
+[m4b 2026-07-24T11:44:34.457Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1621 for grammar-m4b-implementer
+[m4b 2026-07-24T11:44:54.469Z] progress 6492s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":112,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1629"}]]
+[m4b 2026-07-24T11:44:54.566Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1629 for grammar-m4b-implementer
+[m4b 2026-07-24T11:45:14.578Z] progress 6513s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":113,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1637"}]]
+[m4b 2026-07-24T11:45:14.686Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1637 for grammar-m4b-implementer
+[m4b 2026-07-24T11:45:34.699Z] progress 6533s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":114,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1645"}]]
+[m4b 2026-07-24T11:45:34.802Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1645 for grammar-m4b-implementer
+[m4b 2026-07-24T11:45:54.812Z] progress 6553s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":115,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1653"}]]
+[m4b 2026-07-24T11:45:54.912Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1653 for grammar-m4b-implementer
+[m4b 2026-07-24T11:46:14.923Z] progress 6573s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":116,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1661"}]]
+[m4b 2026-07-24T11:46:15.028Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1661 for grammar-m4b-implementer
+[m4b 2026-07-24T11:46:35.038Z] progress 6593s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":117,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1669"}]]
+[m4b 2026-07-24T11:46:35.142Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1669 for grammar-m4b-implementer
+[m4b 2026-07-24T11:46:55.155Z] progress 6613s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":118,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1677"}]]
+[m4b 2026-07-24T11:46:55.262Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1677 for grammar-m4b-implementer
+[m4b 2026-07-24T11:47:15.276Z] progress 6633s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":119,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1685"}]]
+[m4b 2026-07-24T11:47:15.381Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1685 for grammar-m4b-implementer
+[m4b 2026-07-24T11:47:35.395Z] progress 6653s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":120,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1693"}]]
+[m4b 2026-07-24T11:47:35.503Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1693 for grammar-m4b-implementer
+[m4b 2026-07-24T11:47:55.518Z] progress 6674s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":121,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1701"}]]
+[m4b 2026-07-24T11:47:55.621Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1701 for grammar-m4b-implementer
+[m4b 2026-07-24T11:48:15.636Z] progress 6694s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":122,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1709"}]]
+[m4b 2026-07-24T11:48:15.740Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1709 for grammar-m4b-implementer
+[m4b 2026-07-24T11:48:35.751Z] progress 6714s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":123,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1717"}]]
+[m4b 2026-07-24T11:48:35.851Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1717 for grammar-m4b-implementer
+[m4b 2026-07-24T11:48:55.862Z] progress 6734s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":124,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1725"}]]
+[m4b 2026-07-24T11:48:55.964Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1725 for grammar-m4b-implementer
+[m4b 2026-07-24T11:49:15.981Z] progress 6754s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":125,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1733"}]]
+[m4b 2026-07-24T11:49:16.093Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1733 for grammar-m4b-implementer
+[m4b 2026-07-24T11:49:36.108Z] progress 6774s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":126,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1741"}]]
+[m4b 2026-07-24T11:49:36.217Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1741 for grammar-m4b-implementer
+[m4b 2026-07-24T11:49:56.222Z] progress 6794s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":127,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1749"}]]
+[m4b 2026-07-24T11:49:56.311Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1749 for grammar-m4b-implementer
+[m4b 2026-07-24T11:50:16.326Z] progress 6814s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":128,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1757"}]]
+[m4b 2026-07-24T11:50:16.438Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1757 for grammar-m4b-implementer
+[m4b 2026-07-24T11:50:36.450Z] progress 6834s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":129,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1765"}]]
+[m4b 2026-07-24T11:50:36.554Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1765 for grammar-m4b-implementer
+[m4b 2026-07-24T11:50:56.565Z] progress 6855s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":130,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1773"}]]
+[m4b 2026-07-24T11:50:56.669Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1773 for grammar-m4b-implementer
+[m4b 2026-07-24T11:51:16.682Z] progress 6875s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":131,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1781"}]]
+[m4b 2026-07-24T11:51:16.794Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1781 for grammar-m4b-implementer
+[m4b 2026-07-24T11:51:36.809Z] progress 6895s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":132,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1789"}]]
+[m4b 2026-07-24T11:51:36.920Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1789 for grammar-m4b-implementer
+[m4b 2026-07-24T11:51:56.933Z] progress 6915s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":133,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1797"}]]
+[m4b 2026-07-24T11:51:57.046Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1797 for grammar-m4b-implementer
+[m4b 2026-07-24T11:52:17.059Z] progress 6935s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":134,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1805"}]]
+[m4b 2026-07-24T11:52:17.159Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1805 for grammar-m4b-implementer
+[m4b 2026-07-24T11:52:37.171Z] progress 6955s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":135,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1813"}]]
+[m4b 2026-07-24T11:52:37.276Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1813 for grammar-m4b-implementer
+[m4b 2026-07-24T11:52:57.292Z] progress 6975s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":136,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1821"}]]
+[m4b 2026-07-24T11:52:57.409Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1821 for grammar-m4b-implementer
+[m4b 2026-07-24T11:53:17.415Z] progress 6995s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":137,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1829"}]]
+[m4b 2026-07-24T11:53:17.504Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1829 for grammar-m4b-implementer
+[m4b 2026-07-24T11:53:37.518Z] progress 7016s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":138,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1837"}]]
+[m4b 2026-07-24T11:53:37.631Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1837 for grammar-m4b-implementer
+[m4b 2026-07-24T11:53:57.646Z] progress 7036s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":139,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1845"}]]
+[m4b 2026-07-24T11:53:57.759Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1845 for grammar-m4b-implementer
+[m4b 2026-07-24T11:54:17.774Z] progress 7056s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":140,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1853"}]]
+[m4b 2026-07-24T11:54:17.886Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1853 for grammar-m4b-implementer
+[m4b 2026-07-24T11:54:37.898Z] progress 7076s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":141,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1861"}]]
+[m4b 2026-07-24T11:54:38.007Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1861 for grammar-m4b-implementer
+[m4b 2026-07-24T11:54:58.016Z] progress 7096s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":142,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1869"}]]
+[m4b 2026-07-24T11:54:58.121Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1869 for grammar-m4b-implementer
+[m4b 2026-07-24T11:55:18.136Z] progress 7116s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":143,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1877"}]]
+[m4b 2026-07-24T11:55:18.237Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1877 for grammar-m4b-implementer
+[m4b 2026-07-24T11:55:38.254Z] progress 7136s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":144,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1885"}]]
+[m4b 2026-07-24T11:55:38.373Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1885 for grammar-m4b-implementer
+[m4b 2026-07-24T11:55:58.388Z] progress 7156s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":145,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1893"}]]
+[m4b 2026-07-24T11:55:58.509Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1893 for grammar-m4b-implementer
+[m4b 2026-07-24T11:56:18.523Z] progress 7177s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":146,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1901"}]]
+[m4b 2026-07-24T11:56:18.640Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1901 for grammar-m4b-implementer
+[m4b 2026-07-24T11:56:38.647Z] progress 7197s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":147,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1909"}]]
+[m4b 2026-07-24T11:56:38.743Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1909 for grammar-m4b-implementer
+[m4b 2026-07-24T11:56:58.758Z] progress 7217s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":148,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1917"}]]
+[m4b 2026-07-24T11:56:58.872Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1917 for grammar-m4b-implementer
+[m4b 2026-07-24T11:57:18.886Z] progress 7237s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":149,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1925"}]]
+[m4b 2026-07-24T11:57:19.003Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1925 for grammar-m4b-implementer
+[m4b 2026-07-24T11:57:39.018Z] progress 7257s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":150,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1933"}]]
+[m4b 2026-07-24T11:57:39.138Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1933 for grammar-m4b-implementer
+[m4b 2026-07-24T11:57:59.151Z] progress 7277s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":151,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1941"}]]
+[m4b 2026-07-24T11:57:59.261Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1941 for grammar-m4b-implementer
+[m4b 2026-07-24T11:58:19.276Z] progress 7297s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":152,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1949"}]]
+[m4b 2026-07-24T11:58:19.387Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1949 for grammar-m4b-implementer
+[m4b 2026-07-24T11:58:39.401Z] progress 7317s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":153,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1957"}]]
+[m4b 2026-07-24T11:58:39.520Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1957 for grammar-m4b-implementer
+[m4b 2026-07-24T11:58:59.536Z] progress 7338s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":154,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1965"}]]
+[m4b 2026-07-24T11:58:59.657Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1965 for grammar-m4b-implementer
+[m4b 2026-07-24T11:59:19.672Z] progress 7358s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":155,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1973"}]]
+[m4b 2026-07-24T11:59:19.792Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1973 for grammar-m4b-implementer
+[m4b 2026-07-24T11:59:39.807Z] progress 7378s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":156,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1981"}]]
+[m4b 2026-07-24T11:59:39.926Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1981 for grammar-m4b-implementer
+[m4b 2026-07-24T11:59:59.940Z] progress 7398s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":157,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1989"}]]
+[m4b 2026-07-24T12:00:00.056Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1989 for grammar-m4b-implementer
+[m4b 2026-07-24T12:00:20.067Z] progress 7418s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":158,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:1997"}]]
+[m4b 2026-07-24T12:00:20.187Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:1997 for grammar-m4b-implementer
+[m4b 2026-07-24T12:00:40.200Z] progress 7438s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":159,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2005"}]]
+[m4b 2026-07-24T12:00:40.323Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2005 for grammar-m4b-implementer
+[m4b 2026-07-24T12:01:00.333Z] progress 7458s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":160,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2013"}]]
+[m4b 2026-07-24T12:01:00.445Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2013 for grammar-m4b-implementer
+[m4b 2026-07-24T12:01:20.457Z] progress 7478s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":161,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2021"}]]
+[m4b 2026-07-24T12:01:20.572Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2021 for grammar-m4b-implementer
+[m4b 2026-07-24T12:01:40.585Z] progress 7499s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":162,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2029"}]]
+[m4b 2026-07-24T12:01:40.702Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2029 for grammar-m4b-implementer
+[m4b 2026-07-24T12:02:00.716Z] progress 7519s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":163,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2037"}]]
+[m4b 2026-07-24T12:02:00.834Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2037 for grammar-m4b-implementer
+[m4b 2026-07-24T12:02:20.841Z] progress 7539s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":164,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2045"}]]
+[m4b 2026-07-24T12:02:20.938Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2045 for grammar-m4b-implementer
+[m4b 2026-07-24T12:02:40.953Z] progress 7559s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":165,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2053"}]]
+[m4b 2026-07-24T12:02:41.071Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2053 for grammar-m4b-implementer
+[m4b 2026-07-24T12:03:01.087Z] progress 7579s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":166,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2061"}]]
+[m4b 2026-07-24T12:03:01.208Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2061 for grammar-m4b-implementer
+[m4b 2026-07-24T12:03:21.224Z] progress 7599s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":167,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2069"}]]
+[m4b 2026-07-24T12:03:21.345Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2069 for grammar-m4b-implementer
+[m4b 2026-07-24T12:03:41.362Z] progress 7619s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":168,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2077"}]]
+[m4b 2026-07-24T12:03:41.492Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2077 for grammar-m4b-implementer
+[m4b 2026-07-24T12:04:01.509Z] progress 7640s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":169,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2085"}]]
+[m4b 2026-07-24T12:04:01.634Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2085 for grammar-m4b-implementer
+[m4b 2026-07-24T12:04:21.647Z] progress 7660s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":170,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2093"}]]
+[m4b 2026-07-24T12:04:21.771Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2093 for grammar-m4b-implementer
+[m4b 2026-07-24T12:04:41.784Z] progress 7680s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":171,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2101"}]]
+[m4b 2026-07-24T12:04:41.906Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2101 for grammar-m4b-implementer
+[m4b 2026-07-24T12:05:01.924Z] progress 7700s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":172,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2109"}]]
+[m4b 2026-07-24T12:05:02.052Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2109 for grammar-m4b-implementer
+[m4b 2026-07-24T12:05:22.068Z] progress 7720s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":173,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2117"}]]
+[m4b 2026-07-24T12:05:22.190Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2117 for grammar-m4b-implementer
+[m4b 2026-07-24T12:05:42.205Z] progress 7740s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":174,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2125"}]]
+[m4b 2026-07-24T12:05:42.339Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2125 for grammar-m4b-implementer
+[m4b 2026-07-24T12:06:02.353Z] progress 7760s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":175,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2133"}]]
+[m4b 2026-07-24T12:06:02.470Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2133 for grammar-m4b-implementer
+[m4b 2026-07-24T12:06:22.487Z] progress 7780s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":176,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2141"}]]
+[m4b 2026-07-24T12:06:22.621Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2141 for grammar-m4b-implementer
+[m4b 2026-07-24T12:06:42.636Z] progress 7801s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":177,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2149"}]]
+[m4b 2026-07-24T12:06:42.752Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2149 for grammar-m4b-implementer
+[m4b 2026-07-24T12:07:02.772Z] progress 7821s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":178,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2157"}]]
+[m4b 2026-07-24T12:07:02.900Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2157 for grammar-m4b-implementer
+[m4b 2026-07-24T12:07:22.915Z] progress 7841s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":179,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2165"}]]
+[m4b 2026-07-24T12:07:23.042Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2165 for grammar-m4b-implementer
+[m4b 2026-07-24T12:07:43.057Z] progress 7861s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":180,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2173"}]]
+[m4b 2026-07-24T12:07:43.179Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2173 for grammar-m4b-implementer
+[m4b 2026-07-24T12:08:03.187Z] progress 7881s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":181,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2181"}]]
+[m4b 2026-07-24T12:08:03.300Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2181 for grammar-m4b-implementer
+[m4b 2026-07-24T12:08:23.317Z] progress 7901s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":182,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2189"}]]
+[m4b 2026-07-24T12:08:23.433Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2189 for grammar-m4b-implementer
+[m4b 2026-07-24T12:08:43.443Z] progress 7921s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":183,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2197"}]]
+[m4b 2026-07-24T12:08:43.562Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2197 for grammar-m4b-implementer
+[m4b 2026-07-24T12:09:03.572Z] progress 7942s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":184,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2205"}]]
+[m4b 2026-07-24T12:09:03.696Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2205 for grammar-m4b-implementer
+[m4b 2026-07-24T12:09:23.714Z] progress 7962s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":185,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2213"}]]
+[m4b 2026-07-24T12:09:23.838Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2213 for grammar-m4b-implementer
+[m4b 2026-07-24T12:09:43.854Z] progress 7982s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":186,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2221"}]]
+[m4b 2026-07-24T12:09:43.972Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2221 for grammar-m4b-implementer
+[m4b 2026-07-24T12:10:03.988Z] progress 8002s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":187,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2229"}]]
+[m4b 2026-07-24T12:10:04.104Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2229 for grammar-m4b-implementer
+[m4b 2026-07-24T12:10:24.110Z] progress 8022s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":188,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2237"}]]
+[m4b 2026-07-24T12:10:24.220Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2237 for grammar-m4b-implementer
+[m4b 2026-07-24T12:10:44.235Z] progress 8042s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":189,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2245"}]]
+[m4b 2026-07-24T12:10:44.377Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2245 for grammar-m4b-implementer
+[m4b 2026-07-24T12:11:04.393Z] progress 8062s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":190,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2253"}]]
+[m4b 2026-07-24T12:11:04.511Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2253 for grammar-m4b-implementer
+[m4b 2026-07-24T12:11:24.528Z] progress 8083s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":191,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2261"}]]
+[m4b 2026-07-24T12:11:24.666Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2261 for grammar-m4b-implementer
+[m4b 2026-07-24T12:11:44.682Z] progress 8103s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":192,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2269"}]]
+[m4b 2026-07-24T12:11:44.821Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2269 for grammar-m4b-implementer
+[m4b 2026-07-24T12:12:04.837Z] progress 8123s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":193,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2277"}]]
+[m4b 2026-07-24T12:12:04.965Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2277 for grammar-m4b-implementer
+[m4b 2026-07-24T12:12:24.984Z] progress 8143s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":194,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2285"}]]
+[m4b 2026-07-24T12:12:25.121Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2285 for grammar-m4b-implementer
+[m4b 2026-07-24T12:12:45.133Z] progress 8163s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":195,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2293"}]]
+[m4b 2026-07-24T12:12:45.267Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2293 for grammar-m4b-implementer
+[m4b 2026-07-24T12:13:05.285Z] progress 8183s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":196,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2301"}]]
+[m4b 2026-07-24T12:13:05.419Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2301 for grammar-m4b-implementer
+[m4b 2026-07-24T12:13:25.435Z] progress 8203s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":197,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2309"}]]
+[m4b 2026-07-24T12:13:25.565Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2309 for grammar-m4b-implementer
+[m4b 2026-07-24T12:13:45.584Z] progress 8224s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":198,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2317"}]]
+[m4b 2026-07-24T12:13:45.723Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2317 for grammar-m4b-implementer
+[m4b 2026-07-24T12:14:05.739Z] progress 8244s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":199,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2325"}]]
+[m4b 2026-07-24T12:14:05.871Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2325 for grammar-m4b-implementer
+[m4b 2026-07-24T12:14:25.886Z] progress 8264s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":200,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2333"}]]
+[m4b 2026-07-24T12:14:26.017Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2333 for grammar-m4b-implementer
+[m4b 2026-07-24T12:14:46.032Z] progress 8284s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":201,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2341"}]]
+[m4b 2026-07-24T12:14:46.162Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2341 for grammar-m4b-implementer
+[m4b 2026-07-24T12:15:06.176Z] progress 8304s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":202,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2349"}]]
+[m4b 2026-07-24T12:15:06.321Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2349 for grammar-m4b-implementer
+[m4b 2026-07-24T12:15:26.340Z] progress 8324s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":203,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2357"}]]
+[m4b 2026-07-24T12:15:26.471Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2357 for grammar-m4b-implementer
+[m4b 2026-07-24T12:15:46.489Z] progress 8344s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":204,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2365"}]]
+[m4b 2026-07-24T12:15:46.626Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2365 for grammar-m4b-implementer
+[m4b 2026-07-24T12:16:06.642Z] progress 8365s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":205,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2373"}]]
+[m4b 2026-07-24T12:16:06.773Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2373 for grammar-m4b-implementer
+[m4b 2026-07-24T12:16:26.787Z] progress 8385s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":206,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2381"}]]
+[m4b 2026-07-24T12:16:26.924Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2381 for grammar-m4b-implementer
+[m4b 2026-07-24T12:16:46.942Z] progress 8405s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":207,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2389"}]]
+[m4b 2026-07-24T12:16:47.077Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2389 for grammar-m4b-implementer
+[m4b 2026-07-24T12:17:07.096Z] progress 8425s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":208,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2397"}]]
+[m4b 2026-07-24T12:17:07.231Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2397 for grammar-m4b-implementer
+[m4b 2026-07-24T12:17:27.257Z] progress 8445s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":209,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2405"}]]
+[m4b 2026-07-24T12:17:27.408Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2405 for grammar-m4b-implementer
+[m4b 2026-07-24T12:17:47.426Z] progress 8465s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":210,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2413"}]]
+[m4b 2026-07-24T12:17:47.554Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2413 for grammar-m4b-implementer
+[m4b 2026-07-24T12:18:07.573Z] progress 8486s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":211,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2421"}]]
+[m4b 2026-07-24T12:18:07.717Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2421 for grammar-m4b-implementer
+[m4b 2026-07-24T12:18:27.735Z] progress 8506s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":212,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2429"}]]
+[m4b 2026-07-24T12:18:27.879Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2429 for grammar-m4b-implementer
+[m4b 2026-07-24T12:18:47.895Z] progress 8526s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":213,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2437"}]]
+[m4b 2026-07-24T12:18:48.032Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2437 for grammar-m4b-implementer
+[m4b 2026-07-24T12:19:08.047Z] progress 8546s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":214,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2445"}]]
+[m4b 2026-07-24T12:19:08.179Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2445 for grammar-m4b-implementer
+[m4b 2026-07-24T12:19:28.193Z] progress 8566s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":215,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2453"}]]
+[m4b 2026-07-24T12:19:28.332Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2453 for grammar-m4b-implementer
+[m4b 2026-07-24T12:19:48.344Z] progress 8586s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":216,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2461"}]]
+[m4b 2026-07-24T12:19:48.481Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2461 for grammar-m4b-implementer
+[m4b 2026-07-24T12:20:08.500Z] progress 8607s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":217,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2469"}]]
+[m4b 2026-07-24T12:20:08.637Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2469 for grammar-m4b-implementer
+[m4b 2026-07-24T12:20:28.656Z] progress 8627s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":218,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2477"}]]
+[m4b 2026-07-24T12:20:28.803Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2477 for grammar-m4b-implementer
+[m4b 2026-07-24T12:20:48.820Z] progress 8647s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":219,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2485"}]]
+[m4b 2026-07-24T12:20:48.963Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2485 for grammar-m4b-implementer
+[m4b 2026-07-24T12:21:08.981Z] progress 8667s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":220,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2493"}]]
+[m4b 2026-07-24T12:21:09.120Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2493 for grammar-m4b-implementer
+[m4b 2026-07-24T12:21:29.141Z] progress 8687s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":221,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2501"}]]
+[m4b 2026-07-24T12:21:29.285Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2501 for grammar-m4b-implementer
+[m4b 2026-07-24T12:21:49.313Z] progress 8707s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":222,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2509"}]]
+[m4b 2026-07-24T12:21:49.455Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2509 for grammar-m4b-implementer
+[m4b 2026-07-24T12:22:09.472Z] progress 8727s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":223,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2517"}]]
+[m4b 2026-07-24T12:22:09.604Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2517 for grammar-m4b-implementer
+[m4b 2026-07-24T12:22:29.624Z] progress 8748s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":224,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2525"}]]
+[m4b 2026-07-24T12:22:29.766Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2525 for grammar-m4b-implementer
+[m4b 2026-07-24T12:22:49.786Z] progress 8768s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":225,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2533"}]]
+[m4b 2026-07-24T12:22:49.932Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2533 for grammar-m4b-implementer
+[m4b 2026-07-24T12:23:09.951Z] progress 8788s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":226,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2541"}]]
+[m4b 2026-07-24T12:23:10.090Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2541 for grammar-m4b-implementer
+[m4b 2026-07-24T12:23:30.108Z] progress 8808s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":227,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2549"}]]
+[m4b 2026-07-24T12:23:30.254Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2549 for grammar-m4b-implementer
+[m4b 2026-07-24T12:23:50.273Z] progress 8828s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":228,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2557"}]]
+[m4b 2026-07-24T12:23:50.413Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2557 for grammar-m4b-implementer
+[m4b 2026-07-24T12:24:10.429Z] progress 8848s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":229,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2565"}]]
+[m4b 2026-07-24T12:24:10.565Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2565 for grammar-m4b-implementer
+[m4b 2026-07-24T12:24:30.583Z] progress 8869s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":230,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2573"}]]
+[m4b 2026-07-24T12:24:30.729Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2573 for grammar-m4b-implementer
+[m4b 2026-07-24T12:24:50.747Z] progress 8889s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":231,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2581"}]]
+[m4b 2026-07-24T12:24:50.890Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2581 for grammar-m4b-implementer
+[m4b 2026-07-24T12:25:10.906Z] progress 8909s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":232,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2589"}]]
+[m4b 2026-07-24T12:25:11.049Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2589 for grammar-m4b-implementer
+[m4b 2026-07-24T12:25:31.065Z] progress 8929s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":233,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2597"}]]
+[m4b 2026-07-24T12:25:31.206Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2597 for grammar-m4b-implementer
+[m4b 2026-07-24T12:25:51.228Z] progress 8949s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":234,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2605"}]]
+[m4b 2026-07-24T12:25:51.374Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2605 for grammar-m4b-implementer
+[m4b 2026-07-24T12:26:11.388Z] progress 8969s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":235,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2613"}]]
+[m4b 2026-07-24T12:26:11.525Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2613 for grammar-m4b-implementer
+[m4b 2026-07-24T12:26:31.541Z] progress 8990s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":236,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2621"}]]
+[m4b 2026-07-24T12:26:31.686Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2621 for grammar-m4b-implementer
+[m4b 2026-07-24T12:26:51.703Z] progress 9010s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":237,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2629"}]]
+[m4b 2026-07-24T12:26:51.846Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2629 for grammar-m4b-implementer
+[m4b 2026-07-24T12:27:11.861Z] progress 9030s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":238,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2637"}]]
+[m4b 2026-07-24T12:27:12.012Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2637 for grammar-m4b-implementer
+[m4b 2026-07-24T12:27:32.027Z] progress 9050s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":239,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2645"}]]
+[m4b 2026-07-24T12:27:32.174Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2645 for grammar-m4b-implementer
+[m4b 2026-07-24T12:27:52.193Z] progress 9070s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":240,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2653"}]]
+[m4b 2026-07-24T12:27:52.343Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2653 for grammar-m4b-implementer
+[m4b 2026-07-24T12:28:12.357Z] progress 9090s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":241,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2661"}]]
+[m4b 2026-07-24T12:28:12.505Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2661 for grammar-m4b-implementer
+[m4b 2026-07-24T12:28:32.520Z] progress 9111s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":242,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2669"}]]
+[m4b 2026-07-24T12:28:32.663Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2669 for grammar-m4b-implementer
+[m4b 2026-07-24T12:28:52.680Z] progress 9131s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":243,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2677"}]]
+[m4b 2026-07-24T12:28:52.818Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2677 for grammar-m4b-implementer
+[m4b 2026-07-24T12:29:12.830Z] progress 9151s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":244,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2685"}]]
+[m4b 2026-07-24T12:29:12.969Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2685 for grammar-m4b-implementer
+[m4b 2026-07-24T12:29:32.996Z] progress 9171s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":245,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2693"}]]
+[m4b 2026-07-24T12:29:33.167Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2693 for grammar-m4b-implementer
+[m4b 2026-07-24T12:29:53.181Z] progress 9191s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":246,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2701"}]]
+[m4b 2026-07-24T12:29:53.326Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2701 for grammar-m4b-implementer
+[m4b 2026-07-24T12:30:13.345Z] progress 9211s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":247,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2709"}]]
+[m4b 2026-07-24T12:30:13.501Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2709 for grammar-m4b-implementer
+[m4b 2026-07-24T12:30:33.510Z] progress 9232s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":248,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2717"}]]
+[m4b 2026-07-24T12:30:33.644Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2717 for grammar-m4b-implementer
+[m4b 2026-07-24T12:30:53.656Z] progress 9252s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":249,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2725"}]]
+[m4b 2026-07-24T12:30:53.801Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2725 for grammar-m4b-implementer
+[m4b 2026-07-24T12:31:13.817Z] progress 9272s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":250,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2733"}]]
+[m4b 2026-07-24T12:31:13.967Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2733 for grammar-m4b-implementer
+[m4b 2026-07-24T12:31:33.977Z] progress 9292s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":251,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2741"}]]
+[m4b 2026-07-24T12:31:34.120Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2741 for grammar-m4b-implementer
+[m4b 2026-07-24T12:31:54.125Z] progress 9312s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":252,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2749"}]]
+[m4b 2026-07-24T12:31:54.259Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2749 for grammar-m4b-implementer
+[m4b 2026-07-24T12:32:14.279Z] progress 9332s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":253,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2757"}]]
+[m4b 2026-07-24T12:32:14.435Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2757 for grammar-m4b-implementer
+[m4b 2026-07-24T12:32:34.446Z] progress 9352s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":254,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2765"}]]
+[m4b 2026-07-24T12:32:34.592Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2765 for grammar-m4b-implementer
+[m4b 2026-07-24T12:32:54.604Z] progress 9373s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":255,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2773"}]]
+[m4b 2026-07-24T12:32:54.756Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2773 for grammar-m4b-implementer
+[m4b 2026-07-24T12:33:14.768Z] progress 9393s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":256,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2781"}]]
+[m4b 2026-07-24T12:33:14.949Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2781 for grammar-m4b-implementer
+[m4b 2026-07-24T12:33:34.959Z] progress 9413s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":257,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2789"}]]
+[m4b 2026-07-24T12:33:35.107Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2789 for grammar-m4b-implementer
+[m4b 2026-07-24T12:33:55.118Z] progress 9433s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":258,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2797"}]]
+[m4b 2026-07-24T12:33:55.280Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2797 for grammar-m4b-implementer
+[m4b 2026-07-24T12:34:15.288Z] progress 9453s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":259,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2805"}]]
+[m4b 2026-07-24T12:34:15.465Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2805 for grammar-m4b-implementer
+[m4b 2026-07-24T12:34:35.471Z] progress 9473s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":260,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2813"}]]
+[m4b 2026-07-24T12:34:35.616Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2813 for grammar-m4b-implementer
+[m4b 2026-07-24T12:34:55.623Z] progress 9494s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":261,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2821"}]]
+[m4b 2026-07-24T12:34:55.818Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2821 for grammar-m4b-implementer
+[m4b 2026-07-24T12:35:15.826Z] progress 9514s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":262,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2829"}]]
+[m4b 2026-07-24T12:35:16.126Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2829 for grammar-m4b-implementer
+[m4b 2026-07-24T12:35:36.135Z] progress 9534s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":263,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2837"}]]
+[m4b 2026-07-24T12:35:36.382Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2837 for grammar-m4b-implementer
+[m4b 2026-07-24T12:35:56.418Z] progress 9554s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":264,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2845"}]]
+[m4b 2026-07-24T12:35:56.623Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2845 for grammar-m4b-implementer
+[m4b 2026-07-24T12:36:16.630Z] progress 9575s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":265,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2853"}]]
+[m4b 2026-07-24T12:36:16.812Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2853 for grammar-m4b-implementer
+[m4b 2026-07-24T12:36:36.827Z] progress 9595s grammar-m4b-implementer=paused[[{"kind":"turn_checkpoint","workerId":"w-1","taskId":"baton-371ab5cec8dded25388c5faa-work","turnEpoch":266,"changedPathsDigest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","requestId":"pause:baton-371ab5cec8dded25388c5faa-work:2861"}]]
+[m4b 2026-07-24T12:36:36.979Z] steered nudge_turn on pause:baton-371ab5cec8dded25388c5faa-work:2861 for grammar-m4b-implementer

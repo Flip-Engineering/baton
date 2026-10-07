@@ -1,0 +1,15 @@
+# arch-replay-stop.expect — the required logical behaviour per case, read by neither half.
+#
+# EXPECT|<case-id>|<admitted>|<classification>|<quarantine>|<targets>|<cursor>|<owed>
+#
+# The requirement is ARCH-CLOSE-11 with M-5, M-14 and M-17: startup, doctor and recovery validate
+# against one recorded policy basis and classify the cause of a refusal before offering repair. A
+# recorded row that a missing basis cannot validate leaves the projection it was admitted against
+# intact, keeps its continuation owner and its owed delivery, and enters no quarantine, because
+# nothing establishes that the row's bytes are corrupt. A row whose own binding no longer recomputes
+# is a different cause with a different disposition: the refused bytes are preserved and the row does
+# not fold. `targets` is the number of target tasks the projection binds after the case; `cursor` is
+# the last sequence the projection covers; `owed` is the rows past the reader cursor.
+EXPECT|stop-policy-bearing|true|none|false|2|3|2
+EXPECT|stop-missing-policy|false|missing_policy_basis|false|0|2|1
+EXPECT|stop-corrupt-row|false|corrupt_source_bytes|true|0|2|1

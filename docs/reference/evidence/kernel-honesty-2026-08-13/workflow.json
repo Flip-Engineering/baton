@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "kernel-honesty-169-2026-08-13-wave-d",
+  "members": [
+    {
+      "role": "auditor",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["docs/reference/evidence/kernel-honesty-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/kernel-honesty-2026-08-13/audit-169-brief.md",
+      "report": "docs/reference/evidence/kernel-honesty-2026-08-13/kernel-honesty-audit.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue the audit — every finding cited from a fresh read (NUL discipline on application.mjs + coordination-store.mjs). Write the findings table incrementally so partial work survives." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first. This is the FOURTH drive of this audit — three prior attempts died to infrastructure, not substance. Write the deliverable EARLY (findings-table skeleton first, deepen per row) so a mid-flight death still leaves harvestable content. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/kernel-honesty-2026-08-13/kernel-honesty-audit.md", "mustContain": "#169" }
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+.work/
+tmp/
+*-results.json
+npm-test.log

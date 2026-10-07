@@ -1,0 +1,47 @@
+{
+  "at": "2026-07-13T08:30:40.641Z",
+  "repoHead": "7127b6bee04e64a53e791d8b7ee45b8b6a92fd3d",
+  "taskId": "phase49-postfix-glm-review",
+  "credentialPosture": "project-local owner-only ignored key loaded only by GlmSessionCli",
+  "workerId": "w-1",
+  "pid": 46906,
+  "result": {
+    "status": "completed",
+    "ready": true
+  },
+  "route": {
+    "harnessRequested": "glm",
+    "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+    "modelRequested": "glm-4.7",
+    "modelResolved": "glm-4.7",
+    "modelObserved": "glm-4.7",
+    "effortRequested": "low",
+    "effortResolved": "low",
+    "effortObserved": null
+  },
+  "budgetUsed": {
+    "tokens": 117137,
+    "usd": 1.1172000000000002
+  },
+  "verifyAccept": true,
+  "reportCaptured": true,
+  "kill": {
+    "ok": true,
+    "result": "confirmed",
+    "emulated": false
+  },
+  "checks": {
+    "runnerHealthy": true,
+    "exactRoute": true,
+    "completed": true,
+    "freshVerified": true,
+    "killSafe": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "runtimeGone": true,
+    "branchGone": true,
+    "writerReleased": true
+  },
+  "fatal": null,
+  "pass": true
+}

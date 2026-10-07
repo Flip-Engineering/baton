@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-01T23:36:22.880Z",
+  "members": [
+    "false-green-hunter",
+    "coverage-mapper"
+  ],
+  "outcomes": [
+    {
+      "role": "false-green-hunter",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "1 worker(s) active.",
+      "resultSha": null
+    },
+    {
+      "role": "coverage-mapper",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "1 worker(s) active.",
+      "resultSha": null
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "false-green-hunter",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "coverage-mapper",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "coverage-mapper",
+      "requestId": "pause:baton-617b07987034ff6afb8d4b96-work:150",
+      "at": "2026-08-01T23:44:54.031Z"
+    },
+    {
+      "role": "false-green-hunter",
+      "requestId": "pause:baton-04306f3287e3de0e3d1c2462-work:115",
+      "at": "2026-08-01T23:46:47.180Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "coverage-mapper",
+      "requestId": "pause:baton-617b07987034ff6afb8d4b96-work:208",
+      "at": "2026-08-01T23:47:59.772Z",
+      "code": "claimed"
+    },
+    {
+      "role": "false-green-hunter",
+      "requestId": "pause:baton-04306f3287e3de0e3d1c2462-work:140",
+      "at": "2026-08-01T23:48:36.140Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0
+  }
+}

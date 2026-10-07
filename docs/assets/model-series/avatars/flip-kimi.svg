@@ -1,0 +1,30 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-label="Kimi listening pose"><title>Kimi listening pose</title><path id="kimi-background" d="M0 0H200V200H0Z" fill="#F3F1ED" /><g id="kimi-frame" transform="translate(14 14) scale(1.72)"><g id="kimi-stage" transform="rotate(-2 50 52)"><g id="kimi-module-0" transform="translate(50 51)" data-anchor="headset" data-layer="back"><g id="kimi-accessory-0-headset-band" data-anchor="headset" data-layer="back" stroke-linecap="round"><path id="kimi-accessory-0-band" d="M-40 -14 C-39 -38 -23 -46.5 0 -46.5 C22 -46.5 39 -34 40 -14" fill="none" stroke="#002F5B" stroke-width="4.4" /><path id="kimi-accessory-0-inner-band" d="M-40 -14 C-39 -38 -23 -46.5 0 -46.5 C22 -46.5 39 -34 40 -14" fill="none" stroke="#007CFF" stroke-width="1.1" /></g>
+</g><g id="kimi-character">
+<g id="kimi-accessories" data-layer="accessories" />
+<g id="kimi-outline" data-layer="outline"><path fill="#FF8FA3" d="M4 52a46 42 0 1 0 92 0a46 42 0 1 0 -92 0Z" /></g>
+<g id="kimi-body" data-layer="body"><path fill="#FFF0F3" d="M12 54a38 34 0 1 0 76 0a38 34 0 1 0 -76 0Z" /></g>
+<g id="kimi-freckles" data-layer="freckles"><path fill="#E94560" fill-opacity="0.3" d="M30.8 54a1.2 1.2 0 1 0 2.4 0a1.2 1.2 0 1 0 -2.4 0Z" /><path fill="#E94560" fill-opacity="0.3" d="M34.8 56a1.2 1.2 0 1 0 2.4 0a1.2 1.2 0 1 0 -2.4 0Z" /><path fill="#E94560" fill-opacity="0.3" d="M32.8 58a1.2 1.2 0 1 0 2.4 0a1.2 1.2 0 1 0 -2.4 0Z" /><path fill="#E94560" fill-opacity="0.3" d="M62.8 54a1.2 1.2 0 1 0 2.4 0a1.2 1.2 0 1 0 -2.4 0Z" /><path fill="#E94560" fill-opacity="0.3" d="M66.8 56a1.2 1.2 0 1 0 2.4 0a1.2 1.2 0 1 0 -2.4 0Z" /><path fill="#E94560" fill-opacity="0.3" d="M64.8 58a1.2 1.2 0 1 0 2.4 0a1.2 1.2 0 1 0 -2.4 0Z" /></g>
+<g id="kimi-eyebrows" data-replaces="eyebrows"><path d="M27 30 Q34 26.5 41 31 M55 34 Q64 31 73 34" fill="none" stroke="#C93550" stroke-width="3.5" stroke-linecap="round" /></g>
+  <g id="kimi-eyes" data-replaces="eyes">
+    <path d="M29 46a7 7 0 1 0 14 0a7 7 0 1 0 -14 0Z M57 46a7 7 0 1 0 14 0a7 7 0 1 0 -14 0Z" fill="#FFFFFF" />
+    <path d="M30 43.5a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0Z M58 43.5a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0Z" fill="#C93550" />
+    <path d="M34.5 42a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0Z M62.5 42a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0Z" fill="#FFFFFF" />
+  </g>
+  <g id="kimi-mouth" data-replaces="mouth"><path d="M45 64 Q50 67 55 62" fill="none" stroke="#C93550" stroke-width="3.1" stroke-linecap="round" /></g>
+  <g id="kimi-mint-accents" data-layer="mint-accents"><path fill="#4ECDC4" fill-opacity="0.85" d="M76.8 23a4.2 4.2 0 1 0 8.4 0a4.2 4.2 0 1 0 -8.4 0Z" /><path fill="#4ECDC4" fill-opacity="0.85" d="M87.4 14.5a2.6 2.6 0 1 0 5.2 0a2.6 2.6 0 1 0 -5.2 0Z" /></g>
+<g id="kimi-optional-cheek-sparkles" data-layer="optional-cheek-sparkles" display="none"><path d="M22 50.8L22.95 53.05L25.2 54L22.95 54.95L22 57.2L21.05 54.95L18.8 54L21.05 53.05Z" fill="#FFD700" /><path d="M78 50.8L78.95 53.05L81.2 54L78.95 54.95L78 57.2L77.05 54.95L74.8 54L77.05 53.05Z" fill="#FFD700" /></g>
+</g>
+<g id="kimi-module-1" transform="translate(50 51)" data-anchor="headset" data-layer="front"><g id="kimi-accessory-1-headset-cups" data-anchor="headset" data-layer="front" stroke-linecap="round" stroke-linejoin="round">
+    <path id="kimi-accessory-1-left-shell" d="M-46.5 -10 Q-49.5 -8 -49.5 -3 V5 Q-49.5 10 -46.5 11 H-40.5 Q-37.5 10 -37.5 6 V-5 Q-37.5 -10 -40.5 -10 Z" fill="#002F5B" stroke="#002F5B" stroke-width="1.1" />
+    <path id="kimi-accessory-1-right-shell" d="M40.5 -10 Q37.5 -10 37.5 -5 V6 Q37.5 10 40.5 11 H46.5 Q49.5 10 49.5 5 V-3 Q49.5 -8 46.5 -10 Z" fill="#002F5B" stroke="#002F5B" stroke-width="1.1" />
+    <path id="kimi-accessory-1-left-panel" d="M-46.5 -6.5 Q-47.5 -5.5 -47.5 -2 V4 Q-47.5 7.5 -45.5 7.5 H-41.5 Q-39.5 7.5 -39.5 4 V-2 Q-39.5 -6.5 -41.5 -6.5 Z" fill="#F7FAFC" />
+    <path id="kimi-accessory-1-right-panel" d="M41.5 -6.5 Q39.5 -6.5 39.5 -2 V4 Q39.5 7.5 41.5 7.5 H45.5 Q47.5 7.5 47.5 4 V-2 Q47.5 -5.5 46.5 -6.5 Z" fill="#F7FAFC" />
+  </g>
+<g id="kimi-emblem-1" transform="translate(-47.4 -4.5) scale(0.063) translate(-24 -27)" data-source="emblems/kimi.svg"><path d="M139.13 36.5137C144.237 36.5137 148.377 40.6535 148.377 45.7602C148.377 50.867 144.237 55.0068 139.13 55.0068L130.972 55.0068C130.371 55.0068 129.884 54.5198 129.884 53.919L129.884 45.7602C129.884 40.6535 134.024 36.5137 139.13 36.5137Z" fill="#1783FF" />
+<path d="M87.2905 90.3594L122.186 55.739C122.842 55.0865 122.473 53.7744 121.625 53.7744H102.848C102.644 53.7744 102.447 53.8577 102.288 54.0174L64.6898 91.3104C64.1035 91.8866 63.2366 91.3729 63.2366 90.4496V54.8782C63.2366 54.2673 62.8351 53.7744 62.3443 53.7744H49.406C48.9152 53.7744 48.5137 54.2673 48.5137 54.8782V131.575C48.5137 132.186 48.9152 132.679 49.406 132.679H62.3443C62.8351 132.679 63.2366 132.186 63.2366 131.575V115.948C63.2366 115.615 63.3577 115.295 63.5681 115.087L75.2254 103.522C75.5058 103.244 75.8946 103.202 76.2069 103.411L107.386 126.354C112.492 129.791 118.196 131.901 123.99 132.526C124.506 132.581 124.952 132.068 124.952 131.422V116.705C124.952 116.142 124.614 115.684 124.162 115.615C120.752 115.08 117.425 113.761 114.417 111.734L87.4244 92.1921C86.8635 91.8172 86.7934 90.8523 87.2905 90.3594Z" fill="black" />
+</g></g><g id="kimi-foreground"><g id="kimi-hand" data-replaces="hand" data-layer="foreground">
+    <path d="M80 64 C76 61 77 56 80 54 L80 48 C80 45.5 83 45.2 83 48 V54 L84 45 C84 42.5 87 42.5 87 45 V55 C91 55 94 59 93 63 C92 68 86 70 80 64 Z" fill="#FF8FA3" stroke="#C93550" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M83 58 Q86 56 88 59" fill="none" stroke="#C93550" stroke-width="1.8" stroke-linecap="round" />
+  </g>
+</g></g></g></svg>

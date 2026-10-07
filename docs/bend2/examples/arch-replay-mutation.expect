@@ -1,0 +1,13 @@
+# arch-replay-mutation.expect — the required logical behaviour per case, read by neither half.
+#
+# EXPECT|<case-id>|<admitted>|<refusal_class>|<rows_written>|<cursor>|<owed>
+#
+# The requirement is M-14 with M-5 and ARCH-CLOSE-11: a refusal reports the failure it actually is, in
+# a vocabulary that separates one cause from another, and a refused mutation leaves the history it was
+# offered against untouched. `refusal_class` is the cause the refusal must name: a request whose shape
+# is not admitted is `invalid_request`; a request whose authority expired before the event it is
+# judged against is `expired_authority`. `rows_written` is the ledger rows the attempt added, `cursor`
+# the last sequence the projection covers afterwards, `owed` the rows past the reader cursor.
+EXPECT|mutation-valid|true|none|1|3|2
+EXPECT|mutation-unknown-field|false|invalid_request|0|2|1
+EXPECT|mutation-expired-session|false|expired_authority|0|2|1

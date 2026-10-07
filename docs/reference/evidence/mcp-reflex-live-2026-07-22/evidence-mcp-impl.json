@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "mcp-core-implementer",
+      "phase": "work_completed",
+      "terminal": false,
+      "narrative": "0 worker(s) active, 1 done.",
+      "resultSha": "695d3a4be004a44349eb7741e9bb5c130359423f"
+    },
+    {
+      "role": "mcp-board-package-implementer",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "0 worker(s) active.",
+      "resultSha": null
+    }
+  ],
+  "stops": [
+    {
+      "role": "mcp-core-implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "mcp-board-package-implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "remainingCount": 0,
+  "residueUnknown": false
+}

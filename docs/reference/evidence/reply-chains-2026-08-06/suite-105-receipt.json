@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-07T00:47:58.268Z",
+  "salt": "s520260807004758",
+  "role": "suite-105",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-bffb0e22588e2b74cb1a3d2b031c5bc6"
+        ]
+      }
+    },
+    {
+      "step": "terminal:suite-105",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-105": {
+      "pin": "bc9cf5319e8cbd8c0929d03beaa807ccc5ded8ed",
+      "paths": [
+        "impl/test/reply-chains-red.test.mjs",
+        "docs/reference/evidence/reply-chains-2026-08-06/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 345,
+  "verdict": "SUITE-105-OK"
+}

@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T09:11:52.700Z",
+  "salt": "rb20260807091152",
+  "role": "redteam-70",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-f823578140562d695cfacab6e084bb59"
+        ]
+      }
+    },
+    {
+      "step": "terminal:redteam-70",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "redteam-70": {
+      "pin": "982f5e34c09b2b75e3f76c8b0ebbe82a39b4cca8",
+      "paths": [
+        "docs/reference/evidence/cross-deployment-knowledge-2026-08-07/contract-redteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 392,
+  "verdict": "RT-70-OK"
+}

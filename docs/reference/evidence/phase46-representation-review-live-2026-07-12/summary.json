@@ -1,0 +1,68 @@
+{
+  "at": "2026-07-13T05:46:51.350Z",
+  "scenario": {
+    "currentCommittedTree": true,
+    "auditedAci": true,
+    "deterministicReverify": true
+  },
+  "facts": {
+    "treeSha": "0eb63d0c7707bad58be75112851c52d4a3250f56",
+    "rungs": [
+      {
+        "rung": "R1",
+        "name": "ast-cst-structural",
+        "status": "shipped_proposal",
+        "sources": 4
+      },
+      {
+        "rung": "R2",
+        "name": "symbol-scip-index",
+        "status": "shipped_bounded",
+        "sources": 1
+      },
+      {
+        "rung": "R3",
+        "name": "cpg-cfg-path",
+        "status": "shipped_bounded",
+        "sources": 7
+      },
+      {
+        "rung": "R4",
+        "name": "compiler-ir",
+        "status": "decision_ceiling_r3",
+        "sources": 2
+      },
+      {
+        "rung": "R5",
+        "name": "behavioral-fingerprint",
+        "status": "shipped_observational",
+        "sources": 2
+      },
+      {
+        "rung": "R6",
+        "name": "structured-merge",
+        "status": "shipped_structured",
+        "sources": 2
+      },
+      {
+        "rung": "R7",
+        "name": "egraph-evaluation",
+        "status": "decision_retired_native",
+        "sources": 2
+      }
+    ],
+    "packetDigest": "8c409b71948d1d7d2891ed1ec93e69ee0eeb7858f297ff54839f975c84a6fcd5"
+  },
+  "checks": {
+    "sevenFixedRungs": true,
+    "allCommittedSources": true,
+    "decisionsHonest": true,
+    "reverified": true,
+    "noAuthority": true,
+    "auditedAci": true,
+    "closed": true,
+    "writerReleased": true
+  },
+  "fatal": null,
+  "pass": true
+}

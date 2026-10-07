@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "blue-team-2026-08-13-wave-b",
+  "members": [
+    {
+      "role": "coordinator",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-b/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-b/coordinator-brief.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-b/blueteam-qa.md"
+    },
+    {
+      "role": "row-bt170",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-b/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-b/row-bt170.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-b/blueteam-170.md"
+    },
+    {
+      "role": "row-bt163",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-b/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-b/row-bt163.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-b/blueteam-163.md"
+    },
+    {
+      "role": "row-bt165",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-b/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-b/row-bt165.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-b/blueteam-165.md"
+    },
+    {
+      "role": "row-bt167",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-b/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-b/row-bt167.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-b/blueteam-167.md"
+    },
+    {
+      "role": "row-bt146",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-b/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-b/row-bt146.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-b/blueteam-146.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue the attack — every capability row gets its cheapest-wrong-impl named, every pin gets its bite test. Write your report incrementally; run the split twice." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the blue-team law binds you, including the attempt-echo law in the FIRST FIVE lines). Publish your report to the `shared` scratchpad as well as your file; a failed publish is evidence — record the refusal. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 },
+    "signalOnMembersDone": { "roles": ["row-bt170", "row-bt163", "row-bt165", "row-bt167", "row-bt146"], "message": { "kind": "result", "body": "All rows settled (you are the remaining member — the pinned #175 semantics). VERIFY ON DISK FIRST (sibling worktrees at ../../wt/ws-*/ or the main repo post-harvest; silence is not death). Then cross-check per your brief and write blueteam-qa.md." } }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-b/blueteam-qa.md", "mustContain": "BLUETEAM-QA v1" },
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-b/blueteam-170.md", "mustContain": "#170" },
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-b/blueteam-163.md", "mustContain": "#163" },
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-b/blueteam-165.md", "mustContain": "#165" },
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-b/blueteam-167.md", "mustContain": "#167" },
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-b/blueteam-146.md", "mustContain": "#146" }
+    ]
+  }
+}

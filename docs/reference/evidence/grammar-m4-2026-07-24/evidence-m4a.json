@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "grammar-m4a-implementer",
+      "phase": "paused",
+      "terminal": false,
+      "narrative": "Run terminated: budget_hard_limit_exceeded (usd 1006.0909040000001/1000, ratio 1.0060909040000001).",
+      "resultSha": null
+    }
+  ],
+  "stops": [
+    {
+      "role": "grammar-m4a-implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "remainingCount": 0,
+  "residueUnknown": false
+}

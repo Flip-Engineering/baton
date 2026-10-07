@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "fold-foundry-2026-08-13-wave-b",
+  "members": [
+    {
+      "role": "row-fold170",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["docs/reference/evidence/workflow-dsl-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13-b/row-fold-170.md",
+      "report": "docs/reference/evidence/workflow-dsl-2026-08-13/fold-170.md"
+    },
+    {
+      "role": "row-fold163",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/contract-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13-b/row-fold-163.md",
+      "report": "docs/reference/evidence/contract-foundry-2026-08-13/fold-163.md"
+    },
+    {
+      "role": "row-fold165",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/contract-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13-b/row-fold-165.md",
+      "report": "docs/reference/evidence/contract-foundry-2026-08-13/fold-165.md"
+    },
+    {
+      "role": "row-fold167",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/contract-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13-b/row-fold-167.md",
+      "report": "docs/reference/evidence/contract-foundry-2026-08-13/fold-167.md"
+    },
+    {
+      "role": "row-fold146",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/contract-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13-b/row-fold-146.md",
+      "report": "docs/reference/evidence/contract-foundry-2026-08-13/fold-146.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue the fold — every row blocker AND every QA instruction gets FOLDED/STRUCK/ESCALATED, no silent drops. The row report governs on conflict (the QA was blind). Write the fold notes incrementally." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the shared frame binds you — including the blind-QA law: your redteam-<issue>.md governs over the QA on conflict). Raw material: the contract + redteam-<issue>.md in the contract's dir, and the QA at docs/reference/evidence/review-foundry-2026-08-13-b/review-qa.md. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them in the fold notes." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/workflow-dsl-2026-08-13/fold-170.md", "mustContain": "#170" },
+      { "path": "docs/reference/evidence/contract-foundry-2026-08-13/fold-163.md", "mustContain": "#163" },
+      { "path": "docs/reference/evidence/contract-foundry-2026-08-13/fold-165.md", "mustContain": "#165" },
+      { "path": "docs/reference/evidence/contract-foundry-2026-08-13/fold-167.md", "mustContain": "#167" },
+      { "path": "docs/reference/evidence/contract-foundry-2026-08-13/fold-146.md", "mustContain": "#146" }
+    ]
+  }
+}

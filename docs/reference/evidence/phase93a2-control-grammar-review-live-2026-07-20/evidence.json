@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 2,
+  "failure": {
+    "name": "Error",
+    "code": "watchdog_expired",
+    "message": "wave1.5 watchdog expired"
+  },
+  "outcomes": [],
+  "steering": [],
+  "stops": [
+    {
+      "role": "spec-redteam",
+      "runId": "run-c617c30a21390485a52e56e5028bb6ea",
+      "stop": null,
+      "ownership": null
+    },
+    {
+      "role": "tests-redteam",
+      "runId": "run-d40895474184475e7a2dadb8909e282e",
+      "stop": null,
+      "ownership": null
+    },
+    {
+      "role": "impl-review",
+      "runId": "run-fb118f0ca68fb73ee03cc019be37a3a4",
+      "stop": null,
+      "ownership": null
+    }
+  ],
+  "progress": [
+    {
+      "at": "2026-07-21T02:18:00.759Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:18:21.003Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:18:41.246Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:19:01.486Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:19:21.702Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:19:41.937Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:20:02.185Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:20:22.431Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:20:42.685Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:21:02.927Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:21:23.180Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:21:43.392Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:22:03.635Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:22:23.875Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:22:44.115Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:23:04.363Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:23:24.611Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:23:44.851Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:24:05.101Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:24:25.337Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:24:45.576Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:25:05.814Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:25:26.051Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:25:46.284Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:26:06.530Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:26:26.780Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:26:47.027Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:27:07.276Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:27:27.521Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:27:47.770Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:28:08.013Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:28:28.252Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:28:48.495Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:29:08.730Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:29:28.975Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:29:49.218Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:30:09.473Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:30:29.720Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:30:49.977Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    },
+    {
+      "at": "2026-07-21T02:31:10.221Z",
+      "line": "spec-redteam=work_completed tests-redteam=work_completed impl-review=cancelled"
+    }
+  ]
+}

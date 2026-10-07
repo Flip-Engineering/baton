@@ -1,0 +1,240 @@
+{
+  "schemaVersion": 1,
+  "baseline": {
+    "record": "run",
+    "revision": "67904d59cb5c183f8f683aa73e375402b0255991",
+    "node": "22.22.2",
+    "command": "npm test -- --test-concurrency=2",
+    "scope": "Isolated original-revision checkout; complete run. Failure inventory includes failed suite containers as well as test rows.",
+    "summary": {
+      "tests": 4445,
+      "passed": 3746,
+      "failed": 508,
+      "cancelled": 191,
+      "durationMs": 1185523.694292
+    }
+  },
+  "comparisonScope": "Failure discovery only: first integrated sweep imported follow-on edits in progress. Different observed rows are candidates for diagnosis, not proof of introduced or fixed regressions.",
+  "sharedFailureRows": 678,
+  "onlyInWorkingSweep": [
+    {
+      "record": "failure",
+      "test": "PS1-PS5: Claude, Codex, and Grok each run two public turns on one native session then kill",
+      "location": "impl/test/phase11-persistent-sessions.test.mjs:325:1",
+      "failureType": "testCodeFailure",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "QV2: outage, pagination, and response ceilings fail closed with typed reasons",
+      "location": "impl/test/phase36-quartermaster-external.test.mjs:89:1",
+      "failureType": "cancelledByParent",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "QV6: cache and snapshot reverify avoid network; expiry blocks until explicit refresh",
+      "location": "impl/test/phase36-quartermaster-external.test.mjs:112:1",
+      "failureType": "cancelledByParent",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "QV3/QV6: malicious package signal blocks and dossier substitution/tamper refuses",
+      "location": "impl/test/phase36-quartermaster-external.test.mjs:126:1",
+      "failureType": "cancelledByParent",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "QV3: a tiny context budget returns an honest ref-only partial without an infinite cursor",
+      "location": "impl/test/phase36-quartermaster-external.test.mjs:137:1",
+      "failureType": "cancelledByParent",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "QV1/QV7: the public driver exposes external vet through the sole audited ACI plane",
+      "location": "impl/test/phase36-quartermaster-external.test.mjs:144:1",
+      "failureType": "cancelledByParent",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "SNAPSHOT-ON-RECEIPT (\\#244): settle outcomes carry the member snapshot sha",
+      "location": "impl/test/reap-snapshot-244-red.test.mjs:23:1",
+      "failureType": "testCodeFailure",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "PARITY-MATRIX (\\#191): the matrix exists, is generated from the live catalog, and is coherent",
+      "location": "impl/test/surface-parity-191-red.test.mjs:25:1",
+      "failureType": "testCodeFailure",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "TC-17 size[cell-size-bound-missing]: MAX_CELL_SIZE is a named documented count bound of 64",
+      "location": "impl/test/tight-cell-red.test.mjs:1412:1",
+      "failureType": "testCodeFailure",
+      "baselineTestRowObserved": false
+    }
+  ],
+  "onlyInBaseline": [
+    {
+      "record": "failure",
+      "test": "P6 (PIN): GREEN-3 coaching feedback is authored and rendered exactly as today",
+      "location": "impl/test/feedback-forge-hardening-red.test.mjs:607:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "F1: no module re-declares a cataloged byte literal or hand-types byte prose outside limits.mjs",
+      "location": "impl/test/frame-economics-red.test.mjs:1786:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "Q2: the interpreter gates a member on its plan task's state \u2014 blocked \u2192 dispatch_pending, done \u2192 settleable",
+      "location": "impl/test/orchestrator-plan-object-red.test.mjs:1505:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "O1: plan.read at the orchestrator seat returns the campaign todo as the plan projection",
+      "location": "impl/test/orchestrator-plan-object-red.test.mjs:1538:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "DC1/DC5: max+1 refuses before fencing and an exact retry can still close",
+      "location": "impl/test/phase56-drain-and-close.test.mjs:228:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "UA2/UA6: a durable Goal-only planning failure remains a readable retryable RunView",
+      "location": "impl/test/phase64-integrated-run-application.test.mjs:452:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "WF79-1: deployment workflow compiles one durable multi-node Plan and starts no provider before approval",
+      "location": "impl/test/phase79-workflow-composition-red.test.mjs:109:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "WF79-6: role-addressed member stop is durable, exact, and leaves a sibling Attempt running",
+      "location": "impl/test/phase79-workflow-composition-red.test.mjs:456:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "WF79-D1: Workflow definition prebinding survives a lost Plan proposal and precedes retry proposal",
+      "location": "impl/test/phase79-workflow-definition-authority-red.test.mjs:112:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "AR80-1: selected Candidate feedback proposes one successor Plan pre-effect and replays both rounds",
+      "location": "impl/test/phase80-application-revision-red.test.mjs:75:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "AR80-2: a second feedback round appends Plan v3 and replays from its durable definition",
+      "location": "impl/test/phase80-application-revision-red.test.mjs:184:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "AR80-3: repeated feedback and explicit contradiction pause recursion without a Plan effect",
+      "location": "impl/test/phase80-application-revision-red.test.mjs:287:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "AR80-4: the bound deployment round ceiling pauses without exposing a caller loop knob",
+      "location": "impl/test/phase80-application-revision-red.test.mjs:357:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "AR80-RS1: lost successor-approval response restarts one exact revision dispatch",
+      "location": "impl/test/phase80-revision-restart-stop-red.test.mjs:194:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "AR80-RS2: a working revision lost across restart exposes exact typed recovery and forbids redelivery",
+      "location": "impl/test/phase80-revision-restart-stop-red.test.mjs:246:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "a member terminalizing unrecoverably hard-breaks the loop and the survivor result-sha is harvested",
+      "location": "impl/test/quiescence-completion-red.test.mjs:299:3",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "R5 (stage[hard-break-evidence-missing])",
+      "location": "impl/test/quiescence-completion-red.test.mjs:298:1",
+      "failureType": "subtestsFailed",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "canonical names outrank compatibility aliases and live alias corrections have one owner",
+      "location": "impl/test/surface-capability-catalog.test.mjs:88:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "TC-21 reply[per-member-reply-slot-missing]: a runId broadcast admits EACH delivered member's FIRST reply",
+      "location": "impl/test/tight-cell-red.test.mjs:931:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "CLI generic invocation resolves exact canonical names before compatibility aliases",
+      "location": "impl/test/unified-cli-surface.test.mjs:58:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "CLI surfaceSnapshot combines monitoring and optional run/wave projections",
+      "location": "impl/test/unified-cli-surface.test.mjs:79:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "configured describe resolves canonical names and corrected live aliases deterministically",
+      "location": "impl/test/unified-mcp-surface.test.mjs:145:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    }
+  ]
+}

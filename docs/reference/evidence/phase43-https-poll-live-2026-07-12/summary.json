@@ -1,0 +1,31 @@
+{
+  "at": "2026-07-13T04:06:18.975Z",
+  "transport": {
+    "tls": true,
+    "fixedOrigin": true,
+    "redirectsFollowed": false,
+    "pageRequests": 2,
+    "authorizedRequests": 2,
+    "cursorDigests": [
+      "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "b2d4bfec5d40a799c22b81301a398a93c1b70d64f4b0bb139e980c3a9574ddae"
+    ],
+    "pageDigests": [
+      "a0b60a618859a8426bd5b27f02b44825c2c2d7e6eb4efd00c7cb1c287d25dbf4",
+      "5bdfda53ee92c9c3962c63c48cd036df5073313a1870ca8f42d091aa9ab966b7"
+    ]
+  },
+  "checks": {
+    "gapDegraded": true,
+    "twoAuthenticatedPages": true,
+    "recoveredOnce": true,
+    "pendingRetained": true,
+    "statusSanitized": true,
+    "zeroNetworkReplay": true,
+    "redegraded": true,
+    "writerReleased": true,
+    "noFleetOwnership": true
+  },
+  "fatal": null,
+  "pass": true
+}

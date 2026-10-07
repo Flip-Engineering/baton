@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T06:59:55.842Z",
+  "salt": "r920260807065955",
+  "role": "redteam-59",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-6d0ae4b0913d609e3de6c396f5ea79f0"
+        ]
+      }
+    },
+    {
+      "step": "terminal:redteam-59",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "redteam-59": {
+      "pin": "cb61de46462eb2986bcc983c8d0f5791273674e3",
+      "paths": [
+        "docs/reference/evidence/redrive-continuity-2026-08-07/contract-redteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 376,
+  "verdict": "RT-59-OK"
+}

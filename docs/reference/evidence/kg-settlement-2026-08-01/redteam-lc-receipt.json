@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-01T23:07:41.474Z",
+  "members": [
+    "lifecycle-attacker"
+  ],
+  "outcomes": [
+    {
+      "role": "lifecycle-attacker",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "94a9d0e81c4b5401906ce041b4a047cb72352c5c"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "lifecycle-attacker",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "lifecycle-attacker",
+      "requestId": "pause:baton-e2830087277a6cbab502125e-work:114",
+      "at": "2026-08-01T23:16:12.451Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "lifecycle-attacker",
+      "requestId": "pause:baton-e2830087277a6cbab502125e-work:160",
+      "at": "2026-08-01T23:18:07.772Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0
+  },
+  "manifest": {
+    "schemaVersion": 1,
+    "waveId": "wave:13496027f30cfdec6147c1db4a5485b1",
+    "idempotencyKey": "kg-settlement-redteam-lc-2026-08-01",
+    "recipeDigest": "a41d89342100e5ca877f0ef07672e4c0d561b0f53dfaeba9ecfc439cac1c068d",
+    "salt": "81395471-9395-4942-b0ea-63071ed5ddd6",
+    "renderedMembers": [
+      {
+        "role": "lifecycle-attacker",
+        "objective": "Adversarially red-team the KG settlement contract v0.9 (LIFECYCLE + ORDERING angle). Ground every claim in file:line. Anchors: coordination-store.mjs createTask :12103, createAndClaimRecoveryRefinement :12128, elevateTaskScratchpad :13181, settleWorkflowScratchpad :13330, issueRunOrchestratorLease :1770, _assertRunAdmissionOpen :7234, admitWorkflowFinding :14539, board candidacy :13717; coordinator.mjs wrappers :9700/:9727/:9831; wave-driver.mjs settle window :660-680; run-lineage.mjs TTL :22-28. Contract: docs/reference/evidence/kg-settlement-2026-08-01/kg-settlement-decisions.md. Gap receipts: docs/reference/evidence/kg-tiered-loop-2026-08-01/kg-loop-verdict.md. Attack: (1) Can a member be claimed-terminal while its scratchpad partition still has pending writes (paused at a checkpoint)? Trace wave-driver.mjs:660-680 vs turn.paused. (2) The settlement task stays working after driver exit — what reaps it if promote never comes? Lease TTL 30min — lingering task/lease rows acceptable? (3) Default-on ledger growth per wave: compute the worst case with MAX_SCRATCHPAD_SHARED_ENTRIES (grep it). (4) D4 skips plan+link — issue #59 wants re-drive continuity from dead attempts: does skipping plan destroy that? (5) Crash mid-hook: walk a crash between steps 2-3 and between lease and board post — do waveId/runId keys make re-drive exactly-once? (6) Doubts elevate but never candidate — silent knowledge sink? Verdict each: CONFIRMED-HOLE / DEFENDED / NEEDS-AMENDMENT + amendment text.\nRed-team the KG settlement contract v0.9 lifecycle angle\nWrite the report skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion; the trust gate kills no-diff workers.\nRead-only review: do not edit impl/ files; your only write target is your report path.\nName the report redteam-lifecycle.md (overwrite any skeleton).\n[attempt: 81395471-9395-4942-b0ea-63071ed5ddd6 lifecycle-attacker]",
+        "exact": {
+          "harness": "glm",
+          "model": "glm-5.2",
+          "effort": "high"
+        },
+        "scope": [
+          "docs/reference/evidence/kg-settlement-2026-08-01/**"
+        ],
+        "report": "docs/reference/evidence/kg-settlement-2026-08-01/redteam-lifecycle.md"
+      }
+    ]
+  }
+}

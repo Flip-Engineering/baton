@@ -1,0 +1,23 @@
+{
+  "attempt": "2026-08-06T22:15:12.192Z",
+  "salt": "rt20260806221512",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "run": "run-c54a6e88c2f62b9f1c99acfa6e97efb9"
+      }
+    },
+    {
+      "step": "terminal",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    }
+  ],
+  "harvest": {
+    "pin": "8a209a22c026a12e47d1892a569a4a41dbc015d6",
+    "bytes": 25338
+  },
+  "verdict": "RT-103-OK"
+}

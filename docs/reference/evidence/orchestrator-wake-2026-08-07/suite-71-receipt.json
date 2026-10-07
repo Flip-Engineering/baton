@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-07T07:23:47.776Z",
+  "salt": "sb20260807072347",
+  "role": "suite-71",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-9f0efb5879ca125c2aa3e9f6510c44e1"
+        ]
+      }
+    },
+    {
+      "step": "terminal:suite-71",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-71": {
+      "pin": "daafb248f7ac755760f1a706724f7e22921abf39",
+      "paths": [
+        "impl/test/orchestrator-wake-red.test.mjs",
+        "docs/reference/evidence/orchestrator-wake-2026-08-07/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 381,
+  "verdict": "SUITE-71-OK"
+}

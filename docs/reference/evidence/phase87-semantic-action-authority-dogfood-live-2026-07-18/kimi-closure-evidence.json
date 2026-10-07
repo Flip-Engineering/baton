@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "error": {
+    "name": "Error",
+    "code": "authentication_refresh_required",
+    "message": "Kimi authentication has expired. Run the ordinary `kimi` login flow to refresh authentication, then reopen Baton."
+  },
+  "cleanup": {
+    "stops": [],
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}

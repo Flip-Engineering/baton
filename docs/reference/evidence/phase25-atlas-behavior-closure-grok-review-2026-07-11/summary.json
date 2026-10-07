@@ -1,0 +1,493 @@
+{
+  "at": "2026-07-12T04:38:51.037Z",
+  "repoHead": "acc3d93aa207d0812662b287191cbe908d68449d",
+  "reviewProfile": "behavior-implementation",
+  "reviewTimeoutMs": 360000,
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "rows": [
+    {
+      "taskId": "grok-behavior-review-45",
+      "model": "grok-4.5",
+      "path": "reviews/dogfood/grok-behavior-review-45.md",
+      "stance": "security",
+      "workerId": "w-1",
+      "handle": {
+        "id": "w-1",
+        "vendor": "grok",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"adversarial-implementation-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-4.5"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f549d-6367-7151-a2ef-ce82b8e74a82",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-behavior-closure.tOl93h/.baton/wt/grok-behavior-review-45",
+          "repoRoot": "/private/tmp/baton-behavior-closure.tOl93h",
+          "baseSha": "acc3d93aa207d0812662b287191cbe908d68449d",
+          "branch": "baton/grok-behavior-review-45",
+          "ownerTaskId": "grok-behavior-review-45"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-behavior-closure.tOl93h/.baton/runtime/w-1",
+          "home": "/private/tmp/baton-behavior-closure.tOl93h/.baton/runtime/w-1/home",
+          "tmp": "/private/tmp/baton-behavior-closure.tOl93h/.baton/runtime/w-1/tmp",
+          "config": "/private/tmp/baton-behavior-closure.tOl93h/.baton/runtime/w-1/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-behavior-review-45",
+        "worktree": "/private/tmp/baton-behavior-closure.tOl93h/.baton/wt/grok-behavior-review-45",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 53348,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T04:37:07.715Z"
+      },
+      "pid": 45873,
+      "verify": {
+        "worker": "w-1",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"adversarial-implementation-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 10
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "a35b18aadae657b86aa9b2a1cc655887fa457d83",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-4.5",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"adversarial-implementation-review\"]"
+          }
+        },
+        "seq": 368,
+        "ts": "2026-07-12T04:38:50.778Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 10
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"adversarial-implementation-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f549d-6367-7151-a2ef-ce82b8e74a82",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-behavior-closure.tOl93h/.baton/wt/grok-behavior-review-45",
+          "repoRoot": "/private/tmp/baton-behavior-closure.tOl93h",
+          "baseSha": "acc3d93aa207d0812662b287191cbe908d68449d",
+          "branch": "baton/grok-behavior-review-45",
+          "ownerTaskId": "grok-behavior-review-45"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# Grok adversarial review — Phase 25 BF1–BF7 (post-acc3d93 / 5a94c51)\n\nReviewed against `spec/phase25/atlas-behavior-fingerprint.md`, `impl/src/atlas-behavior-fingerprint.mjs`, `impl/test/phase25-atlas-behavior-fingerprint.test.mjs`, Baton-on-Baton evidence under `docs/reference/evidence/phase25-atlas-behavior-fingerprint-2026-07-11/` (reverified at `acc3d93`), prior defect narrative in `docs/handoff/evidence/phase25-atlas-behavior-fingerprint-2026-07-11.md` and `docs/26-full-system-goal.md` (Phase 25 R5 paragraph), and R5 framing in `docs/15-representation-and-computation.md` / `docs/26-full-system-goal.md`. Findings are grounded in source sequences; worker/summary pass bits are not trusted as proof.\n\n## Decision\n\n**One actionable BF1–BF7 implementation defect remains, confined to BF3 (result-channel authenticity).** The hardened runner correctly defeats the previously fixed multi-frame / deferred-stdout suffix attack and NaN/`-0` JSON collapse, but a same-process child can still replace the runner-owned observation with a single forged frame by writing one `BATON_BEHAVIOR_RESULT:` line and calling `process.exit(0)` before the runner emits. Parent logic accepts any sole well-formed frame (`frames.length !== 1` only) and never authenticates runner ownership.\n\nBF1, BF2, BF4, BF5, BF6, and BF7 have **no remaining actionable implementation defects** under the Phase 25 contract: residual gaps map to **explicit non-goals** (no dependency following, no effect inference, no semantic equivalence, operator-pinned corpus, Node permission-model limits) or are already red-covered.\n\n## Proposed numbered contract\n\nImplementation matrix only — no scope expansion beyond BF1–BF7 / Phase 25 R5 vertical.\n\n| ID | Contract seam (spec) | Implementation locus | Verdict |\n|----|----------------------|----------------------|---------|\n| **BF1** | Confined `.js`/`.mjs` path, named export, JSON corpus; reject escape, bad export, oversized/invalid corpus, unsupported language, source ceiling | `validatePath` L70–74; `target` L76–86; export regex L176; `corpusBytes` L88–108; invoke L212–215 | **Met.** `..` / absolute / symlink-via-`realpath` escape → `path_escape`; non-`.js/.mjs` → `unsupported_language`; non-function → `invalid_export`; non-finite/cyclic/exotic corpus → `invalid_corpus`; case/byte/source ceilings typed. |\n| **BF2** | Throwaway copy; `--permission` + isolated read; minimal env; deny net/child/worker/write; denial → `sandbox_violation`; cleanup always | `_once` L144–172: `mkdtemp`+`realpath`, write `target.mjs` mode `0o400`, `runFile` args L148–154, `env` only `LANG/LC_ALL/TZ/NODE_NO_WARNINGS`, `rmSync` in `finally` L170–172; denial scan L163 | **Met** for uncaught denials. Env fully replaced (no ambient inheritance). Policy pin is declarative provenance L184 (honest BF6). **Non-goal:** caught `ERR_ACCESS_DENIED` returns as normal observation (not whole-op violation) — confinement still holds. |\n| **BF3** | Dual isolated runs; byte-stable structured identity; **exactly one runner-owned frame**; multi-frame typed fail; bounds/timeout/nondeterminism | Dual `_once` L178–180; `stable` L14–18 + `valueBytes`/numberClass L41–48; frame emit L55–58; parent frame gate L155–160; timeout L168 | **Defect remains (channel ownership).** Multi-frame + deferred hijack fixed; early-exit single-frame forge not. See Red tests. Nondeterminism/timeout/output bounds otherwise Met. |\n| **BF4** | `behavior.compare` case-indexed agree/diverge; meaning `observed_corpus_agreement_not_semantic_equivalence` | invoke L217–229; meaning L196; payload comparison L219–223 | **Met.** Text agreement on specials covered by valueBytes path (test BF3/BF4 special numbers). |\n| **BF5** | ACI envelope, content-addressed artifact, token bound + resume cursor, path/schema/digest integrity, cancel, reverify | `_writeResult` L188–205; `resume` L232–243; `reverify` L246–248; abort L13/L211 | **Met.** `wx` + digest name; resume requires `realpath` path `=== join(artifactRoot, ${digest}.json)` and sha match; tamper red present. |\n| **BF6** | Pin digests/export/node/policy/observations; no effect-from-absence, deps, input gen, shrink, coverage claim | provenance L202; `card().limitations` L136; meaning strings L196 | **Met / non-goals explicit.** Matches docs/26: empirical differential R5, not proof or merge authority. |\n| **BF7** | Focused reds + green suite + BoB cleanup evidence | `impl/test/phase25-atlas-behavior-fingerprint.test.mjs`; evidence `run.mjs` checks `noSandboxResidue` / resume / reverify | **Met for shipped reds**; **gap:** no red for early-exit single-frame forge (BF3). BoB evidence is corroboration only, not a substitute for that red. |\n\n**Minimal BF3 contract patch (no new phase surface):** Parent must reject observations unless the result channel is runner-authenticated against same-process target subversion of process lifetime — e.g. (a) freeze/`process.exit` and known force-exit entry points after capturing `hardExit`, emit, then allow exit only once; and/or (b) fail closed if the child can produce a protocol line without the runner post-loop epilogue running. Multi-frame rejection alone is insufficient.\n\n## Red tests and proof\n\n### Actionable defect — BF3 single-frame early exit forge\n\n**Mechanism (source):**\n\n1. Runner binds stdout/`exit` then `import(targetUrl)` (`RUNNER` L20–35).\n2. Target body may write stdout and call `process.exit` — still the real exit unless neutered; binding `hardExit` does not remove `process.exit` from the target’s view.\n3. Parent accepts exactly one line starting `BATON_BEHAVIOR_RESULT:` and `v8.deserialize`s it (L155–160). There is no runner MAC, nonce bound outside target-readable surfaces, or “epilogue reached” bit.\n4. Dual repetition (`_observe` L178–180) only requires equal observations — a deterministic forge passes both children.\n\n**Concrete failure sequence (reproducible operator corpus):**\n\n```js\n// target: forge.mjs  (dependency-free ESM named export)\nimport { serialize } from 'node:v8';\nexport function calculate(x) {\n  const observations = [{\n    caseIndex: 0,\n    kind: 'return',\n    value: 999,\n    valueBytes: Buffer.from(serialize(999)).toString('base64'),\n  }];\n  const frame = Buffer.from(serialize({\n    nodeVersion: process.version,\n    observations,\n  })).toString('base64');\n  process.stdout.write('\\nBATON_BEHAVIOR_RESULT:' + frame + '\\n');\n  process.exit(0); // runner never reaches L55–58\n}\n```\n\nInvoke `behavior.fingerprint` with `{ path: 'forge.mjs', exportName: 'calculate', corpus: [1] }` under a normal root.\n\n**Expected under BF3 “runner-owned”:** typed failure (`observation_protocol` / `execution_failed` / equivalent authenticity code) — runner did not complete.\n\n**Actual with current code:** `status: 'ok'` (or bounded ok path) with `payload[0].value === 999` while honest evaluation would be `2` if the export were `x * 2`. Sync dual-frame still fails (existing red L49–50); deferred `setImmediate` forge is killed by `hardExit` (red L45–48). **Neither red covers exit-before-epilogue.**\n\n**Defect vs non-goal:** Implementation defect against BF3 frame ownership. Not excused by BF6 “not semantic equivalence” — the artifact claims false observed returns for the pinned corpus.\n\n### Seams exercised without remaining actionable defects\n\n| Attack class | Sequence | Outcome | Class |\n|--------------|----------|---------|-------|\n| FS escape read | `readFileSync('/etc/passwd')` uncaught | `sandbox_violation` (test L53–56; L163) | Fixed / Met |\n| Net / child / worker | `fetch` / `execFileSync` / `Worker` | `sandbox_violation` (test L59–66) | Fixed / Met |\n| Ambient secret | Parent sets `BATON_BEHAVIOR_SECRET_SENTINEL`; child `process.env` inspect | `undefined`; env object L153 has no inheritance | Fixed / Met |\n| Path escape / language / corpus / source | `../`, `.py`, 17 cases, `undefined` corpus, tiny `maxSourceBytes` | typed codes (test L87–95) | Fixed / Met |\n| Deferred stdout suffix | `setImmediate` second frame | single runner frame + exit; parent multi-frame reject | Fixed (5a94c51) |\n| Sync multi-frame | write forge frame then return | `observation_protocol` | Fixed |\n| JSON special collapse | compare NaN/null and -0/0 | diverge via `valueBytes`/`numberClass` (test L37–42) | Fixed |\n| Nondeterminism / timeout | `randomUUID` / `while(true)` | `nondeterministic` / `execution_timeout` (test L80–84) | Met |\n| Artifact tamper / resume | alter artifact bytes; resume | `artifact_integrity` (test L98–105; resume L235–237) | Met |\n| Sandbox residue | BoB `run.mjs` L13–36 `noSandboxResidue` | finally `rmSync` L170–172 | Met (cleanup path) |\n| Caught permission probe | try/catch deny, return `e.code` | normal return observation | **Non-goal** (effects not inferred; BF6) |\n| Imports / multi-file / coverage | follow deps, gen inputs | unsupported by design | **Non-goal** (BF1/BF6, docs/26) |\n\n### R5 plan alignment\n\ndocs/15 places R5 at equivalence/behavioral differential traces; docs/26 Phase 25 instantiates the **first measured** slice: pinned-corpus, sandboxed, non-proof. The residual forge breaks that slice’s observation integrity claim, not the deliberate non-claim of semantic equivalence.\n\n## Risks and rejection criteria\n\n**Reject Phase 25 BF3 closure while** a target can, in one child lifetime: (1) write a single valid `BATON_BEHAVIOR_RESULT` v8-base64 envelope to stdout and (2) terminate the process so the runner epilogue never runs, and the parent still returns `ok`/`needs_resume` with those observations. Any “fix” that only multiplies frames, only blocks `setImmediate`, or only checks `frames.length === 1` is insufficient.\n\n**Accept BF3 re-close only when:**\n\n1. A focused red implements the early-`process.exit` (or equivalent force-exit) single-frame forge above and expects typed failure; and  \n2. Dual-run + honest pure export reds remain green; and  \n3. No new claim of semantic equivalence, coverage, or effect completeness is introduced.\n\n**Do not reject on:** caught sandbox probes; missing dependency graph; weak operator corpora; Node permission-model residual native escapes outside BF2’s stated deny list; BoB `summary.json` path ephemerality; maxBuffer errors mapping to `execution_failed` rather than `output_too_large` (bounds still fail closed).\n\n**Risk if unfixed:** fingerprints and before/after agreements become attacker-chosen under adversarial child code while still labeled deterministic observed corpus agreement — silent integrity failure of the R5 vertical, worse than honest `execution_failed`."
+    },
+    {
+      "taskId": "grok-behavior-review-composer",
+      "model": "grok-composer-2.5-fast",
+      "path": "reviews/dogfood/grok-behavior-review-composer.md",
+      "stance": "semantics",
+      "workerId": "w-2",
+      "handle": {
+        "id": "w-2",
+        "vendor": "grok",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"adversarial-implementation-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-composer-2.5-fast"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f549d-6392-7912-b025-fb35e525f361",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-behavior-closure.tOl93h/.baton/wt/grok-behavior-review-composer",
+          "repoRoot": "/private/tmp/baton-behavior-closure.tOl93h",
+          "baseSha": "acc3d93aa207d0812662b287191cbe908d68449d",
+          "branch": "baton/grok-behavior-review-composer",
+          "ownerTaskId": "grok-behavior-review-composer"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-behavior-closure.tOl93h/.baton/runtime/w-2",
+          "home": "/private/tmp/baton-behavior-closure.tOl93h/.baton/runtime/w-2/home",
+          "tmp": "/private/tmp/baton-behavior-closure.tOl93h/.baton/runtime/w-2/tmp",
+          "config": "/private/tmp/baton-behavior-closure.tOl93h/.baton/runtime/w-2/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-behavior-review-composer",
+        "worktree": "/private/tmp/baton-behavior-closure.tOl93h/.baton/wt/grok-behavior-review-composer",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 35323,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T04:37:07.785Z"
+      },
+      "pid": 45889,
+      "verify": {
+        "worker": "w-2",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"adversarial-implementation-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 11
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "758c4cac3c43d62f85fc712dfe62240c9f29455f",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-composer-2.5-fast",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"adversarial-implementation-review\"]"
+          }
+        },
+        "seq": 433,
+        "ts": "2026-07-12T04:38:09.518Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 11
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"adversarial-implementation-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f549d-6392-7912-b025-fb35e525f361",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-behavior-closure.tOl93h/.baton/wt/grok-behavior-review-composer",
+          "repoRoot": "/private/tmp/baton-behavior-closure.tOl93h",
+          "baseSha": "acc3d93aa207d0812662b287191cbe908d68449d",
+          "branch": "baton/grok-behavior-review-composer",
+          "ownerTaskId": "grok-behavior-review-composer"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# Phase 25 BF1–BF7 adversarial review (commit `acc3d93`)\n\nGrounding: `spec/phase25/atlas-behavior-fingerprint.md`, `impl/src/atlas-behavior-fingerprint.mjs`, `impl/test/phase25-atlas-behavior-fingerprint.test.mjs`, `docs/handoff/evidence/phase25-atlas-behavior-fingerprint-2026-07-11.md`, Baton-on-Baton evidence under `docs/reference/evidence/phase25-atlas-behavior-fingerprint-2026-07-11/` (reverify proof corrected at `acc3d93`), and R5 placement in `docs/15-representation-and-computation.md` §4c and `docs/26-full-system-goal.md` Phase 25 checkpoint. Worker narratives and handoff pass counts are not trusted without source-backed sequences.\n\n## Decision\n\n**One actionable BF1–BF7 implementation defect remains.**\n\nThe corrected tree at `acc3d93` fixes the two defects documented in `docs/26-full-system-goal.md` and the handoff evidence: deferred stdout suffix-hijack of the runner frame (BF3) and JSON collapse of runtime-distinct returns into false `behavior.compare` agreement (BF3/BF4). V8 structured serialization, single-frame emission with synchronous `process.exit(0)` before deferred target I/O, and parent rejection of zero or multiple `BATON_BEHAVIOR_RESULT:` lines address those seams. No further actionable defect remains in fingerprint/delta identity, nondeterminism gating, corpus validation before child launch, sandbox cleanup, or digest-stable `reverify` when args are unchanged.\n\nThe remaining defect is BF1 export rejection taxonomy. When the child runner finds a missing or non-function named export it throws `EXPORT_NOT_FUNCTION` on the error object (`impl/src/atlas-behavior-fingerprint.mjs:36`), but the parent remaps child failure using `error.message.includes('EXPORT_NOT_FUNCTION')` (`impl/src/atlas-behavior-fingerprint.mjs:169`). The thrown message is `'named export is not a function'`, so the substring never matches and callers receive `execution_failed` instead of `invalid_export`. BF1 requires rejecting missing/non-function exports; the rejection happens, but the typed code contract is wrong and is not red-covered.\n\nAll other reviewed gaps are explicit non-goals (JSON corpus expressiveness limits, no dependency following, no coverage or semantic-equivalence claims, throw identity limited to name/message/code) or BF7 red omissions that do not prove an implementation hole given current source.\n\n## Proposed numbered contract\n\nImplementation matrix for BF1–BF7 only; scope is not expanded beyond `spec/phase25/atlas-behavior-fingerprint.md`.\n\n| # | Seam | Verdict at `acc3d93` | Primary evidence |\n|---|------|----------------------|------------------|\n| BF1 | Pure-function ESM target: relative path confinement, `.js`/`.mjs` only, named-export invoke, corpus/size ceilings, reject bad exports | **Partial — one defect** | Path/language/corpus/source bounds and `invalid_export` for bad export *names* are implemented (`validatePath` `70-74`, `corpusBytes` `88-107`, `_observe` `176`) and red-tested (`impl/test/phase25-atlas-behavior-fingerprint.test.mjs:87-96`). Missing/non-function exports are rejected in the child (`atlas-behavior-fingerprint.mjs:35-36`) but mis-typed as `execution_failed` in the parent (`169`). |\n| BF2 | Real Node permission sandbox: isolated copy, minimal env, fs-read-only sandbox, deny network/child/workers/writes, typed `sandbox_violation`, always `rmSync` sandbox | **Met** | `_once` grants canonical temp root (`140-144`, `145`), strips ambient env (`153`), runs `--permission --allow-fs-read=${sandbox}` (`148-149`), detects `ERR_ACCESS_DENIED` throws (`163`), and removes sandbox in `finally` (`170-171`). Reds: fs escape (`test.mjs:53-57`), network/child/worker (`59-67`), env sentinel (`69-78`). |\n| BF3 | Deterministic observation: dual isolated runs, typed `nondeterministic`, structured-value identity, single runner frame, normalized case records, output/time bounds | **Met** | Two `_once` passes (`175-180`), `stable()` equality gate (`180`), v8 `serialize`/`deserialize` runner channel (`32`, `55-58`, `157-161`), `valueBytes` plus `numberClass` for special numbers (`41-45`), sync exit before deferred hijack (`56-58`), frame cardinality check (`155-156`). Reds: stable fingerprint (`15-22`), special-number divergence (`37-43`), frame hijack (`45-51`), nondeterminism/timeout (`80-85`). |\n| BF4 | Before/after compare under one corpus: case-indexed divergences, `observed_corpus_agreement_not_semantic_equivalence`, textual change may agree | **Met** | `invoke` compare arm (`217-229`) diffs per-case `stable()` observations (`220-222`), sets meaning (`196`, `test.mjs:32`), agrees on behavior-preserving rewrite (`24-35`). Identity uses full observation records including `valueBytes`, not JSON preview alone. |\n| BF5 | ACI lifecycle: bounded envelope, content-addressed artifacts, token resume, digest/path/schema integrity, cancellation, deterministic reverify | **Met with red gaps** | `_writeResult` (`188-206`), `resume` digest/path/offset guards (`232-244`), `reverify` digest replay (`246-249`). Reds: resume/tamper/reverify (`98-106`). Not implemented as defects: resume omits `provenance.meaning` (`243`) — artifact ref still carries pinned meaning in stored JSON (`196-202`). |\n| BF6 | Honest limitations: pin digests/policy/observations; no effect inference, deps, input gen, shrink, or coverage claims | **Met** | `card().limitations` (`136-137`), invoke `provenance.meaning` (`196-202`), spec-aligned handoff boundary (`docs/handoff/evidence/...:55-61`). JSON corpus cannot pin `-0`/`NaN`/`Infinity` inputs (`corpusBytes` `93-94`) — consistent with “operator-pinned JSON corpus,” not return observation. |\n| BF7 | Acceptance reds for stable/divergent/nondeterministic/sandbox/timeout/bounds/cancel/resume/tamper/reverify plus Baton-on-Baton | **Met with omissions** | Ten focused tests cover listed seams (`impl/test/phase25-atlas-behavior-fingerprint.test.mjs`). Handoff claims 10/10 gate and BoB cleanup (`docs/handoff/evidence/...:27-35`). Missing reds (non-function export code, `artifact_too_large`, negative `reverify`, invalid resume cursor) are test/evidence gaps, not demonstrated impl failures. |\n\n## Red tests and proof\n\n### Fixed defects (no longer actionable)\n\n**Deferred stdout suffix-hijack (BF3).** Failure sequence before fix: target schedules `setImmediate(() => process.stdout.write('\\nBATON_BEHAVIOR_RESULT:…'))`, runner wrote an honest frame then exited asynchronously; parent `stdout.split(...).filter(line => line.startsWith('BATON_BEHAVIOR_RESULT:'))` could observe two lines and accept the attacker’s last frame on both repetitions, yielding a stable but forged fingerprint. Current runner captures `emit`/`hardExit` before `import`, removes `beforeExit`/`exit` listeners, writes exactly one serialized frame, and calls `hardExit(0)` synchronously (`atlas-behavior-fingerprint.mjs:21-22`, `55-58`). Parent requires `frames.length === 1` (`155-156`). Red: deferred hijack still returns real `6` (`test.mjs:45-48`); synchronous forged prefix yields `observation_protocol` (`49-50`).\n\n**JSON collapse false agreement (BF3/BF4).** Failure sequence: returns `NaN` vs `null` and `-0` vs `0` serialize identically under JSON preview, so `behavior.compare` reported `agree: true` despite runtime-distinct values. Current runner always records `valueBytes = serialize(value)` (`41`) and tags `numberClass`/`valueType` (`42-45`); parent/compare use recursive `stable()` over the full observation object (`14-17`, `180`, `221`). Red: special-number compare diverges on both cases (`test.mjs:37-43`).\n\n### Remaining actionable defect\n\n**Non-function export mis-typed (BF1).** Reproducible sequence:\n\n1. Write `export const calculate = 1` to `bad.mjs` under a confined root.\n2. `atlas.invoke('behavior.fingerprint', { path: 'bad.mjs', exportName: 'calculate', corpus: [1] }, { root, budgetTokens: 100 })`.\n3. Child import succeeds; `typeof fn !== 'function'` throws at `atlas-behavior-fingerprint.mjs:36` with `{ code: 'EXPORT_NOT_FUNCTION' }` on the error object, message `'named export is not a function'`.\n4. Parent `execFile` catch at `165-169` inspects only `error.message`, not `error.code` or stderr framing; message does not contain the substring `EXPORT_NOT_FUNCTION`.\n5. Caller receives `code: 'execution_failed'`, not `invalid_export` as used for malformed export names (`176`).\n\nThis is an implementation defect, not a non-goal: BF1 explicitly requires rejecting non-function exports, and the capability already exposes `invalid_export` for export-name validation. The failure is classification only — observation does not proceed and no misleading artifact is written.\n\nProposed red (not in tree): `assert.rejects(..., (e) => e.code === 'invalid_export')` for `exportName` pointing at a non-function binding.\n\n### Non-goals confirmed by source (not defects)\n\n- **JSON corpus cannot express `-0` or non-finite numbers as inputs.** `corpusBytes` rejects non-finite numbers (`93-94`); `JSON.stringify(-0)` is `\"0\"`. Pinning negative zero as input is out of scope for a JSON corpus; return-side `-0` identity is still preserved via structured bytes (`42-44`, `test.mjs:37-43`).\n- **Throw observations collapse to name/message/code (`51`).** Two distinct errors with identical surfaced fields agree; stack traces and cause chains beyond `code` are not part of the observation contract (spec BF3 “normalized” records).\n- **No dependency graph or import following.** Spec BF1/BF6: “dependency-free JavaScript ESM”; imports in target code are operator responsibility.\n- **Resume slice omits full provenance.** `resume` returns `provenance: { artifactDigest, resumed_from, deterministic: true }` (`243`) without repeating `meaning` or `sandbox`; the content-addressed artifact at `refs[0]` still stores the full pinned record (`188-202`). Consumers must resolve the ref for limitation language — awkward for ACI but not a falsified claim in `invoke` results.\n\n### Missing reds (BF7 omissions, not proven impl failures)\n\n| Missing red | Why it is not an actionable defect without a failing sequence |\n|-------------|---------------------------------------------------------------|\n| Non-function / missing export → `invalid_export` | Rejection occurs; only error code is wrong (see above). |\n| `artifact_too_large` | Guard exists (`190`); no sequence shows bypass. |\n| `reverify` with changed corpus/source → `ok: false` | `reverify` reruns `invoke` and compares digests (`246-248`); changed inputs necessarily change artifact JSON. |\n| `invalid_cursor` / resume path escape | Validated at `234-241`; no source path shows acceptance of escaped paths. |\n| `output_too_large` on observation JSON | Checked post-deserialize (`162`); would need a target returning huge structured values. |\n\n### Baton-on-Baton and `acc3d93`\n\nHandoff evidence (`docs/handoff/evidence/phase25-atlas-behavior-fingerprint-2026-07-11.md`) claims BoB fingerprints `impl/src/route-tuple.mjs#routeTupleKey`, resumes a bounded result, reverifies, self-compares, balances events, and leaves no stray sandbox roots. Commit `acc3d93` only adjusts BoB `summary.json` / `events.jsonl` for reverify proof correction — implementation files are unchanged on that commit. Recursive review artifacts under `docs/reference/evidence/phase25-atlas-behavior-grok-review-2026-07-11/` document the prior stdout and JSON-collapse defects and their fixes; those findings match the current runner/parent code cited above.\n\nIndependent test execution in this worktree (`node --test impl/test/phase25-atlas-behavior-fingerprint.test.mjs`) failed at import resolution (`ERR_MODULE_NOT_FOUND` via `impl/src/index.mjs`); verdicts above are from direct source inspection and test file content, not from trusting handoff pass counts.\n\n## Risks and rejection criteria\n\n**Reject Phase 25 BF closure if:**\n\n1. **Export rejection taxonomy regresses or stays wrong.** Any missing/non-function named export must surface `invalid_export` (or a single documented BF1 code), not `execution_failed`, so orchestrators do not treat export-shape errors as sandbox crashes.\n2. **Observation identity regresses to JSON preview.** Compare/nondeterminism gates must continue to use structured observation records (`valueBytes`, `numberClass`, `valueType`), not `payload[].value` alone; otherwise `NaN`/`null` and `-0`/`0` false agreement returns.\n3. **Result channel becomes ambiguous again.** More than one `BATON_BEHAVIOR_RESULT:` line, or attacker-controlled trailing frames after runner exit, must fail `observation_protocol` and never produce `status: 'ok'`.\n4. **Sandbox or honesty claims overreach.** Artifacts or `provenance.meaning` must not imply semantic equivalence, coverage, or effect inference; `observed_*_not_semantic_equivalence` must remain on fresh `invoke` results (`196-202`).\n5. **Reverify or resume integrity loosens.** `resume` must keep exact-path + digest equality (`236-237`); `reverify` must remain a full re-observation digest check, not a shallow payload compare.\n6. **BoB evidence diverges from implementation.** Evidence that asserts cleanup, reverify, or compare without matching artifact digests/event balance should block sign-off even if unit reds pass.\n\n**Residual risks accepting current tree:**\n\n- **Weak or JSON-limited corpora** can agree on behaviorally different code outside pinned cases (doc 15 §4c; spec BF6) — accepted non-goal.\n- **Module evaluation side effects** before the export check run in the sandbox (`34-35`); determinism is only over corpus cases, not import-time globals.\n- **`stable()` ordering** depends on sorted object keys (`16`); schema additions must keep deterministic key ordering or nondeterminism detection false-negatives.\n- **Child `maxBuffer`** is tied to `maxOutputBytes` (`152`); pathological stdout volume before the runner frame may fail as `execution_failed` rather than `output_too_large` — deployment-bounded but coarse.\n- **BF7 red suite** does not exercise every typed failure path; closure should require the non-function export red before calling BF1 complete.\n\n**Recommendation:** Land a one-line parent fix (check child stderr/exit framing for `EXPORT_NOT_FUNCTION` or map via structured child error code) plus the BF1 red, then treat BF1–BF7 implementation seams as closed for Phase 25 R5 vertical scope."
+    }
+  ],
+  "approvals": [
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:3",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-2",
+      "requestId": "w-2:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-2",
+      "requestId": "w-2:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:4",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:5",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "stopResults": [
+    {
+      "taskId": "grok-behavior-review-45",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "grok-behavior-review-composer",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "twoReviews": true,
+    "distinctLivePids": true,
+    "concurrentTurns": true,
+    "exactModelsObserved": true,
+    "bothFreshVerified": true,
+    "reportsCaptured": true,
+    "bothKillsConfirmed": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimeGone": true,
+    "branchesGone": true
+  },
+  "fatal": null,
+  "pass": true
+}

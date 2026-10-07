@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-12T01:29:00.371Z",
+  "salt": "fc20260812012900",
+  "role": "fold-70",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-841c53fa39ef2a868f5a6f6e92fb4f75"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-70",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-70": {
+      "pin": "4583d15e8974d7bf6f876fab780ac86d4ccf25a5",
+      "paths": [
+        "docs/reference/evidence/cross-deployment-knowledge-2026-08-07/cross-deployment-knowledge-contract.md",
+        "docs/reference/evidence/cross-deployment-knowledge-2026-08-07/contract-fold.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 396,
+  "verdict": "FOLD-70-OK"
+}

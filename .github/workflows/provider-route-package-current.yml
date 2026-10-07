@@ -1,0 +1,94 @@
+name: provider-route-current-native-package
+
+'on':
+  push:
+    branches: [codex/validate-route678-681-full-20261007]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  darwin-arm64:
+    runs-on: xcode-27
+    env:
+      BEND_NO_TELEMETRY: '1'
+      ROUTE_SOURCE: '72ee0f08a628e5f350cd6c7536027e8f7096f2c0'
+      ROUTE_TREE: '54f4d96ff006f92ffafc7a4ed26dc87c7d669cf5'
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: '72ee0f08a628e5f350cd6c7536027e8f7096f2c0'
+          persist-credentials: false
+
+      - name: Select Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Create owned build clone and preserve compiler archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          run="$RUNNER_TEMP/baton2-native-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          mkdir -p "$run/toolchain"
+          printf 'BATON2_NATIVE_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          git clone --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$run/build-source" > "$run/clone.log" 2>&1
+          git -C "$run/build-source" checkout --detach "$ROUTE_SOURCE" >> "$run/clone.log" 2>&1
+          test "$(git -C "$run/build-source" rev-parse HEAD)" = "$ROUTE_SOURCE"
+          test "$(git -C "$run/build-source" rev-parse HEAD^{tree})" = "$ROUTE_TREE"
+          git -C "$run/build-source" rev-parse HEAD HEAD^{tree} > "$run/source-identity.txt"
+          cat "$run/source-identity.txt"
+          archive="$run/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
+            -o "$archive" > "$run/toolchain/download.log" 2>&1
+          printf 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31  %s\n' "$archive" | \
+            shasum -a 256 -c - > "$run/toolchain/archive-check.log" 2>&1
+          tar -tzf "$archive" > "$run/toolchain/archive-members.txt"
+          test ! -e "$run/toolchain-home"
+          BEND_HOME="$run/toolchain-home" sh "$run/build-source/docs/bend2/reference/toolchain/install-2.0.25.sh" \
+            > "$run/toolchain/install.log" 2>&1
+
+      - name: Run complete exact-source gates and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$BATON2_NATIVE_RUN/build-source/bend2/scripts/package-native.py" \
+            --output "$BATON2_NATIVE_RUN/package" \
+            --bend "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" \
+            --compiler-archive "$BATON2_NATIVE_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+
+      - name: Exercise extracted artifact with build path unavailable
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="$BATON2_NATIVE_RUN/build-source"
+          retained="$BATON2_NATIVE_RUN/build-source-retained"
+          test ! -e "$retained"
+          mv "$build" "$retained"
+          trap 'mv "$retained" "$build"' EXIT
+          archive="$BATON2_NATIVE_RUN/package/baton2-development-darwin-arm64-$ROUTE_SOURCE.tar.gz"
+          sha=$(awk '{print $1}' "$BATON2_NATIVE_RUN/package/SHA256SUMS")
+          python3 "$GITHUB_WORKSPACE/bend2/scripts/smoke-native-artifact.py" \
+            --archive "$archive" --sha256 "$sha" \
+            --provenance "$BATON2_NATIVE_RUN/package/manifest.json" \
+            --unavailable-source "$build" --output "$BATON2_NATIVE_RUN/smoke"
+
+      - name: Retain native artifact and validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: baton2-development-darwin-arm64-${{ env.ROUTE_SOURCE }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.BATON2_NATIVE_RUN }}/package/
+            ${{ env.BATON2_NATIVE_RUN }}/smoke/
+            ${{ env.BATON2_NATIVE_RUN }}/toolchain/
+            ${{ env.BATON2_NATIVE_RUN }}/clone.log
+            ${{ env.BATON2_NATIVE_RUN }}/source-identity.txt
+          if-no-files-found: error
+          include-hidden-files: true

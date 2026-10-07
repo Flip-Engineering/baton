@@ -1,0 +1,45 @@
+# Baton2 1.0 release report
+
+[Baton2 1.0.1](https://github.com/Flip-Engineering/baton/releases/tag/baton2-v1.0.1) at source [e8ab3996](https://github.com/Flip-Engineering/baton/commit/e8ab3996dde581e9634e944a9db4a1eaf721ffbe) was published on 2026-10-04 at 09:08:52 UTC. Complete local and hosted gates, source-unavailable release-archive use, normal installation and useful native work passed. Independent prepublication acceptance covers the tag, draft assets, downloaded smoke and final installation recipe. Actual anonymous public downloads match the qualified LOCAL and draft bytes. Independent final-public acceptance verified the complete payload, current installation, published metadata and byte correspondence. Public 1.0.0 at `ea514a28` remains preserved.
+
+The qualified platform is macOS 27 arm64. Configured Git workflows require Git and Node 22.15 or later. The package contains the compiled coordinator, six MJS adapters, `libexec/baton2/git-series.mjs`, source/build manifests, Apache 2.0 project terms and separate upstream Bend notices. Model work requires the selected provider executable and authentication; Codex uses the ChatGPT subscription login.
+
+## Native controls and useful work
+
+Routine orchestration uses compiled `start`, `recruit`, `receiver`, `dispatch-file` and `dispatch-turn`, with native inspection, acknowledgment, knowledge and checked Git operations. MCP forwards `baton2_recruit`, `baton2_receiver`, `baton2_dispatch_file` and `baton2_dispatch_turn`. The shipped Node helper selects recipient Git identity. Developer tests, fault instrumentation and artifact qualification use Python, Node and shell tools.
+
+The public roles and groups are Principal Conductor, Associate Conductor, Player, Ensemble, Section and Orchestra. Conductors message descendants; subordinates message their immediate Conductor. Peer messaging requires an explicitly tight Ensemble, with matching hierarchy depth for Conductor peers. Ensembles default to loose coupling. Reviewed knowledge retains evidence and limits; promotion preserves authorship and notifies the destination owner. Git attribution uses model-series identities. [Setup](https://github.com/Flip-Engineering/baton/blob/e8ab3996dde581e9634e944a9db4a1eaf721ffbe/docs/bend2/harness-setup.md) and [messaging](https://github.com/Flip-Engineering/baton/blob/e8ab3996dde581e9634e944a9db4a1eaf721ffbe/docs/bend2/messaging.md)
+
+A normally installed subscription Codex Principal recruited a Kimi K3 Associate, which delegated useful repository work to DeepSeek Flash and Muse Spark 1.3 contributor. Kimi reviewed and checked both Player landings; the Principal reviewed and checked the Associate landing. Six checked landings across both levels produced tests and a workflow guide at `cae1c68b`, subsequently published on `bend2-trial`. The selected check passed on candidate and target with zero skips. A corrective follow-up captured both Players physically live; Kimi also steered DeepSeek during its original active turn. Initial overlap was missed and remains unproven. A landing conflict required a merge and checked retry.
+
+Kimi authored an evidence-backed finding; the Principal reviewed and promoted it, verified provenance and the destination notice, and notified Kimi. Complete reports and 14 Operator acknowledgment transitions were reviewed. A separate normal 1.0.1 saved-Codex inspection completed nine direct shell/native calls and delivered its full automatic Operator report. Native events confirmed subordinate models. Codex model and effort were bound by requested configuration and arguments; server-effective behavior was unobserved. [Native hierarchy qualification](https://github.com/Flip-Engineering/baton/issues/657#issuecomment-5978296537) and [subscription-native installed-use qualification](https://github.com/Flip-Engineering/baton/issues/655#issuecomment-5978295868)
+
+## Laws and measured validation
+
+The coordinator entry imports operative laws over real functions. Both exact e8 qualifications passed 496 proof-removal controls, 156 implementation mutations and 653 compiler invocations. Each default native qualification passed 344 Python cases across 31 suites and 12 Node cases. Foreign host assumptions remain explicit; process, SQLite, Git and harness behavior has separately scoped runtime evidence.
+
+| Gate | Local exit; elapsed seconds | Hosted exit; elapsed seconds |
+| --- | --- | --- |
+| Native build | 0; 29.35 | 0; 265.17 |
+| Complete law controls | 0; 6415.09 | 0; 9858.56 |
+| Default native checks | 0; 244.61 | 0; 1145.95 |
+
+The hosted aggregate package step lasted 11278 seconds by GitHub timestamps. Internal durations come from retained gate receipts. These are separate host measurements. The failed historical matched native comparison establishes no causal speed or cost advantage. The independent data review of [hosted run 37179320337, attempt 1](https://github.com/Flip-Engineering/baton/actions/runs/37179320337) verified 550 retained file hashes, 150 source-file bindings, seven staged MJS files, notices and 34 extracted smoke commands.
+
+The consolidation review accounts for all 20 accepted post-1.0 commits and retains the delivery-lane references. Their validated changes are represented in e8. Scope-qualified closure comments and closed state are recorded for [#655](https://github.com/Flip-Engineering/baton/issues/655#issuecomment-5978295868), [#656](https://github.com/Flip-Engineering/baton/issues/656#issuecomment-5978296191) and [#657](https://github.com/Flip-Engineering/baton/issues/657#issuecomment-5978296537).
+
+## Recovery and remaining limits
+
+Controlled cases cover keeper loss with a surviving native child, keeper-plus-observer loss, original result retention, pending-input continuation, fresh fallback for refused conversations and direct Turn admission. The limited real keeper-loss case retained original terminal/report text and later saved-ID continuation; its live-retry window was missed and original numeric wait is unknown. A separate real Codex all-owner-loss case killed three selected owned processes while the OS and storage stayed available, resumed the saved conversation and completed pending work. Missing-result and unknown-exit reports remained distinct from the resumed result. Nondirect numeric waits remain unknown. That model turn used an optional Python read aggregator; the later native-only release-prefix inspection has separate acceptance. [Process-loss qualification and its limits](https://github.com/Flip-Engineering/baton/issues/656#issuecomment-5978296191)
+
+Measured inspection friction remains: help omits supported `--pretty` forms for several readers, endpoints display as escaped JSON strings, and harness displays can truncate complete retained output. Full working-day use, physical host/power loss, replacement-observer startup failure, startup birth-persistence windows, complete descendant lifetime recovery and broader provider/platform coverage remain unqualified in #539.
+
+## Installation and delivery status
+
+The normal installation originated from the qualified LOCAL archive at `~/.local/share/baton2/releases/1.0.1-e8ab3996dde581e9634e944a9db4a1eaf721ffbe`. Mutable databases, logs and conversations remain outside that version/source directory. Guarded symlink activation passed help and fresh status checks; all three earlier prefixes remained unchanged. Later download-byte correspondence preserves the LOCAL origin. The installed binary is `02dd409e…`; the independently qualified hosted development binary is `3af5d902…`, with its own build and host receipts.
+
+Annotated tag `baton2-v1.0.1` object `8c2ff0dc222c2b06a3e5bae7e883b1106be6153c` peels to e8. Release `402925870` preserves archive, manifest and checksum asset IDs `609464599`, `609464594` and `609464593` from the accepted draft. Anonymous asset-API downloads equal both draft and LOCAL bytes: archive `699fee6e…`, manifest `d2d31cd7…` and checksum file `c99e5b1f…`. Public release metadata records `draft=false` and `prerelease=false`; its body matches SHA-256 `81d9b72a63ccbbcf2c1edc5731fc1d47878be131716a3e88044baca59b80ed84`. Six anonymous metadata/tag/asset reads completed with outer exit 0; separate numeric child waits remain unknown. Downloaded-draft smoke completed with outer exit 0 and restored the source path. Independent prepublication and final-public acceptance passed.
+
+The six [declared release criteria](https://github.com/Flip-Engineering/baton/blob/e8ab3996dde581e9634e944a9db4a1eaf721ffbe/docs/bend2/readiness.md) retain their requirements. Actual publication, anonymous serving and public=draft=LOCAL byte correspondence are recorded. Independent final-public acceptance completed with no blockers. The audit of original-Baton capabilities follows this completed release report.
+
+The final public acceptance receipt has SHA256 `8df61adfc144263f04f62b356e198b95e64f4574f4b007a8f75f04bba9176e3f`. Full qualification files remain in the operator's retained evidence directories; the release assets carry source/build provenance and complete gate logs.

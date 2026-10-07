@@ -1,0 +1,460 @@
+{
+  "at": "2026-07-12T04:15:07.116Z",
+  "repoHead": "6f0d47ffca152da5cf14be227fd7267aa3456eb9",
+  "reviewTimeoutMs": 360000,
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "rows": [
+    {
+      "taskId": "grok-ir-scope-45",
+      "model": "grok-4.5",
+      "path": "reviews/dogfood/grok-ir-scope-45.md",
+      "stance": "constructive",
+      "workerId": "w-1",
+      "handle": {
+        "id": "w-1",
+        "vendor": "grok",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"representation-design-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-4.5"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f5488-41bd-7010-b1a6-abe2f066ea30",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-ir-scope-review.kRdNBk/.baton/wt/grok-ir-scope-45",
+          "repoRoot": "/private/tmp/baton-ir-scope-review.kRdNBk",
+          "baseSha": "6f0d47ffca152da5cf14be227fd7267aa3456eb9",
+          "branch": "baton/grok-ir-scope-45",
+          "ownerTaskId": "grok-ir-scope-45"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-ir-scope-review.kRdNBk/.baton/runtime/w-1",
+          "home": "/private/tmp/baton-ir-scope-review.kRdNBk/.baton/runtime/w-1/home",
+          "tmp": "/private/tmp/baton-ir-scope-review.kRdNBk/.baton/runtime/w-1/tmp",
+          "config": "/private/tmp/baton-ir-scope-review.kRdNBk/.baton/runtime/w-1/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-ir-scope-45",
+        "worktree": "/private/tmp/baton-ir-scope-review.kRdNBk/.baton/wt/grok-ir-scope-45",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 62535,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T04:14:02.074Z"
+      },
+      "pid": 77895,
+      "verify": {
+        "worker": "w-1",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"representation-design-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 10
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "5e305b99e95fc170546e19bbe1b35cb5daaba007",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-4.5",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"representation-design-review\"]"
+          }
+        },
+        "seq": 310,
+        "ts": "2026-07-12T04:15:06.784Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 10
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"representation-design-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f5488-41bd-7010-b1a6-abe2f066ea30",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-ir-scope-review.kRdNBk/.baton/wt/grok-ir-scope-45",
+          "repoRoot": "/private/tmp/baton-ir-scope-review.kRdNBk",
+          "baseSha": "6f0d47ffca152da5cf14be227fd7267aa3456eb9",
+          "branch": "baton/grok-ir-scope-45",
+          "ownerTaskId": "grok-ir-scope-45"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# Grok IR / R4 scope review — `6f0d47f`\n\nGrounded at `6f0d47f` (`Reap workers after operational log failure`). Sources: `docs/15-representation-and-computation.md`, `docs/26-full-system-goal.md` §I, `reviews/frontier-features/representation.md`, `spec/phase18–22` Atlas CPG contracts, `spec/capability-plane.md` ACI envelope, `impl/src/atlas-cpg*.mjs`, evidence notes under `docs/handoff/evidence/phase1{8,9}-*`, and Evidence ladder notes in `docs/capabilities/math-proof.md`. **Existing capability** is labeled **[shipped]**; **new work** is labeled **[new]**.\n\n## Decision\n\n**For JavaScript/TypeScript: measured negative gate — not external compiler IR, not a Baton-authored IR, not a language “IR fixture” that pretends CPG is R4.**\n\n| Option | Verdict |\n|---|---|\n| Real external compiler IR for JS/TS (LLVM/MLIR/MIR-class) | **Reject now.** No commodity JS/TS → hub-recheckable compiler-IR + translation-validation stack is in Baton, and doc 15’s R4 tools are LLVM/MLIR/Rust MIR/CakeML, not V8 bytecode or TS emit. |\n| Deliberately scoped Baton IR for JS/TS | **Reject.** Would duplicate Phase 18–22 CPG under a dishonest name (SSA/CFG/value facts already claimed only as lexical/may-reach seed). |\n| Language fixture that *is* CPG/AST labeled IR | **Reject.** Violates “do not relabel AST/CPG as compiler IR.” |\n| Measured negative gate for JS/TS R4 | **Accept.** Record that R3 is the honest representation ceiling for JS/TS under current tools. |\n| Optional later R4 vertical (not JS/TS product) | **Keep catalogued, do not build as next Atlas increment:** hermetic **external** IR digest envelope (e.g. pinned `.ll` fixtures + optional Alive2 when installed) as Evidence/machine-axis TV consumer — only when a Rust/C/LLVM task demands it. |\n\n**Value proposition of R4 (doc 15 §2, doc 26 §I):** optimization/machine-level reasoning and the substrate for **translation validation** (Alive2 on LLVM IR per math-proof dossier). That value is **not** “richer graph for review” — review value is already R1 structural delta **[shipped Phase 13]** and R3 CPG delta/taint **[shipped Phase 18–22]**.\n\n**What is already R3, not R4 [shipped]:**\n\n- Phase 18 `AtlasCpgSlice`: single-file JS/TS-family CPG seed via `@ast-grep/napi` — containment, block CFG, lexical/`cfg_may` reaching-def, local calls; **explicitly denies** SSA, path-sensitive PDG, alias, interproc, dynamic dispatch as completeness claims (CG1; PS5).\n- Phase 19 `AtlasCpgDelta`: before/after **hub-built** graphs, semantic matching, impact as **graph reachability not behavioral proof** (CD1–CD5).\n- Phase 20/22: operator-specified taint + bounded path-sensitive CFG may-reach; provenance `cfg_may_reach_value_graph_not_safety_proof`.\n- Atlas conventions already on CPG: deployment-derived `artifactRoot`/byte ceilings, content-addressed `schemaVersion` JSON, `summary`/`payload`/`refs`/`cursor`/`cost`/`provenance`, cancel, resume with digest-bound cursor, tamper refusal, `reverify` rebuild-compare digests (CG6–CG7, CD6–CD7, CT6–CT7, PS6; capability-plane §3).\n\n**JS/TS resolution (unambiguous):** the fleet’s JS/TS representation product stops at **R3**. R4 remains in the full-system catalog (doc 26: negative result retires via Decision, not omission) but **does not** get a Baton IR invent or an external-IR mandate for TS sources. Semantic-delta work continues as **CPG/AST delta**, never “IR delta.”\n\n**Smallest honest “R4 vertical” worth building *now*:** not an IR builder. Build a **typed rung-ceiling / negative-gate capability slice** that makes the Decision executable and non-forgeable by workers:\n\n1. Card states `representation_ceiling` per language family (JS/TS → `R3`; IR tools → `unavailable` until tool card probes true).\n2. Any `ir.build` / `ir.delta` / `tv.check` request on JS/TS fails typed (`rung_ceiling` / `unsupported_language`), with provenance pinning source digests and the Decision id — never silent fallback to CPG labeled as IR.\n3. No LLVM/Alive2 hard dependency until a non-JS demand path + installed tool card exist (math-proof filter already notes Alive2 often **not** installed).\n\nOptional **redirect (later, not now):** if/when Baton must exercise R4 ACI plumbing, use **external pinned LLVM IR fixtures** (or rustc-emitted IR under a tool card) and optional Alive2 TV as **Evidence ladder machine-axis**, not as Atlas CPG continuation. That is a **different language substrate**, not a JS/TS feature.\n\n## Proposed numbered contract\n\n**Name:** `AtlasRepresentationCeiling` / `R4NegativeGate` **[new]**  \n**Status:** design Decision at `6f0d47f`; implementation only after red tests land.  \n**Non-goals:** inventing Baton SSA/MIR; wrapping SWC/Babel as “compiler IR”; claiming TV on JS; expanding CPG under IR names.\n\n1. **RC1 — Rung vocabulary is not marketing.**  \n   Cards and artifacts MUST use the doc 15/26 ladder labels. `kind` values for existing CPG media types remain `cpg_*` / `application/vnd.baton.atlas-cpg-*` **[shipped]**. No artifact MAY use `compiler_ir`, `llvm_ir`, `mir`, or `r4` kinds unless produced by a declared external compiler/TV tool path. Falsifier: any CPG JSON or delta ref labeled IR.\n\n2. **RC2 — JS/TS ceiling is R3.**  \n   For paths with JS/TS-family extensions (same set as Phase 18 `LANG`), ops `ir.build`, `ir.lower`, `ir.delta`, `tv.validate` MUST fail typed with code `rung_ceiling` (or `unsupported_language` if the IR tool simply does not apply). Message MUST name max representation rung `R3` and point to Phase 18–22 CPG/taint for structural/dataflow needs. Falsifier: success status on JS/TS for those ops.\n\n3. **RC3 — Worker claims are non-authoritative.**  \n   Callers MUST NOT supply IR text/JSON as authority for a positive R4 verdict. Hub rebuild/probe only (mirror CD1). A worker-prose claim “semantics-preserving IR rewrite” without hub TV is `claim_only`, never `ok`. Falsifier: accept path that trusts worker IR bytes without re-derive or tool recheck.\n\n4. **RC4 — ACI envelope parity with Atlas CPG [shipped pattern → new ops].**  \n   Negative-gate and any future real IR op return the capability-plane envelope: `status`, `summary`, token-bounded `payload`, `refs[]` handles, optional resume `cursor`, `cost`, `provenance` (sourceDigest(s), decisionId, tool card versions, `representationRung`, `ceilingReason`). Full bodies content-addressed under deployment `artifactRoot` with `schemaVersion`. Falsifier: unbounded raw IR dump as default payload; missing provenance fields.\n\n5. **RC5 — Bounds, cancel, resume, tamper, reverify.**  \n   Same discipline as CG6–CG7/CD6–CD7: deployment-derived source/artifact ceilings; `ctx.signal` abort → `cancelled`; resume cursor binds `art:sha256` digest + offset + schema; path escape / digest mismatch / schema drift → `artifact_integrity`; `reverify` re-invokes from sources/tool and compares digests (negative-gate reverify: same typed refusal + same ceiling codes). Falsifier: resume from tampered blob succeeds; reverify skips rebuild.\n\n6. **RC6 — Delta / translation-validation relationship.**  \n   - **Semantic delta for review/risk [shipped R1/R3]:** `AtlasStructuralDelta`, `AtlasCpgDelta` — meaning change in syntax/graph; **not** TV.  \n   - **Translation validation [catalogued Evidence machine-axis, not representation default]:** compares **compiler IR** before/after opt or src→IR refinement (Alive2-class). R4 exists to feed **that** axis, not to replace CPG deltas.  \n   - Contract: a CPG delta MUST NOT be accepted as a TV certificate; a TV certificate MUST name IR digests + tool/version + bound, not CPG node IDs. Falsifier: merge/review path treats `cpg_delta` as `tv` attestation.\n\n7. **RC7 — Tool/substrate choice.**  \n   - **Now:** no new external IR tool required for the negative gate; card probes may report `ir_tools: []`.  \n   - **Later redirect:** only adopt **external** IR producers (e.g. `rustc --emit=llvm-ir`, `clang -emit-llvm`, Alive2) behind capability cards with version pins — never a Baton-written SSA for JS.  \n   - Homelab / project-manager: **forbidden** (doc 26 scope correction).\n\n8. **RC8 — Integration seams.**  \n   - Atlas capability plane only (same invoke/resume/reverify surface as CPG).  \n   - Trust gate / Referee may **query ceiling** when a task brief requests “IR review” on TS; must escalate to CPG delta or refuse, not invent.  \n   - Coordination/epistemic: Decision node edges to this review + ledger event; Representation typed node may record `ceiling:R3` for `language:typescript` **[schema reserved Phase 11; producer later]**.  \n   - No change to southbound harness adapters required for the negative gate.\n\n9. **RC9 — Keep / redirect / retire.**  \n   - **Keep:** R0–R3 Atlas path; doc 26 R4 catalog entry; Alive2/TV as Evidence machine-axis for languages that lower to LLVM.  \n   - **Redirect:** any “JS IR” product request → Phase 19/20/22 CPG delta/taint or Evidence R0–R3 tests/fuzz; any “prove opt safe” on Rust/C → future external IR+TV vertical.  \n   - **Retire (this Decision):** Baton-authored JS/TS compiler IR; labeling CPG as R4; mandatory Alive2 install for JS fleets.\n\n10. **RC10 — Acceptance.**  \n    Focused tests for RC1–RC6 plus one live Baton-on-Baton proof: invoke ceiling op on a real Baton JS source (e.g. `impl/src/atlas-cpg.mjs`); assert typed refusal, stable provenance, reverify agreement, artifact root reap. No claim of IR completeness.\n\n## Red tests and proof\n\n**Red tests [new] (must fail before implementation):**\n\n1. `ir.build` on `.ts`/`.mjs` fixture returns `status: ok` or mediaType containing `ir` while body is CPG-shaped nodes/edges → must fail design (relabel ban).\n2. Worker-supplied “LLVM IR” string accepted as TV pass without tool recheck.\n3. Resume cursor with flipped digest still returns payload.\n4. Missing `artifactRoot` or non-positive ceilings construct successfully.\n5. Card omits JS/TS ceiling / lists `llvm` for `javascript` without tool probe.\n\n**Existing green anchors [shipped] (must stay green; prove R3 ≠ R4):**\n\n- `impl/test/phase18-atlas-cpg.test.mjs` — determinism, bounds, cancel, resume/tamper, reverify, export.\n- `phase19-atlas-cpg-delta.test.mjs` — format invariance, impact honesty, Baton-on-Baton before/after.\n- `phase20` / `phase22` — taint policy, CFG may-reach, partial parse, path-sensitive limits.\n\n**Live proof for this Decision:** Baton-on-Baton run that (a) builds Phase 18 CPG on a Baton source **[shipped pattern]**, and (b) requests R4 IR on the same path and records **typed ceiling failure** with matching reverify — proving the ladder is honest under recursive dogfood without needing Alive2.\n\n## Risks and rejection criteria\n\n| Risk | Rejection / stop criterion |\n|---|---|\n| **Relabel pressure** — ship “IR” by renaming CPG | Reject any PR that changes `cpg_*` media types or summaries to claim compiler IR without external tool provenance. |\n| **Baton IR science project** — custom SSA for TS | Reject if milestone adds Baton IR grammar before a measured external-tool demand on a non-JS language. |\n| **TV confusion** — treat missing CPG path as safety / treat CPG delta as Alive2 | Reject attestations that omit `cfg_may_reach_value_graph_not_safety_proof` / that set Evidence `tv` from CPG digests. |\n| **Tool fiction** — claim Alive2/LLVM demoable when absent | Reject cards that hardcode deep IR tools without probe; match math-proof filter honesty. |\n| **Scope creep into polyglot IR** | Reject multi-language IR matrices before single external-IR language vertical is live-proven. |\n| **Negative gate as no-op doc only** | Reject Decision if no red test enforces typed refusal (doc 26 loop: contract → red → smallest vertical). |\n| **Homelab coupling** | Reject any IR/TV path that requires project-manager or non-portable knowledge service. |\n\n**Honest limitations:** JS/TS agents will not get machine-level opt equivalence from Atlas; R3 may-reach/taint remains unsound for aliases/heap/interproc (PS5). R4 stays a **catalogued ceiling**, not a missing checkbox. Frontier review correctly prioritizes structural change-class + scoped CPG triage over IR.\n\n**Unambiguous next action:** Add a failing focused test + thin card stub that asserts `ir.*` on JS/TS yields `rung_ceiling` (and never emits `compiler_ir` kinds), wire it to this Decision id; **do not** implement a Baton JS IR or Alive2 integration in that PR."
+    },
+    {
+      "taskId": "grok-ir-scope-composer",
+      "model": "grok-composer-2.5-fast",
+      "path": "reviews/dogfood/grok-ir-scope-composer.md",
+      "stance": "adversarial",
+      "workerId": "w-2",
+      "handle": {
+        "id": "w-2",
+        "vendor": "grok",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"representation-design-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-composer-2.5-fast"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f5488-41bd-7243-b7d3-88cb288c141f",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-ir-scope-review.kRdNBk/.baton/wt/grok-ir-scope-composer",
+          "repoRoot": "/private/tmp/baton-ir-scope-review.kRdNBk",
+          "baseSha": "6f0d47ffca152da5cf14be227fd7267aa3456eb9",
+          "branch": "baton/grok-ir-scope-composer",
+          "ownerTaskId": "grok-ir-scope-composer"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-ir-scope-review.kRdNBk/.baton/runtime/w-2",
+          "home": "/private/tmp/baton-ir-scope-review.kRdNBk/.baton/runtime/w-2/home",
+          "tmp": "/private/tmp/baton-ir-scope-review.kRdNBk/.baton/runtime/w-2/tmp",
+          "config": "/private/tmp/baton-ir-scope-review.kRdNBk/.baton/runtime/w-2/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-ir-scope-composer",
+        "worktree": "/private/tmp/baton-ir-scope-review.kRdNBk/.baton/wt/grok-ir-scope-composer",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 41857,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T04:14:02.323Z"
+      },
+      "pid": 77910,
+      "verify": {
+        "worker": "w-2",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"representation-design-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 20
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "07d016439ceb7d4f457eafff9210e1b92b6714b0",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-composer-2.5-fast",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"representation-design-review\"]"
+          }
+        },
+        "seq": 443,
+        "ts": "2026-07-12T04:14:46.471Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 20
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"representation-design-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f5488-41bd-7243-b7d3-88cb288c141f",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-ir-scope-review.kRdNBk/.baton/wt/grok-ir-scope-composer",
+          "repoRoot": "/private/tmp/baton-ir-scope-review.kRdNBk",
+          "baseSha": "6f0d47ffca152da5cf14be227fd7267aa3456eb9",
+          "branch": "baton/grok-ir-scope-composer",
+          "ownerTaskId": "grok-ir-scope-composer"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# R4 compiler IR scope review (adversarial)\n\n*Commit reviewed: `6f0d47f` context from `docs/26-full-system-goal.md` and Phase 18–23 handoff. Stance: falsify “R4 vertical belongs next.”*\n\n## Decision\n\n**Redirect — do not start an R4 compiler-IR vertical next.** Record a **measured negative gate for JavaScript/TypeScript** and keep R4 in the catalog only as a **language-fixtured, Evidence-ladder-adjacent** capability (Rust/C via existing Kani/translation-validation rungs), not as the next Atlas increment.\n\nFalsification succeeded on sequencing, substrate, and demand:\n\n1. **Sequencing.** `docs/26-full-system-goal.md` names browser OIDC/control proof, MCP/stream depth, and operator surfaces as the active next increment. Representation expansion is “measured increments” *after* those gates. Phase 18–22 just shipped R3 CPG seed, delta, taint, and path-sensitive CFG (31/31 focused, 735/735). Recursive R4 design dogfooding already hit host `ENOSPC`; Phase 23 ER1–ER6 exists precisely because R4 work must not proceed on poisoned operational substrate. An R4 vertical is not the honest next rung.\n\n2. **Substrate.** Doc 15’s R4 is **compiler IR** (LLVM IR, MLIR, Rust MIR) for optimization and **translation validation** (Alive2-class). That is not AST, not CPG, not structural delta. Phase 18 `CG1` explicitly labels `AtlasCpgSlice` as “first measured **R3** slice.” Phase 19 `CD1–CD5` ship **CPG graph delta and impact** — semantic change over syntax/control/def-use — which doc 15 places at R3/R6, not R4. Relabeling CPG or AST deltas as “compiler IR” would violate the ladder and duplicate shipped work.\n\n3. **JavaScript/TypeScript has no honest external compiler IR.** Baton’s Atlas vertical is JS/TS-first (tree-sitter, confined single-file CPG). There is no stable, tool-agnostic JS/TS IR comparable to LLVM/MIR for fleet verification: V8 bytecode is VM-internal; Babel/SWC IRs are transform-pipeline artifacts, not semantics substrates for optimization proofs; TypeScript’s public surface is AST + types, not machine-level IR. Building “Baton IR” for JS/TS would invent a new representation ladder rung, not adopt R4. The only defensible R4 substrate in-repo today is **Evidence-ladder R4 on Rust/C** (Kani, self-validating counterexamples) — a different axis from representation R4 and already catalogued under Evidence, not Atlas.\n\n4. **Demand.** Doc 15 §3 assigns R4 to “optimization / perf change validation” and R4+R5 equivalence — a narrow Referee path. Frontier filter (`reviews/frontier-features/representation.md`) ranks structural diff and localized CPG triage ahead of IR; behavioral fingerprint belongs on the Evidence ladder. No shipped Baton task class, routing bucket, or red test currently requires JS/TS compiler IR. CPG-delta (`impl/src/atlas-cpg-delta.mjs`, spec Phase 19) already answers the fleet’s highest-value semantic-delta question for review: “what graph facts changed and who is impacted?”\n\n**Unambiguous next action:** **Ship IR-N1–IR-N6 (below) as a focused negative gate** that documents, tests, and records why JS/TS lacks an adoptable compiler IR, while **continuing R3 depth** (SSA, interprocedural returns, shadowing — explicitly unclaimed in `docs/26`) before revisiting representation R4 on a Rust/C fixture tied to an Evidence-ladder task.\n\n---\n\n## Proposed numbered contract\n\nContracts distinguish **existing** capability (no new build) from **new** work. Naming: **IR-N** = negative gate; **IR-R** = reserved Rust/C fixture path, gated on Evidence demand.\n\n### Existing capability (do not relabel as R4)\n\n| ID | Status | What it is |\n|---|---|---|\n| E0 | Shipped | R1 structural delta — Phase 13 AT1–AT6, `diff.structural`, content-addressed artifacts, ACI envelope |\n| E1 | Shipped | R2 symbol/call graph — Phase 13 index, SCIP JSON |\n| E2 | Shipped | R3 CPG slice — Phase 18 CG1–CG8, single-file JS/TS, containment/CFG/reaching-def/local CALLS |\n| E3 | Shipped | R3 CPG delta + impact — Phase 19 CD1–CD8, semantic keys, bounded impact, reverify |\n| E4 | Shipped | R3 taint — Phase 20 operator-specified sources/sinks |\n| E5 | Shipped | R3 path-sensitive CFG — Phase 22 braced-if/else, may-reaching-def, dead-branch prune |\n| E6 | Catalogued | Evidence-ladder R4 (Kani/Rust) — forgery-resistant counterexamples; **not** Atlas representation R4 |\n\n### IR-N — Measured negative gate for JS/TS compiler IR (new; smallest honest vertical)\n\n**IR-N1 — Definition honesty.** Any Atlas card claiming `compiler_ir` MUST name an external, versioned IR schema (e.g. LLVM bitcode, MLIR dialect, rustc MIR export) or fail typed `unsupported_substrate`. AST, CST, CPG, structural delta, and CPG-delta artifacts MUST NOT use `compiler_ir`, `mlir`, `llvm`, or `mir` kinds.\n\n**IR-N2 — JS/TS substrate survey artifact.** One content-addressed JSON artifact under the Atlas artifact root listing, per language: candidate IRs (V8 bytecode, Babel internal, SWC, TSC), stability verdict (`adoptable` / `internal_only` / `absent`), translation-validation pairing (Alive2, Cranelift, none), and citation to in-repo spec lines. Status `complete_negative` when every JS/TS candidate is `internal_only` or `absent`.\n\n**IR-N3 — Demand probe.** Coordinator query: count tasks in the last N replayable runs whose `verification` or review routing requested optimization/equivalence beyond tests. If zero, R4 vertical status remains `deferred_no_demand`; gate passes without implementation.\n\n**IR-N4 — ACI envelope parity.** Negative-gate `invoke('ir.scope.negative', …)` returns the common Atlas ACI shape (Phase 13 AT1): `op/status/summary/payload/refs/cost/provenance`. Payload token-bounded; full survey in SHA-256-addressed artifact; cursor `artifact/digest/offset` tamper-checked; `reverify` rebuilds survey and compares digest.\n\n**IR-N5 — Bounds and lifecycle.** Deployment-derived ceilings on survey bytes and probe window; cancellation typed; no homelab or network fetch during gate execution.\n\n**IR-N6 — Decision record.** On pass, append a typed `Decision` node to causal knowledge: “JS/TS representation R4 deferred; semantic delta remains R3 CPG-delta + R1 structural delta.” Supersedes any informal “build R4 next” brief. Retire representation R4 for JS/TS only if a later falsifier shows an adoptable external IR **and** IR-R1 passes.\n\n### IR-R — Rust/C fixture path (new work; not next until IR-N passes and Evidence routes a task)\n\n**IR-R1 — Fixture-bound compiler IR.** Given a confined Rust source file and pinned `rustc`/`llvm` toolchain digest, materialize MIR or LLVM IR as a content-addressed artifact distinct from `cpg_slice` schema. Card denies JS/TS.\n\n**IR-R2 — IR delta, not CPG delta.** `ir.delta` compares two immutable IR artifacts keyed by semantic identity in the IR (functions/basic blocks), not CPG semantic keys. Must not duplicate Phase 19 `AtlasCpgDelta`.\n\n**IR-R3 — Translation-validation seam.** IR delta MAY emit a `translation_validation_candidate` ref only when an Evidence-ladder task names Alive2/Kani/ct axis; Atlas does not claim proof. Relationship: representation supplies artifact; Evidence ladder owns verdict.\n\n**IR-R4 — Integration seam.** Review routing consumes R1 change-class + R3 CPG risk class first; IR-R outputs attach only when task policy names `representation_rung >= R4` and `language in {rust, c}`.\n\n### Semantic-delta relationship (clarification, not new IR)\n\nDoc 15 §4a “semantic diff as fleet primitive” is **already partially realized** at R1 (structural) and R3 (CPG delta). Phase 19 `CD2` semantic matching keys and `CD5` “impact is graph reachability, not behavioral proof” are the honest semantics. Full “semantic merge” (doc 15 §4b) remains research; Mergiraf-class structured merge is a merge-step adoption, not R4. Do not conflate.\n\n---\n\n## Red tests and proof\n\n### Existing green proof (reuse, do not duplicate)\n\n- **Baton-on-Baton CPG delta** (Phase 19 CD8, `docs/26`): `sha` helper node/edge delta with reverse-caller impact; MCP `JSON.parse` assignment → `server.handle` reaching-def/taint path. Proves **R3 semantic delta**, not compiler IR.\n- **ACI conventions** (Phase 13 AT1, AT6, AT14; Phase 18 CG7; Phase 19 CD7): content-addressed artifacts, bounded inline payload, resume cursors, digest reverify, cancellation — pattern IR-N4 must mirror.\n\n### Red tests for IR-N (proposed focused gate)\n\n| Test | Expectation |\n|---|---|\n| N-RED-1 | `invoke('ir.scope.negative', { language: 'typescript' })` returns `status: complete_negative` and refs artifact kind `ir_substrate_survey`, not `cpg_slice` |\n| N-RED-2 | Survey artifact lists V8/SWC/Babel/TSC with `adoptable: false` for JS/TS |\n| N-RED-3 | Attempt to register CPG-delta artifact with `kind: compiler_ir` fails typed `schema_violation` (IR-N1) |\n| N-RED-4 | Tampered survey digest → `artifact_integrity` before payload return |\n| N-RED-5 | `reverify` on survey returns identical digest; mutated toolchain pin → `substrate_changed` |\n| N-RED-6 | Demand probe with zero qualifying tasks → `deferred_no_demand` without throwing |\n\n### Red tests for IR-R (only if gate flips)\n\n| Test | Expectation |\n|---|---|\n| R-RED-1 | Rust fixture emits `mir_module` artifact; same source via `AtlasCpgSlice` yields different schema/version than MIR artifact |\n| R-RED-2 | `ir.delta` on semantics-preserving rustc refactor reports zero IR change class `logic`; textual diff non-empty |\n| R-RED-3 | JS/TS confined file through `ir.delta` fails typed `unsupported_substrate` |\n\n### Live Baton-on-Baton proof for negative gate\n\nRun IR-N against this repository: survey cites Phase 18–22 specs and `impl/src/atlas-cpg*.mjs`; demand probe reads replay catalog for optimization/equivalence tasks; emit `Decision` that R3 continuation (SSA, interprocedural per `docs/26` unclaimed list) precedes any IR-R work. **No external compiler install required** for IR-N pass — that is the point.\n\n### What would falsify this review\n\n- A merged spec naming a **stable, content-addressable JS/TS IR** with a maintained serializer and translation-validation tool, plus a routed Baton task that fails R3+C tests but needs IR equivalence.\n- Measured proof that commit-granular CPG refresh is insufficient and optimization review volume exceeds 5% of verified integrations.\n\nNeither is evidenced at `6f0d47f`.\n\n---\n\n## Risks and rejection criteria\n\n### Risks if R4 is forced next\n\n1. **Category error.** Shipping CPG-delta v2 under an `ir.*` namespace duplicates Phase 19–22, confuses representation vs Evidence ladder R4 (Kani), and breaks doc 15 ladder semantics.\n2. **Invented IR tax.** A bespoke “Baton IR” for JS/TS becomes a permanent maintenance rung with no Alive2-class validator — moat theater.\n3. **Substrate bleed.** Embedding Babel/SWC as mandatory Atlas deps expands supply-chain and cancellation surfaces without fleet demand (`docs/26` TF1–TF4 discipline applies).\n4. **Sequencing regression.** R4 before R3 completeness (SSA, aliases, interprocedural, repo-wide overlay) leaves Referee with a thin CPG and a heavy IR story — inverted leverage doc 15 §5 warns against.\n5. **Operational repeat.** Phase 23 showed recursive R4 design on tight disk/log headroom produces `confirmed_unlogged` emergency paths — unacceptable as a gate definition.\n\n### Keep criteria (representation R4 stays in catalog)\n\n- Recorded Decision exists (IR-N6).\n- Evidence-ladder dispatches Rust/C optimization or translation-validation tasks with pinned toolchains.\n- IR-R1–R4 red tests exist and a Baton-on-Baton Rust fixture proves IR delta ≠ CPG delta.\n\n### Redirect criteria (current state — met)\n\n- R3 vertical just shipped with independent review closure; unclaimed R3 items remain (`docs/26`: SSA, path-condition PDG, aliases, interprocedural, overlays).\n- JS/TS lacks adoptable compiler IR per honest survey.\n- Active pursuit order points to control/browser/MCP depth, not representation R4.\n- Semantic-delta value is captured by shipped R1 + R3 artifacts.\n\n### Retire criteria (representation R4 for JS/TS only)\n\n- IR-N6 Decision recorded AND two consecutive quarterly demand probes remain zero AND no external IR stabilizes. Retire through explicit `Decision` supersession — never omission (`docs/26`).\n\n### Rejection criteria for this proposal\n\nReject IR-N if it becomes a paperwork gate without tests N-RED-1–6. Reject IR-R if it ships before IR-N passes or before Evidence routes a Rust/C task. Reject any spec that maps `AtlasCpgDelta` → `ir.delta` without IR-R2 semantic key separation.\n\n---\n\n*Word count target: <2600. Evidence sources: `docs/15-representation-and-computation.md`, `docs/26-full-system-goal.md`, `reviews/frontier-features/representation.md`, `spec/phase18–22/atlas-cpg*.md`, `spec/phase19/atlas-cpg-delta-impact.md`, `impl/src/atlas-cpg-delta.mjs`, `spec/phase13/atlas-structural-delta.md`, `docs/reference/evidence/phase23-atlas-ir-scope-grok-review-2026-07-11/run.mjs`, Phase 23 ER handoff in `docs/26`.*"
+    }
+  ],
+  "approvals": [
+    {
+      "workerId": "w-2",
+      "requestId": "w-2:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "stopResults": [
+    {
+      "taskId": "grok-ir-scope-45",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "grok-ir-scope-composer",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "twoReviews": true,
+    "distinctLivePids": true,
+    "concurrentTurns": true,
+    "exactModelsObserved": true,
+    "bothFreshVerified": true,
+    "reportsCaptured": true,
+    "bothKillsConfirmed": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimeGone": true,
+    "branchesGone": true
+  },
+  "fatal": null,
+  "pass": true
+}

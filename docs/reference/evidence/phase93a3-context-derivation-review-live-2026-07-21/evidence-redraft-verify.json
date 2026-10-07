@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "outcome": {
+    "role": "redraft-verify",
+    "phase": "work_completed",
+    "materializedVia": "refs/baton/results fallback",
+    "resultSha": "05664cc20da765e20c0fedee73aad71ce05af7aa",
+    "materialized": "docs/reference/evidence/phase93a3-context-derivation-review-live-2026-07-21/redraft-verify.md"
+  },
+  "stops": [
+    {
+      "runId": "run-98fff57bb6baac0233885ee38ee9681d",
+      "stop": null,
+      "ownership": null
+    }
+  ],
+  "failure": null
+}

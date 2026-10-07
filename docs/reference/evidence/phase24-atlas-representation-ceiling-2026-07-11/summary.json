@@ -1,0 +1,161 @@
+{
+  "at": "2026-07-12T04:19:48.131Z",
+  "repoHead": "08b1418e8cef5d3d817fad44de97e4560ebbc8c1",
+  "args": {
+    "path": "impl/src/coordinator.mjs"
+  },
+  "card": {
+    "name": "atlas-representation-ceiling",
+    "version": "0.1.0",
+    "underlying": [
+      "policy:phase24-js-ts-r3-ceiling"
+    ],
+    "ops": {
+      "representation.ceiling": {
+        "deterministic": true,
+        "latency_class": "interactive",
+        "side_effects": "writes_content_addressed_artifacts",
+        "reverifiable": true
+      }
+    },
+    "languageFamilies": {
+      "javascript-typescript": {
+        "extensions": [
+          ".cjs",
+          ".cts",
+          ".js",
+          ".jsx",
+          ".mjs",
+          ".mts",
+          ".ts",
+          ".tsx"
+        ],
+        "maximumRung": "R3"
+      }
+    },
+    "limitations": [
+      "produces no compiler IR",
+      "produces no translation-validation verdict",
+      "external LLVM/MIR/MLIR paths remain separately gated"
+    ]
+  },
+  "bounded": {
+    "op": "representation.ceiling",
+    "status": "needs_resume",
+    "summary": "javascript-typescript maximum representation rung is R3",
+    "payload": [],
+    "refs": [
+      {
+        "handle": "art:sha256:3a2ea503967d2f3b5215abe4030912784a4ad12d3218b1cbf804cf389afafcf5",
+        "kind": "representation_policy",
+        "digest": "3a2ea503967d2f3b5215abe4030912784a4ad12d3218b1cbf804cf389afafcf5",
+        "bytes": 591,
+        "mediaType": "application/vnd.baton.atlas-representation-policy+json",
+        "path": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-representation-proof-uOcdqt/artifacts/3a2ea503967d2f3b5215abe4030912784a4ad12d3218b1cbf804cf389afafcf5.json"
+      }
+    ],
+    "cursor": "atlas-representation:3a2ea503967d2f3b5215abe4030912784a4ad12d3218b1cbf804cf389afafcf5:0",
+    "cost": {
+      "tokens_out": 1,
+      "wall_ms": 1,
+      "usd": 0,
+      "underlying": "policy:phase24-js-ts-r3-ceiling"
+    },
+    "provenance": {
+      "decisionId": "phase24-js-ts-r3-ceiling",
+      "representationRung": "R3",
+      "languageFamily": "javascript-typescript",
+      "deterministic": true,
+      "semanticDeltaMeaning": "structural_and_cpg_delta_are_review_signals_not_translation_validation"
+    }
+  },
+  "resumed": {
+    "op": "representation.ceiling",
+    "status": "ok",
+    "summary": "resumed 1 representation policy records",
+    "payload": [
+      {
+        "recordType": "representation_ceiling",
+        "path": "impl/src/coordinator.mjs",
+        "languageFamily": "javascript-typescript",
+        "maximumRung": "R3",
+        "decisionId": "phase24-js-ts-r3-ceiling",
+        "availableViews": [
+          "R0:text",
+          "R1:ast-structural",
+          "R2:symbol-scip",
+          "R3:cpg-cfg-may-dataflow"
+        ],
+        "unavailableViews": [
+          "R4:compiler-ir",
+          "translation-validation"
+        ],
+        "redirects": [
+          "diff.structural",
+          "cpg.build",
+          "cpg.delta",
+          "cpg.taint"
+        ],
+        "meaning": "representation_availability_policy_not_behavioral_or_translation_validation_proof"
+      }
+    ],
+    "refs": [
+      {
+        "handle": "art:sha256:3a2ea503967d2f3b5215abe4030912784a4ad12d3218b1cbf804cf389afafcf5",
+        "kind": "representation_policy",
+        "digest": "3a2ea503967d2f3b5215abe4030912784a4ad12d3218b1cbf804cf389afafcf5",
+        "bytes": 591,
+        "mediaType": "application/vnd.baton.atlas-representation-policy+json",
+        "path": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-representation-proof-uOcdqt/artifacts/3a2ea503967d2f3b5215abe4030912784a4ad12d3218b1cbf804cf389afafcf5.json"
+      }
+    ],
+    "cost": {
+      "tokens_out": 123,
+      "wall_ms": 0,
+      "usd": 0,
+      "underlying": "policy:phase24-js-ts-r3-ceiling"
+    },
+    "provenance": {
+      "decisionId": "phase24-js-ts-r3-ceiling",
+      "resumed_from": 0,
+      "deterministic": true
+    }
+  },
+  "reverified": {
+    "ok": true,
+    "observedDigest": "3a2ea503967d2f3b5215abe4030912784a4ad12d3218b1cbf804cf389afafcf5"
+  },
+  "refusals": [
+    {
+      "op": "ir.build",
+      "code": "rung_ceiling",
+      "maximumRung": "R3",
+      "decisionId": "phase24-js-ts-r3-ceiling"
+    },
+    {
+      "op": "ir.delta",
+      "code": "rung_ceiling",
+      "maximumRung": "R3",
+      "decisionId": "phase24-js-ts-r3-ceiling"
+    },
+    {
+      "op": "tv.validate",
+      "code": "rung_ceiling",
+      "maximumRung": "R3",
+      "decisionId": "phase24-js-ts-r3-ceiling"
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "boundedFirstResult": true,
+    "realBatonPath": true,
+    "r3Ceiling": true,
+    "artifactHonest": true,
+    "deterministicReverify": true,
+    "falseR4Typed": true,
+    "balancedEvents": true,
+    "artifactRootGone": true
+  },
+  "fatal": null,
+  "pass": true
+}

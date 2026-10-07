@@ -1,0 +1,104 @@
+{
+  "scope": "Local adapter integration and captured real native stream replay; no post-fix provider self-build or full-suite acceptance claim.",
+  "nativeClaude": [
+    {
+      "session_id": "510315db-cdb9-4e45-8574-7afa060b6ced",
+      "total_cost_usd": 1.49395365,
+      "num_turns": 31,
+      "terminal_reason": "completed",
+      "result": "Clean \u2014 only the two new files exist as untracked. No existing files were modified.\n\n---\n\n**Summary**\n\n`impl/src/omp-usage.mjs` \u2014 `OmpTurnUsageAccumulator` class + `OMP_TOKEN_METRIC` export:\n\n- **counterId** bound to `(worker, turnEpoch)` as `omp:${worker}:${turnEpoch}`; null and inert when constructor args are invalid\n- **`consumeMessageEnd(event)`** validates the native `message_end` frame, accumulates `totalTokens` (all cache dims included) and `cost.total` (USD per call) with nano-precision; silently omits absent/invalid individual dimensions per \"invalid dimensions stay unreported\"; rejects wrong event type or malformed frame structure; observes `provider/model` identity on first qualifying event\n- **`finalize({ terminalTelemetry? })`** returns `{ resourceTokens, seal, modelObserved }`:\n  - **Primary path** (any `message_end` consumed): `resourceTokens` carries `source: 'message_end'`, `accounting: 'delta'`, the accumulated token/USD totals, `counterId`, and `tokenMetric: 'message_end.totalTokens'`; `terminalTelemetry` is ignored entirely (using both would double-count the same turn)\n  - **Fallback path** (no `message_end` seen): reads `telemetry.usage.tokens` / `telemetry.tokens` and `telemetry.cost` with documented native assumptions; `source: 'agent_end_telemetry'`\n  - **Absent path**: `null` resourceTokens, unavailable seal\n- **Seal invariants** match coordinator's `_validateTerminalUsageSeal` rules: `counterId` is null iff nothing is reported; `tokenMetric` is null iff tokens is `'unavailable'`\n- A finalized accumulator rejects further `consumeMessageEnd` calls and throws on a second `finalize`\n\n`impl/test/omp-usage.test.mjs` \u2014 49 tests covering constructor validation, per-dimension omit/report rules, zero reporting, accumulation across calls, identity qualification, double-count prevention, telemetry fallback shapes, seal invariants, lifecycle guards, and USD nano-precision."
+    },
+    {
+      "session_id": "510315db-cdb9-4e45-8574-7afa060b6ced",
+      "total_cost_usd": 0.9256365,
+      "num_turns": 11,
+      "terminal_reason": "completed",
+      "result": "Clean \u2014 only my two new files are in the untracked list (`impl/test/omp-usage-adapter.test.mjs` and `impl/test/omp-question-coordinator.test.mjs` are other agents' work, untouched).\n\n---\n\n**What changed and why:**\n\n**`impl/src/omp-usage.mjs`** \u2014 full rewrite:\n\n| Point | What changed |\n|---|---|\n| **Observable during turn** | `consumeMessageEnd` now returns `{ ok, resourceTokens, modelObserved, stopReason }`. Each call returns the delta for *that one* API call, emittable immediately as `resource.tokens`. `finalize` produces no additional delta when message_end coverage exists. |\n| **snapshot()** | Read-only getter returning the current `{ seal }` based on what has already been reported. Safe at crash, interrupt, or mid-turn. |\n| **processGeneration** | Third constructor param (default 1). counterId is `omp:${worker}:${turnEpoch}:${processGeneration}`. Exceeding 256 bytes triggers SHA-256 hash path (`omp-h:<hex>`), always stable for the same inputs. |\n| **Role filtering** | `consumeMessageEnd` requires `message.role === 'assistant'`. Non-assistant events return `ok:true, code:'non_assistant_role'` and don't increment `messageEndCount` or affect the seal. `agent_end.messages` fallback also filters by role. |\n| **Identity per-call** | `modelObserved` is returned fresh on every `consumeMessageEnd` call (not cached from first). Avoids double-prefixing: if model already starts with `provider/`, it's preserved as-is. |\n| **stopReason** | Returned from each `consumeMessageEnd` as-is from `message.stopReason`. Helper does not manufacture success semantics. |\n| **Partial mutation** | `extractUsageDimensions` evaluates tokens and USD independently. Invalid/absent `totalTokens` does not suppress valid `cost.total` and vice versa. |\n| **No telemetry fallback** | Removed: `telemetry.usage.tokens` / `telemetry.tokens` were unverified assumptions. |\n| **agent_end.messages fallback** | Used only when `messageEndCount === 0`. Sums `totalTokens` and `cost.total` from assistant-role messages, with per-dimension overflow protection. Uses `OMP_TOKEN_METRIC` \u2014 same metric as message_end path. |\n| **Non-terminal agent_end** | `finalize({ isTerminal: false })` returns `{ resourceTokens: null, seal: null }` \u2014 no seal, no reset. |\n| **consumeMessageStart** | Optional boundary marker. End without preceding start is accepted (no-start fallback, counted in `#noStartCount` for diagnostics). |\n| **Installed binary evidence** | `j2a` shape (offset ~75993585) confirms `role/provider/model/usage.totalTokens/usage.cost.total/stopReason`. `LQo` confirms `agent_end.messages` is the new-messages array. |\n\n**`impl/test/omp-usage.test.mjs`** \u2014 45 tests, focused on adverse/live-event cases:\nper-call delta semantics, role filtering, route-change identity observation, double-qualification prevention, stopReason pass-through, partial-mutation independence, snapshot at various states, non-terminal seal suppression, messages fallback vs coverage precedence, start/end boundary, processGeneration counterId, hash fallback stability, lifecycle guards."
+    }
+  ],
+  "checks": [
+    {
+      "localLog": "/tmp/baton-omp-all-final.log",
+      "sha256": "d583e8043112619a7f81cdedbaf1fc4883468303e01ee8560060051f3cdca834",
+      "tail": [
+        "  duration_ms: 0.328167",
+        "  type: 'test'",
+        "  ...",
+        "1..139",
+        "# tests 139",
+        "# suites 0",
+        "# pass 139",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 7023.354041"
+      ]
+    },
+    {
+      "localLog": "/tmp/baton-accounting-production.log",
+      "sha256": "03948c92b37859e074e546a27e90be3252c5f0188aff029c53893117878be753",
+      "tail": [
+        "  duration_ms: 0.247916",
+        "  type: 'test'",
+        "  ...",
+        "1..24",
+        "# tests 24",
+        "# suites 0",
+        "# pass 24",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 2580.449083"
+      ]
+    },
+    {
+      "localLog": "/tmp/baton-accounting-surfaces.log",
+      "sha256": "135ce6527c7faec65c566a814a74aaebf21ec6aa224745716aa9370deda1fd7f",
+      "tail": [
+        "  },",
+        "  \"completeCapabilityCount\": 116,",
+        "  \"metaNames\": [",
+        "    \"baton_surface_catalog\",",
+        "    \"baton_surface_describe\",",
+        "    \"baton_surface_invoke\",",
+        "    \"baton_surface_snapshot\",",
+        "    \"baton_surface_visualize\",",
+        "    \"baton_surface_watch\"",
+        "  ],",
+        "  \"cliMetaCases\": 7",
+        "}"
+      ]
+    },
+    {
+      "localLog": "/tmp/baton-accounting-package.log",
+      "sha256": "3744389ec72485a12a1161ad35b10e67b4f6038b7b927868da66a3259bf76496",
+      "tail": [
+        "",
+        "> baton@0.1.0 test:package",
+        "> node scripts/release-package-smoke.mjs",
+        "",
+        "{\"ok\":true,\"archive\":\"baton-0.1.0.tgz\",\"bins\":[\"baton\",\"baton-mcp\",\"baton-mcp-web\"],\"convergence\":true,\"unifiedCapabilities\":114,\"completeCapabilityNames\":612,\"notificationWatch\":true,\"connectedRunDebug\":true,\"workflowWebPorts\":8}"
+      ]
+    },
+    {
+      "localLog": "/tmp/baton-omp-usage-adapter-before.log",
+      "sha256": "efba601240d58b440635a9fcc856cc13d4429772ad0ce8e5bd83bbe7d46b729c",
+      "tail": [
+        "    Test.run (node:internal/test_runner/test:1101:12)",
+        "    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)",
+        "  ...",
+        "1..7",
+        "# tests 7",
+        "# suites 0",
+        "# pass 0",
+        "# fail 7",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 67.558791"
+      ]
+    }
+  ]
+}

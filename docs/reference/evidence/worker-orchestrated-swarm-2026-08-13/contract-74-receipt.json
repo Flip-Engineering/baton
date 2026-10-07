@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T01:08:13.158Z",
+  "salt": "ci20260813010813",
+  "role": "contract-74",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-f6445c78418b1d746363caffe7b2cb73"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-74",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-74": {
+      "pin": "fc81eec5769e4eeab4d9924a67651995d2ba325b",
+      "paths": [
+        "docs/reference/evidence/worker-orchestrated-swarm-2026-08-13/worker-orchestrated-swarm-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 418,
+  "verdict": "CONTRACT-74-OK"
+}

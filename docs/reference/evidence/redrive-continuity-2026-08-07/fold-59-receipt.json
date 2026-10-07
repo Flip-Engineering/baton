@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-07T07:08:39.980Z",
+  "salt": "f320260807070839",
+  "role": "fold-59",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-3938d240731a6c70ceaf862faad63740"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-59",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-59": {
+      "pin": "688cf20b9e96966dd5af62f172c82f317370420b",
+      "paths": [
+        "docs/reference/evidence/redrive-continuity-2026-08-07/redrive-continuity-contract.md",
+        "docs/reference/evidence/redrive-continuity-2026-08-07/contract-fold.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 377,
+  "verdict": "FOLD-59-OK"
+}

@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T08:48:00.104Z",
+  "salt": "cb20260807084800",
+  "role": "contract-73",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-7e8b0ad850c56711b3b2b35b5a994fad"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-73",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-73": {
+      "pin": "aa9a91de2bf6d7c35d47dc852be5ecae7d754a2a",
+      "paths": [
+        "docs/reference/evidence/feedback-forge-hardening-2026-08-07/feedback-forge-hardening-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 388,
+  "verdict": "CONTRACT-73-OK"
+}

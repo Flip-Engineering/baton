@@ -1,0 +1,14 @@
+{
+  "source": "a966bba6267a9dbe7b17ce8c6409033f1801bd08",
+  "node": "22.22.2",
+  "command": "npm test -- --test-concurrency=2",
+  "tests": 4611,
+  "passed": 4008,
+  "failed": 463,
+  "cancelled": 140,
+  "skipped": 0,
+  "durationMs": 407677.291792,
+  "failureRows": 603,
+  "log": "/tmp/baton-stable-a966bba6-suite.log",
+  "acceptance": "failed"
+}

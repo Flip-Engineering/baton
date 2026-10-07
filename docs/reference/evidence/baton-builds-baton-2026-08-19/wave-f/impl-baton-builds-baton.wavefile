@@ -1,0 +1,10 @@
+wave bbb-2026-08-20-wave-f-demo
+member demo-visual
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-f/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-f/demo-visual-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-f/notes-demo.md"
+messageOnSpawn brief "Read your objectiveRef brief; it is a small demo task. Your [attempt:] line verbatim in your report's first five lines."
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-f/notes-demo.md" mustContain "attempt:"

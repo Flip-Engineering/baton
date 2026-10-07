@@ -1,0 +1,456 @@
+{
+  "swarmId": "audit-comm",
+  "purpose": "Audit Baton's bidirectional communication from inside a suborchestrated swarm",
+  "status": "open",
+  "closedReason": null,
+  "actor": "web:local-owner:31a271a5-3316-4246-88a7-9fde081767a4",
+  "seq": 1565,
+  "ts": "2026-09-14T04:33:37.406Z",
+  "participants": [
+    {
+      "participantId": "suborchestrator",
+      "role": "You are the suborchestrator of swarm audit-comm in Baton, the cross-agent coordination harness this repository is. Your task is to audit Baton's bidirectional communication from inside a suborchestrated swarm by actually running one. The root orchestrator (a Claude session) is watching this same swarm from outside through `swarm watch --follow`, the coordination log and the worker logs, and will compare what it observed with what you report. Be honest and specific; the value is in the gaps.\n\nYou hold the recruit, organize, review, communicate and contribute permissions. Use the swarm client exactly as your brief's guidance shows (node \"$BATON_SWARM_CLIENT\" <command> with JSON arguments). Do this, in the order you judge best:\n\n1. Read your own seat first: swarm.view. Note what you can see (participants, your permissions, available actions, attention rows, shared context) and what you cannot but needed.\n\n2. Recruit two probes with short, concrete objectives you write yourself:\n   - probe-see, options {\"exact\":{\"harness\":\"omp\",\"model\":\"deepseek/deepseek-flash\",\"effort\":\"max\"}}, permissions [\"read\",\"communicate\",\"contribute\"]. It audits what a participant can SEE: its own swarm.view, the subtree view (participantId scoping), attention rows, whether guidance from you and from the root arrives and how (it should publish a context note with the text \"guide me\" so the root sends one), how swarm.watch wakes behave and their timing, and what is missing for a worker to know its place in the swarm.\n   - probe-say, options {\"exact\":{\"harness\":\"omp\",\"model\":\"zai/glm-5.3-flash\",\"effort\":\"max\"}}, permissions [\"read\",\"communicate\",\"contribute\",\"organize\"]. It audits what a participant can SAY: swarm.context_updated, swarm.work_updated, swarm.contribution_recorded, swarm.holder_released, one action outside its permissions (swarm.recruit) so the refusal text is recorded verbatim, and whether each thing it says produces a wake for you (you are watching).\n   Record each recruit's result (or refusal) with its timestamp.\n\n3. Declare the work in the swarm: swarm.work_updated for two units (see, say), swarm.assignment_updated assigning each to its probe, and one swarm.context_updated note describing this protocol so both probes read the same plan.\n\n4. Coordinate only through the swarm: swarm.watch to await their updates (record what each wake named), swarm.guide to steer each probe at least once (record whether and when it acknowledged), and swarm.contribution_reviewed for each contribution with a decision and reason. If a probe dies or leaves, say what the swarm told you and what you did.\n\n5. When both probes have contributed and been reviewed, write docs/audits/2026-09-14-swarm-communication/suborchestrator.md: for each channel (view, subtree view, watch, guide, each update kind, recruit, attention rows, capture/check as observed) what worked, the latencies you observed with timestamps, refusals with their exact text, gaps (things you needed and could not get), frictions (possible but awkward), and novel insights. Quote the probes' findings (they write probe-see.md and probe-say.md in the same directory) rather than paraphrasing. Then publish swarm.contribution_recorded naming your file and end your turn so the root captures the directory.\n\nConstraints: write only under docs/audits/2026-09-14-swarm-communication/; no source changes. A budget threshold notification is evidence, not a stop. Never print environment variables containing tokens.",
+      "parentId": null,
+      "runId": "run-952156582b4936417a3543d3ebc67879",
+      "permissions": [
+        "read",
+        "communicate",
+        "contribute",
+        "review",
+        "organize",
+        "recruit"
+      ],
+      "workspaceId": null,
+      "status": "active",
+      "leftReason": null,
+      "bindings": [
+        {
+          "workerId": "w-3",
+          "taskId": "baton-a7baed4ac339b710c1019c6e-work",
+          "sessionId": null,
+          "actor": "web:local-owner:31a271a5-3316-4246-88a7-9fde081767a4",
+          "seq": 1582,
+          "ts": "2026-09-14T04:33:46.217Z"
+        }
+      ],
+      "actor": "web:local-owner:31a271a5-3316-4246-88a7-9fde081767a4",
+      "seq": 1582,
+      "ts": "2026-09-14T04:33:46.217Z",
+      "delegation": {
+        "children": [
+          "probe-say",
+          "probe-see"
+        ],
+        "work": [
+          "work-say",
+          "work-see"
+        ],
+        "complete": false
+      },
+      "native": {
+        "coverage": "observed_only",
+        "agents": [],
+        "invocations": [],
+        "unidentified": []
+      },
+      "runtime": {
+        "workerId": "w-3",
+        "state": "working",
+        "turn": "running"
+      }
+    },
+    {
+      "participantId": "probe-see",
+      "role": "Audit what a swarm participant can SEE: your own swarm.view, the subtree view via participantId scoping (swarm.view with participantId suborchestrator), attention rows, whether guidance arrives and how (publish a context note with body text \"guide me\" so the suborchestrator sends you one via swarm.guide; then describe verbatim how it appeared in your view/watches), how swarm.watch wakes behave and their timing, and what is missing for a worker to know its place in the swarm. Write docs/audits/2026-09-14-swarm-communication/probe-see.md with your findings (quote exact texts and timestamps), then publish swarm.contribution_recorded naming that file. Write only under docs/audits/2026-09-14-swarm-communication/. Never print environment variables containing tokens.",
+      "parentId": "suborchestrator",
+      "runId": "run-a22f333ac9d85b7fc4aa85516912132b",
+      "permissions": [
+        "read",
+        "communicate",
+        "contribute"
+      ],
+      "workspaceId": null,
+      "status": "active",
+      "leftReason": null,
+      "bindings": [
+        {
+          "workerId": "w-4",
+          "taskId": "baton-ddd4f82d1496158952f821b7-work",
+          "sessionId": null,
+          "actor": "swarm-native:audit-comm:suborchestrator",
+          "seq": 1646,
+          "ts": "2026-09-14T04:35:05.168Z"
+        }
+      ],
+      "actor": "swarm-native:audit-comm:suborchestrator",
+      "seq": 1646,
+      "ts": "2026-09-14T04:35:05.168Z",
+      "delegation": {
+        "children": [],
+        "work": [
+          "work-see"
+        ],
+        "complete": false
+      },
+      "native": {
+        "coverage": "observed_only",
+        "agents": [],
+        "invocations": [],
+        "unidentified": []
+      },
+      "runtime": {
+        "workerId": "w-4",
+        "state": "working",
+        "turn": "running"
+      }
+    },
+    {
+      "participantId": "probe-say",
+      "role": "Audit what a swarm participant can SAY via swarm.update. Exercise every channel once and record the exact result (including errors, verbatim): swarm.work_updated (open a unit of work), swarm.assignment_updated, swarm.holder_released (expect refusal while a live participant holds seats — record the refusal text verbatim), swarm.context_updated, swarm.contribution_recorded, and one action OUTSIDE your permissions: attempt swarm.recruit and record the refusal text verbatim. Also test swarm.update for work and assignment where possible. Note which of your utterances produce a wake for the suborchestrator (it is watching). Write docs/audits/2026-09-14-swarm-communication/probe-say.md with findings (quote exact texts and timestamps), then publish swarm.contribution_recorded naming that file. Write only under docs/audits/2026-09-14-swarm-communication/. Never print environment variables containing tokens.",
+      "parentId": "suborchestrator",
+      "runId": "run-f5719ceaf19287b6d1fc0afabe219d68",
+      "permissions": [
+        "read",
+        "communicate",
+        "contribute",
+        "organize"
+      ],
+      "workspaceId": null,
+      "status": "active",
+      "leftReason": null,
+      "bindings": [
+        {
+          "workerId": "w-5",
+          "taskId": "baton-ec94b45cb6cef8afaa089b0d-work",
+          "sessionId": null,
+          "actor": "swarm-native:audit-comm:suborchestrator",
+          "seq": 1669,
+          "ts": "2026-09-14T04:35:24.014Z"
+        }
+      ],
+      "actor": "swarm-native:audit-comm:suborchestrator",
+      "seq": 1669,
+      "ts": "2026-09-14T04:35:24.014Z",
+      "delegation": {
+        "children": [],
+        "work": [
+          "work-say"
+        ],
+        "complete": false
+      },
+      "native": {
+        "coverage": "observed_only",
+        "agents": [],
+        "invocations": [],
+        "unidentified": []
+      },
+      "runtime": {
+        "workerId": "w-5",
+        "state": "working",
+        "turn": "running"
+      }
+    }
+  ],
+  "groups": {},
+  "work": {
+    "work-see": {
+      "workId": "work-see",
+      "objective": "Audit what a swarm participant can SEE: own view, subtree view, attention rows, guidance delivery, watch wakes",
+      "status": "open",
+      "version": 1,
+      "actor": "swarm-native:audit-comm:suborchestrator",
+      "seq": 1736,
+      "ts": "2026-09-14T04:36:01.175Z",
+      "evidence": {
+        "contributions": [],
+        "accepted": [],
+        "derivedComplete": false
+      }
+    },
+    "work-say": {
+      "workId": "work-say",
+      "objective": "Audit what a swarm participant can SAY: each update kind, out-of-permission refusal text, wake production",
+      "status": "open",
+      "version": 1,
+      "actor": "swarm-native:audit-comm:suborchestrator",
+      "seq": 1737,
+      "ts": "2026-09-14T04:36:01.903Z",
+      "evidence": {
+        "contributions": [],
+        "accepted": [],
+        "derivedComplete": false
+      }
+    },
+    "work-say-probe": {
+      "workId": "work-say-probe",
+      "objective": "Probe from probe-say: exercise swarm.work_updated by opening one unit of work",
+      "status": "open",
+      "version": 2,
+      "actor": "swarm-native:audit-comm:probe-say",
+      "seq": 1895,
+      "ts": "2026-09-14T04:37:59.606Z",
+      "evidence": {
+        "contributions": [],
+        "accepted": [],
+        "derivedComplete": false
+      }
+    }
+  },
+  "assignments": {
+    "assignment-probe-see": {
+      "assignmentId": "assignment-probe-see",
+      "participantId": "probe-see",
+      "workId": "work-see",
+      "status": "active",
+      "version": 1,
+      "actor": "swarm-native:audit-comm:suborchestrator",
+      "seq": 1738,
+      "ts": "2026-09-14T04:36:02.911Z"
+    },
+    "assignment-probe-say": {
+      "assignmentId": "assignment-probe-say",
+      "participantId": "probe-say",
+      "workId": "work-say",
+      "status": "active",
+      "version": 1,
+      "actor": "swarm-native:audit-comm:suborchestrator",
+      "seq": 1739,
+      "ts": "2026-09-14T04:36:03.612Z"
+    },
+    "assignment-say-probe": {
+      "assignmentId": "assignment-say-probe",
+      "participantId": "probe-say",
+      "workId": "work-say-probe",
+      "status": "released",
+      "version": 2,
+      "actor": "swarm-native:audit-comm:probe-say",
+      "seq": 1897,
+      "ts": "2026-09-14T04:38:00.119Z"
+    }
+  },
+  "context": {
+    "[null,\"protocol:audit\"]": {
+      "key": "protocol:audit",
+      "body": {
+        "plan": [
+          "probe-see: publish a context note containing the text \"guide me\"; the suborchestrator will swarm.guide you; observe how guidance appears; then audit view/subtree/attention/watch and write docs/audits/2026-09-14-swarm-communication/probe-see.md; contribute naming that file",
+          "probe-say: exercise each update kind once, attempt swarm.recruit (outside your permissions) and record the refusal verbatim, note which utterances wake the suborchestrator, write docs/audits/2026-09-14-swarm-communication/probe-say.md; contribute naming that file",
+          "both: quote exact refusal texts and timestamps; write only under docs/audits/2026-09-14-swarm-communication/; never print env tokens"
+        ],
+        "reviewer": "suborchestrator will swarm.contribution_reviewed each contribution"
+      },
+      "groupId": null,
+      "version": 1,
+      "actor": "swarm-native:audit-comm:suborchestrator",
+      "seq": 1745,
+      "ts": "2026-09-14T04:36:04.221Z"
+    },
+    "[null,\"notes:probe-see-guide-request\"]": {
+      "key": "notes:probe-see-guide-request",
+      "body": "guide me",
+      "groupId": null,
+      "version": 1,
+      "actor": "swarm-native:audit-comm:probe-see",
+      "seq": 1767,
+      "ts": "2026-09-14T04:36:16.856Z"
+    },
+    "[null,\"notes:say-probe\"]": {
+      "key": "notes:say-probe",
+      "body": {
+        "note": "probe-say exercised swarm.context_updated at this timestamp; whole-swarm scope (no groupId)"
+      },
+      "groupId": null,
+      "version": 1,
+      "actor": "swarm-native:audit-comm:probe-say",
+      "seq": 1846,
+      "ts": "2026-09-14T04:37:22.213Z"
+    },
+    "[null,\"notes:probe-see:watch-wake\"]": {
+      "key": "notes:probe-see:watch-wake",
+      "body": {
+        "note": "wake latency probe",
+        "at": "2026-09-14T04:38:21.301Z"
+      },
+      "groupId": null,
+      "version": 1,
+      "actor": "swarm-native:audit-comm:probe-see",
+      "seq": 1922,
+      "ts": "2026-09-14T04:38:22.025Z"
+    }
+  },
+  "contributions": {},
+  "reviews": {},
+  "caller": {
+    "participantId": "probe-see",
+    "permissions": [
+      "read",
+      "communicate",
+      "contribute"
+    ]
+  },
+  "availableActions": [
+    "swarm.view",
+    "swarm.watch",
+    "swarm.guide",
+    "swarm.capture",
+    "swarm.check",
+    "swarm.update"
+  ],
+  "attention": [],
+  "actionTargets": {
+    "swarm.capture": {
+      "participantIds": [
+        "probe-see"
+      ]
+    },
+    "swarm.check": {
+      "participantIds": [
+        "probe-see"
+      ]
+    }
+  },
+  "updates": [
+    "swarm.context_updated",
+    "swarm.contribution_recorded",
+    "swarm.participant_left"
+  ],
+  "updatePayloads": {
+    "swarm.context_updated": {
+      "summary": "write one shared-context entry the whole swarm can read",
+      "fields": {
+        "swarmId": {
+          "description": "the swarm the event applies to",
+          "required": true,
+          "autoFilled": "from your token scope (args.swarmId); never write it inside the payload",
+          "type": "string",
+          "expectation": "a swarm identity",
+          "example": "swarm-40e643e96fd1edcd"
+        },
+        "key": {
+          "type": "string",
+          "description": "the shared-context key",
+          "expectation": "non-empty text",
+          "required": true,
+          "example": "notes:discovery"
+        },
+        "body": {
+          "type": "json",
+          "description": "the entry — arbitrary JSON",
+          "expectation": "any JSON value — arbitrary, not a fixed record shape",
+          "required": true,
+          "example": {
+            "finding": "the discovery lane is cheapest at the contract"
+          }
+        },
+        "groupId": {
+          "type": "string",
+          "description": "scope the entry to one group instead of the whole swarm",
+          "expectation": "non-empty text",
+          "example": "group-reviewers"
+        },
+        "expectedVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "optimistic-concurrency guard: the version the caller believes the row has",
+          "expectation": "a non-negative integer",
+          "example": 0
+        }
+      },
+      "example": {
+        "key": "notes:discovery",
+        "body": {
+          "finding": "the discovery lane is cheapest at the contract"
+        }
+      }
+    },
+    "swarm.contribution_recorded": {
+      "summary": "publish a finding or work product attributed to its author",
+      "fields": {
+        "swarmId": {
+          "description": "the swarm the event applies to",
+          "required": true,
+          "autoFilled": "from your token scope (args.swarmId); never write it inside the payload",
+          "type": "string",
+          "expectation": "a swarm identity",
+          "example": "swarm-40e643e96fd1edcd"
+        },
+        "contributionId": {
+          "type": "string",
+          "description": "the contribution identity",
+          "expectation": "non-empty text",
+          "required": true,
+          "autoFilled": "minted for you when omitted"
+        },
+        "participantId": {
+          "type": "string",
+          "description": "the author",
+          "expectation": "non-empty text",
+          "required": true,
+          "autoFilled": "your own participant identity; contributions must name their actual author"
+        },
+        "body": {
+          "type": "json",
+          "description": "the finding itself: arbitrary JSON, or pass the whole payload as plain text",
+          "expectation": "any JSON value — or pass the whole payload as plain text",
+          "example": "the discovery lane needs per-event payload schemas"
+        },
+        "workId": {
+          "type": "string",
+          "description": "the work this contribution advances",
+          "expectation": "non-empty text",
+          "example": "work-discovery"
+        },
+        "refs": {
+          "type": "array",
+          "items": "non-empty text",
+          "description": "related identities (work, contributions, artifacts)",
+          "expectation": "an array of non-empty strings",
+          "example": [
+            "work-discovery"
+          ]
+        }
+      },
+      "example": {
+        "body": "the discovery lane needs per-event payload schemas"
+      }
+    },
+    "swarm.participant_left": {
+      "summary": "remove one participant from the swarm",
+      "fields": {
+        "swarmId": {
+          "description": "the swarm the event applies to",
+          "required": true,
+          "autoFilled": "from your token scope (args.swarmId); never write it inside the payload",
+          "type": "string",
+          "expectation": "a swarm identity",
+          "example": "swarm-40e643e96fd1edcd"
+        },
+        "participantId": {
+          "type": "string",
+          "description": "the participant who leaves",
+          "expectation": "non-empty text",
+          "required": true,
+          "autoFilled": "defaults to your own leave when you call as a member"
+        },
+        "reason": {
+          "type": "string",
+          "description": "why they are leaving",
+          "expectation": "non-empty text",
+          "example": "turn complete"
+        }
+      },
+      "example": {}
+    }
+  },
+  "cursor": 1922,
+  "watch": {
+    "reason": "event",
+    "afterSeq": 1921,
+    "matchedSeq": 1922,
+    "event": {
+      "seq": 1922,
+      "kind": "swarm.context_updated",
+      "payloadKind": null
+    }
+  }
+}

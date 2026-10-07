@@ -1,0 +1,131 @@
+{
+  "attempt": "2026-08-01T08:53:20.704Z",
+  "salt": "kgv20260801085320",
+  "repoId": "repo-kgv20260801085320",
+  "phases": [
+    {
+      "phase": 1,
+      "runId": "run-4562010cbb4d0b2ab187880a87c9337f"
+    },
+    {
+      "phase": 1.1,
+      "resting": true,
+      "runId": "run-4562010cbb4d0b2ab187880a87c9337f"
+    },
+    {
+      "phase": 2,
+      "steps": [
+        {
+          "name": "discover",
+          "receipt": {
+            "taskId": "baton-a56d63be7872c003a7aa7bd6-work",
+            "workerId": "w-1",
+            "taskStatus": "completed",
+            "workerFence": 3,
+            "workerEntries": [
+              {
+                "entryId": "scratchpad-entry:edf56d21d1ef5e8510bb4ff8bf52393e7e802327c274510aea0840e4a1cffa4a",
+                "kind": "note"
+              },
+              {
+                "entryId": "scratchpad-entry:14654945dc7c765682ee1014f87d5097a153221e1ce5f0aa746fa6e07f9fffc4",
+                "kind": "plan"
+              },
+              {
+                "entryId": "scratchpad-entry:cc272230a8d85e75e00ffcdb9739efebb15466cd12395a9bb1d0a1d1848f2f42",
+                "kind": "doubt"
+              }
+            ]
+          }
+        },
+        {
+          "name": "horizons-before",
+          "receipt": {
+            "nodes": 4,
+            "edges": 1,
+            "sharedFence": 0
+          }
+        },
+        {
+          "name": "steering-registered",
+          "receipt": {
+            "runId": "run-4562010cbb4d0b2ab187880a87c9337f"
+          }
+        },
+        {
+          "name": "elevate",
+          "receipt": {
+            "result": "settled",
+            "elevated": [
+              {
+                "sourceEntryId": "scratchpad-entry:cc272230a8d85e75e00ffcdb9739efebb15466cd12395a9bb1d0a1d1848f2f42",
+                "sharedEntryId": "scratchpad-entry:1be44d2bcde3a5f2216d43d6d964f4d5752740242db183fcb1343e6f4607dce2",
+                "sharedEntryDigest": "f9da0a662c31b9f27fc95322805f325aa90c7cd5336826d84551a2b73b23332c",
+                "scratchFactId": null
+              },
+              {
+                "sourceEntryId": "scratchpad-entry:edf56d21d1ef5e8510bb4ff8bf52393e7e802327c274510aea0840e4a1cffa4a",
+                "sharedEntryId": "scratchpad-entry:cbadaf12a31223c85cec2ff011f61f8e38d2946976e7c5d7d55a8e8dc7ff55bb",
+                "sharedEntryDigest": "69a4af14a57920039ab076e0b3c6aaf108f303fdf60ef52d4380a1aef7b04241",
+                "scratchFactId": "scratch-fact:84c1fed5b5694545813f343943a8133f829ef8ad88a3cb8fe6b966984fe4605c"
+              }
+            ],
+            "scratchpadFence": 4
+          }
+        },
+        {
+          "name": "lease",
+          "receipt": {
+            "leaseId": "run-orchestrator-lease:9359f8863fdbff9d0",
+            "parentRunId": "run-kgv20260801085320-orchestrator"
+          }
+        },
+        {
+          "name": "board-candidacy",
+          "receipt": {
+            "itemId": "board-item:031d7553e3bfb91a42bc28738c804",
+            "itemVersion": 2,
+            "candidateFindingId": "finding:board-close:board-item:031d7553e3bfb91a42bc28738c804"
+          }
+        },
+        {
+          "name": "admit",
+          "receipt": {
+            "findingId": "finding:workflow-admitted:finding:board-close:board-item:031d7553e3bfb91",
+            "grounding": "verified",
+            "trigger": "workflow.admitted",
+            "replayed": false
+          }
+        },
+        {
+          "name": "settle",
+          "receipt": {
+            "result": "settled",
+            "reapEventSeq": 74,
+            "expiredScratchFactIds": [
+              "scratch-fact:84c1fed5b5694545813f343943a8133f829ef8ad88a3cb8fe6b966984fe4605c"
+            ]
+          }
+        },
+        {
+          "name": "horizons-after",
+          "receipt": {
+            "nodes": 7,
+            "edges": 2,
+            "sharedFence": 3,
+            "promotedFinding": {
+              "id": "finding:workflow-admitted:finding:board-close:board-item:031d7553e3bfb91",
+              "grounding": "verified"
+            }
+          }
+        }
+      ],
+      "verdict": "TIERED-LOOP-OK"
+    },
+    {
+      "phase": 3,
+      "waveClosed": true,
+      "remainingCount": 0
+    }
+  ]
+}

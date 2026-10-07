@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T03:16:01.451Z",
+  "salt": "c620260807031601",
+  "role": "contract-80",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-2f3ca4c4f332f452357a9751e5443f4b"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-80",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-80": {
+      "pin": "14fd7bec682475e405cc1b8c0749e174dc6a61ae",
+      "paths": [
+        "docs/reference/evidence/tg3-window-2026-08-07/tg3-window-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 353,
+  "verdict": "CONTRACT-80-OK"
+}

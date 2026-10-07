@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "review-foundry-2026-08-13-wave-b",
+  "members": [
+    {
+      "role": "coordinator",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["docs/reference/evidence/review-foundry-2026-08-13-b/**"],
+      "objectiveRef": "docs/reference/evidence/review-foundry-2026-08-13-b/coordinator-brief.md",
+      "report": "docs/reference/evidence/review-foundry-2026-08-13-b/review-qa.md"
+    },
+    {
+      "role": "row-rt170",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/review-foundry-2026-08-13-b/**"],
+      "objectiveRef": "docs/reference/evidence/review-foundry-2026-08-13-b/row-rt170.md",
+      "report": "docs/reference/evidence/review-foundry-2026-08-13-b/redteam-170.md"
+    },
+    {
+      "role": "row-rt163",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/review-foundry-2026-08-13-b/**"],
+      "objectiveRef": "docs/reference/evidence/review-foundry-2026-08-13-b/row-rt163.md",
+      "report": "docs/reference/evidence/review-foundry-2026-08-13-b/redteam-163.md"
+    },
+    {
+      "role": "row-rt165",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/review-foundry-2026-08-13-b/**"],
+      "objectiveRef": "docs/reference/evidence/review-foundry-2026-08-13-b/row-rt165.md",
+      "report": "docs/reference/evidence/review-foundry-2026-08-13-b/redteam-165.md"
+    },
+    {
+      "role": "row-rt167",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/review-foundry-2026-08-13-b/**"],
+      "objectiveRef": "docs/reference/evidence/review-foundry-2026-08-13-b/row-rt167.md",
+      "report": "docs/reference/evidence/review-foundry-2026-08-13-b/redteam-167.md"
+    },
+    {
+      "role": "row-rt146",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/review-foundry-2026-08-13-b/**"],
+      "objectiveRef": "docs/reference/evidence/review-foundry-2026-08-13-b/row-rt146.md",
+      "report": "docs/reference/evidence/review-foundry-2026-08-13-b/redteam-146.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue your attack drive — verify every anchor against the real code, write your report incrementally, publish to the shared scratchpad when complete." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the shared frame binds you). Publish your final report to the `shared` scratchpad partition as well as your file. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 },
+    "signalOnMembersDone": { "roles": ["coordinator"], "message": { "kind": "result", "body": "All rows settled — read their reports from the `shared` scratchpad partition and write review-qa.md per your brief." } }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/review-foundry-2026-08-13-b/review-qa.md", "mustContain": "REVIEW-QA v1" },
+      { "path": "docs/reference/evidence/review-foundry-2026-08-13-b/redteam-170.md", "mustContain": "#170" },
+      { "path": "docs/reference/evidence/review-foundry-2026-08-13-b/redteam-163.md", "mustContain": "#163" },
+      { "path": "docs/reference/evidence/review-foundry-2026-08-13-b/redteam-165.md", "mustContain": "#165" },
+      { "path": "docs/reference/evidence/review-foundry-2026-08-13-b/redteam-167.md", "mustContain": "#167" },
+      { "path": "docs/reference/evidence/review-foundry-2026-08-13-b/redteam-146.md", "mustContain": "#146" }
+    ]
+  }
+}

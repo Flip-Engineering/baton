@@ -1,0 +1,47 @@
+{
+  "at": "2026-07-13T03:56:21.183Z",
+  "repoHead": "7e67de8810dfd621c98caac7be33bed568b6aeaa",
+  "runId": "phase43-provider-read-review",
+  "taskId": "phase43-provider-read-glm-review",
+  "workerId": "w-1",
+  "pid": 52084,
+  "result": {
+    "status": "completed",
+    "ready": true
+  },
+  "route": {
+    "harnessRequested": "glm",
+    "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+    "modelRequested": "glm-4.7",
+    "modelResolved": "glm-4.7",
+    "modelObserved": "glm-4.7",
+    "effortRequested": "low",
+    "effortResolved": "low",
+    "effortObserved": null
+  },
+  "budgetUsed": {
+    "tokens": 91681,
+    "usd": 0.9583809999999999
+  },
+  "verifyAccept": true,
+  "reportCaptured": true,
+  "kill": {
+    "ok": true,
+    "result": "confirmed",
+    "emulated": false
+  },
+  "checks": {
+    "runnerHealthy": true,
+    "exactRoute": true,
+    "credentialedNativePid": true,
+    "freshVerified": true,
+    "killSafe": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "runtimeGone": true,
+    "branchGone": true,
+    "writerAuthorityReleased": true
+  },
+  "fatal": null,
+  "pass": true
+}

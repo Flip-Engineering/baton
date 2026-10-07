@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "grammar-redteam-opus",
+      "phase": "start_failed",
+      "terminal": true,
+      "narrative": null,
+      "resultSha": null,
+      "error": {
+        "code": "application_client_invalid",
+        "message": "Run objective is required"
+      }
+    },
+    {
+      "role": "grammar-redteam-kimi",
+      "phase": "start_failed",
+      "terminal": true,
+      "narrative": null,
+      "resultSha": null,
+      "error": {
+        "code": "application_client_invalid",
+        "message": "Run objective is required"
+      }
+    }
+  ],
+  "stops": [],
+  "remainingCount": 0,
+  "residueUnknown": false
+}

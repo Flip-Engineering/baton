@@ -1,0 +1,30 @@
+{
+  "attempt": "2026-08-13T07:32:43.045Z",
+  "salt": "z220260813073243",
+  "role": "audit-169c",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-b9b0b13173022784592907b4616bd467"
+        ]
+      }
+    },
+    {
+      "step": "dead:audit-169c",
+      "receipt": {
+        "phase": "failed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {},
+  "harvestStalePinsSkipped": 473,
+  "verdict": "AUDIT-169C-FAILED"
+}

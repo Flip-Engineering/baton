@@ -1,0 +1,60 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "runId": "run-90236c443caf5dca19f9621bb4271c62",
+    "outcome": "operator_interrupted_before_candidate",
+    "reason": "Both healthy parallel workers exceeded the concise audit envelope without producing their only scoped report; the operator exercised the durable stop/reap path at approximately ten minutes.",
+    "routes": [
+      {
+        "role": "codex-lifecycle-auditor",
+        "harnessRequested": "codex",
+        "harnessResolved": "codex@codex-cli 0.144.5",
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "effortRequested": "high",
+        "effortResolved": "high"
+      },
+      {
+        "role": "codex-provenance-adversary",
+        "harnessRequested": "codex",
+        "harnessResolved": "codex@codex-cli 0.144.5",
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "effortRequested": "xhigh",
+        "effortResolved": "xhigh"
+      }
+    ],
+    "context": {
+      "cellId": "cell:809a0ff7c4e54a2b37e3448f4b2258952dcd8bb3812a291cdbadf51c613a643c",
+      "matchedItems": 0,
+      "scopedEntries": 0,
+      "outsideScopeEntries": 1055,
+      "finding": "The report-only write scope was also used as Context read scope; Phase 83 follow-up split these authorities."
+    },
+    "candidates": [],
+    "postRepairValidation": {
+      "focused": "62/62",
+      "fullSuite": "2054/2054"
+    }
+  },
+  "cleanup": {
+    "stopped": {
+      "state": "stopped",
+      "receiptDigest": "b2b3eb0f2e3c3639b9e03f9031fa7676011c76b5d20a95e69f2274da22b93ab9",
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    },
+    "callerStatusUnchanged": true,
+    "callerIndexUnchanged": true
+  }
+}

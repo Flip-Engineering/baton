@@ -1,0 +1,3 @@
+RESULT|mutation-valid|admitted=true|refusal_class=none|rows_written=1|cursor=3|owed=2
+RESULT|mutation-unknown-field|admitted=false|refusal_class=invalid_request|rows_written=0|cursor=2|owed=1
+RESULT|mutation-expired-session|admitted=false|refusal_class=expired_authority|rows_written=0|cursor=2|owed=1

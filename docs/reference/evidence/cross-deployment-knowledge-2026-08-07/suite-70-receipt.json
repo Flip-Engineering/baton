@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-13T02:28:38.676Z",
+  "salt": "s920260813022838",
+  "role": "suite-70",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-89d84f631bbb52b2dffc68ef9f1ab68f"
+        ]
+      }
+    },
+    {
+      "step": "terminal:suite-70",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-70": {
+      "pin": "7a659858e7defd267b6b8e8a66bf67cefae89b3f",
+      "paths": [
+        "impl/test/cross-deployment-knowledge-red.test.mjs",
+        "docs/reference/evidence/cross-deployment-knowledge-2026-08-07/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 432,
+  "verdict": "SUITE-70-OK"
+}

@@ -1,0 +1,990 @@
+{
+  "scope": "Checked candidate publication after target movement, law enforcement, native worker review and landing, and composed receive recovery. These are local integration measurements.",
+  "host": {
+    "system": "Darwin",
+    "release": "27.0.0",
+    "machine": "arm64",
+    "compiler": "bend 2.0.25"
+  },
+  "productionCorrection": "f30c41c9e4714f81e657dc984642855f03c5e361",
+  "testedIntegration": "4f31f8dcc61ea9ff0b314805e3a2a966e136e575",
+  "runtimeTree": "ff095e7725778dbf74eb1fbc9faf60dbb657e619",
+  "recordedUpstream": "2bd4af0bb96394018faeb8eb719f91c0e9120d2d",
+  "counterexample": {
+    "scope": "Socket-synchronized checked landing of independent passing workers whose clean composition fails the selected behavioral check. Baseline admits the unchecked composition. Fixed runtime blocks target movement and checks the new composition on explicit retry.",
+    "baseline": {
+      "source": "2bd4af0bb96394018faeb8eb719f91c0e9120d2d",
+      "sourceTree": "3e1ede8620d2ec3feaa8a2376c7dcf798eb49879",
+      "binarySha256": "300602b88a81395bdb03a15722f09bc4497b5132648d1af9bdcbbae69c6f5331",
+      "binarySha256After": "300602b88a81395bdb03a15722f09bc4497b5132648d1af9bdcbbae69c6f5331",
+      "driverSha256": "70874505442c5351e5d6ea1a8516c399314762c4b8904f150ccb4eddab23782d",
+      "evidencePath": "/Users/wahargis/Development/Experiments/baton-bend2-landing-reference-20260928/.scratch/landing-recheck/before/evidence.json",
+      "evidenceSha256": "87966b07b13ee748d898396ac570ddd71a1ff966f75122b2cecdefebe75417b5",
+      "elapsedSeconds": 3.964641809463501,
+      "targetBeforeMove": "f4fc3daad86ea88914edee66c49ea427e4fe05f0",
+      "targetAfterFirstLanding": "f55f54fdcc07d2a234bd21cf92b48064c68fc993",
+      "checkedCandidate": {
+        "head": "49ff2c44621f0aa0717c6c96eded5b8d409ad619",
+        "tree": "593772aa8029bcfe501bcd5a450b72c68eb2876d",
+        "exitCode": 0
+      },
+      "checkedBasis": {
+        "head": "f4fc3daad86ea88914edee66c49ea427e4fe05f0",
+        "tree": "b971c427d1838ee2181a52b638d555e49236225d",
+        "exitCode": 0
+      },
+      "firstWorkerBLanding": {
+        "status": "landed",
+        "target": "main",
+        "commit": "a23ea1c7294d76c18acfe8cf1b8b507a9f49a068"
+      },
+      "workerALanding": {
+        "status": "landed",
+        "target": "main",
+        "commit": "f55f54fdcc07d2a234bd21cf92b48064c68fc993"
+      },
+      "retryWorkerBLanding": null,
+      "checks": [
+        {
+          "index": 1,
+          "role": "candidate",
+          "head": "49ff2c44621f0aa0717c6c96eded5b8d409ad619",
+          "tree": "593772aa8029bcfe501bcd5a450b72c68eb2876d",
+          "exitCode": 0,
+          "frontend": 4,
+          "backend": 6,
+          "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-landing-reference-20260928/.scratch/landing-recheck/before/repository/.scratch/bend2-land-worker-b-C9956F781C40F60F"
+        },
+        {
+          "index": 2,
+          "role": "candidate",
+          "head": "f55f54fdcc07d2a234bd21cf92b48064c68fc993",
+          "tree": "1e0082595d939c1ac0dc80a1de2914710cda3b43",
+          "exitCode": 0,
+          "frontend": 6,
+          "backend": 4,
+          "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-landing-reference-20260928/.scratch/landing-recheck/before/repository/.scratch/bend2-land-worker-a-A453D7541F7684F2"
+        },
+        {
+          "index": 3,
+          "role": "basis",
+          "head": "f4fc3daad86ea88914edee66c49ea427e4fe05f0",
+          "tree": "b971c427d1838ee2181a52b638d555e49236225d",
+          "exitCode": 0,
+          "frontend": 4,
+          "backend": 4,
+          "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-landing-reference-20260928/.scratch/landing-recheck/before/repository/.scratch/bend2-land-worker-a-A453D7541F7684F2-target"
+        },
+        {
+          "index": 4,
+          "role": "basis",
+          "head": "f4fc3daad86ea88914edee66c49ea427e4fe05f0",
+          "tree": "b971c427d1838ee2181a52b638d555e49236225d",
+          "exitCode": 0,
+          "frontend": 4,
+          "backend": 4,
+          "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-landing-reference-20260928/.scratch/landing-recheck/before/repository/.scratch/bend2-land-worker-b-C9956F781C40F60F-target"
+        }
+      ],
+      "checkCount": 4,
+      "checkTreeCounts": {
+        "593772aa8029bcfe501bcd5a450b72c68eb2876d": 1,
+        "1e0082595d939c1ac0dc80a1de2914710cda3b43": 1,
+        "b971c427d1838ee2181a52b638d555e49236225d": 2
+      },
+      "workersPreserved": {
+        "worker-a": {
+          "commitBefore": "78a3b7631de98e285f9db7512bf462585423bdaa",
+          "commitAfter": "78a3b7631de98e285f9db7512bf462585423bdaa",
+          "commitNow": "78a3b7631de98e285f9db7512bf462585423bdaa",
+          "path": "/Users/wahargis/Development/Experiments/baton-bend2-landing-reference-20260928/.scratch/landing-recheck/before/worker-a",
+          "exists": true,
+          "contentNow": {
+            "frontend": 6,
+            "backend": 4
+          },
+          "unchanged": true
+        },
+        "worker-b": {
+          "commitBefore": "aac5d13817472539ba1e18e10d2fce729fd05549",
+          "commitAfter": "aac5d13817472539ba1e18e10d2fce729fd05549",
+          "commitNow": "aac5d13817472539ba1e18e10d2fce729fd05549",
+          "path": "/Users/wahargis/Development/Experiments/baton-bend2-landing-reference-20260928/.scratch/landing-recheck/before/worker-b",
+          "exists": true,
+          "contentNow": {
+            "frontend": 4,
+            "backend": 6
+          },
+          "unchanged": true
+        }
+      },
+      "finalTarget": "a23ea1c7294d76c18acfe8cf1b8b507a9f49a068",
+      "finalBehavior": {
+        "head": "a23ea1c7294d76c18acfe8cf1b8b507a9f49a068",
+        "tree": "15d0f7262748b48292a296f94b8a0fb4eaf4085f",
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "F\n======================================================================\nFAIL: test_combined_budget (__main__.Capacity.test_combined_budget)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/Users/wahargis/Development/Experiments/baton-bend2-landing-reference-20260928/.scratch/landing-recheck/before/final-target/selected.py\", line 6, in test_combined_budget\n    self.assertLessEqual(frontend+backend,10,'combined budget exceeds capacity')\n    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 12 not less than or equal to 10 : combined budget exceeds capacity\n\n----------------------------------------------------------------------\nRan 1 test in 0.001s\n\nFAILED (failures=1)\n",
+        "frontend": 6,
+        "backend": 6
+      },
+      "independentFinalCheck": {
+        "argv": [
+          "python3",
+          "selected.py"
+        ],
+        "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-landing-reference-20260928/.scratch/landing-recheck/before/final-target",
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "F\n======================================================================\nFAIL: test_combined_budget (__main__.Capacity.test_combined_budget)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/Users/wahargis/Development/Experiments/baton-bend2-landing-reference-20260928/.scratch/landing-recheck/before/final-target/selected.py\", line 6, in test_combined_budget\n    self.assertLessEqual(frontend+backend,10,'combined budget exceeds capacity')\n    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 12 not less than or equal to 10 : combined budget exceeds capacity\n\n----------------------------------------------------------------------\nRan 1 test in 0.001s\n\nFAILED (failures=1)\n"
+      },
+      "checkedFinalTree": false,
+      "counterexample": true,
+      "cleanupSignals": []
+    },
+    "fixed": {
+      "source": "f30c41c9e4714f81e657dc984642855f03c5e361",
+      "sourceTree": "fe56934d3aa1970ab11acc753e364f37176d9c5e",
+      "binarySha256": "c1fc3aa2c1396989cd79bb214d93cf786aeae22370ad6d1532d363899c82aed4",
+      "binarySha256After": "c1fc3aa2c1396989cd79bb214d93cf786aeae22370ad6d1532d363899c82aed4",
+      "driverSha256": "3bb545e1074240eb3a8963d601a3a2d4fc5a670a6c2f4b1f957d478980ef603b",
+      "evidencePath": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/evidence.json",
+      "evidenceSha256": "e6bd97c78dfba1c855d1bfc192e25aced966eac9f6886ff7f7c538dff96bb0f1",
+      "elapsedSeconds": 4.007492780685425,
+      "targetBeforeMove": "651967165b0aae1427cb9f22acdb39c676d75f8e",
+      "targetAfterFirstLanding": "9235cc389b2dbf6281c23fd6bce20d89de77293c",
+      "checkedCandidate": {
+        "head": "5fb910159a447d38f38aec56ea76b64583d40061",
+        "tree": "593772aa8029bcfe501bcd5a450b72c68eb2876d",
+        "exitCode": 0
+      },
+      "checkedBasis": {
+        "head": "651967165b0aae1427cb9f22acdb39c676d75f8e",
+        "tree": "b971c427d1838ee2181a52b638d555e49236225d",
+        "exitCode": 0
+      },
+      "firstWorkerBLanding": {
+        "status": "blocked",
+        "reason": "target moved during checked landing; rerun land-checked to prepare and check against the current target"
+      },
+      "workerALanding": {
+        "status": "landed",
+        "target": "main",
+        "commit": "9235cc389b2dbf6281c23fd6bce20d89de77293c"
+      },
+      "retryWorkerBLanding": {
+        "status": "blocked",
+        "reason": "new failures: ?uncovered: 73656c65637465642e7079 43617061636974792e746573745f636f6d62696e65645f627564676574 417373657274696f6e4572726f72 63617061636974792d6578636565646564"
+      },
+      "checks": [
+        {
+          "index": 1,
+          "role": "candidate",
+          "head": "5fb910159a447d38f38aec56ea76b64583d40061",
+          "tree": "593772aa8029bcfe501bcd5a450b72c68eb2876d",
+          "exitCode": 0,
+          "frontend": 4,
+          "backend": 6,
+          "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/repository/.scratch/bend2-land-worker-b-78420DE2F051DD00"
+        },
+        {
+          "index": 2,
+          "role": "candidate",
+          "head": "9235cc389b2dbf6281c23fd6bce20d89de77293c",
+          "tree": "1e0082595d939c1ac0dc80a1de2914710cda3b43",
+          "exitCode": 0,
+          "frontend": 6,
+          "backend": 4,
+          "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/repository/.scratch/bend2-land-worker-a-0B610CCCFC6688D1"
+        },
+        {
+          "index": 3,
+          "role": "basis",
+          "head": "651967165b0aae1427cb9f22acdb39c676d75f8e",
+          "tree": "b971c427d1838ee2181a52b638d555e49236225d",
+          "exitCode": 0,
+          "frontend": 4,
+          "backend": 4,
+          "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/repository/.scratch/bend2-land-worker-a-0B610CCCFC6688D1-target"
+        },
+        {
+          "index": 4,
+          "role": "basis",
+          "head": "651967165b0aae1427cb9f22acdb39c676d75f8e",
+          "tree": "b971c427d1838ee2181a52b638d555e49236225d",
+          "exitCode": 0,
+          "frontend": 4,
+          "backend": 4,
+          "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/repository/.scratch/bend2-land-worker-b-78420DE2F051DD00-target"
+        },
+        {
+          "index": 5,
+          "role": "candidate",
+          "head": "086d185c3a9c267599a933d03ec8fd3cf0f97ed1",
+          "tree": "15d0f7262748b48292a296f94b8a0fb4eaf4085f",
+          "exitCode": 1,
+          "frontend": 6,
+          "backend": 6,
+          "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/repository/.scratch/bend2-land-worker-b-FF7ACADDDDF35077"
+        },
+        {
+          "index": 6,
+          "role": "basis",
+          "head": "9235cc389b2dbf6281c23fd6bce20d89de77293c",
+          "tree": "1e0082595d939c1ac0dc80a1de2914710cda3b43",
+          "exitCode": 0,
+          "frontend": 6,
+          "backend": 4,
+          "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/repository/.scratch/bend2-land-worker-b-FF7ACADDDDF35077-target"
+        }
+      ],
+      "checkCount": 6,
+      "checkTreeCounts": {
+        "593772aa8029bcfe501bcd5a450b72c68eb2876d": 1,
+        "1e0082595d939c1ac0dc80a1de2914710cda3b43": 2,
+        "b971c427d1838ee2181a52b638d555e49236225d": 2,
+        "15d0f7262748b48292a296f94b8a0fb4eaf4085f": 1
+      },
+      "workersPreserved": {
+        "worker-a": {
+          "commitBefore": "6c2ccef865bd936aa75b37bb2333cf42055debf8",
+          "commitAfter": "6c2ccef865bd936aa75b37bb2333cf42055debf8",
+          "commitNow": "6c2ccef865bd936aa75b37bb2333cf42055debf8",
+          "path": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/worker-a",
+          "exists": true,
+          "contentNow": {
+            "frontend": 6,
+            "backend": 4
+          },
+          "unchanged": true
+        },
+        "worker-b": {
+          "commitBefore": "e76c8147d05641e79121e1e6ffb39e1b1e724688",
+          "commitAfter": "e76c8147d05641e79121e1e6ffb39e1b1e724688",
+          "commitNow": "e76c8147d05641e79121e1e6ffb39e1b1e724688",
+          "path": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/worker-b",
+          "exists": true,
+          "contentNow": {
+            "frontend": 4,
+            "backend": 6
+          },
+          "unchanged": true
+        }
+      },
+      "finalTarget": "9235cc389b2dbf6281c23fd6bce20d89de77293c",
+      "finalBehavior": {
+        "head": "9235cc389b2dbf6281c23fd6bce20d89de77293c",
+        "tree": "1e0082595d939c1ac0dc80a1de2914710cda3b43",
+        "exitCode": 0,
+        "stdout": "",
+        "stderr": ".\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n",
+        "frontend": 6,
+        "backend": 4
+      },
+      "independentFinalCheck": {
+        "argv": [
+          "python3",
+          "selected.py"
+        ],
+        "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/final-target",
+        "exitCode": 0,
+        "stdout": "",
+        "stderr": ".\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+      },
+      "checkedFinalTree": true,
+      "counterexample": false,
+      "cleanupSignals": [],
+      "scratchPreservation": {
+        "beforeExplicitRetry": [
+          "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/repository/.scratch/bend2-land-worker-b-78420DE2F051DD00",
+          "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/repository/.scratch/bend2-land-worker-b-78420DE2F051DD00-target"
+        ],
+        "candidateAfterTargetMovement": {
+          "head": "5fb910159a447d38f38aec56ea76b64583d40061",
+          "tree": "593772aa8029bcfe501bcd5a450b72c68eb2876d",
+          "exitCode": 0,
+          "stdout": "",
+          "stderr": ".\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n",
+          "frontend": 4,
+          "backend": 6
+        },
+        "afterExplicitRetry": [
+          "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/repository/.scratch/bend2-land-worker-b-FF7ACADDDDF35077",
+          "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/repository/.scratch/bend2-land-worker-b-FF7ACADDDDF35077-target"
+        ],
+        "failedCandidate": {
+          "head": "086d185c3a9c267599a933d03ec8fd3cf0f97ed1",
+          "tree": "15d0f7262748b48292a296f94b8a0fb4eaf4085f",
+          "exitCode": 1,
+          "stdout": "",
+          "stderr": "F\n======================================================================\nFAIL: test_combined_budget (__main__.Capacity.test_combined_budget)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/explicit-retry/repository/.scratch/bend2-land-worker-b-FF7ACADDDDF35077/selected.py\", line 6, in test_combined_budget\n    self.assertLessEqual(frontend+backend,10,'combined budget exceeds capacity')\n    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 12 not less than or equal to 10 : combined budget exceeds capacity\n\n----------------------------------------------------------------------\nRan 1 test in 0.001s\n\nFAILED (failures=1)\n",
+          "frontend": 6,
+          "backend": 6
+        },
+        "retainedPathsExistNow": true,
+        "firstPairRetainedUntilRetry": true,
+        "retryReplacesFirstPair": true
+      },
+      "retryBlockedNewFailure": true,
+      "targetUnchangedAcrossBlockedAttempts": true
+    },
+    "remainingOwnedProcesses": [],
+    "pythonLaws": {
+      "evidencePath": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/laws-check.json",
+      "evidenceSha256": "200e50cfceeee3710053948083764ff42e1dcfefb871c6f3bfc77e79320955db",
+      "scope": "Pure models, operative entry laws, receive admission and recovery IO laws, shared session identity laws, production-source negative controls, the transition witness and two JavaScript regressions. Native lock and keeper semantics require host process tests.",
+      "compiler": "/Users/wahargis/Development/Experiments/bend2-trial/.bend/bin/bend",
+      "rows": 30,
+      "passed": 30,
+      "failedRows": []
+    }
+  },
+  "entryProofRemoval": {
+    "source": "f30c41c9e4714f81e657dc984642855f03c5e361",
+    "argv": [
+      "node",
+      "bend2/scripts/laws-check.mjs",
+      "/Users/wahargis/Development/Experiments/bend2-trial/.bend/bin/bend"
+    ],
+    "baseline": {
+      "check": "entry compiles with every law proven",
+      "passed": true
+    },
+    "laws": 205,
+    "compiles": 206,
+    "failed": [],
+    "logPath": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/entry-laws.log",
+    "logSha256": "1e18f48bdbbc801217c2b06004ac3f989a6961c97825ea1788c4a52f4f7b3c53"
+  },
+  "actualProductionMutations": {
+    "source_sha256": "f759fbafc04ba8fe5bef7ae8b6ffe0cb1833630d0344275877e82c359496b895",
+    "results": [
+      {
+        "mutation": "moved-target-publishes",
+        "expected_law": "m3a_changed_basis_requires_new_check",
+        "exit_code": 1,
+        "named_law_reported": true,
+        "seconds": 1.44542645799811,
+        "log": "moved-target-publishes.log"
+      },
+      {
+        "mutation": "gate-changes-basis",
+        "expected_law": "m3a_checked_pair_reaches_publication",
+        "exit_code": 1,
+        "named_law_reported": true,
+        "seconds": 1.4596429170051124,
+        "log": "gate-changes-basis.log"
+      },
+      {
+        "mutation": "effect-changes-basis",
+        "expected_law": "m3a_publication_invokes_checked_pair",
+        "exit_code": 1,
+        "named_law_reported": true,
+        "seconds": 1.933142208996287,
+        "log": "effect-changes-basis.log"
+      }
+    ]
+  },
+  "pythonLawChecks": {
+    "scope": "Pure models, operative entry laws, receive admission and recovery IO laws, shared session identity laws, production-source negative controls, the transition witness and two JavaScript regressions. Native lock and keeper semantics require host process tests.",
+    "logPath": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/laws-check.json",
+    "logSha256": "200e50cfceeee3710053948083764ff42e1dcfefb871c6f3bfc77e79320955db",
+    "rows": [
+      {
+        "label": "toolchain",
+        "exit": 0,
+        "expectedExit": 0,
+        "passed": true
+      },
+      {
+        "label": "open obligations",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "model proofs",
+        "exit": 0,
+        "expectedExit": 0,
+        "passed": true
+      },
+      {
+        "label": "receive application proofs",
+        "exit": 0,
+        "expectedExit": 0,
+        "passed": true
+      },
+      {
+        "label": "operative entry proofs",
+        "exit": 0,
+        "expectedExit": 0,
+        "passed": true
+      },
+      {
+        "label": "model run",
+        "exit": 0,
+        "expectedExit": 0,
+        "passed": true
+      },
+      {
+        "label": "transition witness",
+        "exit": 0,
+        "expectedExit": 0,
+        "passed": true
+      },
+      {
+        "label": "erase prior history",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "drop new row",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "empty result",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "reorder rows",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "alter identity",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "deny workers",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "refusal field drifts",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "refusal rule drifts",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "refusal remedy drifts",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "refusal table drifts",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "refusal unredacted secret",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "decision infers a remote",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "decision codes a publishing outcome",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "decision publishes undeclared",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "busy receive runs its continuation",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "receive recovery starts another process",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "session admission substitutes another session",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "session admission bypasses canonicalization",
+        "exit": 1,
+        "expectedExit": 1,
+        "passed": true
+      },
+      {
+        "label": "witness control drops a row",
+        "exit": 0,
+        "expectedExit": 0,
+        "passed": true
+      },
+      {
+        "label": "native build",
+        "exit": 0,
+        "expectedExit": 0,
+        "passed": true
+      },
+      {
+        "label": "native run",
+        "exit": 0,
+        "expectedExit": 0,
+        "passed": true
+      },
+      {
+        "label": "JavaScript review retention",
+        "exit": 0,
+        "expectedExit": 0,
+        "passed": true
+      },
+      {
+        "label": "JavaScript worker admission",
+        "exit": 0,
+        "expectedExit": 0,
+        "passed": true
+      }
+    ]
+  },
+  "nativeWorker": {
+    "setup": {
+      "base": "9107256bc5f40075525cecc138bb762b8e2e5484",
+      "coordinator": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/bend2/baton2",
+      "coordinatorSha256": "c6fcca8d251b38b1410c5269d53890266602dd7ef6037a9bd327b45b3ace39ed",
+      "parent": {
+        "id": "root",
+        "parent": null,
+        "harness": "codex",
+        "model": "",
+        "effort": "",
+        "native": "",
+        "observedHarness": "",
+        "observedModel": "",
+        "observedEffort": "",
+        "endpoint": "",
+        "workspace": "",
+        "branch": "",
+        "base": ""
+      },
+      "worker": {
+        "id": "landing-regression",
+        "parent": "root",
+        "harness": "omp",
+        "model": "deepseek/deepseek-flash",
+        "effort": "low",
+        "native": "",
+        "observedHarness": "",
+        "observedModel": "",
+        "observedEffort": "",
+        "endpoint": "",
+        "workspace": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/worktree",
+        "branch": "codex/bend2-landing-regression-20260928",
+        "base": "9107256bc5f40075525cecc138bb762b8e2e5484"
+      },
+      "worktree": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/worktree",
+      "task": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/task.md"
+    },
+    "sessionAfter": {
+      "id": "landing-regression",
+      "parent": "root",
+      "harness": "omp",
+      "model": "deepseek/deepseek-flash",
+      "effort": "low",
+      "native": "01a0ea07-6a9e-7000-af1e-b004c520a1f8",
+      "observed_harness": "",
+      "observed_model": "deepseek/deepseek-flash",
+      "observed_effort": "",
+      "endpoint": "",
+      "workspace": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/worktree",
+      "branch": "codex/bend2-landing-regression-20260928",
+      "base": "9107256bc5f40075525cecc138bb762b8e2e5484"
+    },
+    "messages": [
+      {
+        "id": "landing-test-guidance",
+        "sender": "root",
+        "recipient": "landing-regression",
+        "kind": "guidance",
+        "body": "The production correction is now committed separately as f30c41c9. Keep your contribution to the new regression method. Please also assert that the explicit retry evaluates the combined tree against the moved target and leaves target A unchanged when the combination fails. Your frozen baseline binary is intentionally old; an initial landed result is the expected regression failure.",
+        "receipt": "{\"id\":\"landing-test-guidance\",\"type\":\"response\",\"command\":\"steer\",\"success\":true}",
+        "bodySha256": "fe950f84ff70a04eec0b0ba1f9d14d4e01861f0b8e18a61d177ad076ebe0039b"
+      },
+      {
+        "id": "landing-test-turn",
+        "sender": "landing-regression",
+        "recipient": "root",
+        "kind": "report",
+        "receipt": "Reviewed cc1c8984; requested exact rerun guidance assertion and simpler candidate-only barrier before landing.",
+        "bodySha256": "f26b9bca32cf27cfae33cca71a8e08de7ed4bd2d9d758da70c548677965092d5"
+      },
+      {
+        "id": "landing-review-turn",
+        "sender": "landing-regression",
+        "recipient": "root",
+        "kind": "report",
+        "receipt": "Reviewed 9710be22 and its passing corrected test; independent baseline run still fails at unsafe publication. Accepted for checked landing.",
+        "bodySha256": "6df7cce52c9d432eb757a6e286d44b1dbcb65a9235fa8c93ba64cbb1952c5944"
+      }
+    ],
+    "originalWorkerTip": "cc1c8984cc5c2a935d54493e4709a53f82892620",
+    "reviewedWorkerTip": "9710be22faa5ccba61b8c26547c41850c37c74f2",
+    "composedWorkerTip": "f5b883ca1582aba7c9ca91a4d445a95d26f0e93a",
+    "reviewedRegressionOnBaseline": {
+      "workerTip": "9710be22faa5ccba61b8c26547c41850c37c74f2",
+      "testSourceSha256": "1ed9489a031fa8b73f7781c8bc70b7f960af4e408068f4a9aa9f8ea75ff95297",
+      "binarySha256": "c6fcca8d251b38b1410c5269d53890266602dd7ef6037a9bd327b45b3ace39ed",
+      "elapsedSeconds": 1.9665447499937727,
+      "testsRun": 1,
+      "errors": 0,
+      "failures": [
+        "Traceback (most recent call last):\n  File \"/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/worktree/bend2/test/land.py\", line 522, in test_target_moving_under_a_held_candidate_blocks_and_keeps_it\n    self.assertEqual(result['status'], 'blocked')\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'landed' != 'blocked'\n- landed\n+ blocked\n\n"
+      ],
+      "expectedFailure": true
+    },
+    "firstLanding": {
+      "targetBefore": "b52b6daa9e154b0095c1dc935b8fcceb032169f1",
+      "workerBefore": "9710be22faa5ccba61b8c26547c41850c37c74f2",
+      "coordinatorSha256": "c1fc3aa2c1396989cd79bb214d93cf786aeae22370ad6d1532d363899c82aed4",
+      "argv": [
+        "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/bend2/baton2",
+        "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/state.db",
+        "land-checked",
+        "landing-regression",
+        "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928",
+        "codex/bend2-integration-20260928",
+        "bend2/scripts/check-unittest.sh",
+        "bend2/test/land.py"
+      ],
+      "exit": 0,
+      "seconds": 2.135951666001347,
+      "answer": {
+        "status": "conflict",
+        "files": "bend2/test/land.py",
+        "dir": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/bend2-land-landing-regression-78EC47E67814121C"
+      },
+      "stderrSha256": "4481e72083f9525d4f90704fb27889f72befbf9738bfa552e8b52cfd8984e5ae"
+    },
+    "acceptedLanding": {
+      "targetBefore": "b52b6daa9e154b0095c1dc935b8fcceb032169f1",
+      "targetAfter": "4f31f8dcc61ea9ff0b314805e3a2a966e136e575",
+      "workerBefore": "f5b883ca1582aba7c9ca91a4d445a95d26f0e93a",
+      "workerAfter": "f5b883ca1582aba7c9ca91a4d445a95d26f0e93a",
+      "coordinatorSha256": "c1fc3aa2c1396989cd79bb214d93cf786aeae22370ad6d1532d363899c82aed4",
+      "argv": [
+        "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/bend2/baton2",
+        "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/state.db",
+        "land-checked",
+        "landing-regression",
+        "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928",
+        "codex/bend2-integration-20260928",
+        "bend2/scripts/check-unittest.sh",
+        "bend2/test/land.py"
+      ],
+      "exit": 0,
+      "seconds": 69.27628999999433,
+      "stdout": "{\"status\":\"landed\",\"target\":\"codex/bend2-integration-20260928\",\"commit\":\"4f31f8dcc61ea9ff0b314805e3a2a966e136e575\"}\n",
+      "stderrPath": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/landing.stderr",
+      "stderrSha256": "349f98df52ab7ac44d3afcd36b262182f410861736ba669c7dc82d2a561db5a3",
+      "answer": {
+        "status": "landed",
+        "target": "codex/bend2-integration-20260928",
+        "commit": "4f31f8dcc61ea9ff0b314805e3a2a966e136e575"
+      }
+    },
+    "workerWorkspaceExists": true,
+    "workerWorktreeStatus": "",
+    "nativeLogs": [
+      {
+        "path": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/native.jsonl",
+        "sha256": "10ab020a2b97bab80e886b99d257109e5494fbf25082f6a21e7ad7e0aec88ca7"
+      },
+      {
+        "path": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/review-native.jsonl",
+        "sha256": "9f5f3fbe5020c241e68093fabb4434ce79dc2d77757f767b60305c404fd7b409"
+      },
+      {
+        "path": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/turn.stdout",
+        "sha256": "be2da1877f57f5b94c951c400b9bff967dfdc45a883a5543f41f893bd0d79b44"
+      },
+      {
+        "path": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/review-turn.stdout",
+        "sha256": "0e8d4c0c7f6ade5aa3eef58adc3a02421c2345e55b0c280babe45e9cfdf844ed"
+      },
+      {
+        "path": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/task.md",
+        "sha256": "74484438b1ffbb3f78e9d2d1cc17966676fa5f50cd72c27768145c730275dd43"
+      },
+      {
+        "path": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/review-task.md",
+        "sha256": "64db1ee6e4d5fc7e0d739ed40453a9922b9cb5c2be1a9505a3ad07268ccd2c50"
+      },
+      {
+        "path": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/native-worker/composed-worker-tests.log",
+        "sha256": "a08d1431228baf680d0828c39fd89d59e72c7523314190655021b296d1c079b7"
+      }
+    ],
+    "rootConsumption": "Reports were read and acknowledged by the root; the registered root endpoint was empty."
+  },
+  "receiveComposition": {
+    "source": "9107256bc5f40075525cecc138bb762b8e2e5484",
+    "tree": "5d2613c9848c27b0b426f9704e9611228c300c87",
+    "binarySha256": "c6fcca8d251b38b1410c5269d53890266602dd7ef6037a9bd327b45b3ace39ed",
+    "gitStatus": "",
+    "finishedUtc": "2026-09-28T21:56:12.462684+00:00",
+    "entryCheck": {
+      "argv": [
+        "/Users/wahargis/Development/Experiments/bend2-trial/.bend/bin/bend",
+        "bend2/src/coordinator/main.bend",
+        "--check-only"
+      ],
+      "exit": 0,
+      "durationSeconds": 9.00862358300219
+    },
+    "build": {
+      "argv": [
+        "sh",
+        "bend2/scripts/build-native.sh"
+      ],
+      "exit": 0,
+      "durationSeconds": 97.23500908400456,
+      "executableSha256": "c6fcca8d251b38b1410c5269d53890266602dd7ef6037a9bd327b45b3ace39ed"
+    },
+    "probes": {
+      "supervisor-codex": {
+        "exit": 0,
+        "durationSeconds": 2.338120082997193,
+        "evidenceSha256": "4a8891b535fcae1e3e992352ae2a4ac20f19e3b8dbe67d741ef4fca00f57d13d",
+        "status": "passed",
+        "duplicateNativeSession": false,
+        "retryStatus": "queued",
+        "retryAfterTerminalStatus": "queued",
+        "postLossOutputRetained": true,
+        "originalCompletionRetained": true,
+        "pendingInputDrained": true,
+        "parentNotified": true,
+        "processesBeforeCleanup": [],
+        "sourceAndBinaryPinsMatch": true
+      },
+      "supervisor-omp": {
+        "exit": 0,
+        "durationSeconds": 2.082690666000417,
+        "evidenceSha256": "7a36fd5514e8aac518e00a859b93e95bf58df3f3d4eed277f5e5f6f9fd726746",
+        "status": "passed",
+        "duplicateNativeSession": false,
+        "retryStatus": "queued",
+        "retryAfterTerminalStatus": "queued",
+        "postLossOutputRetained": true,
+        "originalCompletionRetained": true,
+        "pendingInputDrained": true,
+        "parentNotified": true,
+        "processesBeforeCleanup": [],
+        "sourceAndBinaryPinsMatch": true
+      },
+      "host-restart": {
+        "exit": 0,
+        "durationSeconds": 2.920583416998852,
+        "evidenceSha256": "026784d0c9717cc9e7d5599ddb83e75f9ec567ab648b3157015ea4691f800e20",
+        "failures": [],
+        "afterKill": {
+          "branches": {
+            "lead": "1139fc298da975026d78aaf4e8377640d179def3",
+            "worker": "1139fc298da975026d78aaf4e8377640d179def3"
+          },
+          "nativesAlive": [],
+          "ownedProcesses": [],
+          "supervisorsAlive": [],
+          "worktrees": [
+            "worktree /Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/bend2/receive ' paths px8drt2j/repository",
+            "HEAD 1139fc298da975026d78aaf4e8377640d179def3",
+            "branch refs/heads/main",
+            "",
+            "worktree /Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/bend2/receive ' paths px8drt2j/lead-wt",
+            "HEAD 1139fc298da975026d78aaf4e8377640d179def3",
+            "branch refs/heads/bend2/lead",
+            "",
+            "worktree /Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/bend2/receive ' paths px8drt2j/worker-wt",
+            "HEAD 1139fc298da975026d78aaf4e8377640d179def3",
+            "branch refs/heads/bend2/worker"
+          ]
+        },
+        "afterCompletion": {
+          "ownedProcesses": []
+        },
+        "startsPerSession": {
+          "lead": 2,
+          "worker": 1
+        },
+        "killedKeepers": [
+          {
+            "command": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/bend2/baton2 --host-process-keeper /Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/bend2/receive ' paths px8drt2j/state.db.attempt-726563656976653a6c6561643a313a6561303835303734383130393862366166303635613834316666363130623437 4",
+            "pid": 60178,
+            "ppid": 60116,
+            "status": "T"
+          },
+          {
+            "command": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/bend2/baton2 --host-process-keeper /Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/bend2/receive ' paths px8drt2j/state.db.attempt-726563656976653a776f726b65723a323a6131663364383934346638323439356465373736333137393732316237386339 4",
+            "pid": 60671,
+            "ppid": 60613,
+            "status": "T"
+          }
+        ],
+        "sessions": {
+          "lead": {
+            "restartResume": "native-lead",
+            "restartPromptHasPending": true,
+            "secondInvocation": {
+              "session": "lead",
+              "status": "queued"
+            },
+            "inboxAfter": []
+          },
+          "worker": {
+            "restartResume": "native-worker",
+            "restartPromptHasPending": true,
+            "secondInvocation": {
+              "session": "worker",
+              "status": "queued"
+            },
+            "inboxAfter": []
+          }
+        },
+        "sourcePinMatches": true
+      },
+      "retained-fallback": {
+        "exit": 0,
+        "durationSeconds": 3.6005327500024578,
+        "evidenceSha256": "1a2786f5ed0283a4f569762e13e4d84b2f03974ee22016e0fe979c5e21d6f8ac",
+        "status": "passed",
+        "fallbackApplied": true,
+        "journalBefore": "base line\npreexisting edit\n",
+        "journalAfter": "base line\npreexisting edit\ncompleted after recovery\n",
+        "workspaceStatusAfter": " M journal.txt\n",
+        "workerPending": [],
+        "parentPending": [],
+        "remainingOwnedProcessesAfterCleanup": [],
+        "sourceAndBinaryPinsMatch": true
+      }
+    },
+    "beforeAfterPinsMatch": true,
+    "processAudit": {
+      "knownPids": [
+        57152,
+        57165,
+        57172,
+        57217,
+        59590,
+        59603,
+        59663,
+        59665,
+        59670,
+        59671,
+        59703,
+        59740,
+        59768,
+        60116,
+        60178,
+        60201,
+        60613,
+        60671,
+        60689,
+        61888,
+        61895,
+        62186,
+        62209,
+        62232,
+        62239,
+        63386,
+        63403,
+        63416,
+        63430,
+        63700,
+        64826,
+        66230
+      ],
+      "matchingLiveProcesses": []
+    }
+  },
+  "limits": [
+    "Atomic Git old-value comparison and host exit reporting are runtime assumptions.",
+    "The target moves during the gate; the read-to-CAS interval is covered by source laws and is not forcibly raced by this run.",
+    "Parent reports were read and acknowledged manually in the native worker run.",
+    "The private coordinator probes establish the recorded process-loss cases, not host power-loss durability.",
+    "The integration branch has not been published by this run."
+  ],
+  "nativeCheck": {
+    "source": "4f31f8dcc61ea9ff0b314805e3a2a966e136e575",
+    "tree": "5e4ad9b06527c484433bc3942879364e31c4cd66",
+    "argv": [
+      "sh",
+      "bend2/scripts/check-native.sh"
+    ],
+    "exit": 0,
+    "elapsedSeconds": 384.62748987500527,
+    "pythonTestCounts": [
+      13,
+      10,
+      19,
+      1,
+      19,
+      9,
+      11,
+      6,
+      22,
+      4,
+      14
+    ],
+    "pythonFiles": [
+      "bend2/test/check-unittest.py",
+      "bend2/test/codex-root.py",
+      "bend2/test/coordinator.py",
+      "bend2/test/end-to-end.py",
+      "bend2/test/land.py",
+      "bend2/test/mcp-root.py",
+      "bend2/test/omp-root.py",
+      "bend2/test/process.py",
+      "bend2/test/receive.py",
+      "bend2/test/recruit.py",
+      "bend2/test/turn.py"
+    ],
+    "coordinatorSha256": "c1fc3aa2c1396989cd79bb214d93cf786aeae22370ad6d1532d363899c82aed4",
+    "logSha256": "c146c4b5c34dc58d8ec4369af59bc3f46d21eefccf41eb22f905adc7cd12f9f8",
+    "logPath": "/Users/wahargis/Development/Experiments/baton-bend2-integration-20260928/.scratch/continued-rewrite/landing-fix/check-native-final.log",
+    "pythonTests": 128,
+    "bendSuites": {
+      "git": true,
+      "land": true
+    },
+    "warnings": [
+      "...../opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/unittest/case.py:704: ResourceWarning: unclosed file <_io.BufferedReader name=10>",
+      "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/unittest/case.py:704: ResourceWarning: unclosed file <_io.BufferedWriter name=6>",
+      "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/unittest/case.py:704: ResourceWarning: unclosed file <_io.BufferedReader name=8>"
+    ]
+  },
+  "implementationAndTestSourcesUnchangedAfterNativeCheck": true
+}

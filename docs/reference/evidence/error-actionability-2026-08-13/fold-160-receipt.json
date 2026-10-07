@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T07:34:08.455Z",
+  "salt": "z320260813073408",
+  "role": "fold-160",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-6a26127f9997d857296d19e3947acf0c"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-160",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-160": {
+      "pin": "7faadc404124af05273f4ffd4f96dc8d9317eeb7",
+      "paths": [
+        "docs/reference/evidence/error-actionability-2026-08-13/contract-fold.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 473,
+  "verdict": "FOLD-160-OK"
+}

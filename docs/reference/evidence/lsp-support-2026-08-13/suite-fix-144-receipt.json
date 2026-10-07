@@ -1,0 +1,39 @@
+{
+  "attempt": "2026-08-13T03:13:50.359Z",
+  "salt": "t320260813031350",
+  "role": "suite-fix-144",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-19dacd20ff00ca2628803b4b6859deed"
+        ]
+      }
+    },
+    {
+      "step": "terminal:suite-fix-144",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-fix-144": {
+      "pin": "d2e46f257418cfd59c4ce5553ec42aff2f465b3a",
+      "paths": [
+        "impl/test/issue144-lsp-pool-red.test.mjs",
+        "docs/reference/evidence/lsp-support-2026-08-13/suite-draft-notes.md",
+        "docs/reference/evidence/lsp-support-2026-08-13/issue144-lsp-pool-red.PARTIAL.test.mjs"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 442,
+  "verdict": "SUITEFIX-144-OK"
+}

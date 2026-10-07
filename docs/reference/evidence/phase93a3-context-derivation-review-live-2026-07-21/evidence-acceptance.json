@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "outcome": {
+    "role": "acceptance",
+    "phase": "work_completed",
+    "materializedVia": "refs/baton/results fallback",
+    "resultSha": "77c7f0888eb51b5976896f4bdf44450fd022cf8c",
+    "materialized": "docs/reference/evidence/phase93a3-context-derivation-review-live-2026-07-21/acceptance-review.md"
+  },
+  "stops": [
+    {
+      "runId": "run-9faa7b37e87ff97051cf9ad8887b4392",
+      "stop": null,
+      "ownership": null
+    }
+  ],
+  "failure": null
+}

@@ -1,0 +1,2367 @@
+{
+  "generatedAt": "2026-08-06T02:51:37.801Z",
+  "pins": [
+    {
+      "sha": "f394d08cee4e8114f64f4ad5aa60c385be9918d7",
+      "date": "2026-07-13T21:00:20-07:00",
+      "task": "baton-877a6bed7fa4dc17915cec62-work",
+      "vendor": "glm",
+      "model": "glm-4.7",
+      "effort": "low",
+      "subject": "baton-877a6bed7fa4dc17915cec62-work"
+    },
+    {
+      "sha": "08386d8de4acaae081589faf0b56b93f7ac67e1d",
+      "date": "2026-07-17T20:56:48-07:00",
+      "task": "baton-03aaaa72bf43f5e374f1fd29-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "medium",
+      "subject": "baton-03aaaa72bf43f5e374f1fd29-work"
+    },
+    {
+      "sha": "299eb80747ec50384f79cc586e251815d208cb7e",
+      "date": "2026-07-17T22:00:40-07:00",
+      "task": "baton-06ae79f0d87d88985459588b-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "medium",
+      "subject": "baton-06ae79f0d87d88985459588b-work"
+    },
+    {
+      "sha": "cb7db24e1bd79b4610bc37b6b64214f6ae268bdb",
+      "date": "2026-07-17T22:29:25-07:00",
+      "task": "baton-321f5a6d7697a76eea465379-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "medium",
+      "subject": "baton-321f5a6d7697a76eea465379-work"
+    },
+    {
+      "sha": "b9711f7eb2deb1895d31c1e8eef7e4b26f8af7a7",
+      "date": "2026-07-17T22:39:40-07:00",
+      "task": "baton-99598a0fee35c8a593c5b834-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "baton-99598a0fee35c8a593c5b834-work"
+    },
+    {
+      "sha": "5e79a9ea986be55d0a9e43710e22e805356aa0cd",
+      "date": "2026-07-18T00:08:06-07:00",
+      "task": "baton-a8437a9f9e9871bd98efc01a-attempt-failure-hunter",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "medium",
+      "subject": "baton-a8437a9f9e9871bd98efc01a-attempt-failure-hunter"
+    },
+    {
+      "sha": "a5b5ba72d7cfe7710c293b67b25a1770f193283a",
+      "date": "2026-07-18T02:58:35-07:00",
+      "task": "baton-b3a35418e24eaacd8a5c4661-attempt-codex-architect",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "low",
+      "subject": "baton-b3a35418e24eaacd8a5c4661-attempt-codex-architect"
+    },
+    {
+      "sha": "a66ab6c2634297971c781c927f299abbe0ddc594",
+      "date": "2026-07-18T03:16:16-07:00",
+      "task": "baton-069250081407c1d6e26d40d1-attempt-codex-architect",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "low",
+      "subject": "baton-069250081407c1d6e26d40d1-attempt-codex-architect"
+    },
+    {
+      "sha": "9939dc170987551d9b5655f98cb9ff99485ff1d8",
+      "date": "2026-07-18T03:31:02-07:00",
+      "task": "baton-1f38eb519bcab945072dc090-attempt-kimi-adversary",
+      "vendor": "kimi-code:kimi-code",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "subject": "baton-1f38eb519bcab945072dc090-attempt-kimi-adversary"
+    },
+    {
+      "sha": "1a649e6bad93371bc519612a4a93df7a6fde22fd",
+      "date": "2026-07-18T03:36:41-07:00",
+      "task": "baton-1f19106744211e75d53e9bde-revision-2-kimi-adversary",
+      "vendor": "kimi-code:kimi-code",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "subject": "baton-1f19106744211e75d53e9bde-revision-2-kimi-adversary"
+    },
+    {
+      "sha": "da39a0480cbbe50dc89d6b56109e72789bf80d6f",
+      "date": "2026-07-18T07:54:02-07:00",
+      "task": "baton-9c449eab2f405ff565b0445f-attempt-ax-adversary-0002",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-9c449eab2f405ff565b0445f-attempt-ax-adversary-0002"
+    },
+    {
+      "sha": "241d133272396af286b32c4ed67a1ae9208413d8",
+      "date": "2026-07-18T07:54:26-07:00",
+      "task": "baton-84b3195c431f086cfe84482d-attempt-ax-adversary-0001",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-84b3195c431f086cfe84482d-attempt-ax-adversary-0001"
+    },
+    {
+      "sha": "5d91a8143f9b4fc15c48a5d9d580964be00db8b9",
+      "date": "2026-07-18T07:57:26-07:00",
+      "task": "baton-928251e1d525e7f9a0232553-attempt-ax-adversary-0003",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-928251e1d525e7f9a0232553-attempt-ax-adversary-0003"
+    },
+    {
+      "sha": "dc0ddec4b00ab61983b5b70f80e6f95d75e62fc6",
+      "date": "2026-07-18T07:57:39-07:00",
+      "task": "baton-c4f7108b5cf71abfb19e033b-attempt-ax-adversary-0004",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-c4f7108b5cf71abfb19e033b-attempt-ax-adversary-0004"
+    },
+    {
+      "sha": "e594fced164cda0626dded35412136ac9d172125",
+      "date": "2026-07-18T11:00:57-07:00",
+      "task": "baton-d168c0c3abab85e6f0b67f3e-attempt-ax-adversary-0002",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-d168c0c3abab85e6f0b67f3e-attempt-ax-adversary-0002"
+    },
+    {
+      "sha": "ab457484fcef389f0aa361ca21844797f8ca2925",
+      "date": "2026-07-18T11:01:02-07:00",
+      "task": "baton-9856746f08cf5da5ae72fd8b-attempt-ax-adversary-0001",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-9856746f08cf5da5ae72fd8b-attempt-ax-adversary-0001"
+    },
+    {
+      "sha": "fb8b625c5b3c2539300eaff5a8747d63f42c7409",
+      "date": "2026-07-18T11:08:35-07:00",
+      "task": "baton-bd2cfb679f8dfed26a1815c1-attempt-ax-adversary-0001",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-bd2cfb679f8dfed26a1815c1-attempt-ax-adversary-0001"
+    },
+    {
+      "sha": "bd1e7d2de1c6480cc5b6bd47515da3af483fe427",
+      "date": "2026-07-18T11:09:41-07:00",
+      "task": "baton-826deb9f14471f877ae544fb-attempt-ax-adversary-0002",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-826deb9f14471f877ae544fb-attempt-ax-adversary-0002"
+    },
+    {
+      "sha": "4407b1cca20ccf55096d9b61fe5a254b6ada740b",
+      "date": "2026-07-18T11:26:17-07:00",
+      "task": "baton-fd895469228192b4976a0bde-attempt-ax-adversary-0002",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-fd895469228192b4976a0bde-attempt-ax-adversary-0002"
+    },
+    {
+      "sha": "6b5cce21f07dd26c34611186d65b726af92bf510",
+      "date": "2026-07-18T11:28:32-07:00",
+      "task": "baton-deb326f155529dff14263972-attempt-ax-adversary-0001",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-deb326f155529dff14263972-attempt-ax-adversary-0001"
+    },
+    {
+      "sha": "192414ac930e58416cfac8bd76adfd614aa9a071",
+      "date": "2026-07-18T11:36:48-07:00",
+      "task": "baton-031a595f243a7cfdbff38f07-attempt-ax-adversary-0002",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-031a595f243a7cfdbff38f07-attempt-ax-adversary-0002"
+    },
+    {
+      "sha": "978075e76074f43880837830e08fc73b5824f0b1",
+      "date": "2026-07-18T11:38:14-07:00",
+      "task": "baton-bdf779ed3c33dd132741a651-attempt-ax-adversary-0001",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-bdf779ed3c33dd132741a651-attempt-ax-adversary-0001"
+    },
+    {
+      "sha": "fddb7dc1c95693ce4f83e42b1faf5835f66bec32",
+      "date": "2026-07-18T11:56:45-07:00",
+      "task": "baton-4d0137a3e42de43a243221ea-attempt-ax-adversary-0002",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-4d0137a3e42de43a243221ea-attempt-ax-adversary-0002"
+    },
+    {
+      "sha": "36d40ec55b64da4cd2f6f9d2de4899be41f738e3",
+      "date": "2026-07-18T11:58:43-07:00",
+      "task": "baton-dfae6d3a46573ddb27c104c5-attempt-ax-adversary-0001",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-dfae6d3a46573ddb27c104c5-attempt-ax-adversary-0001"
+    },
+    {
+      "sha": "252e8b69f4d9f273f14595eea43efc5438a99577",
+      "date": "2026-07-18T12:05:09-07:00",
+      "task": "baton-bf49c6e6e153f8d309d54a09-attempt-ax-adversary-0002",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-bf49c6e6e153f8d309d54a09-attempt-ax-adversary-0002"
+    },
+    {
+      "sha": "a83f36326ab9869640159229ca59b19820aa9a3f",
+      "date": "2026-07-18T12:05:27-07:00",
+      "task": "baton-ef86b76a8c8d7a4f6bf32b64-attempt-ax-adversary-0001",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-ef86b76a8c8d7a4f6bf32b64-attempt-ax-adversary-0001"
+    },
+    {
+      "sha": "58133fe77752262367a50687b402c9387d05861a",
+      "date": "2026-07-18T12:16:04-07:00",
+      "task": "baton-bb1c1cd03eb9b55010206b1b-attempt-ax-adversary-0001",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-bb1c1cd03eb9b55010206b1b-attempt-ax-adversary-0001"
+    },
+    {
+      "sha": "4e34f3a0c05e5fb77d19f9e2e56fbd1d09a3e61b",
+      "date": "2026-07-18T12:19:02-07:00",
+      "task": "baton-8616f33d893f5d01b327bc11-attempt-ax-adversary-0002",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-8616f33d893f5d01b327bc11-attempt-ax-adversary-0002"
+    },
+    {
+      "sha": "379ebdc7591b108e937162044eaf2773ffa92706",
+      "date": "2026-07-18T12:39:25-07:00",
+      "task": "baton-445ac108d6a282d6f543449d-attempt-lineage-builder",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "baton-445ac108d6a282d6f543449d-attempt-lineage-builder"
+    },
+    {
+      "sha": "6f9141bb266519f34a866a8a20712a2eeff656aa",
+      "date": "2026-07-18T12:59:44-07:00",
+      "task": "baton-99b95a5af0fac4260f86c878-attempt-ax-adversary-0001",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-99b95a5af0fac4260f86c878-attempt-ax-adversary-0001"
+    },
+    {
+      "sha": "1326b501602af34c669c53a9d69257fa127167a5",
+      "date": "2026-07-18T13:00:24-07:00",
+      "task": "baton-2083db23ded0f7b51d343cec-attempt-ax-adversary-0002",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-2083db23ded0f7b51d343cec-attempt-ax-adversary-0002"
+    },
+    {
+      "sha": "61a29e00a43de74c8bb2042ad6b288c040db3ad2",
+      "date": "2026-07-18T13:26:29-07:00",
+      "task": "baton-be0317878c9f76111ef38434-attempt-failure-settlement-builder",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "baton-be0317878c9f76111ef38434-attempt-failure-settlement-builder"
+    },
+    {
+      "sha": "ec200099ad92315a086ea7f4e1cb9bc32b695505",
+      "date": "2026-07-18T13:54:53-07:00",
+      "task": "baton-74a50c4e5e847ff033e222f4-attempt-result-capsule-builder",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "baton-74a50c4e5e847ff033e222f4-attempt-result-capsule-builder"
+    },
+    {
+      "sha": "f57a9861bb7dab6d01177cad9055a3ec2d2b6328",
+      "date": "2026-07-18T14:23:35-07:00",
+      "task": "baton-2605251f197f529914b681c7-attempt-result-settlement-builder",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "baton-2605251f197f529914b681c7-attempt-result-settlement-builder"
+    },
+    {
+      "sha": "1323775577e61b34ed618311ed45b8fb73b68fb8",
+      "date": "2026-07-18T14:27:48-07:00",
+      "task": "baton-15ac30442593654edf343381-attempt-result-settlement-adversary",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-15ac30442593654edf343381-attempt-result-settlement-adversary"
+    },
+    {
+      "sha": "c9e3be80daf4f549722f50350d1038f66adfa51c",
+      "date": "2026-07-18T15:00:35-07:00",
+      "task": "baton-c8bc95ffca3f727762bf92d2-attempt-role-catalog-builder",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "baton-c8bc95ffca3f727762bf92d2-attempt-role-catalog-builder"
+    },
+    {
+      "sha": "d437b3e9bfb846875949358b028f39212f6db46a",
+      "date": "2026-07-18T15:54:25-07:00",
+      "task": "baton-25752521995041cc245c5498-attempt-context-call-adversary",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-25752521995041cc245c5498-attempt-context-call-adversary"
+    },
+    {
+      "sha": "47f892cebcdf24599cb9289e230b1240ba814a71",
+      "date": "2026-07-18T15:54:53-07:00",
+      "task": "baton-5631bca616f06e1322ff911f-attempt-context-call-builder",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "baton-5631bca616f06e1322ff911f-attempt-context-call-builder"
+    },
+    {
+      "sha": "2fe4b30397b96ccd5e52f4654002684ef53d429c",
+      "date": "2026-07-18T16:15:02-07:00",
+      "task": "baton-bacc4d269c1ea2981641e16b-attempt-result-lineage-adversary",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-bacc4d269c1ea2981641e16b-attempt-result-lineage-adversary"
+    },
+    {
+      "sha": "77aa81d5aac30b16dd06a1c494e3c7c7f0ef8152",
+      "date": "2026-07-18T16:15:28-07:00",
+      "task": "baton-6d174ffd057a01cf0eda4697-attempt-result-lineage-builder",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "baton-6d174ffd057a01cf0eda4697-attempt-result-lineage-builder"
+    },
+    {
+      "sha": "e36b94b40c076452fcf0ff04256a3e1cfa10e0c4",
+      "date": "2026-07-18T18:14:16-07:00",
+      "task": "baton-d5e4fd3f36fa60ff3083d797-attempt-reduce-ax-adversary",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "baton-d5e4fd3f36fa60ff3083d797-attempt-reduce-ax-adversary"
+    },
+    {
+      "sha": "ade5bf6cfa2dba606a097038c581e2fb69567c47",
+      "date": "2026-07-18T18:16:00-07:00",
+      "task": "baton-dba57f85720405650748248a-attempt-reduce-contract-reviewer",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-dba57f85720405650748248a-attempt-reduce-contract-reviewer"
+    },
+    {
+      "sha": "444a7ed6d5451f2cf87a8beb90b13e0e901ab4a9",
+      "date": "2026-07-18T18:56:54-07:00",
+      "task": "baton-ac006f1bef73f4de1ab1485e-attempt-settlement-adversary-0001",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-ac006f1bef73f4de1ab1485e-attempt-settlement-adversary-0001"
+    },
+    {
+      "sha": "0758b6b3bafcd57d1cb3b9f4d1549487c11ea941",
+      "date": "2026-07-18T18:58:06-07:00",
+      "task": "baton-d38d1e33585ce17bc6d011ea-attempt-settlement-adversary-0002",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-d38d1e33585ce17bc6d011ea-attempt-settlement-adversary-0002"
+    },
+    {
+      "sha": "298c53601daededdd46e370b87ebe1472e8b41b6",
+      "date": "2026-07-18T18:59:07-07:00",
+      "task": "baton-2556259110eb028ae32a620d-attempt-settlement-adversary-0005",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-2556259110eb028ae32a620d-attempt-settlement-adversary-0005"
+    },
+    {
+      "sha": "bccb991c184599b8effcd7038c177f0ccc23fcd8",
+      "date": "2026-07-18T18:59:19-07:00",
+      "task": "baton-eae9babba72ea89a34c4b75b-attempt-settlement-adversary-0004",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-eae9babba72ea89a34c4b75b-attempt-settlement-adversary-0004"
+    },
+    {
+      "sha": "7456027cf245ec2616d4d36eb8330ffe31b6f446",
+      "date": "2026-07-18T19:03:37-07:00",
+      "task": "baton-550f76d1fa8f1f0d2d7c661d-attempt-settlement-adversary-0001",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-550f76d1fa8f1f0d2d7c661d-attempt-settlement-adversary-0001"
+    },
+    {
+      "sha": "6e6eb93ad58ce7d87b904c8da80a152f821cacd5",
+      "date": "2026-07-18T19:04:14-07:00",
+      "task": "baton-61c4044d084124f90b29d22b-attempt-settlement-adversary-0004",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-61c4044d084124f90b29d22b-attempt-settlement-adversary-0004"
+    },
+    {
+      "sha": "b1bb0d1d54a0900ed21992e7c9330bb34836ea4e",
+      "date": "2026-07-18T19:04:26-07:00",
+      "task": "baton-ab150ca92497d62db4e1800e-attempt-settlement-adversary-0002",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-ab150ca92497d62db4e1800e-attempt-settlement-adversary-0002"
+    },
+    {
+      "sha": "e32c436b4207168af9583de50a68a6a23e3ea2f5",
+      "date": "2026-07-18T19:05:32-07:00",
+      "task": "baton-9b404255648b0ab45496f93f-attempt-settlement-adversary-0003",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-9b404255648b0ab45496f93f-attempt-settlement-adversary-0003"
+    },
+    {
+      "sha": "276943d8dfe142e5c8f7d0cba3bcd1b7f827e845",
+      "date": "2026-07-18T19:06:55-07:00",
+      "task": "baton-8aef18c1df0002bcc170b349-attempt-settlement-adversary-0005",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-8aef18c1df0002bcc170b349-attempt-settlement-adversary-0005"
+    },
+    {
+      "sha": "7d1167975d142096afb0275324d943721d36b1cf",
+      "date": "2026-07-18T19:32:12-07:00",
+      "task": "baton-81474f626d3fb6735b5866c8-attempt-settlement-adversary-0001",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-81474f626d3fb6735b5866c8-attempt-settlement-adversary-0001"
+    },
+    {
+      "sha": "a689b8e754a1197d36cb5963145907bcf1748d6e",
+      "date": "2026-07-18T19:32:56-07:00",
+      "task": "baton-f40a2de3e12a6e9b577cc958-attempt-settlement-adversary-0003",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-f40a2de3e12a6e9b577cc958-attempt-settlement-adversary-0003"
+    },
+    {
+      "sha": "0a4a048c235eba04860e7d08883661379498e9d3",
+      "date": "2026-07-18T19:34:04-07:00",
+      "task": "baton-f6761436dd62e947100bdd2c-attempt-settlement-adversary-0005",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-f6761436dd62e947100bdd2c-attempt-settlement-adversary-0005"
+    },
+    {
+      "sha": "7485995085484a3fa79aa69eddf080c6a3d07c76",
+      "date": "2026-07-18T19:34:34-07:00",
+      "task": "baton-19c3a29b258f22d4a486663a-attempt-settlement-adversary-0004",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-19c3a29b258f22d4a486663a-attempt-settlement-adversary-0004"
+    },
+    {
+      "sha": "b1ae30e43a61b8d472ed8a311b99ccf2267302d4",
+      "date": "2026-07-18T20:56:07-07:00",
+      "task": "baton-4eca423959b473680649ab32-attempt-settlement-adversary-0005",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-4eca423959b473680649ab32-attempt-settlement-adversary-0005"
+    },
+    {
+      "sha": "3dfb03560f91a4c34d7f67151bbdfdb003aee01e",
+      "date": "2026-07-18T20:57:35-07:00",
+      "task": "baton-f7f92b256ad3af2e906d3881-attempt-settlement-adversary-0002",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-f7f92b256ad3af2e906d3881-attempt-settlement-adversary-0002"
+    },
+    {
+      "sha": "5d1aafd3c5136d2bfd5688c9647afaa2cbf84b1a",
+      "date": "2026-07-18T20:57:36-07:00",
+      "task": "baton-d7a388cd9990026dc3a2277c-attempt-settlement-adversary-0004",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-d7a388cd9990026dc3a2277c-attempt-settlement-adversary-0004"
+    },
+    {
+      "sha": "506da6334cc0fbb4bfa77a503d54ad128853555d",
+      "date": "2026-07-18T20:57:47-07:00",
+      "task": "baton-fcb4cb53b95e4a45da15e635-attempt-settlement-adversary-0003",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-fcb4cb53b95e4a45da15e635-attempt-settlement-adversary-0003"
+    },
+    {
+      "sha": "9d4416d1201fe5e1511001d7877698f871d439a9",
+      "date": "2026-07-18T21:04:17-07:00",
+      "task": "baton-e3407054a688f2410584366d-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-e3407054a688f2410584366d-work"
+    },
+    {
+      "sha": "91138aed76e4192c11b12ad417f206d315e79415",
+      "date": "2026-07-18T21:43:20-07:00",
+      "task": "baton-26f152aa37f69820c247ceb0-attempt-settlement-adversary-0004",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-26f152aa37f69820c247ceb0-attempt-settlement-adversary-0004"
+    },
+    {
+      "sha": "cdd2030be7e580221cac7d907471c6db453e28e7",
+      "date": "2026-07-18T21:43:40-07:00",
+      "task": "baton-20f1d302be591612b0eb1169-attempt-settlement-adversary-0005",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-20f1d302be591612b0eb1169-attempt-settlement-adversary-0005"
+    },
+    {
+      "sha": "8e7e038e4ba2157fbc483a082455b25b8c0e4061",
+      "date": "2026-07-18T21:44:06-07:00",
+      "task": "baton-8e3d832b74f936ce3c783578-attempt-settlement-adversary-0003",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-8e3d832b74f936ce3c783578-attempt-settlement-adversary-0003"
+    },
+    {
+      "sha": "691b1a0c636c94da155f1d9bb428dec0d4bfb401",
+      "date": "2026-07-18T21:44:51-07:00",
+      "task": "baton-0506c545067243d862d9870d-attempt-settlement-adversary-0002",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-0506c545067243d862d9870d-attempt-settlement-adversary-0002"
+    },
+    {
+      "sha": "cef3ee86699dc4c249e51a664928b796df5bd9a0",
+      "date": "2026-07-18T21:47:07-07:00",
+      "task": "baton-0834fabafab1d792c781d9ce-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-0834fabafab1d792c781d9ce-work"
+    },
+    {
+      "sha": "2c4d08be92ec4a4a5f78698b86d0ac9fbe30861b",
+      "date": "2026-07-18T21:49:46-07:00",
+      "task": "baton-2d03f124c8194056fc8c4dbd-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-2d03f124c8194056fc8c4dbd-work"
+    },
+    {
+      "sha": "052928604ad16df5a2a2ea889b2c0f6bd3f08dfd",
+      "date": "2026-07-18T22:03:13-07:00",
+      "task": "baton-c5612471759102cfd9a60109-attempt-settlement-adversary-0005",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-c5612471759102cfd9a60109-attempt-settlement-adversary-0005"
+    },
+    {
+      "sha": "a7a386bd57604319108f39de973ad9c35319c041",
+      "date": "2026-07-18T22:03:19-07:00",
+      "task": "baton-a83f1c6445d66dd7ec6fba54-attempt-settlement-adversary-0002",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-a83f1c6445d66dd7ec6fba54-attempt-settlement-adversary-0002"
+    },
+    {
+      "sha": "82e7d13ecaa836d860d266b83adae889c29c0570",
+      "date": "2026-07-18T22:03:36-07:00",
+      "task": "baton-2e9619c8875113eac116aaa3-attempt-settlement-adversary-0003",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-2e9619c8875113eac116aaa3-attempt-settlement-adversary-0003"
+    },
+    {
+      "sha": "13d3c071d24697de528dab007e5859b07df183b1",
+      "date": "2026-07-18T22:04:24-07:00",
+      "task": "baton-8794aee22af542b41f8a2657-attempt-settlement-adversary-0004",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-8794aee22af542b41f8a2657-attempt-settlement-adversary-0004"
+    },
+    {
+      "sha": "ba73e048884c6a195d0e881c9ac73bf7778d8c4c",
+      "date": "2026-07-18T22:05:34-07:00",
+      "task": "baton-0d718cdeeedc008e4dbb4991-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-0d718cdeeedc008e4dbb4991-work"
+    },
+    {
+      "sha": "ba2d9385445d0ceb9dff0628f3a157349b05d306",
+      "date": "2026-07-18T22:12:37-07:00",
+      "task": "baton-1e8400142944daf09a965fe5-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-1e8400142944daf09a965fe5-work"
+    },
+    {
+      "sha": "5d90d6533a9afead100605527861c9e7fa960549",
+      "date": "2026-07-18T22:48:32-07:00",
+      "task": "baton-c0f1c71545a3776ad41cd289-attempt-context-eval-adversary-0001",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "xhigh",
+      "subject": "baton-c0f1c71545a3776ad41cd289-attempt-context-eval-adversary-0001"
+    },
+    {
+      "sha": "e5f4fd27469b6eed175103aea1d213fd81ccb6c8",
+      "date": "2026-07-19T00:40:53-07:00",
+      "task": "baton-051decf72db7c0aa1123b6d1-work",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "xhigh",
+      "subject": "baton-051decf72db7c0aa1123b6d1-work"
+    },
+    {
+      "sha": "92c7eb1c7668075ea3d1516e5d5c089bcf608323",
+      "date": "2026-07-19T01:22:25-07:00",
+      "task": "baton-98e6ce74be99ccdae8725926-work",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "xhigh",
+      "subject": "baton-98e6ce74be99ccdae8725926-work"
+    },
+    {
+      "sha": "42b5ca09d01e6f17c6d4df9b649cab78b52127bd",
+      "date": "2026-07-19T01:35:56-07:00",
+      "task": "baton-58ab02aae17a7d69a213dbd5-work",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "xhigh",
+      "subject": "baton-58ab02aae17a7d69a213dbd5-work"
+    },
+    {
+      "sha": "6d22dc8b5e6b6bcc9a111d3b77a10f4a535af21a",
+      "date": "2026-07-19T02:05:06-07:00",
+      "task": "baton-897b0b4f7119a1203c6add27-work",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "xhigh",
+      "subject": "baton-897b0b4f7119a1203c6add27-work"
+    },
+    {
+      "sha": "f14fdf14ebc7032a159e07ac1592928ee16fae30",
+      "date": "2026-07-19T02:22:38-07:00",
+      "task": "baton-39344af73d321bcd5a145521-work",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "xhigh",
+      "subject": "baton-39344af73d321bcd5a145521-work"
+    },
+    {
+      "sha": "8237d684440974cbda65eb4cd3e4ce5a1316b2d8",
+      "date": "2026-07-19T02:56:14-07:00",
+      "task": "baton-30780ebfa95eaddc79e04721-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "medium",
+      "subject": "baton-30780ebfa95eaddc79e04721-work"
+    },
+    {
+      "sha": "73fba0fba960c18645ef10e21d9741424f879745",
+      "date": "2026-07-19T02:58:15-07:00",
+      "task": "baton-d5aa312b8628caacfa8813e0-work",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "xhigh",
+      "subject": "baton-d5aa312b8628caacfa8813e0-work"
+    },
+    {
+      "sha": "ccc24fd66d7024d021535ea179b51e91b2e32a8e",
+      "date": "2026-07-19T03:30:26-07:00",
+      "task": "baton-77efde81c54a18df678e992c-work",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "xhigh",
+      "subject": "baton-77efde81c54a18df678e992c-work"
+    },
+    {
+      "sha": "e2a90736da73efb64ab5a1a1431bcc6123dc8375",
+      "date": "2026-07-19T03:33:47-07:00",
+      "task": "baton-e39e2c20967574bf721eb112-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "baton-e39e2c20967574bf721eb112-work"
+    },
+    {
+      "sha": "910b4f2cd48f45ee7f7bb4b4dd99e16e2a308538",
+      "date": "2026-07-19T04:16:08-07:00",
+      "task": "baton-b3d44edbc50fe35755a28917-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "baton-b3d44edbc50fe35755a28917-work"
+    },
+    {
+      "sha": "014071faf6a03c374ee4655ee86207c3ed3c2ab2",
+      "date": "2026-07-19T04:18:02-07:00",
+      "task": "baton-8fed85ee305c41d58d6ff947-work",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "xhigh",
+      "subject": "baton-8fed85ee305c41d58d6ff947-work"
+    },
+    {
+      "sha": "09693a9fce885e9ac87c161f02bbe81197bd4f39",
+      "date": "2026-07-19T07:02:39-07:00",
+      "task": "baton-3eb3d840c9d55f7665615f83-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "baton-3eb3d840c9d55f7665615f83-work"
+    },
+    {
+      "sha": "4cda077a1c0b9e05c7b59ebf7851a08f187acf22",
+      "date": "2026-07-19T07:16:55-07:00",
+      "task": "baton-041ec6834a7d621a197dba79-work",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "xhigh",
+      "subject": "baton-041ec6834a7d621a197dba79-work"
+    },
+    {
+      "sha": "343e50d7bdf89b6ed8385f56b137507191362f09",
+      "date": "2026-07-19T07:56:21-07:00",
+      "task": "baton-f9d2b55a8a6a9de238086d44-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-f9d2b55a8a6a9de238086d44-work"
+    },
+    {
+      "sha": "f1e5c2555fc505914b906ea1b17fb029ef3c9b45",
+      "date": "2026-07-19T09:55:29-07:00",
+      "task": "baton-0981e91a30e730adbeac7935-work",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "xhigh",
+      "subject": "baton-0981e91a30e730adbeac7935-work"
+    },
+    {
+      "sha": "bbd464c329af1afa61a30cbeb4ec6abc39fed9c1",
+      "date": "2026-07-19T13:07:16-07:00",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "fix default Claude route inventory"
+    },
+    {
+      "sha": "e9b0c3450dbfb7b25232e07d209658b5a7d2443d",
+      "date": "2026-07-19T14:11:44-07:00",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "fix cross-controller lifecycle recovery"
+    },
+    {
+      "sha": "b22169836358bad05f33932a868e05a52bfa2495",
+      "date": "2026-07-19T14:48:15-07:00",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "complete issue 10 P0 agent experience vertical"
+    },
+    {
+      "sha": "5cac7af6db1a97dcaf9f78df76fe6f1eb0e72da9",
+      "date": "2026-07-19T15:57:26-07:00",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "fix deterministic cross-controller process recovery"
+    },
+    {
+      "sha": "207145be11d97b957b9e6cc530f9bd81954ff1cb",
+      "date": "2026-07-19T17:48:02-07:00",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "test: stabilize workflow and reap lifecycle timing"
+    },
+    {
+      "sha": "ff8a3fcdc15c53579c4df911a38fd2bb455bbb13",
+      "date": "2026-07-19T18:24:23-07:00",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "fix retryable native process reap ownership"
+    },
+    {
+      "sha": "9bfe5dd11a4264602387b255a5908a820ef69a37",
+      "date": "2026-07-19T19:06:10-07:00",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "fix retryable native process reap ownership"
+    },
+    {
+      "sha": "fa9e07a383b33cac000f29a27a5e6be9515bba76",
+      "date": "2026-07-19T19:59:12-07:00",
+      "task": "baton-877dcfa84daf4af0615c14db-work",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "xhigh",
+      "subject": "baton-877dcfa84daf4af0615c14db-work"
+    },
+    {
+      "sha": "11a08771b1c7a2d2b2e801bcefe858f6244c260d",
+      "date": "2026-07-19T21:18:28-07:00",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "spec: define phase 93 program contract"
+    },
+    {
+      "sha": "6b316931ee58853222a14d3baa4d3a07c02e6f3f",
+      "date": "2026-07-19T22:41:45-07:00",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "fix receipt-bound processless recovery context"
+    },
+    {
+      "sha": "13e5c59167179f8ae6d44305e173d50bc291c1f2",
+      "date": "2026-07-19T23:32:25-07:00",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "spec: close phase 93 aggregate and parallel authority"
+    },
+    {
+      "sha": "4237c64123666df2dc812d29f94338a7b74c3844",
+      "date": "2026-07-19T23:45:40-07:00",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "spec: close phase 93 normalization holes"
+    },
+    {
+      "sha": "303eab0d3283bcbeeacaeb38f0dad5b287566635",
+      "date": "2026-07-20T00:33:31-07:00",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "implement phase 93a.1 canonical value kernel"
+    },
+    {
+      "sha": "30694cd78da079011571e432dabd360f1a0994a9",
+      "date": "2026-07-20T01:24:32-07:00",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "Implement explicit result intent vertical"
+    },
+    {
+      "sha": "ddd84c0a6d3e0daf92f39339b1e9b577c17d7157",
+      "date": "2026-07-20T18:13:30-07:00",
+      "task": "ws-226af4efbcb20975c67c6bb7f48464c1",
+      "vendor": "kimi-code:kimi-code",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "subject": "ws-226af4efbcb20975c67c6bb7f48464c1"
+    },
+    {
+      "sha": "c017491919d802e3b31d32b3c8833d2f5685deb2",
+      "date": "2026-07-20T18:25:37-07:00",
+      "task": "ws-5cc2e0de1d8aa100c78fc2823a467e5c",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "xhigh",
+      "subject": "ws-5cc2e0de1d8aa100c78fc2823a467e5c"
+    },
+    {
+      "sha": "f3e1230cc35dd30ccd3055c2fe180ea5204d29a1",
+      "date": "2026-07-20T20:56:05-07:00",
+      "task": "ws-6bd31be2b15bbbac1f124f851825442a",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-6bd31be2b15bbbac1f124f851825442a"
+    },
+    {
+      "sha": "d59d703b9cf06836b9e524fdb1e1de1bf2a112ba",
+      "date": "2026-07-20T21:12:00-07:00",
+      "task": "ws-f666fbacb7079e055c77072f98b6d644",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "xhigh",
+      "subject": "ws-f666fbacb7079e055c77072f98b6d644"
+    },
+    {
+      "sha": "fd040f9c089094993e8a0a4d3e8f56c87f998495",
+      "date": "2026-07-20T23:05:54-07:00",
+      "task": "ws-03be8c1bfd48d6bdc65eeac477958f07",
+      "vendor": "kimi-code:kimi-code",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "subject": "ws-03be8c1bfd48d6bdc65eeac477958f07"
+    },
+    {
+      "sha": "438aa06bb8c58d89e9e57ab618282c601a4ffc4e",
+      "date": "2026-07-20T23:10:04-07:00",
+      "task": "ws-db2a2d4cabacc7107c94cd40088a97ed",
+      "vendor": "kimi-code:kimi-code",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "subject": "ws-db2a2d4cabacc7107c94cd40088a97ed"
+    },
+    {
+      "sha": "5363f79ebad8ea2af91cc7ebc852080cde954314",
+      "date": "2026-07-20T23:19:42-07:00",
+      "task": "ws-de29353668a7b56cb8d1dad0e3665ca7",
+      "vendor": "kimi-code:kimi-code",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "subject": "ws-de29353668a7b56cb8d1dad0e3665ca7"
+    },
+    {
+      "sha": "7c5246eea5c46e6baee706f89dcf29630e18bb85",
+      "date": "2026-07-20T23:32:43-07:00",
+      "task": "ws-9c29150ecdfb1bd1cf07c2c14098e131",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-9c29150ecdfb1bd1cf07c2c14098e131"
+    },
+    {
+      "sha": "d53eccddee2310dd56295a0d4e4990ce7aba0dba",
+      "date": "2026-07-20T23:56:51-07:00",
+      "task": "ws-eed730e9e72142dd33789be3c9d28826",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-eed730e9e72142dd33789be3c9d28826"
+    },
+    {
+      "sha": "281f887f0371bfb82aad698de7e41ab096471325",
+      "date": "2026-07-21T00:00:08-07:00",
+      "task": "ws-28655cc90f0ba59b58a51d0da3686d5d",
+      "vendor": "kimi-code:kimi-code",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "subject": "ws-28655cc90f0ba59b58a51d0da3686d5d"
+    },
+    {
+      "sha": "4e3813c499d9db71aa8fae71c0d1f7439d3262a1",
+      "date": "2026-07-21T00:29:49-07:00",
+      "task": "ws-a331563bdf8a0c0c9363a3576fc99c63",
+      "vendor": "kimi-code:kimi-code",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "subject": "ws-a331563bdf8a0c0c9363a3576fc99c63"
+    },
+    {
+      "sha": "e1842ab2fa194d4a1a4bceb07f5a796eac6c7d7a",
+      "date": "2026-07-21T00:50:39-07:00",
+      "task": "ws-bbc6e1b49c2977a8282c1af5ff56ccd8",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-bbc6e1b49c2977a8282c1af5ff56ccd8"
+    },
+    {
+      "sha": "acf8db1c2fd4145741c94a4055d5ad9370743030",
+      "date": "2026-07-21T00:58:18-07:00",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "evidence: selective member stop proof — beta stopped mid-flight, alpha continued to verified completion"
+    },
+    {
+      "sha": "6da911968634e81692580b5c6cdeba3b64a93ac2",
+      "date": "2026-07-21T01:17:40-07:00",
+      "task": "ws-a79d5f3fe81fc49cfe2fe1d9e58b68b0",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-a79d5f3fe81fc49cfe2fe1d9e58b68b0"
+    },
+    {
+      "sha": "f375f29828fcc8b664c44bb15e46a5123a5670c2",
+      "date": "2026-07-21T08:24:44Z",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "Baton private effective-tree snapshot"
+    },
+    {
+      "sha": "395c066aacdfd2157021e999554f466f4035ea29",
+      "date": "2026-07-21T11:28:52-07:00",
+      "task": "ws-8c00da764c65796cf24699f36c006f64",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-8c00da764c65796cf24699f36c006f64"
+    },
+    {
+      "sha": "05664cc20da765e20c0fedee73aad71ce05af7aa",
+      "date": "2026-07-21T11:49:26-07:00",
+      "task": "ws-ea91b83cbb5eaa2ec2de0f8e88fee37d",
+      "vendor": "kimi-code:kimi-code",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "subject": "ws-ea91b83cbb5eaa2ec2de0f8e88fee37d"
+    },
+    {
+      "sha": "535bc699d3882623afe68dbded3351cf9c0bfef6",
+      "date": "2026-07-21T12:39:47-07:00",
+      "task": "ws-eaf46d9b2f26b81d377351835e6eb89a",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-eaf46d9b2f26b81d377351835e6eb89a"
+    },
+    {
+      "sha": "77c7f0888eb51b5976896f4bdf44450fd022cf8c",
+      "date": "2026-07-21T12:58:53-07:00",
+      "task": "ws-784f8c7c9a607ba9df56934d08c57144",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-784f8c7c9a607ba9df56934d08c57144"
+    },
+    {
+      "sha": "8cc5afeab40fcf7adbc9d234ae5aa1df09a5bff9",
+      "date": "2026-07-21T15:17:18-07:00",
+      "task": "ws-a7e39297bdbd6ad85791f5cf9e76dfe5",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-a7e39297bdbd6ad85791f5cf9e76dfe5"
+    },
+    {
+      "sha": "26f2561d9a6bfb659bb3d9bf0babeb355c837347",
+      "date": "2026-07-21T15:47:50-07:00",
+      "task": "ws-7b5db6434be4a3d1f0498328c03d9c8f",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-7b5db6434be4a3d1f0498328c03d9c8f"
+    },
+    {
+      "sha": "3db09da15f6032ead4eb4b3d88afcc318c2e346d",
+      "date": "2026-07-21T16:10:28-07:00",
+      "task": "ws-0074f5cad6b5b15893f0cbd76d4f4b6f",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-0074f5cad6b5b15893f0cbd76d4f4b6f"
+    },
+    {
+      "sha": "89e7574cb2bca6390c36856a36e70380662d6913",
+      "date": "2026-07-21T16:44:10-07:00",
+      "task": "ws-bf0f987c1bd040aa948688d705cffd1c",
+      "vendor": "kimi-code:kimi-code",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "subject": "ws-bf0f987c1bd040aa948688d705cffd1c"
+    },
+    {
+      "sha": "d2a1bb53f8c0d9d5e358805263ae26b8f76a73d1",
+      "date": "2026-07-21T16:51:02-07:00",
+      "task": "ws-6d289f6fc3bc34fe2ab3b402beb03278",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-6d289f6fc3bc34fe2ab3b402beb03278"
+    },
+    {
+      "sha": "de92c7231a23e3577da9952ec2b8c1457b05ef4d",
+      "date": "2026-07-21T17:05:59-07:00",
+      "task": "ws-c1c9a710f003f96bc2fae56e7be4135e",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-c1c9a710f003f96bc2fae56e7be4135e"
+    },
+    {
+      "sha": "5d1eabd47e1f7276a134dfb9be9ce5184c888124",
+      "date": "2026-07-21T17:48:52-07:00",
+      "task": "ws-56b70f85ec21e840a86728a26fbde66a",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-56b70f85ec21e840a86728a26fbde66a"
+    },
+    {
+      "sha": "7362bf17c5db4d28ec5465231643ae02a899d27e",
+      "date": "2026-07-21T18:25:06-07:00",
+      "task": "ws-03b37603aaee69ea169b187084ce3ef4",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-03b37603aaee69ea169b187084ce3ef4"
+    },
+    {
+      "sha": "29778edfb47ad4387f9efbbde3e88cbb6040af62",
+      "date": "2026-07-21T19:08:18-07:00",
+      "task": "ws-3578332e286a2dc70d0983d052e59f8a",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-3578332e286a2dc70d0983d052e59f8a"
+    },
+    {
+      "sha": "418209fc269d733e2e9ad04b336df5844cf93775",
+      "date": "2026-07-21T19:08:19-07:00",
+      "task": "ws-f3e1131e4105b7f8be76e40bf6ba96bb",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-f3e1131e4105b7f8be76e40bf6ba96bb"
+    },
+    {
+      "sha": "290c7f4cf2e34a6cd88502f255525ae1fe3c06c4",
+      "date": "2026-07-21T21:04:50-07:00",
+      "task": "ws-7174f62cc35cda367aac0009cb4e6f33",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-7174f62cc35cda367aac0009cb4e6f33"
+    },
+    {
+      "sha": "2131e688e0f75ccefe040a7c4d843f7d50a20106",
+      "date": "2026-07-21T21:07:11-07:00",
+      "task": "ws-875cad71365720c2240261a3e1e1644a",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-875cad71365720c2240261a3e1e1644a"
+    },
+    {
+      "sha": "a076d9f3911b38262f963ff295de2660491b4890",
+      "date": "2026-07-21T21:08:43-07:00",
+      "task": "ws-e17867866a43389636ec7702863d43d1",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-e17867866a43389636ec7702863d43d1"
+    },
+    {
+      "sha": "25d43048b6eebf4fa36973318b913c9c9e714057",
+      "date": "2026-07-21T21:10:02-07:00",
+      "task": "ws-1783789fa8a51ade33cac31143bba032",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-1783789fa8a51ade33cac31143bba032"
+    },
+    {
+      "sha": "2348ac50f21f70e457b20de2e4422f8d4a917132",
+      "date": "2026-07-21T22:44:27-07:00",
+      "task": "ws-2d697101fab701f73288f207114d538b",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-2d697101fab701f73288f207114d538b"
+    },
+    {
+      "sha": "c227c57e63be5157f878a6a89b3da04ab1a60416",
+      "date": "2026-07-21T22:56:26-07:00",
+      "task": "ws-e89c8422b616326177cd62e19946c0fb",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-e89c8422b616326177cd62e19946c0fb"
+    },
+    {
+      "sha": "dd0bcb1e585e979d9fff16a7032d0a62a5809540",
+      "date": "2026-07-22T00:14:10-07:00",
+      "task": "ws-af470c8990257fa5cf06064b3c0bfdc1",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-af470c8990257fa5cf06064b3c0bfdc1"
+    },
+    {
+      "sha": "4e2920ade42a7fb5a2a315a30326e8ab83fae914",
+      "date": "2026-07-22T00:19:37-07:00",
+      "task": "ws-7f78005f0fabaeba1ddc38f312d9d2a3",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-7f78005f0fabaeba1ddc38f312d9d2a3"
+    },
+    {
+      "sha": "695d3a4be004a44349eb7741e9bb5c130359423f",
+      "date": "2026-07-22T00:48:36-07:00",
+      "task": "ws-03ea921566ede76a1b873928e02685a1",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-03ea921566ede76a1b873928e02685a1"
+    },
+    {
+      "sha": "77741a84f77a3964da8a9a8b1450d48befdc17ae",
+      "date": "2026-07-22T22:55:25-07:00",
+      "task": "ws-39feda0d6cdfeaf4f32546eee4fc7af9",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-39feda0d6cdfeaf4f32546eee4fc7af9"
+    },
+    {
+      "sha": "376c60feaeebdbabc4a92782d41cf7bf81db8a43",
+      "date": "2026-07-22T23:11:39-07:00",
+      "task": "ws-3d049936ea85ff46d810e1aec0ac3112",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-3d049936ea85ff46d810e1aec0ac3112"
+    },
+    {
+      "sha": "60990cc484010daa059b1ca5043926f1eac4b3f1",
+      "date": "2026-07-23T03:02:58-07:00",
+      "task": "ws-476029a2cae26a7b8b1afe0e89ad1a52",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-476029a2cae26a7b8b1afe0e89ad1a52"
+    },
+    {
+      "sha": "2d8ada2069b58f8a0f61d36bd2bf06c36d2980af",
+      "date": "2026-07-23T03:13:18-07:00",
+      "task": "ws-afd5ae45cec8f74640492c223b1701cc",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-afd5ae45cec8f74640492c223b1701cc"
+    },
+    {
+      "sha": "8fe5b5b2bb5315481df1f86399fece31a99fcc72",
+      "date": "2026-07-23T03:59:37-07:00",
+      "task": "ws-cd2b43f1f8ffb2ccadbaa7bb20bde5e6",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-cd2b43f1f8ffb2ccadbaa7bb20bde5e6"
+    },
+    {
+      "sha": "a903d6c66ef26da300af7318cb1ebebe8111c470",
+      "date": "2026-07-23T04:01:14-07:00",
+      "task": "ws-3a22bb50a94601852dff37e76fa51469",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-3a22bb50a94601852dff37e76fa51469"
+    },
+    {
+      "sha": "3b0968c93d1cb182128a5cf0d762e365daaa41b5",
+      "date": "2026-07-23T04:50:57-07:00",
+      "task": "ws-2a6ace0944d24bfdf2be2f3da8b98ea1",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-2a6ace0944d24bfdf2be2f3da8b98ea1"
+    },
+    {
+      "sha": "81be821cf39269471d42f19af7ce7b6391a28b90",
+      "date": "2026-07-23T05:46:31-07:00",
+      "task": "ws-4772e95fa1d5b524d319fb3b9e866229",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-4772e95fa1d5b524d319fb3b9e866229"
+    },
+    {
+      "sha": "ab70a079c9fbfdc9ca6f80db9715c3fd9fd4cd80",
+      "date": "2026-07-23T06:27:27-07:00",
+      "task": "ws-03c36080cc4391754445ff83208bff20",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-03c36080cc4391754445ff83208bff20"
+    },
+    {
+      "sha": "5eea18e419a4ff872f4a48d21ca87879a3c9378c",
+      "date": "2026-07-23T06:42:41-07:00",
+      "task": "ws-a2c4fc038a6f4555ed475d0f0f4a860e",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "ws-a2c4fc038a6f4555ed475d0f0f4a860e"
+    },
+    {
+      "sha": "0c7008c98eb5ae9a9a2c4144bff524435c12281b",
+      "date": "2026-07-23T06:47:35-07:00",
+      "task": "ws-03ee15f8d5753a591731362a388a1fb0",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "ws-03ee15f8d5753a591731362a388a1fb0"
+    },
+    {
+      "sha": "6047e731ee2793950605296500729387c3cf2081",
+      "date": "2026-07-23T06:53:17-07:00",
+      "task": "ws-46b4dafe09ce2c246d0aab9b37384406",
+      "vendor": "kimi-code:kimi-code",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "subject": "ws-46b4dafe09ce2c246d0aab9b37384406"
+    },
+    {
+      "sha": "7da5d95c35d7a3acd96b2a58254d087b9ba649ab",
+      "date": "2026-07-23T09:04:43-07:00",
+      "task": "ws-44cc54fbf1221f23ca1d0c9e13ec359d",
+      "vendor": "kimi-code:kimi-code",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "subject": "ws-44cc54fbf1221f23ca1d0c9e13ec359d"
+    },
+    {
+      "sha": "58fef567e03a80fbd088dbf19a5b6a3aaf011915",
+      "date": "2026-07-31T13:57:27-07:00",
+      "task": "ws-16a4c8d2d7cd02e2f9011803340d8adf",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "low",
+      "subject": "ws-16a4c8d2d7cd02e2f9011803340d8adf"
+    },
+    {
+      "sha": "b655016879fd4926d46666ac99d29fb8f3858f24",
+      "date": "2026-07-31T14:40:02-07:00",
+      "task": "ws-cd5c9528c232867926711d2aa1bc60b0",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "ws-cd5c9528c232867926711d2aa1bc60b0"
+    },
+    {
+      "sha": "b66be067680c916052e1da070cb203a55ae99a0b",
+      "date": "2026-07-31T15:06:02-07:00",
+      "task": "ws-71e107bcbd41daa2913d4db18590ca93",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "ws-71e107bcbd41daa2913d4db18590ca93"
+    },
+    {
+      "sha": "ffeacc46fa307914019d417461aa8e6e1251c24f",
+      "date": "2026-07-31T15:18:51-07:00",
+      "task": "ws-de17e3013af09391aff09b8c08bfe333",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-de17e3013af09391aff09b8c08bfe333"
+    },
+    {
+      "sha": "f3f4748065942743069b78f653f64dd341f8d013",
+      "date": "2026-07-31T15:28:04-07:00",
+      "task": "ws-f58d044b395ff2f0e6faacb57d94f6cd",
+      "vendor": "grok:grok",
+      "model": "grok-4.5",
+      "effort": "high",
+      "subject": "ws-f58d044b395ff2f0e6faacb57d94f6cd"
+    },
+    {
+      "sha": "d58e892936f93eeba6efdf672851ded2b4e831eb",
+      "date": "2026-07-31T15:33:13-07:00",
+      "task": "ws-f255fd5308354446d0cc7cd1b79f039f",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "ws-f255fd5308354446d0cc7cd1b79f039f"
+    },
+    {
+      "sha": "58a29f7d60355848f52658e7046187b88e1227a5",
+      "date": "2026-07-31T15:33:35-07:00",
+      "task": "ws-73cfc46da88c9eadddc814335dd3bade",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-73cfc46da88c9eadddc814335dd3bade"
+    },
+    {
+      "sha": "0045e06ebf5065b865db60576d45e0d54498f0a2",
+      "date": "2026-07-31T15:37:11-07:00",
+      "task": "ws-458892461b528bb184f060fe7c0745e9",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-458892461b528bb184f060fe7c0745e9"
+    },
+    {
+      "sha": "e89e7b7bdfbfa944597bc72273bf1462536eeda5",
+      "date": "2026-07-31T15:42:26-07:00",
+      "task": "ws-0ffc78f9300a9f166f0f3da4fa274bc3",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-0ffc78f9300a9f166f0f3da4fa274bc3"
+    },
+    {
+      "sha": "e8d33689e39d1098244fda780c66941c35e74b4d",
+      "date": "2026-07-31T16:00:19-07:00",
+      "task": "ws-a131743ab56beec767c2018860c46b0d",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-a131743ab56beec767c2018860c46b0d"
+    },
+    {
+      "sha": "3a858e68249953ed748095c2209874a20d1e04f1",
+      "date": "2026-07-31T16:34:52-07:00",
+      "task": "ws-beecae6bdaa492051e4925e353f2ba40",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-beecae6bdaa492051e4925e353f2ba40"
+    },
+    {
+      "sha": "11bbf4aa262e3cf3d642f37f5402c82f97cea94c",
+      "date": "2026-07-31T16:34:58-07:00",
+      "task": "ws-3fbbb96f3cd21bbd9c9728e6863ca4ac",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-3fbbb96f3cd21bbd9c9728e6863ca4ac"
+    },
+    {
+      "sha": "5e659720bb51c63ff5119686e847256eb57537eb",
+      "date": "2026-07-31T16:35:44-07:00",
+      "task": "ws-1b24da0e1baed985076b5cd4f628bdd6",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-1b24da0e1baed985076b5cd4f628bdd6"
+    },
+    {
+      "sha": "8b1e11685e76cd2c0c8a7f404dd70f2d7c72848b",
+      "date": "2026-07-31T17:18:31-07:00",
+      "task": "ws-f4ef138ce971b3c30d15720aa434f5ac",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "ws-f4ef138ce971b3c30d15720aa434f5ac"
+    },
+    {
+      "sha": "1d128bb7a29bda22a25436452859171509363c09",
+      "date": "2026-07-31T17:28:00-07:00",
+      "task": "ws-30cc45547c427f9ae0936ec8f8664166",
+      "vendor": "claude-code:claude",
+      "model": "claude-opus-4-8",
+      "effort": "high",
+      "subject": "ws-30cc45547c427f9ae0936ec8f8664166"
+    },
+    {
+      "sha": "4fc3852778745e427c5becc64e6954b30ee0c025",
+      "date": "2026-07-31T17:28:30-07:00",
+      "task": "ws-1e3552ae4ba2ca5e2090b30be78d791f",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-1e3552ae4ba2ca5e2090b30be78d791f"
+    },
+    {
+      "sha": "548e0c30a64119a9a9fc379df0d95c130f0c8b6d",
+      "date": "2026-07-31T17:59:10-07:00",
+      "task": "ws-b0689de66c816b1e95cebc67586ce718",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-b0689de66c816b1e95cebc67586ce718"
+    },
+    {
+      "sha": "ef7814c480de5998a29dd7febaf9220feab2a158",
+      "date": "2026-07-31T17:59:49-07:00",
+      "task": "ws-f8847c50579abaa47eb060758f4f18f7",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "ws-f8847c50579abaa47eb060758f4f18f7"
+    },
+    {
+      "sha": "18ef8243f3c6e307803a41b363822865038d00ed",
+      "date": "2026-07-31T18:38:59-07:00",
+      "task": "ws-770ce3a2b77fed1d42ef1e326425a465",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-770ce3a2b77fed1d42ef1e326425a465"
+    },
+    {
+      "sha": "6aa88bd371fb6c4a4ed05b423bb998a0a2759df2",
+      "date": "2026-07-31T18:57:20-07:00",
+      "task": "ws-cac5505a4b10476d49fa9d41f353787e",
+      "vendor": "grok:grok",
+      "model": "grok-4.5",
+      "effort": "high",
+      "subject": "ws-cac5505a4b10476d49fa9d41f353787e"
+    },
+    {
+      "sha": "c3cd5c708ed0ffe8c58429406c7cc4fde843f0e6",
+      "date": "2026-07-31T18:57:58-07:00",
+      "task": "ws-cb7fd94dadbd57de7b44bdfa554b2d5c",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-cb7fd94dadbd57de7b44bdfa554b2d5c"
+    },
+    {
+      "sha": "ddbe8cbac98474d71739cb8d936fa91149bf2c54",
+      "date": "2026-07-31T19:36:03-07:00",
+      "task": "ws-6ff3691740dfc9c13c159a71724dce9f",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "ws-6ff3691740dfc9c13c159a71724dce9f"
+    },
+    {
+      "sha": "bfacbd2e62251c539ee7ccee51161ce3e282124a",
+      "date": "2026-07-31T20:32:55-07:00",
+      "task": "ws-b087e6ad7b40b040ff1875a5432c938c",
+      "vendor": "grok:grok",
+      "model": "grok-4.5",
+      "effort": "high",
+      "subject": "ws-b087e6ad7b40b040ff1875a5432c938c"
+    },
+    {
+      "sha": "1cdbac0111f3cd065a8721fa33e94f27ea1d2062",
+      "date": "2026-07-31T20:57:46-07:00",
+      "task": "ws-4be4520521c3a13c2ca69fcbef81f73d",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "ws-4be4520521c3a13c2ca69fcbef81f73d"
+    },
+    {
+      "sha": "e6d3fbf77e3341092e479a1e470e15a0d9a55bed",
+      "date": "2026-07-31T21:25:34-07:00",
+      "task": "ws-463da2445213c2f30bd57143a04f11d4",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-463da2445213c2f30bd57143a04f11d4"
+    },
+    {
+      "sha": "30631a05f19cf3a96aee810ad92d15deb3caa375",
+      "date": "2026-07-31T22:14:07-07:00",
+      "task": "ws-e1fce2551086dff3701693ea8a552dfb",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-e1fce2551086dff3701693ea8a552dfb"
+    },
+    {
+      "sha": "56eeaf2e1e5e018a924d7c610ea14563821b7b7d",
+      "date": "2026-07-31T23:17:52-07:00",
+      "task": "ws-ddb486506ef991aaaeccdb3c95e75fe1",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-ddb486506ef991aaaeccdb3c95e75fe1"
+    },
+    {
+      "sha": "c7641da082c1a31dc4a2d12c72294c63363482e2",
+      "date": "2026-08-01T01:44:51-07:00",
+      "task": "ws-2b99e0ef18c9036c7329d890e68ddfd5",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-2b99e0ef18c9036c7329d890e68ddfd5"
+    },
+    {
+      "sha": "3c351cd11dd76d960f9503e7352c30c16530d6d1",
+      "date": "2026-08-01T01:52:10-07:00",
+      "task": "ws-5d976f245797947a8110975988710d4b",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-5d976f245797947a8110975988710d4b"
+    },
+    {
+      "sha": "32d87cfacd2d2362b7c7f6f36dec80ebd4309e98",
+      "date": "2026-08-01T01:57:37-07:00",
+      "task": "ws-c29442784466c113196127307297a76c",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-c29442784466c113196127307297a76c"
+    },
+    {
+      "sha": "5c738f1e0040879734f204fadb28f0b338c9f7c3",
+      "date": "2026-08-01T16:04:47-07:00",
+      "task": "ws-f84b91581ed6065a8b450f46877c8bd0",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-f84b91581ed6065a8b450f46877c8bd0"
+    },
+    {
+      "sha": "94a9d0e81c4b5401906ce041b4a047cb72352c5c",
+      "date": "2026-08-01T16:18:07-07:00",
+      "task": "ws-b51d6793d640398f3fc1c5a3aeb7f175",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-b51d6793d640398f3fc1c5a3aeb7f175"
+    },
+    {
+      "sha": "3cbdc3942848144e87686f94d27a67dbd22dba5a",
+      "date": "2026-08-01T18:54:50-07:00",
+      "task": "ws-15674d982a47c9ae6f9155a864f9085f",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-15674d982a47c9ae6f9155a864f9085f"
+    },
+    {
+      "sha": "a1e0a5421e929b445b5f99838012738720b2c2e3",
+      "date": "2026-08-02T15:05:47-07:00",
+      "task": "ws-9e6339b929cae7e7c1e4e231bd71d80d",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-9e6339b929cae7e7c1e4e231bd71d80d"
+    },
+    {
+      "sha": "042bf8651b44af94184d0829aca6792aef451fbe",
+      "date": "2026-08-02T15:15:08-07:00",
+      "task": "ws-cd8fd3911b7a9fe0af9edc39bb3dfc1e",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-cd8fd3911b7a9fe0af9edc39bb3dfc1e"
+    },
+    {
+      "sha": "3b6a18248dcd1bc6aa4299e2a5981a93c9bd635a",
+      "date": "2026-08-02T15:33:22-07:00",
+      "task": "ws-0a01f06954d9267433e5a39ce0ba672a",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-0a01f06954d9267433e5a39ce0ba672a"
+    },
+    {
+      "sha": "df3c49be30242ead5f21eb664a6c08c92cf05eb5",
+      "date": "2026-08-02T15:36:08-07:00",
+      "task": "ws-3345867ec7ddd13ae289464862b57e79",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "ws-3345867ec7ddd13ae289464862b57e79"
+    },
+    {
+      "sha": "ef76dbf78ef7b378fe955b7f3a91e3759c9d526e",
+      "date": "2026-08-02T17:00:51-07:00",
+      "task": "ws-9abe8177caad2bbc5a3ce200a2ea654b",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-9abe8177caad2bbc5a3ce200a2ea654b"
+    },
+    {
+      "sha": "5d1d6ef36de449d24214b8e85cb0474957d9f846",
+      "date": "2026-08-02T17:06:30-07:00",
+      "task": "ws-7472d8f36e3b209c40c909569d1b29ac",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-7472d8f36e3b209c40c909569d1b29ac"
+    },
+    {
+      "sha": "c7c4d2c7c8c632755c46a6837a2c6b1afa440576",
+      "date": "2026-08-02T17:41:59-07:00",
+      "task": "ws-8e3f6d64c469267bc733dd5b7a31bb6a",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-8e3f6d64c469267bc733dd5b7a31bb6a"
+    },
+    {
+      "sha": "2d36a13a646d1b0b012f9be047d32986c04a2ce9",
+      "date": "2026-08-02T17:44:37-07:00",
+      "task": "ws-e38b839566203c350cd9aa6d45cb79f5",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "ws-e38b839566203c350cd9aa6d45cb79f5"
+    },
+    {
+      "sha": "2134d205745a1cae4da5efc218e012dda609e3be",
+      "date": "2026-08-02T17:57:47-07:00",
+      "task": "ws-3f217ae2db3ee7ef1629e0fd7b97eaa7",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-3f217ae2db3ee7ef1629e0fd7b97eaa7"
+    },
+    {
+      "sha": "de690ca7e26554d5247bd0e0d97f13b7b9f9cac4",
+      "date": "2026-08-02T17:58:15-07:00",
+      "task": "ws-cfef2d74451df229ff2936758c0cc8b2",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-cfef2d74451df229ff2936758c0cc8b2"
+    },
+    {
+      "sha": "746a886975e190c0a2588dc0911c19e739b78609",
+      "date": "2026-08-02T17:58:22-07:00",
+      "task": "ws-61d5d4361a003a52d6ee91405aceb2fb",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-61d5d4361a003a52d6ee91405aceb2fb"
+    },
+    {
+      "sha": "f5f432534b66e8937cb6849f5ea886be51230da4",
+      "date": "2026-08-02T18:01:55-07:00",
+      "task": "ws-a34c9b016abe40cebf9279559e9d0ff9",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "ws-a34c9b016abe40cebf9279559e9d0ff9"
+    },
+    {
+      "sha": "a338100bce59e87f4ccac6621dca5dcfa1767d9a",
+      "date": "2026-08-02T18:13:24-07:00",
+      "task": "ws-ce84662832e60b42f4183e9bde742ade",
+      "vendor": "codex:codex",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "subject": "ws-ce84662832e60b42f4183e9bde742ade"
+    },
+    {
+      "sha": "27180f756a76c2e7c13b24b01ff437508777d732",
+      "date": "2026-08-02T18:14:47-07:00",
+      "task": "ws-2c63ef8a25775d82ebc0601f39c7f721",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-2c63ef8a25775d82ebc0601f39c7f721"
+    },
+    {
+      "sha": "01fc610f2cdccc7f5c87293307e08d56c1e55c01",
+      "date": "2026-08-02T18:15:12-07:00",
+      "task": "ws-ce8535ca18fdcdc4425b4559ddab2429",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-ce8535ca18fdcdc4425b4559ddab2429"
+    },
+    {
+      "sha": "7681ced0325295916dcb8e8d92e3630f5a02eb24",
+      "date": "2026-08-02T18:19:20-07:00",
+      "task": "ws-5df86fa6c77e6c0e5ecfdf2d144e60f1",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-5df86fa6c77e6c0e5ecfdf2d144e60f1"
+    },
+    {
+      "sha": "898c228e2e05714ba8da1fd16f37ba12b70361ca",
+      "date": "2026-08-02T19:55:10-07:00",
+      "task": "ws-bb56818366ccd05f8cb9da2bb25ff2bf",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-bb56818366ccd05f8cb9da2bb25ff2bf"
+    },
+    {
+      "sha": "127a14479cfae8e80f37fa0d49df4f99bce64ffa",
+      "date": "2026-08-02T21:51:52-07:00",
+      "task": "ws-476017938f242c5e1f1435ad8ded0c53",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-476017938f242c5e1f1435ad8ded0c53"
+    },
+    {
+      "sha": "a501af86a8368eb54ef14e84bd0c51b4a030f434",
+      "date": "2026-08-02T22:00:03-07:00",
+      "task": "ws-72b34554cbfd9a77573a92417f90f03f",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-72b34554cbfd9a77573a92417f90f03f"
+    },
+    {
+      "sha": "55076da22f610e56cbe5f6809aa6dac609ea98df",
+      "date": "2026-08-03T11:56:09-07:00",
+      "task": "ws-059e8884813cc9d3d1715b2940ddc9da",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-059e8884813cc9d3d1715b2940ddc9da"
+    },
+    {
+      "sha": "38738eb8afd376e23b12e431f9719f793cd5537c",
+      "date": "2026-08-03T23:55:08-07:00",
+      "task": "ws-01fdfea785b9bdfca885967d36c37b01",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-01fdfea785b9bdfca885967d36c37b01"
+    },
+    {
+      "sha": "af5a941b5ee74a625b778d0882dde141b23a7170",
+      "date": "2026-08-04T00:23:36-07:00",
+      "task": "ws-40136d6df63c7b7e812494eeb2727ec3",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-40136d6df63c7b7e812494eeb2727ec3"
+    },
+    {
+      "sha": "3416348836939b6b16b3092f8051bab0f706b998",
+      "date": "2026-08-04T00:26:01-07:00",
+      "task": "ws-b527c156bbda93763e5df6a80599da9d",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-b527c156bbda93763e5df6a80599da9d"
+    },
+    {
+      "sha": "f9c257554960448b06bbbfa022e1c939331d36df",
+      "date": "2026-08-04T05:21:09-07:00",
+      "task": "ws-b029764e4b2cc6674753a4acf7c6ca7f",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-b029764e4b2cc6674753a4acf7c6ca7f"
+    },
+    {
+      "sha": "9d06357a377cbcd55f2d916fca70df01afc8f0d6",
+      "date": "2026-08-04T06:45:32-07:00",
+      "task": "ws-f2b451446733037239faf146b1c3db94",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-f2b451446733037239faf146b1c3db94"
+    },
+    {
+      "sha": "04b356ed020a8e8d39cce1e5889db1e96e0c3411",
+      "date": "2026-08-04T08:52:23-07:00",
+      "task": "ws-351711e3dfa0631a31c212a164347b99",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-351711e3dfa0631a31c212a164347b99"
+    },
+    {
+      "sha": "c343c2d0684b5b400f11a9c699f3899bf6eae0d0",
+      "date": "2026-08-05T16:48:56-07:00",
+      "task": "ws-977477bb68cc43a8e8ceb300cf402867",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-977477bb68cc43a8e8ceb300cf402867"
+    },
+    {
+      "sha": "187f7ee68f9c6d0d9c57f5a1d96d99e7dd604255",
+      "date": "2026-08-05T16:49:28-07:00",
+      "task": "ws-a313355cae040fc95c6f9cbb4ea0c2fc",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-a313355cae040fc95c6f9cbb4ea0c2fc"
+    },
+    {
+      "sha": "4f2befbfd56895fcc5febab81095d204d11896d5",
+      "date": "2026-08-05T16:55:31-07:00",
+      "task": "ws-ada225cc2c5965740fdaa8c8c6de5eeb",
+      "vendor": "glm:glm",
+      "model": "glm-5.2",
+      "effort": "high",
+      "subject": "ws-ada225cc2c5965740fdaa8c8c6de5eeb"
+    },
+    {
+      "sha": "2e4d44eaad7e3ecf09c9409e0d4a76d4a11213a4",
+      "date": "2026-08-05T17:40:12-07:00",
+      "task": "ws-ca35a2a433572bbce51f1d5a785f9fb3",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-ca35a2a433572bbce51f1d5a785f9fb3"
+    },
+    {
+      "sha": "5c0e0eb02a2508a916d58fbef3e1a2d3d22235dc",
+      "date": "2026-08-05T17:40:44-07:00",
+      "task": "ws-5a48b3d9c9b4055c57b9f13661b73f26",
+      "vendor": "claude-code:claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "subject": "ws-5a48b3d9c9b4055c57b9f13661b73f26"
+    },
+    {
+      "sha": "fedb994dcd0024d4e4e74eaac6be66e6c814b45b",
+      "date": "2026-08-05T18:27:06-07:00",
+      "task": "ws-655498cba7ad7e1d742e10d396c0cd72",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-655498cba7ad7e1d742e10d396c0cd72"
+    },
+    {
+      "sha": "99cbb7c664fcdd5b41b1ecacb566c70dc734399b",
+      "date": "2026-08-05T18:36:55-07:00",
+      "task": "ws-38661ff77a1d477c3942dc1ece01ad79",
+      "vendor": "deepseek:deepseek",
+      "model": "deepseek-v4-flash",
+      "effort": "high",
+      "subject": "ws-38661ff77a1d477c3942dc1ece01ad79"
+    },
+    {
+      "sha": "7670461b00425a32a92ee24714d7c5c4368efb90",
+      "date": "candidate|artifact|notification|checkpoint|partial_collection|",
+      "task": null,
+      "vendor": null,
+      "model": null,
+      "effort": null,
+      "subject": "spec: close phase 93 program-contract audit blockers"
+    }
+  ],
+  "rows": [
+    {
+      "receipt": "docs/reference/evidence/bidirectional-v3-2026-08-02/impl-receipt.json",
+      "role": "implementer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "898c228e2e05714ba8da1fd16f37ba12b70361ca",
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-03T02:09:57.952Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/bidirectional-v3-2026-08-02/redteam-receipt.json",
+      "role": "authority-attacker",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "2d36a13a646d1b0b012f9be047d32986c04a2ce9",
+      "basis": "completed",
+      "nudges": 2,
+      "claims": 2,
+      "startedAt": "2026-08-03T00:31:32.494Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/bidirectional-v3-2026-08-02/redteam-receipt.json",
+      "role": "lifecycle-attacker",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "c7c4d2c7c8c632755c46a6837a2c6b1afa440576",
+      "basis": "completed",
+      "nudges": 2,
+      "claims": 2,
+      "startedAt": "2026-08-03T00:31:32.494Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/board-impl-receipt.json",
+      "role": "implementer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "55076da22f610e56cbe5f6809aa6dac609ea98df",
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-03T18:14:27.167Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/browser-impl-receipt.json",
+      "role": "implementer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "38738eb8afd376e23b12e431f9719f793cd5537c",
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-04T05:54:18.173Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/claim-preflight-impl-receipt.json",
+      "role": "implementer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "f9c257554960448b06bbbfa022e1c939331d36df",
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-04T11:48:41.001Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/contract-storm-receipt.json",
+      "role": "board-workerhalf-contract",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "f5f432534b66e8937cb6849f5ea886be51230da4",
+      "basis": "completed",
+      "nudges": 4,
+      "claims": 4,
+      "startedAt": "2026-08-03T00:49:31.314Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/contract-storm-receipt.json",
+      "role": "orientation-contract",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "2134d205745a1cae4da5efc218e012dda609e3be",
+      "basis": "completed",
+      "nudges": 4,
+      "claims": 4,
+      "startedAt": "2026-08-03T00:49:31.314Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/contract-storm-receipt.json",
+      "role": "readiness-credentials-contract",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "de690ca7e26554d5247bd0e0d97f13b7b9f9cac4",
+      "basis": "completed",
+      "nudges": 4,
+      "claims": 4,
+      "startedAt": "2026-08-03T00:49:31.314Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/contract-storm-receipt.json",
+      "role": "browser-use-contract",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "746a886975e190c0a2588dc0911c19e739b78609",
+      "basis": "completed",
+      "nudges": 4,
+      "claims": 4,
+      "startedAt": "2026-08-03T00:49:31.314Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/crossreview-receipt.json",
+      "role": "board-workerhalf-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "7681ced0325295916dcb8e8d92e3630f5a02eb24",
+      "basis": "completed",
+      "nudges": 4,
+      "claims": 4,
+      "startedAt": "2026-08-03T01:04:37.430Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/crossreview-receipt.json",
+      "role": "orientation-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "a338100bce59e87f4ccac6621dca5dcfa1767d9a",
+      "basis": "completed",
+      "nudges": 4,
+      "claims": 4,
+      "startedAt": "2026-08-03T01:04:37.430Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/crossreview-receipt.json",
+      "role": "readiness-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "27180f756a76c2e7c13b24b01ff437508777d732",
+      "basis": "completed",
+      "nudges": 4,
+      "claims": 4,
+      "startedAt": "2026-08-03T01:04:37.430Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/crossreview-receipt.json",
+      "role": "browser-use-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "01fc610f2cdccc7f5c87293307e08d56c1e55c01",
+      "basis": "completed",
+      "nudges": 4,
+      "claims": 4,
+      "startedAt": "2026-08-03T01:04:37.430Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/frame-economics-impl-receipt.json",
+      "role": "implementer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "9d06357a377cbcd55f2d916fca70df01afc8f0d6",
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-04T12:37:20.120Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/orientation-impl-receipt.json",
+      "role": "implementer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "3416348836939b6b16b3092f8051bab0f706b998",
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-04T05:54:57.279Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/readiness-impl-receipt.json",
+      "role": "implementer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "af5a941b5ee74a625b778d0882dde141b23a7170",
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-04T05:53:16.224Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/frontier-sweep-2026-08-03/workflow-surface-impl-receipt.json",
+      "role": "implementer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "04b356ed020a8e8d39cce1e5889db1e96e0c3411",
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-04T14:01:19.360Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/kg-settlement-2026-08-01/impl-receipt.json",
+      "role": "implementer",
+      "phase": "failed",
+      "terminal": true,
+      "resultSha": null,
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-02T01:56:07.507Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/kg-settlement-2026-08-01/redteam-lc-receipt.json",
+      "role": "lifecycle-attacker",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "94a9d0e81c4b5401906ce041b4a047cb72352c5c",
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-01T23:07:41.474Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/kg-settlement-2026-08-01/redteam-receipt.json",
+      "role": "authority-attacker",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "5c738f1e0040879734f204fadb28f0b338c9f7c3",
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-01T22:50:52.523Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/kg-settlement-2026-08-01/redteam-receipt.json",
+      "role": "lifecycle-attacker",
+      "phase": "failed",
+      "terminal": true,
+      "resultSha": null,
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-01T22:50:52.523Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/kg-settlement-2026-08-01/test-blueteam-receipt.json",
+      "role": "remediation-verifier",
+      "phase": "failed",
+      "terminal": true,
+      "resultSha": null,
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-02T01:17:55.436Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/kg-settlement-2026-08-01/test-blueteam-v2-receipt.json",
+      "role": "remediation-verifier",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "3cbdc3942848144e87686f94d27a67dbd22dba5a",
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-02T01:47:37.971Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/kg-settlement-2026-08-01/test-redteam-receipt.json",
+      "role": "false-green-hunter",
+      "phase": "failed",
+      "terminal": true,
+      "resultSha": null,
+      "basis": "completed",
+      "nudges": 2,
+      "claims": 2,
+      "startedAt": "2026-08-01T23:36:22.880Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/kg-settlement-2026-08-01/test-redteam-receipt.json",
+      "role": "coverage-mapper",
+      "phase": "failed",
+      "terminal": true,
+      "resultSha": null,
+      "basis": "completed",
+      "nudges": 2,
+      "claims": 2,
+      "startedAt": "2026-08-01T23:36:22.880Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/mcp-packaging-2026-08-02/feedback-receipt.json",
+      "role": "worker-experience-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "5d1d6ef36de449d24214b8e85cb0474957d9f846",
+      "basis": "completed",
+      "nudges": 2,
+      "claims": 2,
+      "startedAt": "2026-08-02T23:56:39.280Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/mcp-packaging-2026-08-02/feedback-receipt.json",
+      "role": "orchestrator-experience-reviewer",
+      "phase": "failed",
+      "terminal": true,
+      "resultSha": null,
+      "basis": "completed",
+      "nudges": 2,
+      "claims": 2,
+      "startedAt": "2026-08-02T23:56:39.280Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/mcp-packaging-2026-08-02/feedback-receipt.json",
+      "role": "frontier-features-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "ef76dbf78ef7b378fe955b7f3a91e3759c9d526e",
+      "basis": "completed",
+      "nudges": 2,
+      "claims": 2,
+      "startedAt": "2026-08-02T23:56:39.280Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/mcp-packaging-2026-08-02/impl-receipt.json",
+      "role": "implementer",
+      "phase": "failed",
+      "terminal": true,
+      "resultSha": null,
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-02T23:18:17.721Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/mcp-packaging-2026-08-02/redteam-receipt.json",
+      "role": "authority-attacker",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "df3c49be30242ead5f21eb664a6c08c92cf05eb5",
+      "basis": "completed",
+      "nudges": 2,
+      "claims": 2,
+      "startedAt": "2026-08-02T22:21:08.180Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/mcp-packaging-2026-08-02/redteam-receipt.json",
+      "role": "lifecycle-attacker",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "3b6a18248dcd1bc6aa4299e2a5981a93c9bd635a",
+      "basis": "completed",
+      "nudges": 2,
+      "claims": 2,
+      "startedAt": "2026-08-02T22:21:08.180Z"
+    },
+    {
+      "receipt": "docs/reference/evidence/trust-gate-steering-2026-08-02/impl-receipt.json",
+      "role": "implementer",
+      "phase": "result_ready",
+      "terminal": false,
+      "resultSha": "a1e0a5421e929b445b5f99838012738720b2c2e3",
+      "basis": "completed",
+      "nudges": 1,
+      "claims": 1,
+      "startedAt": "2026-08-02T21:19:13.348Z"
+    }
+  ],
+  "pinModels": {
+    "glm-4.7": 1,
+    "gpt-5.6-sol": 88,
+    "kimi-code/k3": 12,
+    "glm-5.2": 32,
+    "unknown": 16,
+    "claude-opus-4-8": 19,
+    "claude-sonnet-5": 28,
+    "deepseek-v4-flash": 21,
+    "grok-4.5": 3
+  },
+  "outcomePhases": {
+    "result_ready": 26,
+    "failed": 7
+  },
+  "medianNudges": 2,
+  "resultReadyCount": 26
+}

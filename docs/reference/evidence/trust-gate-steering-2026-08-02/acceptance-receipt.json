@@ -1,0 +1,23 @@
+{
+  "attempt": "2026-08-02T22:12:45.407Z",
+  "outcome": {
+    "phase": "result_ready",
+    "resultSha": "042bf8651b44af94184d0829aca6792aef451fbe"
+  },
+  "basis": "completed",
+  "nudges": 1,
+  "claims": [
+    {
+      "role": "reader",
+      "requestId": "pause:baton-f339119595841301b66c0e41-work:73",
+      "at": "2026-08-02T22:15:07.878Z",
+      "code": "claimed"
+    }
+  ],
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0,
+    "candidatesAwaitingAdmission": 0,
+    "settlementRunId": null
+  }
+}

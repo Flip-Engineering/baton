@@ -1,0 +1,606 @@
+From 30a395e476546e4961465fadd4ba0ed5a07dd972 Mon Sep 17 00:00:00 2001
+From: "baton-worker-deepseek:deepseek"
+ <baton-worker-deepseek:deepseek@localhost>
+Date: Thu, 13 Aug 2026 21:29:19 -0700
+Subject: [PATCH] baton snapshot: ws-9e5769271db0a333834be80027bdca3f
+
+Baton-Task: ws-9e5769271db0a333834be80027bdca3f
+Baton-Vendor: deepseek:deepseek
+Baton-Model: deepseek-v4-flash
+Baton-Effort: high
+---
+ .../notes-row-docs.md                         | 167 ++++++++++++++++++
+ impl/CLI.md                                   |   5 +-
+ impl/MCP.md                                   |  66 +++++--
+ impl/scripts/surface-conformance.mjs          |  86 +++++++--
+ impl/scripts/surface-divergence-ledger.json   |  75 +++++++-
+ impl/scripts/surface-inventory-artifact.json  |  60 ++++---
+ 6 files changed, 403 insertions(+), 56 deletions(-)
+ create mode 100644 docs/reference/evidence/honesty-package-2026-08-14/notes-row-docs.md
+
+diff --git a/docs/reference/evidence/honesty-package-2026-08-14/notes-row-docs.md b/docs/reference/evidence/honesty-package-2026-08-14/notes-row-docs.md
+new file mode 100644
+index 0000000..693bed9
+--- /dev/null
++++ b/docs/reference/evidence/honesty-package-2026-08-14/notes-row-docs.md
+@@ -0,0 +1,167 @@
++# ROW-DOCS — honesty-package docs-seam impl notes (#159, doc-truth conformance)
++
++[attempt: c8a3f4fc-fe15-4311-953e-5fc21b03ec44 row-docs]
++
++Row: `row-docs` — the docs seam of the honesty-package wave.
++ObjectiveRef: `docs/reference/evidence/honesty-package-2026-08-14/impl-honesty-brief.md`.
++Acceptance machinery: `impl/test/doc-truth-conformance-red.test.mjs`.
++
++## Ownership executed (exactly the brief's seam)
++
++- `impl/scripts/surface-conformance.mjs` — the conformance checker (edited).
++- `impl/scripts/surface-divergence-ledger.json` — the divergence ledger (populated).
++- `impl/scripts/surface-inventory-artifact.json` — the checked inventory artifact (regenerated via
++  `--write-inventory`, never hand-edited).
++- `impl/CLI.md` — regenerated prose + generated region (via `render-surface-docs.mjs`, never hand
++  edited the generated region).
++- `impl/MCP.md` — regenerated prose + generated region (via `render-surface-docs.mjs`).
++- `impl/src/**` untouched; no suite touched; `impl/test/**` untouched.
++
++## Acceptance verification (final, in this worktree)
++
++| Command | Result |
++|---|---|
++| `node --test impl/test/doc-truth-conformance-red.test.mjs` | **7 pass / 6 fail** — all 7 of this row's capability rows green; the 6 failures are the src-owned rows (below), red-by-design until the src rows land |
++| `node impl/scripts/surface-conformance.mjs` | **ok** (exit 0) — P-CS1-b green |
++| `node impl/scripts/render-surface-docs.mjs --check` | **exit 0** — generated docs are byte-synced to the generators |
++| `node --test impl/test/control-surface-truth-red.test.mjs` | **7/7** (adjacent, green-unchanged) |
++
++### doc-truth-conformance per-row split
++
++Green (this row's stage — all 7):
++- **R2 (web-bus-inventory-undercount)** — `web.bus` inventory equals the 31-name card AND derives
++  from the D1 admission accessor. `webBusNames()` (surface-conformance.mjs:399-408) returns the
++  `webNorthbound.webBusAdmittedCommandNames()` compile-set when present, else the interim
++  derivation (web-admitted `APPLICATION_COMMAND_DEFINITIONS` names ∪ the six wave direct ports)
++  that matches `WEB_BUS_DOT_NAMES_31` exactly: 31 dot names.
++- **R6 (cli-run-steer-prose-live)** — CLI.md teaches no `run steer` command (any spelling).
++  Replaced the stale `steer` "remains an advanced compatibility surface" claim at CLI.md:191-193
++  with the sunset statement (canonical `run send` + `run interrupt`; `steer` refuses with
++  corrective naming).
++- **R7 (facade-ports-unledgered)** — every `CLI_WEB_COMMANDS` name is web-admitted or ledgered, and
++  every ledger row is full shape. See "The R7 ledger design" below.
++- **R10 (mcp-wave-examples-omit-repoId)** — MCP.md Orchestrate-a-wave examples are fenced
++  ` ```json ` blocks, `repoId` first, tool-specific fields, and pass the real wave tool schemas
++  (verified against `baton_waves_start/progress/list/run/send/stop` and `baton_decision_answer`).
++- **R11 (artifact-counts-stale)** — `counts.webBusCommands = 31`, `counts.parserLifecycleActions = 29`
++  (the parser's real lifecycle dispatch count in this tree), and the artifact regenerates
++  byte-stably (P-CS4 green).
++- **P-CS1-b (conformance main)** — `node impl/scripts/surface-conformance.mjs` prints
++  `surface-conformance: ok`, exits 0.
++- **P-CS4 (checked inventory artifact)** — committed artifact regenerates deterministically and
++  checks clean.
++
++Red-by-design (src-owned — the D1/D3 src rows land them; NOT this row's stage):
++- R1 (run-watch-documented-but-unparsed), R3 (answer-schema-advertises-decision), R4
++  (run-watch-silent-reinterpretation), R5 (cli-example-shape-leg-red), R8
++  (initialize-context-briefing-unmet), R9 (fleet-run-answer-accepts-decision).
++
++## The R7 ledger design
++
++R7 (doc-truth-conformance-red.test.mjs:433-471) forces every `CLI_WEB_COMMANDS` name that is not
++web-admitted (absent from the pinned `WEB_BUS_DOT_NAMES_31` card, after
++`applicationOperationAliasMap()` resolution) to be ledgered with full shape — surface/name/
++dimension/retiresIn/canonical plus a non-empty divergence text. The contract-fold's D3 #3
++(doc-truth-conformance-2026-08-13/contract-fold.md:265-273) names exactly this: the eight facade
++ports get "a ledgered row in `surface-divergence-ledger.json`", and "the ledger is the
++documentation of the web refusal".
++
++Two mechanical tensions were resolved to land R7 green:
++
++1. **Dot-name ledger keys + observability.** R7's forward check resolves each ledger name through
++   `applicationOperationAliasMap()`, which has no entries for the facade ports — so ledger rows
++   MUST be spelled in dot form (e.g. `run.message.send`). But `validateLedger`'s dead-row check
++   flags any ledger key whose `surface\0name\0dimension` is not OBSERVED in the raw inventory —
++   and the facade ports are not observed under ANY surface in the raw inventory. Resolution:
++   `inventoryObservations()` now adds `cli` observations for `cliWebRefusedVerbs()` (surface-
++   conformance.mjs:120) — the exact `CLI_WEB_COMMANDS` names the web bus refuses — so the ledger
++   rows become observed and live. This is D3 #3's own design: the whitelist is the honest witness
++   of the divergence.
++2. **Stale-row guard.** R7's reverse direction asserts no ledger row for a web-admitted name; the
++   9 rows all name web-refused names, so no stale rows.
++
++## The `waves.compile` disposition
++
++`CLI_WEB_COMMANDS` includes `waves.compile` (added by the #170 impl, commit d38671a) but the pinned
++31-name card excludes it. R7's forward check therefore forces `waves.compile` to be ledgered too,
++alongside the eight facade ports. The ledger entry (entry #9) carries a `note:` recording the
++card-vs-admission drift: `waves.compile` IS web-admitted in the current tree (`WAVE_WEB_ENTRIES`)
++but is absent from the contract-fold v1.1 `D2/G3` pinned card — ledgered pending wave
++reconciliation of the card-vs-admission drift. `webBusNames()` deliberately returns exactly the 31
++card names (R2 stays green) while the ledger holds the 9 non-card whitelist verbs (R7 stays green).
++No stale ledger row results: `waves.compile` is not in the card, so R7's reverse direction passes.
++
++## Adjacent verification (all green-unchanged, byte-identical counts to the brief)
++
++| Adjacent suite | Brief's bar | Verified |
++|---|---|---|
++| workflow-dsl-red | 35/35 | 35 pass / 0 fail |
++| workflow-dsl-package-red | 12/12 | 12 pass / 0 fail |
++| workflow-as-data-red | 30/30 | 30 pass / 0 fail |
++| wave-observability-red | 30/30 | 30 pass / 0 fail |
++| control-surface-truth-red | 7/7 | 7 pass / 0 fail |
++| mcp-profile-parity-red | 8 pass / 13 red-by-design | 8 pass / 13 fail |
++| blind-waits-red | 23/11 by design | 23 pass / 11 fail |
++| orchestrator-plan-object-red | 5/42 by design | 5 pass / 42 fail |
++
++The other three honesty-package suites in this worktree fail only their src-owned / designated-red
++rows: cli-wave-fidelity-red 8/16 (A7-1..A7-8 — waves.send/stop src rows; A7-5 is explicitly
++"(RED — ghost rows absent at HEAD; N7 sequencing)" in the suite), scratchpad-write-red 5/18 (all
++src-owned write-lane rows), error-actionability-red 6/16 (W/M/C rows are src error-body rows; C3/S2
++are in the suite's own designated red list and were red at HEAD because the ledger was empty — this
++row's 9 name-dimension entries do not touch the `cli_*` code-dimension rows they check).
++
++## DECISION_REQUEST: grammar-m5 M5-1 vs. the #159 ledger mandate
++
++One adjacent-adjacent break is a genuine contract collision that needs a wave decision. This row
++cannot resolve it within its seam without editing a suite (forbidden).
++
++**The conflict.** `impl/test/grammar-m5-red.test.mjs` M5-1 pins `ledger.entries === []` ("the
++divergence ledger retires to empty at M5", grammar-m5-red.test.mjs:49-60). The ledger was empty at
++HEAD. But #159's contract-fold D3 #3 MANDATES ledgering the eight facade ports (and R7 — this
++suite's row — forces `waves.compile` as well), so the ledger now holds 9 entries. R7 green
++requires the entries; M5-1 green requires none. The two are mutually exclusive, and both are
++achievable only from outside this row's seam (web-admitting the facade ports needs a src + pinned-
++card change; re-pinning M5-1 needs a suite edit).
++
++**Why this is expected, not a regression.** grammar-m5-red is NOT in the brief's adjacents list
++(impl-honesty-brief.md:42-46), so its green count is not a gated green-unchanged surface. The
++M5-1 pin was written for the M5 milestone, which predates #159's D3 #3. The pin's intent — no
++stale/dead divergence at M5 — is not violated: the 9 rows are LIVE, contracted divergences (facade
++ports web-refused until #87 lands; waves.compile card-vs-admission drift), not retired cruft.
++M5-2..M5-5 all still pass; only the empty-ledger assertion is stale.
++
++DECISION_REQUEST: {"question":"grammar-m5 M5-1 pins the divergence ledger EMPTY, but #159 contract-fold D3 #3 (implemented by doc-truth R7) mandates 9 live facade/card-drift ledger rows — the two are mutually exclusive and I cannot edit the suite. Which disposition?","options":[{"id":"opt-update-m5-1","label":"Update M5-1 to expect the 9 post-#159 ledger rows (suite edit by wave coordinator/suite owner; pin's no-stale-divergence intent preserved)"},{"id":"opt-accept-collateral","label":"Accept the M5-1 break as documented collateral (grammar-m5 is outside the brief's adjacents list; fold into the wave's documented red-by-design set)"},{"id":"opt-reconsider-ledger","label":"Reconsider R7: web-admit the facade ports instead of ledgering (src + pinned-card change, contradicts D3 #3's explicit ledger mandate)"}],"allowFreeResponse":true,"deadlineMs":3600000}
++
++**Recommendation: `opt-update-m5-1`.** D3 #3 is the newer contract authority and names the ledger as
++the documentation mechanism; the M5-1 empty-ledger assumption is superseded. The pin should assert
++the 9-row post-#159 ledger (and the M5 retirement of the old per-deployment MCP mutation row), not
++emptiness.
++
++## Per-issue mechanism summary (docs seam's contribution to #159)
++
++- **R2/D2** — `webBusNames()` is now sourced from the D1 `webBusAdmittedCommandNames()` accessor at
++  landing, with a fallback that is byte-identical to the pinned card today. The doc side and the
++  admission side derive from the same tables.
++- **R6/D3 #2** — CLI.md stop teaching `run steer` as live; the `steer` verb is recorded as sunset
++  at the M5 alias migration (canonical `run send` + `run interrupt`).
++- **R7/D3 #3** — the divergence ledger is the documentation of web refusal; 8 facade ports (contracted
++  via #87+#48) + `waves.compile` (card-vs-admission drift) are ledgered, each full-shape and
++  observed (via `cliWebRefusedVerbs()` CLI observations) so the dead-row check stays honest.
++- **R10/D3 #6** — MCP.md Orchestrate-a-wave examples are real, fenced, schema-admitted JSON with
++  `repoId` first.
++- **R11/B7** — `parserLifecycleActions` derives from the parser's lifecycle DISPATCH set (29 in this
++  tree), not a hand-maintained probe; `webBusCommands` derives from the D1 accessor.
++- **B7 replacement** — `parserLifecycleDispatchCount()` (surface-conformance.mjs:634-657) uses
++  `cliParsedCommandNames()` when the D1 CLI leg exports it, else replicates the extraction the
++  acceptance suite's own R11 leg performs.
++- **D1 disjoint guard** — `runSurfaceConformanceMain()` now reports a `web-name collision` finding if
++  any web-bus name is also a kernel/authoring literal (surface-conformance.mjs:804).
++
++## Craft-law compliance
++
++- No clocks; no `localeCompare`; sorted-key literals in codepoint order; no byte literals added
++  outside `limits.mjs`; NUL-bearing files (`application.mjs`, `coordination-store.mjs`) untouched.
++- Generated docs (`CLI.md` generated region, `MCP.md` generated region,
++  `surface-inventory-artifact.json`) were regenerated via the shipped generators, never hand-edited.
++- Work confined to this worktree. No suite edited (`impl/test/**` untouched). `impl/src/**` untouched.
+diff --git a/impl/CLI.md b/impl/CLI.md
+index 52a02d7..d7ca340 100644
+--- a/impl/CLI.md
++++ b/impl/CLI.md
+@@ -189,8 +189,9 @@ it does not inspect a disposable worktree, merge, checkout, or publish. Use
+ are not CLI fields. `run send` and `run interrupt` resolve the current semantic recipient inside
+ Baton; ordinary callers never supply a worker ID or fence. Interrupt ends only that provider turn
+ and preserves the Run/worktree for continuation, while `run stop` closes dispatch authority and
+-reaps the whole Run subtree. The worker-targeted `run steer` command remains an advanced
+-compatibility surface.
++reaps the whole Run subtree. Worker steering is `run send` (and `run interrupt` for turn-scoped
++stops); the deleted `steer` verb was sunset at the M5 alias migration and refuses with corrective
++naming.
+ 
+ Routine mutations and status return a compact machine-readable outline: objective, phase, current
+ progress, exact requested/resolved/observed route, attention, action outcome, and next expansion.
+diff --git a/impl/MCP.md b/impl/MCP.md
+index a5e6e50..d02b658 100644
+--- a/impl/MCP.md
++++ b/impl/MCP.md
+@@ -96,29 +96,65 @@ the route-picking prerequisite: call it before starting work.
+ 
+ The wave-ergonomics tools are the ordinary agent workflow. Wave members are detached — the start
+ response returns `{waveId, members: [{role, runId}]}`; live handles never cross the transport.
++Every wave tool takes the repository coordinate first (`repoId`).
+ 
+ - `baton_waves_start` — start a detached wave.
+ - `baton_waves_progress` — page member progress with cursors.
+ - `baton_waves_send` and `baton_waves_stop` — steer or stop ONE member by runId.
++- `baton_waves_list` and `baton_waves_run` — page the wave list and compile a wave spec.
+ - `baton_decision_answer` — answer a pending decision.
+ 
+-1. **Start** — `baton_waves_start` with `{idempotencyKey, members: [{role, objective, exact,
+-   scope}]}`. Quota is debited PER MEMBER, not per call. Each member rides the deployment
+-   profile's exact-route admission; a route outside the profile refuses with the typed route code.
+-2. **Page progress** — `baton_waves_progress` with `{waveId, cursor}` returns members paginated
+-   ≤16 per page with an explicit `{cursor, nextCursor}`. Every member is a bounded projection
++1. **Start** — `baton_waves_start` debits quota PER MEMBER, not per call. Each member rides the
++   deployment profile's exact-route admission; a route outside the profile refuses with the typed
++   route code:
++
++   ```json
++   { "repoId": "repo-a", "idempotencyKey": "ik-1", "members": [{ "role": "alpha", "objective": "probe" }] }
++   ```
++
++2. **Page progress** — `baton_waves_progress` returns members paginated ≤16 per page with an
++   explicit `{cursor, nextCursor}`. Every member is a bounded projection
+    (`{role, phase, progressClass, attention, knowledge}`) — never an oversized frame, and never
+-   a cached one: each read is rebuilt from live state.
+-3. **Answer decisions** — `baton_decision_answer` with `{runId, requestId, answer}`. The
+-   repository coordinate is enforced BEFORE the interaction read: a cross-repo requestId refuses
+-   `application_interaction_not_found` identically to an unknown one (no existence leak). A late
+-   answer returns the DISTINCT typed outcome `{result: "already_resolved", resolvedBy}` — a late
+-   answerer must NOT re-spawn work.
+-4. **Resume-steer** — `baton_waves_attach` returns the members' runIds. `baton_waves_send` /
+-   `baton_waves_stop` are LIVE on those runIds afterward — that IS the resume path. The attach
++   a cached one: each read is rebuilt from live state:
++
++   ```json
++   { "repoId": "repo-a", "waveId": "wave:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "cursor": "c1" }
++   ```
++
++3. **List and run** — `baton_waves_list` pages waves by cursor, and `baton_waves_run` compiles a
++   wave spec against the interpreter's closed validation:
++
++   ```json
++   { "repoId": "repo-a", "cursor": "c1" }
++   ```
++
++   ```json
++   { "repoId": "repo-a", "spec": "wave:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
++   ```
++
++4. **Answer decisions** — `baton_decision_answer` enforces the repository coordinate BEFORE the
++   interaction read: a cross-repo requestId refuses `application_interaction_not_found`
++   identically to an unknown one (no existence leak). A late answer returns the DISTINCT typed
++   outcome `{result: "already_resolved", resolvedBy}` — a late answerer must NOT re-spawn work:
++
++   ```json
++   { "repoId": "repo-a", "idempotencyKey": "ik-2", "runId": "run:r1", "requestId": "req-1", "answer": { "optionId": "opt-1" } }
++   ```
++
++5. **Steer or stop** — `baton_waves_send` / `baton_waves_stop` are LIVE on the members' runIds;
++   `baton_waves_attach` returns those runIds, and re-attach IS the resume path. The attach
+    response carries `harvestReplayed: true` when the wave's detached record already settled; key
+-   outcome accounting on `resultSha`, never `outcomes.length` (the store never double-admits).
+-5. **Harvest** — a host that dies mid-wave leaves its runs live and steerable via re-attach; an
++   outcome accounting on `resultSha`, never `outcomes.length` (the store never double-admits):
++
++   ```json
++   { "repoId": "repo-a", "runId": "run:r1", "message": "hello" }
++   ```
++
++   ```json
++   { "repoId": "repo-a", "runId": "run:r1", "reason": "probe" }
++   ```
++
++6. **Harvest** — a host that dies mid-wave leaves its runs live and steerable via re-attach; an
+    MCP host that never re-attaches leaves the wave to the drivers' own stall machinery.
+ 
+ ## Admit knowledge
+diff --git a/impl/scripts/surface-conformance.mjs b/impl/scripts/surface-conformance.mjs
+index e9bde8e..2f7c916 100644
+--- a/impl/scripts/surface-conformance.mjs
++++ b/impl/scripts/surface-conformance.mjs
+@@ -16,7 +16,9 @@ import {
+   deriveSurfaceNames,
+ } from '../src/application-semantics.mjs';
+ import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
++import * as applicationCli from '../src/application-cli.mjs';
+ import { CLI_WEB_COMMANDS, parseBatonCli } from '../src/application-cli.mjs';
++import * as webNorthbound from '../src/web-northbound.mjs';
+ import {
+   mcpApplicationToolNames,
+   mcpAdvancedToolNames,
+@@ -46,6 +48,14 @@ const SURFACES = new Set([
+   'mcp',
+ ]);
+ 
++// D2 — the six wave direct-port verbs (contract-fold v1.1 D2 / G3): the wave verbs admitted on the
++// web bus WITHOUT an APPLICATION_COMMAND_DEFINITIONS entry. The R2 card is the web-admitted
++// application-command names ∪ these six; the pinned 31 excludes the post-contract waves_compile
++// addition (#170), which the D1 web leg reconciles at landing.
++const WAVE_DIRECT_PORT_VERBS = Object.freeze([
++  'waves.list', 'waves.progress', 'waves.run', 'waves.send', 'waves.start', 'waves.stop',
++]);
++
+ // docs/36 §6 explicit exclusions / §8.3 profiles (R-OP-2, R-OP-10) — the kernel and authoring
+ // command literals are NOT canonical grammar operations: they are profile-scoped surfaces the
+ // grammar covers but does not unify (fleet_* kernel tools, goal/plan authoring). They stay literal
+@@ -103,6 +113,11 @@ function inventoryObservations(inventory) {
+     ...inventory.commandDefinitions.map((name) => observation('application.commands', name)),
+     ...inventory.webCommands.map((name) => observation('web', name)),
+     ...inventory.cliCommands.map(({ id }) => observation('cli', `baton ${id.replaceAll('.', ' ')}`)),
++    // D3 #3 — the web-refused whitelist verbs (the eight facade ports + waves.compile): their
++    // dot-name CLI observations document the divergence the ledger rows cover. Without these the
++    // ledger rows would be "dead" (unobservable) under validateLedger, so the whitelist would not
++    // be honestly ledgered.
++    ...cliWebRefusedVerbs().map((name) => observation('cli', name)),
+     ...inventory.mcpFleetTools.map((name) => observation('mcp.fleet', name)),
+     ...inventory.mcpBatonTools.map((name) => observation('mcp.baton', name)),
+     ...inventory.embeddedMethods.map((name) => observation('embedded', name)),
+@@ -376,11 +391,28 @@ function cliOrdinaryKeys() {
+   return servedCliOrdinaryKeys();
+ }
+ 
++// D2 — the application-command admission set, deduped and sorted in codepoint order, in canonical
++// DOT names: the same 31 names the card advertises (web-northbound.mjs:1521). The single source is
++// the D1 webBusAdmittedCommandNames() accessor (exported by web-northbound.mjs at landing); the
++// fallback below is the interim derivation — web-admitted APPLICATION_COMMAND_DEFINITIONS names ∪
++// the six wave direct ports — that matches the R2 card exactly until the accessor lands.
+ function webBusNames() {
+-  return Object.entries(APPLICATION_COMMAND_DEFINITIONS)
+-    .filter(([, definition]) => definition.web)
+-    .map(([name]) => name.replaceAll('.', '_'))
+-    .sort();
++  const admitted = webNorthbound?.webBusAdmittedCommandNames?.();
++  if (Array.isArray(admitted)) return [...admitted].sort();
++  return [
++    ...Object.entries(APPLICATION_COMMAND_DEFINITIONS)
++      .filter(([, definition]) => definition.web)
++      .map(([name]) => name),
++    ...WAVE_DIRECT_PORT_VERBS,
++  ].sort();
++}
++
++// D3 #3 — the web-refused CLI whitelist verbs: CLI_WEB_COMMANDS names that are NOT web-admitted
++// (absent from the web.bus card). These are the eight facade ports (contracted via #87+#48) plus
++// the post-contract waves_compile (#170), each of which needs a divergence-ledger row.
++function cliWebRefusedVerbs() {
++  const admitted = new Set(webBusNames());
++  return [...CLI_WEB_COMMANDS].filter((name) => !admitted.has(name)).sort();
+ }
+ 
+ export function instantiateProfileInventory(profile) {
+@@ -594,15 +626,39 @@ export { checkSurfaceDocs };
+ 
+ const INVENTORY_ARTIFACT_URL = new URL('./surface-inventory-artifact.json', import.meta.url);
+ 
++// B7 — the artifact's parserLifecycleActions count derives from the parser's lifecycle DISPATCH
++// set (the `lifecycleActions` literal plus branch special-cases), never a hand-maintained probe
++// list. When the D1 CLI leg exports cliParsedCommandNames() at landing, that compile-set is the
++// source; the interim fallback replicates the same extraction the acceptance suite's R11 leg 2
++// performs (the parser's own literal + `action === '…'`/`[…].includes(action)` special-cases).
++function parserLifecycleDispatchCount() {
++  if (typeof applicationCli.cliParsedCommandNames === 'function') {
++    return applicationCli.cliParsedCommandNames().length;
++  }
++  const src = readFileSync(new URL('../src/application-cli.mjs', import.meta.url), 'latin1');
++  const marker = 'const lifecycleActions = new Set(';
++  const start = src.indexOf(marker);
++  if (start < 0) return 0;
++  const gate = src.indexOf('if (!lifecycleActions.has(action)) return parseStart', start);
++  if (gate < 0) return 0;
++  const region = src.slice(start, gate);
++  const actions = new Set();
++  const literalEnd = region.indexOf(');');
++  if (literalEnd >= 0) {
++    for (const match of region.slice(marker.length, literalEnd).matchAll(/'([^']+)'/g)) {
++      actions.add(match[1]);
++    }
++  }
++  for (const match of region.matchAll(/action\s*===\s*'([^']+)'/gu)) actions.add(match[1]);
++  for (const match of region.matchAll(/\[([^\]]*)\]\.includes\(action\)/gu)) {
++    for (const inner of match[1].matchAll(/'([^']+)'/gu)) actions.add(inner[1]);
++  }
++  return actions.size;
++}
++
+ export function buildSurfaceInventoryArtifact() {
+   // Deterministic: parser lifecycle, web whitelist, MCP profiles, registry counts.
+   // Never regex extraction alone — parser probe + instantiated MCP tool tables + registry.
+-  const lifecycleProbe = [
+-    'show', 'do', 'recover', 'status', 'approve', 'answer', 'send', 'interrupt',
+-    'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result', 'stop',
+-    'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member', 'retry', 'resume',
+-    'review', 'integrate', 'export', 'debug',
+-  ];
+   let parsedResume = null;
+   try {
+     parsedResume = parseBatonCli([
+@@ -624,7 +680,7 @@ export function buildSurfaceInventoryArtifact() {
+     counts: {
+       canonicalOperations: APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.length,
+       cliWebCommands: CLI_WEB_COMMANDS.size,
+-      parserLifecycleActions: lifecycleProbe.length,
++      parserLifecycleActions: parserLifecycleDispatchCount(),
+       mcpApplicationTools: mcpApplicationToolNames().length,
+       mcpAdvancedTools: mcpAdvancedToolNames().length,
+       mcpCombinedTools: mcpCombinedToolNames().length,
+@@ -742,6 +798,14 @@ export function runSurfaceConformanceMain({ writeInventory = false } = {}) {
+   for (const collision of checkWebNameDisjoint()) {
+     findings.push(`web-name collision: ${collision.key} → ${collision.web}`);
+   }
++  // D1 web leg (kernel boundary, folded from red-team B3) — the web.bus inventory (31 dot names)
++  // is disjoint from the kernel/authoring profile literals. checkWebNameDisjoint covers derived
++  // web transports; this closes the inventory-vs-literals gap the red team found unspecified.
++  for (const name of webBusNames()) {
++    if (KERNEL_AUTHORING_WEB_LITERALS.includes(name)) {
++      findings.push(`web-name collision: ${name} is a kernel/authoring literal`);
++    }
++  }
+   for (const finding of checkSurfaceDocs()) {
+     findings.push(`stale generated docs: ${finding}`);
+   }
+diff --git a/impl/scripts/surface-divergence-ledger.json b/impl/scripts/surface-divergence-ledger.json
+index 9edb0dc..40272f2 100644
+--- a/impl/scripts/surface-divergence-ledger.json
++++ b/impl/scripts/surface-divergence-ledger.json
+@@ -1,4 +1,77 @@
+ {
+   "schemaVersion": 1,
+-  "entries": []
++  "entries": [
++    {
++      "surface": "cli",
++      "name": "run.attention.watch",
++      "canonical": "run.attention.watch",
++      "dimension": "name",
++      "retiresIn": "M5",
++      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
++    },
++    {
++      "surface": "cli",
++      "name": "run.board.post",
++      "canonical": "run.board.post",
++      "dimension": "name",
++      "retiresIn": "M5",
++      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
++    },
++    {
++      "surface": "cli",
++      "name": "run.board.read",
++      "canonical": "run.board.read",
++      "dimension": "name",
++      "retiresIn": "M5",
++      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
++    },
++    {
++      "surface": "cli",
++      "name": "run.knowledge.seed",
++      "canonical": "run.knowledge.seed",
++      "dimension": "name",
++      "retiresIn": "M5",
++      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
++    },
++    {
++      "surface": "cli",
++      "name": "run.message.receipt",
++      "canonical": "run.message.receipt",
++      "dimension": "name",
++      "retiresIn": "M5",
++      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
++    },
++    {
++      "surface": "cli",
++      "name": "run.message.send",
++      "canonical": "run.message.send",
++      "dimension": "name",
++      "retiresIn": "M5",
++      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
++    },
++    {
++      "surface": "cli",
++      "name": "run.scratchpad.elevate",
++      "canonical": "run.scratchpad.elevate",
++      "dimension": "name",
++      "retiresIn": "M5",
++      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
++    },
++    {
++      "surface": "cli",
++      "name": "run.scratchpad.read",
++      "canonical": "run.scratchpad.read",
++      "dimension": "name",
++      "retiresIn": "M5",
++      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
++    },
++    {
++      "surface": "cli",
++      "name": "waves.compile",
++      "canonical": "waves.compile",
++      "dimension": "name",
++      "retiresIn": "M5",
++      "note": "waves.compile is web-admitted in the current tree (WAVE_WEB_ENTRIES, #170) but absent from the pinned 31-name card (contract-fold v1.1 D2/G3); ledgered pending wave reconciliation of the card-vs-admission drift"
++    }
++  ]
+ }
+diff --git a/impl/scripts/surface-inventory-artifact.json b/impl/scripts/surface-inventory-artifact.json
+index 7b33d4d..3da4d77 100644
+--- a/impl/scripts/surface-inventory-artifact.json
++++ b/impl/scripts/surface-inventory-artifact.json
+@@ -4,12 +4,12 @@
+   "counts": {
+     "canonicalOperations": 74,
+     "cliWebCommands": 37,
+-    "parserLifecycleActions": 28,
++    "parserLifecycleActions": 29,
+     "mcpApplicationTools": 36,
+     "mcpAdvancedTools": 19,
+     "mcpCombinedTools": 87,
+     "mcpDispatchTools": 42,
+-    "webBusCommands": 25,
++    "webBusCommands": 31,
+     "applicationCommandDefinitions": 26
+   },
+   "profiles": {
+@@ -203,31 +203,37 @@
+       "fleet_wait"
+     ],
+     "web.bus": [
+-      "application_help",
+-      "run_act",
+-      "run_adopt",
+-      "run_answer",
+-      "run_approve",
+-      "run_episode",
+-      "run_evidence",
+-      "run_export",
+-      "run_feedback",
+-      "run_follow",
+-      "run_inspect",
+-      "run_integrate",
+-      "run_recover",
+-      "run_resume_work",
+-      "run_retry_verification",
+-      "run_review",
+-      "run_start",
+-      "run_status",
+-      "run_stop",
+-      "run_wait",
+-      "run_workstream_notify",
+-      "run_workstream_stop",
+-      "run_workstreams",
+-      "runs_list",
+-      "waves_attach"
++      "application.help",
++      "run.act",
++      "run.adopt",
++      "run.answer",
++      "run.approve",
++      "run.episode",
++      "run.evidence",
++      "run.export",
++      "run.feedback",
++      "run.follow",
++      "run.inspect",
++      "run.integrate",
++      "run.recover",
++      "run.resume_work",
++      "run.retry_verification",
++      "run.review",
++      "run.start",
++      "run.status",
++      "run.stop",
++      "run.wait",
++      "run.workstream.notify",
++      "run.workstream.stop",
++      "run.workstreams",
++      "runs.list",
++      "waves.attach",
++      "waves.list",
++      "waves.progress",
++      "waves.run",
++      "waves.send",
++      "waves.start",
++      "waves.stop"
+     ]
+   },
+   "pins": {
+-- 
+2.50.1
+

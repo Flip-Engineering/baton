@@ -1,0 +1,79 @@
+[
+  {
+    "harness": "gemini",
+    "request": "initialize",
+    "providerPromptSent": false,
+    "state": "initialized",
+    "protocolVersion": 1,
+    "agentInfo": {
+      "name": "gemini-cli",
+      "title": "Gemini CLI",
+      "version": "0.37.0"
+    },
+    "agentCapabilities": {
+      "loadSession": true,
+      "promptCapabilities": {
+        "image": true,
+        "audio": true,
+        "embeddedContext": true
+      },
+      "mcpCapabilities": {
+        "http": true,
+        "sse": true
+      }
+    },
+    "authMethods": [
+      {
+        "id": "oauth-personal",
+        "name": "Log in with Google"
+      },
+      {
+        "id": "gemini-api-key",
+        "name": "Gemini API key"
+      },
+      {
+        "id": "vertex-ai",
+        "name": "Vertex AI"
+      },
+      {
+        "id": "gateway",
+        "name": "AI API Gateway"
+      }
+    ],
+    "processGroupAbsent": true
+  },
+  {
+    "harness": "opencode",
+    "request": "initialize",
+    "providerPromptSent": false,
+    "state": "initialized",
+    "protocolVersion": 1,
+    "agentInfo": {
+      "name": "OpenCode",
+      "version": "1.14.28"
+    },
+    "agentCapabilities": {
+      "loadSession": true,
+      "mcpCapabilities": {
+        "http": true,
+        "sse": true
+      },
+      "promptCapabilities": {
+        "embeddedContext": true,
+        "image": true
+      },
+      "sessionCapabilities": {
+        "fork": {},
+        "list": {},
+        "resume": {}
+      }
+    },
+    "authMethods": [
+      {
+        "id": "opencode-login",
+        "name": "Login with opencode"
+      }
+    ],
+    "processGroupAbsent": true
+  }
+]

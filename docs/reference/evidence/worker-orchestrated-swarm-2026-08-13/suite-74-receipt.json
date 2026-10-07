@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-13T02:24:41.792Z",
+  "salt": "s720260813022441",
+  "role": "suite-74",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-c454966fdad7b4525ff83959bef34566"
+        ]
+      }
+    },
+    {
+      "step": "terminal:suite-74",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-74": {
+      "pin": "3c547ad8a846e1019da0c2fa8ab31a35f02d2cd8",
+      "paths": [
+        "impl/test/worker-orchestrated-swarm-red.test.mjs",
+        "docs/reference/evidence/worker-orchestrated-swarm-2026-08-13/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 432,
+  "verdict": "SUITE-74-OK"
+}

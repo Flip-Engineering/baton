@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-07-31T23:47:50.620Z",
+  "members": [
+    "bd-b-implementer-opus"
+  ],
+  "outcomes": [
+    {
+      "role": "bd-b-implementer-opus",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "1d128bb7a29bda22a25436452859171509363c09"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "bd-b-implementer-opus",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "bd-b-implementer-opus",
+      "requestId": "pause:baton-242d79ebc9e6cfe41580ba2c-work:314",
+      "at": "2026-08-01T00:26:38.633Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "bd-b-implementer-opus",
+      "requestId": "pause:baton-242d79ebc9e6cfe41580ba2c-work:338",
+      "at": "2026-08-01T00:27:59.037Z",
+      "code": "claimed"
+    }
+  ],
+  "salt": null
+}

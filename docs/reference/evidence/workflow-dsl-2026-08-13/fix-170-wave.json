@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "fix-170-2026-08-14-wave-a",
+  "members": [
+    {
+      "role": "fix-170",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["impl/src/**", "impl/test/workflow-surface-red.test.mjs", "docs/reference/evidence/workflow-dsl-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/workflow-dsl-2026-08-13/fix-170-brief.md",
+      "report": "docs/reference/evidence/workflow-dsl-2026-08-13/fix-170-notes.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue the fix — the four regression suites green again, both #170 suites still green, no assertion weakened. Write fix-170-notes.md incrementally." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then impl-170-notes.md §3 in the same dir (the prior member's decision record). The craft laws bind (no clocks, additive-only, NUL discipline, generated docs regenerate never hand-edit). Never weaken a suite — the only permitted suite edit is workflow-surface-red's FP-14 collateral count. Your [attempt:] line verbatim in your notes' first five lines. Verify before you finish: the four regressions + the two #170 suites + the named adjacents." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/workflow-dsl-2026-08-13/fix-170-notes.md", "mustContain": "#170" }
+    ]
+  }
+}

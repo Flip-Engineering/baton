@@ -1,0 +1,21 @@
+[
+  {
+    "command": [
+      "/tmp/codex-baton2-context-afnsav7o/toolchain/bend/bin/bend",
+      "/tmp/baton-bend2-laws-review/architecture/codex-probes/dropped-child.bend",
+      "-o",
+      "/tmp/baton-bend2-laws-review/architecture/codex-probes/dropped-child"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "/tmp/baton-bend2-laws-review/architecture/codex-probes/dropped-child"
+    ],
+    "exit_code": 0,
+    "stdout": "parent returned without joining\nchild continued\n",
+    "stderr": ""
+  }
+]

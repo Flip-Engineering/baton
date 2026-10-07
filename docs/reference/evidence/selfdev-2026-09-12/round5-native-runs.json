@@ -1,0 +1,307 @@
+{
+  "date": "2026-09-13",
+  "execution": "Three actual native workers admitted through Baton; their process intervals overlap.",
+  "runs": [
+    {
+      "lane": "accounting_review",
+      "runId": "run-61b0a5a0eaf8c5daa4768eddcebf2ace",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-v4-flash",
+        "effort": "high"
+      },
+      "baseSha": "a966bba6267a9dbe7b17ce8c6409033f1801bd08",
+      "accepted": {
+        "state": "accepted",
+        "nodeKey": "work",
+        "sha": "93e5bc1f225f52c4cdb4a01c418b3bceff8cf3e4",
+        "commitArtifact": {
+          "id": "artifact:5706bd6b6274d31aa147ecf43f1c3f934c02945c90498cdf946610ef3a5fa931",
+          "digest": "5706bd6b6274d31aa147ecf43f1c3f934c02945c90498cdf946610ef3a5fa931"
+        },
+        "verificationArtifact": {
+          "id": "artifact:7f03d4509bbe1884337aa241406252defe06267eec3b5295743fb07d087131b2",
+          "digest": "7f03d4509bbe1884337aa241406252defe06267eec3b5295743fb07d087131b2"
+        },
+        "stability": null,
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": null
+      },
+      "verification": {
+        "command": "node",
+        "arguments": [
+          "--test",
+          "impl/test/omp-usage.test.mjs",
+          "impl/test/omp-usage-adapter.test.mjs",
+          "impl/test/omp-interrupt-lifetime.test.mjs",
+          "impl/test/omp-question-coordinator.test.mjs"
+        ],
+        "verdict": {
+          "schemaVersion": 1,
+          "reverified": true,
+          "observedExit": 0,
+          "outputExceeded": false,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": false,
+          "baseExit": 0,
+          "coverageOfChange": null,
+          "uncoveredChangedLineCount": 0,
+          "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutantCount": 0,
+          "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "capturedOutputBytes": 17448,
+          "capturedOutputDigest": "51b263338d15ac7ed674ca8bac54aefb911931d174bc01c8bc4297e227af4785",
+          "diagnosticCode": "verification_red_green_failed",
+          "durationMs": 3965,
+          "execution": {
+            "state": "completed",
+            "code": "verification_completed"
+          },
+          "baseExecution": {
+            "state": "completed",
+            "code": "verification_completed"
+          },
+          "runtimeDigest": "9ea0509ae155b69e48e56c4028edcaf268ec08b3ec27df3d90f0a2e9935eb2fd",
+          "outcome": "passed",
+          "failureOwnership": null
+        },
+        "accepted": true
+      },
+      "resourceObservations": {
+        "usageEvents": 111,
+        "tokens": 16132401,
+        "canonicalUsdNanos": 92718093,
+        "modelObserved": [
+          "deepseek/deepseek-v4-flash"
+        ]
+      },
+      "lifetime": {
+        "pid": 56129,
+        "startedAt": "2026-09-13T08:18:49.848Z",
+        "closedAt": "2026-09-13T08:31:47.808Z",
+        "pidAbsentAfterClosure": true,
+        "nativeTerminalEvents": 1,
+        "orchestratorNudges": 0,
+        "stopResources": {
+          "state": "stopped",
+          "ownedCount": 0,
+          "cleanupState": "stopped",
+          "terminalCause": {
+            "kind": "operator_stop",
+            "code": "operator_stop"
+          }
+        },
+        "orchestratorClaims": 0
+      },
+      "sourceLogSha256": "d2e373895f2753fd78b520bd87b03f99b620d55f7e841b4a759daef629572896"
+    },
+    {
+      "lane": "capacity_review",
+      "runId": "run-eec7788d4e0e6f2ef2c8f538844aa6c6",
+      "route": {
+        "harness": "claude-code",
+        "provider": "claude",
+        "model": "claude-sonnet-4-6",
+        "effort": "high"
+      },
+      "baseSha": "a966bba6267a9dbe7b17ce8c6409033f1801bd08",
+      "accepted": {
+        "state": "accepted",
+        "nodeKey": "work",
+        "sha": "45d0ed365554110b885e2463a614db86d50bb5c3",
+        "commitArtifact": {
+          "id": "artifact:30c3cbd1597e94b252af3741757978b060d93b12222cc2807899af482cd31290",
+          "digest": "30c3cbd1597e94b252af3741757978b060d93b12222cc2807899af482cd31290"
+        },
+        "verificationArtifact": {
+          "id": "artifact:8f2555344708ca6eb8841b66a764d9a8add491f4a2f95b13896bfb6ea6e87b6d",
+          "digest": "8f2555344708ca6eb8841b66a764d9a8add491f4a2f95b13896bfb6ea6e87b6d"
+        },
+        "stability": null,
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": null
+      },
+      "verification": {
+        "command": "node",
+        "arguments": [
+          "--test",
+          "impl/test/capacity-refusal-visibility-red.test.mjs"
+        ],
+        "verdict": {
+          "schemaVersion": 1,
+          "reverified": true,
+          "observedExit": 0,
+          "outputExceeded": false,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": false,
+          "baseExit": 0,
+          "coverageOfChange": null,
+          "uncoveredChangedLineCount": 0,
+          "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutantCount": 0,
+          "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "capturedOutputBytes": 1891,
+          "capturedOutputDigest": "470147536e674b0b7be2f3d8de7b6d8c96d44cfd743ffeac142d45f7b2d46da9",
+          "diagnosticCode": "verification_red_green_failed",
+          "durationMs": 1727,
+          "execution": {
+            "state": "completed",
+            "code": "verification_completed"
+          },
+          "baseExecution": {
+            "state": "completed",
+            "code": "verification_completed"
+          },
+          "runtimeDigest": "9ea0509ae155b69e48e56c4028edcaf268ec08b3ec27df3d90f0a2e9935eb2fd",
+          "outcome": "passed",
+          "failureOwnership": null
+        },
+        "accepted": true
+      },
+      "resourceObservations": {
+        "usageEvents": 2,
+        "tokens": 31164,
+        "canonicalUsdNanos": 0,
+        "modelObserved": [
+          "claude-sonnet-4-6"
+        ]
+      },
+      "lifetime": {
+        "pid": 55943,
+        "startedAt": "2026-09-13T08:18:49.717Z",
+        "closedAt": "2026-09-13T08:31:51.226Z",
+        "pidAbsentAfterClosure": true,
+        "nativeTerminalEvents": 2,
+        "orchestratorNudges": 1,
+        "stopResources": {
+          "state": "stopped",
+          "ownedCount": 0,
+          "cleanupState": "stopped",
+          "terminalCause": {
+            "kind": "operator_stop",
+            "code": "operator_stop"
+          }
+        },
+        "orchestratorClaims": 1
+      },
+      "sourceLogSha256": "bca68b07ebac8633124fd4ce048e59e3550ff7e8e90056390bda3461595dac7f"
+    },
+    {
+      "lane": "e2e_contracts",
+      "runId": "run-92696ed08904b0516e0391df57595cd2",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-v4-flash",
+        "effort": "high"
+      },
+      "baseSha": "a966bba6267a9dbe7b17ce8c6409033f1801bd08",
+      "accepted": {
+        "state": "accepted",
+        "nodeKey": "work",
+        "sha": "1be8d2f8baade8aefaf7c423bdec310927e9a5b2",
+        "commitArtifact": {
+          "id": "artifact:29231498513d2a052aa3b77e8baa843d10a12288def0e231837a40932d1fb611",
+          "digest": "29231498513d2a052aa3b77e8baa843d10a12288def0e231837a40932d1fb611"
+        },
+        "verificationArtifact": {
+          "id": "artifact:a444533b8f8e5df2bfc2885583013e1d5885707c889be0acbc7860f5995380de",
+          "digest": "a444533b8f8e5df2bfc2885583013e1d5885707c889be0acbc7860f5995380de"
+        },
+        "stability": null,
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": null
+      },
+      "verification": {
+        "command": "node",
+        "arguments": [
+          "--test",
+          "impl/test/e2e.test.mjs"
+        ],
+        "verdict": {
+          "schemaVersion": 1,
+          "reverified": true,
+          "observedExit": 0,
+          "outputExceeded": false,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": true,
+          "baseExit": 1,
+          "coverageOfChange": null,
+          "uncoveredChangedLineCount": 0,
+          "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutantCount": 0,
+          "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "capturedOutputBytes": 1411,
+          "capturedOutputDigest": "6c5c3a5afb7e5ae5d3adb0036533d1ae9f2aa5fa4c3736d5225935f33dd07c20",
+          "diagnosticCode": "verification_passed",
+          "durationMs": 1776,
+          "execution": {
+            "state": "completed",
+            "code": "verification_completed"
+          },
+          "baseExecution": {
+            "state": "completed",
+            "code": "verification_completed"
+          },
+          "runtimeDigest": "9ea0509ae155b69e48e56c4028edcaf268ec08b3ec27df3d90f0a2e9935eb2fd",
+          "outcome": "passed",
+          "failureOwnership": null
+        },
+        "accepted": true
+      },
+      "resourceObservations": {
+        "usageEvents": 50,
+        "tokens": 5224028,
+        "canonicalUsdNanos": 39167927,
+        "modelObserved": [
+          "deepseek/deepseek-v4-flash"
+        ]
+      },
+      "lifetime": {
+        "pid": 22978,
+        "startedAt": "2026-09-13T08:21:01.285Z",
+        "closedAt": "2026-09-13T08:25:43.258Z",
+        "pidAbsentAfterClosure": true,
+        "nativeTerminalEvents": 1,
+        "orchestratorNudges": 0,
+        "stopResources": {
+          "state": "stopped",
+          "ownedCount": 0,
+          "cleanupState": "stopped",
+          "terminalCause": {
+            "kind": "operator_stop",
+            "code": "operator_stop"
+          }
+        },
+        "orchestratorClaims": 0
+      },
+      "sourceLogSha256": "7051e9e95d87e1bb9a5cc0b2f6aa1c51633c6c46c03021bb76e6239abf96071d"
+    }
+  ],
+  "limits": [
+    "OMP contributions enter the configured gate from native terminal events. The Claude review was explicitly nudged once for revision, then explicitly claimed.",
+    "Configured verification is mechanical acceptance; root separately reviewed and revised the end-to-end cleanup and the review document.",
+    "Reported native USD is an observation, not a billing statement.",
+    "Baton accepted these three contributions; the full project suite remains red."
+  ]
+}

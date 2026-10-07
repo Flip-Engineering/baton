@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-04T12:37:20.120Z",
+  "members": [
+    "implementer"
+  ],
+  "outcomes": [
+    {
+      "role": "implementer",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "9d06357a377cbcd55f2d916fca70df01afc8f0d6"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "implementer",
+      "requestId": "pause:baton-693e778fa3636f8e6db5dd2b-work:986",
+      "at": "2026-08-04T13:42:44.593Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "implementer",
+      "requestId": "pause:baton-693e778fa3636f8e6db5dd2b-work:1024",
+      "at": "2026-08-04T13:45:32.159Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0,
+    "candidatesAwaitingAdmission": 0,
+    "settlementRunId": null
+  },
+  "settlement": {
+    "errors": []
+  },
+  "manifest": {
+    "schemaVersion": 1,
+    "waveId": "wave:7c3b08f4d10ecf248ffa00bb9d5864ad",
+    "idempotencyKey": "l2-frame-economics-impl-2026-08-03",
+    "recipeDigest": "00bb8a8e08cf331d238d6f5e1307605c0a118e36114b6c2c8e862d496d5bf7c1",
+    "salt": "656a3f2c-0927-46f4-883f-77d389d9040f",
+    "renderedMembers": [
+      {
+        "role": "implementer",
+        "objective": "Implement the assigned contract rung. The task that follows is your sole work authority.\n\nImplement the assigned contract rung. The task that follows is your sole work authority. Implement the #89 epic per docs/reference/evidence/frame-economics-2026-08-03/frame-economics-contract.md (READ IT FULLY first), the folded blue-team blockers in docs/reference/evidence/frame-economics-2026-08-03/contract-fold.md + suite-fold.md (READ IT second — it carries the sharpened oracles), and make impl/test/frame-economics-red.test.mjs (READ IT FULLY third) green with ZERO weakening edits. The suite is red-first post-fold: every row fails at a named stage for a missing capability — your work is to make each named capability real, never to move a stage or relax an assertion. Some files contain NUL bytes (application.mjs, coordinator.mjs, coordination-store.mjs) — grep -an + sed -n only, never open them whole. Campaign law: controls are eval-able, constructive, or conversational — NEVER clocks or turn-limits; scanners stay shape-only (no content caps at the wire, #86/#89); localeCompare is BANNED (use (a < b ? -1 : a > b ? 1 : 0)); sorted-key closed-shape literals must be written in ACTUAL sorted order (the BD3-A0 lesson). frame-economics (#89, contract v1.2): NEW impl/src/limits.mjs — FRAME_LIMITS (frozen lane → {lane, class, value, unit, graceful, enforcedAt?, refusalCode?}), FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST (canonicalDigest over DECLARED rows only — override NEVER churns the handshake), composeFrameLimitRefusal(row, actual, cap) producing EXACTLY the suite's two hardcoded goldens (graceful: \"message.send.body is 1048577 bytes (cap 1048576); over-cap bodies spill to a durable artifact — resend with a digest-citable head\" · hard: \"decision.question is 2049 bytes (cap 2048); resend within the 2048-byte cap\") — B-section dual-asserts payload AND message on all 14 lanes with cap+actual. Spill lane: mintSpill/materializeSpill in coordination-store.mjs (1 MiB ceiling + spill_body_exceeded coaching refusal, byte-identical roundtrip, spill.minted event), the spill query kind on the read port (CONTEXT_READ {kind:\"spill\"} through _renderContextRead, UNTRUSTED), spilled message.delivered/messageReceipt envelopes {body: head, bytes, digest, spill} — NEVER cap-voiding full delivery (C4), NEVER unresolvable head-only (C5); wave-member multibyte admission admits-with-spill, byte-measured (C10 — the validText char wall goes). Scanner posture: all SIX grammars shape-only + the BOARD_REPORT doc-comment law sentence (D8). Doctor: doctorReadiness().limits + card() limitsRegistryDigest + handshake cli_connection_incompatible on mismatch. Store dispositions per v1.2 Decision 2 (board.report.body LIVE 4096 → board_report_exceeded coaching; run.legacy_send.body LIVE 16384 → run_legacy_send_exceeded). Wave-driver onAdvisory callback. Anchors: coordinator.mjs sendMessage/_renderContextRead, coordination-store.mjs submitBoardReport :14442, application.mjs notifyWorkstream/validText, application-cli.mjs :1970 handshake, wave-driver.mjs policy, application-semantics/mcp-northbound. Verify: node --test impl/test/frame-economics-red.test.mjs from the repo root, then the suite's adjacents it names.\nWork red-first: write the failing test first, then implement until green.\nHARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.\nDo NOT git commit — the orchestrator harvests your worktree.\nMatch existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.\nSCRATCHPAD_WRITE is printed TEXT, never a tool; entries are EXACTLY note{text} | plan{objective,steps[{text,state}],supersedes} | doubt{question,context} | link{label,relation,target} (+ expectedFence:\"current\", unique idempotencyKey).\n[attempt: 656a3f2c-0927-46f4-883f-77d389d9040f implementer]",
+        "exact": {
+          "harness": "deepseek",
+          "model": "deepseek-v4-flash",
+          "effort": "high"
+        },
+        "scope": [
+          "impl/**",
+          "docs/reference/evidence/frontier-sweep-2026-08-03/**"
+        ]
+      }
+    ]
+  }
+}

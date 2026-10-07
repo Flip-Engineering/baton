@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T07:18:52.632Z",
+  "salt": "y520260813071852",
+  "role": "contract-164",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-ccae192a4d7c47a9fdd32a4c56c942eb"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-164",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-164": {
+      "pin": "da672e5cdf5604aa4d789a167ab170c1370805a2",
+      "paths": [
+        "docs/reference/evidence/blind-waits-2026-08-13/blind-waits-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 465,
+  "verdict": "CONTRACT-164-OK"
+}

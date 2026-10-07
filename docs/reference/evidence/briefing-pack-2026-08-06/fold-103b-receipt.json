@@ -1,0 +1,40 @@
+{
+  "attempt": "2026-08-06T23:33:01.684Z",
+  "salt": "f620260806233301",
+  "role": "fold-103b",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-11cd58649abe7d6b1c6c63c75a0228b9"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-103b",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-103b": {
+      "pin": "d6a73c7b03a1430382d1aac14cad0cbd74e7efdd",
+      "paths": [
+        "impl/test/briefing-pack-red.test.mjs",
+        "docs/reference/evidence/briefing-pack-2026-08-06/suite-fold-2.md",
+        "docs/reference/evidence/briefing-pack-2026-08-06/suite-draft-notes.md",
+        "docs/reference/evidence/briefing-pack-2026-08-06/briefing-pack-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 336,
+  "verdict": "FOLD-103B-OK"
+}

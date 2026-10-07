@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "stopReceipt": {
+    "state": "admitted",
+    "at": "2026-07-21T07:45:24.944Z"
+  },
+  "sibling": {
+    "phase": "selection_required",
+    "narrative": "Run terminated: provider_turn_failed."
+  },
+  "stops": [
+    {
+      "runId": "run-ca041b01e59b963ca3f2a79e4060828c",
+      "stop": null,
+      "ownership": null
+    }
+  ],
+  "failure": null
+}

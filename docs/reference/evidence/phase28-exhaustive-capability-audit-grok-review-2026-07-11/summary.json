@@ -1,0 +1,517 @@
+{
+  "at": "2026-07-12T06:24:21.491Z",
+  "repoHead": "e07f5ab2e43ef010dbbc997b9a02ef998108f18b",
+  "reviewProfile": "capability-audit",
+  "reviewTimeoutMs": 360000,
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "rows": [
+    {
+      "taskId": "grok-capability-audit-45",
+      "model": "grok-4.5",
+      "path": "reviews/dogfood/grok-capability-audit-45.md",
+      "stance": "wiring",
+      "workerId": "w-1",
+      "handle": {
+        "id": "w-1",
+        "vendor": "grok",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"full-system-capability-audit\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-4.5"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54fe-1fa9-74a3-b2d7-aba13157dc6e",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-capability-audit.ufGUW2/.baton/wt/grok-capability-audit-45",
+          "repoRoot": "/private/tmp/baton-capability-audit.ufGUW2",
+          "baseSha": "e07f5ab2e43ef010dbbc997b9a02ef998108f18b",
+          "branch": "baton/grok-capability-audit-45",
+          "ownerTaskId": "grok-capability-audit-45"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-capability-audit.ufGUW2/.baton/runtime/w-1",
+          "home": "/private/tmp/baton-capability-audit.ufGUW2/.baton/runtime/w-1/home",
+          "tmp": "/private/tmp/baton-capability-audit.ufGUW2/.baton/runtime/w-1/tmp",
+          "config": "/private/tmp/baton-capability-audit.ufGUW2/.baton/runtime/w-1/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-capability-audit-45",
+        "worktree": "/private/tmp/baton-capability-audit.ufGUW2/.baton/wt/grok-capability-audit-45",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 84280,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T06:22:46.209Z"
+      },
+      "pid": 11421,
+      "verify": {
+        "worker": "w-1",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"full-system-capability-audit\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 22
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "86ba773f0e6047d2d54975261941b32aa79e094e",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-4.5",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"full-system-capability-audit\"]"
+          }
+        },
+        "seq": 478,
+        "ts": "2026-07-12T06:24:20.911Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 22
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"full-system-capability-audit\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54fe-1fa9-74a3-b2d7-aba13157dc6e",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-capability-audit.ufGUW2/.baton/wt/grok-capability-audit-45",
+          "repoRoot": "/private/tmp/baton-capability-audit.ufGUW2",
+          "baseSha": "e07f5ab2e43ef010dbbc997b9a02ef998108f18b",
+          "branch": "baton/grok-capability-audit-45",
+          "ownerTaskId": "grok-capability-audit-45"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# Grok capability audit — full-system catalog at e07f5ab\n\nPinned: `e07f5ab2e43ef010dbbc997b9a02ef998108f18b`. Sources of truth for status: public assembly in [`impl/src/index.mjs`](impl/src/index.mjs) (`createDriver` + exports), coordinator call paths in [`impl/src/coordinator.mjs`](impl/src/coordinator.mjs), numbered phase specs under [`spec/`](spec/), focused tests under [`impl/test/`](impl/test/), and live/Decision evidence under [`docs/handoff/evidence/`](docs/handoff/evidence/) and [`impl/VALIDATION.md`](impl/VALIDATION.md). The phase-10 matrix ([`docs/handoff/evidence/capability-matrix.json`](docs/handoff/evidence/capability-matrix.json): 41 SHIPPED / 44 UNSHIPPED-DEBT / 22 DELIBERATELY-FENCED) is the research inventory snapshot only; post-10.1/11–27 code and evidence override row status. Homelab integration is **out of scope** (explicit non-dependency). Documentation prose alone never upgrades status.\n\n**Shipped** means a real northbound or `createDriver`/`Coordinator` call path with contract tests (and live proof where a harness/OS boundary is claimed). **Partial** means exported modules, cards, specs, or unit gates without full coordinator/driver/capability-plane wiring or incomplete vendor/live depth. **Pending** means designed/catalogued with no executable product path. **Explicitly retired** / **conditionally catalogued** require a recorded Decision artifact with reopening gates.\n\n## Decision\n\nBaton at e07f5ab is a **live, dependency-free Node ESM fleet-driver reference implementation**, not a complete realization of the full-system goal in [`docs/26-full-system-goal.md`](docs/26-full-system-goal.md) / [`SYSTEM.md`](SYSTEM.md).\n\n**What is actually shipped as product spine:** `createDriver()` wires Log, FenceTable, worktree manager (pin/create/capture/fresh verify/ff-only + structured stage/finalize/reconcile/reap), referee/`accept`, AdaptiveRouter, StoryCompiler, RuntimeIsolation, CoordinationStore, optional publisher, and Coordinator. Session-tier adapters (`ClaudeSessionCli`, `CodexAppServerCli`, `GrokAcpCli`, `GlmSessionCli`) are exported and constructible; the eight commands plus `integrate`, `requestPublication`, `recover`, `spawnReview`, Scratch/knowledge mediation, and budget/watchdog hooks are coordinator-owned. Authenticated web (HTTPS commands, SSE, OIDC bootstrap, operator seat, edge policy, command reconciliation) and MCP stdio fleet tools are separate exported assemblies that call the **same** coordinator methods—not a second state machine. Canonical suite is reported **776/776** with owned fixture lifecycle (TF1–TF4). Live multi-vendor, multi-Grok reap, exact route-tuple, governance, and many phase evidence packs exist.\n\n**What must not be over-claimed:** Atlas representation modules, representation-ceiling/e-graph Decision engines, and MergirafResolver are **exported and test-locked** but **not constructed inside `createDriver()` and not invoked by Coordinator**—they are library/ACI surfaces, not fleet-integrated capability tools. Vantage, Skill Forge/computer-use, Cartographer/Quartermaster product modules, full Evidence Ladder above test/mutation/oracle, OTEL export, plan-gate, impact-selected re-run, account quota-seat scheduling, automatic broker rejoin, true semantic merge, WebSocket parity, Streamable HTTP MCP/tasks/daemon, production Go/Elixir core, and registered M0/M1/E2 evals are **pending or partial**. GLM is built to the credential boundary (**PENDING-LIVE**). Live external Mergiraf binary and real in-app browser OIDC interaction remain pending. JS/TS compiler-IR (R4) is **ceiling-retired** via Phase 24 Decision; native whole-repo e-graph is **retired** and expression/kernel R7 is **conditionally catalogued** via Phase 27 Decision—neither is a silent deletion.\n\n**Audit rule applied:** matrix “SHIPPED” or a green unit test without coordinator/northbound/`createDriver` wiring is **partial** for full-system completeness. Phase-10 “fenced” rows are **not** deleted; they stay pending/conditional until earned or Decision-retired.\n\n## Proposed numbered contract\n\n### Status legend\n\n| Label | Meaning |\n|---|---|\n| **shipped** | Public assembly or northbound→coordinator path + focused contracts; live evidence where boundary-required |\n| **partial** | Real code/tests/export, missing driver/capability integration, vendor parity, or live proof |\n| **pending** | In goal/specs/designs only; no product call path |\n| **explicitly retired** | Decision artifact closes native path; reopening gates recorded |\n| **conditionally catalogued** | Kept visible behind demand/tool/accuracy gates; no current product path |\n\n### A–J status matrix (full intended catalog)\n\n| # | Catalog item | Status | Evidence (wiring / tests / live / Decision) |\n|---|---|---|---|\n| A1 | Eight commands: spawn/send/wait/respond/interrupt/result/list/kill | **shipped** | `Coordinator` methods; `createDriver`; web + MCP fleet_* tools; phase10/10.1/11 tests; live capstones |\n| A2 | Ordered delivery, fencing, single-consumer, two-phase stop, terminal monotonicity, bounded ops, process/worktree reap | **shipped** | FenceTable + coordinator; SC12–SC20; multi-Grok reap evidence |\n| A3 | Persistent multi-turn; interrupt-follow-up; resume/fork/recover | **partial** | Phase11 persistent sessions + recover shipped; automatic startup rejoin **pending**; Grok-native fork/rewind **planned/partial**; checkpoint/rewind depth incomplete ([VALIDATION](impl/VALIDATION.md) limits §4) |\n| A4 | Restart-safe identity, fences, sessions as orphaned, worktrees, story/budgets/routing | **partial** | Replay + recover gates; router state is in-memory AdaptiveRouter (not full log-authoritative routing history); restart drops pending publication authority by design |\n| A5 | Test/fixture resource lifecycle ownership | **shipped** | TF1–TF4; `npm test` private root reap; bare `node --test` / uncatchable SIGKILL explicitly outside boundary |\n| A6 | Task DAG, refinements, claims, artifacts, path leases, ready-work | **shipped** | CoordinationStore + coordinator mediation; CK evidence; Scratch claim APIs on coordinator |\n| B1 | Independent harness + exact model + effort axes; fail-closed no silent fallback | **shipped** | route-tuple + spawn filters; phase14 evidence; live gpt-5.6-sol / grok-4.5 / grok-composer-2.5-fast |\n| B2 | Route identity in handles/events/results/coordination/verify/routing/replay/commits | **shipped** | Phase14 attribution + commit trailers |\n| B3 | Concurrent provider route/kill/reap at card ceilings | **shipped** | Multi-Grok + concurrent exact-model evidence |\n| C1 | Claude session depth (steer/interrupt/approvals/resume/fork/card) | **partial** | Core session path shipped; hooks enum, inject-without-turn, full mid-session reconfig, deep context introspection **pending** |\n| C2 | Codex app-server depth | **partial** | Session/steer/interrupt/approvals/usage shipped; thread/inject_items, broker topology, schema feature-detect, remote PTY **pending/fenced** |\n| C3 | Grok ACP depth | **partial** | Core + model + session/load shipped; x.ai extensions, multi-client attach, native fork/rewind, ask-user **pending/fenced** |\n| C4 | GLM parity | **partial** | `GlmSessionCli` + nonRefuser routing **shipped** in code; **PENDING-LIVE** credential proof |\n| C5 | One-shot / reduced tiers honestly carded | **shipped** | Legacy adapters exported; not product path; cards declare reduced verbs |\n| D1 | OS sandbox / worktree confinement / network policy | **partial** | Worktree isolation shipped; RuntimeIsolation homes/secret strip shipped; Grok sandbox denial live; Claude/Codex full denial parity incomplete; Grok child-network macOS gap carded |\n| D2 | Scoped credentials; ambient secret strip | **shipped** | RuntimeIsolation + governance live Grok evidence |\n| D3 | Trust ramp dry-run→approve-all→sample→autonomous | **pending** | Described in SYSTEM/docs; no coordinator policy machine |\n| D4 | Emergency stop always works | **shipped** | kill + ER1–ER6 emergency unlogged stop path |\n| D5 | Wall/token/USD budgets + hard stops | **shipped** | Canonical deltas 50/80/100%; hard stop + terminal grace |\n| D6 | Account-seat / quota-window proactive scheduling | **pending** | Explicit remaining limit |\n| D7 | Deterministic watchdog stall/loop/scope→interrupt/kill | **shipped** | Governance phase11; semantic classifiers remain untrusted |\n| D8 | Provenance labels + contamination/read edges | **partial** | Hub vs worker facts + Scratch ReadBy/knowledge edges shipped; full contagion analysis UX **pending** |\n| E1 | Immutable delegation contract + pinned DoD command | **shipped** | createBrief / brief shape; trust gate runs pinned command |\n| E2 | Fresh-result verification | **shipped** | referee + fresh worktree in driver |\n| E3 | Red→green / coverage-of-change / mutation | **shipped** | referee + accept opts on createDriver; AC tests |\n| E4 | Impact-selected test re-run | **pending** | Catalogued; no selector in referee |\n| E5 | Independent oracle + cross-vendor review | **partial** | spawnReview + family gate shipped; continuous review product depth **partial** |\n| E6 | Property/fuzz/BMC/SMT/proof ladder | **pending** | Design only (`math-proof.md`); not wired |\n| E7 | Structured postmortem on gate reject | **pending** | Not a coordinator product artifact |\n| E8 | FF integration + approval-gated publication | **shipped** | integrate + requestPublication; no live remote push proof (injected publisher) |\n| E9 | Structured (syntax-aware) merge rung | **partial** | Phase26 coordinator `strategy:'structured'` + injected resolver **shipped** in code/tests; **live Mergiraf binary pending** |\n| E10 | True semantic merge (data/control-flow) | **conditionally catalogued** | Explicit research; no authority hook from CPG/behavior |\n| E11 | Stacked integration / deploy adapters / rollback automation | **pending** | — |\n| F1 | Adaptive routing on verified outcomes only | **shipped** | AdaptiveRouter in createDriver; record after accept |\n| F2 | New-model exploration, decay, pin/exclude/prefer, quota-aware routing | **partial** | Decay/explore/UCB-style pick shipped; operator pin/exclude surface + quota-window routing **pending** |\n| F3 | M0/M1/E2 reproducible eval program | **pending** | Fleet exists; evals not productized (was matrix-fenced research) |\n| G1 | Operational ledger + cursors + replay | **shipped** | Log + coordinator replay |\n| G2 | Coordinative task/artifact/claims | **shipped** | CoordinationStore CK1–CK9 path |\n| G3 | Scratch TTL/CAS/take/notify blackboard | **partial** | claim/post/read + expiry on coordinator; full REPL/Bench product **partial** |\n| G4 | Epistemic causal KG (typed nodes/edges, bitemporal, promotion, bounded recall) | **partial** | add/promote/read + recallKnowledge shipped on store/coordinator; full Cairn promoter/export/scorecard product **pending** |\n| G5 | No homelab coupling | **shipped** (constraint) | Deployment-neutral store; out of scope |\n| H1 | Atlas ACI envelope + cards (as modules) | **partial** | Per-module ops/cards; **not** fleet invoke path in createDriver |\n| H2 | Atlas lexical index, AST delta, symbols/SCIP, structural search/rewrite (proposal-only) | **partial** | Exported modules + phase13/17 tests + self-proofs; **no coordinator wiring** |\n| H3 | Atlas CPG seed/delta/taint/path-sensitive | **partial** | Exported + phase18–22 gates; library only in assembly |\n| H4 | Atlas behavior fingerprint R5 | **partial** | Exported + phase25; not driver-integrated |\n| H5 | Vantage (DAP debug/record-replay) | **pending** | Design only (`debug-interp.md`); no `impl/src` module |\n| H6 | Evidence Ladder beyond test cluster | **pending** | Trust cluster E2–E3 shipped; higher rungs pending |\n| H7 | Skill Forge + computer use | **pending** | Design only (`skills-computeruse.md`) |\n| H8 | Cartographer / Quartermaster | **pending** | Design only; Atlas index is not the full module |\n| H9 | Cairn BoK product | **partial** | Substrate nodes/edges/recall partial; exportable BoK/scorecards pending |\n| I0 | R0 text | **shipped** | Default worker medium |\n| I1 | R1 CST/AST structural | **partial** | Module-shipped; not fleet tool |\n| I2 | R2 symbol/SCIP | **partial** | Module-shipped; live LSP pending |\n| I3 | R3 CPG (+delta/taint/path-sensitive bounded) | **partial** | Module-shipped; SSA/full PDG/interproc unclaimed |\n| I4 | R4 IR / translation validation | **explicitly retired** (JS/TS product path) / **conditionally catalogued** (external LLVM/MIR/MLIR) | Phase24 `AtlasRepresentationCeiling` Decision; false ir.* ops typed-fail |\n| I5 | R5 behavioral fingerprints | **partial** | Phase25 bounded corpus agreement only; not equivalence/merge authority |\n| I6 | R6 structured merge | **partial** | See E9 |\n| I6b | R6 semantic merge | **conditionally catalogued** | See E10 |\n| I7 | R7 e-graph | **explicitly retired** (native whole-repo) / redirect (whole-function→R5+verify) / **conditionally catalogued** (expression/kernel external) | Phase27 Decision EG1–EG8; `AtlasEGraphEvaluation` policy-only |\n| J1 | Vendor-shaped briefs, addressed context, DoD reinject on compact | **partial** | Briefs shipped; compaction reinjection/governance firewall **pending** |\n| J2 | MCP northbound stdio fleet tools | **shipped** | McpFleetServer→coordinator; MN1–MN10; Streamable HTTP/tasks/daemon **pending** |\n| J3 | Authenticated HTTPS commands + resumable SSE | **shipped** | WebNorthbound + stream; WN/IL/EP/RC evidence |\n| J4 | Browser OIDC + operator seat | **partial** | BO/BU unit + TLS socket proof; **in-app browser interaction pending**; production OIDC provider adapter pending |\n| J5 | WebSocket event parity | **pending** | Catalogued next depth |\n| J6 | Operator TUI/takeover depth | **partial** | Minimal browser operator assets; full takeover seat pending |\n| J7 | OpenTelemetry GenAI export | **pending** | — |\n| J8 | Production Go/Elixir core | **pending** | Node reference intentional; migration fenced historically |\n| J9 | Multi-machine/remote mesh | **conditionally catalogued** | Explicitly not allowed to distort local correctness; no product path |\n| X1 | A2A federation / extra ACP vendors / harness-as-MCP southbound | **conditionally catalogued** | Former deliberate fences; still goal-visible |\n| X2 | Story compiler narrative | **shipped** | StoryCompiler in createDriver |\n| X3 | Plan-gate before budget spend | **pending** | — |\n\n### Dependency-ordered pursuit list\n\nNo item below is deleted by “later.” Each step reuses the earned loop: verify → numbered contract → red test → implement → adversarial review → live proof → catalog update.\n\n1. **Close live/credential honesty gaps that block recursive dogfood claims**  \n   - GLM **PENDING-LIVE** when isolated Z.ai credentials exist (no ambient secret projection).  \n   - Live Mergiraf binary proof for structured merge (SM live gate).  \n   - Real-browser OIDC/control/SSE/logout when execution bridge available; keep TLS socket proof separate.  \n   - Final independent clean review for edge policy after provider quota (explicit pending gate).  \n   **Reopen/accept:** live summary.json-style checks + full reap; never infer from unit green alone.\n\n2. **Session continuity remainder (A3/C*)**  \n   - Automatic startup rejoin to running broker/process.  \n   - Grok fork/rewind schemas; deeper checkpoint/rewind.  \n   - Remaining vendor depth: Claude hooks/inject-without-turn; Codex inject_items/schema detect (not remote cloud).  \n   **Accept:** driver-mediated resume/fork/rejoin without fabricated uniform semantics; cards honest.\n\n3. **Governance depth (D6/F2/J1)**  \n   - Account quota-window + fleet-seat scheduling.  \n   - Operator pin/exclude/prefer routing controls + durable router state replay.  \n   - Compaction constraint/DoD reinjection (governance firewall).  \n   **Accept:** thresholds act without human babysitting; reinject observed on compact events.\n\n4. **Trust ladder remainder (E4–E7, E11, H6)**  \n   - Impact-selected re-run.  \n   - Structured postmortem artifacts on reject.  \n   - Plan-gate.  \n   - Higher Evidence rungs only with language/tool ceilings and no “proven” over worker-weakened specs.  \n   - Stacked integration / deploy / automated rollback only after publication authority stays single-consumer.  \n   **Reject:** any path that bypasses fresh verify or weakens oracle family rules.\n\n5. **Fleet-integrate Atlas (H1–H4 / I1–I3/I5) before new modules**  \n   - Wire Atlas ops through coordinator/capability invoke with ACI, cancellation, reverify, cost/provenance—not export-only.  \n   - Direct structural apply still **gated** (proposal-only remains until apply contract).  \n   - Live LSP optional depth.  \n   **Accept:** worker/orchestrator can invoke via public driver/northbound; still no merge authority from CPG/fingerprint.\n\n6. **Capability plane next verticals (after substrate+Atlas invoke)**  \n   - H8 Cartographer/Quartermaster on shared index/call graph.  \n   - H9 Cairn promoter/scorecard/export (build on G4).  \n   - H5 Vantage.  \n   - H7 Skill Forge (command-recipe registry first) then computer-use only behind containment.  \n   **Accept:** one ACI envelope; hub re-verify; no second control plane.\n\n7. **Northbound/runtime depth (J2–J8)**  \n   - Streamable HTTP MCP auth, MCP Tasks, progress heartbeats, daemon supervision.  \n   - Optional WebSocket parity.  \n   - Deeper operator/takeover.  \n   - OTEL GenAI export.  \n   - Go/Elixir production port only after executable-spec contracts stabilize.  \n   **Accept:** same coordinator authority; cannot bypass fence/sandbox/budget/trust.\n\n8. **Representation research under Decisions (I4/I6b/I7)**  \n   - JS/TS R4 stays retired until external IR+TV demand gates fire.  \n   - Semantic merge only with adoptable engine + measured demand + false-clean eval gates.  \n   - Expression/kernel e-graph only with external engine, translation validation, scale/accuracy/incremental-value thresholds; meeting JSON thresholds alone must not enable capability (Phase27).  \n   **Reopen gates:** recorded in phase24/27 evidence—new reviewed spec + tool provenance + independent evidence.\n\n9. **Evals and multi-machine (F3/J9/X1)**  \n   - M0 latency, M1 arms, E2 decorrelation as first-class reproducible programs.  \n   - Multi-machine/A2A/extra vendors remain conditional; must not weaken single-box correctness.\n\n### Explicit non-goals for this audit branch\n\n- Homelab or project-manager runtime integration.  \n- Relabeling CPG as IR, structured merge as semantic merge, or policy Decisions as engines.  \n- Counting export-only Atlas or design-only Vantage/Skill/Cartographer/Cairn as shipped fleet capabilities.\n\n## Red tests and proof\n\n| Gate | Proof shape already present or required |\n|---|---|\n| Driver assembly | `createDriver` constructs coordinator+log+router+story+coordination+runtime; adapters passed in—not invented inside |\n| SC12–SC20 stop/spawn | `impl/test/phase10.1-reconciliation.test.mjs` |\n| Route tuple fail-closed | `phase14-route-tuple.test.mjs` + recursive exact-model evidence |\n| Budgets/watchdog/isolation | `phase11-governance.test.mjs` + live Grok governance summary |\n| Red→green/coverage/mutation/oracle/integrate/publish | `phase11-acceptance-integration.test.mjs` + phase11 acceptance evidence |\n| Structured merge refusal surface | `phase26-structured-merge.test.mjs` (injected resolver); live Mergiraf still red until binary present |\n| Coordination/Scratch/knowledge | `phase11-coordination-store.test.mjs` + CK foundation evidence |\n| Web/MCP northbound same authority | phase12/* + `phase16-mcp-northbound.test.mjs` |\n| Atlas modules (library) | phase13/17/18/19/20/22/25 tests; **red for “fleet invoke” until coordinator wiring exists** |\n| R4 ceiling | `phase24-atlas-representation-ceiling.test.mjs`; ir.* must typed-fail |\n| R7 Decision | `phase27-atlas-egraph-evaluation.test.mjs`; build/sat/proof/merge-authority refuse |\n| Fixture lifecycle | TF1–TF4; acceptance command is `npm test` only |\n| Emergency reap | ER1–ER6; storage poison path must not count as pass |\n| GLM live | remains red without credentialed smoke |\n| Browser product path | unit/TLS green ≠ in-app browser pass |\n\n**Audit reds (must stay red until fixed):** any claim that Atlas/Vantage/Skill/Cartographer/Cairn/OTEL/plan-gate/impact-select/semantic-merge/native-egraph/JS-IR are “shipped through createDriver”; any silent fallback model; any publication without approval; any trust-gate accept on worker prose alone.\n\n## Risks and rejection criteria\n\n1. **Export/false-shipped inflation** — Reject any status upgrade based solely on `index.mjs` re-exports, capability cards, design docs, or matrix snapshot without coordinator/northbound call path.  \n2. **Representation laundering** — Reject CPG-as-IR, fingerprint-as-semantic-equivalence, structured-merge-as-semantic-merge, or Decision policy as executable e-graph. Phase24/27 reopening gates are mandatory.  \n3. **Northbound dual state machines** — Reject web/MCP paths that mutate fleet state outside Coordinator fences/idempotency/audit.  \n4. **Credential/ambient bleed** — Reject ambient secret projection to close GLM/Grok live gaps; missing credentials are typed blockers only.  \n5. **Trust-gate bypass** — Reject integrate/publish/auto-merge from worker claims, CPG impact, or behavior corpus agreement alone.  \n6. **Lifecycle leaks** — Reject “green” suites that leave worktrees, PIDs, runtime homes, stages, or baton-suite roots; uncatchable SIGKILL still needs supervisor stale-root reconciliation (explicit remaining risk).  \n7. **Homelab creep** — Reject product dependency on external project-manager/homelab services.  \n8. **Eval/fenced amnesia** — Reject closing full-system goal while M0/M1/E2, multi-machine, or capability-plane items vanish without Decision.  \n9. **Provider-limit false completion** — Reject treating provider usage-limit refusals as clean independent reviews.  \n10. **Scope discipline** — This audit file is the only allowed edit for this task; product code/specs/tests/evidence must not be mutated by the audit itself.\n\n**Bottom line:** control plane + route tuple + sessions/governance/trust/integration + Scratch/causal substrate + web/MCP northbound are **shipped or honestly partial with live depth**. Capability/representation planes are **mostly library-partial or pending**, with two **Decision-backed** retirements/conditionals (R4 JS/TS IR native path; R7 native e-graph). Remaining work is dependency-ordered above; nothing in the intended catalog is dropped by fencing language."
+    },
+    {
+      "taskId": "grok-capability-audit-composer",
+      "model": "grok-composer-2.5-fast",
+      "path": "reviews/dogfood/grok-capability-audit-composer.md",
+      "stance": "catalog",
+      "workerId": "w-2",
+      "handle": {
+        "id": "w-2",
+        "vendor": "grok",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"full-system-capability-audit\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-composer-2.5-fast"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54fe-1fa9-7411-91cc-92f706740c5e",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-capability-audit.ufGUW2/.baton/wt/grok-capability-audit-composer",
+          "repoRoot": "/private/tmp/baton-capability-audit.ufGUW2",
+          "baseSha": "e07f5ab2e43ef010dbbc997b9a02ef998108f18b",
+          "branch": "baton/grok-capability-audit-composer",
+          "ownerTaskId": "grok-capability-audit-composer"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-capability-audit.ufGUW2/.baton/runtime/w-2",
+          "home": "/private/tmp/baton-capability-audit.ufGUW2/.baton/runtime/w-2/home",
+          "tmp": "/private/tmp/baton-capability-audit.ufGUW2/.baton/runtime/w-2/tmp",
+          "config": "/private/tmp/baton-capability-audit.ufGUW2/.baton/runtime/w-2/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-capability-audit-composer",
+        "worktree": "/private/tmp/baton-capability-audit.ufGUW2/.baton/wt/grok-capability-audit-composer",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 66064,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T06:22:46.460Z"
+      },
+      "pid": 11425,
+      "verify": {
+        "worker": "w-2",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"full-system-capability-audit\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 22
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "f15a87da542b0659d5a83ee9e026a40ec41d2f23",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-composer-2.5-fast",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"full-system-capability-audit\"]"
+          }
+        },
+        "seq": 546,
+        "ts": "2026-07-12T06:23:42.598Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 22
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"full-system-capability-audit\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54fe-1fa9-7411-91cc-92f706740c5e",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-capability-audit.ufGUW2/.baton/wt/grok-capability-audit-composer",
+          "repoRoot": "/private/tmp/baton-capability-audit.ufGUW2",
+          "baseSha": "e07f5ab2e43ef010dbbc997b9a02ef998108f18b",
+          "branch": "baton/grok-capability-audit-composer",
+          "ownerTaskId": "grok-capability-audit-composer"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# Grok capability audit — full-system catalog at e07f5ab\n\nAudit date: 2026-07-11. Scope: reconcile `SYSTEM.md`, `README.md`, `docs/25-capability-gap.md`, `docs/26-full-system-goal.md`, `docs/handoff/evidence/capability-matrix.json`, `impl/VALIDATION.md`, all `spec/phase*` contracts, `impl/src/index.mjs` assembly/exports, and focused evidence. Homelab integration excluded. Grounding: source wiring (`createDriver`, exports), focused phase tests, live evidence ledgers, and explicit Decision artifacts — not prose alone.\n\n## Decision\n\nBaton at e07f5ab is a **dependency-free Node ESM reference fleet driver** with a **776/776 green canonical suite** (`npm test` in `impl/`, TF1–TF4 lifecycle-owned). The phase-10 handoff matrix (`capability-matrix.json`, 107 rows) is **stale**: 41/22/44 counts and many per-row statuses predate phases 11–27. Current code and `impl/VALIDATION.md` override the matrix wherever they disagree.\n\n**Verdict:** Core control plane, harness/model/effort routing, persistent sessions, sandbox/secrets, budgets/watchdogs, hardened acceptance, integration/publication, coordination/Scratch/causal KG substrate, authenticated web/MCP northbound (partial depth), and Atlas representation through R7 Decision are **shipped or explicitly bounded with evidence**. Six catalog families remain **open debt** without silent retirement: quota-window governance, full capability-plane modules (Vantage, Evidence Ladder, Skill Forge, Cartographer/Quartermaster, Cairn), representation depth above current ceilings (live LSP, full PDG/SSA, true semantic merge, external IR), northbound depth (real-browser OIDC, WebSocket parity, Streamable HTTP MCP/tasks/daemon), cross-vendor decorrelation eval (E2), and live proofs blocked by environment (GLM credential, Mergiraf binary, twelfth clean EP review).\n\nNothing in the full-system goal is dropped by “later” or “fenced” labels; retired rungs carry explicit Decision gates (R4 JS/TS ceiling RG1–RG7; R7 native e-graph EG1–EG8).\n\n## Proposed numbered contract\n\n### 1. Status matrix (docs/26 catalog A–J)\n\nLegend: **S** shipped (driver-reachable + test/evidence), **P** partial (bounded vertical; reopening gates listed), **D** pending (not wired; catalogued), **F** fenced/retired (explicit non-goal or Decision), **C** conditional (external/tool/demand gates).\n\n| ID | Capability | Status | Evidence / reopening gate |\n|---|---|---|---|\n| **A — Fleet control & reliability** |\n| A1 | Eight commands (spawn/send/wait/respond/interrupt/result/list/kill) | S | `createDriver()` → `Coordinator`; `spec/driver.md`; live capstones |\n| A2 | Fencing, single-consumer, two-phase stop, terminal monotonicity | S | SC12–SC20; `spec/phase10.1/spawn-stop-reconciliation.md` |\n| A3 | Persistent multi-turn workers; interrupt-follow-up | S | Phase 11 persistent sessions; 16-check Grok two-turn ledger |\n| A4 | Resume/fork/recovery (vendor-honest, non-uniform) | P | Claude/Codex resume/fork + Grok `session/load` ship; **D:** auto-rejoin, Grok-native fork/rewind (`planned`) |\n| A5 | Restart-safe identity (tasks, fences, sessions, worktrees, budgets, routing) | P | In-process replay + coordination store; **D:** full coordinator-process persistence across restart |\n| A6 | Fixture/resource lifecycle ownership | P | TF1–TF4 + 776 suite; **D:** stale-root reconciliation after uncatchable wrapper SIGKILL |\n| A7 | Task DAG, claims, path leases, ready-work selection | S | CK1–CK9 `CoordinationStore`; 28+ coordination focused tests |\n| **B — Harness, model, effort** |\n| B1 | Independent `{harness, exactModel, effort}` axes | S | Phase 14 MN1–MN10 + web/MCP; issue #2 gate |\n| B2 | Visible requested/resolved/observed attribution | S | `route-tuple.mjs`; durable events, verification, integration trailers |\n| B3 | Fail-visible model mismatch (no silent fallback) | S | Live `gpt-5.6` rejection; exact Grok concurrent proof |\n| B4 | Concurrent multi-Grok interrupt/kill/reap | S | Phase 21 evidence; four-session ceiling proven |\n| **C — Southbound harness depth** |\n| C1 | Claude session (steer/interrupt/approvals/multi-turn) | S | `ClaudeSessionCli` exported; capstone |\n| C2 | Codex app-server (steer/interrupt/threads/telemetry) | S | `CodexAppServerCli`; X1/X2 live |\n| C3 | Grok ACP (prompt/interrupt/steer-emulated/kill/usage) | S | `GrokAcpCli`; GA13/GA20 |\n| C4 | GLM via Claude+Z.ai | P | `GlmSessionCli` built; **PENDING-LIVE** (credential blocker, not inferred) |\n| C5 | One-shot / future ACP adapters (honest card) | F | `docs/24` non-goals; carded unsupported |\n| C6 | Native context injection (Codex inject_items, Claude inject-without-turn) | D | Emulated nudge only |\n| C7 | Compaction awareness + governance firewall | D | No compaction events consumed; no constraint re-injection |\n| C8 | Claude hooks / mid-session reconfiguration | D | Researched; zero consumers |\n| C9 | Codex broker/shared-daemon topology | D | Private child per worker |\n| C10 | Grok programmatic authenticate | D | Typed auth-gate failure only |\n| C11 | Grok x.ai extensions (compact, share, etc.) | D | Uninvoked catalog |\n| **D — Safety & governance** |\n| D1 | OS sandbox + worktree confinement + scoped secrets | P | `RuntimeIsolation`; Grok sandbox live-proven; Claude/Codex parity probes **D** |\n| D2 | Isolated harness homes (GROK_HOME, etc.) | S | Phase 11 private runtime homes |\n| D3 | Trust ramp (dry-run → autonomous) | D | Emergency stop ships; ramp not wired |\n| D4 | Wall/token/USD budgets + 50/80/100% thresholds + hard stops | S | Phase 11 governance; Grok governance ledger |\n| D5 | Deterministic watchdog (stall/loop/scope) | S | Phase 11; mechanical only |\n| D6 | Quota-window / fleet-seat scheduling | D | Static concurrency ceilings only |\n| D7 | Provenance trust labels + contamination edges | P | Hub vs worker facts; CK contamination; full fleet graph **D** |\n| **E — Trust, review, integration** |\n| E1 | Immutable delegation brief + pinned DoD | S | `createBrief`/`validateBrief`; referee wiring |\n| E2 | Fresh-worktree verification (base gate) | S | `referee.verify` + `createVerifyWorktree` |\n| E3 | Red→green + coverage-of-change + mutation | S | `createDriver({requireRedGreen,requireCoverage,requireMutation})`; AC1–AC6 |\n| E4 | Independent oracle + cross-vendor review | S | `requireIndependentOracle`; different family enforced |\n| E5 | Structured postmortem on gate reject | D | `observedOutputTail` only; no synthesis |\n| E6 | Proof ladder (proptest→fuzz→BMC→SMT→proof) | F | `docs/22` deferred bet; not erased |\n| E7 | `integrate()` ff-only + structured (Mergiraf-class) | P | SM1–SM10; **D:** live Mergiraf binary on host |\n| E8 | Publication approval (exact SHA, no push without) | S | Phase 11; injected no-network publisher in tests |\n| E9 | True semantic merge / stacked integration / deploy adapters | D | R6 structured ≠ semantic; explicit SM gates |\n| E10 | Live remote-push proof | D | Publisher wired; no real remote mutation proof |\n| **F — Routing, evaluation, learning** |\n| F1 | Adaptive routing (verified-wins, decay, UCB) | S | `AdaptiveRouter` + `route.record` on accept |\n| F2 | Operator pin/exclude/prefer | D | Fixed-vendor spawn only |\n| F3 | Router state in event log (replayable) | D | In-memory `snapshot()`; not persisted on replay |\n| F4 | M0/M1/E2 eval program | F/C | E2 fenced phase-11 research; M0 probes answered live |\n| **G — Memory tempos + Scratch** |\n| G1 | Operational ledger + replay + artifacts | S | `Log`; D10/D11 |\n| G2 | Coordinative task DAG + claims/leases | S | CK2; `refines` edge ships |\n| G3 | Epistemic causal KG (typed nodes/edges, bitemporal) | S | CK3–CK9; no homelab dependency |\n| G4 | Scratch blackboard (TTL/CAS/claims/notify) | S | `postScratchFact`, `claimScratch`, `readScratch` in `CoordinationStore` |\n| G5 | Contradiction-gated recall / promotion | P | CK promotion + `ReadBy`; auto-injection **D** |\n| G6 | Run scorecards (Cairn-shaped) | D | Graph primitives exist; Cairn module/ACI envelope **D** |\n| G7 | Replay counterfactual re-run | P | Log replay; counterfactual API **D** |\n| **H — Capability plane (ACI envelope)** |\n| H1 | Atlas: lexical + structural delta + index/overlay | S | `AtlasStructuralDelta`, `AtlasCodeIndex`; phase 13 |\n| H2 | Atlas: proposal-only structural search/rewrite | S | `AtlasStructuralRewrite` AR1–AR10; **D:** direct apply |\n| H3 | Atlas: symbols/SCIP/call graph | S | Phase 13 index/symbols |\n| H4 | Atlas: CPG seed + delta + impact + taint + path-sensitive CFG | S | CG/CD/CT/PS1–PS8; 31/31 R3 gate |\n| H5 | Vantage (DAP, record/replay, debug leases) | D | Spec only (`spec/capability-plane.md`) |\n| H6 | Evidence Ladder (tests→proof module) | D | Trust gates ship; named module **D** |\n| H7 | Skill Forge + computer use | D | `docs/capabilities/skills-computeruse.md`; no impl |\n| H8 | Cartographer + Quartermaster | D | Partial via Atlas orientation; named module **D** |\n| H9 | Cairn (scorecards, route stats, BoK export) | D | Route stats in router only; Cairn ACI **D** |\n| **I — Representation ladder** |\n| I0 | R0 text/tokens | S | Baseline |\n| I1 | R1 CST/AST structural delta | S | Phase 13 |\n| I2 | R2 symbols/SCIP | S | Phase 13 |\n| I3 | R3 CPG (bounded intraprocedural) | S | Phases 18–22; **D:** SSA, full PDG, interprocedural, aliases, heap |\n| I4 | R4 compiler IR / translation validation | F/C | RG1–RG7: JS/TS ceiling R3; external LLVM/MIR/MLIR catalogued |\n| I5 | R5 behavioral fingerprint | S | BF1–BF7; `observed_corpus_agreement_not_semantic_equivalence` |\n| I6 | R6 structured merge (syntax-aware) | P | SM1–SM10; not semantic merge |\n| I7 | R6 true semantic diff/merge | D | Research bet; explicit evaluation gates |\n| I8 | R7 e-graph equality saturation | F/C | EG1–EG8 Decision: native retired; external kernel research conditional |\n| I9 | Representation choreography + attestation overlay | D | Design in `docs/15`; not wired |\n| **J — Context, operator, northbound, runtime** |\n| J1 | Vendor-shaped briefs + context-on-demand | P | `renderBrief`; bulky-link pattern partial |\n| J2 | Plan-gate | D | Brief field only; no enforcement |\n| J3 | MCP stdio northbound (8 fleet tools) | S | Phase 16 MN1–MN10; `serveMcpStdio` exported |\n| J4 | MCP Streamable HTTP / Tasks / daemon supervision | D | Explicit next depth per VALIDATION |\n| J5 | Authenticated HTTPS commands + SSE WN6 | S | Phase 12; 100/100 combined |\n| J6 | OIDC browser bootstrap (BO1–BO7) | P | TLS wire proof passes; **D:** in-app browser bridge |\n| J7 | Operator seat (BU1–BU7) | P | Minimal authenticated seat; takeover depth **D** |\n| J8 | Web command reconciliation (RC1–RC6) | S | Durable status reads |\n| J9 | Edge policy EP1–EP9 | P | 82 focused tests; **D:** twelfth clean independent review (quota refused) |\n| J10 | WebSocket parity | D | Catalogued; not shipped |\n| J11 | OpenTelemetry GenAI export | D | JSONL ledger only |\n| J12 | Production Elixir/Go core | F | MVP stays TypeScript per `docs/22` |\n| J13 | Multi-machine / A2A federation / remote fleet | F | Single-box goal |\n| J14 | Emergency stop-only kill (ER1–ER6) | S | Phase 23; `confirmed_unlogged` path |\n\n### 2. Stale or mislabeled claims (reconciliation)\n\n| Claim source | Issue | Correct status |\n|---|---|---|\n| `capability-matrix.json` (107 rows) | Phase-10 snapshot; 22 rows marked DELIBERATELY-FENCED including MCP northbound, human seat, capability plane | MCP stdio **S**; operator seat **P**; Atlas **P**; matrix counts not authoritative |\n| Matrix: resume/fork UNSHIPPED-DEBT (high) | Pre-phase-11 | **P** — ships via `send(turn)`, `recover()` |\n| Matrix: red→green/coverage/budget/watchdog/merge UNSHIPPED | Pre-phase-11 | **S** (E3, D4–D5, E7–E8) |\n| Matrix: MCP northbound DELIBERATELY-FENCED | Pre-phase-16 | **S** stdio; HTTP/tasks **D** |\n| `docs/22` §5 human seat/web dashboard fenced | Pre-phase-12 | **P** — BU1–BU7 + web vertical |\n| `docs/22` §5 capability plane fenced | Over-broad | Atlas **S/P**; Vantage/Evidence/Skill/Cartographer/Cairn **D** |\n| `docs/22` §5 semantic diff/merge fenced | Partially superseded | R1/R6 structured **S/P**; true semantic **D** |\n| `SYSTEM.md` §10 feature index | Some rows lag phases 12–27 | Use docs/26 + VALIDATION as override |\n| README \"next phase is depth\" | Understates shipped northbound/Atlas | Accurate on remaining depth, not on absence |\n\n### 3. Dependency-ordered pursuit list\n\n1. **P0 live-proof closures (no new architecture):** GLM `PENDING-LIVE` smoke; live Mergiraf binary structured-merge proof; real-browser OIDC/control when execution bridge available; twelfth clean EP independent review after provider quota reset; live remote-push publication proof.\n2. **P1 northbound depth:** WebSocket parity (WN); Streamable HTTP MCP + Tasks + daemon supervision (MN depth); deeper operator/takeover surfaces; OpenTelemetry GenAI emission.\n3. **P2 governance completeness:** Quota-window/account-seat scheduling; trust ramp; plan-gate; compaction firewall; proactive schema/card probing; router persistence in log; operator routing overrides.\n4. **P3 capability-plane modules on shared substrate:** Vantage → Evidence Ladder → Skill Forge → Cartographer/Quartermaster → Cairn (each: numbered spec → red tests → `createDriver`/ACI wiring → live boundary proof).\n5. **P4 Atlas representation depth:** Direct structural rewrite apply; live LSP; full PDG/SSA/path-solving; repository-wide CPG overlay; semantic diff; true semantic merge (measured demand gate); external IR/tool paths per RG Decision.\n6. **P5 integration depth:** Stacked integration, conflict rollback, deploy adapters, cross-vendor semantic review automation, structured postmortems.\n7. **P6 research evals (explicitly fenced):** E2 cross-vendor decorrelation eval after operator demand; external e-graph kernel research per EG reopening thresholds.\n8. **P7 production runtime:** Go/Elixir port only after executable-spec stabilization (`F`, not deleted).\n\nNo step retires a catalog item without a recorded Decision artifact (cf. RG1–RG7, EG1–EG8).\n\n## Red tests and proof\n\n| Gate | Contract | Current proof | Gap |\n|---|---|---|---|\n| Canonical suite | TF1–TF4 + full regression | **776/776** via `npm test` | Bare `node --test` outside owner |\n| Spawn/stop authority | SC12–SC20, U-1…U-11 | Phase 10.1 reverification + adversarial | — |\n| Live three-vendor fleet | Capstone checks | `phase10.1-capstone-2026-07-10/summary.json` all true | — |\n| Multi-Grok reap | 4-session ceiling | `grok-multi-reap-2026-07-10/summary.json` | — |\n| Exact model routes | Phase 14/21 | Concurrent `grok-4.5` + `grok-composer-2.5-fast` observed + reaped | — |\n| Persistent session | PS contracts | 16/16 Grok two-turn ledger | Grok fork/rewind |\n| Governance | GOV contracts | 16/16 isolated Grok governance ledger | Quota-window |\n| Acceptance | AC1–AC6 | 16 focused + wired `requireRedGreen/Coverage/Mutation` | — |\n| Coordination/KG | CK1–CK9 | 28+ focused; crash-window reviews | Cairn module |\n| Scratch | CK4 | `postScratchFact/claimScratch/readScratch` tested | Fleet graph UI |\n| Web northbound | WN1–WN10, BO, BU, RC, EP | 100/100 Phase 12; 82 EP focused | Real-browser; WN12 review |\n| MCP stdio | MN1–MN10 | 14/14 focused; 692+ suite | Streamable HTTP/tasks |\n| Atlas R1–R3 | AR/CG/CD/CT/PS | 31/31 R3 combined | Live LSP; full PDG |\n| R4 ceiling | RG1–RG7 | 5/5 focused; false `ir.build` typed refuse | External LLVM proof |\n| R5 fingerprint | BF1–BF7 | 10/10 focused; concurrent Grok closure | Not equivalence claim |\n| R6 structured merge | SM1–SM10 | 16/16 injected resolver | Live Mergiraf |\n| R7 e-graph | EG1–EG8 | 6/6 focused; Decision artifact | External kernel |\n| Route tuple | Phase 14 | 609+ suite; recursive Codex exact route | — |\n| Emergency reap | ER1–ER6 | Phase 23; poison vs `confirmed_unlogged` | — |\n| Matrix reconciliation | 107 rows | **Stale** — do not use for CI gating | Regenerate or supersede |\n\n**Assembly proof (`impl/src/index.mjs`):** `createDriver()` wires `Log`, `FenceTable`, `AdaptiveRouter`, `StoryCompiler`, `RuntimeIsolation`, `CoordinationStore`, `worktreeManager` (ff + structured merge), `refereeFn` (base sandbox path), `route` (tuple-keyed), acceptance opts, publisher, budgets/watchdog — and exports session adapters, web stack, MCP, and Atlas modules listed at lines 22–50.\n\n## Risks and rejection criteria\n\n**Reject completion claims when:**\n\n1. Status relies on `capability-matrix.json` row counts without phase 11–27 override.\n2. \"Fenced\" or \"later\" labels are used to remove catalog items (violates docs/26 §Scope correction).\n3. Adapter-only or fake-backed tests are cited as live harness proof where `VALIDATION.md` requires real boundary evidence.\n4. Structured merge (SM) or behavioral fingerprint (BF) is called semantic equivalence or merge authority (explicit refusal language in contracts).\n5. JS/TS `ir.build` or native e-graph saturation is claimed despite RG/EG Decision artifacts.\n6. MCP stdio presence is conflated with Streamable HTTP, Tasks, or daemon supervision.\n7. `CoordinationStore` knowledge primitives are conflated with shipped Cairn/Vantage/Evidence Ladder modules.\n8. GLM is marked shipped-live without credential-backed smoke.\n9. Browser OIDC wire proof is relabeled as real in-app browser pass.\n10. Homelab/`project-manager` runtime dependency is introduced (explicit non-goal).\n11. Canonical acceptance uses bare `node --test` instead of `npm test` (TF boundary).\n12. Any increment ships without numbered contract → red test → adversarial seam review loop.\n\n**Top residual risks:**\n\n- **Stale inventory drift:** The 107-row matrix silently misleads auditors; regenerate or mark deprecated.\n- **Environment-blocked proofs:** GLM, Mergiraf, real-browser, EP twelfth review, remote push — absence must not downgrade adjacent shipped wiring to \"complete system.\"\n- **Representation overclaim:** CPG path-sensitive slice is valuable but not full PDG/taint; semantic merge remains research.\n- **Northbound depth gap:** Stdio MCP + SSE web ≠ full SYSTEM.md §7 protocol stack (WebSocket, MCP HTTP, OTel).\n- **Quota blind spots:** Per-task budgets ship; account-window scheduling does not — fleet cost runaway risk under multi-seat production use.\n- **Coordinator restart:** Replay rebuilds statuses but not full handle/session fidelity — documented shadow of persistence non-goal.\n- **Capability-plane vacuum:** Workers still lack Vantage/Evidence/Skill/Cartographer/Cairn tools despite Atlas progress — fleet intelligence ceiling.\n\n**Acceptance for this audit:** Four headings present; full docs/26 catalog mapped; no silent deletions; pursuit list dependency-ordered; grounded in `index.mjs`, 776-suite, and phase evidence ledgers."
+    }
+  ],
+  "approvals": [
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:3",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:4",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:5",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:6",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-2",
+      "requestId": "w-2:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:7",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:8",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "stopResults": [
+    {
+      "taskId": "grok-capability-audit-45",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "grok-capability-audit-composer",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "expectedReviews": true,
+    "distinctLivePids": true,
+    "concurrentTurns": true,
+    "exactModelsObserved": true,
+    "bothFreshVerified": true,
+    "reportsCaptured": true,
+    "allKillsConfirmed": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimeGone": true,
+    "branchesGone": true
+  },
+  "fatal": null,
+  "pass": true
+}

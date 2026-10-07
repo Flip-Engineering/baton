@@ -1,0 +1,3 @@
+{
+  "relayText": "SURVEYOR SCRATCHPAD (shared layer, relayed by the orchestrator): {\"runId\":\"run-f78010dd4d02c13a6e5012c69390b7d6\",\"workerId\":\"w-1\",\"scopes\":[\"shared\",\"worker:w-1\"],\"fenceTuple\":[[\"shared\",0],[\"worker:w-1\",0]],\"entries\":[],\"scratchpadViewTruncated\":false,\"nextBefore\":null}"
+}

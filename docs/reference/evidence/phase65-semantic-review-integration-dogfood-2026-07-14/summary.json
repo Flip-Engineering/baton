@@ -1,0 +1,204 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "runtimeHeadSha": "fa668c292e3cd5479dd0236a9b8a5b084d292a21",
+    "targetHeadSha": "1a83a6de4a4b029d83ff2609df68d526e4065148",
+    "runtimeDigest": "4811a2c19dc0d300cbff5ce43841d39ec72ae0dbceaaa7242f3314ab579c1643",
+    "targetRuntimeDigest": "4811a2c19dc0d300cbff5ce43841d39ec72ae0dbceaaa7242f3314ab579c1643"
+  },
+  "applicationCommands": [
+    "run.start",
+    "run.status",
+    "run.approve",
+    "run.wait",
+    "run.answer",
+    "run.steer",
+    "run.stop",
+    "run.evidence",
+    "run.adopt",
+    "run.review",
+    "run.integrate",
+    "application.shutdown"
+  ],
+  "checkpoints": {
+    "proposed": "awaiting_plan_approval",
+    "dispatched": "running",
+    "worked": "work_completed",
+    "reviewing": "reviewing",
+    "reviewed": "work_completed",
+    "adopted": "adopted",
+    "integrated": "completed"
+  },
+  "implementerRoute": {
+    "requested": {
+      "harness": "mock-worker",
+      "model": "mock-work",
+      "effort": "low"
+    },
+    "resolved": {
+      "harness": "mock-worker@1.0.0",
+      "model": "mock-work",
+      "effort": "low"
+    },
+    "observed": null,
+    "rationale": "exact deployment-profile route"
+  },
+  "semanticReview": {
+    "state": "semantic_reviewed",
+    "verdict": "approved",
+    "summary": "The exact reviewed result in impl/phase65-dogfood.mjs implements a trivial but semantically correct answer() function that returns the integer 42. The implementation contains no bugs, follows correct JavaScript module export syntax, uses appropriate function naming, and represents a complete, self-contained unit with no external dependencies or side effects.",
+    "findings": [],
+    "independent": true,
+    "route": {
+      "requested": {
+        "harness": "glm",
+        "model": "glm-4.7",
+        "effort": "low"
+      },
+      "resolved": {
+        "harness": "glm",
+        "model": "glm-4.7",
+        "effort": "low"
+      },
+      "observed": {
+        "harness": "glm",
+        "model": "glm-4.7",
+        "effort": null
+      }
+    },
+    "workerId": "w-2",
+    "taskId": "run-semantic-836b8d96c777456c66090d903e5dd51ea247b01f3dbbbf22",
+    "targetDigest": "1a82d0c3a82f6d832e26983208574cb3ac31b8a2be4a39be483e5cdbf1086a6b",
+    "report": {
+      "path": "reviews/dogfood/phase65-semantic-review.json",
+      "sha": "284fbcf033fee9567b0a2b3ac0efd5d3be0e5e86",
+      "digest": "744b5a18038762299b248e98cb492c58c8d99174017ac46a1fe9803552526d3f",
+      "bytes": 530
+    },
+    "receiptDigest": "945ace02887fd900e117bc7f0748eb93a87546b7d5f341d68ddd8a7f255dac67"
+  },
+  "evidence": {
+    "beforeAdoption": "7dc270198ba1bb2874c025e7d35733952dcbd7dcbaf43edc256292e550494bd7",
+    "beforeIntegration": "ef3f6b86f712ca4e06f2cd61c94524ba4894c2be695db868944e3ea98a347c6b"
+  },
+  "integration": {
+    "state": "integrated",
+    "strategy": "ff-only",
+    "beforeSha": "524e78450d7307cb08f12d24a03e4f95b7be6301",
+    "resultSha": "1a83a6de4a4b029d83ff2609df68d526e4065148",
+    "afterSha": "1a83a6de4a4b029d83ff2609df68d526e4065148"
+  },
+  "report": {
+    "exportedFile": "glm-semantic-review.json",
+    "digest": "744b5a18038762299b248e98cb492c58c8d99174017ac46a1fe9803552526d3f",
+    "bytes": 530
+  },
+  "processLifecycle": {
+    "started": [
+      {
+        "kind": "lifecycle.process_started",
+        "generation": 1,
+        "pid": 77641,
+        "processGroupId": 77641,
+        "modelObserved": null,
+        "effortObserved": null
+      }
+    ],
+    "closed": [
+      {
+        "kind": "lifecycle.process_closed",
+        "generation": 1,
+        "pid": 77641,
+        "processGroupId": 77641,
+        "modelObserved": "glm-4.7",
+        "effortObserved": null
+      }
+    ],
+    "unreaped": [],
+    "stillAlive": []
+  },
+  "cleanup": {
+    "preShutdownHandles": [
+      {
+        "id": "w-1",
+        "taskId": "baton-a46988dc412fcd41da83b2d0-work",
+        "status": "dead",
+        "worktree": null,
+        "runtimeActive": false,
+        "processRef": null
+      },
+      {
+        "id": "w-2",
+        "taskId": "run-semantic-836b8d96c777456c66090d903e5dd51ea247b01f3dbbbf22",
+        "status": "dead",
+        "worktree": null,
+        "runtimeActive": false,
+        "processRef": {
+          "generation": 1,
+          "pid": 77641,
+          "processGroupId": 77641,
+          "state": "closed",
+          "ready": true,
+          "startedSeq": 5,
+          "closedSeq": 87
+        }
+      }
+    ],
+    "shutdown": {
+      "schemaVersion": 1,
+      "state": "closed",
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": true
+      },
+      "receipt": {
+        "schemaVersion": 1,
+        "state": "closed",
+        "fleet": {
+          "schemaVersion": 1,
+          "state": "drained",
+          "scope": "local-controller",
+          "repoId": "baton-phase65-dogfood",
+          "targetCount": 0,
+          "remainingCount": 0,
+          "targetDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "counts": {
+            "pendingCancelled": 0,
+            "killConfirmed": 0,
+            "alreadyTerminal": 0,
+            "processesObserved": 0,
+            "processesClosed": 0
+          },
+          "checks": {
+            "admissionClosed": true,
+            "authorityOpsDrained": true,
+            "stopWaitersDrained": true,
+            "cleanupDrained": true,
+            "localWorkerAuthorityReleased": true
+          },
+          "effects": {
+            "coordinatorClosed": false,
+            "writerReleased": false,
+            "transportsClosed": false
+          },
+          "receiptDigest": "a39e8b404d5383b9a89cc0c20d0639f04aa86f0150f24768d5473ae513262322"
+        },
+        "supervisors": {
+          "sessionRecovery": "absent",
+          "providerProcessing": "absent",
+          "providerPolling": "absent"
+        },
+        "authority": {
+          "coordinatorClosed": true,
+          "writerReleased": true
+        },
+        "receiptDigest": "d42084b1334e3ee5d31bc281b4a88b782b61a77089d4546e2e731261c2b11db0"
+      }
+    }
+  },
+  "target": {
+    "clean": true,
+    "contentDigest": "c405535e0b1c438f3fbd7f93e0cf4dbdad0b9c9f8863c3a89807ab4b0801c141"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-06T23:26:54.716Z",
+  "salt": "r220260806232654",
+  "role": "redteam-132",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-ec27d197a83ba391d815a2694452823d"
+        ]
+      }
+    },
+    {
+      "step": "terminal:redteam-132",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "redteam-132": {
+      "pin": "13973e75ff9c0d46688ce851a6341d5462b9ae6f",
+      "paths": [
+        "docs/reference/evidence/wave-observability-2026-08-06/contract-redteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 334,
+  "verdict": "RT-132-OK"
+}
