@@ -305,7 +305,7 @@ test('runControl retains process identity, completion time, output receipts, and
     assert.ok(result.peakRssBytes > 0);
     assert.ok(result.peakProcessCount > 0);
     assert.equal(result.samplingError, null);
-    assert.equal((await verifyResults([control], [result])).length, 0);
+    assert.deepEqual(await verifyResults([control], [result]), []);
   } finally {
     sampler.close();
   }
