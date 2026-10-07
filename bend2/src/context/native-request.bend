@@ -37,10 +37,13 @@ def request_members(+req: J.Json) -> J.Json:
     case J.Jobj{+members}: members
     case other: J.Jnil{}
 
-def optional_member_text(+members: J.Json, +name: String) -> String:
-  match Req.member_lookup(name, members):
+def optional_member_value(found: Maybe<&2, J.Json>) -> String:
+  match found:
     case None{}: SNil{}
     case Some{+value}: Req.text_of(value)
+
+def optional_member_text(+members: J.Json, +name: String) -> String:
+  optional_member_value(Req.member_lookup(name, members))
 
 def request_select(+members: J.Json) -> J.Json:
   match Req.member_lookup("select", members):
