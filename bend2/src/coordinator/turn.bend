@@ -608,7 +608,7 @@ def launch(sessions: String, +cmd: String, +model: String, +effort: String, +cwd
     Codex.start_player(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)),
     claude_launch(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)))))
 
-def launch_bounded(sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +stderr: String, +session: String, +harness: String, task: String, limit: U32) -> IO(Result<&1,&1,U32 & String,U32>):
+def launch_bounded(sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +stderr: String, +session: String, +harness: String, +task: String, +limit: U32) -> IO(Result<&1,&1,U32 & String,U32>):
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"omp\n"),
     Omp.start_player_bounded(cmd,model,effort,cwd,log,stderr,sessions,session,String.is_empty(session),limit),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"muse\n"),
