@@ -54,11 +54,9 @@ export interface BendHookSink {
 }
 export interface BendHookInstall { status: "installed" | "refused"; owner: string; reason?: string; }
 let bendHookSink: BendHookSink | null = null;
-// failures counts observer breakage: a throwing emit, install, release or consumer call, or a
-// rendering the run needed (a diagnostic). refusals counts loader refusals. unrendered counts
-// best-effort type-observation renders the shower could not produce: the observation is skipped,
-// the capture it observes stays intact, and the skip is accounted here rather than as a failure.
-export const bendHookState = { failures: 0, refusals: 0, unrendered: 0, owner: "", installs: 0, refusedInstalls: 0 };
+// failures counts observer breakage, including a type observation the renderer could not produce.
+// refusals counts loader refusals. unrendered counts type observations skipped after a render error.
+export const bendHookState = { failures: 0, refusals: 0, unrendered: 0, unrenderedSamples: [] as Array<{ observation: string; definition: string; stage: string; valueKind: string; errorKind: string; message: string | null }>, owner: "", installs: 0, refusedInstalls: 0 };
 export function bendHooks(sink: BendHookSink | null, owner?: string): BendHookInstall {
   const token = owner === undefined ? "" : owner;
   if (sink !== null && token === "") {
@@ -111,14 +109,40 @@ function bendShow(value: unknown): string | null {
     return null;
   }
 }
-function bendTermShow(value: unknown): string | null {
+function bendTermTag(value: unknown): string {
   try {
-    return term_show(term_lower(value as LTerm));
+    if (value === null) return "null";
+    if (typeof value !== "object") return typeof value;
+    const tag = (value as { $?: unknown }).$;
+    return typeof tag === "string" ? tag.slice(0, 48) : "object";
   } catch {
-    // A term outside the shower's coverage is not observer breakage: the
-    // caller skips that observation, the count stays visible here, and the
-    // run's evidence is not marked failed for it.
+    return "unreadable";
+  }
+}
+function bendTermShow(value: unknown, observation: string, definition: string, lower: (value: unknown) => LTerm, stageName: string): string | null {
+  let stage = stageName;
+  try {
+    const lowered = lower(value);
+    stage = "term_show";
+    return term_show(lowered);
+  } catch (error) {
+    bendHookState.failures += 1;
     bendHookState.unrendered += 1;
+    if (bendHookState.unrenderedSamples.length < 8) {
+      let errorKind = bendTermTag(error);
+      let message: string | null = null;
+      try {
+        if (error !== null && typeof error === "object") {
+          const name = (error as { name?: unknown }).name;
+          if (typeof name === "string" && name.length > 0) errorKind = name.slice(0, 48);
+          const text = (error as { message?: unknown }).message;
+          if (typeof text === "string") message = text.slice(0, 160);
+        }
+      } catch {
+        errorKind = "unreadable";
+      }
+      bendHookState.unrenderedSamples.push({ observation: observation.slice(0, 32), definition: definition.slice(0, 160), stage, valueKind: bendTermTag(value), errorKind, message });
+    }
     return null;
   }
 }
@@ -371,13 +395,13 @@ export const HOOK_OPERATIONS = Object.freeze({
       id: 'bend.checkPreRegion',
       summary: 'observe failures before the final term_check as well',
       anchor: '  const qs = tele_unbind(book, def.T).doms.map((dom) => dom[0]);\n  const gen = def.x === 0 ? book : { ...book, tlds: Object.create(book.tlds) };\n  let [t, v, T]: HTerm[] = [Ref(k), def.v as HTerm, def.T];\n  for (let j = 0; j < def.x; j++) {\n    const h = tele_head(gen, T, ctx_nil(), k);\n    const o = k + "~" + h.k;\n    if (o in gen.tlds) {\n      throw Err(book, ctx_nil(), "a fresh ~ binder name", h.k, h.s);\n    }\n    gen.tlds[o] = { $: "Def", n: 0, x: 0, T: h.A, v: null, b: true };\n    t = App(t, Ref(o));\n    v = term_apply(v, Ref(o));\n    T = h.B(Ref(o));\n  }',
-      replacement: '  let qs: Quant[] = [];\n  let bendQuantities: Array<{ quant: string; name: Name }> = [];\n  let gen: Book = book;\n  let t: HTerm = Ref(k);\n  let v: HTerm = def.v as HTerm;\n  let T: HTerm = def.T;\n  try {\n    const bendDoms = tele_unbind(book, def.T).doms;\n    qs = bendDoms.map((dom) => dom[0]);\n    bendQuantities = bendDoms.map((dom) => ({ quant: quant_show(dom[0]), name: dom[1] }));\n    gen = def.x === 0 ? book : { ...book, tlds: Object.create(book.tlds) };\n    [t, v, T] = [Ref(k), def.v as HTerm, def.T];\n    for (let j = 0; j < def.x; j++) {\n      const h = tele_head(gen, T, ctx_nil(), k);\n      const o = k + "~" + h.k;\n      if (o in gen.tlds) {\n        throw Err(book, ctx_nil(), "a fresh ~ binder name", h.k, h.s);\n      }\n      gen.tlds[o] = { $: "Def", n: 0, x: 0, T: h.A, v: null, b: true };\n      t = App(t, Ref(o));\n      v = term_apply(v, Ref(o));\n      T = h.B(Ref(o));\n    }\n  } catch (bendTemplate) {\n    const bendTemplateIsErr = bendTemplate !== null && typeof bendTemplate === "object" && (bendTemplate as { $?: string }).$ === "Err";\n    bendEmit({ kind: "checkFailure", phase: "check", definition: k, thrownDiagnostic: bendTemplateIsErr });\n    const bendTemplateContext = bendThrownContext(bendTemplate);\n    bendEmit({ kind: "diagnostic", phase: "check", form: "thrown", file: null, thrown: bendTemplate, rendered: bendShow(bendTemplate), definition: bendTemplateContext.definition === null ? k : bendTemplateContext.definition, span: bendTemplateContext.span });\n    throw bendTemplate;\n  }\n  const bendDeclaredText = bendTermShow(def.T);\n  if (bendDeclaredText !== null) {\n    bendEmit({ kind: "typeObservation", phase: "check", status: "declared", qualified: k, definition: k, file: null, text: bendDeclaredText, quantities: bendQuantities, span: def.T.s === undefined ? null : def.T.s });\n  }',
+      replacement: '  let qs: Quant[] = [];\n  let bendQuantities: Array<{ quant: string; name: Name }> = [];\n  let gen: Book = book;\n  let t: HTerm = Ref(k);\n  let v: HTerm = def.v as HTerm;\n  let T: HTerm = def.T;\n  try {\n    const bendDoms = tele_unbind(book, def.T).doms;\n    qs = bendDoms.map((dom) => dom[0]);\n    bendQuantities = bendDoms.map((dom) => ({ quant: quant_show(dom[0]), name: dom[1] }));\n    gen = def.x === 0 ? book : { ...book, tlds: Object.create(book.tlds) };\n    [t, v, T] = [Ref(k), def.v as HTerm, def.T];\n    for (let j = 0; j < def.x; j++) {\n      const h = tele_head(gen, T, ctx_nil(), k);\n      const o = k + "~" + h.k;\n      if (o in gen.tlds) {\n        throw Err(book, ctx_nil(), "a fresh ~ binder name", h.k, h.s);\n      }\n      gen.tlds[o] = { $: "Def", n: 0, x: 0, T: h.A, v: null, b: true };\n      t = App(t, Ref(o));\n      v = term_apply(v, Ref(o));\n      T = h.B(Ref(o));\n    }\n  } catch (bendTemplate) {\n    const bendTemplateIsErr = bendTemplate !== null && typeof bendTemplate === "object" && (bendTemplate as { $?: string }).$ === "Err";\n    bendEmit({ kind: "checkFailure", phase: "check", definition: k, thrownDiagnostic: bendTemplateIsErr });\n    const bendTemplateContext = bendThrownContext(bendTemplate);\n    bendEmit({ kind: "diagnostic", phase: "check", form: "thrown", file: null, thrown: bendTemplate, rendered: bendShow(bendTemplate), definition: bendTemplateContext.definition === null ? k : bendTemplateContext.definition, span: bendTemplateContext.span });\n    throw bendTemplate;\n  }\n  const bendDeclaredText = bendTermShow(def.T, "declared", k, (value) => term_lower(value as HTerm), "term_lower");\n  if (bendDeclaredText !== null) {\n    bendEmit({ kind: "typeObservation", phase: "check", status: "declared", qualified: k, definition: k, file: null, text: bendDeclaredText, quantities: bendQuantities, span: def.T.s === undefined ? null : def.T.s });\n  }',
     }),
     Object.freeze({
       id: 'bend.checkOutcome',
       summary: 'emit checker success or failure around the original check, preserving the throw',
       anchor: '  return term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u, z }, v, Lone(), T, ctx_nil(), 0).tm;',
-      replacement: '  try {\n    const bendChecked = term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u, z }, v, Lone(), T, ctx_nil(), 0).tm;\n    bendEmit({ kind: "checkSuccess", phase: "check", definition: k });\n    const bendCheckedText = bendTermShow(bendChecked);\n    if (bendCheckedText !== null) {\n      bendEmit({ kind: "typeObservation", phase: "check", status: "elaboratedTerm", qualified: k, definition: k, file: null, text: bendCheckedText, quantities: [], span: null });\n    }\n    return bendChecked;\n  } catch (bendCheckError) {\n    const bendCheckIsErr = bendCheckError !== null && typeof bendCheckError === "object" && (bendCheckError as { $?: string }).$ === "Err";\n    bendEmit({ kind: "checkFailure", phase: "check", definition: k, thrownDiagnostic: bendCheckIsErr });\n    const bendCheckContext = bendThrownContext(bendCheckError);\n    bendEmit({ kind: "diagnostic", phase: "check", form: "thrown", file: null, thrown: bendCheckError, rendered: bendShow(bendCheckError), definition: bendCheckContext.definition === null ? k : bendCheckContext.definition, span: bendCheckContext.span });\n    throw bendCheckError;\n  }',
+      replacement: '  try {\n    const bendChecked = term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u, z }, v, Lone(), T, ctx_nil(), 0).tm;\n    bendEmit({ kind: "checkSuccess", phase: "check", definition: k });\n    const bendCheckedText = bendTermShow(bendChecked, "elaboratedTerm", k, (value) => value as LTerm, "term_show");\n    if (bendCheckedText !== null) {\n      bendEmit({ kind: "typeObservation", phase: "check", status: "elaboratedTerm", qualified: k, definition: k, file: null, text: bendCheckedText, quantities: [], span: null });\n    }\n    return bendChecked;\n  } catch (bendCheckError) {\n    const bendCheckIsErr = bendCheckError !== null && typeof bendCheckError === "object" && (bendCheckError as { $?: string }).$ === "Err";\n    bendEmit({ kind: "checkFailure", phase: "check", definition: k, thrownDiagnostic: bendCheckIsErr });\n    const bendCheckContext = bendThrownContext(bendCheckError);\n    bendEmit({ kind: "diagnostic", phase: "check", form: "thrown", file: null, thrown: bendCheckError, rendered: bendShow(bendCheckError), definition: bendCheckContext.definition === null ? k : bendCheckContext.definition, span: bendCheckContext.span });\n    throw bendCheckError;\n  }',
     }),
     Object.freeze({
       id: 'bend.validStart',
