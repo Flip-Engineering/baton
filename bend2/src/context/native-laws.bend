@@ -9,6 +9,7 @@ import ./native-declaration.bend as NativeDeclaration
 import ./native-runtime-laws.bend as NativeRuntimeLaws
 import ./native-declaration-laws.bend as NativeDeclarationLaws
 import ./native-project-policy-laws.bend as NativeProjectPolicyLaws
+import ./native-managed-query-laws.bend as NativeManagedQueryLaws
 import ./service.bend as ContextService
 import ./engines.bend as Eng
 import ../json/canonical.bend as J
