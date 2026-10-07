@@ -6,6 +6,7 @@ import ./codec-wire.bend as Codec
 import ./codec.bend as CoreCodec
 import ./engines.bend as Eng
 import ./engines-select.bend as Sel
+import ./engines-decl.bend as Decl
 import ./engines-wire.bend as EnginesWire
 import ./native-request.bend as NativeRequest
 import ./native-catalog.bend as NativeCatalog
@@ -79,6 +80,26 @@ def project_policy_request(+owner: String, +worktree: String) -> String:
   J.json_text(J.Jobj{J.Jpair{"owner", J.Jstr{owner},
     J.Jpair{"worktree", J.Jstr{worktree}, J.Jnil{}}}})
 
+def query_artifact_argv(+runtime_path: String, +executable: String) -> String:
+  Process.argv([runtime_path, "--experimental-strip-types",
+    installed_provider_path(executable), "--prepare-query-artifact"])
+
+def query_source_argv(+runtime_path: String, +executable: String) -> String:
+  Process.argv([runtime_path, "--experimental-strip-types",
+    installed_provider_path(executable), "--examine-query-source"])
+
+def query_artifact_request(+owner: String, +worktree: String, +query: String) -> String:
+  J.json_text(J.Jobj{J.Jpair{"owner", J.Jstr{owner},
+    J.Jpair{"worktree", J.Jstr{worktree},
+      J.Jpair{"query", J.Jstr{query}, J.Jnil{}}}}})
+
+def query_source_request(+owner: String, +worktree: String, +cwd: String,
+                         +path: String) -> String:
+  J.json_text(J.Jobj{J.Jpair{"owner", J.Jstr{owner},
+    J.Jpair{"worktree", J.Jstr{worktree},
+      J.Jpair{"cwd", J.Jstr{cwd},
+        J.Jpair{"path", J.Jstr{path}, J.Jnil{}}}}}})
+
 type ProviderAnswer is Data:
   ProviderOutput{value: String, status: String}
   ProviderRefused{reason: String}
@@ -96,6 +117,10 @@ type ProjectPolicyAnswer is Data:
 type ProjectPolicyJson is Data:
   ProjectPolicyJsonReady{value: J.Json}
   ProjectPolicyJsonRefused{reason: String}
+
+type BoundaryPath is Data:
+  BoundaryPathReady{path: String}
+  BoundaryPathRefused{reason: String}
 
 def owner_workspace_sql(owner: String) -> String:
   "SELECT workspace FROM sessions WHERE id=" ++ C.q(owner) ++ ";"
@@ -378,6 +403,93 @@ def project_policy_json_decoded(raw: NativeRequest.RawDecode) -> ProjectPolicyJs
 def project_policy_json_rows(+rows: String) -> ProjectPolicyJson:
   project_policy_json_decoded(NativeRequest.raw_rows(rows))
 
+def boundary_member_value(found: Maybe<&2, J.Json>) -> J.Json:
+  match found:
+    case None{}: J.Jnil{}
+    case Some{+value}: value
+
+def boundary_member(+object: J.Json, +key: String) -> J.Json:
+  match object:
+    case J.Jobj{+members}: boundary_member_value(Req.member_lookup(key, members))
+    case other: J.Jnil{}
+
+def boundary_text(+object: J.Json, +key: String) -> String:
+  Req.text_of(boundary_member(object, key))
+
+def query_source_json(+owner: String, +worktree: String,
+                      decoded: ProjectPolicyJson) -> BoundaryPath:
+  match decoded:
+    case ProjectPolicyJsonRefused{reason}: BoundaryPathRefused{reason}
+    case ProjectPolicyJsonReady{+value}:
+      Bool.pick(BoundaryPath,
+        Bool.and(String.eq(boundary_text(value, "status"), "examined"),
+          Bool.and(String.eq(boundary_text(value, "owner"), owner),
+            String.eq(boundary_text(value, "worktree"), worktree))),
+        Bool.pick(BoundaryPath, String.is_empty(boundary_text(value, "identity")),
+          BoundaryPathRefused{"querySourceIdentityMissing"},
+          BoundaryPathReady{boundary_text(value, "identity")}),
+        BoundaryPathRefused{"querySourceObservationMismatch"})
+
+def query_artifact_json(+owner: String, +worktree: String, +query: String,
+                        decoded: ProjectPolicyJson) -> BoundaryPath:
+  match decoded:
+    case ProjectPolicyJsonRefused{reason}: BoundaryPathRefused{reason}
+    case ProjectPolicyJsonReady{+value}:
+      Bool.pick(BoundaryPath,
+        Bool.and(String.eq(boundary_text(value, "status"), "prepared"),
+          Bool.and(String.eq(boundary_text(value, "owner"), owner),
+            Bool.and(String.eq(boundary_text(value, "worktree"), worktree),
+              String.eq(boundary_text(value, "query"), query)))),
+        Bool.pick(BoundaryPath, String.is_empty(boundary_text(value, "path")),
+          BoundaryPathRefused{"queryArtifactPathMissing"},
+          BoundaryPathReady{boundary_text(value, "path")}),
+        BoundaryPathRefused{"queryArtifactObservationMismatch"})
+
+def query_boundary_output(+db: String, +binding: String, +owner: String,
+                         +worktree: String, +query: String,
+                         +source: Bool, +answer: ProviderAnswer) -> IO(BoundaryPath):
+  match answer:
+    case ProviderRefused{reason}: IO.pure(BoundaryPath, BoundaryPathRefused{reason})
+    case ProviderRuntime{path, version}: IO.pure(BoundaryPath, BoundaryPathRefused{"queryBoundaryRuntimeMalformed"})
+    case ProviderOutput{+value, +status}:
+      Bool.pick(IO(BoundaryPath), String.eq(status, "exit 0"),
+        do IO<BoundaryPath>:
+          result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+            Req.json_tree_sql(value))
+          match result:
+            case Fail{error}:
+              match error:
+                case (code, detail): IO.pure(BoundaryPath, BoundaryPathRefused{"queryBoundaryDecodeRead"})
+            case Done{+rows}:
+              decoded : ProjectPolicyJson <- IO.pure(ProjectPolicyJson, project_policy_json_rows(rows))
+              IO.pure(BoundaryPath, Bool.pick(BoundaryPath,
+                source,
+                query_source_json(owner, worktree, decoded),
+                query_artifact_json(owner, worktree, query, decoded))),
+        IO.pure(BoundaryPath, BoundaryPathRefused{"queryBoundaryProcessRefused"}))
+
+def query_boundary_runtime_answer(+db: String, +binding: String, +executable: String,
+                                  +cwd: String, +owner: String, +worktree: String,
+                                  +query: String, +source: Bool, +request: String,
+                                  runtime: ProviderAnswer) -> IO(BoundaryPath):
+  match runtime:
+    case ProviderRefused{reason}: IO.pure(BoundaryPath, BoundaryPathRefused{reason})
+    case ProviderOutput{value, status}: IO.pure(BoundaryPath, BoundaryPathRefused{"queryBoundaryRuntimeMalformed"})
+    case ProviderRuntime{+path, +version}:
+      do IO<BoundaryPath>:
+        spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
+          Bool.pick(String, source, query_source_argv(path, executable),
+            query_artifact_argv(path, executable)), cwd, "/dev/null")
+        answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable), cwd, request, spawned)
+        query_boundary_output(db, binding, owner, worktree, query, source, answer)
+
+def query_boundary(+db: String, +binding: String, +executable: String,
+                   +cwd: String, +owner: String, +worktree: String,
+                   +query: String, +source: Bool, +request: String,
+                   runtime: ProviderAnswer) -> IO(BoundaryPath):
+  query_boundary_runtime_answer(db, binding, executable, cwd, owner, worktree,
+    query, source, request, runtime)
+
 def project_policy_is_present(observation: NativePolicy.PolicyObservation) -> Bool:
   match observation:
     case NativePolicy.PolicyPresent{owner, worktree, path, sha256, bytes}: True{}
@@ -502,8 +614,30 @@ def observe_project_policy(+db: String, +binding: String, +executable: String,
       owner, worktree, runtime)
     project_policy_output(db, binding, owner, worktree, answer)
 
-def query_catalog_admitted(catalog: NativeCatalog.CatalogDecode,
-                           policy: ProjectPolicyAnswer) -> IO(Unit):
+def query_selection_answer(+verdict: Sel.Verdict) -> IO(Unit):
+  match verdict:
+    case Sel.VerdictRefused{stage, +reason}:
+      IO.die(Unit, 3, "selection:" ++ stage ++ ":" ++ Sel.rq_code(reason)
+        ++ ":" ++ Sel.rq_detail(reason))
+    case Sel.VerdictAdmitted{plan, result_schema}:
+      IO.die(Unit, 3, "selectedPlanRequiresPreparedExecutionLifecycle")
+
+def project_selection(+db: String, +binding: String, +owner: String, +query: String,
+                      +canonical: String, +cwd: String, +catalog: Decl.Cat,
+                      +inventory: Decl.Inv,
+                      +operands: Sel.RequestOperands, +installed: Eng.SS,
+                      +disabled: Eng.SS, +preferred: Eng.SS,
+                      +identity: Sel.ProjectPolicyIdentity,
+                      +source_path: String) -> IO(Unit):
+  query_selection_answer(Sel.request_verdict(catalog,
+    Sel.sel_inputs(operands, Sel.ProjectState{Eng.ss_one(source_path), Eng.ss_empty(),
+      installed, disabled, preferred, identity}), inventory, Sel.CapNil{}))
+
+def query_catalog_admitted(+db: String, +binding: String, +owner: String, +query: String,
+                           catalog: NativeCatalog.CatalogDecode,
+                           request: NativeRequest.RequestDecode,
+                           policy: ProjectPolicyAnswer,
+                           source: BoundaryPath) -> IO(Unit):
   match catalog:
     case NativeCatalog.CatalogRefused{condition}:
       IO.die(Unit, 3, "catalog:" ++ condition)
@@ -511,49 +645,74 @@ def query_catalog_admitted(catalog: NativeCatalog.CatalogDecode,
       match policy:
         case ProjectPolicyRefused{reason}: IO.die(Unit, 3, reason)
         case ProjectPolicyReady{policy, identity}:
-          IO.die(Unit, 3, "ownerBoundProjectCaptureRequired")
+          match source:
+            case BoundaryPathRefused{reason}: IO.die(Unit, 3, reason)
+            case BoundaryPathReady{+verified_path}:
+              match request:
+                case NativeRequest.RequestDecodeRefused{condition}:
+                  IO.die(Unit, 3, "request:" ++ condition)
+                case NativeRequest.RequestDecoded{canonical, operands, operation_chain, cwd, source_path}:
+                  match policy:
+                    case NativePolicy.ProjectPolicy{disabled, preferred}:
+                      project_selection(db, binding, owner, query, canonical, cwd,
+                        catalog, inventory, operands, installed, disabled, preferred, identity,
+                        verified_path)
 
-def query_catalog_decoded(catalog: NativeCatalog.CatalogDecode,
+def query_catalog_decoded(+db: String, +binding: String, +owner: String, +query: String,
+                          catalog: NativeCatalog.CatalogDecode,
                           request: NativeRequest.RequestDecode,
-                          policy: ProjectPolicyAnswer) -> IO(Unit):
+                          policy: ProjectPolicyAnswer,
+                          source: BoundaryPath) -> IO(Unit):
   match request:
     case NativeRequest.RequestDecodeRefused{condition}:
       IO.die(Unit, 3, "request:" ++ condition)
     case NativeRequest.RequestDecoded{canonical, operands, operation_chain, cwd, source_path}:
-      query_catalog_admitted(catalog, policy)
+      query_catalog_admitted(db, binding, owner, query, catalog, request,
+        policy, source)
 
-def query_catalog_rows_result(request: NativeRequest.RequestDecode,
+def query_catalog_rows_result(+db: String, +binding: String, +owner: String, +query: String,
+                              request: NativeRequest.RequestDecode,
                               policy: ProjectPolicyAnswer,
+                              source: BoundaryPath,
                               result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Fail{error}:
       match error:
         case (code, detail): IO.die(Unit, 3, "providerInventoryDecodeRead")
     case Done{+rows}:
-      query_catalog_decoded(NativeCatalog.inventory_rows(rows), request, policy)
+      query_catalog_decoded(db, binding, owner, query,
+        NativeCatalog.inventory_rows(rows), request, policy, source)
 
-def query_catalog_rows(db: String, binding: String, value: String,
+def query_catalog_rows(+db: String, +binding: String, +owner: String, +query: String,
+                       +value: String,
                        request: NativeRequest.RequestDecode,
-                       policy: ProjectPolicyAnswer) -> IO(Unit):
+                       policy: ProjectPolicyAnswer,
+                       source: BoundaryPath) -> IO(Unit):
   do IO<Unit>:
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
       Req.json_tree_sql(value))
-    query_catalog_rows_result(request, policy, result)
+    query_catalog_rows_result(db, binding, owner, query, request, policy,
+      source, result)
 
-def query_catalog_output(db: String, binding: String, request: NativeRequest.RequestDecode,
+def query_catalog_output(+db: String, +binding: String, +owner: String, +query: String,
+                         request: NativeRequest.RequestDecode,
                          policy: ProjectPolicyAnswer, status: String,
-                         value: String) -> IO(Unit):
+                         value: String, source: BoundaryPath) -> IO(Unit):
   match status:
-    case "exit 0": query_catalog_rows(db, binding, value, request, policy)
+    case "exit 0": query_catalog_rows(db, binding, owner, query, value,
+      request, policy, source)
     case other: IO.die(Unit, 3, "providerInventory:" ++ value)
 
-def query_catalog_result(db: String, binding: String, policy: ProjectPolicyAnswer,
+def query_catalog_result(+db: String, +binding: String, +owner: String, +query: String,
+                         policy: ProjectPolicyAnswer,
                          answer: ProviderAnswer,
-                         request: NativeRequest.RequestDecode) -> IO(Unit):
+                         request: NativeRequest.RequestDecode,
+                         source: BoundaryPath) -> IO(Unit):
   match answer:
     case ProviderRefused{reason}: IO.die(Unit, 3, "providerInventory:" ++ reason)
     case ProviderRuntime{path, version}: IO.die(Unit, 3, "providerInventoryMalformed")
-    case ProviderOutput{value, status}: query_catalog_output(db, binding, request, policy, status, value)
+    case ProviderOutput{value, status}: query_catalog_output(db, binding, owner,
+      query, request, policy, status, value, source)
 
 def query_environment_runtime(+db: String, +binding: String, +owner: String,
                               +query: String, +cwd: String, +worktree: String,
@@ -568,7 +727,12 @@ def query_environment_runtime(+db: String, +binding: String, +owner: String,
           ProviderRuntime{path, version})
         policy : ProjectPolicyAnswer <- observe_project_policy(db, binding,
           executable, cwd, owner, worktree, ProviderRuntime{path, version})
-        query_catalog_result(db, binding, policy, answer, request)
+        source : BoundaryPath <- query_boundary(db, binding, executable, cwd,
+          owner, worktree, query, True{},
+          query_source_request(owner, worktree, NativeRequest.decoded_cwd(request),
+            NativeRequest.decoded_subject_path(request)), ProviderRuntime{path, version})
+        query_catalog_result(db, binding, owner, query, policy, answer,
+          request, source)
 
 def query_request_environment(db: String, binding: String, owner: String, query: String,
                               cwd: String, worktree: String,
