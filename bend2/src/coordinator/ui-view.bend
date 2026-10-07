@@ -17,10 +17,15 @@ def drop_to_slash(s: String) -> Maybe<String>:
     case SCon{+head, tail}:
       Bool.pick(Maybe<String>,Char.is_eq(head,Char.from_u32(47)),Some{tail},drop_to_slash(tail))
 
-def directory_of(path: String) -> Maybe<String>:
-  match drop_to_slash(Tx.str_rev(path)):
+# The text before the last '/' of a path; the executable's install directory.
+# Matches scrutinize parameters, so the reversed string gets its own def.
+def directory_of_rev(rev: Maybe<String>) -> Maybe<String>:
+  match rev:
     case None{}: None{}
     case Some{+rest}: Some{Tx.str_rev(rest)}
+
+def directory_of(path: String) -> Maybe<String>:
+  directory_of_rev(drop_to_slash(Tx.str_rev(path)))
 
 law directory_of_keeps_the_text_before_the_last_slash:
   {directory_of("/usr/local/bin/baton2") == Some{"/usr/local/bin"} : Maybe<String>}
@@ -35,11 +40,14 @@ def directory_of_a_bare_name_is_empty():
   {==}
 
 # Installed payload first, source checkout second, matching Control.identity.
-def server_candidates(executable: String) -> List<String>:
-  match directory_of(executable):
+def server_candidates_in(dir: Maybe<String>) -> List<String>:
+  match dir:
     case None{}: Nil{}
-    case Some{+dir}:
-      [dir ++ "/../libexec/baton2/ui/server.mjs",dir ++ "/../../bend2/ui/orchestra/server.mjs"]
+    case Some{+parent}:
+      [parent ++ "/../libexec/baton2/ui/server.mjs",parent ++ "/../../bend2/ui/orchestra/server.mjs"]
+
+def server_candidates(executable: String) -> List<String>:
+  server_candidates_in(directory_of(executable))
 
 def resolve_server(candidates: List<String>) -> IO(String):
   match candidates:
