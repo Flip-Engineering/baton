@@ -5,7 +5,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writ
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applyMutation, cloneLinkedTree, concurrencyFor, createRunRoot, detachFile, laws, outputMatches, producerSet, removeProof, runControl, supportedNodeVersion, verifyResults } from './laws-check.mjs';
+import { applyMutation, cloneLinkedTree, concurrencyFor, createRunRoot, detachFile, laws, MUTATIONS, outputMatches, producerSet, removeProof, runControl, supportedNodeVersion, verifyResults } from './laws-check.mjs';
 import { createProcessGroupSampler } from './laws-check-resources.mjs';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
@@ -128,6 +128,15 @@ test('implementation mutations require one exact source match', () => {
   assert.equal(readFileSync(modulePath, 'utf8'), before);
   writeFileSync(modulePath, 'another expression\n');
   assert.equal(applyMutation(modulePath, mutation), false);
+});
+
+test('every configured implementation mutation has one exact producer source match', () => {
+  for (const mutation of MUTATIONS) {
+    const source = readFileSync(join(root, mutation.file), 'utf8');
+    const first = source.indexOf(mutation.find);
+    assert.notEqual(first, -1, `${mutation.name} source match is missing`);
+    assert.equal(first, source.lastIndexOf(mutation.find), `${mutation.name} source match is not unique`);
+  }
 });
 
 test('implementation mutations detach linked source before writing', () => {
