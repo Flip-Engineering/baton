@@ -1,0 +1,52 @@
+name: Provider query Node 22 qualification
+
+on:
+  push:
+    branches:
+      - codex/validate-provider-query-node22-20261007
+
+permissions:
+  contents: read
+
+jobs:
+  provider-query-node22:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out validation driver
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Check out immutable candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: 53a2356ab6e397c129253f1f53525219390dc63b
+          path: candidate
+      - name: Set up Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Record source and tool identity
+        run: |
+          mkdir -p evidence
+          git -C candidate rev-parse HEAD | tee evidence/source-commit.txt
+          git -C candidate rev-parse HEAD^{tree} | tee evidence/source-tree.txt
+          sha256sum candidate/bend2/scripts/provider-availability.mjs candidate/bend2/test/provider-availability.mjs candidate/bend2/scripts/check-native.sh | tee evidence/source-files.sha256
+          node --version | tee evidence/node-version.txt
+          sha256sum "$(command -v node)" | tee evidence/node-binary.sha256
+          test "$(cat evidence/source-commit.txt)" = 53a2356ab6e397c129253f1f53525219390dc63b
+          test "$(cat evidence/source-tree.txt)" = 797661732f302eee07c4847905b462c00fe8df2f
+          case "$(node --version)" in v22.*) ;; *) echo 'Node 22 is required' >&2; exit 1;; esac
+      - name: Run maintained provider availability tests
+        run: node --test candidate/bend2/test/provider-availability.mjs 2>&1 | tee evidence/maintained-tests.log
+      - name: Run actual CLI fixtures
+        env:
+          PROVIDER_SOURCE: ${{ github.workspace }}/candidate
+          PROVIDER_EVIDENCE: ${{ github.workspace }}/evidence/cli
+        run: node bend2/scripts/validate-provider-availability-cli.mjs 2>&1 | tee evidence/cli-fixtures.log
+      - name: Upload raw qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: provider-query-node22-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
