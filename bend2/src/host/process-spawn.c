@@ -235,6 +235,8 @@ typedef struct {
 typedef struct { char magic[8]; uint64_t offset; uint64_t check; } BrCursor;
 static int br_cursor_load(const char *directory,uint64_t *offset);
 static int br_cursor_store(const char *directory,uint64_t offset);
+static uint64_t br_manifest_digest(const BrManifestHeader *header,char *const *fields);
+static int br_manifest_digest_file(const char *directory,uint64_t *digest);
 typedef struct {
   int listener,lock,finishing,single,database_fd,bound;
   uint64_t token,epoch,device,inode,parent_device,parent_inode;
