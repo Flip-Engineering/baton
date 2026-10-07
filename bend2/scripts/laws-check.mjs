@@ -1,10 +1,9 @@
 #!/usr/bin/env node
-// The negative control for the tree's law gate. The entry module imports
-// bend2/src/coordinator/laws.bend, so a compile of the entry verifies every law
-// the module states. This script proves that each law is really verified: for
-// every `law` in bend2/src it creates an isolated source workspace, removes
-// that law's proof, and requires the entry compile to fail. A removable proof
-// that leaves the entry compiling is not part of the gate, and the script reports it.
+// The entry module imports bend2/src/coordinator/laws.bend, so an entry compile
+// verifies the laws in the tree. This script discovers each law declaration,
+// removes its proof in an isolated workspace, and requires the entry compile to
+// fail. It also applies each implementation mutation in its own workspace and
+// requires the named law proof to fail.
 //
 // Usage: node bend2/scripts/laws-check.mjs [compiler]
 
@@ -306,6 +305,8 @@ function sourceIdentity(rows) {
   for (const { file } of rows) paths.add(file);
   paths.add(import.meta.filename);
   paths.add(join(ROOT, 'bend2', 'scripts', 'laws-check-scheduler.test.mjs'));
+  paths.add(join(ROOT, 'bend2', 'scripts', 'laws-check-resources.mjs'));
+  paths.add(join(ROOT, 'bend2', 'scripts', 'laws-check-resources.test.mjs'));
   const records = [...paths].sort().map((path) => ({
     path: relative(ROOT, path),
     sha256: hash(readFileSync(path)),
