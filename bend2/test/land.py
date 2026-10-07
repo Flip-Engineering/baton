@@ -284,8 +284,7 @@ class Land(unittest.TestCase):
         self.git('commit', '-q', '-m', 'target mover')
         moved = self.git('rev-parse', 'HEAD').strip()
         action = [
-            shutil.which('git'), '-C', str(self.repo), 'update-ref',
-            'refs/heads/main', moved, candidate,
+            shutil.which('git'), '-C', str(holder), 'merge', '--ff-only', moved,
         ]
         env = self.git_race_env(holder, 'after-held-merge', action)
         result = self.call('land', 'w1', self.repo, 'main', env=env)
