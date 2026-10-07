@@ -1062,6 +1062,34 @@ MUTATIONS.push(
   {"name": "failed-replay-halts-before-release", "file": "bend2/src/coordinator/turn.bend", "find": "    case Fail{error}: replay_finished(db,player,lock,Fail{error})", "replace": "    case Fail{error}: IO.pass(Unit,Fail{error})", "law": "failed_replay_output_reaches_the_completion_boundary"}
 );
 
+MUTATIONS.push(
+  {"name": "member-presence-matches-parentage-not-registration", "file": "bend2/src/coordinator/commands.bend", "find": "\"EXISTS(SELECT 1 FROM sessions WHERE sessions.id=\" ++ session ++ \")\"", "replace": "\"EXISTS(SELECT 1 FROM sessions WHERE sessions.parent=\" ++ session ++ \")\"", "law": "member_presence_requires_a_stored_player_record"}
+);
+
+MUTATIONS.push(
+  {
+    name: 'held-success-arm-skips-publication-observation',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'ld_adv_wt_observe(p2, r2, t2, c2),\n        ld_adv_wt_refused(p2, r2, t2, b2)',
+    replace: 'IO.pure(LAdv, AdvLanded{}),\n        ld_adv_wt_refused(p2, r2, t2, b2)',
+    law: 'm3a_held_success_arm_uses_publication_observation',
+  },
+  {
+    name: 'held-success-arm-ignores-holder-branch',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '+same = Bool.pick(Bool, status_ok,\n        Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)), False{})\n      IO.pure(LAdv, ld_adv_wt_observed(True{}, same, path))',
+    replace: 'IO.pure(LAdv, ld_adv_wt_observed(True{}, True{}, path))',
+    law: 'm3a_held_holder_different_branch_refuses',
+  },
+  {
+    name: 'held-success-arm-accepts-a-different-target-tip',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '+same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})\n      ld_adv_wt_observed_target_same(same, path, target)',
+    replace: '+same = Bool.pick(Bool, True{}, True{}, True{})\n      ld_adv_wt_observed_target_same(same, path, target)',
+    law: 'm3a_held_target_tip_mismatch_refuses',
+  },
+);
+
 for (const mutation of MUTATIONS) {
   const copied = join(SCRATCH, mutation.file);
   cpSync(join(ROOT, mutation.file), copied);

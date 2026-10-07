@@ -330,8 +330,9 @@ The public log keeps the frames that carry a session, actor, turn, message, tool
 error, exit, delivery or validation identifier. At the default level it drops
 the cumulative `message_update` and `tool_execution_update` snapshots the
 provider resends while a message or a tool call is running, and holds the newest
-`tool_execution_update` of each open call and the newest `message_start` of each
-message until its `tool_execution_end` or `message_end` arrives. The log rotates
+`tool_execution_update` of each open call and the newest `message_start` and
+`message_update` of each message until its `tool_execution_end` or
+`message_end` arrives. The log rotates
 at the session's byte budget and retains the segments the session's retention
 count covers. `logs`, `logs-storage` and `logs-clean` read and set that policy,
 report the storage each producer uses, and remove eligible rotated segments;
