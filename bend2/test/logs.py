@@ -798,6 +798,25 @@ assert sys.stdin.read()==''
                              [('invalid-legacy-level', 3)])
             self.assertEqual(connection.execute("SELECT count(*) FROM sqlite_master WHERE name='log_policies_legacy'").fetchone()[0], 0)
 
+    def test_two_real_turns_register_distinct_generations_for_one_output_log(self):
+        self.stream([self.terminal('First run')], turn='first-run')
+        first = self.log
+        self.stream([self.terminal('Second run')], turn='second-run')
+        second = self.log
+        self.assertNotEqual(first, second)
+        self.assertTrue(pathlib.Path(str(first) + '.stderr.full').is_file())
+        self.assertTrue(pathlib.Path(str(first) + '.stderr.meta').is_file())
+        self.assertTrue(pathlib.Path(str(second) + '.stderr.full').is_file())
+        self.assertTrue(pathlib.Path(str(second) + '.stderr.meta').is_file())
+        with sqlite3.connect(self.db) as connection:
+            rows = connection.execute(
+                'SELECT attempt,log,base FROM log_generations WHERE session=? ORDER BY rowid',
+                ('omp-worker',)).fetchall()
+        self.assertEqual(rows, [('first-run', str(first), str(self.base_log)),
+                                ('second-run', str(second), str(self.base_log))])
+        self.assertEqual(json.loads(self.call('delivery', 'first-run'))['body'], 'First run')
+        self.assertEqual(json.loads(self.call('delivery', 'second-run'))['body'], 'Second run')
+
     def test_storage_reports_attempt_generations_with_identity(self):
         self.stream([self.terminal()])
         generation = self.log
