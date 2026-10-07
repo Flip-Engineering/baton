@@ -319,15 +319,18 @@ def query_catalog_rows(db: String, binding: String, value: String,
       Req.json_tree_sql(value))
     query_catalog_rows_result(request, result)
 
+def query_catalog_output(db: String, binding: String, request: NativeRequest.RequestDecode,
+                        status: String, value: String) -> IO(Unit):
+  match status:
+    case "exit 0": query_catalog_rows(db, binding, value, request)
+    case other: IO.die(Unit, 3, "providerInventory:" ++ value)
+
 def query_catalog_result(db: String, binding: String, answer: ProviderAnswer,
                          request: NativeRequest.RequestDecode) -> IO(Unit):
   match answer:
     case ProviderRefused{reason}: IO.die(Unit, 3, "providerInventory:" ++ reason)
     case ProviderRuntime{path, version}: IO.die(Unit, 3, "providerInventoryMalformed")
-    case ProviderOutput{value, status}:
-      Bool.pick(IO(Unit), String.eq(status, "exit 0"),
-        query_catalog_rows(db, binding, value, request),
-        IO.die(Unit, 3, "providerInventory:" ++ value))
+    case ProviderOutput{value, status}: query_catalog_output(db, binding, request, status, value)
 
 def query_request_result(db: String, binding: String, owner: String, query: String,
                          path: String, result: NativeRequest.RequestDecode) -> IO(Unit):
