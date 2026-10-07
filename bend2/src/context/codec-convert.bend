@@ -228,7 +228,12 @@ def wo_engine_ok(+members: Codec.RawValue) -> Bool:
   Bool.pick(Bool, wc_name_present("engine", members), wc_text_kind(wc_value_member("engine", members)), True{})
 
 def wo_engine_text(+members: Codec.RawValue) -> String:
-  Bool.pick(String, wo_engine_ok(members), wc_text_member("engine", members), SNil{})
+  Bool.pick(String, wo_engine_ok(members),
+            wo_engine_selector(wc_text_member("engine", members)), SNil{})
+
+# The request contract reads an auto engine as the empty explicit selector.
+def wo_engine_selector(+text: String) -> String:
+  Bool.pick(String, String.eq(text, "auto"), SNil{}, text)
 
 def wo_subject_text(+members: Codec.RawValue) -> String:
   wc_text_member_for(wc_value_member("subject", members), "kind")

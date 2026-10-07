@@ -232,20 +232,23 @@ def check_version(+decl_version: String, +protocol_version: String) -> Chk:
            bool_chk(protocol_version_supported(protocol_version),
                     DrUnsupportedProtocolVersion{protocol_version}))
 
-# Whether the candidate set already holds this module id under a different
-# declared identity. A declaration matching itself is not a conflict.
+# Whether the candidate set holds this module id under a different declared
+# identity. A declaration matching itself is not a conflict and the walk carries
+# on, so a second declaration of the same module id is still found.
 def cat_conflict(+cat: Cat, +want_module: String, +want_package: String,
                  +want_revision: String) -> Bool:
   match cat:
     case CatNil{}: False{}
-    case CatCons{h, r}:
+    case CatCons{h, +r}:
       match h:
         case Decl{decl_version, module_id, revision, protocol_version,
                   package_identity, entry, dependencies, operations,
                   applicability}:
           Bool.pick(Bool, String.eq(module_id, want_module),
-            Bool.not(Bool.and(String.eq(package_identity, want_package),
-                              String.eq(revision, want_revision))),
+            Bool.pick(Bool, Bool.and(String.eq(package_identity, want_package),
+                                     String.eq(revision, want_revision)),
+                      cat_conflict(r, want_module, want_package, want_revision),
+                      True{}),
             cat_conflict(r, want_module, want_package, want_revision))
 
 # Stage two: the module id is nonempty and names one identity.
