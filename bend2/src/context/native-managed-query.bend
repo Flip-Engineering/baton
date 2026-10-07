@@ -87,7 +87,7 @@ def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
       J.Jpair{"keeperPath", J.Jstr{keeper_path},
       J.Jpair{"guardIdentity", J.Jstr{guard_identity},
       J.Jpair{"guardKey", J.Jstr{guard_key},
-      J.Jpair{"recoveryArgv", J.Jstr{recovery_argv}, J.Jnil{}}}}}}}}}}}}}}}}}}
+      J.Jpair{"recoveryArgv", J.Jstr{recovery_argv}, J.Jnil{}}}}}}}}}}}}}}}}}
 
 def bootstrap_text(+bootstrap: Bootstrap) -> String:
   J.json_text(bootstrap_json(bootstrap))
