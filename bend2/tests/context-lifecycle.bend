@@ -195,7 +195,7 @@ def role_surfaces(+db: String, +binding: String, +log: String) -> IO(Unit):
     show("event.replay", again)
     stale : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.event_commit_sql("q1", "starter", "0", "root", "0", "2", "{\"phase\":\"waiting\"}", "notice-2", "{\"kind\":\"context-progress\",\"query\":\"q1\"}", "", ""))
     show("event.stale", stale)
-    absent : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.event_commit_sql("q1", "target", "9", "root", "", "1", "", "", "", ""))
+    absent : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.event_commit_sql("q1", "target", "9", "root", "", "1", "", "", "", "", ""))
     show("event.absent", absent)
     notice_read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT body FROM messages WHERE id='notice-1';")
     show("event.notice", notice_read)
