@@ -190,13 +190,18 @@ def omp_message(db: String, +event: String, previous: String, enabled: Bool) -> 
 def omp_content_sql(+message: String) -> String:
   "CASE WHEN json_extract(" ++ C.q(message) ++ ",'$.role')='assistant' THEN json_set(" ++ C.q(message) ++ ",'$.content',json(CASE WHEN json_type(" ++ C.q(message) ++ ",'$.content')='array' THEN coalesce((SELECT json_group_array(json(content.value)) FROM (SELECT c.value AS value,c.key AS key FROM json_each(" ++ C.q(message) ++ ",'$.content') c WHERE json_type(" ++ C.q(message) ++ ",'$.content[' || c.key || ']')='object' ORDER BY c.key) content),'[]') ELSE '[]' END)) ELSE json(" ++ C.q(message) ++ ") END"
 
+# Normalize extraction input for agent_end while retaining all source frames in
+# the native log. JSON object messages and content blocks retain source order.
+def omp_terminal_messages_sql(+event: String, +message: String) -> String:
+  +objects = "(SELECT count(*) FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object')"
+  +kept = "coalesce((SELECT json_group_array(json(message.value)) FROM (SELECT " ++ omp_content_sql("m.value") ++ " AS value,m.key AS key FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object' ORDER BY m.key) message),'[]')"
+  "CASE WHEN " ++ objects ++ "=0 AND json_valid(" ++ C.q(message) ++ ") THEN json_array(json(" ++ C.q(message) ++ ")) ELSE " ++ kept ++ " END"
+
 # OMP may return valid terminal envelopes whose messages array contains a
 # non-object metadata marker. Keep object messages in their original order for
 # result extraction. The native log retains the unmodified frame.
 def omp_terminal_sql(+event: String, +message: String) -> String:
-  +objects = "(SELECT count(*) FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object')"
-  +kept = "coalesce((SELECT json_group_array(json(message.value)) FROM (SELECT " ++ omp_content_sql("m.value") ++ " AS value,m.key AS key FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object' ORDER BY m.key) message),'[]')"
-  +messages = "CASE WHEN " ++ objects ++ "=0 AND json_valid(" ++ C.q(message) ++ ") THEN json_array(json(" ++ C.q(message) ++ ")) ELSE " ++ kept ++ " END"
+  +messages = omp_terminal_messages_sql(event,message)
   "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 THEN CASE WHEN json_type(" ++ C.q(event) ++ ",'$.messages')='array' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json(" ++ messages ++ ")) WHEN json_valid(" ++ C.q(message) ++ ") THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END;"
 
 def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) -> IO(String):

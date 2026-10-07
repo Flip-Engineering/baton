@@ -11,10 +11,10 @@ law muse_terminal_requires_the_admitted_command:
   for +primary: String
   {Turn.primary_terminal_expr(event,primary) == "CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='run_terminal' AND " ++ C.q(primary) ++ "<>'' AND json_extract(" ++ C.q(event) ++ ",'$.payload.command_id')=" ++ C.q(primary) ++ " THEN 1 ELSE 0 END ELSE 0 END" : String}
 
-law omp_terminal_normalizes_only_terminal_message_members:
+law omp_terminal_normalizes_message_and_content_members:
   for +event: String
   for +message: String
-  {Turn.omp_terminal_sql(event,message) == "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 THEN CASE WHEN json_type(" ++ C.q(event) ++ ",'$.messages')='array' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json(CASE WHEN (SELECT count(*) FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object')=0 AND json_valid(" ++ C.q(message) ++ ") THEN json_array(json(" ++ C.q(message) ++ ")) ELSE coalesce((SELECT json_group_array(json(message.value)) FROM (SELECT " ++ Turn.omp_content_sql("m.value") ++ " AS value,m.key AS key FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object' ORDER BY m.key) message),'[]') END)) WHEN json_valid(" ++ C.q(message) ++ ") THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END;" : String}
+  {Turn.omp_terminal_messages_sql(event,message) == "CASE WHEN (SELECT count(*) FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object')=0 AND json_valid(" ++ C.q(message) ++ ") THEN json_array(json(" ++ C.q(message) ++ ")) ELSE coalesce((SELECT json_group_array(json(message.value)) FROM (SELECT " ++ Turn.omp_content_sql("m.value") ++ " AS value,m.key AS key FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object' ORDER BY m.key) message),'[]') END" : String}
 
 law omp_terminal_assistant_content_contains_only_object_blocks:
   for +message: String
@@ -32,7 +32,7 @@ def muse_primary_identity_comes_from_the_admitted_turn_input(event):
 def muse_terminal_requires_the_admitted_command(event,primary):
   {==}
 
-def omp_terminal_normalizes_only_terminal_message_members(event,message):
+def omp_terminal_normalizes_message_and_content_members(event,message):
   {==}
 
 def omp_terminal_assistant_content_contains_only_object_blocks(message):
