@@ -521,7 +521,7 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"attach-complete"),21,
   Bool.pick(U32,String.eq(mode,"role-binding"),22,
   Bool.pick(U32,String.eq(mode,"role-identity"),23,
-  Bool.pick(U32,String.eq(mode,"role-guard"),24,0))))))))))))))))))))))
+  Bool.pick(U32,String.eq(mode,"role-guard"),24,0))))))))))))))))))))))))
 
 # Admits under the shared owner while holding no session guard, so the record
 # states no guard binding.
