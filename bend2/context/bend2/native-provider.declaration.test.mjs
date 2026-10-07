@@ -40,7 +40,7 @@ const SCHEMA_DIR = join(HERE, 'native-schemas');
 const DECLARATION_SCHEMA = 'baton2-native-module-declaration-v1';
 const OPERATION_SCHEMA = 'baton2-native-operation-v1';
 const EXECUTION_TOKENS = ['pure', 'direct', 'managed', 'runtime'];
-const RULE_KINDS = ['path', 'manifest', 'subject', 'projection'];
+const RULE_KINDS = ['path', 'pathSuffix', 'manifest', 'subject', 'projection'];
 const HEX64 = /^[0-9a-f]{64}$/;
 
 // sha256 over the concatenation of the twelve staged artifact bytes in
@@ -305,6 +305,7 @@ test('declaration satisfies every decode validity rule', () => {
   assert.equal(doc.protocolVersion, '2');
   assert.equal(doc.packageIdentity, PACKAGE_IDENTITY);
   assert.deepEqual(doc.entry, { artifact: 'native-provider.mjs', argv: ['--experimental-strip-types'] });
+  assert.deepEqual(doc.applicability, [{ kind: 'pathSuffix', value: '.bend' }]);
   assert.deepEqual(doc.artifactIdentities.map((row) => row.packagePath), ARTIFACT_PATHS);
   for (const row of [...doc.artifactIdentities, ...doc.dependencies]) {
     assert.match(row.sha256, /^[0-9a-f]{64}$/);

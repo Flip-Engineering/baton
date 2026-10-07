@@ -136,7 +136,12 @@
     "baton2.context.bend2.source-analysis.reference.v1",
     "baton2.context.bend2.source-analysis.event.v1"
   ],
-  "applicability": [],
+  "applicability": [
+    {
+      "kind": "pathSuffix",
+      "value": ".bend"
+    }
+  ],
   "operations": [
     {
       "schema": "baton2-native-operation-v1",
