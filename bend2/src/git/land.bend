@@ -2120,7 +2120,19 @@ def shared_reserved_continue(handle: U32, repo: String, target: String, cand: St
 # One self-recursive reservation helper. A collision grows the suffix by one character and tries
 # again under the same held claim, so there is no fixed retry cap: the only refusals are a real
 # error, a malformed record, and a representational suffix length.
-def shared_reserve_rec(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, suffix: String) -> IO(SharedLanding):
+# The attempt name: the base alone for the first attempt, then the base extended with the
+# counter rendered by U32.show. The counter is a U32 and the only refusal past a collision is
+# the type's own maximum, not a chosen policy limit.
+def shared_attempt_name(base: String, attempt: U32) -> String:
+  +b = base
+  +n = attempt
+  match U32.is_eq(n, 1):
+    case True{}: b
+    case False{}: Tx.str_cat(b, Tx.str_cat("-", U32.show(n)))
+
+# One self-recursive reservation body. The returned Result, the exact created/existing records
+# and the retry branching all happen here; only nonrecursive helpers produce final outcomes.
+def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, attempt: U32) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -2129,62 +2141,24 @@ def shared_reserve_rec(handle: U32, repo: String, target: String, cand: String, 
   +gd = guard
   +pa = parent
   +bs = base
-  +sf = suffix
-  +name = Tx.str_cat(bs, sf)
+  +n = attempt
+  +name = shared_attempt_name(bs, n)
   do IO<SharedLanding>:
     observed : Result<U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, name)
-    shared_reserve_rec_seen(h, rp, tg, c, b, gd, pa, bs, sf, name, observed)
-
-def shared_reserve_rec_seen(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, suffix: String, name: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  +sf = suffix
-  +n = name
-  match observed:
-    case Fail{error}: shared_step_failed("reserve", error, h)
-    case Done{record}: shared_reserve_rec_classified(h, rp, tg, c, b, gd, pa, bs, sf, n, record)
-
-def shared_reserve_rec_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, suffix: String, name: String, record: String) -> IO<SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  +sf = suffix
-  +n = name
-  +r = record
-  match Tx.str_eq(r, Pb.production_record("created", shared_parent_path(pa, n), "0")):
-    case True{}: shared_reserved_continue(h, rp, tg, c, b, gd, shared_parent_path(pa, n))
-    case False{}: shared_reserve_rec_next(h, rp, tg, c, b, gd, pa, bs, sf, n, r)
-
-def shared_reserve_rec_next(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, suffix: String, name: String, record: String) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  +sf = suffix
-  +n = name
-  +r = record
-  match Tx.str_eq(r, Pb.production_record("existing", shared_parent_path(pa, n), "0")):
-    case False{}: shared_record_failed("reserve", r, h)
-    case True{}:
-      +next = Tx.str_cat(sf, "-")
-      match U32.is_lt(Tx.byte_len(next), 65):
-        case True{}: shared_reserve_rec(h, rp, tg, c, b, gd, pa, bs, next)
-        case False{}: shared_record_failed("reserve-suffix-exhausted", r, h)
+    match observed:
+      case Fail{error}: shared_step_failed("reserve", error, h)
+      case Done{record}:
+        match Tx.str_eq(record, Pb.production_record("created", shared_parent_path(pa, name), "0")):
+          case True{}: shared_reserved_continue(h, rp, tg, c, b, gd, shared_parent_path(pa, name))
+          case False{}:
+            match Tx.str_eq(record, Pb.production_record("existing", shared_parent_path(pa, name), "0")):
+              case False{}: shared_record_failed("reserve", record, h)
+              case True{}:
+                match U32.is_lt(n, 4294967295):
+                  case True{}:
+                    +next = U32.add(n, 1)
+                    shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, next)
+                  case False{}: shared_record_failed("reserve-counter-maximum", record, h)
 
 def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle
@@ -2197,7 +2171,7 @@ def shared_parent_classified(handle: U32, repo: String, target: String, cand: St
   +bs = base
   +r = record
   match Tx.str_eq(r, Pb.production_record("created", pa, "0")):
-    case True{}: shared_reserve_rec(h, rp, tg, c, b, gd, pa, bs, "")
+    case True{}: shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1)
     case False{}: shared_parent_present(h, rp, tg, c, b, gd, pa, bs, r)
 
 def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
@@ -2211,7 +2185,7 @@ def shared_parent_present(handle: U32, repo: String, target: String, cand: Strin
   +bs = base
   +r = record
   match Tx.str_eq(r, Pb.production_record("present", pa, "0")):
-    case True{}: shared_reserve_rec(h, rp, tg, c, b, gd, pa, bs, "")
+    case True{}: shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1)
     case False{}: shared_record_failed("ensure", r, h)
 
 def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
