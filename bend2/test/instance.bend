@@ -377,7 +377,7 @@ def nolock_started(start: P.RetainedStart, payload: String) -> IO(Unit):
 
 def nolock_cli(args: List<String>) -> IO(Unit):
   match args:
-    case database <> directory <> cwd <> payload <> program: do IO<Unit>:
+    case +database <> +directory <> cwd <> payload <> program: do IO<Unit>:
       executable : String <- IO.try(String,Lock.SessionLock.executable())
       start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr","",1,None{},P.argv([executable,"recover-retained",database,directory])))
       run : Unit <- nolock_started(start,payload)
@@ -397,7 +397,7 @@ def legacy_started(start: P.RetainedStart, payload: String) -> IO(Unit):
 
 def legacy_cli(args: List<String>) -> IO(Unit):
   match args:
-    case directory <> cwd <> payload <> program: do IO<Unit>:
+    case +directory <> cwd <> payload <> program: do IO<Unit>:
       executable : String <- IO.try(String,Lock.SessionLock.executable())
       start : P.RetainedStart <- IO.try(P.RetainedStart,P.ProcessChild.retain(directory,P.argv(program),cwd,directory ++ "/native.stderr",payload,1,0,P.argv([executable,"recover-retained",directory])))
       run : Unit <- legacy_started(start,payload)
