@@ -103,6 +103,24 @@ law a_changed_artifact_never_cancels_a_rejected_preparation:
 def a_changed_artifact_never_cancels_a_rejected_preparation():
   {==}
 
+law a_foreign_workspace_never_cancels_a_rejected_preparation:
+  {Managed.cancel_rejected(managed_bootstrap(), ready_keeper(),
+    Admission.AdmissionRetained{"owner-1", "{}", "rejected", "refused", "0",
+      "/logs/keeper-q", "/foreign-worktree", "/work/.baton/context-artifacts/q"}) ==
+    Managed.StartHeld{"rejectedAdmissionIdentityMismatch"} : Managed.StartDecision}
+
+def a_foreign_workspace_never_cancels_a_rejected_preparation():
+  {==}
+
+law a_different_origin_attempt_never_cancels_a_rejected_preparation:
+  {Managed.cancel_rejected(managed_bootstrap(), ready_keeper(),
+    Admission.AdmissionRetained{"owner-1", "{}", "rejected", "refused", "1",
+      "/logs/keeper-q", "/work", "/work/.baton/context-artifacts/q"}) ==
+    Managed.StartHeld{"rejectedAdmissionIdentityMismatch"} : Managed.StartDecision}
+
+def a_different_origin_attempt_never_cancels_a_rejected_preparation():
+  {==}
+
 law an_accepted_retained_row_can_replay_its_original_start_grant:
   {Managed.start_from_submission(managed_bootstrap(), ready_keeper(),
     Service.SubmissionRetainedVerified{

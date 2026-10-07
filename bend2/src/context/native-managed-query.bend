@@ -56,6 +56,18 @@ def bootstrap_request(bootstrap: Bootstrap) -> String:
         plan_identity, result_schema, artifact_path, keeper_path,
         guard_identity, guard_key, recovery_argv}: request
 
+def bootstrap_cwd(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
+        plan_identity, result_schema, artifact_path, keeper_path,
+        guard_identity, guard_key, recovery_argv}: cwd
+
+def bootstrap_attempt(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
+        plan_identity, result_schema, artifact_path, keeper_path,
+        guard_identity, guard_key, recovery_argv}: origin_attempt
+
 def bootstrap_keeper_path(bootstrap: Bootstrap) -> String:
   match bootstrap:
     case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt, plan_value,
@@ -205,23 +217,27 @@ def submit_after_observer_ready(+bootstrap: Bootstrap, readiness: KeeperReadines
         IO.pure(StartDecision, StartHeld{"observerIdentityMismatch"}))
 
 def rejection_identity_match(+expected_owner: String, +expected_request: String,
-                             +expected_keeper: String, +expected_artifact: String,
+                             +expected_keeper: String, +expected_cwd: String,
+                             +expected_attempt: String, +expected_artifact: String,
                              +admission: Admission.Admission) -> Bool:
   match admission:
     case Admission.AdmissionRetained{+owner, +request, decision, state, attempt,
-        +keeperPath, cwd, +artifactPath}:
+        +keeperPath, +cwd, +artifactPath}:
       Bool.and(String.eq(owner, expected_owner),
       Bool.and(String.eq(request, expected_request),
       Bool.and(String.eq(keeperPath, expected_keeper),
+      Bool.and(String.eq(cwd, expected_cwd),
+      Bool.and(String.eq(attempt, expected_attempt),
       Bool.and(String.eq(artifactPath, expected_artifact),
-      Bool.and(String.eq(decision, "rejected"), String.eq(state, "refused"))))))
+      Bool.and(String.eq(decision, "rejected"), String.eq(state, "refused"))))))))
     case _: False{}
 
 def rejected_admission_decision(+bootstrap: Bootstrap,
                                 +admission: Admission.Admission) -> StartDecision:
   Bool.pick(StartDecision,
     rejection_identity_match(bootstrap_owner(bootstrap), bootstrap_request(bootstrap),
-      bootstrap_keeper_path(bootstrap), bootstrap_artifact_path(bootstrap), admission),
+      bootstrap_keeper_path(bootstrap), bootstrap_cwd(bootstrap),
+      bootstrap_attempt(bootstrap), bootstrap_artifact_path(bootstrap), admission),
     StartCancelled{bootstrap_query(bootstrap), bootstrap_owner(bootstrap),
       "admissionRejected", bootstrap_keeper_path(bootstrap)},
     StartHeld{"rejectedAdmissionIdentityMismatch"})
