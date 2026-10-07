@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TypeScript provider result frame",
+  "description": "The frame the provider writes for one query, mirrored from the envelope its builder constructs and from the closed-schema validation that admits it.",
+  "sourceContract": {
+    "authority": "bend2/context/typescript/lib/protocol.mjs (validateResult :251-290); the built envelope is lib/query.mjs:118-155 and the frame is written by provider.mjs",
+    "lines": ["33", "251-290", "118-155"],
+    "drift": "validateResult is the authority for admission and query.mjs is the authority for the members a published result carries; this document is their admitted mirror, so a change to either requires a change here. validateResult admits version 1 (:251), requires facts, relations, refs and limits to be arrays (:254-256), requires every fact and relation to carry a nonempty unique id (:258-262), a classification from CLASSIFICATIONS (:33, :263) and a nonempty evidence array (:264), requires every ref to carry a nonempty unique id (:265-270) and the snapshot identity in use (:271-277), and requires a record inside a value to carry the snapshot identity in use (:278-283).",
+    "identityNote": "no $id is set: the admitted identity is a hole for package admission to fill, named by the inventory it admits.",
+    "crossFieldRules": [
+      {
+        "code": "uniqueFactAndRelationIds",
+        "lines": ["258-262"],
+        "detail": "an id repeated across facts and relations refuses with result-ids-not-unique"
+      },
+      {
+        "code": "classificationClosed",
+        "lines": ["33", "263"],
+        "detail": "a classification outside observed, static-possible, checked and declared refuses with result-classification-invalid"
+      },
+      {
+        "code": "evidenceRequired",
+        "lines": ["264"],
+        "detail": "a fact or relation with no evidence member, or with an empty evidence array, refuses with result-evidence-missing"
+      },
+      {
+        "code": "referenceSnapshotIdentity",
+        "lines": ["271-277"],
+        "detail": "every ref names the snapshot identity of this result, and a ref naming another one refuses with result-ref-snapshot-mismatch"
+      },
+      {
+        "code": "recordSnapshotIdentity",
+        "lines": ["278-283"],
+        "detail": "a record carried inside a fact or relation value names the snapshot identity of this result, and another one refuses with result-record-snapshot-mismatch"
+      },
+      {
+        "code": "snapshotIdentityBound",
+        "lines": ["34-55", "156-157"],
+        "detail": "the builder replaces its pending marker with the identity computed over the captured input closure before the result is returned, and refuses to return a result in which the marker survives"
+      }
+    ]
+  },
+  "type": "object",
+  "properties": {
+    "version": { "const": 1 },
+    "engine": { "type": "string", "minLength": 1 },
+    "query": { "type": ["string", "null"] },
+    "provider": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string" },
+        "libraryPath": { "type": "string", "minLength": 1 },
+        "librarySha": { "type": "string", "minLength": 1 },
+        "node": { "type": "string", "minLength": 1 },
+        "runtime": { "type": "string" }
+      },
+      "required": ["name", "version", "libraryPath", "librarySha", "node", "runtime"],
+      "additionalProperties": false
+    },
+    "subject": { "$ref": "subject.request.json" },
+    "snapshot": {
+      "type": "object",
+      "properties": {
+        "snapshotId": { "type": "string", "minLength": 1 },
+        "worktree": { "type": ["object", "null"] },
+        "effectiveOptions": { "type": ["object", "array", "null"] },
+        "provider": { "type": "object" },
+        "inputs": { "type": "array" }
+      },
+      "required": ["snapshotId", "worktree", "effectiveOptions", "provider", "inputs"],
+      "additionalProperties": true
+    },
+    "facts": { "type": "array", "items": { "$ref": "#/$defs/factLike" } },
+    "relations": { "type": "array", "items": { "$ref": "#/$defs/factLike" } },
+    "refs": { "type": "array", "items": { "$ref": "reference.json" } },
+    "limits": { "type": "array" },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "examined": { "type": "array", "items": { "type": "string" } },
+        "excluded": { "type": "array", "items": { "type": "string" } },
+        "providerCompletion": { "type": "boolean" },
+        "unsupported": { "type": "array" }
+      },
+      "required": ["examined", "excluded", "providerCompletion", "unsupported"],
+      "additionalProperties": true
+    },
+    "applicability": { "type": "string", "minLength": 1 },
+    "changedInputs": { "type": "array" }
+  },
+  "required": [
+    "version",
+    "engine",
+    "query",
+    "provider",
+    "subject",
+    "snapshot",
+    "facts",
+    "relations",
+    "refs",
+    "limits",
+    "coverage",
+    "applicability",
+    "changedInputs"
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "factLike": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "classification": { "enum": ["observed", "static-possible", "checked", "declared"] },
+        "value": { "type": ["object", "array", "string", "number", "boolean", "null"] },
+        "evidence": { "type": "array", "minItems": 1 },
+        "limits": { "type": "array" },
+        "from": { "type": "string" },
+        "to": { "type": "string" }
+      },
+      "required": ["id", "kind", "classification", "evidence", "limits"],
+      "additionalProperties": true
+    }
+  }
+}

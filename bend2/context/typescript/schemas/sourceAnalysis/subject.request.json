@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TypeScript provider request subject",
+  "description": "The subject member of the admitted canonical request, mirrored from the provider's own validation. This document is the admitted mirror; the validator is the authority.",
+  "sourceContract": {
+    "authority": "bend2/context/typescript/lib/protocol.mjs",
+    "lines": ["49", "57-61", "70-73", "89-97", "106-131"],
+    "drift": "protocol.mjs validateRequest is the authority and this document is its admitted mirror: a change to those lines requires a change here. Allowed keys are exactly the SUBJECT_KEYS entry of the kind (:57-61). Every kind carries a nonempty path whose suffix is in SOURCE_SUFFIXES (:49, sourceSuffixMatches :70-73); position and diagnostic carry line and column as u32 (:117-120); symbol carries a nonempty name and a container string that defaults to the empty string (:121-124); diagnostic carries a nonempty code (:125-127).",
+    "identityNote": "no $id is set: the admitted identity is a hole for package admission to fill, named by the inventory it admits.",
+    "crossFieldRules": [
+      {
+        "code": "subjectKeysAreClosed",
+        "lines": ["107-111"],
+        "detail": "the keys of one subject are exactly the SUBJECT_KEYS entry of its kind; a member outside that set refuses with context-subject-unknown-field, and an unknown kind refuses with context-subject-unknown"
+      },
+      {
+        "code": "u32Domain",
+        "lines": ["89-92"],
+        "detail": "requireU32 admits a safe integer from 0 to 0xffffffff, and nothing else"
+      },
+      {
+        "code": "nonemptyStrings",
+        "lines": ["94-97"],
+        "detail": "requireNonEmptyString admits a string of length at least one, and nothing else"
+      }
+    ]
+  },
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "position" },
+        "path": { "type": "string", "minLength": 1, "pattern": "\\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|json)$" },
+        "line": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "column": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+      },
+      "required": ["kind", "path", "line", "column"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "symbol" },
+        "path": { "type": "string", "minLength": 1, "pattern": "\\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|json)$" },
+        "name": { "type": "string", "minLength": 1 },
+        "container": { "type": "string" }
+      },
+      "required": ["kind", "path", "name"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "diagnostic" },
+        "path": { "type": "string", "minLength": 1, "pattern": "\\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|json)$" },
+        "line": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "column": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "code": { "type": "string", "minLength": 1 }
+      },
+      "required": ["kind", "path", "line", "column", "code"],
+      "additionalProperties": false
+    }
+  ]
+}

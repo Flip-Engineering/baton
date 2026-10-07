@@ -9,7 +9,7 @@
 // package on disk.
 
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
@@ -34,17 +34,29 @@ import {
   PROVIDER_DECLARATION,
   PROVIDER_DECLARATION_SCHEMA,
   PROVIDER_ENTRY,
+  SCHEMA_DOCUMENTS,
+  SCHEMA_DRIFT_NOTE,
   SCHEMA_ROLES,
+  SCHEMA_SOURCE_AUTHORITY,
   SOURCE_ANALYSIS,
   SOURCE_PROJECTIONS,
   SOURCE_SUBJECT_KINDS,
   SQL_PLAN,
   admissionRequirements,
   checkProviderDeclaration,
+  schemaShapeFor,
   verifyDeclaredClosure,
 } from './provider-declaration.mjs';
+import { SCHEMA_SOURCE_ROOT, schemaDocumentInventory, sharedDocumentPairs } from './schemas/manifest.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const SCHEMA_DIR = join(HERE, 'schemas');
+
+// The repository path of a document, resolved to the file that carries it.
+function documentFile(sourcePath) {
+  assert.ok(sourcePath.startsWith(`${SCHEMA_SOURCE_ROOT}/`), `${sourcePath} lives under the schema root`);
+  return join(SCHEMA_DIR, sourcePath.slice(SCHEMA_SOURCE_ROOT.length + 1));
+}
 
 // A record whose holes are filled with fixture values. The values exercise the check; they are not
 // claims about any admitted inventory.
@@ -276,6 +288,9 @@ test('the completeness check refuses each way the record can drift', () => {
   const withoutEvent = filledRecord();
   withoutEvent.operations[0].schemas = withoutEvent.operations[0].schemas.filter((row) => row.role !== 'event');
   assert.ok(reasonsOf(checkProviderDeclaration(withoutEvent)).includes('schemaRoleMissing'));
+  const withoutShape = filledRecord();
+  withoutShape.operations[0].schemas[0].shape = null;
+  assert.ok(reasonsOf(checkProviderDeclaration(withoutShape)).includes('schemaShapeMissing'));
 
   assert.ok(reasonsOf(mutated((copy) => { copy.applicability = []; })).includes('applicabilityEmpty'));
   assert.ok(reasonsOf(mutated((copy) => { copy.applicability = [{ kind: 'subject', value: 'subject' }]; }))
@@ -295,4 +310,81 @@ test('the declared artifact closure matches the provider package on disk', (t) =
   const { missing, undeclared } = verifyDeclaredClosure(PROVIDER_DECLARATION, packageRoot);
   assert.deepEqual(missing, [], 'every declared artifact exists in the package');
   assert.deepEqual(undeclared, [], 'every provider module is declared');
+});
+
+test('every operation and role names one schema document, and no identity is invented', () => {
+  assert.equal(SCHEMA_DOCUMENTS.length, OPERATIONS.length * SCHEMA_ROLES.length);
+  assert.equal(SCHEMA_SOURCE_AUTHORITY, 'bend2/context/typescript/lib/protocol.mjs');
+  assert.match(SCHEMA_DRIFT_NOTE, /validator in lib\/protocol\.mjs is the authority/);
+  assert.match(SCHEMA_DRIFT_NOTE, /change to a cited line requires the document to change with it/);
+
+  const inventory = schemaDocumentInventory();
+  assert.equal(inventory.length, SCHEMA_DOCUMENTS.length);
+  for (const row of SCHEMA_DOCUMENTS) {
+    assert.ok(OPERATIONS.some((operation) => operation.id === row.operation), `${row.operation} is declared`);
+    assert.ok(SCHEMA_ROLES.includes(row.role), `${row.role} is a declared role`);
+    assert.equal(row.identity, null, 'the admitted identity stays a hole');
+    assert.equal(row.status, 'unadmitted');
+    assert.ok(row.names.length > 0, `${row.operation}.${row.role} names what it mirrors`);
+    assert.ok(row.sourceLines.length > 0, `${row.operation}.${row.role} cites the lines it mirrors`);
+    assert.ok(row.path.startsWith('libexec/baton2/context/typescript/schemas/'), 'the installed path is the staged one');
+    assert.ok(existsSync(documentFile(row.sourcePath)), `${row.sourcePath} exists`);
+  }
+  for (const operation of OPERATIONS) {
+    for (const role of SCHEMA_ROLES) {
+      assert.equal(
+        schemaShapeFor(operation.id, role),
+        SCHEMA_DOCUMENTS.find((row) => row.operation === operation.id && row.role === role).path,
+        `${operation.id}.${role} names its document`,
+      );
+    }
+    assert.deepEqual(
+      operation.schemas.map((row) => row.identity),
+      operation.schemas.map(() => null),
+      'no operation fakes an admitted identity',
+    );
+    assert.ok(
+      operation.schemas.every((row) => typeof row.shape === 'string' && row.shape.length > 0),
+      'every role row carries the shape it mirrors',
+    );
+  }
+});
+
+test('every named document cites the validator it mirrors', () => {
+  for (const row of SCHEMA_DOCUMENTS) {
+    const raw = readFileSync(documentFile(row.sourcePath), 'utf8');
+    const document = JSON.parse(raw);
+    assert.equal(
+      document.sourceContract.authority,
+      SCHEMA_SOURCE_AUTHORITY,
+      `${row.sourcePath} names the authority`,
+    );
+    assert.ok(document.sourceContract.lines.length > 0, `${row.sourcePath} cites its lines`);
+    assert.deepEqual(
+      [...document.sourceContract.lines].sort(),
+      [...row.sourceLines].sort(),
+      `${row.sourcePath} and the manifest cite the same lines`,
+    );
+    assert.match(document.sourceContract.drift, /authority|mirror/, `${row.sourcePath} carries the drift note`);
+    assert.equal(document.$id, undefined, 'an unadmitted document names no admitted identity');
+  }
+});
+
+test('a shared document stays byte-identical to the document it mirrors', () => {
+  const pairs = sharedDocumentPairs();
+  assert.equal(pairs.length, SCHEMA_DOCUMENTS.filter((row) => row.sharedAs !== null).length);
+  assert.ok(pairs.length > 0, 'the engine-level roles are shared and recorded as such');
+  for (const pair of pairs) {
+    assert.equal(
+      readFileSync(documentFile(pair.path), 'utf8'),
+      readFileSync(documentFile(pair.original), 'utf8'),
+      `${pair.path} mirrors ${pair.original}`,
+    );
+  }
+  const optionsRows = SCHEMA_DOCUMENTS.filter((row) => row.role === 'options');
+  assert.equal(optionsRows.length, OPERATIONS.length, 'the options role is declared per operation');
+  assert.ok(
+    optionsRows.every((row) => row.sharedAs === null),
+    'the options documents are the ones whose shape differs per operation',
+  );
 });
