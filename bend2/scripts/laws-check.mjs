@@ -605,7 +605,7 @@ export const MUTATIONS = [
   {"name": "principal-completion-preparation-uses-parent-only", "file": "bend2/src/coordinator/turn.bend", "find": "def prepare(+db: String, +player: String, id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):\n  do IO<Unit>:\n    recipient : String <- IO.try(String,DB.Sql.query(db,\"SELECT \" ++ C.report_recipient(C.q(player)) ++ \" IS NOT NULL;\"))", "replace": "def prepare(+db: String, +player: String, id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):\n  do IO<Unit>:\n    recipient : String <- IO.try(String,DB.Sql.query(db,\"SELECT parent IS NOT NULL FROM sessions WHERE id=\" ++ C.q(player) ++ \";\"))", "law": "completion_preparation_checks_the_upstream_recipient"},
   {"name": "principal-completion-delivery-uses-parent-only", "file": "bend2/src/coordinator/turn.bend", "find": "def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):\n  do IO<Result<&1,&1,U32 & String,Unit>>:\n    recipient : String <- IO.try(String,DB.Sql.query(db,\"SELECT \" ++ C.report_recipient(C.q(player)) ++ \" IS NOT NULL;\"))", "replace": "def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):\n  do IO<Result<&1,&1,U32 & String,Unit>>:\n    recipient : String <- IO.try(String,DB.Sql.query(db,\"SELECT parent IS NOT NULL FROM sessions WHERE id=\" ++ C.q(player) ++ \";\"))", "law": "completion_delivery_checks_the_upstream_recipient"},
   {"name": "stopped-principal-completion-uses-parent-only", "file": "bend2/src/coordinator/stop.bend", "find": "SELECT st.report_id,s.id,\" ++ C.report_recipient(\"s.id\") ++ \",'report',", "replace": "SELECT st.report_id,s.id,s.parent,'report',", "law": "stopped_completion_reports_to_the_recorded_upstream_recipient"},
-  { name: "native-detached-launch-skipped", file: join("bend2","src","coordinator","control.bend"), find: "Host.Control.launch(Tx.enc_argv([executable,\"--dispatch-message\",database,id]),database,id)", replace: "IO.pure(Result<&1,&1,U32 & String,String>,Done{\"{}\"})", law: "authorized_detached_delivery_launches_the_native_self_entry" },
+  { name: "native-detached-launch-skipped", file: join("bend2","src","coordinator","control.bend"), find: "      launched : String <- IO.try(String,Host.Control.launch(Tx.enc_argv([executable,\"--dispatch-message\",database,id]),database,id))", replace: "      launched : String <- IO.pure(Result<&1,&1,U32 & String,String>,Done{\"{}\"})", law: "authorized_detached_delivery_launches_the_native_self_entry" },
   { name: "native-detached-child-skips-delivery", file: join("bend2","src","coordinator","control.bend"), find: "Delivery.deliver(db,id,\"1\",\"\")", replace: "IO.pure(Result<&1,&1,U32 & String,String>,Done{\"{}\"})", law: "detached_self_entry_delivers_the_committed_message" },
   { name: "native-start-conflict-refusal-skipped", file: join("bend2","src","coordinator","control.bend"), find: "case other: IO.die(Unit,2,other)", replace: "case other: IO.pure(Unit,Unit{})", law: "conflicting_principal_startup_refuses_before_task_dispatch" },
   {
@@ -632,8 +632,8 @@ export const MUTATIONS = [
   {
     name: "native-receiver-accepts-unchecked-endpoint",
     file: join("bend2", "src", "coordinator", "control.bend"),
-    find: " ++ \" AND \" ++ C.endpoint_admitted(endpoint) ++ \")\"",
-    replace: " ++ \")\"",
+    find: "def receiver_admitted(+session: String, endpoint: String) -> String:\n  \"(EXISTS(SELECT 1 FROM sessions WHERE id=\" ++ C.q(session) ++ \" AND harness IN ('codex','omp')) AND NOT \" ++ C.stopped_session_sql(C.q(session)) ++ \" AND \" ++ C.endpoint_admitted(endpoint) ++ \")\"",
+    replace: "def receiver_admitted(+session: String, endpoint: String) -> String:\n  \"(EXISTS(SELECT 1 FROM sessions WHERE id=\" ++ C.q(session) ++ \" AND harness IN ('codex','omp')) AND NOT \" ++ C.stopped_session_sql(C.q(session)) ++ \")\"",
     law: "native_receiver_checks_harness_stop_and_endpoint_admission",
   },
   {
@@ -653,8 +653,8 @@ export const MUTATIONS = [
   {
     name: "native-receiver-duplicates-wake-argument",
     file: join("bend2", "src", "coordinator", "control.bend"),
-    find: "[executable,db,\"receive\",session,cmd,\"\",\"\",\"\",log]",
-    replace: "[executable,db,\"receive\",session,cmd,\"\",\"\",\"\",log,\"\"]",
+    find: "def receiver_args(executable: String, db: String, session: String, cmd: String, log: String) -> List<String>:\n  [executable,db,\"receive\",session,cmd,\"\",\"\",\"\",log]",
+    replace: "def receiver_args(executable: String, db: String, session: String, cmd: String, log: String) -> List<String>:\n  [executable,db,\"receive\",session,cmd,\"\",\"\",\"\",log,\"\"]",
     law: "native_receiver_leaves_the_wake_argument_to_delivery",
   },
   {
@@ -667,8 +667,8 @@ export const MUTATIONS = [
   {
     name: "native-start-entry-skips-setup",
     file: join("bend2", "src", "coordinator", "main.bend"),
-    find: "Control.start(db,session,harness,cmd,model,effort,cwd,log,id,task)",
-    replace: "IO.pure(String,\"{}\")",
+    find: "        saved : String <- Control.start(db,session,harness,cmd,model,effort,cwd,log,id,task)\n        print_result(saved)",
+    replace: "        saved : String <- IO.pure(String,\"{}\")\n        print_result(saved)",
     law: "start_entry_executes_the_native_control",
   },
   {
@@ -1122,8 +1122,8 @@ export const MUTATIONS = [
   {
     name: 'm3a-held-advance-drops-the-fast-forward-requirement',
     file: join('bend2', 'src', 'git', 'land.bend'),
-    find: '    g : T.GitOut <- Git.runGit(p2, ["merge", "--ff-only", c2])',
-    replace: '    g : T.GitOut <- Git.runGit(p2, ["merge", c2])',
+    find: '        merged : T.GitOut <- Git.runGit(p2, ["merge", "--ff-only", c2])',
+    replace: '        merged : T.GitOut <- Git.runGit(p2, ["merge", c2])',
     law: 'm3a_held_advance_is_the_worktree_fast_forward',
   },
   {
