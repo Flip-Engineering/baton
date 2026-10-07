@@ -183,11 +183,11 @@ class SharedInstance(unittest.TestCase):
         while True:
             value = child.lines.get(timeout=30)
             if value is None:
-                self.fail(self.child_start_failure(child, expected))
+                self.fail(self.child_failure(child, f'expected first line {expected!r}, got EOF'))
             if value == expected:
                 return
 
-    def child_start_failure(self, child, expected):
+    def child_failure(self, child, reason):
         try:
             child.wait(timeout=3)
         except subprocess.TimeoutExpired:
@@ -215,7 +215,7 @@ class SharedInstance(unittest.TestCase):
         saved = ROOT / '.scratch' / 'shared-instance-failures' / f'startup-{os.getpid()}-{child.pid}'
         saved.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(self.home, saved, dirs_exist_ok=True)
-        return (f'expected first line {expected!r}, got EOF; child_pid={child.pid}; '
+        return (f'{reason}; child_pid={child.pid}; '
                 f'child_returncode={child.returncode}; child_args={child.args!r}; '
                 f'child_stderr={stderr.decode(errors="replace")!r}; '
                 f'attempts={attempt_state}; owner={self.owner_state()}; preserved={saved}; '
@@ -235,7 +235,8 @@ class SharedInstance(unittest.TestCase):
         child.stdin.close()
         child.wait(timeout=60)
         if child.returncode != 0:
-            self.fail(child.stderr.read() + '\n' + self.owner_state())
+            self.fail(self.child_failure(child,
+                f'expected exit status 0, got {child.returncode}'))
         return ''.join(child.output)
 
     def command(self, *args):
