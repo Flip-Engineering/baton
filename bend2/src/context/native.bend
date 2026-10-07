@@ -48,7 +48,7 @@ def provider_wait_answer(+value: String, surplus: Bool,
       Bool.pick(ProviderAnswer, surplus, ProviderRefused{"providerOutputSurplus"}, ProviderOutput{value, status}))
     case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"providerWait"})
 
-def provider_wait(handle: U32, +value: String, surplus: Bool) -> IO(ProviderAnswer):
+def provider_wait(+handle: U32, +value: String, surplus: Bool) -> IO(ProviderAnswer):
   do IO<ProviderAnswer>:
     waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
     provider_wait_answer(value, surplus, waited)
@@ -59,12 +59,12 @@ def provider_reap_answer(+reason: String,
     case Done{status}: IO.pure(ProviderAnswer, ProviderRefused{reason})
     case Fail{error}: IO.pure(ProviderAnswer, ProviderRefused{"providerWait"})
 
-def provider_reap(handle: U32, +reason: String) -> IO(ProviderAnswer):
+def provider_reap(+handle: U32, +reason: String) -> IO(ProviderAnswer):
   do IO<ProviderAnswer>:
     waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
     provider_reap_answer(reason, waited)
 
-def provider_second(handle: U32, +value: String,
+def provider_second(+handle: U32, +value: String,
                     second: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(ProviderAnswer):
   match second:
     case Fail{error}: provider_reap(handle, "providerOutputRead")
@@ -73,12 +73,12 @@ def provider_second(handle: U32, +value: String,
         case Some{value}: provider_wait(handle, value, True{})
         case None{}: provider_wait(handle, value, False{})
 
-def provider_after_first(handle: U32, +value: String) -> IO(ProviderAnswer):
+def provider_after_first(+handle: U32, +value: String) -> IO(ProviderAnswer):
   do IO<ProviderAnswer>:
     extra : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
     provider_second(handle, value, extra)
 
-def provider_read(handle: U32, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(ProviderAnswer):
+def provider_read(+handle: U32, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(ProviderAnswer):
   match result:
     case Fail{error}: provider_reap(handle, "providerOutputRead")
     case Done{+line}:
@@ -87,7 +87,7 @@ def provider_read(handle: U32, result: Result<&1,&1,U32 & String,Maybe<String>>)
         case Some{+value}:
           provider_after_first(handle, value)
 
-def provider_close(handle: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(ProviderAnswer):
+def provider_close(+handle: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(ProviderAnswer):
   match result:
     case Fail{error}:
       match error:
@@ -97,7 +97,7 @@ def provider_close(handle: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(P
         output : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
         provider_read(handle, output)
 
-def provider_write(handle: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(ProviderAnswer):
+def provider_write(+handle: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(ProviderAnswer):
   match result:
     case Fail{error}:
       match error:
@@ -109,7 +109,7 @@ def provider_spawn(+path: String, +cwd: String, +frame: String, result: Result<&
     case Fail{error}:
       match error:
         case (code, detail): IO.pure(ProviderAnswer, ProviderRefused{"providerSpawn"})
-    case Done{handle}:
+    case Done{+handle}:
       do IO<ProviderAnswer>:
         written : Result<&1,&1,U32 & String,Unit> <- Process.ProcessChild.write(handle, frame ++ "\n")
         provider_write(handle, written)
