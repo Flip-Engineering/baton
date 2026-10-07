@@ -2011,7 +2011,6 @@ static int br_artifact_name_ok(const char *name,size_t length) {
   if(strlen(name)!=length)return EINVAL;
   return 0;
 }
-/* Exact comparison of the artifact already in custody with a requested byte
 /* Writes the prepared artifact into private attempt custody: exclusive creation,
    no symlink following, read-only mode, the file flushed and its directory
    flushed, all before any child is spawned. */
