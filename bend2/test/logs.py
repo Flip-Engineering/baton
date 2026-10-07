@@ -291,8 +291,12 @@ sys.exit(%d)
         end = json.dumps({'type': 'tool_execution_end', 'toolCallId': 'tool-0', 'toolName': 'bash',
                           'result': {'content': [{'type': 'text', 'text': 'done'}]}})
         self.stream([update, update, end, self.terminal()])
-        retained = self.rotated_frames()
-        notes = [line for line in retained if '"moved"' in line]
+        raw = []
+        for name in ('turn.jsonl.4', 'turn.jsonl.3', 'turn.jsonl.2', 'turn.jsonl.1', 'turn.jsonl'):
+            path = self.cwd / name
+            if path.exists():
+                raw += path.read_text().splitlines()
+        notes = [line for line in raw if '"moved"' in line]
         self.assertEqual(len(notes), 1)
 
     def test_storage_previews_rotated_segments_without_writing(self):
