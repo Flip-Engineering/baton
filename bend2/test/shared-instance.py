@@ -94,7 +94,7 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(child.returncode, 0, child.stderr.read())
         return ''.join(child.output)
 
-    def run(self, *args):
+    def command(self, *args):
         return subprocess.run([str(EXE), *map(str, args)], capture_output=True,
                               text=True, timeout=30)
 
@@ -119,7 +119,7 @@ class SharedInstance(unittest.TestCase):
     def write(self, directory, text):
         path = self.home / 'control.payload'
         path.write_text(text)
-        result = self.run('control-write', directory, path)
+        result = self.command('control-write', directory, path)
         self.assertIn('control-write-complete', result.stdout, result.stderr)
 
     def hold(self, path, expected, timeout=30):
@@ -158,7 +158,7 @@ class SharedInstance(unittest.TestCase):
     def test_second_owner_for_one_database_is_refused(self):
         directory, child = self.begin('a0')
         self.line(child, 'admitted')
-        result = self.run('owner-try', self.db)
+        result = self.command('owner-try', self.db)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('owner-refused:', result.stdout)
         self.assertIn('busy', result.stdout.lower())
@@ -167,7 +167,7 @@ class SharedInstance(unittest.TestCase):
     def test_multiply_linked_database_is_refused(self):
         link = self.home / 'alias.db'
         os.link(self.db, link)
-        result = self.run('owner-try', link)
+        result = self.command('owner-try', link)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('owner-refused:', result.stdout)
         self.assertIn('link', result.stdout.lower())
@@ -200,7 +200,7 @@ class SharedInstance(unittest.TestCase):
         directory, child = self.begin('a0')
         self.wait_run(child)
         self.assertEqual(len(self.owner_processes()), 1)
-        result = self.run('shutdown', self.db)
+        result = self.command('shutdown', self.db)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('shutdown-ok', result.stdout)
         deadline = time.monotonic() + 10
