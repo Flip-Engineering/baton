@@ -827,3 +827,16 @@ law a_four_byte_scalar_preserves_all_continuation_bits:
 
 def a_four_byte_scalar_preserves_all_continuation_bits():
   {==}
+
+
+law hexadecimal_framing_accepts_both_letter_cases:
+  {hex_ok("7Baf") == True{} : Bool}
+
+def hexadecimal_framing_accepts_both_letter_cases():
+  {==}
+
+law hexadecimal_framing_refuses_non_hexadecimal_letters:
+  {hex_ok("7G") == False{} : Bool}
+
+def hexadecimal_framing_refuses_non_hexadecimal_letters():
+  {==}

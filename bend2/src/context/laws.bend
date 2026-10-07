@@ -440,7 +440,7 @@ def a_term_request_upgrades_to_kill():
 law a_control_query_cannot_control_itself:
   for +owner: String
   for +query: String
-  {ContextControl.controllable(owner,query) == "EXISTS(SELECT 1 FROM semantic_queries c WHERE c.id=" ++ C.q(query) ++ " AND c.owner=" ++ C.q(owner) ++ " AND c.runtime_id IS NULL AND NOT (c.result_json IS NOT NULL AND json_extract(c.result_json,'$.kind')='queryControl'))" : String}
+  {ContextControl.controllable(owner,query) == "EXISTS(SELECT 1 FROM semantic_queries c WHERE c.id=" ++ C.q(query) ++ " AND c.owner=" ++ C.q(owner) ++ " AND c.runtime_id IS NULL AND coalesce(json_extract(c.result_json,'$.kind'),'')<>'queryControl')" : String}
 
 def a_control_query_cannot_control_itself(owner,query):
   {==}
