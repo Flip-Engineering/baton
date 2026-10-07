@@ -205,6 +205,34 @@ law native_installed_provider_path_uses_the_executable_install_prefix:
 def native_installed_provider_path_uses_the_executable_install_prefix():
   {==}
 
+law query_bootstrap_persistence_uses_the_installed_core_helper:
+  {Native.query_bootstrap_argv("/opt/node22", "/opt/baton2/bin/baton2") ==
+    Process.argv(["/opt/node22", "--experimental-strip-types",
+      "/opt/baton2/bin/../libexec/baton2/context-provider.mjs",
+      "--persist-query-bootstrap"]) : String}
+
+def query_bootstrap_persistence_uses_the_installed_core_helper():
+  {==}
+
+law query_outcome_persistence_uses_the_installed_core_helper:
+  {Native.query_outcome_argv("/opt/node22", "/opt/baton2/bin/baton2") ==
+    Process.argv(["/opt/node22", "--experimental-strip-types",
+      "/opt/baton2/bin/../libexec/baton2/context-provider.mjs",
+      "--persist-query-outcome"]) : String}
+
+def query_outcome_persistence_uses_the_installed_core_helper():
+  {==}
+
+law query_bootstrap_request_binds_its_artifact_authority:
+  {Native.query_bootstrap_request("owner-1", "/work", "query-1", "{\"planValue\":[]}")==
+    J.json_text(J.Jobj{J.Jpair{"owner", J.Jstr{"owner-1"},
+      J.Jpair{"worktree", J.Jstr{"/work"},
+      J.Jpair{"query", J.Jstr{"query-1"},
+      J.Jpair{"bootstrapText", J.Jstr{"{\"planValue\":[]}"}, J.Jnil{}}}}}}) : String}
+
+def query_bootstrap_request_binds_its_artifact_authority():
+  {==}
+
 law native_owner_workspace_sql_is_scoped_to_the_recorded_session:
   {Native.owner_workspace_sql("owner-1") == "SELECT workspace FROM sessions WHERE id='owner-1';" : String}
 

@@ -85,6 +85,14 @@ def query_artifact_argv(+runtime_path: String, +executable: String) -> String:
   Process.argv([runtime_path, "--experimental-strip-types",
     installed_provider_path(executable), "--prepare-query-artifact"])
 
+def query_bootstrap_argv(+runtime_path: String, +executable: String) -> String:
+  Process.argv([runtime_path, "--experimental-strip-types",
+    installed_provider_path(executable), "--persist-query-bootstrap"])
+
+def query_outcome_argv(+runtime_path: String, +executable: String) -> String:
+  Process.argv([runtime_path, "--experimental-strip-types",
+    installed_provider_path(executable), "--persist-query-outcome"])
+
 def query_source_argv(+runtime_path: String, +executable: String) -> String:
   Process.argv([runtime_path, "--experimental-strip-types",
     installed_provider_path(executable), "--examine-query-source"])
@@ -93,6 +101,23 @@ def query_artifact_request(+owner: String, +worktree: String, +query: String) ->
   J.json_text(J.Jobj{J.Jpair{"owner", J.Jstr{owner},
     J.Jpair{"worktree", J.Jstr{worktree},
       J.Jpair{"query", J.Jstr{query}, J.Jnil{}}}}})
+
+def query_bootstrap_request(+owner: String, +worktree: String, +query: String,
+                            +bootstrap_text: String) -> String:
+  J.json_text(J.Jobj{J.Jpair{"owner", J.Jstr{owner},
+    J.Jpair{"worktree", J.Jstr{worktree},
+      J.Jpair{"query", J.Jstr{query},
+        J.Jpair{"bootstrapText", J.Jstr{bootstrap_text}, J.Jnil{}}}}}})
+
+def query_outcome_request(+owner: String, +worktree: String, +query: String,
+                          +bootstrap_digest: String, +exit_status: U32,
+                          +event_frame: String) -> String:
+  J.json_text(J.Jobj{J.Jpair{"owner", J.Jstr{owner},
+    J.Jpair{"worktree", J.Jstr{worktree},
+      J.Jpair{"query", J.Jstr{query},
+        J.Jpair{"bootstrapSha256", J.Jstr{bootstrap_digest},
+          J.Jpair{"exitStatus", J.Jint{exit_status},
+            J.Jpair{"eventFrame", J.Jstr{event_frame}, J.Jnil{}}}}}}}})
 
 def query_source_request(+owner: String, +worktree: String, +cwd: String,
                          +path: String) -> String:
