@@ -552,6 +552,7 @@ class SharedInstance(unittest.TestCase):
         second.wait(timeout=60)
         self.assertNotEqual(second.returncode, 0,
                             'a repeat while an observer holds the attempt is refused, not duplicated')
+        self.hold(directory / 'stdout', '"role": "native"')
         self.assertEqual((directory / 'stdout').read_text(errors='replace').count('"role": "native"'), 1)
         first.kill()
         first.wait(timeout=10)
