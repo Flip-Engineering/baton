@@ -2,7 +2,7 @@ import Base
 import ../src/host/instance.bend as Custody
 import ../src/host/process.bend as P
 import ../src/host/session-lock.bend as Lock
-import ../src/host/sqlite.bend as Sql
+import ../src/host/sqlite.bend as DB
 import ../src/host/text.bend as Text
 import ../src/context/identity.bend as Identity
 
@@ -424,7 +424,7 @@ def role_binding(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
 def role_binding_cli(args: List<String>) -> IO(Unit):
   match args:
     case path <> Nil{}: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,String> <- Sql.binding(path)
+      result : Result<&1,&1,U32 & String,String> <- DB.Sql.binding(path)
       role_binding(result)
     case _: IO.die(Unit,2,"role-binding DATABASE")
 
@@ -436,7 +436,7 @@ def role_identity_cli(args: List<String>) -> IO(Unit):
 def role_guard_cli(args: List<String>) -> IO(Unit):
   match args:
     case path <> binding <> key <> Nil{}: do IO<Unit>:
-      handle : U32 <- IO.try(U32,Sql.role_guard(path,binding,key))
+      handle : U32 <- IO.try(U32,DB.Sql.role_guard(path,binding,key))
       printed : Unit <- IO.print("role-held")
       gate : String <- IO.try(String,Text.Text.read("-"))
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
