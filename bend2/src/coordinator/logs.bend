@@ -780,8 +780,8 @@ def attempt_cleanup_files(db: String, directory: String) -> IO(String):
     keeper : String <- attempt_cleanup_file(db,directory,"keeper.log")
     IO.pure(String,items_join(stdout,items_join(stderr,items_join(observer,keeper))))
 
-def attempt_cleanup_row(db: String, row: String) -> IO(String):
-  match Tx.split_tabs(row):
+def attempt_cleanup_fields(db: String, fields: List<String>) -> IO(String):
+  match fields:
     case session <> attempt <> mode <> phase <> status <> +directory <> pending <> level <> reported <> path <> rest: do IO<String>:
       released_file : String <- IO.try(String,F.Files.regular(directory ++ "/released"))
       acknowledged_file : String <- IO.try(String,F.Files.regular(directory ++ "/acknowledged"))
@@ -796,6 +796,9 @@ def attempt_cleanup_row(db: String, row: String) -> IO(String):
       files : String <- Bool.pick(IO(String),eligible,attempt_cleanup_files(db,directory),IO.pure(String,""))
       IO.pure(String,files)
     case other: IO.pure(String,"")
+
+def attempt_cleanup_row(db: String, row: String) -> IO(String):
+  attempt_cleanup_fields(db,Tx.split_tabs(row))
 
 def attempt_cleanup_rows(db: String, rows: List<String>, acc: String) -> IO(String):
   match rows:
