@@ -1110,6 +1110,35 @@ static void br_keeper_stop(BrKeeper *keeper) {
   free(keeper->incoming);free(keeper->directory);br_manifest_free(&keeper->manifest);
   free(keeper);
 }
+/* Removes the per-attempt listener path only after acknowledgment has made the
+   attempt terminal. The manifest's control path was verified before the owner
+   started this keeper; an unacknowledged or failed attempt keeps its socket and
+   private directory for recovery. */
+static void br_keeper_cleanup_control_path(BrKeeper *keeper) {
+  if(!keeper || !br_exists(keeper->directory,"acknowledged"))return;
+  const char *path=keeper->manifest.field[5];
+  if(!path || !path[0])return;
+  char *parent=strdup(path);
+  if(!parent)return;
+  char *slash=strrchr(parent,'/');
+  if(!slash || slash==parent || strcmp(slash+1,"control")) {free(parent);return;}
+  *slash=0;
+  if(strncmp(parent,"/tmp/baton-retained-",20)) {free(parent);return;}
+  struct stat directory_info,socket_info;
+  if(lstat(parent,&directory_info) || !S_ISDIR(directory_info.st_mode) ||
+     directory_info.st_uid!=geteuid() || (directory_info.st_mode&0777)!=0700) {
+    free(parent);return;
+  }
+  int remove_parent=0;
+  if(lstat(path,&socket_info)) {
+    remove_parent=errno==ENOENT;
+  } else if(S_ISSOCK(socket_info.st_mode) && socket_info.st_uid==geteuid()) {
+    remove_parent=!unlink(path);
+  }
+  if(remove_parent && rmdir(parent) && errno!=ENOENT && errno!=ENOTEMPTY)
+    br_note(keeper,"cleanup-error",errno);
+  free(parent);
+}
 /* Starts custody of one attempt. The native process, its stdin writer, its
    stdout spool and its wait authority stay in this process for the attempt's
    lifetime, so observer and coordinator loss leave them intact. */
@@ -1749,7 +1778,8 @@ static int br_owner_loop(BrOwner *owner) {
       BrKeeper *keeper=*link;
       if(keeper->finishing && !keeper->outgoing) {
         *link=keeper->next;
-        if(owner->single)owner->finishing=1;else br_keeper_stop(keeper);
+        if(owner->single)owner->finishing=1;
+        else {br_keeper_cleanup_control_path(keeper);br_keeper_stop(keeper);}
         continue;
       }
       if((error=br_flush_commands(keeper))) {

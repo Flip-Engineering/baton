@@ -190,6 +190,22 @@ class SharedInstance(unittest.TestCase):
         result = self.command('control-write', directory, path)
         self.assertIn('control-write-complete', result.stdout, result.stderr)
 
+    def control_socket(self, directory):
+        raw = (directory / 'manifest').read_bytes()
+        magic, *fields = struct.unpack_from('=8s6QII', raw, 0)
+        self.assertEqual(magic, b'BATONRP1')
+        lengths = fields[:6]
+        offset = struct.calcsize('=8s6QII')
+        control = None
+        for index, length in enumerate(lengths):
+            value = raw[offset:offset + length]
+            offset += length
+            if index == 5:
+                self.assertTrue(value.endswith(b'\0'))
+                control = pathlib.Path(os.fsdecode(value[:-1]))
+        self.assertIsNotNone(control)
+        return control
+
     def hold(self, path, expected, timeout=30):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -349,6 +365,23 @@ class SharedInstance(unittest.TestCase):
         self.assertIn('stale-write-failed:', output)
         self.assertNotIn('stale-write-ok', output)
         print('evidence retirement', output.replace('\n', '|'))
+
+    def test_acknowledged_attempt_removes_its_private_control_path(self):
+        directory, child = self.begin('cleanup')
+        self.line(child, 'admitted')
+        control = self.control_socket(directory)
+        self.assertEqual(control.name, 'control')
+        self.assertTrue(control.parent.name.startswith('baton-retained-'))
+
+        output = self.wait_run(child)
+        self.assertIn('acknowledge-ok', output)
+        self.assertIn('attempt-complete', output)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and (os.path.lexists(control) or control.parent.exists()):
+            time.sleep(.01)
+        self.assertFalse(os.path.lexists(control), f'control socket remains: {control}')
+        self.assertFalse(control.parent.exists(), f'private control directory remains: {control.parent}')
+        print('evidence acknowledged-control-path-removed', control)
 
     def test_recovery_resumes_at_the_committed_checkpoint(self):
         directory, child = self.begin('partial', mode='partial', payload='one\n')
