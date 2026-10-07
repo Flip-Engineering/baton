@@ -54,11 +54,11 @@ def production_record(tag: String, path: String, pending: String) -> String:
 # tab, NUL and the separator are refused here, and the remaining alphabet is enforced by
 # Receipt.publish itself, whose refusal arrives as a host failure. The predicate is named
 # for what it establishes, not for the producer's full check.
-def name_char_ok(c: Char) -> Bool:
+def name_char_ok_slash(c: Char) -> Bool:
   +ch = c
-  match Tx.is_tab(ch):
+  match Char.is_eq(ch, Char.from_u32(47)):
     case True{}: False{}
-    case False{}: name_char_ok_next(ch)
+    case False{}: True{}
 
 def name_char_ok_next(c: Char) -> Bool:
   +ch = c
@@ -66,18 +66,11 @@ def name_char_ok_next(c: Char) -> Bool:
     case True{}: False{}
     case False{}: name_char_ok_slash(ch)
 
-def name_char_ok_slash(c: Char) -> Bool:
+def name_char_ok(c: Char) -> Bool:
   +ch = c
-  match Char.is_eq(ch, Char.from_u32(47)):
+  match Tx.is_tab(ch):
     case True{}: False{}
-    case False{}: True{}
-
-def name_go(text: String, ok: Bool) -> Bool:
-  match text:
-    case SNil{}: ok
-    case SCon{c, rest}:
-      +here = c
-      name_go_char(rest, ok, here)
+    case False{}: name_char_ok_next(ch)
 
 def name_go_char(rest: String, ok: Bool, c: Char) -> Bool:
   +tail = rest
@@ -86,6 +79,13 @@ def name_go_char(rest: String, ok: Bool, c: Char) -> Bool:
   match name_char_ok(here):
     case False{}: False{}
     case True{}: name_go(tail, sofar)
+
+def name_go(text: String, ok: Bool) -> Bool:
+  match text:
+    case SNil{}: ok
+    case SCon{c, rest}:
+      +here = c
+      name_go_char(rest, ok, here)
 
 def name_has_nul_go(text: String) -> Bool:
   match text:
@@ -97,29 +97,17 @@ def name_has_nul_go(text: String) -> Bool:
       +total = Bool.or(found, name_has_nul_go(rest))
       total
 
-def name_not_dot(text: String) -> Bool:
-  +n = text
-  match Tx.str_eq(n, "."):
-    case True{}: False{}
-    case False{}: name_not_dot_dot(n)
-
 def name_not_dot_dot(text: String) -> Bool:
   +n = text
   match Tx.str_eq(n, ".."):
     case True{}: False{}
     case False{}: True{}
 
-def name_precondition(name: String) -> Bool:
-  +n = name
-  match Tx.str_eq(n, ""):
+def name_not_dot(text: String) -> Bool:
+  +n = text
+  match Tx.str_eq(n, "."):
     case True{}: False{}
-    case False{}: name_precondition_go(n)
-
-def name_precondition_go(name: String) -> Bool:
-  +n = name
-  match name_go(n, True{}):
-    case False{}: False{}
-    case True{}: name_precondition_dots(n)
+    case False{}: name_not_dot_dot(n)
 
 def name_precondition_dots(name: String) -> Bool:
   +n = name
@@ -130,11 +118,24 @@ def name_precondition_dots(name: String) -> Bool:
 # The directory precondition the ensure effect itself enforces: empty and NUL are outer
 # failures there, and a tab is refused by publish. Checked before ensure so no effect runs
 # on a directory the producer would reject.
-def directory_precondition(directory: String) -> Bool:
-  +d = directory
-  match Tx.str_eq(d, ""):
+
+def name_precondition_go(name: String) -> Bool:
+  +n = name
+  match name_go(n, True{}):
+    case False{}: False{}
+    case True{}: name_precondition_dots(n)
+
+def name_precondition(name: String) -> Bool:
+  +n = name
+  match Tx.str_eq(n, ""):
     case True{}: False{}
-    case False{}: directory_next(d)
+    case False{}: name_precondition_go(n)
+
+def directory_tab(directory: String) -> Bool:
+  +d = directory
+  match I.carries_tab(d):
+    case True{}: False{}
+    case False{}: True{}
 
 def directory_next(directory: String) -> Bool:
   +d = directory
@@ -142,11 +143,11 @@ def directory_next(directory: String) -> Bool:
     case True{}: False{}
     case False{}: directory_tab(d)
 
-def directory_tab(directory: String) -> Bool:
+def directory_precondition(directory: String) -> Bool:
   +d = directory
-  match I.carries_tab(d):
+  match Tx.str_eq(d, ""):
     case True{}: False{}
-    case False{}: True{}
+    case False{}: directory_next(d)
 
 def publish_third(raw: String, path: String) -> String:
   +r = raw
@@ -319,16 +320,19 @@ def publish_directory(request: I.IntentInput, path: String, content: String, dir
 
 # The entry. The requested receipt path and the derived path are the same one, and the name
 # and directory preconditions hold, before any effect runs.
-def Intent.publish_intent(request: I.IntentInput, directory: String, name: String, content: String) -> IO(IntentPublish):
+
+def preflight_directory(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO<IntentPublish>:
   +req = request
+  +p = path
+  +want = content
   +dir = directory
   +n = name
-  +want = content
-  +derived = intent_path(dir, n)
-  +asked = I.requested_path(req)
-  match Tx.str_eq(asked, derived):
-    case False{}: IO.pure(IntentPublish, PublishRefused{req, "association", n, derived})
-    case True{}: preflight_name(req, derived, want, dir, n)
+  match directory_precondition(dir):
+    case False{}: IO.pure(IntentPublish, PublishRefused{req, "directory", n, dir})
+    case True{}: publish_directory(req, p, want, dir, n)
+
+law a_fresh_publication_record_is_admitted:
+  {classify_publish("published\t/d/n\t0\t\t0\t", "/d/n") == "published" : String}
 
 def preflight_name(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO(IntentPublish):
   +req = request
@@ -340,15 +344,17 @@ def preflight_name(request: I.IntentInput, path: String, content: String, direct
     case False{}: IO.pure(IntentPublish, PublishRefused{req, "name", n, ""})
     case True{}: preflight_directory(req, p, want, dir, n)
 
-def preflight_directory(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO<IntentPublish>:
+def Intent.publish_intent(request: I.IntentInput, directory: String, name: String, content: String) -> IO(IntentPublish):
   +req = request
-  +p = path
-  +want = content
   +dir = directory
   +n = name
-  match directory_precondition(dir):
-    case False{}: IO.pure(IntentPublish, PublishRefused{req, "directory", n, dir})
-    case True{}: publish_directory(req, p, want, dir, n)
+  +want = content
+  +derived = intent_path(dir, n)
+  +asked = I.requested_path(req)
+  match Tx.str_eq(asked, derived):
+    case False{}: IO.pure(IntentPublish, PublishRefused{req, "association", n, derived})
+    case True{}: preflight_name(req, derived, want, dir, n)
+
 
 law a_fresh_publication_record_is_admitted:
   {classify_publish("published\t/d/n\t0\t\t0\t", "/d/n") == "published" : String}
