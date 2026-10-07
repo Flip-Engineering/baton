@@ -28,4 +28,7 @@ only with `?fixture=<name>`
   exact client assertions: bounded probe resumes via `connectEvents`,
   zero snapshot requests during events-only recovery, bound
   subject/cursor/generation, terminal 503 still stops with no polling,
-  notice clears after hello.
+  notice clears after hello. Harness step-counting unit: one script
+  step is consumed per probe fetch plus per EventSource attempt
+  together, so the transient 503 consumes step 1 and the held-open 200
+  serves step 2 across both attempt kinds.

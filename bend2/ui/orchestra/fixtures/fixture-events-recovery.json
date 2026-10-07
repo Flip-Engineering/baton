@@ -8,14 +8,14 @@
  "players": [],
  "script": [
   {
-   "respond": { "body": { "error": "native-owner-subscription-unavailable" }, "status": 503 },
+   "respond": { "body": { "error": "owner-election-in-progress" }, "status": 503 },
    "step": 1,
-   "when": "first pre-open events probe"
+   "when": "first pre-open events probe (transient: not the exact terminal error, so the client falls through to connectEvents instead of stopping)"
   },
   {
    "respond": {
     "frames": [
-     { "data": { "generation": "fixture-events-gen-1" }, "event": "hello", "id": "fixture-events-1-hello" },
+     { "data": { "contractVersion": 1, "cursor": "fixture-events-1-hello", "generation": "fixture-events-gen-1" }, "event": "hello", "id": "fixture-events-1-hello" },
      { "data": { "pendingCount": 1, "session": "fixture-player-1", "unacknowledgedCount": 0 }, "event": "pending", "id": "fixture-events-2-pending" },
      { "data": { "id": "fixture-transition-1", "kind": "report", "session": "fixture-player-1" }, "event": "transition", "id": "fixture-events-3-transition" }
     ],
