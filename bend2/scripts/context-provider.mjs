@@ -210,6 +210,33 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
       process.stdout.write(`${JSON.stringify(refused('projectPolicyAuthorityMalformed', error.message))}\n`);
       process.exitCode = 2;
     }
+  } else if (process.argv[2] === '--prepare-query-artifact') {
+    const { prepareQueryArtifact } = await import('./context-query-artifact.mjs');
+    let input = '';
+    for await (const chunk of process.stdin) input += chunk;
+    try {
+      const authority = JSON.parse(input);
+      const result = prepareQueryArtifact({ owner: authority.owner, worktree: authority.worktree, query: authority.query });
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      if (result.status !== 'prepared') process.exitCode = 2;
+    } catch (error) {
+      process.stdout.write(`${JSON.stringify(refused('queryArtifactAuthorityMalformed', error.message))}\n`);
+      process.exitCode = 2;
+    }
+  } else if (process.argv[2] === '--examine-query-source') {
+    const { examineQuerySource } = await import('./context-query-artifact.mjs');
+    let input = '';
+    for await (const chunk of process.stdin) input += chunk;
+    try {
+      const authority = JSON.parse(input);
+      const result = examineQuerySource({ owner: authority.owner, worktree: authority.worktree,
+        cwd: authority.cwd, path: authority.path });
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      if (result.status !== 'examined') process.exitCode = 2;
+    } catch (error) {
+      process.stdout.write(`${JSON.stringify(refused('querySourceAuthorityMalformed', error.message))}\n`);
+      process.exitCode = 2;
+    }
   } else {
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
