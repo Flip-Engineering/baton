@@ -388,11 +388,18 @@ def record_filter(log: String, +state: String, omp: Bool) -> IO(Result<&1,&1,U32
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case True{}: append_frame(log,Omp.filter_note(state),True{})
 
-def terminal_event(db: String, +event: String, +previous: String, +primary: String, relevant: Bool, muse: Bool) -> IO(String):
+def terminal_event(db: String, +event: String, +previous: String, relevant: Bool) -> IO(String):
   match relevant:
     case False{}: IO.pure(String,previous)
     case True{}: do IO<String>:
-      selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ Bool.pick(String,muse,primary_terminal_expr(event,primary),C.terminal(event)) ++ " THEN CASE WHEN " ++ C.q(previous) ++ "='' THEN " ++ C.q(event) ++ " ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
+      selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.terminal(event) ++ " THEN CASE WHEN " ++ C.q(previous) ++ "='' THEN " ++ C.q(event) ++ " ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
+      IO.pure(String,Tx.trim_nl(selected))
+
+def muse_terminal_event(db: String, +event: String, +previous: String, +primary: String, relevant: Bool) -> IO(String):
+  match relevant:
+    case False{}: IO.pure(String,previous)
+    case True{}: do IO<String>:
+      selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ primary_terminal_expr(event,primary) ++ " THEN CASE WHEN " ++ C.q(previous) ++ "='' THEN " ++ C.q(event) ++ " ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
       IO.pure(String,Tx.trim_nl(selected))
 
 def codex_frames(db: String, +previous: String, +line: String, codex: Bool) -> IO(String):
@@ -480,7 +487,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         conflict_note : Unit <- completion_conflict_note(db,player,id,event,String.eq(state,"conflict"))
         deferred : Unit <- deferred_note(db,player,id,event,terminal,next_primary,next_current,sealed,String.eq(harness,"muse\n"))
         observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant,observation_sealed)
-        ended : String <- terminal_event(db,event,terminal,next_primary,relevant,String.eq(harness,"muse\n"))
+        ended : String <- Bool.pick(IO(String),String.eq(harness,"muse\n"),muse_terminal_event(db,event,terminal,next_primary,relevant),terminal_event(db,event,terminal,relevant))
         codex_state : String <- codex_frames(db,codex_log,line,String.eq(harness,"codex\n"))
         questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String <- NativeRequests.observe(db,player,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
         +mode : String <- filter_mode(db,line,String.eq(harness,"omp\n"))
