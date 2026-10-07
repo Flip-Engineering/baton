@@ -1434,30 +1434,32 @@ type InputPlan is Data:
   IpRows{raw: String, sql: String}
   IpRefused{document: String}
 
-# The fixed refusal documents. The command names the agreed internal entry, the
+# The fixed refusal documents. The command is the argv-selected ordinary command, the
 # condition is one fixed name that echoes no input, and the next value is the literal
 # navigation argv, which is empty for these refusals.
-def validation_refusal(condition: String) -> String:
-  Context.refusal_text(Context.Refuse{Context.RfValidation{}, "context-request-codec", Context.text_condition(condition), Context.NextStop{}})
+def validation_refusal(+c: Context.CodecCommand, condition: String) -> String:
+  Context.refusal_text(Context.Refuse{Context.RfValidation{}, Context.command_name(c), Context.text_condition(condition), Context.NextStop{}})
 
-def finish_observed(+retained: String, +v: ValidationObserved) -> InputPlan:
+def finish_observed(+c: Context.CodecCommand, +retained: String, +v: ValidationObserved) -> InputPlan:
   match v:
     case VoValid{}: IpRows{retained, Req.Context.json_tree_sql(retained)}
-    case VoInvalid{}: IpRefused{validation_refusal("invalidJson")}
-    case VoMalformed{}: IpRefused{validation_refusal("malformedValidationObservation")}
+    case VoInvalid{}: IpRefused{validation_refusal(c, "invalidJson")}
+    case VoMalformed{}: IpRefused{validation_refusal(c, "malformedValidationObservation")}
 
-def finish_validation(+retained: String, observed: String) -> InputPlan:
-  finish_observed(retained, validation_observed(observed))
+def finish_validation(+c: Context.CodecCommand, +retained: String, observed: String) -> InputPlan:
+  finish_observed(c, retained, validation_observed(observed))
 
 # The reader classifier. A decoded text body plans the validity statement; the three
 # reader refusals are answers about the input, so each becomes its own complete
-# document. Host failure is the caller's branch and never reaches this definition.
-def plan_of_read(+r: Raw.RawRead) -> InputPlan:
+# document. Host failure is the caller's branch and never reaches this definition. The
+# argv-selected command travels through every branch, so a refusal before any frame or
+# tool was read still names the command the caller selected.
+def plan_of_read(+c: Context.CodecCommand, +r: Raw.RawRead) -> InputPlan:
   match r:
     case Raw.RawText{+value}: IpValidate{value, Req.Context.validity_sql(value)}
-    case Raw.RawInvalidUtf8{+offset}: IpRefused{validation_refusal("invalidUtf8")}
-    case Raw.RawNul{+offset}: IpRefused{validation_refusal("nulByte")}
-    case Raw.RawBom{}: IpRefused{validation_refusal("bom")}
+    case Raw.RawInvalidUtf8{+offset}: IpRefused{validation_refusal(c, "invalidUtf8")}
+    case Raw.RawNul{+offset}: IpRefused{validation_refusal(c, "nulByte")}
+    case Raw.RawBom{}: IpRefused{validation_refusal(c, "bom")}
 
 # The complete document contract. The variant carries the discriminator the caller
 # needs for its stdout/exit0 and stderr/exit2 branches, so no caller parses a status
@@ -1468,13 +1470,33 @@ type Document is Data:
   DocOk{document: String}
   DocRefused{document: String}
 
-def decision_document(+d: FrameDecision) -> Document:
+def decision_document(+c: Context.CodecCommand, +d: FrameDecision) -> Document:
   match d:
     case FdOk{tool, id, query, request, scope}: DocOk{Context.codec_success_text(tool, id, query, request, scope)}
-    case FdRefused{cls, condition}: DocRefused{Context.refusal_text(Context.Refuse{cls, "context-request-codec", Context.text_condition(condition), Context.NextStop{}})}
+    case FdRefused{cls, condition}: DocRefused{Context.refusal_text(Context.Refuse{cls, Context.command_name(c), Context.text_condition(condition), Context.NextStop{}})}
 
-def document_of_rows(rows: String) -> Document:
-  decision_document(frame_decision(frame_envelope(Req.Context.parse_rows(rows))))
+def document_of_rows(+c: Context.CodecCommand, rows: String) -> Document:
+  decision_document(c, frame_decision(frame_envelope(Req.Context.parse_rows(rows))))
+
+# The frame's public tool must match the argv-selected command before any accepted
+# decision or effect. This entry is that gate: a frame whose public name is not the one
+# the selected command admits refuses with the one fixed mismatch condition, so a frame
+# never chooses the command and no unchecked frame text becomes command authority. The
+# name it reads is the same public name the envelope already validates, so an unknown
+# tool still refuses as an unknown tool in the ordinary decision below.
+def command_frame_name_of_read(+r: FrameRead) -> String:
+  match r:
+    case FrValue{+value}: raw_field_text(params_of(value), "name")
+    case FrRefused{condition}: SNil{}
+
+def command_frame_name_of_text(rows_text: String) -> String:
+  command_frame_name_of_read(frame_read(Req.Context.parse_rows(rows_text)))
+
+def command_document(+c: Context.CodecCommand, rows_text: String) -> Document:
+  command_document_step(c, rows_text, Context.command_admits_frame_name(c, command_frame_name_of_text(rows_text)))
+
+def command_document_step(+c: Context.CodecCommand, rows_text: String, ok: Bool) -> Document:
+  Bool.pick(Document, ok, document_of_rows(c, rows_text), DocRefused{validation_refusal(c, Context.command_mismatch_condition())})
 
 # ---------------------------------------------------------------------------
 # The correlated frame decision. A caller that answers one frame correlates its
@@ -2315,49 +2337,49 @@ def codec_law_any_other_observation_is_malformed():
 # The valid branch returns the row plan over the same retained raw document, carrying
 # the producer statement this lane selected.
 law codec_law_the_valid_observation_returns_the_selected_row_plan:
-  {finish_validation("{}", "1\n") == IpRows{"{}", "WITH raw(t) AS (SELECT '{}') SELECT hex(CAST(r.id AS TEXT)), hex(CAST(r.parent AS TEXT)), hex(CAST(r.type AS TEXT)), hex(CAST(r.key AS TEXT)), hex(CAST(CASE WHEN r.type IN ('integer','real') THEN CAST(t -> r.fullkey AS TEXT) ELSE CAST(r.value AS TEXT) END AS TEXT)) FROM raw, json_tree(raw.t) r;"} : InputPlan}
+  {finish_validation(Context.CcQuery{}, "{}", "1\n") == IpRows{"{}", "WITH raw(t) AS (SELECT '{}') SELECT hex(CAST(r.id AS TEXT)), hex(CAST(r.parent AS TEXT)), hex(CAST(r.type AS TEXT)), hex(CAST(r.key AS TEXT)), hex(CAST(CASE WHEN r.type IN ('integer','real') THEN CAST(t -> r.fullkey AS TEXT) ELSE CAST(r.value AS TEXT) END AS TEXT)) FROM raw, json_tree(raw.t) r;"} : InputPlan}
 
 def codec_law_the_valid_observation_returns_the_selected_row_plan():
   {==}
 
 law codec_law_the_invalid_observation_returns_its_complete_document:
-  {finish_validation("{}", "0\n") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"invalidJson\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+  {finish_validation(Context.CcQuery{}, "{}", "0\n") == IpRefused{"{\"command\":\"context-query\",\"condition\":\"invalidJson\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_the_invalid_observation_returns_its_complete_document():
   {==}
 
 law codec_law_a_bare_lf_observation_is_malformed_transport:
-  {finish_validation("{}", "\n") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+  {finish_validation(Context.CcQuery{}, "{}", "\n") == IpRefused{"{\"command\":\"context-query\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_a_bare_lf_observation_is_malformed_transport():
   {==}
 
 law codec_law_an_observation_without_its_framing_is_malformed_transport:
-  {finish_validation("{}", "1") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+  {finish_validation(Context.CcQuery{}, "{}", "1") == IpRefused{"{\"command\":\"context-query\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_an_observation_without_its_framing_is_malformed_transport():
   {==}
 
 law codec_law_an_observation_with_an_extra_column_is_malformed_transport:
-  {finish_validation("{}", "1\u{9}\n") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+  {finish_validation(Context.CcQuery{}, "{}", "1\u{9}\n") == IpRefused{"{\"command\":\"context-query\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_an_observation_with_an_extra_column_is_malformed_transport():
   {==}
 
 law codec_law_a_null_like_observation_is_malformed_transport:
-  {finish_validation("{}", "NULL\n") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+  {finish_validation(Context.CcQuery{}, "{}", "NULL\n") == IpRefused{"{\"command\":\"context-query\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_a_null_like_observation_is_malformed_transport():
   {==}
 
 law codec_law_a_multirow_observation_is_malformed_transport:
-  {finish_validation("{}", "1\n0\n") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+  {finish_validation(Context.CcQuery{}, "{}", "1\n0\n") == IpRefused{"{\"command\":\"context-query\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_a_multirow_observation_is_malformed_transport():
   {==}
 
 law codec_law_a_bom_answer_returns_its_complete_document:
-  {plan_of_read(Raw.RawBom{}) == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"bom\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+  {plan_of_read(Context.CcQuery{}, Raw.RawBom{}) == IpRefused{"{\"command\":\"context-query\",\"condition\":\"bom\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_a_bom_answer_returns_its_complete_document():
   {==}
@@ -2381,25 +2403,25 @@ def codec_law_the_scope_of_a_session_scoped_frame_is_the_session_value():
   {==}
 
 law codec_law_a_decoded_text_body_plans_the_validity_statement:
-  {plan_of_read(Raw.RawText{"{}"}) == IpValidate{"{}", "WITH raw(t) AS (SELECT '{}') SELECT json_valid(t) FROM raw;"} : InputPlan}
+  {plan_of_read(Context.CcQuery{}, Raw.RawText{"{}"}) == IpValidate{"{}", "WITH raw(t) AS (SELECT '{}') SELECT json_valid(t) FROM raw;"} : InputPlan}
 
 def codec_law_a_decoded_text_body_plans_the_validity_statement():
   {==}
 
 law codec_law_an_invalid_utf8_answer_returns_its_complete_document:
-  {plan_of_read(Raw.RawInvalidUtf8{"7"}) == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"invalidUtf8\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+  {plan_of_read(Context.CcQuery{}, Raw.RawInvalidUtf8{"7"}) == IpRefused{"{\"command\":\"context-query\",\"condition\":\"invalidUtf8\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_an_invalid_utf8_answer_returns_its_complete_document():
   {==}
 
 law codec_law_a_nul_answer_returns_its_complete_document:
-  {plan_of_read(Raw.RawNul{"7"}) == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"nulByte\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+  {plan_of_read(Context.CcQuery{}, Raw.RawNul{"7"}) == IpRefused{"{\"command\":\"context-query\",\"condition\":\"nulByte\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_a_nul_answer_returns_its_complete_document():
   {==}
 
 law codec_law_an_empty_row_set_returns_a_refusal_document:
-  {document_of_rows("") == DocRefused{"{\"command\":\"context-request-codec\",\"condition\":\"emptyFrame\",\"error\":\"validationRefusal\",\"next\":[]}"} : Document}
+  {document_of_rows(Context.CcQuery{}, "") == DocRefused{"{\"command\":\"context-query\",\"condition\":\"emptyFrame\",\"error\":\"validationRefusal\",\"next\":[]}"} : Document}
 
 def codec_law_an_empty_row_set_returns_a_refusal_document():
   {==}
@@ -2554,7 +2576,7 @@ def codec_law_a_numbered_scope_argument_refuses():
   {==}
 
 law codec_law_a_scoped_engines_frame_from_literal_transport_reports_the_session_scope:
-  {document_of_rows("30\u{9}\u{9}6f626a656374\u{9}\u{9}\n31\u{9}30\u{9}74657874\u{9}6a736f6e727063\u{9}322e30\n32\u{9}30\u{9}74657874\u{9}6d6574686f64\u{9}746f6f6c732f63616c6c\n33\u{9}30\u{9}696e7465676572\u{9}6964\u{9}37\n34\u{9}30\u{9}6f626a656374\u{9}706172616d73\u{9}\n35\u{9}34\u{9}74657874\u{9}6e616d65\u{9}6261746f6e325f636f6e746578745f656e67696e6573\n36\u{9}34\u{9}6f626a656374\u{9}617267756d656e7473\u{9}\n37\u{9}36\u{9}74657874\u{9}73636f7065\u{9}73657373696f6e\n") == DocOk{"{\"id\":7,\"query\":null,\"requestCanonical\":null,\"scope\":\"session\",\"tool\":\"context-engines\",\"version\":1}"} : Document}
+  {document_of_rows(Context.CcQuery{}, "30\u{9}\u{9}6f626a656374\u{9}\u{9}\n31\u{9}30\u{9}74657874\u{9}6a736f6e727063\u{9}322e30\n32\u{9}30\u{9}74657874\u{9}6d6574686f64\u{9}746f6f6c732f63616c6c\n33\u{9}30\u{9}696e7465676572\u{9}6964\u{9}37\n34\u{9}30\u{9}6f626a656374\u{9}706172616d73\u{9}\n35\u{9}34\u{9}74657874\u{9}6e616d65\u{9}6261746f6e325f636f6e746578745f656e67696e6573\n36\u{9}34\u{9}6f626a656374\u{9}617267756d656e7473\u{9}\n37\u{9}36\u{9}74657874\u{9}73636f7065\u{9}73657373696f6e\n") == DocOk{"{\"id\":7,\"query\":null,\"requestCanonical\":null,\"scope\":\"session\",\"tool\":\"context-engines\",\"version\":1}"} : Document}
 
 def codec_law_a_scoped_engines_frame_from_literal_transport_reports_the_session_scope():
   {==}
@@ -2574,13 +2596,13 @@ def codec_law_a_row_line_with_an_extra_column_classifies_as_a_malformed_row():
 # The malformed row's kind field is not hex, so the first field check refuses it before
 # the kind is ever read. The document therefore answers `malformedHexField`.
 law codec_law_a_row_line_missing_a_column_is_malformed_transport:
-  {document_of_rows("30\u{9}\u{9}6f626a656374\u{9}\n") == DocRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedHexField\",\"error\":\"validationRefusal\",\"next\":[]}"} : Document}
+  {document_of_rows(Context.CcQuery{}, "30\u{9}\u{9}6f626a656374\u{9}\n") == DocRefused{"{\"command\":\"context-query\",\"condition\":\"malformedHexField\",\"error\":\"validationRefusal\",\"next\":[]}"} : Document}
 
 def codec_law_a_row_line_missing_a_column_is_malformed_transport():
   {==}
 
 law codec_law_a_row_line_with_an_extra_column_is_malformed_transport:
-  {document_of_rows("30\u{9}\u{9}6f626a656374\u{9}\u{9}\u{9}\n") == DocRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedHexField\",\"error\":\"validationRefusal\",\"next\":[]}"} : Document}
+  {document_of_rows(Context.CcQuery{}, "30\u{9}\u{9}6f626a656374\u{9}\u{9}\u{9}\n") == DocRefused{"{\"command\":\"context-query\",\"condition\":\"malformedHexField\",\"error\":\"validationRefusal\",\"next\":[]}"} : Document}
 
 def codec_law_a_row_line_with_an_extra_column_is_malformed_transport():
   {==}
@@ -2601,13 +2623,13 @@ def codec_law_a_transported_query_frame_returns_a_success_document_from_rows():
   {==}
 
 law codec_law_an_empty_observation_is_malformed_transport:
-  {finish_validation("{}", "") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+  {finish_validation(Context.CcQuery{}, "{}", "") == IpRefused{"{\"command\":\"context-query\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_an_empty_observation_is_malformed_transport():
   {==}
 
 law codec_law_a_padded_observation_is_malformed_transport:
-  {finish_validation("{}", "1\nx") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+  {finish_validation(Context.CcQuery{}, "{}", "1\nx") == IpRefused{"{\"command\":\"context-query\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_a_padded_observation_is_malformed_transport():
   {==}

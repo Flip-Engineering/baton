@@ -203,6 +203,99 @@ def codec_tool_of(name: String) -> Maybe<&2, CodecTool>:
     case "context-result": Some{CtResult{}}
     case other: None{}
 
+# ---------------------------------------------------------------------------
+# The ordinary command identity. It is selected from parsed trusted native argv, it has
+# these four constructors and no others, and it renders exactly the four ordinary command
+# names. The frame's public tool must match the selected command before any accepted
+# decision or effect, so both query commands admit only the query frame tool. A refusal
+# that happens before tool selection still names the argv-selected command, so no frame
+# text and no arbitrary string ever becomes the command authority.
+
+type CodecCommand is Data:
+  CcQuery{}
+  CcQueryFile{}
+  CcResult{}
+  CcEngines{}
+
+def command_name(+c: CodecCommand) -> String:
+  match c:
+    case CcQuery{}: "context-query"
+    case CcQueryFile{}: "context-query-file"
+    case CcResult{}: "context-result"
+    case CcEngines{}: "context-engines"
+
+def command_of_name(+name: String) -> Maybe<&2, CodecCommand>:
+  match name:
+    case "context-query": Some{CcQuery{}}
+    case "context-query-file": Some{CcQueryFile{}}
+    case "context-result": Some{CcResult{}}
+    case "context-engines": Some{CcEngines{}}
+    case other: None{}
+
+# The public frame tool the selected command admits, and the only one it admits.
+def command_frame_name(+c: CodecCommand) -> String:
+  match c:
+    case CcQuery{}: "baton2_context_query"
+    case CcQueryFile{}: "baton2_context_query"
+    case CcResult{}: "baton2_context_result"
+    case CcEngines{}: "baton2_context_engines"
+
+def command_admits_frame_name(+c: CodecCommand, +name: String) -> Bool:
+  String.eq(command_frame_name(c), name)
+
+# One fixed condition for a frame whose public tool does not match the selected command.
+# It echoes no input.
+def command_mismatch_condition() -> String:
+  "commandToolMismatch"
+
+law contracts_law_the_command_names_are_the_four_ordinary_ones:
+  {[command_name(CcQuery{}), command_name(CcQueryFile{}), command_name(CcResult{}), command_name(CcEngines{})] == ["context-query", "context-query-file", "context-result", "context-engines"] : List<String>}
+
+def contracts_law_the_command_names_are_the_four_ordinary_ones():
+  {==}
+
+law contracts_law_argv_selects_the_query_command:
+  {command_of_name("context-query") == Some{CcQuery{}} : Maybe<&2, CodecCommand>}
+
+def contracts_law_argv_selects_the_query_command():
+  {==}
+
+law contracts_law_argv_refuses_an_unknown_command:
+  {command_of_name("context-request-codec") == None{} : Maybe<&2, CodecCommand>}
+
+def contracts_law_argv_refuses_an_unknown_command():
+  {==}
+
+law contracts_law_both_query_commands_admit_only_the_query_frame_tool:
+  {[command_frame_name(CcQuery{}), command_frame_name(CcQueryFile{})] == ["baton2_context_query", "baton2_context_query"] : List<String>}
+
+def contracts_law_both_query_commands_admit_only_the_query_frame_tool():
+  {==}
+
+law contracts_law_a_query_command_refuses_the_result_frame_tool:
+  {command_admits_frame_name(CcQuery{}, "baton2_context_result") == False{} : Bool}
+
+def contracts_law_a_query_command_refuses_the_result_frame_tool():
+  {==}
+
+law contracts_law_the_file_query_command_admits_the_query_frame_tool:
+  {command_admits_frame_name(CcQueryFile{}, "baton2_context_query") == True{} : Bool}
+
+def contracts_law_the_file_query_command_admits_the_query_frame_tool():
+  {==}
+
+law contracts_law_the_engines_command_admits_only_the_engines_frame_tool:
+  {command_admits_frame_name(CcEngines{}, "baton2_context_engines") == True{} : Bool}
+
+def contracts_law_the_engines_command_admits_only_the_engines_frame_tool():
+  {==}
+
+law contracts_law_the_mismatch_condition_is_fixed:
+  {command_mismatch_condition() == "commandToolMismatch" : String}
+
+def contracts_law_the_mismatch_condition_is_fixed():
+  {==}
+
 type RefusalClass is Data:
   RfValidation{}
   RfAdmissionRejected{}
