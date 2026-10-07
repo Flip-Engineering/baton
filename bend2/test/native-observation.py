@@ -27,7 +27,7 @@ class NativeObservation(RECEIVE.Receive):
             "        reply({'frame_written':True})\n"
             "        continue\n")
         self.assertIn(needle, fixture)
-        self.fixture.write_text(fixture.replace(needle, addition + needle, 1))
+        self.fixture.write_text(fixture.replace(needle, needle + addition, 1))
 
     def test_mixed_agent_end_members_preserve_completion_and_raw_frame(self):
         self.player(harness='omp')
