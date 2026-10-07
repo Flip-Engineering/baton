@@ -270,6 +270,10 @@ jobs:
           for gate in build-native laws-check check-native; do
             mv "$run/collected/gate-$gate-$GITHUB_SHA-$GITHUB_RUN_ATTEMPT/gate-$gate" "$run/receipts/$gate"
           done
+          # Producer admission: same-run download-artifact delivery plus directory
+          # names that bind each receipt to gate-<gate>-<sha>-<attempt>. The
+          # assembler then verifies every receipt's run identity, per-gate job,
+          # and complete logs; environment strings alone prove nothing.
           python3 "$BATON2_NATIVE_RUN/build-source/bend2/scripts/package-native.py" \
             --assemble-gates "$BATON2_NATIVE_RUN/receipts" \
             --build-outputs "$BATON2_NATIVE_RUN/receipts/build-native/outputs" \

@@ -264,6 +264,27 @@ def cc_version(cc):
                                    stdin=subprocess.DEVNULL, text=True).strip()
 
 
+def optional_output(argv):
+    try:
+        return subprocess.check_output(argv, cwd=ROOT, stdin=subprocess.DEVNULL,
+                                       text=True).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def toolchain_identity(cc):
+    """Full C/Xcode/SDK toolchain identity for identical package qualification.
+
+    A bare C version alone loses material identity. Install paths and runner
+    names are provenance only; the compared identity is versions and the Xcode
+    directory, which are image-level on qualified runners. Xcode and SDK
+    entries are absent off Darwin.
+    """
+    return {'cc_version': cc_version(cc),
+            'xcode_directory': optional_output(['xcode-select', '-p']),
+            'sdk_version': optional_output(['xcrun', '--show-sdk-version'])}
+
+
 def run_one_gate(gate_name, compiler, env, output, initial):
     """Run a single gate exactly as run_gates runs it and record a receipt.
 
@@ -298,7 +319,7 @@ def run_one_gate(gate_name, compiler, env, output, initial):
                'compiler_sha256': sha256(compiler),
                'compiler_version': bend_version(compiler),
                'compiler_arch': platform.machine(),
-               'cc_version': cc_version(cc),
+               'toolchain': toolchain_identity(cc),
                'runner_sha256': sha256(Path(__file__)),
                'producer': producer}
     same_source(receipt['before'], initial)
@@ -373,8 +394,8 @@ def verify_gate_receipt(directory, initial, compiler):
     require(summary.get('compiler_arch') == platform.machine(),
             'Gate receipt compiler architecture differs from this host')
     cc = summary.get('environment', {}).get('CC', 'clang')
-    require(summary.get('cc_version') == cc_version(cc),
-            'Gate receipt C toolchain differs from the selected toolchain')
+    require(summary.get('toolchain') == toolchain_identity(cc),
+            'Gate receipt C/Xcode/SDK toolchain differs from the selected toolchain')
     require(summary.get('environment', {}).get('BEND_NO_TELEMETRY') == '1',
             'Gate receipt must disable compiler telemetry')
     stage = summary.get('stage', {})
@@ -444,6 +465,7 @@ def assemble_gate_receipts(receipts_dir, build_outputs, compiler, env, logs, ini
                                                 'CC': env.get('CC', 'clang')},
                'compiler_sha256': sha256(compiler), 'runner_sha256': sha256(Path(__file__)),
                'producer': producers[0], 'inputs_before': before_inputs,
+               'producers': {name: verified[name].get('producer') for name in GATE_NAMES},
                'stages': [verified[name]['stage'] for name in GATE_NAMES],
                'assembled_from': {name: sha256(receipts_dir / name / 'summary.json')
                                   for name in GATE_NAMES}}

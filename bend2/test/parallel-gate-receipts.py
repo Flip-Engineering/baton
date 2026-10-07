@@ -61,9 +61,11 @@ class Receipts(unittest.TestCase):
         self.previous_bend_version = PACKAGE.bend_version
         PACKAGE.bend_version = lambda compiler: 'bend 2.0.25'
         self.addCleanup(setattr, PACKAGE, 'bend_version', self.previous_bend_version)
-        self.previous_cc_version = PACKAGE.cc_version
-        PACKAGE.cc_version = lambda cc: 'fake-cc 1.0'
-        self.addCleanup(setattr, PACKAGE, 'cc_version', self.previous_cc_version)
+        self.previous_toolchain_identity = PACKAGE.toolchain_identity
+        PACKAGE.toolchain_identity = lambda cc: {'cc_version': 'fake-cc 1.0',
+                                                 'xcode_directory': '/fake/Xcode.app/Contents/Developer',
+                                                 'sdk_version': '26.0'}
+        self.addCleanup(setattr, PACKAGE, 'toolchain_identity', self.previous_toolchain_identity)
         saved = {key: os.environ.pop(key) for key in GITHUB_KEYS if key in os.environ}
         self.addCleanup(os.environ.update, saved)
 
@@ -111,7 +113,9 @@ class Receipts(unittest.TestCase):
             'compiler_sha256': PACKAGE.sha256(self.compiler),
             'compiler_version': 'bend 2.0.25',
             'compiler_arch': platform.machine(),
-            'cc_version': 'fake-cc 1.0',
+            'toolchain': {'cc_version': 'fake-cc 1.0',
+                          'xcode_directory': '/fake/Xcode.app/Contents/Developer',
+                          'sdk_version': '26.0'},
             'runner_sha256': PACKAGE.sha256(pathlib.Path(PACKAGE.__file__)),
             'producer': producer,
             'binary_sha256': binary_sha,
@@ -271,17 +275,42 @@ class Receipts(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.assemble(receipts)
 
-    def test_cc_toolchain_mismatch_rejected(self):
+    def test_toolchain_mismatch_rejected(self):
         receipts = self.home / 'receipts'
         receipts.mkdir()
         self.complete_set(receipts)
 
         def mutate(summary, directory):
-            summary['cc_version'] = 'other-cc 2.0'
+            summary['toolchain'] = {'cc_version': 'other-cc 2.0',
+                                    'xcode_directory': '/fake/Xcode.app/Contents/Developer',
+                                    'sdk_version': '26.0'}
 
         self.write_receipt(receipts, 'build-native', mutate=mutate)
         with self.assertRaises(RuntimeError):
             self.assemble(receipts)
+
+    def test_sdk_identity_mismatch_rejected(self):
+        receipts = self.home / 'receipts'
+        receipts.mkdir()
+        self.complete_set(receipts)
+
+        def mutate(summary, directory):
+            summary['toolchain'] = {'cc_version': 'fake-cc 1.0',
+                                    'xcode_directory': '/fake/Xcode.app/Contents/Developer',
+                                    'sdk_version': '25.0'}
+
+        self.write_receipt(receipts, 'check-native', mutate=mutate)
+        with self.assertRaises(RuntimeError):
+            self.assemble(receipts)
+
+    def test_per_gate_producers_preserved(self):
+        receipts = self.home / 'receipts'
+        receipts.mkdir()
+        self.complete_set(receipts)
+        _, summary = self.assemble(receipts)
+        self.assertEqual(set(summary['producers']), set(PACKAGE.GATE_NAMES))
+        for gate in PACKAGE.GATE_NAMES:
+            self.assertEqual(summary['producers'][gate]['job'], 'gate-' + gate)
 
     def test_arch_mismatch_rejected(self):
         receipts = self.home / 'receipts'
