@@ -23,7 +23,7 @@ const workspaceRoot = mkdtempSync(join(tmpdir(), 'laws-check-workspace-fixture-'
 const complete = dispatched.map((control, index) => {
   const diagnostic = control.kind === 'proof'
     ? 'Error: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.'
-    : control.payload.law;
+    : `Error in ${control.payload.law}: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.`;
   const stdoutPath = join(artifactRoot, `${index}.stdout.log`);
   const stderrPath = join(artifactRoot, `${index}.stderr.log`);
   writeFileSync(stdoutPath, diagnostic);
@@ -161,10 +161,27 @@ test('producer discovery returns each proof and mutation identity once', async (
   assert.throws(() => producerSet(rows, [mutations[0], mutations[0]]), /not unique/);
 });
 
+test('mutation results reject output that names the law without an incomplete-proof diagnostic', async () => {
+  const resultIndex = dispatched.findIndex(({ kind }) => kind === 'mutation');
+  const result = complete[resultIndex];
+  const stdoutPath = join(artifactRoot, 'mutation-generic-error.log');
+  writeFileSync(stdoutPath, `Error in ${dispatched[resultIndex].payload.law}: unrelated type mismatch`);
+  const bytes = readFileSync(stdoutPath);
+  const results = complete.map((item, index) => index === resultIndex ? {
+    ...item,
+    outputs: {
+      ...item.outputs,
+      stdout: { artifact: stdoutPath, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') },
+    },
+  } : item);
+  assert.ok((await verifyResults(dispatched, results)).some(({ id, reason }) =>
+    id === result.id && reason === 'compiler output does not contain the producer diagnostic'));
+});
+
 test('aggregation rejects an omitted producer result', async () => {
   const failures = await verifyResults(dispatched, complete.slice(1));
   assert.equal(failures.filter(({ reason }) => reason === 'producer result omitted').length, 1);
-  assert.equal(failures[0].id, controls[0].id);
+  assert.ok(failures.some(({ id, reason }) => id === controls[0].id && reason === 'producer result omitted'));
 });
 
 test('aggregation rejects duplicate and unknown results', async () => {
