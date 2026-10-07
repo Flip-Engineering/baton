@@ -2574,6 +2574,16 @@ static int br_instance_attach_owned(BatonProcessCall *call) {
     if(error==ECONNREFUSED || error==ENOENT || error==EPIPE)
       error=br_attach_orphan(call->child,directory,(int)call->lock);
   }
+  else if(error==ENOENT || error==ECONNREFUSED || error==EPIPE) {
+    /* An owner elected after this attempt started has no in-memory record of
+       it, and an owner that is gone answers nothing at all. The attempt's own
+       custody decides both cases: the per-attempt lock, the manifest with its
+       prepared-file SHA-256 binding, the recorded native birth and the spool.
+       Adoption attaches the surviving child to this observer; it never spawns a
+       replacement, and an attempt with no spool or no launch record is refused
+       by the same path. */
+    error=br_attach_orphan(call->child,directory,(int)call->lock);
+  }
   free(directory);
   return error;
 }
