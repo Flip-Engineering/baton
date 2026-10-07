@@ -32,6 +32,9 @@ import ../src/host/session-lock.bend as Lock
 import ../src/host/files.bend as Files
 import ../src/git/text.bend as Tx
 
+def bool_text(value: Bool) -> String:
+  Bool.pick(String, value, "true", "false")
+
 def obs(+key: String, +value: String) -> IO(Unit):
   IO.print(key ++ "=" ++ value)
 
@@ -50,9 +53,9 @@ def identity_surfaces() -> IO(Unit):
     +identity : String <- IO.pure(String, ContextRole.guard_identity("/work/coord.sqlite", subject, ContextRole.RoleStarter{}, "0"))
     obs("identity.starter", identity)
     +other : String <- IO.pure(String, ContextRole.guard_identity("/work/coord.sqlite", subject, ContextRole.RoleTarget{}, "0"))
-    obs("identity.distinct", Bool.show(Bool.not(String.eq(identity, other))))
-    obs("identity.admitted", Bool.show(ContextRole.identity_admitted(identity, identity)))
-    obs("identity.rejected", Bool.show(ContextRole.identity_admitted(identity, other)))
+    obs("identity.distinct", bool_text(Bool.not(String.eq(identity, other))))
+    obs("identity.admitted", bool_text(ContextRole.identity_admitted(identity, identity)))
+    obs("identity.rejected", bool_text(ContextRole.identity_admitted(identity, other)))
     obs("lock.name", ContextRole.guard_lock_name("00ffa5"))
     obs("lock.length", Nat.show(String.length(ContextRole.guard_lock_name("00ffa5"))))
     obs("anchor", ContextRole.guard_anchor("/work/log"))
@@ -69,21 +72,21 @@ def progress_surfaces() -> IO(Unit):
     obs("cleanup.unreconciled", ContextProgress.cleanup_text(ContextProgress.cleanup_of(True{}, 1, 1)))
     obs("cleanup.pending", ContextProgress.cleanup_text(ContextProgress.cleanup_of(True{}, 0, 2)))
     obs("cleanup.complete", ContextProgress.cleanup_text(ContextProgress.cleanup_of(True{}, 0, 0)))
-    obs("settled.owed", Bool.show(ContextProgress.phase_admitted(ContextProgress.PhaseSettled{}, ContextProgress.CleanupComplete{}, 1)))
-    obs("settled.clean", Bool.show(ContextProgress.phase_admitted(ContextProgress.PhaseSettled{}, ContextProgress.CleanupComplete{}, 0)))
-    obs("state.terminal", Bool.show(ContextProgress.terminal(Context.QsRefused{})))
+    obs("settled.owed", bool_text(ContextProgress.phase_admitted(ContextProgress.PhaseSettled{}, ContextProgress.CleanupComplete{}, 1)))
+    obs("settled.clean", bool_text(ContextProgress.phase_admitted(ContextProgress.PhaseSettled{}, ContextProgress.CleanupComplete{}, 0)))
+    obs("state.terminal", bool_text(ContextProgress.terminal(Context.QsRefused{})))
     obs("state.late", Context.query_state_name(ContextProgress.state_after(Context.QsComplete{}, Context.QsFailed{})))
     obs("state.forward", Context.query_state_name(ContextProgress.state_after(Context.QsAccepted{}, Context.QsRunning{})))
 
 def admission_surfaces() -> IO(Unit):
   do IO<Unit>:
-    obs("owner.active", Bool.show(ContextAdmission.owner_admission(True{}, True{}, ContextAdmission.OwnerOrdinary{})))
-    obs("owner.stopped.ordinary", Bool.show(ContextAdmission.owner_admission(False{}, True{}, ContextAdmission.OwnerOrdinary{})))
-    obs("owner.stopped.control", Bool.show(ContextAdmission.owner_admission(False{}, True{}, ContextAdmission.OwnerQueryControl{})))
-    obs("owner.stopped.runtime", Bool.show(ContextAdmission.owner_admission(False{}, True{}, ContextAdmission.OwnerRuntimeRelease{})))
-    obs("owner.foreign", Bool.show(ContextAdmission.owner_admission(True{}, False{}, ContextAdmission.OwnerOrdinary{})))
-    obs("lifecycle.ready.all", Bool.show(ContextLifecycle.rejected_cleanup_ready(True{}, True{}, True{}, True{})))
-    obs("lifecycle.ready.missing", Bool.show(ContextLifecycle.rejected_cleanup_ready(True{}, True{}, True{}, False{})))
+    obs("owner.active", bool_text(ContextAdmission.owner_admission(True{}, True{}, ContextAdmission.OwnerOrdinary{})))
+    obs("owner.stopped.ordinary", bool_text(ContextAdmission.owner_admission(False{}, True{}, ContextAdmission.OwnerOrdinary{})))
+    obs("owner.stopped.control", bool_text(ContextAdmission.owner_admission(False{}, True{}, ContextAdmission.OwnerQueryControl{})))
+    obs("owner.stopped.runtime", bool_text(ContextAdmission.owner_admission(False{}, True{}, ContextAdmission.OwnerRuntimeRelease{})))
+    obs("owner.foreign", bool_text(ContextAdmission.owner_admission(True{}, False{}, ContextAdmission.OwnerOrdinary{})))
+    obs("lifecycle.ready.all", bool_text(ContextLifecycle.rejected_cleanup_ready(True{}, True{}, True{}, True{})))
+    obs("lifecycle.ready.missing", bool_text(ContextLifecycle.rejected_cleanup_ready(True{}, True{}, True{}, False{})))
     obs("delivery.attempt", ContextLifecycle.release_attempt_delivery("pending"))
     obs("delivery.ack", ContextLifecycle.release_ack_delivery(True{}))
     obs("delivery.unknown", ContextLifecycle.release_ack_delivery(False{}))
@@ -260,7 +263,7 @@ def show_duty(+key: String, result: Result<&1,&1,U32 & String,ContextDuties.Duty
 
 def show_duty_has(+key: String, view: Result<&1,&1,U32 & String,ContextDuties.DutyView>, +kind: String, +subject: String) -> IO(Unit):
   match view:
-    case Done{+duties}: obs(key, Bool.show(ContextDuties.duty_contains(duties, kind, subject)))
+    case Done{+duties}: obs(key, bool_text(ContextDuties.duty_contains(duties, kind, subject)))
     case Fail{error}:
       match error:
         case (code, message): obs(key ++ ".error", message)
@@ -269,8 +272,8 @@ def show_duty_set(result: Result<&1,&1,U32 & String,ContextDuties.DutyView>) -> 
   match result:
     case Done{+view}: do IO<Unit>:
       shown : Unit <- obs("duties.view", ContextDuties.duty_text(view))
-      first : Unit <- obs("duties.q1", Bool.show(ContextDuties.duty_contains(view, "query", "q1")))
-      obs("duties.q4", Bool.show(ContextDuties.duty_contains(view, "query", "q4")))
+      first : Unit <- obs("duties.q1", bool_text(ContextDuties.duty_contains(view, "query", "q1")))
+      obs("duties.q4", bool_text(ContextDuties.duty_contains(view, "query", "q4")))
     case Fail{error}:
       match error:
         case (code,+message): do IO<Unit>:
@@ -439,10 +442,10 @@ def intent_surfaces() -> IO(Unit):
     obs("intent.step.missing", ContextLifecycle.companion_text(ContextLifecycle.intent_step("missing\n")))
     obs("intent.step.unreadable", ContextLifecycle.companion_text(ContextLifecycle.intent_step("weird\n")))
     obs("intent.step.unterminated", ContextLifecycle.companion_text(ContextLifecycle.intent_step("1")))
-    obs("intent.duty.attempted", Bool.show(ContextLifecycle.owns_live_duty("attempted")))
-    obs("intent.duty.unavailable", Bool.show(ContextLifecycle.owns_live_duty("unavailable")))
-    obs("intent.duty.acknowledged", Bool.show(ContextLifecycle.owns_live_duty("acknowledged")))
-    obs("intent.duty.settled", Bool.show(ContextLifecycle.owns_live_duty("settled")))
+    obs("intent.duty.attempted", bool_text(ContextLifecycle.owns_live_duty("attempted")))
+    obs("intent.duty.unavailable", bool_text(ContextLifecycle.owns_live_duty("unavailable")))
+    obs("intent.duty.acknowledged", bool_text(ContextLifecycle.owns_live_duty("acknowledged")))
+    obs("intent.duty.settled", bool_text(ContextLifecycle.owns_live_duty("settled")))
 
 def show_step(+key: String, step: ContextLifecycle.CompanionStep) -> IO(Unit):
   obs(key, ContextLifecycle.companion_text(step))

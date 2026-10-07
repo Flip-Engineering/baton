@@ -179,7 +179,7 @@ def check_host(values, db, log):
     check(values.get("key.abc") == sha256_text("abc"), "key.abc", values.get("key.abc"))
     check(values.get("key.abc") is not None and len(values.get("key.abc", "")) == 64, "key.abc length", values.get("key.abc"))
     check(values.get("lock.acquired") == "true", "lock.acquired", values.get("lock.acquired"))
-    want_lock = str(pathlib.Path(log).resolve() / ("g.lock-" + values.get("key.abc", "")))
+    want_lock = str(pathlib.Path(log).resolve() / ("g.lock-" + values.get("key.abc", "").encode().hex()))
     check(values.get("lock.found") == want_lock, "lock.found", f"{values.get('lock.found')} != {want_lock}")
     binding = values.get("binding.original")
     try:

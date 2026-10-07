@@ -110,6 +110,12 @@ static void __attribute__((constructor)) baton_sql_use(void) {
 
 #include <ctype.h>
 #include <sys/stat.h>
+#include <limits.h>
+#ifdef __linux__
+#include <linux/stat.h>
+#include <sys/syscall.h>
+#include <sys/sysmacros.h>
+#endif
 
 #define BATON_SQL_UNAVAILABLE "context database binding unavailable: "
 #define BATON_SQL_MISMATCH "context database binding mismatch: "
@@ -333,12 +339,25 @@ static size_t baton_sql_json_string(char *out, const char *text) {
 /* Birth time in nanoseconds, or 0 when the platform cannot supply a positive
    incarnation discriminator. Size, mtime and ctime are deliberately absent:
    they change during ordinary writes. */
-static unsigned long long baton_sql_birth(const struct stat *info) {
+static unsigned long long baton_sql_birth(const char *path, const struct stat *info) {
 #ifdef __APPLE__
+  (void)path;
   if (info->st_birthtimespec.tv_sec <= 0) return 0;
   return (unsigned long long)info->st_birthtimespec.tv_sec * 1000000000ull
     + (unsigned long long)info->st_birthtimespec.tv_nsec;
+#elif defined(__linux__) && defined(SYS_statx)
+  struct statx observed;
+  memset(&observed, 0, sizeof(observed));
+  if (syscall(SYS_statx, AT_FDCWD, path, 0, STATX_BTIME | STATX_INO | STATX_TYPE, &observed)) return 0;
+  if ((observed.stx_mask & (STATX_BTIME | STATX_INO | STATX_TYPE)) != (STATX_BTIME | STATX_INO | STATX_TYPE)) return 0;
+  if (!S_ISREG(observed.stx_mode) || observed.stx_ino != (unsigned long long)info->st_ino ||
+      makedev(observed.stx_dev_major, observed.stx_dev_minor) != info->st_dev) return 0;
+  if (observed.stx_btime.tv_sec <= 0 || observed.stx_btime.tv_nsec >= 1000000000u) return 0;
+  unsigned long long seconds = (unsigned long long)observed.stx_btime.tv_sec;
+  if (seconds > (ULLONG_MAX - observed.stx_btime.tv_nsec) / 1000000000ull) return 0;
+  return seconds * 1000000000ull + observed.stx_btime.tv_nsec;
 #else
+  (void)path;
   (void)info;
   return 0;
 #endif
@@ -455,7 +474,7 @@ static int baton_sql_binding_open(const char *path, sqlite3 **out, char **bindin
   }
   /* The scheme is advertised only with its evidence: without a birth-time
      incarnation discriminator the platform cannot qualify dev-ino-birth. */
-  unsigned long long birth = baton_sql_birth(&info);
+  unsigned long long birth = baton_sql_birth(resolved, &info);
   if (!birth) {
     free(resolved);
     sqlite3_free(vfs_name);
