@@ -1,6 +1,5 @@
 import Base
 import ./commands.bend as C
-import ./stop.bend as Stop
 import ./receive.bend as Receive
 import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
@@ -49,30 +48,14 @@ def fork_tasks(+db: String, sessions: List<String>) -> IO(List<Chan(Result<&1,&1
       others : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, rest)
       IO.pure(List<Chan(Result<&1,&1,U32 & String,Unit>)>, Con{task, others})
 
-# A task that fails on a session which stopped after the snapshot is not a
-# serve failure: the stop retained its input by design. Any other failure is
-# carried to the shutdown exit.
-@unsafe
-def note_task(+db: String, +failed: Bool, +session: String, done: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
+# A failed task carries its failure to the shutdown exit. A stop racing the
+# snapshot can fail a task whose input the stop retained; the next serve
+# excludes that stopped input, so the exit stays truthful while the input
+# stays pending.
+def note_task(failed: Bool, done: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
   match done:
     case Done{unit}: IO.pure(Bool, failed)
-    case Fail{error}: do IO<Bool>:
-      stopped : Bool <- Stop.stopped(db, session)
-      IO.pure(Bool, Bool.or(failed, Bool.not(stopped)))
-
-# Joins one task list to its flag. Fresh snapshots fork through drain_tasks
-# below, so this helper never names the drive loop.
-@unsafe
-def drain_now(+db: String, +handle: U32, +failed: Bool, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, sessions: List<String>) -> IO(Bool):
-  match tasks:
-    case Nil{}: IO.pure(Bool, failed)
-    case task <> rest_tasks:
-      match sessions:
-        case Nil{}: IO.pure(Bool, failed)
-        case session <> rest_sessions: do IO<Bool>:
-          done : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>, task)
-          failed_now : Bool <- note_task(db, failed, session, done)
-          drain_now(db, handle, failed_now, rest_tasks, rest_sessions)
+    case Fail{error}: IO.pure(Bool, True{})
 
 def close_subscription(+handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match failed:
@@ -81,24 +64,32 @@ def close_subscription(+handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & Str
       IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{(1, "The serve recorded a swept task failure.")})
     case False{}: Custody.Instance.unsubscribe(handle)
 
+# Joins one forked list to its flag. Fresh snapshots fork through drain_tasks
+# below, so this helper never names the drive loop.
+@unsafe
+def drain_now(+db: String, +handle: U32, +failed: Bool, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>) -> IO(Bool):
+  match tasks:
+    case Nil{}: IO.pure(Bool, failed)
+    case task <> rest: do IO<Bool>:
+      done : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>, task)
+      failed_now : Bool <- note_task(failed, done)
+      drain_now(db, handle, failed_now, rest)
+
 # Tasks join one at a time. After every joined task the loop re-snapshots and
 # forks newly dirty sessions, draining those before rejoining the older tasks,
 # so discovery never waits for all tasks to end. The continuation carries the
 # loop without naming it, keeping every definition ordered before its callers.
 @unsafe
-def drain_tasks(+db: String, +handle: U32, +failed: Bool, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, sessions: List<String>, again: Bool -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def drain_tasks(+db: String, +handle: U32, +failed: Bool, tasks: List<Chan(Result<&1,&1,U32 & String,Unit>)>, again: Bool -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match tasks:
     case Nil{}: again(failed)
-    case task <> rest_tasks:
-      match sessions:
-        case Nil{}: again(failed)
-        case session <> rest_sessions: do IO<Result<&1,&1,U32 & String,Unit>>:
-          done : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>, task)
-          failed_now : Bool <- note_task(db, failed, session, done)
-          +fresh : List<String> <- snapshot(db)
-          extra : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, fresh)
-          failed_fresh : Bool <- drain_now(db, handle, failed_now, extra, fresh)
-          drain_tasks(db, handle, failed_fresh, rest_tasks, rest_sessions, again)
+    case task <> rest: do IO<Result<&1,&1,U32 & String,Unit>>:
+      done : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>, task)
+      failed_now : Bool <- note_task(failed, done)
+      fresh : List<String> <- snapshot(db)
+      extra : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, fresh)
+      failed_fresh : Bool <- drain_now(db, handle, failed_now, extra)
+      drain_tasks(db, handle, failed_fresh, rest, again)
 
 def notice_closed(+db: String, +handle: U32, +failed: Bool, result: Result<&1,&1,U32 & String,String>, again: Bool -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
@@ -118,9 +109,8 @@ def drive_sessions(+db: String, +handle: U32, +failed: Bool, sessions: List<Stri
   match sessions:
     case Nil{}: idle(db, handle, failed, again)
     case session <> rest: do IO<Result<&1,&1,U32 & String,Unit>>:
-      +both : List<String> <- IO.pure(List<String>, Con{session, rest})
-      first : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, both)
-      drain_tasks(db, handle, failed, first, both, again)
+      first : List<Chan(Result<&1,&1,U32 & String,Unit>)> <- fork_tasks(db, sessions)
+      drain_tasks(db, handle, failed, first, again)
 
 @unsafe
 def drive(+db: String, +handle: U32, +failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
