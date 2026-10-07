@@ -11,6 +11,11 @@ Exit status separates collection from qualification:
   2  collection completed, nothing failed, but some result is unqualified
      (a module whose output has no independently reviewed oracle)
 
+With no arguments the compiler is the one bend2/scripts/build-native.sh selects:
+$BEND, then .bend/bin/bend, then node_modules/.bend/bin/bend, and the evidence
+directory is a fresh temporary directory this run creates, prints and keeps.
+Explicit --bend and --out keep their meaning.
+
 Every executed command's argv, working directory, stdout, stderr, status and
 signal is recorded, and the raw streams are written to files as they run. Source
 and toolchain hashes are taken before and after the run; a change fails the run. A
@@ -69,6 +74,14 @@ def sha256_file(path):
     return sha256_bytes(Path(path).read_bytes())
 
 
+def resolve_compiler():
+    """Select the compiler bend2/scripts/build-native.sh selects."""
+    compiler = os.environ.get("BEND") or str(ROOT / ".bend" / "bin" / "bend")
+    if not os.access(compiler, os.X_OK):
+        compiler = str(ROOT / "node_modules" / ".bend" / "bin" / "bend")
+    return compiler if os.access(compiler, os.X_OK) else ""
+
+
 def source_hashes():
     seen = {}
     for name in sorted(set(CHECK_MODULES + EXTRA_MODULES)):
@@ -104,11 +117,25 @@ def run(record, name, argv, cwd, stdin_bytes=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--bend", required=True, help="absolute path to the pinned Bend compiler")
-    parser.add_argument("--out", required=True, help="evidence directory; it must not already exist")
+    parser.add_argument("--bend", default=None,
+                        help="pinned Bend compiler; defaults to $BEND, then the repository's Bend 2.0.25")
+    parser.add_argument("--out", default=None,
+                        help="evidence directory; defaults to a fresh temporary directory this run keeps")
     args = parser.parse_args()
 
-    out = Path(args.out)
+    bend = args.bend or resolve_compiler()
+    if not bend:
+        print("no Bend 2.0.25 compiler: set BEND, or install one at"
+              " .bend/bin/bend or node_modules/.bend/bin/bend", file=sys.stderr)
+        return 1
+
+    keep_out = args.out is not None
+    out = Path(args.out) if keep_out else Path(tempfile.mkdtemp(prefix="context-codec-"))
+    print(f"evidence directory: {out}", file=sys.stderr)
+    return run_collection(bend, out, keep_out)
+
+
+def run_collection(bend, out, keep_out):
     if out.exists() and any(out.iterdir()):
         print(f"refusing to reuse a non-empty output directory: {out}", file=sys.stderr)
         return 1
@@ -118,29 +145,29 @@ def main():
     record = {"commands": [], "_out": out, "failures": [], "unqualified": [], "discrepancies": [],
               "platform": {"platform": platform.platform(), "machine": platform.machine(),
                            "python": sys.version.split()[0]},
-              "compiler": {"path": str(args.bend)}}
-    if not Path(args.bend).exists():
+              "compiler": {"path": str(bend)}}
+    if not Path(bend).exists():
         record["failures"].append("the given compiler path does not exist")
         (out / "evidence.json").write_text(json.dumps(record, indent=1, default=str) + "\n")
         print(json.dumps({"failures": record["failures"]}, indent=1))
         return 1
-    record["compiler"]["sha256"] = sha256_file(args.bend)
+    record["compiler"]["sha256"] = sha256_file(bend)
     record["sources_before"] = source_hashes()
 
-    entry, stdout, _ = run(record, "bend-version", [args.bend, "version"], ROOT)
+    entry, stdout, _ = run(record, "bend-version", [bend, "version"], ROOT)
     version = stdout.decode("utf-8", "replace").strip()
     record["compiler"]["version"] = version
     if entry["status"] != 0 or version != "bend 2.0.25":
         record["failures"].append(f"compiler identity is not bend 2.0.25: {version!r}")
 
     for module in CHECK_MODULES:
-        entry, _, _ = run(record, f"check-{module.replace('.bend','')}", [args.bend, "--check-only", CONTEXT / module], ROOT)
+        entry, _, _ = run(record, f"check-{module.replace('.bend','')}", [bend, "--check-only", CONTEXT / module], ROOT)
         if entry["status"] != 0:
             record["failures"].append(f"--check-only failed for {module}")
 
     fixture = out / "raw-fixture"
     env = dict(os.environ)
-    env["BEND"] = str(args.bend)
+    env["BEND"] = str(bend)
     try:
         built = subprocess.run(["sh", str(ROOT / "bend2" / "scripts" / "build-native.sh"),
                                 str(CONTEXT / "raw-fixture.bend"), str(fixture)],
@@ -171,14 +198,20 @@ def main():
         for index, (target, expected) in enumerate(targets):
             got = lines[index] if index < len(lines) else "<missing>"
             wanted = f"{target} {expected}"
-            record["discrepancies"].append({"case": target.name, "expected": wanted, "actual": got, "match": got == wanted})
+            match = got == wanted
+            record["discrepancies"].append({"case": target.name, "expected": wanted, "actual": got, "match": match})
+            if not match:
+                record["failures"].append(f"{target.name} differs from its raw-byte oracle")
         name, payload, expected = STDIN_CASE
         entry, stdout, _ = run(record, "raw-stdin", [fixture, name], ROOT, stdin_bytes=payload)
         got = stdout.decode("utf-8", "replace").strip()
-        record["discrepancies"].append({"case": "stdin", "expected": expected, "actual": got, "match": got == expected})
+        match = got == expected
+        record["discrepancies"].append({"case": "stdin", "expected": expected, "actual": got, "match": match})
+        if not match:
+            record["failures"].append("the stdin case differs from its raw-byte oracle")
 
     for module in ENTRY_MODULES:
-        entry, stdout, _ = run(record, f"interpreted-{module.replace('.bend','')}", [args.bend, CONTEXT / module], ROOT)
+        entry, stdout, _ = run(record, f"interpreted-{module.replace('.bend','')}", [bend, CONTEXT / module], ROOT)
         if entry["status"] != 0:
             record["failures"].append(f"the {module} entry did not exit 0")
         oracle = (CONTEXT / module).with_suffix(".expected.txt")
@@ -195,6 +228,9 @@ def main():
         else:
             record["unqualified"].append({"module": module, "actual_file": str(candidate),
                                           "reason": "no independently reviewed oracle is checked in"})
+
+    record["qualified"] = [d["module"] for d in record["discrepancies"]
+                           if d.get("module") and d.get("match")]
 
     mutations = json.loads((CONTEXT / "codec-mutations.json").read_text())
     record["mutations"] = {"count": len(mutations), "records": []}
@@ -218,8 +254,10 @@ def main():
     record["qualification"] = "failed" if record["failures"] else ("unqualified" if record["unqualified"] else "qualified")
     record["exit"] = status
     (out / "evidence.json").write_text(json.dumps(record, indent=1, default=str) + "\n")
-    print(json.dumps({"out": str(out), "collection": record["collection"],
+    print(json.dumps({"out": str(out), "out_explicit": keep_out,
+                      "collection": record["collection"],
                       "qualification": record["qualification"], "exit": status,
+                      "qualified": record["qualified"],
                       "failures": record["failures"], "unqualified": [u["module"] for u in record["unqualified"]],
                       "raw_cases": len(RAW_CASES) + 1,
                       "byte_mismatches": [d for d in record["discrepancies"] if d.get("match") is False]}, indent=1))
