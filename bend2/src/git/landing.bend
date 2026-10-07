@@ -27,7 +27,7 @@ import ../host/receipt.bend as R
 
 type LandingRequest is Data:
   LandingRequested{intent: I.IntentInput, name: String, old_target: String, content: String,
-                   guard: String, artifact: String, attempt_directory: String, mutation: String}
+                   guard: String, artifact: String, attempt_directory: String, repository: String}
 
 type Landing is Data:
   LandingClaimFailed{error: U32 & String}
@@ -115,7 +115,7 @@ def Landing.associations(request: LandingRequest, handle: U32, published: String
     case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
       Landing.old_value_checked(h, req, pub, candidate_oid, basis_oid, target_head)
 
-def Landing.old_value_checked(handle: U32, request: LandingRequest, published: String, candidate: String, basis: String, head: String) -> IO<Landing>:
+def Landing.old_value_checked(handle: U32, request: LandingRequest, published: String, candidate: String, basis: String, head: String) -> IO(Landing)>:
   +h = handle
   +req = request
   +pub = published
@@ -129,18 +129,18 @@ def Landing.old_value_checked(handle: U32, request: LandingRequest, published: S
 
 # The mutation runs through the guarded capture with the live claim descriptor, so the child
 # inherits the lock and the artifact retains the diagnostics and the terminal outcome.
-def Landing.mutated(handle: U32, request: LandingRequest, candidate: String, basis: String, published: String) -> IO<Landing>:
+def Landing.mutated(handle: U32, request: LandingRequest, candidate: String, basis: String, published: String) -> IO(Landing)>:
   +h = handle
   +req = request
   +pub = published
   +cand = candidate
   +base = basis
-  +argv = Tx.str_cat(req.mutation, Tx.str_cat("\t", Tx.str_cat(qualified_target(intent_target(req.intent)), Tx.str_cat("\t", Tx.str_cat(cand, Tx.str_cat("\t", mutation_old_value(req.old_target)))))))
-  do IO<Landing>:
-    observed : Result<&1,&1,U32 & String,String & String> <- Process.capture_holding(argv, intent_common(req.intent), h, req.guard, req.artifact)
-    Landing.release(req, h, cand, base, pub, observed)
+  +argv = Tx.enc_argv(Con{"update-ref", Con{qualified_target(intent_target(req.intent)), Con{cand, Con{mutation_old_value(req.old_target), Nil{}}}}})
+  do IO(Landing):
+    observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(argv, req.repository, h, req.guard, req.artifact)
+    Landing.release(h, req, cand, base, pub, observed)
 
-def Landing.release(handle: U32, request: LandingRequest, candidate: String, basis: String, published: String, mutation: Result<&1,&1,U32 & String,String & String>) -> IO<Landing):
+def Landing.release(handle: U32, request: LandingRequest, candidate: String, basis: String, published: String, mutation: Result<&1,&1,U32 & String,String & String>) -> IO(Landing):
   +h = handle
   +req = request
   +cand = candidate
@@ -215,6 +215,41 @@ def Landing.decided(request: LandingRequest, claimed: Result<U32 & String, Maybe
         case None{}: IO.pure(Landing, LandingGuardBusy{intent_target(req.intent)})
         case Some{handle}: Landing.claimed_associated(handle, req)
 
+# The guarded operands come from the caller and are checked here rather than assumed: an
+# empty guard, artifact, attempt directory or repository never reaches an effect.
+def preconditions_hold(request: LandingRequest) -> Bool:
+  match request:
+    case LandingRequested{intent, name, old_target, content, guard, artifact, attempt_directory, repository}:
+      preconditions_rest(name, guard, artifact, attempt_directory, repository)
+
+def empty_strings_ok(name: String, guard: String, artifact: String, attempt_directory: String, repository: String) -> Bool:
+  +a = name
+  +b = guard
+  +c = artifact
+  +d = attempt_directory
+  +e = repository
+  Bool.pick(Bool, Bool.not(Tx.str_eq(name, "")), empty_second(guard, artifact, attempt_directory, repository), Bool.not(Tx.str_eq(guard, "")))
+
+def preconditions_rest(name: String, guard: String, artifact: String, attempt_directory: String, repository: String) -> Bool:
+  +n = name
+  +g = guard
+  +ar = artifact
+  +ad = attempt_directory
+  +rp = repository
+  Bool.pick(Bool, Bool.not(Tx.str_eq(n, "")), preconditions_guarded(g, ar, ad, rp), Bool.not(Tx.str_eq(g, "")))
+
+def preconditions_guarded(guard: String, artifact: String, attempt_directory: String, repository: String) -> Bool:
+  +g = guard
+  +ar = artifact
+  +ad = attempt_directory
+  +rp = repository
+  Bool.pick(Bool, Bool.not(Tx.str_eq(ar, "")), preconditions_dirs(ad, rp), Bool.not(Tx.str_eq(ad, "")))
+
+def preconditions_dirs(attempt_directory: String, repository: String) -> Bool:
+  +ad = attempt_directory
+  +rp = repository
+  Bool.pick(Bool, Bool.not(Tx.str_eq(ad, "")), Bool.not(Tx.str_eq(rp, "")), Bool.not(Tx.str_eq(rp, "")))
+
 def Landing.run(request: LandingRequest) -> IO(Landing):
   +req = request
   +intent = req.intent
@@ -246,19 +281,56 @@ law the_target_is_qualified_once:
 def the_target_is_qualified_once():
   {==}
 
-law a_first_landing_matches_an_absent_head:
-  for request: LandingRequest
-  {Landing.old_value_checked(1, request, "", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "") == (do IO<Landing>:
-    mutated : Result<&1,&1,U32 & String,String & String> <- Process.capture_holding(Tx.str_cat(request.mutation, Tx.str_cat("\t", Tx.str_cat(qualified_target(intent_target(request.intent)), Tx.str_cat("\t", Tx.str_cat("0123456789abcdef0123456789abcdef01234567", Tx.str_cat("\t", mutation_old_value(request.old_target))))))), intent_common(request.intent), 1, request.guard, request.artifact)
+law an_absent_old_target_consumes_an_absent_head:
+  for intent: I.IntentInput
+  for name: String
+  for content: String
+  for guard: String
+  for artifact: String
+  for attempt_directory: String
+  for repository: String
+  {Landing.old_value_checked(1, LandingRequested{intent, name, old_target: "", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "") == (do IO<Landing>:
+    observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(Tx.enc_argv(Con{"update-ref", Con{qualified_target(intent_target(intent)), Con{"0123456789abcdef0123456789abcdef01234567", Con{mutation_old_value(""), Nil{}}}}}), repository, 1, guard, artifact)
     released : Result<U32 & String, Unit> <- R.Receipt.release(1)
-    IO.pure(Landing, LandingHeld{request, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "", mutated, released)) : IO(Landing)}
+    IO.pure(Landing, LandingHeld{LandingRequested{intent, name, old_target: "", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "published", observed, released})) : IO(Landing)}
 
-def a_first_landing_matches_an_absent_head(request):
+def an_absent_old_target_consumes_an_absent_head(intent,name,content,guard,artifact,attempt_directory,repository):
+  {==}
+
+law a_present_old_target_matching_the_head_consumes_it:
+  for intent: I.IntentInput
+  for name: String
+  for content: String
+  for guard: String
+  for artifact: String
+  for attempt_directory: String
+  for repository: String
+  {Landing.old_value_checked(1, LandingRequested{intent, name, old_target: "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222") == (do IO<Landing>:
+    observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(Tx.enc_argv(Con{"update-ref", Con{qualified_target(intent_target(intent)), Con{"0123456789abcdef0123456789abcdef01234567", Con{mutation_old_value("2222222222222222222222222222222222222222"), Nil{}}}}}), repository, 1, guard, artifact)
+    released : Result<U32 & String, Unit> <- R.Receipt.release(1)
+    IO.pure(Landing, LandingHeld{LandingRequested{intent, name, old_target: "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "published", observed, released})) : IO(Landing)}
+
+def a_present_old_target_matching_the_head_consumes_it(intent,name,content,guard,artifact,attempt_directory,repository):
+  {==}
+
+law a_present_old_target_differing_from_the_head_is_refused:
+  for intent: I.IntentInput
+  for name: String
+  for content: String
+  for guard: String
+  for artifact: String
+  for attempt_directory: String
+  for repository: String
+  {Landing.old_value_checked(1, LandingRequested{intent, name, old_target: "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "3333333333333333333333333333333333333333") == (do IO<Landing>:
+    released : Result<U32 & String, Unit> <- R.Receipt.release(1)
+    IO.pure(Landing, LandingOldValueMismatch{"2222222222222222222222222222222222222222", "3333333333333333333333333333333333333333", released})) : IO(Landing)}
+
+def a_present_old_target_differing_from_the_head_is_refused(intent,name,content,guard,artifact,attempt_directory,repository):
   {==}
 
 law a_busy_guard_refuses_before_any_effect:
   for request: LandingRequest
-  {Landing.decided(request, Done{None{}}) == IO.pure(Landing, LandingGuardBusy(intent_target(request.intent))) : IO(Landing)}
+  {Landing.decided(request, Done{None{}}) == IO.pure(Landing, LandingGuardBusy{intent_target(request.intent)}) : IO(Landing)}
 
 def a_busy_guard_refuses_before_any_effect(request):
   {==}
