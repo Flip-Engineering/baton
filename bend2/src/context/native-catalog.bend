@@ -76,7 +76,7 @@ def decoded_declaration(+row: J.Json, decoded: NativeDecl.DeclarationDecode) -> 
 def decoded_row(+row: J.Json) -> CatalogDecode:
   decoded_declaration(row, NativeDecl.decode(member(row, "declaration"), field(row, "declarationDigest")))
 
-def catalog_tail_join(+catalog: Decl.Cat, +inventory: Decl.Inv, +installed: Eng.SS,
+def catalog_tail_join(catalog: Decl.Cat, +inventory: Decl.Inv, +installed: Eng.SS,
                       tail: CatalogDecode) -> CatalogDecode:
   match tail:
     case CatalogRefused{condition}: CatalogRefused{condition}
