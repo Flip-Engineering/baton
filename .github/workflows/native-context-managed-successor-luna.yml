@@ -20,7 +20,7 @@ jobs:
       - name: Check out immutable candidate source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: 726b218c7369cbf7525bb38633a00d0c31f0ef25
+          ref: 0da27934f4d975b5a896498a0a9aa0fba78e89cb
           path: candidate
       - name: Select Node 22
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -41,8 +41,8 @@ jobs:
           set -euo pipefail
           git -C candidate rev-parse HEAD | tee "$NATIVE_CONTEXT_RUN/evidence/source-commit.txt"
           git -C candidate rev-parse 'HEAD^{tree}' | tee "$NATIVE_CONTEXT_RUN/evidence/source-tree.txt"
-          test "$(cat "$NATIVE_CONTEXT_RUN/evidence/source-commit.txt")" = 726b218c7369cbf7525bb38633a00d0c31f0ef25
-          test "$(cat "$NATIVE_CONTEXT_RUN/evidence/source-tree.txt")" = 45d4c2e5dc9f2755304b699b7dabe0400fc0f65b
+          test "$(cat "$NATIVE_CONTEXT_RUN/evidence/source-commit.txt")" = 0da27934f4d975b5a896498a0a9aa0fba78e89cb
+          test "$(cat "$NATIVE_CONTEXT_RUN/evidence/source-tree.txt")" = d56ce153a8c04b32617ddf5247cd030182b5402b
           git -C candidate status --short --branch > "$NATIVE_CONTEXT_RUN/evidence/source-status.txt"
           shasum -a 256 \
             candidate/bend2/src/coordinator/main.bend \
