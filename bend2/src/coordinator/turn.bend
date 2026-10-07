@@ -499,9 +499,10 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +next_filter : String <- IO.pure(String,Omp.filter_next(filter,Tx.trim_nl(mode)))
         +next_checkpoint : Observer.State <- IO.pure(Observer.State,Observer.make(next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_held))
         NativeRequests.with_observation(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,questions,wakes => question_error => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
-          checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(checkpoint_blocked),Bool.and(Bool.not(failed),Bool.and(String.is_empty(question_error),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due(checkpoint_state,next_checkpoint))))))
+          +question_text : String <- IO.pure(String,question_error)
+          checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(checkpoint_blocked),Bool.and(Bool.not(failed),Bool.and(String.is_empty(question_text),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due(checkpoint_state,next_checkpoint))))))
           +checkpointed : Result<&1,&1,U32 & String,Unit> <- Observer.after_observation(db,handle,next_checkpoint,checkpoint_enabled,observed)
-          +next_error : String <- IO.pure(String,remember_write(remember(remember_write(Bool.pick(String,String.is_empty(first_error),question_error,first_error),written),observed),checkpointed))
+          +next_error : String <- IO.pure(String,remember_write(remember(remember_write(Bool.pick(String,String.is_empty(first_error),question_text,first_error),written),observed),checkpointed))
           +checkpoint_failed : Bool <- IO.pure(Bool,Bool.or(checkpoint_blocked,Bool.not(String.is_empty(next_error))))
           next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
           consume(db,player,id,log,current_policy,next_held,failed,handle,harness,next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_error,sender,attempt,next_checkpoint,checkpoint_failed,wakes,next))
