@@ -46,7 +46,7 @@ def recorded_endpoint(+db: String, +session: String, index: String) -> IO(String
 def dirty_session_sql() -> String:
   "SELECT DISTINCT m.recipient || '|' || s.harness FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " AND s.harness IN ('codex','omp','muse','claude-code') AND s.endpoint <> '' ORDER BY m.recipient;"
 
-def split_parts(parts: List<String>, +line: String) -> String & String:
+def split_parts(parts: List<&2,String>, +line: String) -> String & String:
   match parts:
     case session <> harness <> Nil{}: (Tx.trim_nl(session), Tx.trim_nl(harness))
     case other: (Tx.trim_nl(line), "")
