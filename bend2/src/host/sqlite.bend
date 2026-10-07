@@ -10,6 +10,13 @@ def Sql.query(path: String, sql: String) -> IO(Result<&1, &1, U32 & String, Stri
 def Sql.binding(path: String) -> IO(Result<&1, &1, U32 & String, String>):
   import "./sqlite.c"
 
+# Acquires one stable role lock file named from the verified physical database
+# tuple and a caller supplied role digest. The returned descriptor holds the
+# physical role until the caller closes it or exits; owner incarnation must be
+# checked separately at each owner work admission.
+def Sql.role_guard(path: String, binding: String, role_key: String) -> IO(U32):
+  import "./sqlite.c"
+
 # Observes the binding of `path` on a fresh connection and compares it with
 # `expected` before running `sql`. A mismatch is refused without executing the
 # caller SQL; a match returns rows in the same format as Sql.query.

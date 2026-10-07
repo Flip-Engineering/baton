@@ -1,5 +1,11 @@
 #include <sqlite3.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 /* This projection contains only cursor and summary fields. Message bodies and
    reader-visible state remain in the coordinator tables. The triggers run in
@@ -200,6 +206,8 @@ typedef struct {
   size_t length;
   int code, kind;
 } BatonSqlBound;
+
+typedef struct { char *path, *expected, *role; int fd, error; } BatonSqlRoleGuard;
 
 /* The closed reading of an expected binding: raw value text per member, the
    member bits seen so far and the first refusal reason. */
@@ -694,6 +702,115 @@ static Term baton_sql_bound_pack(Env e, IoWork *w) {
   w->data = NULL;
   return result;
 }
+
+static int baton_sql_role_directory(char *out, size_t size) {
+  const char *runtime = getenv("XDG_RUNTIME_DIR");
+  char runtime_path[PATH_MAX], temporary_path[PATH_MAX];
+  const char *choices[2] = { NULL, NULL };
+  if (runtime && *runtime) {
+    int n = snprintf(runtime_path, sizeof(runtime_path), "%s/baton2", runtime);
+    if (n > 0 && (size_t)n < sizeof(runtime_path)) choices[0] = runtime_path;
+  }
+  int n = snprintf(temporary_path, sizeof(temporary_path), "/tmp/baton2-%u", (unsigned)geteuid());
+  if (n > 0 && (size_t)n < sizeof(temporary_path)) choices[1] = temporary_path;
+  for (size_t i = 0; i < 2; i++) {
+    if (!choices[i] || !*choices[i]) continue;
+    struct stat info;
+    if (mkdir(choices[i], 0700) && errno != EEXIST) continue;
+    if (lstat(choices[i], &info) || !S_ISDIR(info.st_mode) || info.st_uid != geteuid()) continue;
+    if ((info.st_mode & 0077) && chmod(choices[i], 0700)) continue;
+    if (snprintf(out, size, "%s", choices[i]) > 0 && strlen(choices[i]) < size) return 0;
+  }
+  return EACCES;
+}
+
+static int baton_sql_role_guard_call(BatonSqlRoleGuard *call) {
+  sqlite3 *db = NULL;
+  char *observed = NULL;
+  const char *reason = NULL;
+  int code = baton_sql_binding_open(call->path, &db, &observed, &reason);
+  if (code) return code;
+  BatonSqlExpected expected;
+  baton_sql_expected_parse(call->expected, &expected);
+  const char *detail = expected.ok ? baton_sql_expected_difference(&expected, observed) : expected.reason;
+  if (detail) code = SQLITE_MISUSE;
+  char *device = expected.value[3] ? strdup(expected.value[3]) : NULL;
+  char *file = expected.value[4] ? strdup(expected.value[4]) : NULL;
+  char *birth = expected.value[5] ? strdup(expected.value[5]) : NULL;
+  for (int i = 0; i < 7; i++) free(expected.value[i]);
+  free(expected.token); free(observed); sqlite3_close(db);
+  if (code) { free(device); free(file); free(birth); return code; }
+  if (!device || !file || !birth || strlen(call->role) != 64) {
+    free(device); free(file); free(birth); return EINVAL;
+  }
+  for (size_t i = 0; i < 64; i++)
+    if (!((call->role[i] >= '0' && call->role[i] <= '9') ||
+          (call->role[i] >= 'a' && call->role[i] <= 'f'))) {
+      free(device); free(file); free(birth); return EINVAL;
+    }
+  char directory[PATH_MAX], path[PATH_MAX];
+  code = baton_sql_role_directory(directory, sizeof(directory));
+  if (!code) {
+    int n = snprintf(path, sizeof(path), "%s/role-%s-%s-%s-%s.lock",
+      directory, device, file, birth, call->role);
+    if (n <= 0 || (size_t)n >= sizeof(path)) code = ENAMETOOLONG;
+  }
+  free(device); free(file); free(birth);
+  if (code) return code;
+  int fd = open(path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
+  if (fd < 0) return errno;
+  if (fd < 3) {
+    int safe_fd = fcntl(fd, F_DUPFD_CLOEXEC, 3);
+    int saved = errno;
+    close(fd);
+    if (safe_fd < 0) return saved;
+    fd = safe_fd;
+  }
+  struct stat info;
+  if (fstat(fd, &info)) { code = errno; close(fd); return code; }
+  if (!S_ISREG(info.st_mode) || info.st_uid != geteuid()) { close(fd); return EPERM; }
+  if ((info.st_mode & 0077) && fchmod(fd, 0600)) { code = errno; close(fd); return code; }
+  int result;
+  do { result = flock(fd, LOCK_EX | LOCK_NB); } while (result < 0 && errno == EINTR);
+  if (result < 0) { code = errno; close(fd); return code; }
+  call->fd = fd;
+  return 0;
+}
+
+static Term baton_sql_role_guard_pack(Env e, IoWork *w) {
+  BatonSqlRoleGuard *call = (BatonSqlRoleGuard *)w->data;
+  Term result = call->error ? io_fail(e, (u32)call->error, "physical role guard acquisition failed")
+    : io_done(e, (Term)call->fd);
+  free(call->path); free(call->expected); free(call->role); free(call);
+  w->data = NULL;
+  return result;
+}
+
+static void baton_sql_role_guard_work(IoWork *w) {
+  BatonSqlRoleGuard *call = (BatonSqlRoleGuard *)w->data;
+  call->error = baton_sql_role_guard_call(call);
+}
+
+#ifdef CID_SQL_ROLE_GUARD
+static Term baton_sql_role_guard_run(Env e, Term *f, IoWork *w) {
+  BatonSqlRoleGuard *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(e, ENOMEM, NULL);
+  u64 path_n = 0, binding_n = 0, role_n = 0;
+  call->path = io_cstr(e, f[0], &path_n);
+  call->expected = io_cstr(e, f[1], &binding_n);
+  call->role = io_cstr(e, f[2], &role_n);
+  call->fd = -1;
+  if (!call->path || !call->expected || !call->role) call->error = EINVAL;
+  if (!call->error && (strlen(call->path) != path_n || strlen(call->expected) != binding_n || strlen(call->role) != role_n))
+    call->error = EINVAL;
+  w->data = (char *)call;
+  if (call->error) return baton_sql_role_guard_pack(e, w);
+  return io_work(w, baton_sql_role_guard_work, baton_sql_role_guard_pack);
+}
+static void __attribute__((constructor)) baton_sql_role_guard_use(void) {
+  io_eff(CID_SQL_ROLE_GUARD, baton_sql_role_guard_run, 0);
+}
+#endif
 
 /* The effect IDs use the definition names from the Bend source. */
 #ifdef CID_SQL_BINDING
