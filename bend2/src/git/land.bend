@@ -510,26 +510,9 @@ def holder_verdict_of(match: Maybe<String>, seen: U32, +request: HolderRequest) 
     case Some{value}: VerdictFound{request, value}
     case None{}: Bool.pick(HolderVerdict, U32.is_eq(seen, 0), VerdictNone{request}, VerdictAmbiguous{request, "the target branch has no valid block"})
 
-def holder_step(lines: List<String>, +branch: String, +target: String, +acc: HolderScan, +request: String) -> HolderScan:
-  match lines:
-    case Nil{}: holder_close(acc, request)
-    case Con{h, rest}:
-      Bool.pick(HolderScan, String.is_empty(h),
-        holder_step(rest, branch, target, holder_close(acc, request), request),
-        holder_line_step(h, rest, branch, target, acc, request))
-
-def holder_line_step(+line: String, rest: List<String>, +branch: String, +target: String, +acc: HolderScan, +request: String) -> HolderScan:
-  Bool.pick(HolderScan, Tx.starts_with(line, "worktree "),
-    holder_step(rest, branch, target, holder_open(holder_path_of(line), acc, request), request),
-    Bool.pick(HolderScan, holder_required_state(line),
-      holder_step(rest, branch, target, holder_ok_state(acc, request), request),
-      Bool.pick(HolderScan, Tx.str_eq(line, branch),
-        holder_step(rest, branch, target, holder_match_seen(line, target, acc, request), request),
-        Bool.pick(HolderScan, holder_valid_branch(line),
-          holder_step(rest, branch, target, holder_branch_ok(acc, request), request),
-          Bool.pick(HolderScan, holder_modifier(line),
-            holder_step(rest, branch, target, holder_ok_branch(acc, request), request),
-            holder_step(rest, branch, target, holder_bad(acc, request), request))))))
+def holder_bad(+acc: HolderScan, +request: String) -> HolderScan:
+  match acc:
+    case ScanState{block, match, seen, bad, blocks}: ScanState{block, match, seen, U32.add(bad, 1), blocks}
 
 def holder_ok_state(+acc: HolderScan, +request: String) -> HolderScan:
   Bool.pick(HolderScan, holder_in_block(acc, request), holder_state_seen(acc, request), holder_bad(acc, request))
@@ -537,10 +520,26 @@ def holder_ok_state(+acc: HolderScan, +request: String) -> HolderScan:
 def holder_ok_branch(+acc: HolderScan, +request: String) -> HolderScan:
   Bool.pick(HolderScan, holder_in_block(acc, request), acc, holder_bad(acc, request))
 
-def holder_bad(+acc: HolderScan, +request: String) -> HolderScan:
-  match acc:
-    case ScanState{block, match, seen, bad, blocks}: ScanState{block, match, seen, U32.add(bad, 1), blocks}
+def holder_line_step(+line: String, +branch: String, +target: String, +acc: HolderScan, +request: String) -> HolderScan:
+  Bool.pick(HolderScan, Tx.starts_with(line, "worktree "),
+    holder_open(holder_path_of(line), acc, request),
+    Bool.pick(HolderScan, holder_required_state(line),
+      holder_ok_state(acc, request),
+      Bool.pick(HolderScan, Tx.str_eq(line, branch),
+        holder_match_seen(line, target, acc, request),
+        Bool.pick(HolderScan, holder_valid_branch(line),
+          holder_branch_ok(acc, request),
+          Bool.pick(HolderScan, holder_modifier(line),
+            holder_ok_branch(acc, request),
+            holder_bad(acc, request))))))
 
+def holder_step(lines: List<String>, +branch: String, +target: String, +acc: HolderScan, +request: String) -> HolderScan:
+  match lines:
+    case Nil{}: holder_close(acc, request)
+    case Con{h, rest}:
+      Bool.pick(HolderScan, String.is_empty(h),
+        holder_step(rest, branch, target, holder_close(acc, request), request),
+        holder_step(rest, branch, target, holder_line_step(h, branch, target, acc, request), request))
 def holder_scan(lines: List<String>, +request: HolderRequest) -> HolderVerdict:
   +target = holder_request_target(request)
   holder_verdict(holder_step(lines, holder_branch_line(target), target, ScanState{NoBlock{}, None{}, 0, 0, 0}, holder_request_argv(request)), request)
