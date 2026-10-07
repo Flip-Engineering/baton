@@ -1,0 +1,122 @@
+name: Provider route composed-source gate
+
+on:
+  push:
+    branches:
+      - codex/validate-route678-681-current-20261007
+
+permissions:
+  contents: read
+
+jobs:
+  provider-route:
+    runs-on: xcode-27
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - name: Check out validation driver
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Check out immutable provider-route source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: 440859ad4e66ea8dd8c302101edc6d673a57aaf1
+          path: candidate
+      - name: Select Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Prepare evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          run="$RUNNER_TEMP/provider-route-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          mkdir -p "$run/toolchain" "$run/evidence"
+          printf 'ROUTE_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          printf '%s\n' "$run" > "$run/evidence/run-directory.txt"
+      - name: Verify source pin and record source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C candidate rev-parse HEAD | tee "$ROUTE_RUN/evidence/source-commit.txt"
+          git -C candidate rev-parse HEAD^{tree} | tee "$ROUTE_RUN/evidence/source-tree.txt"
+          test "$(cat "$ROUTE_RUN/evidence/source-commit.txt")" = 440859ad4e66ea8dd8c302101edc6d673a57aaf1
+          test "$(cat "$ROUTE_RUN/evidence/source-tree.txt")" = a28bd1162cca9352ba1c8c7050b026af59631290
+          git -C candidate status --short --branch > "$ROUTE_RUN/evidence/source-status.txt"
+          shasum -a 256 \
+            candidate/bend2/src/host/process-spawn.c \
+            candidate/bend2/src/host/files.c \
+            candidate/bend2/src/host/native-entry.c \
+            candidate/bend2/src/host/process.bend \
+            candidate/bend2/src/coordinator/main.bend \
+            candidate/bend2/src/coordinator/logs.bend \
+            candidate/bend2/test/configure.py \
+            candidate/bend2/test/mcp-command.py \
+            candidate/bend2/scripts/mcp-conductor.mjs \
+            candidate/bend2/scripts/build-native.sh \
+            > "$ROUTE_RUN/evidence/source-files.sha256"
+      - name: Capture remote compiler runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            uname -a
+            uname -m
+            xcodebuild -version
+            xcrun --find clang
+            clang --version
+            python3 --version
+            node --version
+            sysctl -n hw.memsize
+            git --version
+            sqlite3 --version
+          } > "$ROUTE_RUN/evidence/runtime.txt" 2>&1
+          clang_path="$(xcrun --find clang)"
+          shasum -a 256 "$clang_path" > "$ROUTE_RUN/evidence/clang-binary.sha256"
+          shasum -a 256 "$(command -v python3)" > "$ROUTE_RUN/evidence/python-binary.sha256"
+      - name: Install pinned Bend 2.0.25 toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$ROUTE_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
+            -o "$archive" > "$ROUTE_RUN/toolchain/download.log" 2>&1
+          printf 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31  %s\n' "$archive" | \
+            shasum -a 256 -c - > "$ROUTE_RUN/toolchain/archive-check.log" 2>&1
+          tar -tzf "$archive" > "$ROUTE_RUN/toolchain/archive-members.txt"
+          BEND_HOME="$ROUTE_RUN/toolchain-home" sh candidate/docs/bend2/reference/toolchain/install-2.0.25.sh \
+            > "$ROUTE_RUN/toolchain/install.log" 2>&1
+          bend="$ROUTE_RUN/toolchain-home/bin/bend"
+          "$bend" version | tee "$ROUTE_RUN/toolchain/version.txt"
+          test "$("$bend" version)" = 'bend 2.0.25'
+          shasum -a 256 "$bend" > "$ROUTE_RUN/toolchain/bend-binary.sha256"
+          shasum -a 256 "$archive" > "$ROUTE_RUN/toolchain/archive.sha256"
+      - name: Build production Main with the candidate host C
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p candidate/.scratch/bend2
+          cd candidate
+          BEND="$ROUTE_RUN/toolchain-home/bin/bend" CC=clang \
+            sh bend2/scripts/build-native.sh bend2/src/coordinator/main.bend .scratch/bend2/baton2 \
+            2>&1 | tee "$ROUTE_RUN/evidence/main-build.log"
+          shasum -a 256 .scratch/bend2/baton2 .scratch/bend2/baton2.c \
+            > "$ROUTE_RUN/evidence/main-artifacts.sha256"
+      - name: Run native provider route and MCP suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd candidate
+          python3 bend2/test/configure.py 2>&1 | tee "$ROUTE_RUN/evidence/configure-suite.log"
+          python3 bend2/test/mcp-command.py 2>&1 | tee "$ROUTE_RUN/evidence/mcp-command-suite.log"
+      - name: Retain exact-source provider route evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: provider-route-c-host-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.ROUTE_RUN }}/evidence/
+            ${{ env.ROUTE_RUN }}/toolchain/
+          if-no-files-found: error
+          retention-days: 30
