@@ -30,22 +30,70 @@ def hex_is(c: Char, n: U32) -> Bool:
   +value = n
   Char.is_eq(ch, Char.from_u32(value))
 
-def hex_chain_16(c: Char) -> Bool: match hex_is(c, 102): case True{}: True{} case False{}: False{}
-def hex_chain_15(c: Char) -> Bool: match hex_is(c, 101): case True{}: True{} case False{}: hex_chain_16(c)
-def hex_chain_14(c: Char) -> Bool: match hex_is(c, 100): case True{}: True{} case False{}: hex_chain_15(c)
-def hex_chain_13(c: Char) -> Bool: match hex_is(c, 99): case True{}: True{} case False{}: hex_chain_14(c)
-def hex_chain_12(c: Char) -> Bool: match hex_is(c, 98): case True{}: True{} case False{}: hex_chain_13(c)
-def hex_chain_11(c: Char) -> Bool: match hex_is(c, 97): case True{}: True{} case False{}: hex_chain_12(c)
-def hex_chain_10(c: Char) -> Bool: match hex_is(c, 57): case True{}: True{} case False{}: hex_chain_11(c)
-def hex_chain_9(c: Char) -> Bool: match hex_is(c, 56): case True{}: True{} case False{}: hex_chain_10(c)
-def hex_chain_8(c: Char) -> Bool: match hex_is(c, 55): case True{}: True{} case False{}: hex_chain_9(c)
-def hex_chain_7(c: Char) -> Bool: match hex_is(c, 54): case True{}: True{} case False{}: hex_chain_8(c)
-def hex_chain_6(c: Char) -> Bool: match hex_is(c, 53): case True{}: True{} case False{}: hex_chain_7(c)
-def hex_chain_5(c: Char) -> Bool: match hex_is(c, 52): case True{}: True{} case False{}: hex_chain_6(c)
-def hex_chain_4(c: Char) -> Bool: match hex_is(c, 51): case True{}: True{} case False{}: hex_chain_5(c)
-def hex_chain_3(c: Char) -> Bool: match hex_is(c, 50): case True{}: True{} case False{}: hex_chain_4(c)
-def hex_chain_2(c: Char) -> Bool: match hex_is(c, 49): case True{}: True{} case False{}: hex_chain_3(c)
-def hex_chain_1(c: Char) -> Bool: match hex_is(c, 48): case True{}: True{} case False{}: hex_chain_2(c)
+def hex_chain_16(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 102),
+    True{},
+    False{})
+def hex_chain_15(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 101),
+    True{},
+    hex_chain_16(c))
+def hex_chain_14(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 100),
+    True{},
+    hex_chain_15(c))
+def hex_chain_13(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 99),
+    True{},
+    hex_chain_14(c))
+def hex_chain_12(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 98),
+    True{},
+    hex_chain_13(c))
+def hex_chain_11(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 97),
+    True{},
+    hex_chain_12(c))
+def hex_chain_10(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 57),
+    True{},
+    hex_chain_11(c))
+def hex_chain_9(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 56),
+    True{},
+    hex_chain_10(c))
+def hex_chain_8(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 55),
+    True{},
+    hex_chain_9(c))
+def hex_chain_7(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 54),
+    True{},
+    hex_chain_8(c))
+def hex_chain_6(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 53),
+    True{},
+    hex_chain_7(c))
+def hex_chain_5(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 52),
+    True{},
+    hex_chain_6(c))
+def hex_chain_4(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 51),
+    True{},
+    hex_chain_5(c))
+def hex_chain_3(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 50),
+    True{},
+    hex_chain_4(c))
+def hex_chain_2(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 49),
+    True{},
+    hex_chain_3(c))
+def hex_chain_1(c: Char) -> Bool:
+  Bool.pick(Bool, hex_is(c, 48),
+    True{},
+    hex_chain_2(c))
 
 def hex_go(text: String, ok: Bool) -> Bool:
   match text:
@@ -54,23 +102,21 @@ def hex_go(text: String, ok: Bool) -> Bool:
       +here = c
       +tail = rest
       +sofar = ok
-      match hex_chain_1(here):
-        case False{}: False{}
-        case True{}: hex_go(tail, sofar)
-
+      Bool.pick(Bool, hex_chain_1(here),
+        hex_go(tail, sofar),
+        False{})
 def oid_ok(text: String) -> Bool:
   +t = text
-  match U32.is_eq(Tx.byte_len(t), 40):
-    case False{}: False{}
-    case True{}: hex_go(t, True{})
-
+  Bool.pick(Bool, U32.is_eq(Tx.byte_len(t), 40),
+    hex_go(t, True{}),
+    False{})
 def oid_of(observation: T.GitOut) -> String:
   match observation:
     case T.GRun{code, out}:
       +c = code
-      match U32.is_eq(c, 0):
-        case True{}: Tx.trim_nl(out)
-        case False{}: ""
+      Bool.pick(Bool, U32.is_eq(c, 0),
+        Tx.trim_nl(out),
+        "")
     case T.GBroken{detail}: ""
 
 # rev-parse answers 0 for a resolved revision and 1 for an unknown one; anything else, and a
@@ -79,18 +125,18 @@ def read_failed(observation: T.GitOut) -> Bool:
   match observation:
     case T.GRun{code, out}:
       +c = code
-      match U32.is_eq(c, 0):
-        case True{}: False{}
-        case False{}: True{}
+      Bool.pick(Bool, U32.is_eq(c, 0),
+        False{},
+        True{})
     case T.GBroken{detail}: True{}
 
 def ref_absent(observation: T.GitOut) -> Bool:
   match observation:
     case T.GRun{code, out}:
       +c = code
-      match U32.is_eq(c, 1):
-        case True{}: True{}
-        case False{}: False{}
+      Bool.pick(Bool, U32.is_eq(c, 1),
+        True{},
+        False{})
     case T.GBroken{detail}: False{}
 
 def refuse(step: String, observation: T.GitOut) -> IO(Association):
@@ -102,19 +148,17 @@ def oid_checked(step: String, request: AssociationRequest, observation: T.GitOut
   +s = step
   +req = request
   +obs = observation
-  match read_failed(obs):
-    case True{}: refuse(s, obs)
-    case False{}: oid_profile(s, req, obs, oid_of(obs))
-
+  Bool.pick(Bool, read_failed(obs),
+    refuse(s, obs),
+    oid_profile(s, req, obs, oid_of(obs)))
 def oid_profile(step: String, request: AssociationRequest, observation: T.GitOut, oid: String) -> IO(Association):
   +s = step
   +req = request
   +obs = observation
   +value = oid
-  match oid_ok(value):
-    case False{}: IO.pure(Association, AssociationRefused{s, obs})
-    case True{}: basis_read(req, value)
-
+  Bool.pick(Bool, oid_ok(value),
+    basis_read(req, value),
+    IO.pure(Association, AssociationRefused{s, obs}))
 def basis_read(request: AssociationRequest, candidate: String) -> IO(Association):
   +req = request
   +cand = candidate
@@ -126,19 +170,17 @@ def basis_checked(request: AssociationRequest, candidate: String, observation: T
   +req = request
   +cand = candidate
   +obs = observation
-  match read_failed(obs):
-    case True{}: refuse("basis", obs)
-    case False{}: basis_profile(req, cand, obs, oid_of(obs))
-
+  Bool.pick(Bool, read_failed(obs),
+    refuse("basis", obs),
+    basis_profile(req, cand, obs, oid_of(obs)))
 def basis_profile(request: AssociationRequest, candidate: String, observation: T.GitOut, basis: String) -> IO(Association):
   +req = request
   +cand = candidate
   +obs = observation
   +value = basis
-  match oid_ok(value):
-    case False{}: IO.pure(Association, AssociationRefused{"basis", obs})
-    case True{}: target_read(req, cand, value)
-
+  Bool.pick(Bool, oid_ok(value),
+    target_read(req, cand, value),
+    IO.pure(Association, AssociationRefused{"basis", obs}))
 def target_read(request: AssociationRequest, candidate: String, basis: String) -> IO(Association):
   +req = request
   +cand = candidate
@@ -154,51 +196,45 @@ def target_decided(request: AssociationRequest, candidate: String, basis: String
   +cand = candidate
   +base = basis
   +obs = observation
-  match ref_absent(obs):
-    case True{}: ancestor_read(req, cand, base, "")
-    case False{}: target_present(req, cand, base, obs)
-
+  Bool.pick(Bool, ref_absent(obs),
+    ancestor_read(req, cand, base, ""),
+    target_present(req, cand, base, obs))
 def target_present(request: AssociationRequest, candidate: String, basis: String, observation: T.GitOut) -> IO(Association):
   +req = request
   +cand = candidate
   +base = basis
   +obs = observation
-  match read_failed(obs):
-    case True{}: refuse("target", obs)
-    case False{}: target_profile(req, cand, base, obs)
-
+  Bool.pick(Bool, read_failed(obs),
+    refuse("target", obs),
+    target_profile(req, cand, base, obs))
 def target_profile(request: AssociationRequest, candidate: String, basis: String, observation: T.GitOut) -> IO(Association):
   +req = request
   +cand = candidate
   +base = basis
   +obs = observation
   +head = oid_of(obs)
-  match oid_ok(head):
-    case False{}: IO.pure(Association, AssociationRefused{"target", obs})
-    case True{}: ancestor_read(req, cand, base, head)
-
+  Bool.pick(Bool, oid_ok(head),
+    ancestor_read(req, cand, base, head),
+    IO.pure(Association, AssociationRefused{"target", obs}))
 def ancestor_read(request: AssociationRequest, candidate: String, basis: String, head: String) -> IO(Association):
   +req = request
   +cand = candidate
   +base = basis
   +tip = head
-  match Tx.str_eq(tip, ""):
-    case True{}: holder_read(req, cand, base, tip)
-    case False{}:
-      do IO<Association>:
+  Bool.pick(Bool, Tx.str_eq(tip, ""),
+    holder_read(req, cand, base, tip),
+    do IO<Association>:
         observed : T.GitOut <- Git.runGit(req.holder, ["merge-base", "--is-ancestor", "--end-of-options", tip, cand])
-        ancestor_decided(req, cand, base, tip, observed)
-
+        ancestor_decided(req, cand, base, tip, observed))
 def ancestor_decided(request: AssociationRequest, candidate: String, basis: String, head: String, observation: T.GitOut) -> IO(Association):
   +req = request
   +cand = candidate
   +base = basis
   +tip = head
   +obs = observation
-  match read_failed(obs):
-    case True{}: refuse("ancestor", obs)
-    case False{}: holder_read(req, cand, base, tip)
-
+  Bool.pick(Bool, read_failed(obs),
+    refuse("ancestor", obs),
+    holder_read(req, cand, base, tip))
 def holder_read(request: AssociationRequest, candidate: String, basis: String, head: String) -> IO(Association):
   +req = request
   +cand = candidate
@@ -214,10 +250,9 @@ def holder_decided(request: AssociationRequest, candidate: String, basis: String
   +base = basis
   +tip = head
   +obs = observation
-  match read_failed(obs):
-    case True{}: refuse("holder-common", obs)
-    case False{}: destination_read(req, cand, base, tip, oid_of(obs))
-
+  Bool.pick(Bool, read_failed(obs),
+    refuse("holder-common", obs),
+    destination_read(req, cand, base, tip, oid_of(obs)))
 def destination_read(request: AssociationRequest, candidate: String, basis: String, head: String, common: String) -> IO(Association):
   +req = request
   +cand = candidate
@@ -235,10 +270,9 @@ def destination_decided(request: AssociationRequest, candidate: String, basis: S
   +tip = head
   +holder_common = common
   +obs = observation
-  match read_failed(obs):
-    case True{}: refuse("destination-common", obs)
-    case False{}: common_compared(req, cand, base, tip, holder_common, obs, oid_of(obs))
-
+  Bool.pick(Bool, read_failed(obs),
+    refuse("destination-common", obs),
+    common_compared(req, cand, base, tip, holder_common, obs, oid_of(obs)))
 def common_compared(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, observation: T.GitOut, destination_common: String) -> IO(Association):
   +req = request
   +cand = candidate
@@ -247,10 +281,9 @@ def common_compared(request: AssociationRequest, candidate: String, basis: Strin
   +holder_common = common
   +obs = observation
   +dest_common = destination_common
-  match Tx.str_eq(holder_common, dest_common):
-    case False{}: IO.pure(Association, AssociationRefused{"common", obs})
-    case True{}: requested_compared(req, cand, base, tip, holder_common, dest_common)
-
+  Bool.pick(Bool, Tx.str_eq(holder_common, dest_common),
+    requested_compared(req, cand, base, tip, holder_common, dest_common),
+    IO.pure(Association, AssociationRefused{"common", obs}))
 def requested_compared(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, destination_common: String) -> IO(Association):
   +req = request
   +cand = candidate
@@ -258,10 +291,9 @@ def requested_compared(request: AssociationRequest, candidate: String, basis: St
   +tip = head
   +holder_common = common
   +dest_common = destination_common
-  match Tx.str_eq(holder_common, req.common):
-    case False{}: IO.pure(Association, AssociationRefused{"requested-common", T.GBroken{Tx.str_cat("holder answers ", Tx.str_cat(holder_common, Tx.str_cat(" for the requested ", req.common)))}})
-    case True{}: IO.pure(Association, AssociationHeld{req, cand, base, tip, holder_common, dest_common})
-
+  Bool.pick(Bool, Tx.str_eq(holder_common, req.common),
+    IO.pure(Association, AssociationHeld{req, cand, base, tip, holder_common, dest_common}),
+    IO.pure(Association, AssociationRefused{"requested-common", T.GBroken{Tx.str_cat("holder answers ", Tx.str_cat(holder_common, Tx.str_cat(" for the requested ", req.common)))}}))
 def Association.decide_observed(request: AssociationRequest, observation: T.GitOut) -> IO(Association):
   +req = request
   +obs = observation
