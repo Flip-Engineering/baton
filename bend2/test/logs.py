@@ -18,6 +18,8 @@ class Logs(unittest.TestCase):
         self.task = self.cwd / 'task.txt'
         self.task.write_text('Log policy task.')
         self.log = self.cwd / 'turn.jsonl'
+        self.base_log = self.log
+        self.active_turn = 'turn-1'
         self.events = self.cwd / 'events.jsonl'
         self.player = self.cwd / 'fixture-harness'
         self.repo = self.cwd / 'repository'
@@ -69,8 +71,17 @@ print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
 assert sys.stdin.read()==''
 sys.exit(%d)
 ''' % exit_code)
-        return self.call('turn', player, turn, str(self.player), 'model', 'low',
-                         str(self.cwd), str(self.task), str(self.log), '')
+        self.active_turn = turn
+        result = self.call('turn', player, turn, str(self.player), 'model', 'low',
+                           str(self.cwd), str(self.task), str(self.base_log), '')
+        self.log = self.generation(self.base_log, turn)
+        return result
+
+    def generation(self, base, turn):
+        return pathlib.Path(str(base) + '.attempt-' + turn)
+
+    def segment(self, index, log=None):
+        return pathlib.Path(str(log or self.log) + '.%d' % index)
 
     def prepare_attempt_artifacts(self):
         """Give the completed fixture turn a deterministic retained-attempt directory."""
@@ -94,7 +105,7 @@ sys.exit(%d)
         """Every frame line, oldest first, across the numbered segments and the live log."""
         lines = []
         for index in (4, 3, 2, 1):
-            path = self.cwd / ('turn.jsonl.%d' % index)
+            path = self.segment(index)
             if path.exists() and path.is_file():
                 lines += path.read_text().splitlines()
         lines += self.lines()
@@ -180,7 +191,7 @@ sys.exit(%d)
         self.call('logs', 'omp-worker', 'default', '65536', '2')
         frames = [json.dumps({'type': 'response', 'id': 'r%d' % i, 'command': 'probe', 'pad': 'y' * 20000}) for i in range(10)]
         self.stream(frames + [self.terminal()])
-        self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
+        self.assertTrue(self.segment(1).exists())
         live = self.lines()
         note = json.loads(live[0])
         self.assertEqual(note['type'], 'baton_log_rotation')
@@ -189,8 +200,8 @@ sys.exit(%d)
         self.assertEqual(note['retainedSegments'], 2)
         self.assertEqual(note['moved'], [1])
         self.assertLess(self.log.stat().st_size, 65536 + len(self.terminal()) + 200)
-        self.assertLessEqual((self.cwd / 'turn.jsonl.1').stat().st_size, 65536 + 20000)
-        self.assertFalse((self.cwd / 'turn.jsonl.3').exists())
+        self.assertLessEqual(self.segment(1).stat().st_size, 65536 + 20000)
+        self.assertFalse(self.segment(3).exists())
         note = '{"type":"baton_event_filter","requested":"delta","active":false,"outcome":"unacknowledged"}'
         self.assertEqual(live[-1], note)
         self.assertEqual(live[-2], self.terminal())
@@ -206,34 +217,34 @@ sys.exit(%d)
         skipping = [line for line in live if '"skipped":"pending-input"' in line]
         self.assertTrue(skipping, live[-3:])
         self.assertEqual(json.loads(skipping[0])['budgetBytes'], 65536)
-        self.assertFalse((self.cwd / 'turn.jsonl.1').exists())
+        self.assertFalse(self.segment(1).exists())
         self.assertGreater(self.log.stat().st_size, 65536)
         self.assertEqual(json.loads(self.call('inbox', 'omp-worker'))[0]['id'], 'hold-1')
 
     def test_rotation_stops_when_a_shift_step_fails(self):
         self.call('logs', 'omp-worker', 'default', '65536', '2')
-        blocker = self.cwd / 'turn.jsonl.2'
+        blocker = self.segment(2)
         blocker.mkdir()
         frames = [json.dumps({'type': 'response', 'id': 'r%d' % i, 'command': 'probe', 'pad': 'y' * 20000}) for i in range(10)]
         self.stream(frames + [self.terminal()])
         self.assertTrue(blocker.is_dir())
-        self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
+        self.assertTrue(self.segment(1).exists())
         live = self.lines()
         self.assertEqual(len([line for line in live if '"moved"' in line]), 1)
         failures = [json.loads(line) for line in live if '"failed":true' in line]
         self.assertTrue(failures, live[-4:])
         self.assertTrue(all('error' in item for item in failures), failures)
         self.assertIn('r9', self.log.read_text())
-        self.assertIn('r0', (self.cwd / 'turn.jsonl.1').read_text())
+        self.assertIn('r0', self.segment(1).read_text())
         self.assertTrue(blocker.is_dir())
-        self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
+        self.assertTrue(self.segment(1).exists())
 
     def test_rotation_removes_the_segment_above_the_count(self):
         self.call('logs', 'omp-worker', 'default', '65536', '1')
         frames = [json.dumps({'type': 'response', 'id': 'r%d' % i, 'command': 'probe', 'pad': 'y' * 20000}) for i in range(10)]
         self.stream(frames + [self.terminal()])
-        self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
-        self.assertFalse((self.cwd / 'turn.jsonl.2').exists())
+        self.assertTrue(self.segment(1).exists())
+        self.assertFalse(self.segment(2).exists())
 
     def test_sustained_update_stream_stays_within_retention_bound(self):
         budget, keep, calls = 65536, 2, 40
@@ -247,7 +258,7 @@ sys.exit(%d)
                                       'toolName': 'bash',
                                       'result': {'content': [{'type': 'text', 'text': 'done'}]}}))
         self.stream(frames + [self.terminal()])
-        self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
+        self.assertTrue(self.segment(1).exists())
         retained = self.rotated_frames()
         kinds = [json.loads(line).get('type') for line in retained]
         self.assertEqual(kinds.count('tool_execution_update'), calls)
@@ -256,8 +267,7 @@ sys.exit(%d)
         self.assertIn('"seq": 0', text)
         self.assertIn('"seq": %d' % (calls - 1), text)
         self.assertIn(self.terminal(), retained)
-        total = sum(p.stat().st_size for p in [self.log, self.cwd / 'turn.jsonl.1',
-                                               self.cwd / 'turn.jsonl.2'] if p.exists())
+        total = sum(p.stat().st_size for p in [self.log, self.segment(1), self.segment(2)] if p.exists())
         self.assertLessEqual(total, (keep + 1) * (budget + 4096))
 
     def test_unclassified_command_frames_keep_verbatim(self):
@@ -286,8 +296,8 @@ sys.exit(%d)
                           'result': {'content': [{'type': 'text', 'text': 'done'}]}})
         self.stream([pad, update, end, self.terminal()])
         files = {}
-        for name in ('turn.jsonl', 'turn.jsonl.1', 'turn.jsonl.2'):
-            path = self.cwd / name
+        for path in (self.log, self.segment(1), self.segment(2)):
+            name = path.name
             if path.exists():
                 files[name] = path.read_text().splitlines()
         holders = [name for name, lines in files.items() if update in lines and end in lines]
@@ -296,11 +306,12 @@ sys.exit(%d)
 
     def test_held_update_writes_nothing_until_its_end_batch(self):
         self.call('logs', 'omp-worker', 'default', '65536', '2')
+        self.log = self.generation(self.base_log, 'turn-1')
         pads = [json.dumps({'type': 'response', 'id': 'p%d' % i, 'command': 'probe',
                             'pad': 'y' * 32000}) for i in range(3)]
         self.log.write_text('\n'.join(pads) + '\n')
         self.assertGreater(self.log.stat().st_size, 65536)
-        self.assertFalse((self.cwd / 'turn.jsonl.1').exists())
+        self.assertFalse(self.segment(1).exists())
         update = json.dumps({'type': 'tool_execution_update', 'toolCallId': 'tool-0',
                              'toolName': 'bash',
                              'partialResult': {'content': [{'type': 'text', 'text': 'x' * 2000}]}})
@@ -308,8 +319,7 @@ sys.exit(%d)
                           'result': {'content': [{'type': 'text', 'text': 'done'}]}})
         self.stream([update, update, end, self.terminal()])
         raw = []
-        for name in ('turn.jsonl.4', 'turn.jsonl.3', 'turn.jsonl.2', 'turn.jsonl.1', 'turn.jsonl'):
-            path = self.cwd / name
+        for path in (self.segment(4), self.segment(3), self.segment(2), self.segment(1), self.log):
             if path.exists():
                 raw += path.read_text().splitlines()
         notes = [line for line in raw if '"moved"' in line]
@@ -343,26 +353,27 @@ sys.exit(%d)
         self.call('logs', 'omp-worker', 'default', '65536', '4')
         frames = [json.dumps({'type': 'response', 'id': 'r%d' % i, 'command': 'probe', 'pad': 'y' * 20000}) for i in range(16)]
         self.stream(frames + [self.terminal()])
-        self.assertTrue((self.cwd / "turn.jsonl.4").exists())
-        self.assertIn("r0", (self.cwd / "turn.jsonl.4").read_text())
+        first_log = self.log
+        self.assertTrue(self.segment(4, first_log).exists())
+        self.assertIn("r0", self.segment(4, first_log).read_text())
         self.register('second-worker', 'root', 'omp', 'model', 'low')
-        self.log = self.cwd / 'second.jsonl'
+        self.base_log = self.cwd / 'second.jsonl'
         self.stream([self.terminal('Second answer')], 'second-worker', 'second-turn')
-        kept = (self.cwd / 'second.jsonl').read_text()
-        second_rotated = sorted(p.name for p in self.cwd.glob('second.jsonl.*'))
+        kept = self.log.read_text()
+        second_rotated = sorted(p.name for p in self.cwd.glob(self.log.name + '.*'))
         self.call('logs', 'omp-worker', 'default', '65536', '1')
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
         self.assertEqual(answer['session'], 'omp-worker')
         self.assertTrue(all(item['removed'] for item in answer['removed']), answer)
         self.assertEqual(sorted(item['index'] for item in answer['removed']), [2, 3, 4])
         self.assertTrue(all(item['bytes'] > 0 for item in answer['removed']), answer)
-        self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
-        self.assertFalse((self.cwd / 'turn.jsonl.2').exists())
-        self.assertFalse((self.cwd / 'turn.jsonl.3').exists())
-        self.assertFalse((self.cwd / 'turn.jsonl.4').exists())
+        self.assertTrue(self.segment(1, first_log).exists())
+        self.assertFalse(self.segment(2, first_log).exists())
+        self.assertFalse(self.segment(3, first_log).exists())
+        self.assertFalse(self.segment(4, first_log).exists())
         self.assertTrue(self.log.exists())
-        self.assertEqual((self.cwd / 'second.jsonl').read_text(), kept)
-        self.assertEqual(sorted(p.name for p in self.cwd.glob('second.jsonl.*')), second_rotated)
+        self.assertEqual(self.log.read_text(), kept)
+        self.assertEqual(sorted(p.name for p in self.cwd.glob(self.log.name + '.*')), second_rotated)
         self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['removed'], [])
         self.assertEqual(self.refusal('logs-clean', 'absent-session')['error'], 'unknown-session')
 
@@ -474,15 +485,16 @@ while not pathlib.Path('release').exists(): time.sleep(.05)
 print(%r,flush=True)
 assert sys.stdin.read()==''
 ''' % self.terminal('Concurrent answer'))
+        self.log = self.generation(self.base_log, 'turn-1')
         turn = subprocess.Popen([str(EXE), str(self.db), 'turn', 'omp-worker', 'turn-1', str(self.player),
-                                 'model', 'low', str(self.cwd), str(self.task), str(self.log), ''],
+                                 'model', 'low', str(self.cwd), str(self.task), str(self.base_log), ''],
                                 text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             for _ in range(600):
-                if (self.cwd / 'turn.jsonl.1').exists(): break
+                if self.segment(1).exists(): break
                 if turn.poll() is not None: self.fail(turn.communicate()[1])
                 subprocess.run(['sleep', '.05'])
-            self.assertTrue((self.cwd / 'turn.jsonl.1').exists(), 'the turn did not rotate its live log')
+            self.assertTrue(self.segment(1).exists(), 'the turn did not rotate its live log')
             self.assertEqual(json.loads(self.call('logs-storage'))['logs'][0]['session'], 'omp-worker')
             self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['removed'], [])
             (self.cwd / 'release').write_text('go\n')
@@ -527,8 +539,8 @@ assert sys.stdin.read()==''
         self.assertEqual(answer['removed'], [])
         self.assertEqual(answer['skipped'], 'pending-input')
         self.assertEqual(answer['pendingInput'], 1)
-        self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
-        self.assertTrue((self.cwd / 'turn.jsonl.2').exists())
+        self.assertTrue(self.segment(1).exists())
+        self.assertTrue(self.segment(2).exists())
 
     def test_retention_count_above_four_preserves_requested_history(self):
         policy = json.loads(self.call('logs', 'omp-worker', 'default', '65536', '7'))
@@ -536,8 +548,8 @@ assert sys.stdin.read()==''
         frames = [json.dumps({'type': 'response', 'id': 'r%d' % i,
                              'command': 'probe', 'pad': 'y' * 40000}) for i in range(20)]
         self.stream(frames + [self.terminal()])
-        self.assertTrue((self.cwd / 'turn.jsonl.7').exists())
-        self.assertFalse((self.cwd / 'turn.jsonl.8').exists())
+        self.assertTrue(self.segment(7).exists())
+        self.assertFalse(self.segment(8).exists())
         entry = next(row for row in json.loads(self.call('logs-storage'))['logs']
                      if row['path'] == str(self.log))
         self.assertEqual({row['index'] for row in entry['rotated']}, set(range(1, 8)))
@@ -545,12 +557,13 @@ assert sys.stdin.read()==''
         removed = json.loads(self.call('logs-clean', 'omp-worker'))['removed']
         self.assertEqual({row['index'] for row in removed}, set(range(3, 8)))
         self.assertTrue(all(row['removed'] for row in removed))
-        self.assertTrue((self.cwd / 'turn.jsonl.2').exists())
+        self.assertTrue(self.segment(2).exists())
 
     def test_input_arriving_during_turn_protects_existing_segments(self):
         import time
         self.call('logs', 'omp-worker', 'default', '65536', '1')
-        protected = self.cwd / 'turn.jsonl.1'
+        self.log = self.generation(self.base_log, 'late-input-turn')
+        protected = self.segment(1)
         protected.write_text('sole earlier evidence\n')
         self.harness("""import pathlib,sys,time
 sys.stdin.readline()
@@ -566,7 +579,7 @@ sys.stdin.read()
                                + '\n' + self.terminal() + '\n')
         turn = subprocess.Popen([str(EXE), str(self.db), 'turn', 'omp-worker', 'late-input-turn',
                                  str(self.player), 'model', 'low', str(self.cwd), str(self.task),
-                                 str(self.log), ''], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 str(self.base_log), ''], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True)
         try:
             deadline = time.monotonic() + 30
@@ -603,11 +616,12 @@ pathlib.Path('harness.pid').write_text(str(os.getpid()))
 print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
 while True: time.sleep(1)
 """)
+        self.log = self.generation(self.base_log, 'abrupt-turn')
         turn = subprocess.Popen([str(EXE), str(self.db), 'turn', 'omp-worker', 'abrupt-turn',
                                  str(self.player), 'model', 'low', str(self.cwd), str(self.task),
-                                 str(self.log), ''], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 str(self.base_log), ''], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True)
-        pending = self.cwd / 'turn.jsonl.pending'
+        pending = pathlib.Path(str(self.log) + '.pending')
         try:
             deadline = time.monotonic() + 30
             while not pending.exists() or 'partial 2' not in pending.read_text():
@@ -618,7 +632,7 @@ while True: time.sleep(1)
             turn.wait(timeout=10)
             self.assertEqual([json.loads(line) for line in pending.read_text().splitlines()],
                              [json.loads(updates[-1])])
-            self.assertEqual(list(self.cwd.glob('turn.jsonl.pending.tmp.*')), [])
+            self.assertEqual(list(self.cwd.glob(self.log.name + '.pending.tmp.*')), [])
         finally:
             if turn.poll() is None:
                 turn.kill()
@@ -632,7 +646,7 @@ while True: time.sleep(1)
     def test_later_direct_turn_preserves_an_earlier_checkpoint(self):
         previous = json.dumps({'type': 'tool_execution_update', 'toolCallId': 'previous',
                                'partialResult': {'content': [{'type': 'text', 'text': 'earlier partial'}]}})
-        pending = self.cwd / 'turn.jsonl.pending'
+        pending = pathlib.Path(str(self.generation(self.base_log, 'turn-1')) + '.pending')
         pending.write_text(previous)
         self.stream([self.terminal()])
         self.assertIn(json.loads(previous), [json.loads(line) for line in self.lines()])
@@ -671,16 +685,18 @@ while True: time.sleep(1)
         self.call('logs', 'omp-worker', 'default', '65536', '4294967295')
         self.stream([self.terminal()])
         for index in (65, 101, 4294967295):
-            (self.cwd / ('turn.jsonl.%d' % index)).write_text('retained sparse evidence\n')
-        excluded = ['turn.jsonl.pending', 'turn.jsonl.pending.tmp.owner', 'turn.jsonl.01',
-                    'turn.jsonl.+9', 'turn.jsonl. 9', 'turn.jsonl.9.stderr', 'turn.jsonl.4294967296']
+            self.segment(index).write_text('retained sparse evidence\n')
+        pending = pathlib.Path(str(self.log) + '.pending')
+        pending.write_text('checkpoint\n')
+        excluded = [self.log.name + '.pending', self.log.name + '.pending.tmp.owner', self.log.name + '.01',
+                    self.log.name + '.+9', self.log.name + '. 9', self.log.name + '.9.stderr', self.log.name + '.4294967296']
         for name in excluded:
             (self.cwd / name).write_text('preserved artifact\n')
         entry = next(row for row in json.loads(self.call('logs-storage'))['logs']
                      if row['path'] == str(self.log))
         self.assertEqual({row['index'] for row in entry['rotated']}, {65, 101, 4294967295})
-        self.assertEqual(entry['pendingBytes'], (self.cwd / 'turn.jsonl.pending').stat().st_size)
-        self.assertEqual(entry['pendingPath'], str(self.cwd / 'turn.jsonl.pending'))
+        self.assertEqual(entry['pendingBytes'], pending.stat().st_size)
+        self.assertEqual(entry['pendingPath'], str(pending))
         self.call('logs', 'omp-worker', 'default', '65536', '2')
         removed = json.loads(self.call('logs-clean', 'omp-worker'))['removed']
         self.assertEqual({row['index'] for row in removed}, {65, 101, 4294967295})
@@ -916,13 +932,15 @@ sys.stdin.readline()
 print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
 assert sys.stdin.read()==''
 ''')
-        self.log = unwritable
+        blocked_generation = pathlib.Path(str(unwritable) + '.attempt-turn-1')
+        blocked_generation.mkdir()
+        self.base_log = unwritable
         self.call('turn', 'omp-worker', 'turn-1', str(self.player), 'model', 'low',
-                  str(self.cwd), str(self.task), str(self.log), '')
+                  str(self.cwd), str(self.task), str(self.base_log), '')
         inbox = json.loads(self.call('inbox', 'root'))
         bodies = [message['body'] for message in inbox]
         self.assertEqual(len([body for body in bodies if 'Native output observation failed' in body]), 1, bodies)
-        self.assertTrue(any(str(unwritable) in body for body in bodies), bodies)
+        self.assertTrue(any(str(blocked_generation) in body for body in bodies), bodies)
         self.assertTrue(any('Answer despite an unwritable log' in body for body in bodies), bodies)
 
 if __name__ == '__main__':
