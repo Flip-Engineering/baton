@@ -107,23 +107,37 @@ def serving(db: String, reader: String, +url: String, handle: U32, line: String)
     status : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
     finish(status)
 
-def serve(db: String, reader: String, url: String, handle: U32, first: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
+# The server prints its listening JSON first and the bare URL second; the URL the
+# operator sees and the browser opens is the server's actual bound address, so an
+# ephemeral `--port 0` is reported honestly.
+def serve_url(db: String, reader: String, handle: U32, line: String, second: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
+  match second:
+    case Fail{error}:
+      IO.die(Unit,2,"The view server URL could not be read: " ++ error_text(error) ++ " See " ++ db ++ ".view.stderr.")
+    case Done{None{}}:
+      IO.die(Unit,2,"The view server reported its listener but no URL line. See " ++ db ++ ".view.stderr.")
+    case Done{Some{+url}}:
+      serving(db,reader,url,handle,line)
+
+def serve(db: String, reader: String, handle: U32, first: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
   match first:
     case Fail{error}:
       IO.die(Unit,2,"The view server address could not be read: " ++ error_text(error) ++ " See " ++ db ++ ".view.stderr.")
     case Done{None{}}:
       IO.die(Unit,2,"The view server exited before reporting its address; the port may be in use. Pass another PORT. See " ++ db ++ ".view.stderr.")
     case Done{Some{+line}}:
-      serving(db,reader,url,handle,line)
+      do IO<Unit>:
+        second : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
+        serve_url(db,reader,handle,line,second)
 
-def run_started(db: String, reader: String, url: String, spawned: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+def run_started(db: String, reader: String, spawned: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
   match spawned:
     case Fail{error}:
       IO.die(Unit,2,"The view server could not start: " ++ error_text(error))
     case Done{+handle}:
       do IO<Unit>:
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        serve(db,reader,url,handle,first)
+        serve(db,reader,handle,first)
 
 def node_or_die(node: Result<&1,&1,U32 & String,String>) -> IO(String):
   match node:
@@ -131,14 +145,14 @@ def node_or_die(node: Result<&1,&1,U32 & String,String>) -> IO(String):
     case Fail{error}:
       IO.die(String,2,"Node is required to serve the Orchestra live view (the server uses node:sqlite); add Node 22 or newer to PATH: " ++ error_text(error))
 
-def run_body(subject: String, +reader: String, +port: String, +canonical: String) -> IO(Unit):
+def run_body(subject: String, +reader: String, port: String, +canonical: String) -> IO(Unit):
   do IO<Unit>:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     found : Result<&1,&1,U32 & String,String> <- Host.Control.command("node")
     node : String <- node_or_die(found)
     server : String <- resolve_server(executable)
     spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([node,server,"--database",canonical,"--reader",reader,"--subject",subject,"--host","127.0.0.1","--port",port]),".",canonical ++ ".view.stderr")
-    run_started(canonical,reader,"http://127.0.0.1:" ++ port ++ "/",spawned)
+    run_started(canonical,reader,spawned)
 
 def canonical_or_die(+db: String, canonical: Result<&1,&1,U32 & String,String>) -> IO(String):
   match canonical:
