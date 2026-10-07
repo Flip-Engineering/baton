@@ -147,14 +147,14 @@ def Intent.recorded(request: IntentInput, raw: String) -> IO(IntentPrepared):
   +path = requested_path(req)
   Intent.decided(req, record, receipt_verdict(record, path))
 
-def Intent.record_observed(request: IntentInput, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPrepared):
-  match observed:
+def Intent.record_observed(request: IntentInput, host: Result<&1, &1, U32 & String, String>) -> IO(IntentPrepared):
+  match host:
     case Fail{error}: IO.pure(IntentPrepared, IntentHostFailed{"record", request, error})
     case Done{raw}: Intent.recorded(request, raw)
 
-def Intent.read_observed(request: IntentInput, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPrepared):
+def Intent.read_observed(request: IntentInput, host: Result<&1, &1, U32 & String, String>) -> IO(IntentPrepared):
   +req = request
-  match observed:
+  match host:
     case Fail{error}: IO.pure(IntentPrepared, IntentHostFailed{"qualify", req, error})
     case Done{raw}: Intent.record_observed(req, Done{raw})
 
