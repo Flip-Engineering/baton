@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -39,15 +40,56 @@ class Land(unittest.TestCase):
             check=True, text=True, capture_output=True,
         ).stdout
 
-    def call(self, *args, ok=True):
+    def call(self, *args, ok=True, env=None):
         p = subprocess.run(
             [str(EXE), str(self.db), *map(str, args)],
-            text=True, capture_output=True,
+            text=True, capture_output=True, env=env,
         )
         if ok:
             self.assertEqual(p.returncode, 0, p.stderr)
             return json.loads(p.stdout)
         return p.stderr
+
+    def separate_target_holder(self):
+        holder = self.repo / 'holder'
+        self.git('branch', 'other', self.base)
+        self.git('checkout', '-q', '--detach')
+        self.git('worktree', 'add', '-q', str(holder), 'main')
+        return holder
+
+    def git_race_env(self, holder, trigger, action):
+        real_git = shutil.which('git')
+        self.assertIsNotNone(real_git)
+        wrapper_dir = self.directory / 'git-wrapper'
+        wrapper_dir.mkdir()
+        wrapper = wrapper_dir / 'git'
+        wrapper.write_text(
+            f'#!{sys.executable}\n'
+            'import os, subprocess, sys\n'
+            f'REAL_GIT = {real_git!r}\n'
+            f'REPO = {str(self.repo)!r}\n'
+            f'HOLDER = {str(holder)!r}\n'
+            f'TRIGGER = {trigger!r}\n'
+            f'ACTION = {action!r}\n'
+            'args = sys.argv[1:]\n'
+            'if (TRIGGER == "after-worktree-list" and len(args) >= 4 and\n'
+            '        args[:2] == ["-C", REPO] and args[2:4] == ["worktree", "list"]):\n'
+            '    result = subprocess.run([REAL_GIT, *args], capture_output=True)\n'
+            'elif (TRIGGER == "after-held-merge" and len(args) >= 4 and\n'
+            '        args[:2] == ["-C", HOLDER] and args[2:4] == ["merge", "--ff-only"]):\n'
+            '    result = subprocess.run([REAL_GIT, *args], capture_output=True)\n'
+            'else:\n'
+            '    os.execv(REAL_GIT, [REAL_GIT, *args])\n'
+            'if result.returncode == 0:\n'
+            '    subprocess.run(ACTION, check=True, capture_output=True)\n'
+            'sys.stdout.buffer.write(result.stdout)\n'
+            'sys.stderr.buffer.write(result.stderr)\n'
+            'raise SystemExit(result.returncode)\n'
+        )
+        wrapper.chmod(0o755)
+        env = os.environ.copy()
+        env['PATH'] = str(wrapper_dir) + os.pathsep + env.get('PATH', '')
+        return env
 
     def recruit_and_commit(self, player='w1', branch='w1-branch', path='wt'):
         self.call('recruit', player, 'root', 'omp', 'model', 'high',
@@ -186,6 +228,65 @@ class Land(unittest.TestCase):
         self.assertEqual((holder / 'file.txt').read_text(),
                          'worker change for w1')
         self.assertTrue((self.repo / 'wt' / 'file.txt').is_file())
+
+    def test_holder_change_after_worktree_discovery_does_not_mutate_other_branch(self):
+        holder = self.separate_target_holder()
+        candidate = self.recruit_and_commit()
+        action = ['git', '-C', str(holder), 'switch', '--quiet', 'other']
+        env = self.git_race_env(holder, 'after-worktree-list', action)
+        result = self.call('land', 'w1', self.repo, 'main', env=env)
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('changed away from target branch main', result['reason'])
+        self.assertEqual(self.git('rev-parse', 'main').strip(), self.base)
+        self.assertEqual(self.git('rev-parse', 'other').strip(), self.base)
+        self.assertEqual(self.git('rev-parse', 'w1-branch').strip(), candidate)
+        self.assertFalse((holder / 'file.txt').exists())
+        head = subprocess.run(
+            ['git', '-C', str(holder), 'symbolic-ref', '--quiet', 'HEAD'],
+            check=True, text=True, capture_output=True,
+        ).stdout.strip()
+        self.assertEqual(head, 'refs/heads/other')
+
+    def test_holder_change_after_successful_merge_is_not_reported_as_landed(self):
+        holder = self.separate_target_holder()
+        candidate = self.recruit_and_commit()
+        action = ['git', '-C', str(holder), 'switch', '--quiet', 'other']
+        env = self.git_race_env(holder, 'after-held-merge', action)
+        result = self.call('land', 'w1', self.repo, 'main', env=env)
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('changed away from target branch main', result['reason'])
+        self.assertEqual(self.git('rev-parse', 'main').strip(), candidate)
+        self.assertEqual(self.git('rev-parse', 'other').strip(), self.base)
+        self.assertEqual(self.git('rev-parse', 'w1-branch').strip(), candidate)
+        head = subprocess.run(
+            ['git', '-C', str(holder), 'symbolic-ref', '--quiet', 'HEAD'],
+            check=True, text=True, capture_output=True,
+        ).stdout.strip()
+        self.assertEqual(head, 'refs/heads/other')
+        self.assertFalse((holder / 'file.txt').exists())
+
+    def test_target_moving_after_successful_held_merge_blocks_success_answer(self):
+        holder = self.separate_target_holder()
+        candidate = self.recruit_and_commit()
+        self.git('checkout', '-q', '--detach', candidate)
+        (self.repo / 'mover.txt').write_text('target mover\n')
+        self.git('add', 'mover.txt')
+        self.git('commit', '-q', '-m', 'target mover')
+        moved = self.git('rev-parse', 'HEAD').strip()
+        action = [
+            shutil.which('git'), '-C', str(self.repo), 'update-ref',
+            'refs/heads/main', moved, candidate,
+        ]
+        env = self.git_race_env(holder, 'after-held-merge', action)
+        result = self.call('land', 'w1', self.repo, 'main', env=env)
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('target moved during landing', result['reason'])
+        self.assertEqual(self.git('rev-parse', 'main').strip(), moved)
+        self.assertEqual(self.git('rev-parse', 'w1-branch').strip(), candidate)
+        self.assertEqual(self.git('merge-base', '--is-ancestor', candidate, 'main'), '')
+        retry = self.call('land', 'w1', self.repo, 'main')
+        self.assertEqual(retry['status'], 'already')
+        self.assertEqual(retry['commit'], candidate)
 
     def test_target_moves_under_a_checked_out_target_and_the_retry_lands(self):
         self.waiting_checks()

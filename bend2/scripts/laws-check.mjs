@@ -1066,6 +1066,30 @@ MUTATIONS.push(
   {"name": "member-presence-matches-parentage-not-registration", "file": "bend2/src/coordinator/commands.bend", "find": "\"EXISTS(SELECT 1 FROM sessions WHERE sessions.id=\" ++ session ++ \")\"", "replace": "\"EXISTS(SELECT 1 FROM sessions WHERE sessions.parent=\" ++ session ++ \")\"", "law": "member_presence_requires_a_stored_player_record"}
 );
 
+MUTATIONS.push(
+  {
+    name: 'held-success-arm-skips-publication-observation',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'ld_adv_wt_observe(path, repo, target, cand),\n        ld_adv_wt_refused(path, repo, target, basis)',
+    replace: 'IO.pure(LAdv, AdvLanded{}),\n        ld_adv_wt_refused(path, repo, target, basis)',
+    law: 'm3a_held_success_arm_uses_publication_observation',
+  },
+  {
+    name: 'held-success-arm-ignores-holder-branch',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '+same = Bool.pick(Bool, status_ok,\n        Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)), False{})\n      IO.pure(LAdv, ld_adv_wt_observed(True{}, same, path))',
+    replace: 'IO.pure(LAdv, ld_adv_wt_observed(True{}, True{}, path))',
+    law: 'm3a_held_holder_observation_requires_the_target_branch',
+  },
+  {
+    name: 'held-success-arm-accepts-a-different-target-tip',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '+same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})\n      match same:\n        case False{}: IO.pure(LAdv, AdvMoved{})',
+    replace: '+same = True{}\n      match same:\n        case False{}: IO.pure(LAdv, AdvMoved{})',
+    law: 'm3a_held_target_observation_requires_the_candidate_tip',
+  },
+);
+
 for (const mutation of MUTATIONS) {
   const copied = join(SCRATCH, mutation.file);
   cpSync(join(ROOT, mutation.file), copied);

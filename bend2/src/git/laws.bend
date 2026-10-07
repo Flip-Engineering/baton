@@ -1097,7 +1097,7 @@ def m3a_unusable_listing_advances_nothing(detail, repo, target, cand, basis):
 def held_pair_update(+path: String, +repo: String, +target: String, +cand: String, +basis: String) -> IO(L.LAdv):
   do IO<L.LAdv>:
     g : T.GitOut <- P.runGit(path, ["merge", "--ff-only", cand])
-    L.ld_adv_wt_pick(g, path, repo, target, basis)
+    L.ld_adv_wt_pick(g, path, repo, target, cand, basis)
 
 law m3a_held_advance_is_the_worktree_fast_forward:
   for path: String
@@ -1108,6 +1108,102 @@ law m3a_held_advance_is_the_worktree_fast_forward:
   {L.ld_adv_wt(path, repo, target, cand, basis) == held_pair_update(path, repo, target, cand, basis) : IO(L.LAdv)}
 
 def m3a_held_advance_is_the_worktree_fast_forward(path, repo, target, cand, basis):
+  {==}
+
+# The held success arm dispatches through the source-bound publication
+# observer; a zero exit from merge alone is not a landed answer.
+def held_success_arm(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(L.LAdv):
+  match g:
+    case T.GRun{code, out}:
+      Bool.pick(IO(L.LAdv), U32.is_eq(code, 0),
+        L.ld_adv_wt_observe(path, repo, target, cand),
+        L.ld_adv_wt_refused(path, repo, target, basis))
+    case T.GBroken{detail}: IO.pure(L.LAdv, L.AdvBroken{detail})
+
+law m3a_held_success_arm_uses_publication_observation:
+  for +g: T.GitOut
+  for path: String
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  {L.ld_adv_wt_pick(g, path, repo, target, cand, basis) == held_success_arm(g, path, repo, target, cand, basis) : IO(L.LAdv)}
+
+def m3a_held_success_arm_uses_publication_observation(g, path, repo, target, cand, basis):
+  {==}
+
+def held_success_observation(path: String, repo: String, target: String, cand: String) -> IO(L.LAdv):
+  +p2 = path
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  do IO<L.LAdv>:
+    tip : T.GitOut <- P.runGit(r2, L.ld_target_ref_argv(t2))
+    L.ld_adv_wt_observed_target_pick(tip, p2, t2, c2)
+
+law m3a_held_success_observation_reads_the_target_ref:
+  for path: String
+  for repo: String
+  for target: String
+  for cand: String
+  {L.ld_adv_wt_observe(path, repo, target, cand) == held_success_observation(path, repo, target, cand) : IO(L.LAdv)}
+
+def m3a_held_success_observation_reads_the_target_ref(path, repo, target, cand):
+  {==}
+
+def held_target_observation(g: T.GitOut, path: String, target: String, cand: String) -> IO(L.LAdv):
+  match g:
+    case T.GRun{code, out}:
+      +status_ok = U32.is_eq(code, 0)
+      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})
+      match same:
+        case False{}: IO.pure(L.LAdv, L.AdvMoved{})
+        case True{}:
+          +p2 = path
+          +t2 = target
+          do IO<L.LAdv>:
+            holder : T.GitOut <- P.runGit(p2, L.ld_head_argv())
+            L.ld_adv_wt_observed_holder_pick(holder, p2, t2)
+    case T.GBroken{detail}: IO.pure(L.LAdv, L.AdvBroken{detail})
+
+law m3a_held_target_observation_requires_the_candidate_tip:
+  for +g: T.GitOut
+  for path: String
+  for target: String
+  for cand: String
+  {L.ld_adv_wt_observed_target_pick(g, path, target, cand) == held_target_observation(g, path, target, cand) : IO(L.LAdv)}
+
+def m3a_held_target_observation_requires_the_candidate_tip(g, path, target, cand):
+  {==}
+
+def held_holder_observation(g: T.GitOut, path: String, target: String) -> IO(L.LAdv):
+  match g:
+    case T.GRun{code, out}:
+      +status_ok = U32.is_eq(code, 0)
+      +same = Bool.pick(Bool, status_ok,
+        Tx.str_eq(Tx.trim_nl(out), L.ld_hold_ref(target)), False{})
+      IO.pure(L.LAdv, L.ld_adv_wt_observed(True{}, same, path))
+    case T.GBroken{detail}: IO.pure(L.LAdv, L.AdvBroken{detail})
+
+law m3a_held_holder_observation_requires_the_target_branch:
+  for +g: T.GitOut
+  for path: String
+  for target: String
+  {L.ld_adv_wt_observed_holder_pick(g, path, target) == held_holder_observation(g, path, target) : IO(L.LAdv)}
+
+def m3a_held_holder_observation_requires_the_target_branch(g, path, target):
+  {==}
+
+law m3a_held_tip_read_names_the_local_branch:
+  {L.ld_target_ref_argv("main") == ["rev-parse", "--verify", "refs/heads/main^{commit}"] : List<String>}
+
+def m3a_held_tip_read_names_the_local_branch():
+  {==}
+
+law m3a_held_identity_read_uses_symbolic_head:
+  {L.ld_head_argv() == ["symbolic-ref", "--quiet", "HEAD"] : List<String>}
+
+def m3a_held_identity_read_uses_symbolic_head():
   {==}
 
 # M-3a: a refused fast-forward of a target that still reads as the basis is that
