@@ -171,7 +171,7 @@ assert sys.stdin.read()==''
 ''')
         self.call('turn','omp-worker','retained-turn',str(self.player),'model','low',str(self.cwd),str(self.task),str(self.log),'')
         note='{"type":"baton_event_filter","requested":"delta","active":false,"outcome":"unacknowledged"}'
-        self.assertEqual(self.log.read_text().splitlines(),retained+[terminal,note])
+        self.assertEqual(self.log.read_text().splitlines(),retained+[terminal,omitted[1],note])
         self.assertEqual(json.loads(self.call('delivery','retained-turn'))['body'],final_text)
 
     def test_omp_empty_terminal_envelope_delivers_streamed_trial_report(self):
@@ -258,7 +258,7 @@ pathlib.Path('emitted.jsonl').write_text(chr(10).join(emitted)+chr(10))
 ''')
         self.call('turn','omp-worker','delta-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
         frames=[json.loads(line) for line in self.log.read_text().splitlines()]
-        self.assertEqual([f['type'] for f in frames],['response','response','message_end','agent_end','baton_event_filter'])
+        self.assertEqual([f['type'] for f in frames],['response','response','message_end','agent_end','message_update','baton_event_filter'])
         self.assertEqual(frames[0],{'type':'response','id':'baton:filter','command':'set_event_filter','success':True,'data':{'events':None,'messageUpdates':'delta'}})
         self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'delta','active':True})
         wire=[json.loads(line) for line in (self.cwd/'emitted.jsonl').read_text().splitlines()]

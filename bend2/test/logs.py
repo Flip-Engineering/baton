@@ -108,8 +108,9 @@ assert sys.stdin.read()==''
         saved = self.lines()
         self.assertEqual([json.loads(line).get('type') for line in saved],
                          ['response', 'tool_execution_start', 'tool_execution_update', 'tool_execution_end',
-                          'message_end', 'agent_end', None, 'baton_event_filter'])
-        self.assertEqual([f for f in map(json.loads, saved) if f.get('type') == 'message_update'], [])
+                          'message_end', 'agent_end', None, 'message_update', 'baton_event_filter'])
+        self.assertEqual([f['messageId'] for f in map(json.loads, saved) if f.get('type') == 'message_update'],
+                         ['m1'])
         self.assertIn(payload, '\n'.join(saved))
         self.assertEqual(json.loads(self.call('delivery', 'turn-1'))['body'], 'Complete answer λ')
         self.assertEqual(json.loads(self.call('player', 'omp-worker'))['native'], 'omp-default')
@@ -255,7 +256,7 @@ assert sys.stdin.read()==''
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
         self.assertEqual(answer['session'], 'omp-worker')
         self.assertTrue(all(item['removed'] for item in answer['removed']), answer)
-        self.assertEqual(sorted(item['index'] for item in answer['removed']), [2, 3])
+        self.assertEqual(sorted(item['index'] for item in answer['removed']), [2, 3, 4])
         self.assertTrue(all(item['bytes'] > 0 for item in answer['removed']), answer)
         self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
         self.assertFalse((self.cwd / 'turn.jsonl.2').exists())
@@ -334,6 +335,29 @@ assert sys.stdin.read()==''
         self.assertEqual(answer['pendingInput'], 1)
         self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
         self.assertTrue((self.cwd / 'turn.jsonl.2').exists())
+
+    def test_legacy_policy_table_migrates_and_keeps_its_rows(self):
+        import sqlite3
+        with sqlite3.connect(self.db) as connection:
+            connection.execute('CREATE TABLE log_policies (session TEXT PRIMARY KEY NOT NULL,'
+                               'level TEXT NOT NULL CHECK(level IN (\'quiet\',\'default\',\'diagnostic\')),'
+                               'budget_bytes INTEGER NOT NULL CHECK(budget_bytes BETWEEN 65536 AND 4294967295),'
+                               'keep_segments INTEGER NOT NULL CHECK(keep_segments BETWEEN 1 AND 4));')
+            connection.execute("INSERT INTO log_policies VALUES('omp-worker','diagnostic',1048576,4)")
+            connection.execute('CREATE TABLE log_files (session TEXT NOT NULL,log TEXT NOT NULL,'
+                               'PRIMARY KEY(session,log));')
+            connection.execute("INSERT INTO log_files VALUES('omp-worker','/tmp/legacy.jsonl')")
+        self.assertEqual(json.loads(self.call('logs', 'omp-worker'))['budgetBytes'], 1048576)
+        stored = json.loads(self.call('logs', 'omp-worker', 'default', '2097152', '11'))
+        self.assertEqual(stored['keepSegments'], 11)
+        self.assertEqual(stored['budgetBytes'], 2097152)
+        self.assertEqual(stored['registeredLogs'], 1)
+        self.assertEqual(json.loads(self.call('logs', 'omp-worker'))['keepSegments'], 11)
+        with sqlite3.connect(self.db) as connection:
+            rows = connection.execute('SELECT session,keep_segments FROM log_policies').fetchall()
+            registry = connection.execute('SELECT session,log FROM log_files').fetchall()
+        self.assertEqual(rows, [('omp-worker', 11)])
+        self.assertEqual(registry, [('omp-worker', '/tmp/legacy.jsonl')])
 
     def test_unwritable_log_reports_the_failure_and_keeps_the_report(self):
         unwritable = self.cwd / 'log-directory'
