@@ -215,6 +215,9 @@ typedef struct BrKeeper {
   uint64_t generation;
   pid_t native_pid,recovery_pid;
   int exited,status,released,input_closed,ready,native_waiting,prepared,cancelled;
+  /* Recovery observers are owner-managed continuation work. An acknowledged
+     attempt remains live until every child launched for it has been reaped. */
+  size_t recovery_pending;
   char *directory,*incoming;
   size_t incoming_size,incoming_capacity;
   BrManifest manifest;
@@ -930,6 +933,7 @@ static int br_wait_start(BrKeeper *keeper,pid_t pid,int kind) {
   if(waiter->descriptor<0){int error=errno;free(waiter);return error;}
   pthread_t thread;int error=pthread_create(&thread,NULL,br_waiter,waiter);
   if(error){close(waiter->descriptor);free(waiter);return error;}
+  if(kind=='R')keeper->recovery_pending++;
   pthread_detach(thread);return 0;
 }
 static void br_recover(BrKeeper *keeper) {
@@ -1367,9 +1371,14 @@ static int br_attempt_ready(BrKeeper *keeper,struct pollfd *fds,BrControl **clie
       if(event.status<0)return ECHILD;
       keeper->native_waiting=1;
       if((error=br_native_exited(keeper)))return error;
-    } else if(event.kind=='R' && event.generation==keeper->generation && keeper->client<0) {
-      char text[96];int n=snprintf(text,sizeof(text),"pid %d exited before attach: wait status %d\n",event.pid,event.status);
-      br_file(keeper->directory,"observer-error",text,(size_t)n,0);
+    } else if(event.kind=='R' && event.generation==keeper->generation) {
+      if(keeper->recovery_pending)keeper->recovery_pending--;
+      if(event.status<0) {
+        br_note(keeper,"observer-error",ECHILD);
+      } else if(keeper->client<0) {
+        char text[96];int n=snprintf(text,sizeof(text),"pid %d exited before attach: wait status %d\n",event.pid,event.status);
+        br_file(keeper->directory,"observer-error",text,(size_t)n,0);
+      }
     }
   }
   for(size_t i=0;i<count;i++) if(fds[5+i].revents&(POLLIN|POLLHUP|POLLERR)) {
@@ -2062,7 +2071,7 @@ static int br_owner_loop(BrOwner *owner) {
     }
     for(BrKeeper **link=&owner->attempts;*link;) {
       BrKeeper *keeper=*link;
-      if(keeper->finishing && !keeper->outgoing) {
+      if(keeper->finishing && !keeper->outgoing && !keeper->recovery_pending) {
         *link=keeper->next;
         if(owner->single)owner->finishing=1;
         else {br_keeper_cleanup_control_path(keeper);br_keeper_stop(keeper);}

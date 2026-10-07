@@ -94,6 +94,37 @@ def recover_cli(args: List<String>) -> IO(Unit):
       IO.pure(Unit,Unit{})
     case _: IO.die(Unit,2,"recover-retained DATABASE ATTEMPT")
 
+def recovery_complete_lines(+handle: U32, line: Maybe<String>) -> IO(Unit):
+  match line:
+    case None{}: do IO<Unit>:
+      status : String <- IO.try(String,P.ProcessChild.wait(handle))
+      printed : Unit <- IO.print("native-" ++ status)
+      released : Unit <- operation("release",P.ProcessChild.release(handle))
+      acknowledged : Unit <- operation("acknowledge",P.ProcessChild.acknowledge(handle))
+      retired : Unit <- operation("retire",Custody.Instance.retire(handle))
+      IO.print("attempt-complete")
+    case Some{text}: do IO<Unit>:
+      printed : Unit <- IO.print(text)
+      next : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      recovery_complete_lines(handle,next)
+
+def recovery_complete_attached(result: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+  match result:
+    case Done{+handle}: do IO<Unit>:
+      printed : Unit <- IO.print("attached")
+      restored : Unit <- restore_step(handle)
+      line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      recovery_complete_lines(handle,line)
+    case Fail{(code,text)}: IO.die(Unit,1,U32.show(code) ++ ": " ++ text)
+
+def recovery_complete_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case database <> directory <> Nil{}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,U32> <- Custody.Instance.attach(database,directory)
+      observed : Unit <- recovery_complete_attached(result)
+      IO.pure(Unit,Unit{})
+    case _: IO.die(Unit,2,"attach-complete DATABASE ATTEMPT")
+
 def attached_locked(database: String, directory: String, lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: IO.die(Unit,1,"fixture session busy")
@@ -214,6 +245,18 @@ def admit_cli(args: List<String>, kind: U32) -> IO(Unit):
     case database <> session <> directory <> cwd <> payload <> program:
       Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => attempted_locked(directory,canonical,cwd,payload,program,lock,kind))
     case _: IO.die(Unit,2,"admit DATABASE SESSION ATTEMPT CWD PAYLOAD PROGRAM ARGS...")
+
+def recovery_locked(+directory: String, +database: String, cwd: String, payload: String, recovery: String, program: List<String>, lock: Maybe<U32>) -> IO(Unit):
+  do IO<Unit>:
+    start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr","",1,lock,P.argv([recovery])))
+    run : Unit <- attempted_started(start,payload,2)
+    IO.pure(Unit,Unit{})
+
+def admit_recovery_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case database <> session <> directory <> cwd <> payload <> recovery <> program:
+      Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => recovery_locked(directory,canonical,cwd,payload,recovery,program,lock))
+    case _: IO.die(Unit,2,"admit-recovery DATABASE SESSION ATTEMPT CWD PAYLOAD RECOVERY PROGRAM ARGS...")
 
 # Reads every frame of a prepared-file attempt and reports its exit status. The
 # observer writes nothing to stdin: the artifact carries the task.
@@ -466,8 +509,11 @@ def nolock_cli(args: List<String>) -> IO(Unit):
 
 def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"prepare"),19,
+  Bool.pick(U32,String.eq(mode,"admit-recovery"),20,
+  Bool.pick(U32,String.eq(mode,"attach-complete"),21,
   Bool.pick(U32,String.eq(mode,"state"),17,
   Bool.pick(U32,String.eq(mode,"admit-nolock"),18,mode_legacy(mode)))
+  ))
   )
 
 def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
@@ -491,6 +537,8 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 17: state_cli(rest)
     case 18: nolock_cli(rest)
     case 19: prepared_cli(rest)
+    case 20: admit_recovery_cli(rest)
+    case 21: recovery_complete_cli(rest)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):

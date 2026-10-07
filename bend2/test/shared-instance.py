@@ -12,6 +12,7 @@ import os
 import pathlib
 import queue
 import signal
+import shlex
 import struct
 import subprocess
 import sys
@@ -379,6 +380,38 @@ class SharedInstance(unittest.TestCase):
         self.hold(log, 'native-exit 0')
         print('evidence native-pid', summary['pid'], 'survived-observer-kill', alive)
         print('evidence recovery-log', text.replace('\n', '|'))
+
+    def test_acknowledged_attempt_waits_for_recovery_child(self):
+        directory = pathlib.Path(f'{self.db}.attempt-recovery-child')
+        recovery = self.home / 'delayed-recovery.sh'
+        started = self.home / 'recovery-started'
+        finished = self.home / 'recovery-finished'
+        recovery.write_text(
+            '#!/bin/sh\n'
+            f': > {shlex.quote(str(started))}\n'
+            'sleep 3\n'
+            f'{shlex.quote(str(EXE))} recover-retained {shlex.quote(str(self.db))} {shlex.quote(str(directory))}\n'
+            'status=$?\n'
+            f'echo "$status" > {shlex.quote(str(finished))}\n'
+            'exit "$status"\n')
+        recovery.chmod(0o700)
+        child = self.spawn('admit-recovery', self.db, 'recovery-child', directory,
+                           self.home, 'hello\n', recovery, sys.executable, self.fixture)
+        self.line(child, 'admitted')
+        child.kill()
+        child.wait(timeout=10)
+        self.hold(started, '')
+        self.write(directory, 'exit\n')
+        self.hold(directory / 'stdout', 'native-done')
+        completed = self.command('attach-complete', self.db, directory)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn('acknowledge-ok', completed.stdout)
+        self.assertFalse(finished.exists(), 'the delayed recovery child should still be running')
+        self.hold(finished, '0', timeout=15)
+        self.assertEqual(finished.read_text().strip(), '0',
+                         'the tracked recovery observer must attach before attempt retirement')
+        print('evidence recovery-child-retained', completed.stdout.replace('\n', '|'),
+              'recovery-exit', finished.read_text().strip())
 
     def test_retired_capability_refuses_the_old_generation(self):
         directory, child = self.begin('cycle')
