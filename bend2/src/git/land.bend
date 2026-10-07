@@ -792,6 +792,16 @@ def ff_stage5_guard_observed(cand: String, old: String, repo: String, target: St
 # The fast-forward now advances through the same holder-aware path the checked landing uses,
 # so both reach one effect. Only a landed answer reports LLanded; a moved target, a held
 # worktree, a changed holder, a refused update and a broken read each keep their own answer.
+type LAdv is Data:
+  AdvLanded{}
+  AdvMoved{}
+  AdvHeld{path: String}
+  AdvHolderChanged{path: String}
+  AdvRefused{}
+  AdvBroken{detail: String}
+
+# The compare-and-swap where no worktree holds the target.
+
 def ff_stage5_adv_answer(a: LAdv, target: String, cand: String) -> FFLD:
   match a:
     case AdvLanded{}: FFDone{T.LLanded{target, cand}}
@@ -1147,6 +1157,17 @@ type LdHoldScan is Data:
 # One branch line that names the target: the first one records the path of the
 # block it appeared in, and any later one, or one that appeared before any
 # block, makes the listing unusable.
+def wt_path_go(line: String, label: String) -> String:
+  match line label:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{lc, lr}: ""
+    case SCon{c, rest} SNil{}: line
+    case SCon{c, rest} SCon{lc, lr}:
+      Bool.pick(String, Char.is_eq(c, lc), wt_path_go(rest, lr), "")
+
+def wt_path(line: String) -> String:
+  wt_path_go(line, "worktree ")
+
 def ld_hold_named(+cur: String, +found: String, +seen: U32) -> LdHoldScan:
   Bool.pick(LdHoldScan, String.is_empty(cur),
     HoldScan{cur, found, 2},
@@ -1210,15 +1231,6 @@ def ld_head_argv() -> List<String>:
 
 # The update-ref argv: the target ref, the candidate and the basis it advanced
 # from, so the branch moves only while it still reads as that basis.
-type LAdv is Data:
-  AdvLanded{}
-  AdvMoved{}
-  AdvHeld{path: String}
-  AdvHolderChanged{path: String}
-  AdvRefused{}
-  AdvBroken{detail: String}
-
-# The compare-and-swap where no worktree holds the target.
 def ld_adv_cas(g: T.GitOut) -> LAdv:
   match g:
     case T.GRun{code, out}: Bool.pick(LAdv, U32.is_eq(code, 0), AdvLanded{}, AdvRefused{})
@@ -1808,17 +1820,6 @@ def scratch_prefix(repo: String, worker: String) -> String:
 
 # The path one worktree-list line names: the line with its label matched off,
 # or the empty string for a line that does not carry the label.
-def wt_path_go(line: String, label: String) -> String:
-  match line label:
-    case SNil{} SNil{}: ""
-    case SNil{} SCon{lc, lr}: ""
-    case SCon{c, rest} SNil{}: line
-    case SCon{c, rest} SCon{lc, lr}:
-      Bool.pick(String, Char.is_eq(c, lc), wt_path_go(rest, lr), "")
-
-def wt_path(line: String) -> String:
-  wt_path_go(line, "worktree ")
-
 def scratch_remove1(repo: String, dir: String) -> IO(Unit):
   +r2 = repo
   +d2 = dir
@@ -2228,20 +2229,6 @@ def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String,
                     shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, next)
                   case False{}: shared_record_failed("reserve-counter-maximum", r, h)
 
-def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  +r = record
-  match Tx.str_eq(r, Pb.production_record("created", pa, "0")):
-    case True{}: shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1)
-    case False{}: shared_parent_present(h, rp, tg, c, b, gd, pa, bs, r)
-
 def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
@@ -2255,6 +2242,20 @@ def shared_parent_present(handle: U32, repo: String, target: String, cand: Strin
   match Tx.str_eq(r, Pb.production_record("present", pa, "0")):
     case True{}: shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1)
     case False{}: shared_record_failed("ensure", r, h)
+
+def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +gd = guard
+  +pa = parent
+  +bs = base
+  +r = record
+  match Tx.str_eq(r, Pb.production_record("created", pa, "0")):
+    case True{}: shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1)
+    case False{}: shared_parent_present(h, rp, tg, c, b, gd, pa, bs, r)
 
 def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
   +h = handle
