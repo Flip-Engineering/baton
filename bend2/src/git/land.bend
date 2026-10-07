@@ -854,7 +854,7 @@ def ld_hold_branch(target: String) -> String:
 type LdHoldScan is Data:
   HoldScan{cur: String, found: String, seen: U32}
 
-# The path one worktree-list line names: the line with its label matched off,
+# The path one worktree-list line names: the line with its label match off,
 # or the empty string for a line that does not carry the label.
 def wt_path_go(line: String, label: String) -> String:
   match line label:

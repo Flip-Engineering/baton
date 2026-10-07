@@ -149,7 +149,7 @@ def observed(+db: String, +session: String, +id: String, +log: String, cursor: S
 def reconciled_cursor(cursor: String, adopted: Bool, outcome: Turn.Outcome) -> String:
   match adopted:
     case False{}: cursor
-    case True{}: matched outcome:
+    case True{}: match outcome:
       case Turn.Ended{status,event,error}:
         Bool.pick(String,Bool.and(String.eq(status,"unknown after keeper loss"),Bool.and(String.is_empty(event),String.is_empty(error))),"0",cursor)
 
