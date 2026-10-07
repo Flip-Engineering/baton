@@ -12,6 +12,8 @@ typedef struct {
   int reaped;
   uint32_t generation;
   struct BatonRetained *retained;
+  char *stderr_target,*stderr_spool,*stderr_meta;
+  uint32_t stderr_limit;
 } BatonChild;
 
 typedef struct {
@@ -20,10 +22,11 @@ typedef struct {
   size_t length;
   u32 handle, signal, index;
   int kind, error, eof, unstarted, fresh;
-  char *directory, *initial, *recovery, *detail, *database;
+  char *directory, *initial, *recovery, *detail, *database, *spool, *meta;
   size_t initial_length, recovery_length;
-  u32 keep_stdin, lock;
+  u32 keep_stdin, lock, stderr_limit;
 } BatonProcessCall;
+static char *br_json_escape(const char *text);
 
 /* A capability packs its slot index and generation. A retired slot is reused
    with a higher generation, and a request carrying the old generation is
@@ -42,7 +45,7 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_WAIT, BP_SIGNAL, BP_PID,
        BP_INSTANCE_OWNER, BP_INSTANCE_ADMIT, BP_INSTANCE_ATTACH,
        BP_INSTANCE_ATTACH_OWNED, BP_INSTANCE_SHUTDOWN, BP_INSTANCE_RETIRE,
        BP_INSTANCE_COMMIT, BP_INSTANCE_RESTORE, BP_INSTANCE_REPLAY,
-       BP_INSTANCE_JOB };
+       BP_INSTANCE_JOB, BP_SPAWN_WITH_FILE_BOUNDED };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -78,6 +81,8 @@ static int baton_child_allocate(BatonProcessCall *call) {
     if(!child->generation)child->generation=1;
     baton_children[index]=child;
   } else {
+    free(child->stderr_target);free(child->stderr_spool);free(child->stderr_meta);
+    child->stderr_target=NULL;child->stderr_spool=NULL;child->stderr_meta=NULL;child->stderr_limit=0;
     child->reaped=0;child->pid=0;child->input=-1;child->output=NULL;child->retained=NULL;
   }
   call->index=(u32)index;
@@ -103,7 +108,16 @@ static void baton_child_spawn(BatonProcessCall *call) {
   if(call->error) { free(argv); return; }
   call->error=baton_pipe(out);
   if(call->error) { close(in[0]);close(in[1]);free(argv);return; }
-  int log=open(call->log,O_CREAT|O_WRONLY|O_APPEND|O_CLOEXEC,0600);
+  int bounded=call->kind==BP_SPAWN_WITH_FILE_BOUNDED;
+  if(bounded && (!call->stderr_limit || !call->spool || !call->meta)) {call->error=EINVAL;goto pipes;}
+  if(bounded) {
+    call->child->stderr_target=strdup(call->log);
+    call->child->stderr_spool=strdup(call->spool);
+    call->child->stderr_meta=strdup(call->meta);
+    call->child->stderr_limit=call->stderr_limit;
+    if(!call->child->stderr_target || !call->child->stderr_spool || !call->child->stderr_meta) {call->error=ENOMEM;goto pipes;}
+  }
+  int log=open(bounded?call->spool:call->log,O_CREAT|O_WRONLY|(bounded?O_EXCL:O_APPEND)|O_CLOEXEC,0600);
   if(log<0) { call->error=errno; goto pipes; }
   FILE *reader=fdopen(out[0],"r");
   if(!reader) { call->error=errno; close(log); goto pipes; }
@@ -292,6 +306,55 @@ static int br_write_all(int fd,const void *data,size_t length) {
     bytes+=n;length-=(size_t)n;
   }
   return 0;
+}
+static char *br_json_escape(const char *text) {
+  size_t length=strlen(text);
+  if(length>(SIZE_MAX-1)/6)return NULL;
+  char *escaped=malloc(length*6+1);
+  if(!escaped)return NULL;
+  static const char hex[]="0123456789abcdef";size_t out=0;
+  for(size_t i=0;i<length;i++) {
+    unsigned char c=(unsigned char)text[i];
+    if(c=='"' || c=='\\') {escaped[out++]='\\';escaped[out++]=(char)c;}
+    else if(c<0x20) {escaped[out++]='\\';escaped[out++]='u';escaped[out++]='0';escaped[out++]='0';escaped[out++]=hex[c>>4];escaped[out++]=hex[c&15];}
+    else escaped[out++]=(char)c;
+  }
+  escaped[out]=0;return escaped;
+}
+static int br_stderr_meta(const char *meta,const char *spool,uint32_t limit,
+                          uint64_t observed,uint64_t retained,int error) {
+  char *escaped=br_json_escape(spool);if(!escaped)return ENOMEM;
+  size_t capacity=strlen(escaped)+256;char *record=malloc(capacity);
+  if(!record){free(escaped);return ENOMEM;}
+  int n=error?snprintf(record,capacity,
+    "{\"schema\":\"baton2-stderr-v1\",\"status\":\"unavailable\",\"error\":%d,\"observedBytes\":null,\"retainedBytes\":null,\"truncated\":null,\"spool\":\"%s\"}\n",error,escaped)
+    :snprintf(record,capacity,
+    "{\"schema\":\"baton2-stderr-v1\",\"status\":\"complete\",\"truncated\":%s,\"observedBytes\":%llu,\"retainedBytes\":%llu,\"spool\":\"%s\",\"limitBytes\":%u}\n",
+    observed>retained?"true":"false",(unsigned long long)observed,(unsigned long long)retained,escaped,limit);
+  free(escaped);int fd=open(meta,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC|O_NOFOLLOW,0600);
+  int result=fd<0?errno:br_write_all(fd,record,(size_t)n);
+  if(fd>=0){if(!result && fsync(fd))result=errno;close(fd);}free(record);return result;
+}
+static void br_stderr_processing_error(const char *meta,int error) {
+  size_t length=strlen(meta);if(length>SIZE_MAX-sizeof(".processing-error"))return;
+  char *marker=malloc(length+sizeof(".processing-error"));if(!marker)return;
+  memcpy(marker,meta,length);memcpy(marker+length,".processing-error",sizeof(".processing-error"));
+  int fd=open(marker,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC|O_NOFOLLOW,0600);
+  if(fd>=0){char text[96];int n=snprintf(text,sizeof(text),"stderr metadata finalization failed: %d\n",error);br_write_all(fd,text,(size_t)n);fsync(fd);close(fd);}free(marker);
+}
+static int br_finalize_stderr(const char *target,const char *spool,const char *meta,uint32_t limit) {
+  int source=open(spool,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);int error=source<0?errno:0;
+  struct stat info;uint64_t observed=0,retained=0;
+  if(!error && fstat(source,&info))error=errno;
+  if(!error && (!S_ISREG(info.st_mode) || info.st_size<0))error=EINVAL;
+  if(!error){observed=(uint64_t)info.st_size;retained=observed<limit?observed:limit;
+    int dest=open(target,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC|O_NOFOLLOW,0600);
+    if(dest<0)error=errno;char buffer[16384];uint64_t copied=0;
+    while(!error && copied<retained){size_t want=(size_t)((retained-copied)<sizeof(buffer)?retained-copied:sizeof(buffer));ssize_t n=read(source,buffer,want);
+      if(n<0 && errno==EINTR)continue;if(n<=0){error=n<0?errno:EIO;break;}error=br_write_all(dest,buffer,(size_t)n);copied+=(uint64_t)n;}
+    if(!error && fsync(dest))error=errno;if(dest>=0)close(dest);}
+  if(source>=0)close(source);int result=br_stderr_meta(meta,spool,limit,observed,retained,error);
+  if(result)br_stderr_processing_error(meta,result);return result;
 }
 static int br_read_all(int fd,void *data,size_t length) {
   char *bytes=data;
@@ -2550,7 +2613,7 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
 static void baton_process_call(IoWork *w) {
   BatonProcessCall *call=(BatonProcessCall *)w->data;
   BatonChild *child=call->child;
-  if(call->kind==BP_SPAWN) { baton_child_spawn(call);return; }
+  if(call->kind==BP_SPAWN || call->kind==BP_SPAWN_WITH_FILE_BOUNDED) { baton_child_spawn(call);return; }
   if(call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED || call->kind==BP_RECOVERY || call->kind==BP_KEEPER || call->kind==BP_CONTROL_WRITE || call->kind==BP_CONTROL_SIGNAL ||
      call->kind==BP_INSTANCE_OWNER || call->kind==BP_INSTANCE_ADMIT || call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED ||
      call->kind==BP_INSTANCE_SHUTDOWN || call->kind==BP_INSTANCE_RETIRE) {
@@ -2598,6 +2661,10 @@ static void baton_process_call(IoWork *w) {
     if(WIFEXITED(status)) snprintf(status_text,sizeof(status_text),"exit %d",WEXITSTATUS(status));
     else if(WIFSIGNALED(status)) snprintf(status_text,sizeof(status_text),"signal %d",WTERMSIG(status));
     else { call->error=ECHILD;return; }
+    if(child->stderr_spool) {
+      call->error=br_finalize_stderr(child->stderr_target,child->stderr_spool,child->stderr_meta,child->stderr_limit);
+      if(call->error)return;
+    }
     call->text=strdup(status_text);
     if(!call->text) call->error=ENOMEM;
     else call->length=strlen(call->text);
@@ -2610,7 +2677,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
   BatonProcessCall *call=(BatonProcessCall *)w->data;
   Term value=term_pak(CID_UNIT,0);
   if(!call->error) {
-    if(call->kind==BP_SPAWN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
+    if(call->kind==BP_SPAWN || call->kind==BP_SPAWN_WITH_FILE_BOUNDED || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
        call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED) value=(Term)call->handle;
     else if(call->kind==BP_INPUT_CLOSED) value=(Term)call->signal;
     else if(call->kind==BP_WAIT) value=io_str(e,call->text,call->length);
@@ -2636,12 +2703,14 @@ static Term baton_process_pack(Env e, IoWork *w) {
   }
 #endif
   Term result=call->error && !call->unstarted ? io_fail(e,call->error,call->detail) : io_done(e,value);
-  if((call->kind==BP_SPAWN || call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
+  if((call->kind==BP_SPAWN || call->kind==BP_SPAWN_WITH_FILE_BOUNDED || call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
       call->kind==BP_INSTANCE_ADMIT || call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED) && call->error) {
-    baton_children[call->index]=NULL;free(call->child);call->child=NULL;
+    baton_children[call->index]=NULL;
+    free(call->child->stderr_target);free(call->child->stderr_spool);free(call->child->stderr_meta);
+    free(call->child);call->child=NULL;
   }
   free(call->args);free(call->cwd);free(call->log);free(call->text);
-  free(call->directory);free(call->initial);free(call->recovery);free(call->detail);free(call->database);free(call);
+  free(call->directory);free(call->initial);free(call->recovery);free(call->detail);free(call->database);free(call->spool);free(call->meta);free(call);
   w->data=NULL;
   return result;
 }
@@ -2649,14 +2718,21 @@ static Term baton_process_pack(Env e, IoWork *w) {
 static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
   BatonProcessCall *call=calloc(1,sizeof(*call));
   if(!call) return io_fail(e,ENOMEM,NULL);
-  int acquire=kind==BP_SPAWN || kind==BP_RETAIN || kind==BP_ATTACH || kind==BP_ATTACH_OWNED ||
+  int acquire=kind==BP_SPAWN || kind==BP_SPAWN_WITH_FILE_BOUNDED || kind==BP_RETAIN || kind==BP_ATTACH || kind==BP_ATTACH_OWNED ||
               kind==BP_INSTANCE_ADMIT || kind==BP_INSTANCE_ATTACH || kind==BP_INSTANCE_ATTACH_OWNED;
   call->kind=kind;
   if(acquire) {
     int error=baton_child_allocate(call);
     if(error) {free(call);return io_fail(e,(u32)error,NULL);}
   }
-  if(kind==BP_SPAWN || kind==BP_RETAIN || kind==BP_INSTANCE_ADMIT) {
+  if(kind==BP_SPAWN_WITH_FILE_BOUNDED) {
+    u64 length=0,cwd_length=0,log_length=0,spool_length=0,meta_length=0;
+    call->args=io_cstr(e,f[0],&length);call->length=(size_t)length;
+    call->cwd=io_cstr(e,f[1],&cwd_length);call->log=io_cstr(e,f[2],&log_length);
+    call->stderr_limit=(u32)f[3];call->spool=io_cstr(e,f[4],&spool_length);call->meta=io_cstr(e,f[5],&meta_length);
+    if(!call->stderr_limit || strlen(call->cwd)!=cwd_length || strlen(call->log)!=log_length ||
+       strlen(call->spool)!=spool_length || strlen(call->meta)!=meta_length)call->error=EINVAL;
+  } else if(kind==BP_SPAWN || kind==BP_RETAIN || kind==BP_INSTANCE_ADMIT) {
     int offset=kind==BP_SPAWN?0:(kind==BP_RETAIN?1:2);
     u64 length=0,cwd_length=0,log_length=0;
     if(kind==BP_INSTANCE_ADMIT)call->database=io_cstr(e,f[0],&length);
@@ -2719,6 +2795,9 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
   static void __attribute__((constructor)) name##_use(void){io_eff(ID,name##_run,0);}
 #ifdef CID_PROCESSCHILD_SPAWN
 BP_EFFECT(baton_process_spawn,CID_PROCESSCHILD_SPAWN,BP_SPAWN)
+#endif
+#ifdef CID_PROCESSCHILD_SPAWN_WITH_FILE_BOUNDED
+BP_EFFECT(baton_process_spawn_with_file_bounded,CID_PROCESSCHILD_SPAWN_WITH_FILE_BOUNDED,BP_SPAWN_WITH_FILE_BOUNDED)
 #endif
 #ifdef CID_PROCESSCHILD_WRITE
 BP_EFFECT(baton_process_write,CID_PROCESSCHILD_WRITE,BP_WRITE)
