@@ -288,15 +288,20 @@ def engines(db: String) -> IO(Unit):
     runtime : ProviderAnswer <- resolve_node_runtime("/")
     inventory_with_runtime(executable, "/", runtime)
 
-def query_catalog_result(db: String, binding: String, answer: ProviderAnswer,
-                         request: NativeRequest.RequestDecode) -> IO(Unit):
-  match answer:
-    case ProviderRefused{reason}: IO.die(Unit, 3, "providerInventory:" ++ reason)
-    case ProviderRuntime{path, version}: IO.die(Unit, 3, "providerInventoryMalformed")
-    case ProviderOutput{value, status}:
-      Bool.pick(IO(Unit), String.eq(status, "exit 0"),
-        query_catalog_rows(db, binding, value, request),
-        IO.die(Unit, 3, "providerInventory:" ++ value))
+def query_catalog_admitted(catalog: NativeCatalog.CatalogDecode) -> IO(Unit):
+  match catalog:
+    case NativeCatalog.CatalogRefused{condition}:
+      IO.die(Unit, 3, "catalog:" ++ condition)
+    case NativeCatalog.CatalogDecoded{catalog, inventory, installed}:
+      IO.die(Unit, 3, "ownerBoundProjectCaptureRequired")
+
+def query_catalog_decoded(catalog: NativeCatalog.CatalogDecode,
+                          request: NativeRequest.RequestDecode) -> IO(Unit):
+  match request:
+    case NativeRequest.RequestDecodeRefused{condition}:
+      IO.die(Unit, 3, "request:" ++ condition)
+    case NativeRequest.RequestDecoded{canonical, operands, operation_chain, cwd, source_path}:
+      query_catalog_admitted(catalog)
 
 def query_catalog_rows_result(db: String, binding: String,
                               request: NativeRequest.RequestDecode,
@@ -315,20 +320,15 @@ def query_catalog_rows(db: String, binding: String, value: String,
       Req.json_tree_sql(value))
     query_catalog_rows_result(db, binding, request, result)
 
-def query_catalog_admitted(catalog: NativeCatalog.CatalogDecode) -> IO(Unit):
-  match catalog:
-    case NativeCatalog.CatalogRefused{condition}:
-      IO.die(Unit, 3, "catalog:" ++ condition)
-    case NativeCatalog.CatalogDecoded{catalog, inventory, installed}:
-      IO.die(Unit, 3, "ownerBoundProjectCaptureRequired")
-
-def query_catalog_decoded(catalog: NativeCatalog.CatalogDecode,
-                          request: NativeRequest.RequestDecode) -> IO(Unit):
-  match request:
-    case NativeRequest.RequestDecodeRefused{condition}:
-      IO.die(Unit, 3, "request:" ++ condition)
-    case NativeRequest.RequestDecoded{canonical, operands, operation_chain, cwd, source_path}:
-      query_catalog_admitted(catalog)
+def query_catalog_result(db: String, binding: String, answer: ProviderAnswer,
+                         request: NativeRequest.RequestDecode) -> IO(Unit):
+  match answer:
+    case ProviderRefused{reason}: IO.die(Unit, 3, "providerInventory:" ++ reason)
+    case ProviderRuntime{path, version}: IO.die(Unit, 3, "providerInventoryMalformed")
+    case ProviderOutput{value, status}:
+      Bool.pick(IO(Unit), String.eq(status, "exit 0"),
+        query_catalog_rows(db, binding, value, request),
+        IO.die(Unit, 3, "providerInventory:" ++ value))
 
 def query_request_result(db: String, binding: String, owner: String, query: String,
                          path: String, result: NativeRequest.RequestDecode) -> IO(Unit):
