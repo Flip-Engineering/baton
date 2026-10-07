@@ -299,6 +299,9 @@ def preflight_directory(request: I.IntentInput, path: String, content: String, d
 law a_fresh_publication_record_is_admitted:
   {classify_publish("published\t/d/n\t0\t\t0\t", "/d/n") == "published" : String}
 
+def a_fresh_publication_record_is_admitted():
+  {==}
+
 def preflight_name(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO(IntentPublish):
   +req = request
   +p = path

@@ -924,18 +924,18 @@ def ld_adv_runres(rr: T.RunRes) -> T.GitOut:
 def ld_adv_framed(framing: String) -> T.GitOut:
   ld_adv_runres(Tx.run_res(Done{framing}))
 
+def ld_adv_pair(pair: String & String) -> T.GitOut:
+  match pair:
+    case (framing, diagnostics): ld_adv_framed(framing)
+def ld_adv_host_error(error: U32 & String) -> T.GitOut:
+  match error:
+    case (code, detail): T.GBroken{detail}
+
 def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
   match capture:
     case Fail{error}: ld_adv_host_error(error)
     case Done{pair}: ld_adv_pair(pair)
 
-def ld_adv_host_error(error: U32 & String) -> T.GitOut:
-  match error:
-    case (code, detail): T.GBroken{detail}
-
-def ld_adv_pair(pair: String & String) -> T.GitOut:
-  match pair:
-    case (framing, diagnostics): ld_adv_framed(framing)
 def ld_adv_with(advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>) -> LdAdvObs:
   +a = advance
   +c = capture
