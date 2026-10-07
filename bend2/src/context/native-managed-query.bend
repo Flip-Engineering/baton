@@ -145,7 +145,7 @@ def start_from_submission(+bootstrap: Bootstrap, readiness: KeeperReadiness,
         Bool.and(String.eq(query, bootstrap_query(bootstrap)),
         Bool.and(String.eq(owner, bootstrap_owner(bootstrap)),
         Bool.and(String.eq(keeper_path, bootstrap_keeper_path(bootstrap)),
-        Bool.and(String.eq(role, "starter"), String.eq(incarnation, "0")))),
+        Bool.and(String.eq(role, "starter"), String.eq(incarnation, "0"))))),
         submission_decision(bootstrap, role, incarnation, submission),
         StartHeld{"observerIdentityMismatch"})
 
@@ -173,6 +173,6 @@ def cancel_rejected(+bootstrap: Bootstrap, readiness: KeeperReadiness,
         Bool.and(String.eq(query, bootstrap_query(bootstrap)),
         Bool.and(String.eq(owner, bootstrap_owner(bootstrap)),
         Bool.and(String.eq(keeper_path, bootstrap_keeper_path(bootstrap)),
-        Bool.and(String.eq(role, "starter"), String.eq(incarnation, "0")))),
+        Bool.and(String.eq(role, "starter"), String.eq(incarnation, "0"))))),
         rejected_admission_decision(bootstrap, admission),
         StartHeld{"observerIdentityMismatch"})
