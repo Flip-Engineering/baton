@@ -42,7 +42,7 @@ def ensure_before_begin(db: String) -> IO(Unit):
 
 law ensure_before_begin_installs_through_the_canonical_installer:
   for db: String
-  {Store.ensure_before_begin(db) == (do IO<Unit>:
+  {ensure_before_begin(db) == (do IO<Unit>:
     ensured : String <- IO.try(String,DB.Sql.ensure_projection(db,C.schema()))
     IO.pure(Unit,Unit{})) : IO(Unit)}
 
