@@ -107,7 +107,7 @@ def reset_empty(handle: U32) -> IO(State):
     reset : Unit <- IO.try(Unit,Custody.Instance.replay(handle))
     IO.pure(State,empty())
 
-def decode_nonempty(db: String, handle: U32, +value: String) -> IO(State):
+def decode_nonempty(+db: String, handle: U32, +value: String) -> IO(State):
   do IO<State>:
     valid : String <- IO.try(String,DB.Sql.query(db,valid_sql(value)))
     Bool.pick(IO(State),String.eq(Tx.trim_nl(valid),"1"),decode_valid(db,value),reset_empty(handle))
