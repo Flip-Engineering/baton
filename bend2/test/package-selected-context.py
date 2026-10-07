@@ -34,7 +34,7 @@ class SelectedContextPackageTest(unittest.TestCase):
         module_root = self.payload / 'lib/context/modules/bend2'
         self.assertEqual(manifest['moduleId'], 'bend2')
         self.assertEqual({row['path'] for row in manifest['files']}, {
-            'lib/context/modules/bend2/' + row['path'] for row in declaration['files']
+            row['path'] for row in declaration['files']
         })
         for row in declaration['files']:
             staged = module_root / row['path']
