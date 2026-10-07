@@ -33,6 +33,12 @@ function fixture() {
       session_id TEXT NOT NULL, entity TEXT NOT NULL, entity_id TEXT NOT NULL,
       operation TEXT NOT NULL, event_kind TEXT NOT NULL, summary TEXT NOT NULL
     );
+    CREATE TRIGGER ui_execution_change AFTER UPDATE ON executions
+    BEGIN
+      INSERT INTO native_changes(committed_at,session_id,entity,entity_id,operation,event_kind,summary)
+      VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),NEW.session,'player',NEW.session,'update',
+        'execution','Execution entered ' || NEW.phase);
+    END;
     INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base,endpoint)
       VALUES ('root',NULL,'codex','configured/root','high','/root','main','base',''),
              ('child','root','muse','configured/child','medium','/child','work','base','["node","endpoint"]'),
@@ -97,13 +103,15 @@ test('SSE replays committed projection rows after a silent write and reports cur
   assert.match(decoder.decode(first.value), /event: hello/);
 
   const writer = new DatabaseSync(f.databasePath);
-  writer.exec(`INSERT INTO native_changes(committed_at,session_id,entity,entity_id,operation,event_kind,summary)
-    VALUES ('2026-10-06T12:00:00Z','child','player','child','update','execution','Execution entered running');`);
+  writer.exec("BEGIN; UPDATE executions SET phase='exited', status='exit 1' WHERE session='child'; ROLLBACK;");
+  const rolledBack = await fetch(`${base}/orchestra/snapshot?subject=root&since=0`);
+  assert.equal((await rolledBack.json()).cursor, '0');
+  writer.exec("UPDATE executions SET phase='exited', status='exit 1' WHERE session='child';");
   writer.close();
 
   let text = '';
   const deadline = Date.now() + 3000;
-  while (!text.includes('Execution entered running') && Date.now() < deadline) {
+  while (!text.includes('Execution entered exited') && Date.now() < deadline) {
     const chunk = await Promise.race([
       reader.read(),
       new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1000)),
@@ -113,7 +121,8 @@ test('SSE replays committed projection rows after a silent write and reports cur
   }
   assert.match(text, /event: player/);
   assert.match(text, /event: transition/);
-  assert.match(text, /Execution entered running/);
+  assert.match(text, /Execution entered exited/);
+  assert.match(text, /"status":"exit 1"/);
   await reader.cancel();
 
   const replay = await fetch(`${base}/orchestra/events?subject=root&since=0`);
@@ -121,7 +130,7 @@ test('SSE replays committed projection rows after a silent write and reports cur
   const replayReader = replay.body.getReader();
   let replayText = '';
   const replayDeadline = Date.now() + 3000;
-  while (!replayText.includes('Execution entered running') && Date.now() < replayDeadline) {
+  while (!replayText.includes('Execution entered exited') && Date.now() < replayDeadline) {
     const chunk = await Promise.race([
       replayReader.read(),
       new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1000)),
@@ -129,7 +138,7 @@ test('SSE replays committed projection rows after a silent write and reports cur
     if (chunk.timeout) continue;
     replayText += decoder.decode(chunk.value);
   }
-  assert.match(replayText, /Execution entered running/);
+  assert.match(replayText, /Execution entered exited/);
   await replayReader.cancel();
 
   const gap = await fetch(`${base}/orchestra/snapshot?subject=root&since=99`);
