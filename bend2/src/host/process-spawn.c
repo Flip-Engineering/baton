@@ -233,7 +233,7 @@ typedef struct { char magic[8]; uint64_t offset; uint64_t check; } BrCursor;
 static int br_cursor_load(const char *directory,uint64_t *offset);
 static int br_cursor_store(const char *directory,uint64_t offset);
 typedef struct {
-  int listener,lock,finishing,single,database_fd;
+  int listener,lock,finishing,single,database_fd,bound;
   uint64_t token,epoch,device,inode,parent_device,parent_inode;
   char *database,*ipc,*key,*socket_path,*record_path,*generation_path;
   BrKeeper *attempts;
@@ -1584,6 +1584,7 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
     }
   }
   if(!error)error=br_owner_record_write(owner);
+  if(!error)owner->bound=1;
   if(error) {
     if(owner->listener>=0){close(owner->listener);owner->listener=-1;}
     if(owner->lock>=0){close(owner->lock);owner->lock=-1;}
@@ -1595,8 +1596,12 @@ static int br_owner_serve(const char *database) {
   int error=br_owner_bind(&owner,database);
   if(!error)error=br_owner_loop(&owner);
   if(owner.listener>=0)close(owner.listener);
-  if(owner.socket_path)unlink(owner.socket_path);
-  if(owner.record_path)unlink(owner.record_path);
+  /* A failed election must not remove the elected owner's socket or record;
+     this process unlinks them only when it bound them itself. */
+  if(owner.bound) {
+    if(owner.socket_path)unlink(owner.socket_path);
+    if(owner.record_path)unlink(owner.record_path);
+  }
   if(owner.database_fd>=0)close(owner.database_fd);
   free(owner.ipc);free(owner.key);free(owner.record_path);free(owner.generation_path);
   while(owner.attempts){BrKeeper *keeper=owner.attempts;owner.attempts=keeper->next;br_keeper_stop(keeper);}
