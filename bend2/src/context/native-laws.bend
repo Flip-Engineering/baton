@@ -172,7 +172,8 @@ def native_step_plan() -> Sel.Plan:
       Decl.ExManaged{}, Sel.StepRefsNil{}, "result-v1"},
       Sel.StepsCons{Sel.Step{native_dependency_binding(), "sourceAnalysis", Eng.SSNil{},
         Decl.ExManaged{}, Sel.StepRefsNil{}, "result-v1"}, Sel.StepsNil{}}},
-    Eng.SSNil{}, Sel.CapNil{}, True{}}
+    Eng.SSNil{}, Sel.CapNil{}, True{},
+    Sel.ProjectPolicyMissing{"query-1", "/work", "/work/.baton/context.json"}}
 
 law native_invocation_uses_the_named_dependency_step_binding:
   {Native.invocation_for_step(native_step_plan(), "dependency", "d2", "definition",
