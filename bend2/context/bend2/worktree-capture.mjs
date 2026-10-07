@@ -205,7 +205,7 @@ export function createRetainedWorktreeCapture({ owner, worktree, packages = [] }
       const invalid = checkOwner(candidate);
       if (invalid !== null) return invalid;
       closed = true;
-      return Object.freeze({ status: 'sealed', descriptors: this.descriptors(), fileCount: files.size });
+      return Object.freeze({ status: 'sealed', descriptors: api.descriptors(), fileCount: files.size });
     },
   });
   return Object.freeze({ status: 'ready', capture: api, acquisition: api.forOwner(owner), roots });
