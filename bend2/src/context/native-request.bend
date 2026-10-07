@@ -174,14 +174,17 @@ def report_after_validation(+db: String, +binding: String, +text: String,
         case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"requestValidationRead"})
     case Done{+row}: validation_report_row(db, binding, text, Tx.trim_nl(row))
 
+def request_tree_result(result: Result<&1,&1,U32 & String,String>) -> RequestDecode:
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): RequestDecodeRefused{"requestTreeRead"}
+    case Done{+rows}: request_rows(rows)
+
 def request_rows_after_validation(+db: String, +binding: String, +text: String) -> IO(RequestDecode):
   do IO<RequestDecode>:
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, Req.json_tree_sql(text))
-    match result:
-      case Fail{error}:
-        match error:
-          case (code, detail): IO.pure(RequestDecode, RequestDecodeRefused{"requestTreeRead"})
-      case Done{+rows}: IO.pure(RequestDecode, request_rows(rows))
+    IO.pure(RequestDecode, request_tree_result(result))
 
 def read_raw_after(+db: String, +binding: String, result: Result<&1,&1,U32 & String,Raw.RawRead>) -> IO(RequestDecode):
   match result:
@@ -197,7 +200,9 @@ def read_raw_after(+db: String, +binding: String, result: Result<&1,&1,U32 & Str
         case invalid: RequestDecodeRefused{Req.raw_condition(invalid)}
 
 def read_file(+db: String, +binding: String, +path: String) -> IO(RequestDecode):
-  read_raw_after(db, binding, Req.read_utf8(path))
+  do IO<RequestDecode>:
+    result : Result<&1,&1,U32 & String,Raw.RawRead> <- Req.read_utf8(path)
+    read_raw_after(db, binding, result)
 
 def decoded_subject_path(decoded: RequestDecode) -> String:
   match decoded:
