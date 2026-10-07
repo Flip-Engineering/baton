@@ -392,7 +392,7 @@ type HolderObservation is Data:
   HolderObserved{request: HolderRequest, code: U32, out: String, verdict: HolderVerdict}
   HolderObservedBroken{request: HolderRequest, detail: String, verdict: HolderVerdict}
 
-def prefix_drop(line: String, prefix: String) -> Maybe<String>:
+def prefix_drop(line: String, prefix: String) -> Maybe<&2, String>:
   match line prefix:
     case SNil{} SNil{}: Some{SNil{}}
     case SNil{} SCon{pc, pr}: None{}
@@ -400,7 +400,7 @@ def prefix_drop(line: String, prefix: String) -> Maybe<String>:
     case SCon{lc, lr} SCon{pc, pr}:
       Bool.pick(Maybe<String>, Char.is_eq(lc, pc), prefix_drop(lr, pr), None{})
 
-def holder_path_of(+line: String) -> Maybe<String>:
+def holder_path_of(+line: String) -> Maybe<&2, String>:
   prefix_drop(line, "worktree ")
 
 def holder_path_ok(+path: String) -> Bool:
@@ -780,8 +780,8 @@ def ff_stage5_adv_answer(a: LAdv, target: String, cand: String) -> FFLD:
 
 type LdAdvObs is Data:
   LdAdvNoCapture{advance: LAdv}
-  LdAdvCaptured{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>}
-  LdAdvQualified{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>, readback: T.GitOut}
+  LdAdvCaptured{advance: LAdv, +capture: T.CapturedRaw}
+  LdAdvQualified{advance: LAdv, +capture: T.CapturedRaw, readback: T.GitOut}
 
 # The public shared boundary. The canonical common directory is read once here, the target
 # claim is taken around the holder selection and the selected advance, and the release runs for
@@ -789,21 +789,25 @@ type LdAdvObs is Data:
 # A release failure is therefore visible to both adapters and can never read as a landing.
 type SharedLanding is Data:
   SharedCommonUnreadable{observation: T.GitOut}
-  SharedClaimFailed{error: U32 & String}
+  SharedClaimFailed{error: T.HostError}
   SharedGuardBusy{target: String}
-  SharedStepFailed{step: String, error: U32 & String, released: Result<&1, &1, U32 & String, Unit>}
-  SharedStepRecordFailed{step: String, record: String, released: Result<&1, &1, U32 & String, Unit>}
-  SharedAdvanced{obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>, guard: String, reserved: String}
+  SharedStepFailed{step: String, error: T.HostError, released: T.ReleaseRaw}
+  SharedStepRecordFailed{step: String, record: String, released: T.ReleaseRaw}
+  SharedAdvanced{obs: LdAdvObs, released: T.ReleaseRaw, guard: String, reserved: String}
 
 # Every step failure releases the acquired descriptor and keeps its own stage, its complete
 # error or raw record, and the actual release Result.
+def shared_error(error: U32 & String) -> T.HostError:
+  match error:
+    case (code, detail): T.HostError{code, detail}
+
 def shared_step_failed(step: String, error: U32 & String, handle: U32) -> IO(SharedLanding):
   +s = step
-  +e = error
+  +e = shared_error(error)
   +h = handle
   do IO<SharedLanding>:
     released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(h)
-    IO.pure(SharedLanding, SharedStepFailed{s, e, released})
+    IO.pure(SharedLanding, SharedStepFailed{s, e, T.release_raw_of(released)})
 
 def shared_attempts_parent(common: String) -> String:
   +c = common
@@ -820,7 +824,7 @@ def shared_record_failed(step: String, record: String, handle: U32) -> IO(Shared
   +h = handle
   do IO<SharedLanding>:
     released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(h)
-    IO.pure(SharedLanding, SharedStepRecordFailed{s, r, released})
+    IO.pure(SharedLanding, SharedStepRecordFailed{s, r, T.release_raw_of(released)})
 
 type LdAdvCtx is Data:
   LdAdvContext{claim: U32, guard: String, artifact: String}
@@ -943,12 +947,12 @@ def ld_adv_host_error(error: U32 & String) -> T.GitOut:
   match error:
     case (code, detail): T.GBroken{detail}
 
-def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
+def ld_adv_status(+capture: T.CapturedRaw) -> T.GitOut:
   match capture:
     case Fail{error}: ld_adv_host_error(error)
     case Done{pair}: ld_adv_pair(pair)
 
-def ld_adv_with(advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>) -> LdAdvObs:
+def ld_adv_with(advance: LAdv, +capture: T.CapturedRaw) -> LdAdvObs:
   +a = advance
   +c = capture
   LdAdvCaptured{a, c}
@@ -964,7 +968,7 @@ def ld_adv_cas(g: T.GitOut) -> LAdv:
     case T.GRun{code, out}: Bool.pick(LAdv, U32.is_eq(code, 0), AdvLanded{}, AdvRefused{})
     case T.GBroken{detail}: AdvBroken{detail}
 
-def ld_adv_cas_compared(cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut, tip: String) -> IO(LdAdvObs):
+def ld_adv_cas_compared(cand: String, +capture: T.CapturedRaw, after: T.GitOut, tip: String) -> IO(LdAdvObs):
   +c2 = cand
   +cp = capture
   +obs = after
@@ -972,7 +976,7 @@ def ld_adv_cas_compared(cand: String, capture: Result<&1,&1,U32 & String,String 
   Bool.pick(IO(LdAdvObs), Tx.str_eq(seen, c2),
     IO.pure(LdAdvObs, LdAdvQualified{AdvLanded{}, cp, obs}),
     IO.pure(LdAdvObs, LdAdvQualified{AdvMoved{}, cp, obs}))
-def ld_adv_cas_readback(target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>, after: T.GitOut) -> IO(LdAdvObs):
+def ld_adv_cas_readback(target: String, cand: String, +capture: T.CapturedRaw, after: T.GitOut) -> IO(LdAdvObs):
   match after:
     case T.GRun{code, out}:
       +c0 = code
@@ -984,7 +988,7 @@ def ld_adv_cas_readback(target: String, cand: String, capture: Result<&1,&1,U32 
 # The unheld advance is not landed on exit zero alone: while the target claim is still held the
 # target ref is read back and required to be the candidate. A moved target answers AdvMoved with
 # the capture retained; an unreadable readback answers AdvBroken with it.
-def ld_adv_cas_qualified(target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>, status: T.GitOut, repo: String) -> IO(LdAdvObs):
+def ld_adv_cas_qualified(target: String, cand: String, +capture: T.CapturedRaw, status: T.GitOut, repo: String) -> IO(LdAdvObs):
   match status:
     case T.GRun{code, out}:
       Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
@@ -995,6 +999,12 @@ def ld_adv_cas_qualified(target: String, cand: String, capture: Result<&1,&1,U32
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(ld_adv_cas(status), capture))
 
 # The compare-and-swap where no worktree holds the target.
+def ld_adv_cas_reuse(target: String, cand: String, repo: String, +capture: T.CapturedRaw) -> IO(LdAdvObs):
+  ld_adv_cas_qualified(target, cand, capture, ld_adv_status(capture), repo)
+
+def ld_adv_cas_capture(target: String, cand: String, repo: String, host: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
+  ld_adv_cas_reuse(target, cand, repo, T.captured_raw_of(host))
+
 def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +r2 = repo
   +t2 = target
@@ -1002,8 +1012,8 @@ def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String, ct
   +b2 = basis
   +cx = ctx
   do IO<LdAdvObs>:
-    +captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", ld_update_argv(t2, c2, b2)}), r2, ladvctx_claim(cx), ladvctx_guard(cx), ladvctx_artifact(cx))
-    ld_adv_cas_qualified(t2, c2, captured, ld_adv_status(captured), r2)
+    captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", ld_update_argv(t2, c2, b2)}), r2, ladvctx_claim(cx), ladvctx_guard(cx), ladvctx_artifact(cx))
+    ld_adv_cas_capture(t2, c2, r2, captured)
 # The attached branch name of a worktree, or a nonzero result when detached.
 def ld_head_argv() -> List<String>:
   ["symbolic-ref", "--quiet", "HEAD"]
@@ -1021,7 +1031,7 @@ def ld_adv_refused_pick(g: T.GitOut, path: String, basis: String) -> LAdv:
         AdvBroken{"the target commit could not be read after a refused fast-forward"})
     case T.GBroken{detail}: AdvBroken{detail}
 
-def ld_adv_wt_refused(path: String, repo: String, target: String, basis: String, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
+def ld_adv_wt_refused(path: String, repo: String, target: String, basis: String, +capture: T.CapturedRaw) -> IO(LdAdvObs):
   +p2 = path
   +r2 = repo
   +b2 = basis
@@ -1076,13 +1086,13 @@ def ld_adv_wt_observe(path: String, repo: String, target: String, cand: String) 
     target_tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
     ld_adv_wt_observed_target_pick(target_tip, p2, t2, c2)
 
-def ld_adv_wt_observe_wrapped(path: String, repo: String, target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
+def ld_adv_wt_observe_wrapped(path: String, repo: String, target: String, cand: String, +capture: T.CapturedRaw) -> IO(LdAdvObs):
   +cp = capture
   do IO<LdAdvObs>:
     inner : LAdv <- ld_adv_wt_observe(path, repo, target, cand)
     IO.pure(LdAdvObs, ld_adv_with(inner, cp))
 
-def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
+def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, +capture: T.CapturedRaw) -> IO(LdAdvObs):
   match g:
     case T.GRun{code, out}:
       +p2 = path
@@ -1094,6 +1104,12 @@ def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand
         ld_adv_wt_observe_wrapped(p2, r2, t2, c2, capture),
         ld_adv_wt_refused(p2, r2, t2, b2, capture))
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_with(AdvBroken{detail}, capture))
+def ld_adv_wt_reuse(path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, +capture: T.CapturedRaw) -> IO(LdAdvObs):
+  ld_adv_wt_pick(ld_adv_status(capture), path, repo, target, cand, basis, ctx, capture)
+
+def ld_adv_wt_capture(path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, host: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
+  ld_adv_wt_reuse(path, repo, target, cand, basis, ctx, T.captured_raw_of(host))
+
 def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match same:
     case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvHolderChanged{path}))
@@ -1104,8 +1120,8 @@ def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, 
       +c2 = cand
       +b2 = basis
       do IO<LdAdvObs>:
-        +captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"merge", Con{"--ff-only", Con{c2, Nil{}}}}}), p2, ladvctx_claim(ctx), ladvctx_guard(ctx), ladvctx_artifact(ctx))
-        ld_adv_wt_pick(ld_adv_status(captured), p2, r2, t2, c2, b2, ctx, captured)
+        captured : Result<&1,&1,U32 & String,String & String> <- Git.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"merge", Con{"--ff-only", Con{c2, Nil{}}}}}), p2, ladvctx_claim(ctx), ladvctx_guard(ctx), ladvctx_artifact(ctx))
+        ld_adv_wt_capture(p2, r2, t2, c2, b2, ctx, captured)
 def ld_adv_wt_head_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   match g:
     case T.GRun{code, out}:
@@ -1191,7 +1207,7 @@ def shared_reserved_continue(handle: U32, repo: String, target: String, cand: St
   do IO<SharedLanding>:
     o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
     released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(h)
-    IO.pure(SharedLanding, SharedAdvanced{o, released, gd, rv})
+    IO.pure(SharedLanding, SharedAdvanced{o, T.release_raw_of(released), gd, rv})
 
 # The attempt name: the bare base for the first attempt, then the base extended with the
 # counter rendered by U32.show. The only refusal past a collision is the U32 maximum, checked
@@ -1208,7 +1224,7 @@ def shared_attempt_name(base: String, attempt: U32) -> String:
 def shared_reserve_observed(+handle: U32, +repo: String, +target: String, +cand: String, +basis: String, +guard: String, +parent: String, +base: String, +attempt: U32, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   match observed:
     case Fail{error}: shared_step_failed("reserve", error, handle)
-    case Done{+record}:
+    case Done{record}:
       +created_ok = Tx.str_eq(record, Pb.production_record("created", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0"))
       +existing_ok = Tx.str_eq(record, Pb.production_record("existing", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0"))
       Bool.pick(IO(SharedLanding), created_ok,
@@ -1300,7 +1316,7 @@ def shared_guarded(handle: U32, repo: String, target: String, cand: String, basi
 
 def shared_claim_decided(repo: String, target: String, cand: String, basis: String, common: String, claim_outcome: Result<&1, &1, U32 & String, Maybe<U32>>) -> IO(SharedLanding):
   match claim_outcome:
-    case Fail{error}: IO.pure(SharedLanding, SharedClaimFailed{error})
+    case Fail{error}: IO.pure(SharedLanding, SharedClaimFailed{shared_error(error)})
     case Done{held}:
       match held:
         case None{}: IO.pure(SharedLanding, SharedGuardBusy{target})
@@ -1341,20 +1357,16 @@ def ld_adv_of(obs: LdAdvObs) -> LAdv:
 def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String) -> FFLD:
   match shared:
     case SharedCommonUnreadable{observation}: FFDone{T.LBlocked{"the common directory could not be read for the landing claim"}}
-    case SharedClaimFailed{error}:
-      match error:
-        case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the landing claim failed: ", detail)}}
+    case SharedClaimFailed{error}: FFDone{T.LBlocked{Tx.str_cat("the landing claim failed: ", T.host_detail(error))}}
     case SharedGuardBusy{target}: FFDone{T.LBlocked{"another landing holds the target"}}
-    case SharedStepFailed{step, error, released}:
-      match error:
-        case (code, detail): FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " failed: "), detail)}}
+    case SharedStepFailed{step, error, released}: FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " failed: "), T.host_detail(error))}}
     case SharedStepRecordFailed{step, record, released}: FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " refused: "), record)}}
     case SharedAdvanced{obs, released, guard, reserved}:
-      match released:
-        case Fail{error}:
-          match error:
-            case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", detail)}}
-        case Done{unit}: ff_stage5_adv_answer(ld_adv_of(obs), target, cand)
+      Bool.pick(FFLD, T.release_done(released),
+        ff_stage5_adv_answer(ld_adv_of(obs), target, cand),
+        Bool.pick(FFLD, T.release_unperformed(released),
+          FFDone{T.LBlocked{"the advance ran but its release was not performed"}},
+          FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", T.release_detail(released))}}))
 
 def ff_stage5_shared(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
   +cand = wc
@@ -1693,20 +1705,16 @@ def ld_adv_answer(a: LAdv, target: String, cand: String) -> Ld:
 def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String) -> Ld:
   match shared:
     case SharedCommonUnreadable{observation}: LdFail{T.FCmd{"land", "the common directory could not be read for the landing claim"}}
-    case SharedClaimFailed{error}:
-      match error:
-        case (code, detail): LdFail{T.FCmd{"land", detail}}
+    case SharedClaimFailed{error}: LdFail{T.FCmd{"land", T.host_detail(error)}}
     case SharedGuardBusy{target}: LdFail{T.FCmd{"land", "another landing holds the target; rerun land-checked to prepare and check against the current target"}}
-    case SharedStepFailed{step, error, released}:
-      match error:
-        case (code, detail): LdFail{T.FCmd{"land", detail}}
+    case SharedStepFailed{step, error, released}: LdFail{T.FCmd{"land", T.host_detail(error)}}
     case SharedStepRecordFailed{step, record, released}: LdFail{T.FCmd{"land", record}}
     case SharedAdvanced{obs, released, guard, reserved}:
-      match released:
-        case Fail{error}:
-          match error:
-            case (code, detail): LdFail{T.FCmd{"land", detail}}
-        case Done{unit}: ld_adv_answer(ld_adv_of(obs), target, cand)
+      Bool.pick(Ld, T.release_done(released),
+        ld_adv_answer(ld_adv_of(obs), target, cand),
+        Bool.pick(Ld, T.release_unperformed(released),
+          LdFail{T.FCmd{"land", "the advance ran but its release was not performed"}},
+          LdFail{T.FCmd{"land", Tx.str_cat("the advance ran but its release failed: ", T.release_detail(released))}}))
 def ld_advance(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
   +t2 = target
   +c2 = cand
@@ -2345,4 +2353,28 @@ law an_empty_prefix_leaves_the_whole_line:
   {prefix_drop("worktree /tmp/w", "") == Some{"worktree /tmp/w"} : Maybe<String>}
 
 def an_empty_prefix_leaves_the_whole_line():
+  {==}
+
+law an_unperformed_release_refuses_the_fast_forward:
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseUnperformed{}, "g", "r"}, "t", "c") == FFDone{T.LBlocked{"the advance ran but its release was not performed"}} : FFLD}
+
+def an_unperformed_release_refuses_the_fast_forward():
+  {==}
+
+law a_failed_release_refuses_the_fast_forward:
+  {ff_stage5_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseFailed{13, "release failed"}, "g", "r"}, "t", "c") == FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : FFLD}
+
+def a_failed_release_refuses_the_fast_forward():
+  {==}
+
+law an_unperformed_release_refuses_the_advance:
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseUnperformed{}, "g", "r"}, "t", "c") == LdFail{T.FCmd{"land", "the advance ran but its release was not performed"}} : Ld}
+
+def an_unperformed_release_refuses_the_advance():
+  {==}
+
+law a_failed_release_refuses_the_advance:
+  {ld_advance_shared_answer(SharedAdvanced{ld_adv_wrap(AdvLanded{}), T.ReleaseFailed{13, "release failed"}, "g", "r"}, "t", "c") == LdFail{T.FCmd{"land", Tx.str_cat("the advance ran but its release failed: ", "release failed")}} : Ld}
+
+def a_failed_release_refuses_the_advance():
   {==}

@@ -136,3 +136,29 @@ law a_release_success_is_its_own_success:
 
 def a_release_success_is_its_own_success():
   {==}
+
+def host_code(error: HostError) -> U32:
+  match error:
+    case HostError{code, detail}: code
+
+def host_detail(error: HostError) -> String:
+  match error:
+    case HostError{code, detail}: detail
+
+def release_done(r: ReleaseRaw) -> Bool:
+  match r:
+    case ReleaseDone{}: True{}
+    case ReleaseUnperformed{}: False{}
+    case ReleaseFailed{code, detail}: False{}
+
+def release_unperformed(r: ReleaseRaw) -> Bool:
+  match r:
+    case ReleaseUnperformed{}: True{}
+    case ReleaseDone{}: False{}
+    case ReleaseFailed{code, detail}: False{}
+
+def release_detail(r: ReleaseRaw) -> String:
+  match r:
+    case ReleaseFailed{code, detail}: detail
+    case ReleaseDone{}: ""
+    case ReleaseUnperformed{}: ""
