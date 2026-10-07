@@ -258,12 +258,25 @@ def show_duty(+key: String, result: Result<&1,&1,U32 & String,ContextDuties.Duty
       match error:
         case (code, message): obs(key ++ ".error", message)
 
-def show_duty_has(+key: String, +view: Result<&1,&1,U32 & String,ContextDuties.DutyView>, +kind: String, +subject: String) -> IO(Unit):
+def show_duty_has(+key: String, view: Result<&1,&1,U32 & String,ContextDuties.DutyView>, +kind: String, +subject: String) -> IO(Unit):
   match view:
     case Done{+duties}: obs(key, Bool.show(ContextDuties.duty_contains(duties, kind, subject)))
     case Fail{error}:
       match error:
         case (code, message): obs(key ++ ".error", message)
+
+def show_duty_set(result: Result<&1,&1,U32 & String,ContextDuties.DutyView>) -> IO(Unit):
+  match result:
+    case Done{+view}: do IO<Unit>:
+      shown : Unit <- obs("duties.view", ContextDuties.duty_text(view))
+      first : Unit <- obs("duties.q1", Bool.show(ContextDuties.duty_contains(view, "query", "q1")))
+      obs("duties.q4", Bool.show(ContextDuties.duty_contains(view, "query", "q4")))
+    case Fail{error}:
+      match error:
+        case (code,+message): do IO<Unit>:
+          shown : Unit <- obs("duties.view.error", message)
+          first : Unit <- obs("duties.q1.error", message)
+          obs("duties.q4.error", message)
 
 def duty_surfaces(+db: String, +binding: String) -> IO(Unit):
   do IO<Unit>:
@@ -273,10 +286,8 @@ def duty_surfaces(+db: String, +binding: String) -> IO(Unit):
     show("duties.q4.publish", published)
     settled : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.envelope_sql("q4"))
     show("duties.q4.readback", settled)
-    +view : Result<&1,&1,U32 & String,ContextDuties.DutyView> <- ContextDuties.duties(db, binding)
-    show_duty("duties.view", view)
-    show_duty_has("duties.q1", view, "query", "q1")
-    show_duty_has("duties.q4", view, "query", "q4")
+    view : Result<&1,&1,U32 & String,ContextDuties.DutyView> <- ContextDuties.duties(db, binding)
+    shown : Unit <- show_duty_set(view)
     missing : Result<&1,&1,U32 & String,ContextDuties.DutyView> <- ContextDuties.duties(db, binding ++ "-absent")
     show_duty("duties.missing", missing)
     IO.pure(Unit, Unit{})
