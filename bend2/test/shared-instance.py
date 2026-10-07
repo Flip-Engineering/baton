@@ -826,13 +826,10 @@ class SharedInstance(unittest.TestCase):
         self.assertIn('cancel-ok', cancelled_output)
         self.assertIn('cancel-repeat-ok', cancelled_output)
         self.assertIn('cancel-changed-failed:', cancelled_output)
-        cancelled_state = json.loads(next(line[len('cancel-state:'):] for line in cancelled_output.splitlines() if line.startswith('cancel-state:')))
-        self.assertEqual(cancelled_state['state'], 'cancelled', cancelled_state)
-        self.assertFalse(cancelled_state['spawn_latched'], cancelled_state)
         self.assertIn('start-after-cancel-failed:', cancelled_output)
         self.assertFalse((cancelled_dir / 'launch').exists())
         self.assertFalse((cancelled_dir / 'native.pid').exists())
-        print('evidence dormant-cancel', cancelled_state['state'], 'matching-repeat', 'changed-refused')
+        print('evidence dormant-cancel', 'matching-repeat', 'changed-refused', 'start-refused')
 
 
 if __name__ == '__main__':

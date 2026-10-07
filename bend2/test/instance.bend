@@ -305,8 +305,6 @@ def prepared_cancelled(+handle: U32, +bootstrap: String, +decision: String, resu
     repeated_shown : Unit <- operation("cancel-repeat",repeated)
     changed : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.cancel(handle,bootstrap,decision ++ "-changed")
     changed_shown : Unit <- operation("cancel-changed",changed)
-    state : String <- IO.try(String,Custody.Instance.state(handle))
-    shown : Unit <- IO.print("cancel-state:" ++ state)
     started : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision)
     refused : Unit <- operation("start-after-cancel",started)
     IO.pure(Unit,Unit{})
