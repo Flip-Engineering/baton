@@ -1140,7 +1140,7 @@ def a_rendered_failure_document_is_present():
   {==}
 
 law a_retained_rejected_admission_is_not_admitted:
-  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","rejected","refused","","/k","/w","/a"}) == ContextService.SubmissionRetainedRejected{"rejected","refused","root","{\"v\":1}"} : ContextService.Submission}
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","rejected","refused","","/k","/w","/a"}) == ContextService.SubmissionRetainedRejected{ContextAdmit.AdmissionRetained{"root","{\"v\":1}","rejected","refused","","/k","/w","/a"},"rejected","refused","root","{\"v\":1}"} : ContextService.Submission}
 
 def a_retained_rejected_admission_is_not_admitted():
   {==}

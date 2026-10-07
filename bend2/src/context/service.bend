@@ -62,7 +62,8 @@ type Submission is Data:
   SubmissionAdmitted{admission: ContextAdmit.Admission, proposedPlan: String, proposedSchema: String}
   SubmissionRetainedUnverified{admission: ContextAdmit.Admission, proposedPlan: String, proposedSchema: String}
   SubmissionPlanRefused{stage: String, reason: String}
-  SubmissionRetainedRejected{decision: String, state: String, owner: String, request: String}
+  SubmissionRetainedRejected{admission: ContextAdmit.Admission, decision: String,
+    state: String, owner: String, request: String}
   SubmissionAbsent{}
   SubmissionForeign{owner: String, request: String}
   SubmissionRefused{code: U32, detail: String}
@@ -149,7 +150,7 @@ def retained(+db: String, +binding: String, +query: String) -> IO(Retained):
 def submission_retained(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, +admission: ContextAdmit.Admission, +owner: String, +request: String, +decision: String, +state: String) -> Submission:
   Bool.pick(Submission, String.eq(decision, "accepted"),
     Bool.pick(Submission, ContextAdmit.admit_identical(admission, expectedOwner, expectedRequest), SubmissionRetainedUnverified{admission, plan, resultSchema}, SubmissionForeign{owner, request}),
-    SubmissionRetainedRejected{decision, state, owner, request})
+    SubmissionRetainedRejected{admission, decision, state, owner, request})
 
 def submission_of(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, +admission: ContextAdmit.Admission) -> Submission:
   match admission:

@@ -157,6 +157,32 @@ def accepted_admission(+bootstrap: Bootstrap, +role: String, +incarnation: Strin
           artifact_path, stored_plan, stored_schema},
         StartHeld{"committedAdmissionMismatch"})
 
+def rejection_identity_match(+expected_owner: String, +expected_request: String,
+                             +expected_keeper: String, +expected_cwd: String,
+                             +expected_attempt: String, +expected_artifact: String,
+                             +admission: Admission.Admission) -> Bool:
+  match admission:
+    case Admission.AdmissionRetained{+owner, +request, decision, state, attempt,
+        +keeperPath, +cwd, +artifactPath}:
+      Bool.and(String.eq(owner, expected_owner),
+      Bool.and(String.eq(request, expected_request),
+      Bool.and(String.eq(keeperPath, expected_keeper),
+      Bool.and(String.eq(cwd, expected_cwd),
+      Bool.and(String.eq(attempt, expected_attempt),
+      Bool.and(String.eq(artifactPath, expected_artifact),
+      Bool.and(String.eq(decision, "rejected"), String.eq(state, "refused"))))))))
+    case _: False{}
+
+def rejected_admission_decision(+bootstrap: Bootstrap,
+                                +admission: Admission.Admission) -> StartDecision:
+  Bool.pick(StartDecision,
+    rejection_identity_match(bootstrap_owner(bootstrap), bootstrap_request(bootstrap),
+      bootstrap_keeper_path(bootstrap), bootstrap_cwd(bootstrap),
+      bootstrap_attempt(bootstrap), bootstrap_artifact_path(bootstrap), admission),
+    StartCancelled{bootstrap_query(bootstrap), bootstrap_owner(bootstrap),
+      "admissionRejected", bootstrap_keeper_path(bootstrap)},
+    StartHeld{"rejectedAdmissionIdentityMismatch"})
+
 def submission_decision(+bootstrap: Bootstrap, +role: String, +incarnation: String,
                         +submission: ContextService.Submission) -> StartDecision:
   match submission:
@@ -166,8 +192,8 @@ def submission_decision(+bootstrap: Bootstrap, +role: String, +incarnation: Stri
       accepted_admission(bootstrap, role, incarnation, admission, planValue, resultSchema)
     case ContextService.SubmissionRetainedUnverified{admission, planValue, resultSchema}:
       StartHeld{"retainedAdmissionUnverified"}
-    case ContextService.SubmissionRetainedRejected{decision, state, owner, request}:
-      StartHeld{"rejectedDecisionRequiresPreparedIdentityReadback"}
+    case ContextService.SubmissionRetainedRejected{+admission, decision, state, owner, request}:
+      rejected_admission_decision(bootstrap, admission)
     case ContextService.SubmissionPlanRefused{stage, reason}: StartHeld{"planRefused:" ++ stage ++ ":" ++ reason}
     case ContextService.SubmissionAbsent{}: StartHeld{"admissionAbsent"}
     case ContextService.SubmissionForeign{owner, request}: StartHeld{"admissionForeign"}
@@ -215,32 +241,6 @@ def submit_after_observer_ready(+bootstrap: Bootstrap, readiness: KeeperReadines
           IO.pure(StartDecision, submission_decision(bootstrap, role,
             incarnation, submission)),
         IO.pure(StartDecision, StartHeld{"observerIdentityMismatch"}))
-
-def rejection_identity_match(+expected_owner: String, +expected_request: String,
-                             +expected_keeper: String, +expected_cwd: String,
-                             +expected_attempt: String, +expected_artifact: String,
-                             +admission: Admission.Admission) -> Bool:
-  match admission:
-    case Admission.AdmissionRetained{+owner, +request, decision, state, attempt,
-        +keeperPath, +cwd, +artifactPath}:
-      Bool.and(String.eq(owner, expected_owner),
-      Bool.and(String.eq(request, expected_request),
-      Bool.and(String.eq(keeperPath, expected_keeper),
-      Bool.and(String.eq(cwd, expected_cwd),
-      Bool.and(String.eq(attempt, expected_attempt),
-      Bool.and(String.eq(artifactPath, expected_artifact),
-      Bool.and(String.eq(decision, "rejected"), String.eq(state, "refused"))))))))
-    case _: False{}
-
-def rejected_admission_decision(+bootstrap: Bootstrap,
-                                +admission: Admission.Admission) -> StartDecision:
-  Bool.pick(StartDecision,
-    rejection_identity_match(bootstrap_owner(bootstrap), bootstrap_request(bootstrap),
-      bootstrap_keeper_path(bootstrap), bootstrap_cwd(bootstrap),
-      bootstrap_attempt(bootstrap), bootstrap_artifact_path(bootstrap), admission),
-    StartCancelled{bootstrap_query(bootstrap), bootstrap_owner(bootstrap),
-      "admissionRejected", bootstrap_keeper_path(bootstrap)},
-    StartHeld{"rejectedAdmissionIdentityMismatch"})
 
 def cancel_rejected(+bootstrap: Bootstrap, readiness: KeeperReadiness,
                     +admission: Admission.Admission) -> StartDecision:

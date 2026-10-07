@@ -94,6 +94,17 @@ law rejected_admission_cancels_only_after_exact_retained_identity_readback:
 def rejected_admission_cancels_only_after_exact_retained_identity_readback():
   {==}
 
+law a_rejected_service_readback_retains_the_admission_for_identity_checks:
+  {Managed.submission_decision(managed_bootstrap(), "starter", "0",
+    Service.SubmissionRetainedRejected{
+      Admission.AdmissionRetained{"owner-1", "{}", "rejected", "refused", "0",
+        "/logs/keeper-q", "/work", "/work/.baton/context-artifacts/q"},
+      "rejected", "refused", "owner-1", "{}"}) ==
+    Managed.StartCancelled{"q-1", "owner-1", "admissionRejected", "/logs/keeper-q"} : Managed.StartDecision}
+
+def a_rejected_service_readback_retains_the_admission_for_identity_checks():
+  {==}
+
 law a_changed_artifact_never_cancels_a_rejected_preparation:
   {Managed.cancel_rejected(managed_bootstrap(), ready_keeper(),
     Admission.AdmissionRetained{"owner-1", "{}", "rejected", "refused", "0",
