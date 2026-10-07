@@ -13,7 +13,7 @@ import ./land.bend as Land
 import ./knowledge.bend as Knowledge
 import ./ui-subscription.bend as UISubscription
 import ./usage.bend as Usage
-import ./logs.bend as Logs
+import ./../coordinator/logs.bend as Logs
 import ../coordinator/commands.bend as C
 import ../context/native.bend as ContextNative
 import ./control.bend as Control

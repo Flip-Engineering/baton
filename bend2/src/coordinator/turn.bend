@@ -7,7 +7,7 @@ import ../host/session-lock.bend as Lock
 import ./guidance.bend as Guidance
 import ./native-requests.bend as NativeRequests
 import ./observer-checkpoint.bend as Observer
-import ./logs.bend as Logs
+import ./../coordinator/logs.bend as Logs
 import ../host/log-checkpoint.bend as Checkpoint
 import ../host/sqlite.bend as DB
 import ../host/text.bend as T
