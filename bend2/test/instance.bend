@@ -147,17 +147,17 @@ def hold_started(start: P.RetainedStart, payload: String) -> IO(Unit):
       gate : String <- IO.try(String,Text.Text.read("-"))
       IO.print("hold-released")
 
-def attempted_locked(database: String, directory: String, cwd: String, payload: String, program: List<String>, lock: Maybe<U32>, cycle: Bool) -> IO(Unit):
+def attempted_started(start: P.RetainedStart, payload: String, cycle: Bool) -> IO(Unit):
+  match cycle:
+    case True{}: cycle_started(start,payload)
+    case False{}: hold_started(start,payload)
+
+def attempted_locked(database: String, directory: String, cwd: String, payload: String, program: List<String>, lock: Maybe<U32>, cycle: Bool) -> IO<Unit>:
   do IO<Unit>:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr","",1,lock,P.argv([executable,"recover-retained",database,directory])))
     run : Unit <- attempted_started(start,payload,cycle)
     IO.pure(Unit,Unit{})
-
-def attempted_started(start: P.RetainedStart, payload: String, cycle: Bool) -> IO(Unit):
-  match cycle:
-    case True{}: cycle_started(start,payload)
-    case False{}: hold_started(start,payload)
 
 def admit_cli(args: List<String>, cycle: Bool) -> IO(Unit):
   match args:
