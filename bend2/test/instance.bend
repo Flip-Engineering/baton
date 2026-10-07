@@ -1,5 +1,5 @@
 import Base
-import ../src/host/instance.bend as Instance
+import ../src/host/instance.bend as Custody
 import ../src/host/process.bend as P
 import ../src/host/session-lock.bend as Lock
 import ../src/host/text.bend as Text
@@ -8,7 +8,7 @@ import ../src/host/text.bend as Text
 # no owner answers for a database.
 def owner_cli(args: List<String>) -> IO(Unit):
   match args:
-    case +database <> Nil{}: IO.try(Unit,Instance.owner(database))
+    case +database <> Nil{}: IO.try(Unit,Custody.Instance.owner(database))
     case _: IO.die(Unit,2,"--instance-owner DATABASE")
 
 def answer(result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
@@ -19,7 +19,7 @@ def answer(result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
 def shutdown_cli(args: List<String>) -> IO(Unit):
   match args:
     case +database <> Nil{}: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,Unit> <- Instance.shutdown(database)
+      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.shutdown(database)
       printed : Unit <- answer(result)
       IO.pure(Unit,Unit{})
     case _: IO.die(Unit,2,"shutdown DATABASE")
@@ -34,7 +34,7 @@ def owner_answer(result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
 def owner_try_cli(args: List<String>) -> IO(Unit):
   match args:
     case +database <> Nil{}: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,Unit> <- Instance.owner(database)
+      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.owner(database)
       printed : Unit <- owner_answer(result)
       IO.pure(Unit,Unit{})
     case _: IO.die(Unit,2,"owner-try DATABASE")
@@ -64,7 +64,7 @@ def observe_attached(result: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
 def attach_cli(args: List<String>) -> IO(Unit):
   match args:
     case database <> directory <> Nil{}: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,U32> <- Instance.attach(database,directory)
+      result : Result<&1,&1,U32 & String,U32> <- Custody.Instance.attach(database,directory)
       observed : Unit <- observe_attached(result)
       IO.pure(Unit,Unit{})
     case _: IO.die(Unit,2,"attach DATABASE ATTEMPT")
@@ -74,7 +74,7 @@ def attach_cli(args: List<String>) -> IO(Unit):
 def recover_cli(args: List<String>) -> IO(Unit):
   match args:
     case database <> directory <> Nil{}: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,U32> <- Instance.attach(database,directory)
+      result : Result<&1,&1,U32 & String,U32> <- Custody.Instance.attach(database,directory)
       observed : Unit <- observe_attached(result)
       IO.pure(Unit,Unit{})
     case _: IO.die(Unit,2,"recover-retained DATABASE ATTEMPT")
@@ -83,7 +83,7 @@ def attached_locked(database: String, directory: String, lock: Maybe<U32>) -> IO
   match lock:
     case None{}: IO.die(Unit,1,"fixture session busy")
     case Some{+handle}: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,U32> <- Instance.attach_owned(database,directory,handle)
+      result : Result<&1,&1,U32 & String,U32> <- Custody.Instance.attach_owned(database,directory,handle)
       observed : Unit <- observe_attached(result)
       IO.pure(Unit,Unit{})
 
@@ -102,7 +102,7 @@ def retired_step(+handle: U32, retire: Bool) -> IO<Unit>:
   match retire:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
-      retire_result : Result<&1,&1,U32 & String,Unit> <- Instance.retire(handle)
+      retire_result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.retire(handle)
       outcome : Unit <- operation("retire",retire_result)
       stale_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,"after retire")
       stale : Unit <- operation("stale-write",stale_result)
@@ -158,7 +158,7 @@ def admitted_started(start: P.RetainedStart, payload: String, mode: String) -> I
 def admitted_locked(database: String, directory: String, cwd: String, payload: String, mode: String, program: List<String>, lock: Maybe<U32>) -> IO(Unit):
   do IO<Unit>:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
-    start : P.RetainedStart <- IO.try(P.RetainedStart,Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr",payload,1,lock,P.argv([executable,"recover-retained",database,directory])))
+    start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr",payload,1,lock,P.argv([executable,"recover-retained",database,directory])))
     admitted : Unit <- admitted_started(start,payload,mode)
     IO.pure(Unit,Unit{})
 
