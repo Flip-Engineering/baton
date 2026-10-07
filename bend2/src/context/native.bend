@@ -344,7 +344,7 @@ def query_request_result(db: String, binding: String, owner: String, query: Stri
         answer : ProviderAnswer <- inventory_runtime_answer(executable, cwd, runtime)
         query_catalog_result(db, binding, answer, result)
 
-def query_binding_result(db: String, owner: String, query: String, path: String,
+def query_binding_result(+db: String, +owner: String, +query: String, path: String,
                           binding_result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match binding_result:
     case Fail{error}:
