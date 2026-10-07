@@ -6,6 +6,7 @@ import ../json/canonical.bend as J
 import ./bound-admission.bend as Admission
 import ./service.bend as ContextService
 import ./identity.bend as ContextIdentity
+import ./request.bend as Req
 
 type Bootstrap is Data:
   QueryBootstrap{query: String, owner: String, database_binding: String,
@@ -118,6 +119,108 @@ def bootstrap_owner_witness(bootstrap: Bootstrap) -> String:
         artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
         owner_witness, recovery_argv}: owner_witness
 
+def readiness_member_value(found: Maybe<&2, J.Json>) -> J.Json:
+  match found:
+    case None{}: J.Jnil{}
+    case Some{+value}: value
+
+def readiness_member(+value: J.Json, +key: String) -> J.Json:
+  match value:
+    case J.Jobj{+members}: readiness_member_value(Req.member_lookup(key, members))
+    case other: J.Jnil{}
+
+def readiness_text(+value: J.Json, +key: String) -> String:
+  Req.text_of(readiness_member(value, key))
+
+def readiness_json_text(+value: J.Json, +key: String) -> String:
+  J.json_text(readiness_member(value, key))
+
+def readiness_true(+value: J.Json, +key: String) -> Bool:
+  match readiness_member(value, key):
+    case J.Jtrue{}: True{}
+    case other: False{}
+
+def readiness_false(+value: J.Json, +key: String) -> Bool:
+  match readiness_member(value, key):
+    case J.Jfalse{}: True{}
+    case other: False{}
+
+def readiness_key_allowed(+key: String) -> Bool:
+  Bool.or(String.eq(key, "schema"), Bool.or(String.eq(key, "state"),
+  Bool.or(String.eq(key, "handle"), Bool.or(String.eq(key, "directory"),
+  Bool.or(String.eq(key, "ownerIncarnation"), Bool.or(String.eq(key, "ownerEpoch"),
+  Bool.or(String.eq(key, "ownerAttempt"), Bool.or(String.eq(key, "guardDevice"),
+  Bool.or(String.eq(key, "guardInode"), Bool.or(String.eq(key, "guard"),
+  Bool.or(String.eq(key, "observer_ready"), Bool.or(String.eq(key, "native_pid"),
+  Bool.or(String.eq(key, "status_known"), Bool.or(String.eq(key, "status"),
+  Bool.or(String.eq(key, "spawn_latched"), Bool.or(String.eq(key, "cancelled"),
+  Bool.or(String.eq(key, "identity"), Bool.or(String.eq(key, "expectedBinding"),
+  Bool.or(String.eq(key, "grant"), String.eq(key, "rejection"))))))))))))))))))))
+
+def readiness_members_allowed(+members: J.Json) -> Bool:
+  match members:
+    case J.Jpair{key, value, +rest}:
+      Bool.and(readiness_key_allowed(key), readiness_members_allowed(rest))
+    case J.Jnil{}: True{}
+    case other: False{}
+
+def readiness_member_present(found: Maybe<&2, J.Json>) -> Bool:
+  match found:
+    case Some{value}: True{}
+    case None{}: False{}
+
+def readiness_has(+members: J.Json, +key: String) -> Bool:
+  readiness_member_present(Req.member_lookup(key, members))
+
+def readiness_required_members(+members: J.Json) -> Bool:
+  Bool.and(readiness_has(members, "schema"),
+  Bool.and(readiness_has(members, "state"),
+  Bool.and(readiness_has(members, "handle"),
+  Bool.and(readiness_has(members, "directory"),
+  Bool.and(readiness_has(members, "ownerIncarnation"),
+  Bool.and(readiness_has(members, "ownerEpoch"),
+  Bool.and(readiness_has(members, "ownerAttempt"),
+  Bool.and(readiness_has(members, "guardDevice"),
+  Bool.and(readiness_has(members, "guardInode"),
+  Bool.and(readiness_has(members, "guard"),
+  Bool.and(readiness_has(members, "observer_ready"),
+  Bool.and(readiness_has(members, "native_pid"),
+  Bool.and(readiness_has(members, "status_known"),
+  Bool.and(readiness_has(members, "status"),
+  Bool.and(readiness_has(members, "spawn_latched"),
+  Bool.and(readiness_has(members, "cancelled"),
+  Bool.and(readiness_has(members, "identity"),
+  Bool.and(readiness_has(members, "expectedBinding"),
+  Bool.and(readiness_has(members, "grant"), readiness_has(members, "rejection"))))))))))))))))))))
+
+def readiness_closed(+value: J.Json) -> Bool:
+  match value:
+    case J.Jobj{+members}:
+      Bool.and(readiness_required_members(members), readiness_members_allowed(members))
+    case other: False{}
+
+def keeper_readiness_from_host(+bootstrap: Bootstrap, +expected_binding: String,
+                               +owner_witness: String, +value: J.Json) -> KeeperReadiness:
+  Bool.pick(KeeperReadiness,
+    Bool.and(readiness_closed(value),
+    Bool.and(String.eq(readiness_text(value, "schema"), "baton2-host-ready-v1"),
+    Bool.and(String.eq(readiness_text(value, "state"), "ready"),
+    Bool.and(String.eq(readiness_text(value, "directory"), bootstrap_keeper_path(bootstrap)),
+    Bool.and(readiness_true(value, "observer_ready"),
+    Bool.and(String.eq(readiness_text(value, "identity"), "fixed"),
+    Bool.and(String.eq(readiness_text(value, "expectedBinding"), expected_binding),
+    Bool.and(String.eq(readiness_json_text(value, "ownerIncarnation") ++ ":"
+      ++ readiness_json_text(value, "ownerEpoch"), owner_witness),
+    Bool.and(readiness_false(value, "spawn_latched"),
+    Bool.and(readiness_false(value, "cancelled"),
+    readiness_false(value, "status_known"))))))))))),
+    KeeperObserverReady{bootstrap_query(bootstrap), bootstrap_owner(bootstrap),
+      bootstrap_keeper_path(bootstrap), "starter", "0"},
+    KeeperObserverUnavailable{"hostReadinessMismatch"})
+
+def nullable_text(+value: String) -> J.Json:
+  Bool.pick(J.Json, String.is_empty(value), J.Jnil{}, J.Jstr{value})
+
 def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
   match bootstrap:
     case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
@@ -140,8 +243,32 @@ def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
       J.Jpair{"guardKey", J.Jstr{guard_key},
       J.Jpair{"recoveryArgv", J.Jstr{recovery_argv}, J.Jnil{}}}}}}}}}}}}}}}}}}
 
-def nullable_text(+value: String) -> J.Json:
-  Bool.pick(J.Json, String.is_empty(value), J.Jnil{}, J.Jstr{value})
+def start_decision_json(decision: StartDecision) -> J.Json:
+  match decision:
+    case StartGranted{query, owner, role, incarnation, request, keeper_path,
+        artifact_path, plan_value, result_schema}:
+      J.Jobj{J.Jpair{"artifactPath", J.Jstr{artifact_path},
+      J.Jpair{"incarnation", J.Jstr{incarnation},
+      J.Jpair{"keeperPath", J.Jstr{keeper_path},
+      J.Jpair{"owner", J.Jstr{owner},
+      J.Jpair{"planValue", J.Jstr{plan_value},
+      J.Jpair{"query", J.Jstr{query},
+      J.Jpair{"request", J.Jstr{request},
+      J.Jpair{"resultSchema", J.Jstr{result_schema},
+      J.Jpair{"role", J.Jstr{role},
+      J.Jpair{"schema", J.Jstr{"baton2-managed-context-start-v1"}, J.Jnil{}}}}}}}}}}}
+    case StartCancelled{query, owner, reason, keeper_path}:
+      J.Jobj{J.Jpair{"keeperPath", J.Jstr{keeper_path},
+      J.Jpair{"owner", J.Jstr{owner},
+      J.Jpair{"query", J.Jstr{query},
+      J.Jpair{"reason", J.Jstr{reason},
+      J.Jpair{"schema", J.Jstr{"baton2-managed-context-cancel-v1"}, J.Jnil{}}}}}}}
+    case StartHeld{reason}:
+      J.Jobj{J.Jpair{"reason", J.Jstr{reason},
+      J.Jpair{"schema", J.Jstr{"baton2-managed-context-held-v1"}, J.Jnil{}}}}
+
+def start_decision_text(decision: StartDecision) -> String:
+  J.json_text(start_decision_json(decision))
 
 def bootstrap_text(+bootstrap: Bootstrap) -> String:
   J.json_text(bootstrap_json(bootstrap))

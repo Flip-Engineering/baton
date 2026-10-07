@@ -530,6 +530,43 @@ def project_policy_json_decoded(raw: NativeRequest.RawDecode) -> ProjectPolicyJs
 def project_policy_json_rows(+rows: String) -> ProjectPolicyJson:
   project_policy_json_decoded(NativeRequest.raw_rows(rows))
 
+def managed_readiness_rows(+bootstrap: ManagedQuery.Bootstrap,
+                           +expected_binding: String,
+                           result: Result<&1,&1,U32 & String,String>) -> IO(ManagedQuery.KeeperReadiness):
+  match result:
+    case Fail{error}: IO.pure(ManagedQuery.KeeperReadiness,
+      ManagedQuery.KeeperObserverUnavailable{"readinessDecode"})
+    case Done{+rows}:
+      match project_policy_json_rows(rows):
+        case ProjectPolicyJsonRefused{reason}:
+          IO.pure(ManagedQuery.KeeperReadiness,
+            ManagedQuery.KeeperObserverUnavailable{"readinessJson:" ++ reason})
+        case ProjectPolicyJsonReady{+value}:
+          IO.pure(ManagedQuery.KeeperReadiness,
+            ManagedQuery.keeper_readiness_from_host(bootstrap, expected_binding,
+              ManagedQuery.bootstrap_owner_witness(bootstrap), value))
+
+def managed_readiness_digest(+db: String, +binding: String,
+                             +bootstrap: ManagedQuery.Bootstrap,
+                             +host_json: String,
+                             result: Result<&1,&1,U32 & String,String>) -> IO(ManagedQuery.KeeperReadiness):
+  match result:
+    case Fail{error}: IO.pure(ManagedQuery.KeeperReadiness,
+      ManagedQuery.KeeperObserverUnavailable{"bootstrapBinding"})
+    case Done{+expected_binding}:
+      do IO<ManagedQuery.KeeperReadiness>:
+        rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+          Req.json_tree_sql(host_json))
+        managed_readiness_rows(bootstrap, expected_binding, rows)
+
+def decode_managed_readiness(+db: String, +binding: String,
+                             +bootstrap: ManagedQuery.Bootstrap,
+                             +host_json: String) -> IO(ManagedQuery.KeeperReadiness):
+  do IO<ManagedQuery.KeeperReadiness>:
+    digest : Result<&1,&1,U32 & String,String> <- ContextIdentity.role_guard_key(
+      ManagedQuery.bootstrap_text(bootstrap))
+    managed_readiness_digest(db, binding, bootstrap, host_json, digest)
+
 def boundary_member_value(found: Maybe<&2, J.Json>) -> J.Json:
   match found:
     case None{}: J.Jnil{}

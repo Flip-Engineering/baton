@@ -19,6 +19,14 @@ law an_absent_origin_attempt_serializes_as_null:
 def an_absent_origin_attempt_serializes_as_null():
   {==}
 
+law a_granted_start_has_a_canonical_core_decision_document:
+  {Managed.start_decision_text(Managed.StartGranted{"q-1", "owner-1", "starter", "0",
+    "{}", "/logs/keeper-q", "/work/.baton/context-artifacts/q", "[]", "result-v1"}) ==
+    "{\"artifactPath\":\"/work/.baton/context-artifacts/q\",\"incarnation\":\"0\",\"keeperPath\":\"/logs/keeper-q\",\"owner\":\"owner-1\",\"planValue\":\"[]\",\"query\":\"q-1\",\"request\":\"{}\",\"resultSchema\":\"result-v1\",\"role\":\"starter\",\"schema\":\"baton2-managed-context-start-v1\"}" : String}
+
+def a_granted_start_has_a_canonical_core_decision_document():
+  {==}
+
 def accepted_admission() -> Admission.Admission:
   Admission.AdmissionCreated{"owner-1", "{}", "accepted", "accepted", "0",
     "/logs/keeper-q", "/work", "/work/.baton/context-artifacts/q"}
@@ -28,6 +36,44 @@ def accepted_submission() -> Service.Submission:
 
 def ready_keeper() -> Managed.KeeperReadiness:
   Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"}
+
+def ready_host_json(+binding: String, +incarnation: U32, +epoch: U32) -> J.Json:
+  J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-host-ready-v1"},
+  J.Jpair{"state", J.Jstr{"ready"},
+  J.Jpair{"handle", J.Jint{1},
+  J.Jpair{"directory", J.Jstr{"/logs/keeper-q"},
+  J.Jpair{"ownerAttempt", J.Jint{1},
+  J.Jpair{"guardDevice", J.Jint{1},
+  J.Jpair{"guardInode", J.Jint{1},
+  J.Jpair{"guard", J.Jstr{"1:1"},
+  J.Jpair{"observer_ready", J.Jtrue{},
+  J.Jpair{"native_pid", J.Jint{0},
+  J.Jpair{"status", J.Jint{0},
+  J.Jpair{"identity", J.Jstr{"fixed"},
+  J.Jpair{"expectedBinding", J.Jstr{binding},
+  J.Jpair{"ownerIncarnation", J.Jint{incarnation},
+  J.Jpair{"ownerEpoch", J.Jint{epoch},
+  J.Jpair{"spawn_latched", J.Jfalse{},
+  J.Jpair{"cancelled", J.Jfalse{},
+  J.Jpair{"grant", J.Jstr{""},
+  J.Jpair{"rejection", J.Jstr{""},
+  J.Jpair{"status_known", J.Jfalse{}, J.Jnil{}}}}}}}}}}}}}}}}}}}}}}
+
+law host_readiness_requires_the_bootstrap_digest_and_current_owner_witness:
+  {Managed.keeper_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    ready_host_json("binding-digest", 7, 1)) ==
+    Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
+
+def host_readiness_requires_the_bootstrap_digest_and_current_owner_witness():
+  {==}
+
+law changed_host_owner_witness_holds_managed_start:
+  {Managed.keeper_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    ready_host_json("binding-digest", 8, 1)) ==
+    Managed.KeeperObserverUnavailable{"hostReadinessMismatch"} : Managed.KeeperReadiness}
+
+def changed_host_owner_witness_holds_managed_start():
+  {==}
 
 def managed_submission() -> Service.Submission:
   Service.SubmissionManaged{accepted_admission(), "[]", "plan-identity", "result-v1",
