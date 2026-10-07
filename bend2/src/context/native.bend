@@ -647,7 +647,8 @@ def project_selection(+db: String, +binding: String, +owner: String, +query: Str
 
 def query_catalog_admitted(+db: String, +binding: String, +owner: String, +query: String,
                            catalog: NativeCatalog.CatalogDecode,
-                           request: NativeRequest.RequestDecode,
+                           +canonical: String, +cwd: String,
+                           operands: Sel.RequestOperands,
                            policy: ProjectPolicyAnswer,
                            source: BoundaryPath) -> IO(Unit):
   match catalog:
@@ -660,15 +661,11 @@ def query_catalog_admitted(+db: String, +binding: String, +owner: String, +query
           match source:
             case BoundaryPathRefused{reason}: IO.die(Unit, 3, reason)
             case BoundaryPathReady{+verified_path}:
-              match request:
-                case NativeRequest.RequestDecodeRefused{condition}:
-                  IO.die(Unit, 3, "request:" ++ condition)
-                case NativeRequest.RequestDecoded{canonical, operands, operation_chain, cwd, source_path}:
-                  match policy:
-                    case NativePolicy.ProjectPolicy{disabled, preferred}:
-                      project_selection(db, binding, owner, query, canonical, cwd,
-                        catalog, inventory, operands, installed, disabled, preferred, identity,
-                        verified_path)
+              match policy:
+                case NativePolicy.ProjectPolicy{disabled, preferred}:
+                  project_selection(db, binding, owner, query, canonical, cwd,
+                    catalog, inventory, operands, installed, disabled, preferred, identity,
+                    verified_path)
 
 def query_catalog_decoded(+db: String, +binding: String, +owner: String, +query: String,
                           catalog: NativeCatalog.CatalogDecode,
@@ -679,8 +676,8 @@ def query_catalog_decoded(+db: String, +binding: String, +owner: String, +query:
     case NativeRequest.RequestDecodeRefused{condition}:
       IO.die(Unit, 3, "request:" ++ condition)
     case NativeRequest.RequestDecoded{canonical, operands, operation_chain, cwd, source_path}:
-      query_catalog_admitted(db, binding, owner, query, catalog, request,
-        policy, source)
+      query_catalog_admitted(db, binding, owner, query, catalog, canonical,
+        cwd, operands, policy, source)
 
 def query_catalog_rows_result(+db: String, +binding: String, +owner: String, +query: String,
                               request: NativeRequest.RequestDecode,
