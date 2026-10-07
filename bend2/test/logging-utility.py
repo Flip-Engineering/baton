@@ -122,6 +122,17 @@ sys.exit(0)
         newest = text.splitlines()[-1]
         self.assertEqual(updates, [newest])
 
+    def test_restore_checkpoint_appends_unread_output_and_clears(self):
+        planted = OPEN_STREAM.read_text().splitlines()[-2:]
+        (self.cwd / 'turn.jsonl.pending').write_text('\n'.join(planted) + '\n')
+        self.stream(self.terminal() + '\n', turn='turn-3')
+        kept = self.retained()
+        for line in planted:
+            self.assertIn(line, kept)
+        pending = self.cwd / 'turn.jsonl.pending'
+        if pending.exists():
+            self.assertEqual(pending.read_text(), '')
+
     def test_open_tool_call_flushes_newest_update_and_keeps_start(self):
         text = OPEN_TOOL.read_text()
         self.stream(text + self.terminal() + '\n', turn='turn-2')
