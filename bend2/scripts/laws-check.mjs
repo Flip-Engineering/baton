@@ -178,15 +178,38 @@ function readCpuLoadAverage() {
   return Number(loadavg()[0]) || 0;
 }
 
-function peakRss(pid) {
-  try {
-    const status = readFileSync(`/proc/${pid}/status`, 'utf8').match(/^VmHWM:\s+(\d+)\s+kB/m);
-    if (status) return Number(status[1]) * 1024;
-    const statm = readFileSync(`/proc/${pid}/statm`, 'utf8').trim().split(/\s+/);
-    return Number(statm[1]) * 4096;
-  } catch {
-    return 0;
+let cachedCpuTicksPerSecond;
+
+function cpuTicksPerSecond() {
+  if (cachedCpuTicksPerSecond !== undefined) return cachedCpuTicksPerSecond;
+  const result = spawnSync('getconf', ['CLK_TCK'], { encoding: 'utf8', maxBuffer: 1024 });
+  cachedCpuTicksPerSecond = result.status === 0 && Number(result.stdout) > 0 ? Number(result.stdout) : 0;
+  return cachedCpuTicksPerSecond;
+}
+
+function processTreeUsage(pid) {
+  if (!pid || process.platform !== 'linux') return { rssBytes: 0, cpuTicksByPid: new Map(), processCount: 0 };
+  const pending = [pid];
+  const seen = new Set();
+  let rssBytes = 0;
+  const cpuTicksByPid = new Map();
+  while (pending.length) {
+    const current = pending.pop();
+    if (seen.has(current)) continue;
+    seen.add(current);
+    try {
+      const stat = readFileSync(`/proc/${current}/stat`, 'utf8');
+      const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
+      cpuTicksByPid.set(current, Number(fields[11]) + Number(fields[12]));
+      const status = readFileSync(`/proc/${current}/status`, 'utf8').match(/^VmRSS:\s+(\d+)\s+kB/m);
+      if (status) rssBytes += Number(status[1]) * 1024;
+      const children = readFileSync(`/proc/${current}/task/${current}/children`, 'utf8').trim();
+      if (children) pending.push(...children.split(/\s+/).map(Number));
+    } catch {
+      // A process can exit between reading its parent and its own status.
+    }
   }
+  return { rssBytes, cpuTicksByPid, processCount: seen.size };
 }
 
 function excerpt(path) {
@@ -222,17 +245,41 @@ function runCompiler(args, cwd, stdoutPath, stderrPath) {
     const child = spawn(BEND, args, { cwd, env: ENV, stdio: ['ignore', stdoutFd, stderrFd] });
     const processId = child.pid ?? null;
     let maxRssBytes = 0;
+    let maxProcessCount = 0;
+    let maxCpuCores = 0;
+    const ticksPerSecond = cpuTicksPerSecond();
+    let previousCpuTicksByPid = new Map();
+    let previousSampleAt = null;
     let startupError = null;
-    const sample = setInterval(() => { maxRssBytes = Math.max(maxRssBytes, peakRss(child.pid)); }, 100);
+    const recordUsage = () => {
+      const sampledAt = process.hrtime.bigint();
+      const usage = processTreeUsage(child.pid);
+      maxRssBytes = Math.max(maxRssBytes, usage.rssBytes);
+      maxProcessCount = Math.max(maxProcessCount, usage.processCount);
+      if (previousSampleAt && ticksPerSecond > 0) {
+        const elapsedSeconds = Number(sampledAt - previousSampleAt) / 1e9;
+        let cpuTicks = 0;
+        for (const [process, currentTicks] of usage.cpuTicksByPid) {
+          const previousTicks = previousCpuTicksByPid.get(process);
+          if (previousTicks !== undefined && currentTicks >= previousTicks) cpuTicks += currentTicks - previousTicks;
+        }
+        const cpuSeconds = cpuTicks / ticksPerSecond;
+        if (elapsedSeconds > 0) maxCpuCores = Math.max(maxCpuCores, cpuSeconds / elapsedSeconds);
+      }
+      previousCpuTicksByPid = usage.cpuTicksByPid;
+      previousSampleAt = sampledAt;
+    };
+    recordUsage();
+    const sample = setInterval(recordUsage, 100);
     child.on('error', (error) => { startupError = `${error.name}: ${error.message}`; });
     child.on('close', (code, signal) => {
       clearInterval(sample);
-      maxRssBytes = Math.max(maxRssBytes, peakRss(child.pid));
+      recordUsage();
       fsyncSync(stdoutFd);
       fsyncSync(stderrFd);
       closeSync(stdoutFd);
       closeSync(stderrFd);
-      resolveResult({ processId, completedAt: new Date().toISOString(), exitCode: code, signal, startupError, maxRssBytes });
+      resolveResult({ processId, completedAt: new Date().toISOString(), exitCode: code, signal, startupError, maxRssBytes, maxProcessCount, maxCpuCores, cpuTicksPerSecond: ticksPerSecond });
     });
   });
 }
@@ -315,6 +362,12 @@ export async function verifyResults(expected, results) {
     if (!Number.isInteger(result.processId) || result.processId < 1 || !Number.isFinite(Date.parse(result.completedAt ?? ''))) {
       failures.push({ id: result.id, reason: 'compiler process identity or completion time is missing' });
     }
+    if (!Number.isFinite(result.peakRssBytes) || result.peakRssBytes <= 0 ||
+        !Number.isInteger(result.peakProcessCount) || result.peakProcessCount < 1 ||
+        !Number.isFinite(result.peakCpuCores) || result.peakCpuCores <= 0 ||
+        !Number.isInteger(result.cpuTicksPerSecond) || result.cpuTicksPerSecond <= 0) {
+      failures.push({ id: result.id, reason: 'compiler process-tree resource evidence is missing' });
+    }
     if (!Number.isInteger(result.exitCode) || result.signal !== null || result.startupError !== null) {
       failures.push({ id: result.id, reason: 'compiler process did not report an ordinary completed exit' });
     } else if (result.exitCode === 0) {
@@ -347,14 +400,17 @@ export async function verifyResults(expected, results) {
   return failures;
 }
 
-export function concurrencyFor({ cpuCapacity, cpuLoadAverage = 0, memoryAvailableBytes, memoryEstimateBytes, runnerCapacity }) {
+export function concurrencyFor({ cpuCapacity, cpuLoadAverage = 0, cpuDemandPerCompiler = 1, memoryAvailableBytes, memoryEstimateBytes, runnerCapacity }) {
   const configuredCapacity = Number.isInteger(runnerCapacity) && runnerCapacity > 0 ? runnerCapacity : cpuCapacity;
-  const cpuAvailableCapacity = Math.max(1, Math.floor(cpuCapacity - Math.min(Math.max(0, cpuLoadAverage), Math.max(0, cpuCapacity - 1))));
+  const availableCpuCores = Math.max(0, cpuCapacity - Math.min(Math.max(0, cpuLoadAverage), cpuCapacity));
+  const cpuAvailableCapacity = Math.max(1, Math.floor(availableCpuCores / Math.max(cpuDemandPerCompiler, 1)));
   const memoryCapacity = Math.floor(memoryAvailableBytes / Math.max(memoryEstimateBytes, 1));
   return {
     admitted: Math.max(1, Math.min(cpuAvailableCapacity, configuredCapacity, memoryCapacity)),
     cpuCapacity,
     cpuLoadAverage,
+    availableCpuCores,
+    cpuDemandPerCompiler,
     cpuAvailableCapacity,
     memoryAvailableBytes,
     memoryEstimateBytes,
@@ -365,10 +421,11 @@ export function concurrencyFor({ cpuCapacity, cpuLoadAverage = 0, memoryAvailabl
   };
 }
 
-function admittedConcurrency(memoryEstimateBytes) {
+function admittedConcurrency(memoryEstimateBytes, cpuDemandPerCompiler) {
   const cpu = runnerCpuCapacity();
   return concurrencyFor({
     ...cpu,
+    cpuDemandPerCompiler,
     memoryAvailableBytes: availableMemory(),
     memoryEstimateBytes,
     runnerCapacity: Number(process.env.BATON_LAW_CHECK_RUNNER_CAPACITY),
@@ -422,6 +479,9 @@ async function runControl(control, runRoot) {
     signal: outcome.signal,
     startupError: outcome.startupError,
     peakRssBytes: outcome.maxRssBytes,
+    peakProcessCount: outcome.maxProcessCount,
+    peakCpuCores: outcome.maxCpuCores,
+    cpuTicksPerSecond: outcome.cpuTicksPerSecond,
     outputs,
   };
 }
@@ -1590,6 +1650,8 @@ async function runGate() {
     startupError: baseline.startupError,
     elapsedMs: baselineElapsedMs,
     peakRssBytes: baseline.maxRssBytes,
+    peakProcessCount: baseline.maxProcessCount,
+    peakCpuCores: baseline.maxCpuCores,
     stdout: { bytes: baseline.stdout.bytes, sha256: baseline.stdout.sha256, artifact: baseline.stdout.artifact },
     stderr: { bytes: baseline.stderr.bytes, sha256: baseline.stderr.sha256, artifact: baseline.stderr.artifact },
   }));
@@ -1601,16 +1663,16 @@ async function runGate() {
     writeJson(join(runRoot, 'run.json'), metadata);
     return 1;
   }
-  if (baseline.maxRssBytes === 0) {
+  if (baseline.maxRssBytes === 0 || baseline.maxProcessCount === 0 || baseline.maxCpuCores <= 0) {
     metadata.status = 'red';
     metadata.finishedAt = new Date().toISOString();
-    metadata.failure = 'baseline compiler peak memory could not be measured';
+    metadata.failure = 'baseline compiler process-tree memory or CPU demand could not be measured';
     writeJson(join(runRoot, 'run.json'), metadata);
     console.error(metadata.failure);
     return 1;
   }
 
-  const capacity = admittedConcurrency(Math.max(baseline.maxRssBytes, 1));
+  const capacity = admittedConcurrency(Math.max(baseline.maxRssBytes, 1), Math.max(baseline.maxCpuCores, 1));
   metadata.capacity = capacity;
   metadata.producerCount = controls.length;
   console.log(JSON.stringify({ scheduler: 'admitted', ...capacity, producerCount: controls.length }));

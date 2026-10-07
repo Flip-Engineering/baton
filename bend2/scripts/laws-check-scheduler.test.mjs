@@ -43,6 +43,10 @@ const complete = dispatched.map((control, index) => {
     exitCode: 1,
     signal: null,
     startupError: null,
+    peakRssBytes: 1200 + index,
+    peakProcessCount: 3 + index,
+    peakCpuCores: 2 + index,
+    cpuTicksPerSecond: 100,
     outputs: { stdout: receipt(stdoutPath), stderr: receipt(stderrPath) },
   };
 });
@@ -154,6 +158,13 @@ test('aggregation rejects a result without actual process completion evidence', 
   assert.ok((await verifyResults(dispatched, results)).some(({ reason }) => reason === 'compiler process identity or completion time is missing'));
 });
 
+test('aggregation rejects a result without compiler process-tree resource evidence', async () => {
+  const results = complete.map((result, index) => index === 0
+    ? { ...result, peakRssBytes: 0, peakProcessCount: 0, peakCpuCores: 0 }
+    : result);
+  assert.ok((await verifyResults(dispatched, results)).some(({ reason }) => reason === 'compiler process-tree resource evidence is missing'));
+});
+
 test('aggregation rejects compiler artifacts changed after completion', async () => {
   const stdoutPath = complete[0].outputs.stdout.artifact;
   writeFileSync(stdoutPath, 'changed after compiler completion');
@@ -187,6 +198,14 @@ test('admission uses CPU, available memory, and runner capacity', () => {
     memoryEstimateBytes: 1024,
     runnerCapacity: 20,
   }).admitted, 20);
+  assert.equal(concurrencyFor({
+    cpuCapacity: 32,
+    cpuLoadAverage: 4,
+    cpuDemandPerCompiler: 8,
+    memoryAvailableBytes: 64 * 1024,
+    memoryEstimateBytes: 1024,
+    runnerCapacity: 20,
+  }).admitted, 3);
   const loadLimited = concurrencyFor({
     cpuCapacity: 32,
     cpuLoadAverage: 4,
