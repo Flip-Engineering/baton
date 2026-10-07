@@ -1,28 +1,28 @@
 import Base
 
 type Command is Data:
-  Recruit{id: String, parent: String, harness: String, model: String, effort: String, repo: String, branch: String, path: String, base: String}
+  Recruit{id: String, +: String, +: String, +: String, +: String, repo: String, +: String, path: String, +: String}
   Worktree{id: String}
   Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String}
-  Start{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String, id: String, task: String}
+  Start{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String, +: String, task: String}
   Receiver{session: String, cmd: String, log: String}
-  DispatchFile{id: String, sender: String, recipient: String, kind: String, path: String}
-  DispatchTurn{player: String, id: String, cmd: String, log: String, task: String}
+  DispatchFile{id: String, +: String, +: String, +: String, path: String}
+  DispatchTurn{player: String, +: String, cmd: String, log: String, task: String}
   StatusPretty{}
   Pretty{read: Command}
   Stop{session: String, id: String, reason: String}
   ForceStop{session: String, id: String}
-  RunTurn{player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String}
-  Attach{id: String, harness: String, native: String, endpoint: String}
-  Player{id: String, parent: String, harness: String, model: String, effort: String, workspace: String, branch: String, base: String}
+  RunTurn{player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, +: String}
+  Attach{id: String, harness: String, +: String, endpoint: String}
+  Player{id: String, parent: String, harness: String, model: String, effort: String, +: String, branch: String, base: String}
   Connect{id: String, native: String, endpoint: String}
   Bind{id: String, native: String, harness: String, model: String, effort: String}
   Role{session: String, role: String}
   RoleRead{session: String}
-  Ensemble{id: String, owner: String, coupling: String}
+  Ensemble{id: String, +: String, coupling: String}
   EnsembleRead{id: String}
-  EnsembleMember{id: String, owner: String, session: String, action: String}
-  Message{id: String, sender: String, recipient: String, kind: String, body: String}
+  EnsembleMember{id: String, owner: String, +: String, action: String}
+  Message{id: String, sender: String, recipient: String, kind: String, +: String}
   MessageFile{id: String, sender: String, recipient: String, kind: String, path: String}
   Observe{id: String, player: String, event: String, sealed: Bool}
   ObserveFile{id: String, player: String, path: String}
@@ -56,7 +56,7 @@ type Command is Data:
   Help{}
   Invalid{}
 
-def escape_char(+head: Char, tail: String, quote: Bool) -> String:
+def escape_char(+head: Char, +: String, quote: Bool) -> String:
   match quote:
     case True{}: SCon{head,SCon{head,tail}}
     case False{}: SCon{head,tail}
@@ -91,7 +91,7 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');"
   ++ messaging_schema()
 
-def stopped_session_sql(session: String) -> String:
+def stopped_session_sql(+: String) -> String:
   "EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ session ++ ")"
 
 def execution_input_sql(kind: String) -> String:
@@ -100,7 +100,7 @@ def execution_input_sql(kind: String) -> String:
 def input_state_sql(+row: String) -> String:
   "CASE WHEN " ++ stopped_session_sql(row ++ ".recipient") ++ " THEN json_object('stopId',(SELECT id FROM session_stops WHERE session=" ++ row ++ ".recipient),'executionDisposition',CASE WHEN " ++ row ++ ".receipt IS NOT NULL THEN 'accepted' WHEN " ++ execution_input_sql(row ++ ".kind") ++ " THEN 'stopped' ELSE 'retained-for-stopped-session' END) ELSE json('{}') END"
 
-def session_state_sql(session: String) -> String:
+def session_state_sql(+: String) -> String:
   "coalesce((SELECT json_object('stop',json_object('id',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''))) FROM session_stops WHERE session=" ++ session ++ "),json('{}'))"
 
 def assigned_role(session: String) -> String:
@@ -243,7 +243,7 @@ def ensemble_member_sql(+id: String, +owner: String, +session: String, +action: 
 def section_owner(+ensemble: String, +owner: String) -> String:
   "(EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(ensemble) ++ " AND owner=" ++ q(owner) ++ ") AND " ++ assigned_role(q(owner)) ++ "='conductor')"
 
-def section_admitted(ensemble: String, owner: String, capability: String) -> String:
+def section_admitted(+: String, owner: String, capability: String) -> String:
   "(" ++ section_owner(ensemble,owner) ++ " AND " ++ q(capability) ++ "<>'')"
 
 def section_refusal(ensemble: String, id: String, owner: String, admitted: String) -> String:

@@ -35,7 +35,7 @@ type Mode is Data:
   MArray{}
   MObject{}
 
-def ch(code: U32) -> Char:
+def ch(+: U32) -> Char:
   Char.from_u32(code)
 
 def one(c: Char) -> String:
@@ -44,7 +44,7 @@ def one(c: Char) -> String:
 def cp(c: Char) -> U32:
   Char.to_u32(c)
 
-def hex_digit_go(n: U32, low: Bool) -> Char:
+def hex_digit_go(+: U32, low: Bool) -> Char:
   match low:
     case True{}: ch(U32.add(48, n))
     case False{}: ch(U32.add(87, n))
@@ -143,7 +143,7 @@ def cell_le_b(akey: String, b: Json) -> Bool:
     case Jobj{+members}: False{}
     case Jnil{}: False{}
 
-def cell_le(a: Json, b: Json) -> Bool:
+def cell_le(+: Json, b: Json) -> Bool:
   match a:
     case Jpair{+akey, +avalue, +arest}: cell_le_b(akey, b)
     case Jnull{}: False{}
@@ -214,7 +214,7 @@ def pick_list(c: Bool, yes: List<String>, no: List<String>) -> List<String>:
     case True{}: yes
     case False{}: no
 
-def separator(first: Bool) -> List<String>:
+def separator(+: Bool) -> List<String>:
   pick_list(first, Nil{}, [","])
 
 def mode_is_value(mode: Mode) -> Bool:
@@ -246,7 +246,7 @@ def normalize(+j: Json) -> Json:
 
 # List concatenation: `<>` conses one element onto a list, so joining two list-valued
 # pieces needs this helper.
-def cat_list(xs: List<String>, ys: List<String>) -> List<String>:
+def cat_list(xs: List<String>, +: List<String>) -> List<String>:
   match xs:
     case Nil{}: ys
     case h <> t: h <> cat_list(t, ys)
@@ -301,7 +301,7 @@ def utf8_class(code: U32, ascii: Bool, two: Bool) -> List<U32>:
 def utf8_char(+c: Char) -> List<U32>:
   utf8_class(cp(c), U32.is_lt(cp(c), 128), U32.is_lt(cp(c), 2048))
 
-def cat_bytes(xs: List<U32>, ys: List<U32>) -> List<U32>:
+def cat_bytes(xs: List<U32>, +: List<U32>) -> List<U32>:
   match xs:
     case Nil{}: ys
     case h <> t: h <> cat_bytes(t, ys)

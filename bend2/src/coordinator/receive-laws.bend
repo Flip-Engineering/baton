@@ -275,7 +275,7 @@ def m17_the_observed_dispatch_is_the_refusal_it_read(db,session,id,log,cursor,na
 # only then releases the observer and the native process, delivers the wake
 # and settles question deliveries before acknowledging it. The written-out order is the whole obligation: a
 # reordering of any two steps breaks this proof.
-def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, +: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":recovery-input") ++ ");"))
     saved : Unit <- Receive.record_recovery(db,session,id,native,cwd,String.eq(recorded,"1\n"))
@@ -318,7 +318,7 @@ def m17_recorded_recovery_writes_nothing(db,session,id,native,cwd):
 
 # M-17: an unrecorded recovery writes the workspace note Turn.refused_note
 # builds and hands it, and nothing else, to the recovery input.
-def unrecorded_recovery_writes_the_workspace_note(db: String, session: String, id: String, native: String, cwd: String) -> IO(Unit):
+def unrecorded_recovery_writes_the_workspace_note(db: String, session: String, id: String, +: String, cwd: String) -> IO(Unit):
   do IO<Unit>:
     note : String <- Turn.refused_note(cwd,"")
     Receive.recovery_input(db,session,id,native,note)
@@ -340,7 +340,7 @@ def m17_unrecorded_recovery_writes_the_workspace_note(db,session,id,native,cwd):
 # clear of that native only where changes()=1, the parent report only where the
 # recovery-input row exists, and the COMMIT. SQLite's own transaction and
 # changes() semantics remain a host assumption witnessed by the receive tests.
-def recovery_input_transaction(db: String, +session: String, +id: String, native: String, note: String) -> IO(Unit):
+def recovery_input_transaction(db: String, +session: String, +id: String, +: String, note: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;"
       ++ "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":recovery-input") ++ ",id,id,'recovery'," ++ C.q(note) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND native=" ++ C.q(native) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"
@@ -577,7 +577,7 @@ law retained_observation_uses_the_reconciled_input_cursor:
 def retained_observation_uses_the_reconciled_input_cursor(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,adopted):
   {==}
 
-def fresh_retained_observation(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, lock: U32, +handle: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def fresh_retained_observation(+db: String, +session: String, +id: String, +log: String, cursor: String, +: String, cwd: String, +attempt: String, harness: String, lock: U32, +handle: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     reconciled : Unit <- Stop.started(db,session,id,attempt)
     observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,attempt,handle)

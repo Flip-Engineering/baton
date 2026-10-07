@@ -21,13 +21,13 @@ type AttemptCapture is Data:
   AttemptCaptured{observed: Result<&1,&1,U32 & String,String & String>, released: Result<&1, &1, U32 & String, Unit>}
 
 # The chain, leaf first. The release is attempted only where a handle exists.
-def Attempt.under_claim(handle: U32, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
+def Attempt.under_claim(+: U32, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
   do IO<AttemptCapture>:
     observed : Result<&1,&1,U32 & String,String & String> <- P.Process.capture_holding(argv, cwd, handle, guard, artifact)
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(handle)
     IO.pure(AttemptCapture, AttemptCaptured{observed, released})
 
-def Attempt.held(held: Maybe<U32>, target: String, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
+def Attempt.held(held: Maybe<U32>, +: String, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
   match held:
     case None{}: IO.pure(AttemptCapture, AttemptClaimBusy{target})
     case Some{handle}: Attempt.under_claim(handle, guard, artifact, argv, cwd)

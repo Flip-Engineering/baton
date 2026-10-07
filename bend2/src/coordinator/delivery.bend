@@ -11,12 +11,12 @@ import ../git/types.bend as T
 def endpoint_sql(id: String, condition: String) -> String:
   "SELECT coalesce((SELECT (SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)) FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' ELSE 0 END AND " ++ condition ++ "),'');"
 
-def result(saved: String, log: String, run: T.RunRes) -> Result<&1,&1,U32 & String,String>:
+def result(+: String, log: String, run: T.RunRes) -> Result<&1,&1,U32 & String,String>:
   match run:
     case T.RRun{T.SExit{0},out}: Done{saved}
     case other: Fail{(1,"Message committed; session delivery failed. Read " ++ log ++ " and retry delivery from the pending inbox.")}
 
-def completed(db: String, saved: String, run: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+def completed(+: String, +: String, run: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match run:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
     case Done{+output}: do IO<Result<&1,&1,U32 & String,String>>:
@@ -24,7 +24,7 @@ def completed(db: String, saved: String, run: Result<&1,&1,U32 & String,String>)
       written : Unit <- IO.try(Unit,Text.Text.append(log,output ++ "\n"))
       IO.pure(Result<&1,&1,U32 & String,String>,result(saved,log,Tx.run_res(Done{output})))
 
-def launch(db: String, id: String, saved: String, argv: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def launch(db: String, id: String, +: String, argv: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match empty:
     case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
     case False{}: do IO<Result<&1,&1,U32 & String,String>>:

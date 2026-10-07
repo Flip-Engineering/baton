@@ -18,10 +18,10 @@ def resume_file(primary: String, alternate: String, +session: String, enabled: B
       +first : String <- IO.try(String,F.Files.find_suffix(primary,"_" ++ session ++ ".jsonl"))
       select_file(alternate,session,first,Bool.not(String.is_empty(first)))
 
-def arguments(cmd: String, model: String, effort: String, sessions: String) -> List<String>:
+def arguments(+: String, +: String, +: String, +: String) -> List<String>:
   [cmd,"--mode","rpc","--model",model,"--thinking",effort,"--approval-mode","yolo","--session-dir",sessions]
 
-def argv(cmd: String, model: String, effort: String, sessions: String, session: String, fresh: Bool) -> String:
+def argv(cmd: String, +: String, effort: String, sessions: String, session: String, fresh: Bool) -> String:
   match fresh:
     case True{}: P.argv(arguments(cmd,model,effort,sessions))
     case False{}: P.argv(List.append(&1,String,arguments(cmd,model,effort,sessions),["--resume",session]))

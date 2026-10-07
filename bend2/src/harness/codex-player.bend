@@ -2,10 +2,10 @@ import Base
 import ../host/process.bend as P
 import ../json/canonical.bend as J
 
-def arguments(model: String, effort: String) -> List<String>:
+def arguments(+: String, +: String) -> List<String>:
   ["--json","--model",model,"-c","model_reasoning_effort=" ++ J.string_literal(effort),"--dangerously-bypass-approvals-and-sandbox","-"]
 
-def argv(cmd: String, model: String, effort: String, session: String, fresh: Bool) -> String:
+def argv(+: String, +: String, effort: String, session: String, fresh: Bool) -> String:
   match fresh:
     case True{}: P.argv(List.append(&1,String,["/usr/bin/env","-u","OPENAI_API_KEY","-u","CODEX_API_KEY",cmd,"-c","forced_login_method=\"chatgpt\"","exec"],arguments(model,effort)))
     case False{}: P.argv(List.append(&1,String,["/usr/bin/env","-u","OPENAI_API_KEY","-u","CODEX_API_KEY",cmd,"-c","forced_login_method=\"chatgpt\"","exec","resume",session],arguments(model,effort)))

@@ -19,12 +19,12 @@ def request_sql(+player: String, +turn: String, +attempt: String, +event: String
   ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT id,worker,parent,'question',json_object('nativeRequest',json(event),'requestId',id,'replyCommand',json_array('native-reply',parent,id),'replyFormat',CASE WHEN method='confirm' THEN '{\"confirmed\":true} or {\"confirmed\":false} or {\"cancelled\":true}' ELSE '{\"value\":\"answer\"} or {\"cancelled\":true}' END,'completion','stdin-written records transport completion; native continuation is observed separately') FROM native_requests WHERE attempt=" ++ C.q(attempt) ++ " AND native_id=json_extract(" ++ C.q(event) ++ ",'$.id')" ++ C.message_upsert()
   ++ "SELECT id FROM native_requests WHERE attempt=" ++ C.q(attempt) ++ " AND native_id=json_extract(" ++ C.q(event) ++ ",'$.id') AND closed IS NULL;"
 
-def dispatch(attempt: String, frame: String, allowed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def dispatch(+: String, frame: String, allowed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match allowed:
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(1,"Native request is closed, unavailable, or belongs to another parent.")})
     case True{}: P.ProcessChild.control_write(attempt,frame)
 
-def written(db: String, +id: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,String>):
+def written(+: String, +id: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
     case Done{unit}: DB.Sql.query(db,"UPDATE native_requests SET written=1 WHERE id=" ++ C.q(id) ++ ";SELECT json_object('request'," ++ C.q(id) ++ ",'status','stdin-written');")
@@ -37,7 +37,7 @@ def send(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
     result : Result<&1,&1,U32 & String,Unit> <- dispatch(Tx.trim_nl(attempt),frame,String.eq(allowed,"1\n"))
     written(db,id,result)
 
-def deliver_pending(db: String, id: String, state: String) -> IO(Result<&1,&1,U32 & String,String>):
+def deliver_pending(+: String, +: String, state: String) -> IO(Result<&1,&1,U32 & String,String>):
   match state:
     case "reply\n": send(db,id)
     case "question\n": Delivery.deliver(db,id,"1","")
@@ -48,7 +48,7 @@ def deliver(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
     state : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN closed IS NOT NULL OR written=1 THEN '' WHEN reply IS NOT NULL THEN 'reply' ELSE 'question' END FROM native_requests WHERE id=" ++ C.q(id) ++ ";"))
     deliver_pending(db,id,state)
 
-def fork_saved(db: String, id: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, empty: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)>):
+def fork_saved(db: String, +: String, +: List<Chan(Result<&1,&1,U32 & String,String>)>, empty: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)>):
   match empty:
     case True{}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)>,tasks)
     case False{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)>>:
@@ -56,14 +56,14 @@ def fork_saved(db: String, id: String, tasks: List<Chan(Result<&1,&1,U32 & Strin
       IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)>,task <> tasks)
 
 # A failed transaction cannot publish a parent wake or send a stored answer.
-def saved(db: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,String>) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
+def saved(db: String, +: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,String>) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
   match result:
     case Fail{(code,text)}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,U32.show(code) ++ ": " ++ text))
     case Done{+id}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
       next : List<Chan(Result<&1,&1,U32 & String,String>)> <- fork_saved(db,Tx.trim_nl(id),tasks,String.is_empty(id))
       IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(next,""))
 
-def record(+db: String, player: String, turn: String, attempt: String, event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, parent: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
+def record(+db: String, player: String, turn: String, attempt: String, event: String, +: List<Chan(Result<&1,&1,U32 & String,String>)>, +: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
   match parent:
     case False{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
       shown : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output("Native OMP UI request is unsupported for a session without a registered parent; its full frame remains in the native log.\n")
@@ -72,7 +72,7 @@ def record(+db: String, player: String, turn: String, attempt: String, event: St
       result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ request_sql(player,turn,attempt,event) ++ "COMMIT;")
       saved(db,tasks,result)
 
-def observe(+db: String, +player: String, turn: String, attempt: String, +event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, enabled: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
+def observe(+db: String, +player: String, turn: String, attempt: String, +event: String, +: List<Chan(Result<&1,&1,U32 & String,String>)>, enabled: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
   match enabled:
     case False{}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,""))
     case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:

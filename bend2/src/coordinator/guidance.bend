@@ -8,7 +8,7 @@ def relevant(+kind: String, omp: Bool) -> Bool:
     Bool.or(String.eq(kind,"message_end\n"),Bool.or(String.eq(kind,"tool_execution_start\n"),
     Bool.or(String.eq(kind,"tool_execution_end\n"),String.eq(kind,"agent_end\n"))))))
 
-def send(+db: String, handle: U32, cursor: String, +next: String, same: Bool) -> IO(String):
+def send(+db: String, handle: U32, +: String, +next: String, same: Bool) -> IO(String):
   match same:
     case True{}: IO.pure(String,cursor)
     case False{}: do IO<String>:
@@ -31,12 +31,12 @@ def pending(+db: String, +player: String, handle: U32, +cursor: String) -> IO(St
     send(db,handle,cursor,next,String.eq(cursor,next))
 
 # Replay observes receipts after this attempt stops accepting input.
-def pending_live(db: String, player: String, handle: U32, cursor: String, closed: U32) -> IO(String):
+def pending_live(+: String, player: String, handle: U32, +: String, closed: U32) -> IO(String):
   match closed:
     case 0: pending(db,player,handle,cursor)
     case other: IO.pure(String,cursor)
 
-def continued(db: String, player: String, +handle: U32, cursor: String, ended: Bool) -> IO(String):
+def continued(db: String, player: String, +handle: U32, +: String, ended: Bool) -> IO(String):
   match ended:
     case True{}: do IO<String>:
       closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
@@ -61,7 +61,7 @@ def accepted(db: String, player: String, +event: String, sealed: Bool) -> IO(Str
     case False{}: IO.try(String,DB.Sql.query(db,accepted_sql(player,event) ++ terminal_sql(event)))
 
 # The receipt records native acceptance; the cursor covers this process's sends.
-def observe(+db: String, +player: String, handle: U32, +event: String, cursor: String, enabled: Bool, sealed: Bool) -> IO(String):
+def observe(+db: String, +player: String, handle: U32, +event: String, +: String, enabled: Bool, sealed: Bool) -> IO(String):
   match enabled:
     case False{}: IO.pure(String,cursor)
     case True{}: do IO<String>:

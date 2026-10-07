@@ -18,7 +18,7 @@ import ../git/process.bend as GitProc
 import ../git/types.bend as G
 
 type Outcome is Data:
-  Ended{status: String, event: String, error: String}
+  Ended{status: String, event: String, +: String}
 
 def error_text(error: U32 & String) -> String:
   (code,text)=error
@@ -29,25 +29,25 @@ def remember(+previous: String, result: Result<&1,&1,U32 & String,String>) -> St
     case Fail{error}: Bool.pick(String,String.is_empty(previous),error_text(error),previous)
     case Done{value}: previous
 
-def remember_write(previous: String, result: Result<&1,&1,U32 & String,Unit>) -> String:
+def remember_write(+: String, result: Result<&1,&1,U32 & String,Unit>) -> String:
   match result:
     case Fail{error}: remember(previous,Fail{error})
     case Done{unit}: previous
 
 # The stored report and native outcome retain the failure or recovery note.
 # Its stdout copy is best effort and cannot interrupt native completion.
-def report(db: String, player: String, id: String, body: String) -> IO(Unit):
+def report(+: String, +: String, +: String, body: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,Store.commit(db,C.Report{id,player,body}))
     written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
     IO.pure(Unit,Unit{})
 
-def diagnostic(db: String, player: String, id: String, text: String, empty: Bool) -> IO(Unit):
+def diagnostic(+: String, +: String, +: String, text: String, empty: Bool) -> IO(Unit):
   match empty:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: report(db,player,id ++ ":observation","Native output observation failed: " ++ text)
 
-def result_missing(db: String, player: String, id: String, log: String, stderr: String, status: String, found: Bool) -> IO(Unit):
+def result_missing(+: String, +: String, +: String, +: String, +: String, status: String, found: Bool) -> IO(Unit):
   match found:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: report(db,player,id,"Player process ended without a native result (" ++ status ++ "). Output: " ++ log ++ ". Stderr: " ++ stderr)
@@ -68,7 +68,7 @@ def combine(first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U32 & S
 def delivery_result(+error: String) -> Result<&1,&1,U32 & String,Unit>:
   Bool.pick(Result<&1,&1,U32 & String,Unit>,String.is_empty(error),Done{Unit{}},Fail{(1,error)})
 
-def prepare_finished(+db: String, +player: String, +id: String, log: String, stderr: String, +error: String, +status: String) -> IO(Unit):
+def prepare_finished(+db: String, +player: String, +id: String, log: String, +: String, +error: String, +status: String) -> IO(Unit):
   do IO<Unit>:
     result : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM turns WHERE id=" ++ C.q(id) ++ ";"))
     noted : Unit <- diagnostic(db,player,id,error,String.is_empty(error))
@@ -163,7 +163,7 @@ def codex_result_sql(source: String) -> String:
   "SELECT json_object('type','result','is_error',json_extract(e.value,'$.type')='turn.failed','nativeEvent',json(e.value),'result',CASE WHEN json_extract(e.value,'$.type')='turn.failed' THEN json_extract(e.value,'$.error.message') ELSE (SELECT json_extract(m.value,'$.item.text') FROM json_each(" ++ events ++ ") m WHERE m.key<e.key AND json_extract(m.value,'$.type')='item.completed' AND json_extract(m.value,'$.item.type')='agent_message' ORDER BY m.key DESC LIMIT 1) END) FROM json_each(" ++ events ++ ") e WHERE json_extract(e.value,'$.type') IN ('turn.completed','turn.failed') ORDER BY e.key DESC LIMIT 1;"
 
 # Keep this invocation's latest Codex assistant message and terminal event.
-def codex_finished(+db: String, player: String, id: String, source: String, previous: String, codex: Bool) -> IO(String):
+def codex_finished(+db: String, player: String, id: String, source: String, +: String, codex: Bool) -> IO(String):
   match codex:
     case False{}: IO.pure(String,previous)
     case True{}: do IO<String>:
@@ -189,7 +189,7 @@ def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) ->
       normalized : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 AND coalesce(json_array_length(" ++ C.q(event) ++ ",'$.messages'),0)=0 AND " ++ C.q(message) ++ "<>'' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END;"))
       IO.pure(String,Tx.trim_nl(normalized))
 
-def observe_event(db: String, player: String, id: String, line: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def observe_event(db: String, player: String, id: String, +: String, relevant: Bool, +: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
     case True{}: Store.commit(db,C.Observe{id,player,line,sealed})
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
@@ -293,7 +293,7 @@ def codex_frames(db: String, +previous: String, +line: String, codex: Bool) -> I
       IO.pure(String,Tx.trim_nl(value))
 
 @unsafe
-def consume(+db: String, +player: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, last_message: String, +terminal: String, filter: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def consume(+db: String, +player: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, last_message: String, +terminal: String, +: String, +: String, +first_error: String, +: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   match result:
     case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
@@ -352,7 +352,7 @@ def retained_output(db: String, player: String, id: String, log: String, +harnes
     first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
     consume(db,player,id,log,handle,harness,"0\n","","","","","",sender,attempt,Nil{},first)
 
-def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +: String, +session: String, +harness: String, +sessions: String, +prompt: String, +: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
     alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
@@ -360,17 +360,17 @@ def retained(+db: String, +player: String, +directory: String, +cmd: String, +mo
     input : String <- IO.pure(String,Bool.pick(String,String.eq(harness,"omp\n"),Omp.prompt(prompt),prompt))
     P.ProcessChild.retain(directory,args,cwd,directory ++ "/native.stderr",input,Bool.pick(U32,String.eq(harness,"omp\n"),1,0),lock,recovery)
 
-def claude_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
+def claude_launch(+: String, +: String, +: String, +: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:
     case True{}: Claude.start_player(cmd,model,effort,cwd,stderr)
     case False{}: Claude.resume_player(cmd,model,effort,cwd,stderr,session)
 
-def muse_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, task: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
+def muse_launch(+: String, +: String, +: String, cwd: String, stderr: String, session: String, +: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:
     case True{}: Muse.start_player(cmd,model,effort,cwd,stderr,task)
     case False{}: Muse.resume_player(cmd,model,effort,cwd,stderr,session,task)
 
-def launch(sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
+def launch(sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String, +: String) -> IO(Result<&1,&1,U32 & String,U32>):
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"omp\n"),
     Omp.start_player(cmd,model,effort,cwd,log,sessions,session,String.is_empty(session)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"muse\n"),
@@ -504,7 +504,7 @@ def player_checked(+db: String, +player: String, +id: String, cmd: String, model
         found : String <- IO.try(String,DB.Sql.query(db,turn_present_sql(id)))
         choose(db,player,id,cmd,model,effort,cwd,task,log,session,harness,String.eq(found,"1\n"))
 
-def replay_finished(db: String, player: String, lock: U32, output: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+def replay_finished(db: String, player: String, +: U32, output: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   do IO<Unit>:
     released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
     wake : Result<&1,&1,U32 & String,Unit> <- Delivery.wake_pending(db,player,"0")

@@ -23,18 +23,18 @@ def strings(args: List<String>) -> String:
     case Nil{}: ""
     case arg <> rest: J.string_literal(arg) ++ string_tail(rest)
 
-def receiver_args(executable: String, db: String, session: String, cmd: String, log: String) -> List<String>:
+def receiver_args(executable: String, +: String, session: String, cmd: String, log: String) -> List<String>:
   [executable,db,"receive",session,cmd,"","","",log]
 
 def receiver_endpoint(executable: String, db: String, session: String, cmd: String, log: String) -> String:
   "[" ++ strings(receiver_args(executable,db,session,cmd,log)) ++ "]"
 
-def identity_args(args: List<String>, model: String, identity: String & String) -> List<String>:
+def identity_args(args: List<String>, +: String, identity: String & String) -> List<String>:
   (registry,helper)=identity
   +configured=registry
   List.append(&1,String,Bool.pick(List<String>,String.is_empty(configured),Nil{},["node",helper,"launch","--registry",configured,"--model-key",model,"--"]),args)
 
-def identity_endpoint(executable: String, db: String, session: String, cmd: String, log: String, model: String, identity: String & String) -> String:
+def identity_endpoint(executable: String, db: String, session: String, cmd: String, log: String, +: String, identity: String & String) -> String:
   "[" ++ strings(identity_args(receiver_args(executable,db,session,cmd,log),model,identity)) ++ "]"
 
 # A configured registry maps the recipient's recorded model key to a series
@@ -49,7 +49,7 @@ def identity_check_refusal(+model: String, result: T.RunRes) -> IO(Unit):
     case T.RRun{T.SExit{0}, out}: IO.pure(Unit,Unit{})
     case other: IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.")
 
-def identity_check_body(+registry: String, +helper: String, +model: String, absent: Bool) -> IO(Unit):
+def identity_check_body(+registry: String, +helper: String, +model: String, +: Bool) -> IO(Unit):
   match absent:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
@@ -77,12 +77,12 @@ law native_receiver_leaves_the_wake_argument_to_delivery:
 def native_receiver_leaves_the_wake_argument_to_delivery(executable,db,session,cmd,log):
   {==}
 
-def registered(saved: String) -> IO(String):
+def registered(+: String) -> IO(String):
   match saved:
     case SNil{}: IO.die(String,2,"Session is not registered; recruit a Player or start a Principal before configuring its receiver.")
     case other: IO.pure(String,other)
 
-def command_present(empty: Bool) -> IO(Unit):
+def command_present(+: Bool) -> IO(Unit):
   match empty:
     case True{}: IO.die(Unit,2,"The native harness command is empty; select its executable before startup.")
     case False{}: IO.pure(Unit,Unit{})
@@ -165,7 +165,7 @@ def dispatch_file(+db: String, +id: String, sender: String, recipient: String, k
     body : String <- IO.try(String,Text.Text.read(path))
     dispatch_body(db,id,sender,recipient,kind,body)
 
-def start(+db: String, +session: String, harness: String, cmd: String, +model: String, effort: String, cwd: String, log: String, id: String, task: String) -> IO(String):
+def start(+db: String, +session: String, harness: String, cmd: String, +model: String, effort: String, cwd: String, log: String, id: String, +: String) -> IO(String):
   do IO<String>:
     body : String <- IO.try(String,Text.Text.read(task))
     workspace : String <- IO.try(String,Host.Control.workspace(cwd))
