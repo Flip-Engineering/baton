@@ -39,7 +39,7 @@ def signal_ordering(+recorded: String, requested: String) -> String:
 # The controller's own row is withheld unless the subject is an existing managed
 # query of this owner with no runtime attachment and is not itself a control query.
 def controllable(+owner: String, controlledQuery: String) -> String:
-  "EXISTS(SELECT 1 FROM semantic_queries c WHERE c.id=" ++ C.q(controlledQuery) ++ " AND c.owner=" ++ C.q(owner) ++ " AND c.runtime_id IS NULL AND NOT (c.result_json IS NOT NULL AND json_extract(c.result_json,'$.kind')='queryControl'))"
+  "EXISTS(SELECT 1 FROM semantic_queries c WHERE c.id=" ++ C.q(controlledQuery) ++ " AND c.owner=" ++ C.q(owner) ++ " AND c.runtime_id IS NULL AND coalesce(json_extract(c.result_json,'$.kind'),'')<>'queryControl')"
 
 # Release records the query-wide cleanup intent first, so a role prepared after this
 # commit still reconciles the recorded intent. An existing SIGKILL intent is kept.

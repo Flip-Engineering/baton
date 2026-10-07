@@ -257,11 +257,9 @@ def rows_add(rows: Rows, +r: Row) -> Rows:
     case Rcons{+head, +tail}: Rcons{head, rows_add(tail, r)}
 
 def hex_digit_ok(+c: Char) -> Bool:
-  Bool.pick(Bool, U32.is_lt(Char.to_u32(c), 48), False{},
-    Bool.pick(Bool, U32.is_lt(Char.to_u32(c), 58), True{},
-      Bool.pick(Bool, U32.is_lt(Char.to_u32(c), 97), False{},
-        Bool.pick(Bool, U32.is_lt(Char.to_u32(c), 103), True{},
-          Bool.pick(Bool, U32.is_lt(Char.to_u32(c), 65), False{}, U32.is_lt(Char.to_u32(c), 71))))))
+  Bool.or(Bool.and(Bool.not(U32.is_lt(Char.to_u32(c), 48)), U32.is_lt(Char.to_u32(c), 58)),
+    Bool.or(Bool.and(Bool.not(U32.is_lt(Char.to_u32(c), 65)), U32.is_lt(Char.to_u32(c), 71)),
+      Bool.and(Bool.not(U32.is_lt(Char.to_u32(c), 97)), U32.is_lt(Char.to_u32(c), 103))))
 
 def hex_ok(s: String) -> Bool:
   match s:

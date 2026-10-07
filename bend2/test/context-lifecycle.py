@@ -584,7 +584,7 @@ def check_control(values):
     check(json.loads(values.get("control.downgrade", "{}")).get("state") == "complete", "control.downgrade", values.get("control.downgrade"))
     kept = json.loads(values.get("control.kept", "{}"))
     check(kept.get("signal") == "SIGKILL", "control.kept", kept)
-    check(values.get("control.foreign.error", "") != "", "control.foreign", values.get("control.foreign"))
+    check(json.loads(values.get("control.foreign", "{}" )).get("error") == "control-subject-unavailable", "control.foreign", values.get("control.foreign"))
     recover = json.loads(values.get("control.recover", "{}"))
     check(recover.get("state") == "complete", "control.recover", recover)
     check(recover.get("result", {}).get("controlledQuery") == "q2", "control.recover.query", recover.get("result"))
