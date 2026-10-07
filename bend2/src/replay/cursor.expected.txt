@@ -1,4 +1,0 @@
-RESULT|cursor-live|source=live|checkpoint=none|cursor=4|owed=3
-RESULT|cursor-after-restart-same-basis|source=checkpoint|checkpoint=valid|cursor=4|owed=3
-RESULT|cursor-after-restart-changed-basis|source=ledger_fallback|checkpoint=stale_authority|cursor=4|owed=3
-RESULT|cursor-after-restart-missing-basis|source=ledger_fallback|checkpoint=stale_authority|cursor=4|owed=3

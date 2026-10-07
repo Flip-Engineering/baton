@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-28 -16 60 36" role="img" aria-label="Blue visor with cream front panel">
-  <title>Blue visor with cream front panel</title>
-  <g id="whale-visor" data-anchor="forehead" data-layer="front" style="--cloth:#A3C5DC;--brim:#79A6C7;--ink:#5A7E99;--panel:#F6FAFC" stroke-linecap="round" stroke-linejoin="round">
-    <path id="band" d="M-23 3 C-20 -5 -10 -10 2 -10 C11 -10 20 -6 20 -1 L18 3 C4 -1 -10 0 -21 6 Z" fill="var(--cloth)" stroke="var(--ink)" stroke-width="1.25"/>
-    <path id="brim" d="M-21 3 C-7 -2.5 8 -2 19 1 C24 2.4 26 5.2 21 6.2 C15 7.2 10 3.8 4 3 C-5 1.8 -13 3.7 -20 6 Z" fill="var(--brim)" stroke="var(--ink)" stroke-width="1.25"/>
-    <path id="front-panel" d="M-12 -8.7 Q-4 -10 7 -8 L6 3 Q-4 1.8 -12 3 Z" fill="var(--panel)"/>
-  </g>
-</svg>

@@ -1,6 +1,0 @@
-Run the agent over stdio
-
-Usage: grok agent stdio
-
-Options:
-  -h, --help  Print help
