@@ -9,6 +9,7 @@ import ./native-declaration.bend as NativeDeclaration
 import ./native-runtime-laws.bend as NativeRuntimeLaws
 import ./native-declaration-laws.bend as NativeDeclarationLaws
 import ./native-project-policy-laws.bend as NativeProjectPolicyLaws
+import ./service.bend as ContextService
 import ./engines.bend as Eng
 import ../json/canonical.bend as J
 import ../host/process.bend as Process
@@ -256,10 +257,43 @@ law native_project_policy_request_binds_only_owner_and_worktree:
 def native_project_policy_request_binds_only_owner_and_worktree():
   {==}
 
-law native_result_refuses_without_admission:
-  for +db: String
-  for +query: String
-  {Native.result(db, query) == IO.die(Unit, 3, "Native result lookup remains unavailable for " ++ query) : IO(Unit)}
+def boundary_observation(status: String, owner: String, worktree: String,
+                         query: String, path_key: String, path: String) -> J.Json:
+  J.Jobj{NativeDeclarationLaws.obj_pair("status", J.Jstr{status},
+  NativeDeclarationLaws.obj_pair("owner", J.Jstr{owner},
+  NativeDeclarationLaws.obj_pair("worktree", J.Jstr{worktree},
+  NativeDeclarationLaws.obj_pair("query", J.Jstr{query},
+  NativeDeclarationLaws.obj_pair(path_key, J.Jstr{path}, J.Jnil{}))))) }
 
-def native_result_refuses_without_admission(db,query):
+law native_source_identity_requires_the_bound_owner_and_worktree:
+  {Native.query_source_json("owner-1", "/work/project",
+    Native.ProjectPolicyJsonReady{boundary_observation("examined", "owner-1",
+      "/work/project", "", "identity", "/work/project/src/main.bend")}) ==
+    Native.BoundaryPathReady{"/work/project/src/main.bend"} : Native.BoundaryPath}
+
+def native_source_identity_requires_the_bound_owner_and_worktree():
+  {==}
+
+law native_source_identity_refuses_a_foreign_owner:
+  {Native.query_source_json("owner-1", "/work/project",
+    Native.ProjectPolicyJsonReady{boundary_observation("examined", "owner-2",
+      "/work/project", "", "identity", "/work/project/src/main.bend")}) ==
+    Native.BoundaryPathRefused{"querySourceObservationMismatch"} : Native.BoundaryPath}
+
+def native_source_identity_refuses_a_foreign_owner():
+  {==}
+
+law native_result_returns_the_retained_query_envelope:
+  {Native.result_retained("query-1",
+    ContextService.RetainedFound{"complete", "{\"version\":1,\"query\":\"query-1\"}"}) ==
+    IO.write("{\"version\":1,\"query\":\"query-1\"}\n") : IO(Unit)}
+
+def native_result_returns_the_retained_query_envelope():
+  {==}
+
+law native_result_refuses_an_absent_query:
+  {Native.result_retained("query-absent", ContextService.RetainedAbsent{"query-absent"}) ==
+    IO.die(Unit, 3, "contextResultAbsent:query-absent") : IO(Unit)}
+
+def native_result_refuses_an_absent_query():
   {==}

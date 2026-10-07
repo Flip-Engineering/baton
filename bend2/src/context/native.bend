@@ -11,6 +11,7 @@ import ./engines-wire.bend as EnginesWire
 import ./native-request.bend as NativeRequest
 import ./native-catalog.bend as NativeCatalog
 import ./native-project-policy.bend as NativePolicy
+import ./service.bend as ContextService
 import ../json/canonical.bend as J
 import ./request.bend as Req
 import ../coordinator/commands.bend as C
@@ -842,5 +843,29 @@ def query_file(+db: String, +owner: String, +query: String, path: String) -> IO(
     binding : Result<&1,&1,U32 & String,String> <- DB.Sql.binding(db)
     query_binding_result(db, owner, query, path, binding)
 
-def result(db: String, query: String) -> IO(Unit):
-  IO.die(Unit, 3, "Native result lookup remains unavailable for " ++ query)
+def result_retained(query: String, retained: ContextService.Retained) -> IO(Unit):
+  match retained:
+    case ContextService.RetainedFound{state, envelope}:
+      IO.write(envelope ++ "\n")
+    case ContextService.RetainedAbsent{query}:
+      IO.die(Unit, 3, "contextResultAbsent:" ++ query)
+    case ContextService.RetainedUnreadable{stage, answer}:
+      IO.die(Unit, 3, "contextResultUnreadable:" ++ stage)
+    case ContextService.RetainedRefused{code, detail}:
+      IO.die(Unit, code, detail)
+
+def result_binding(+db: String, +query: String,
+                   result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.die(Unit, code, detail)
+    case Done{+binding}:
+      do IO<Unit>:
+        retained : ContextService.Retained <- ContextService.retained(db, binding, query)
+        result_retained(query, retained)
+
+def result(+db: String, +query: String) -> IO(Unit):
+  do IO<Unit>:
+    binding : Result<&1,&1,U32 & String,String> <- DB.Sql.binding(db)
+    result_binding(db, query, binding)
