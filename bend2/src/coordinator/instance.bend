@@ -26,7 +26,10 @@ def dirty_session_sql() -> String:
 def drop_empty(sessions: List<String>) -> List<String>:
   match sessions:
     case Nil{}: Nil{}
-    case +session <> +rest: Bool.pick(List<String>, String.is_empty(session), drop_empty(rest), Con{session, drop_empty(rest)})
+    case session <> rest:
+      +s = session
+      +r = rest
+      Bool.pick(List<String>, String.is_empty(s), drop_empty(r), Con{s, drop_empty(r)})
 
 def dirty_sessions(saved: String) -> List<String>:
   drop_empty(Tx.split_lines(saved))
