@@ -789,290 +789,6 @@ def ff_stage5_guard_observed(cand: String, old: String, repo: String, target: St
     case Done{guard}: ff_stage5_guarded_now(candidate, tb, rp, tg, cm, guard)
 
 
-# The public shared boundary. The canonical common directory is read once here, the target
-# claim is taken around the holder selection and the selected advance, and the release runs for
-# every returned advance outcome with its own Result preserved beside the advance observation.
-# A release failure is therefore visible to both adapters and can never read as a landing.
-type SharedLanding is Data:
-  SharedCommonUnreadable{observation: T.GitOut}
-  SharedClaimFailed{error: U32 & String}
-  SharedGuardBusy{target: String}
-  SharedStepFailed{step: String, error: U32 & String, released: Result<U32 & String, Unit>}
-  SharedStepRecordFailed{step: String, record: String, released: Result<U32 & String, Unit>}
-  SharedAdvanced{obs: LdAdvObs, released: Result<U32 & String, Unit>, guard: String, reserved: String}
-
-def shared_parent_path(directory: String, name: String) -> String:
-  +d = directory
-  +n = name
-  Tx.str_cat(d, Tx.str_cat("/", n))
-
-def shared_attempts_parent(common: String) -> String:
-  +c = common
-  Tx.str_cat(c, "/baton2-attempts")
-
-# Every step failure releases the acquired descriptor and keeps its own stage, its complete
-# error or raw record, and the actual release Result.
-# Every step failure releases the acquired descriptor and keeps its own stage, its complete
-# error or raw record, and the actual release Result.
-def shared_step_failed(step: String, error: U32 & String, handle: U32) -> IO(SharedLanding):
-  +s = step
-  +e = error
-  +h = handle
-  do IO<SharedLanding>:
-    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
-    IO.pure(SharedLanding, SharedStepFailed{s, e, released})
-
-def shared_record_failed(step: String, record: String, handle: U32) -> IO(SharedLanding):
-  +s = step
-  +r = record
-  +h = handle
-  do IO<SharedLanding>:
-    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
-    IO.pure(SharedLanding, SharedStepRecordFailed{s, r, released})
-
-# Admission runs the advance for the reserved directory and releases, carrying the guard and
-# the reserved path forward for the capture sites.
-# Admission runs the advance for the reserved directory and releases, carrying the guard and
-# the reserved path forward for the capture sites.
-def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, reserved: String) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +rv = reserved
-  +cx = LdAdvContext{h, gd, shared_parent_path(rv, "stderr")}
-  do IO<SharedLanding>:
-    o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
-    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
-    IO.pure(SharedLanding, SharedAdvanced{o, released, gd, rv})
-
-# The attempt name: the bare base for the first attempt, then the base extended with the
-# counter rendered by U32.show. The only refusal past a collision is the U32 maximum, checked
-# before the increment; there is no chosen suffix-length limit.
-# The attempt name: the bare base for the first attempt, then the base extended with the
-# counter rendered by U32.show. The only refusal past a collision is the U32 maximum, checked
-# before the increment; there is no chosen suffix-length limit.
-def shared_attempt_name(base: String, attempt: U32) -> String:
-  +b = base
-  +n = attempt
-  match U32.is_eq(n, 1):
-    case True{}: b
-    case False{}: Tx.str_cat(b, Tx.str_cat("-", U32.show(n)))
-
-# One self-recursive reservation body. The returned Result, the exact created/existing records
-# and the retry branching all happen here; only nonrecursive helpers produce final outcomes.
-# One self-recursive reservation body. The returned Result, the exact created/existing records
-# and the retry branching all happen here; only nonrecursive helpers produce final outcomes.
-def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, attempt: U32) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  +n = attempt
-  +name = shared_attempt_name(bs, n)
-  do IO<SharedLanding>:
-    observed : Result<U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, name)
-    match observed:
-      case Fail{error}: shared_step_failed("reserve", error, h)
-      case Done{record}:
-        +r = record
-        match Tx.str_eq(r, Pb.production_record("created", shared_parent_path(pa, name), "0")):
-          case True{}: shared_reserved_continue(h, rp, tg, c, b, gd, shared_parent_path(pa, name))
-          case False{}:
-            match Tx.str_eq(r, Pb.production_record("existing", shared_parent_path(pa, name), "0")):
-              case False{}: shared_record_failed("reserve", r, h)
-              case True{}:
-                match U32.is_lt(n, 4294967295):
-                  case True{}:
-                    +next = U32.add(n, 1)
-                    shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, next)
-                  case False{}: shared_record_failed("reserve-counter-maximum", r, h)
-
-def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  +r = record
-  match Tx.str_eq(r, Pb.production_record("created", pa, "0")):
-    case True{}: shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1)
-    case False{}: shared_parent_present(h, rp, tg, c, b, gd, pa, bs, r)
-
-def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  +r = record
-  match Tx.str_eq(r, Pb.production_record("present", pa, "0")):
-    case True{}: shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1)
-    case False{}: shared_record_failed("ensure", r, h)
-
-def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +gd = guard
-  +pa = parent
-  +bs = base
-  match observed:
-    case Fail{error}: shared_step_failed("ensure", error, h)
-    case Done{record}: shared_parent_classified(h, rp, tg, c, b, gd, pa, bs, record)
-
-def shared_token_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, guard: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +cm = common
-  +gd = guard
-  match observed:
-    case Fail{error}: shared_step_failed("token", error, h)
-    case Done{token}:
-      +parent = shared_attempts_parent(cm)
-      +base = Tx.str_cat(token, Tx.str_cat("-", Tx.str_cat(c, Tx.str_cat("-", b))))
-      do IO<SharedLanding>:
-        ensured : Result<U32 & String, String> <- Rec.Receipt.ensure(parent)
-        shared_parent_ensured(h, rp, tg, c, b, gd, parent, base, ensured)
-
-def shared_guard_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +cm = common
-  match observed:
-    case Fail{error}: shared_step_failed("guard", error, h)
-    case Done{guard}:
-      do IO<SharedLanding>:
-        token : Result<U32 & String, String> <- Rec.Receipt.attempt_token(tg)
-        shared_token_named(h, rp, tg, c, b, cm, guard, token)
-
-def shared_guarded(handle: U32, repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
-  +h = handle
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +cm = common
-  do IO<SharedLanding>:
-    observed : Result<U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
-    shared_guard_named(h, rp, tg, c, b, cm, observed)
-
-def shared_claim_decided(repo: String, target: String, cand: String, basis: String, common: String, claimed: Result<U32 & String, Maybe<U32>>) -> IO(SharedLanding):
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +cm = common
-  match claimed:
-    case Fail{error}: IO.pure(SharedLanding, SharedClaimFailed{error})
-    case Done{held}:
-      match held:
-        case None{}: IO.pure(SharedLanding, SharedGuardBusy{tg})
-        case Some{handle}: shared_guarded(handle, rp, tg, c, b, cm)
-
-def shared_claimed(repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +cm = common
-  do IO<SharedLanding>:
-    claimed : Result<U32 & String, Maybe<U32>> <- Rec.Receipt.claim(cm, tg)
-    shared_claim_decided(rp, tg, c, b, cm, claimed)
-
-def shared_common_read(repo: String, target: String, cand: String, basis: String, observed: T.GitOut) -> IO(SharedLanding):
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  +obs = observed
-  match obs:
-    case T.GRun{code, out}:
-      +c0 = code
-      match U32.is_eq(c0, 0):
-        case True{}: shared_claimed(rp, tg, c, b, Tx.trim_nl(out))
-        case False{}: IO.pure(SharedLanding, SharedCommonUnreadable{obs})
-    case T.GBroken{detail}: IO.pure(SharedLanding, SharedCommonUnreadable{obs})
-
-def ld_advance(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
-  +t2 = target
-  +c2 = cand
-  do IO<Ld>:
-    shared : SharedLanding <- shared_landing_run(repo, t2, c2, basis)
-    IO.pure(Ld, ld_advance_shared_answer(shared, t2, c2))
-
-# Stage 1 resolves the worker commit; the pipeline carries the resolved sha
-# so the LAlready answer names the worker commit.
-def shared_landing_run(repo: String, target: String, cand: String, basis: String) -> IO(SharedLanding):
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  do IO<SharedLanding>:
-    observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
-    shared_common_read(rp, tg, c, b, observed)
-
-def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String) -> FFLD:
-  +s = shared
-  +tg = target
-  +c = cand
-  match s:
-    case SharedCommonUnreadable{observation}: FFDone{T.LBlocked{"the common directory could not be read for the landing claim"}}
-    case SharedClaimFailed{error}:
-      match error:
-        case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the landing claim failed: ", detail)}}
-    case SharedGuardBusy{target}: FFDone{T.LBlocked{"another landing holds the target"}}
-    case SharedStepFailed{step, error, released}:
-      match error:
-        case (code, detail): FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " failed: "), detail)}}
-    case SharedStepRecordFailed{step, record, released}: FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " refused: "), record)}}
-    case SharedAdvanced{obs, released, guard, reserved}:
-      match released:
-        case Fail{error}:
-          match error:
-            case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", detail)}}
-        case Done{unit}: ff_stage5_adv_answer(ld_adv_of(obs), tg, c)
-
-def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String) -> Ld:
-  +s = shared
-  +tg = target
-  +c = cand
-  match s:
-    case SharedCommonUnreadable{observation}: LdFail{T.FCmd{"land", "the common directory could not be read for the landing claim"}}
-    case SharedClaimFailed{error}:
-      match error:
-        case (code, detail): LdFail{T.FCmd{"land", detail}}
-    case SharedGuardBusy{target}: LdFail{T.FCmd{"land", "another landing holds the target; rerun land-checked to prepare and check against the current target"}}
-    case SharedStepFailed{step, error, released}:
-      match error:
-        case (code, detail): LdFail{T.FCmd{"land", detail}}
-    case SharedStepRecordFailed{step, record, released}: LdFail{T.FCmd{"land", record}}
-    case SharedAdvanced{obs, released, guard, reserved}:
-      match released:
-        case Fail{error}:
-          match error:
-            case (code, detail): LdFail{T.FCmd{"land", detail}}
-        case Done{unit}: ld_adv_answer(ld_adv_of(obs), tg, c)
 # The fast-forward now advances through the same holder-aware path the checked landing uses,
 # so both reach one effect. Only a landed answer reports LLanded; a moved target, a held
 # worktree, a changed holder, a refused update and a broken read each keep their own answer.
@@ -1404,52 +1120,19 @@ def ld_adv_update(repo: String, target: String, cand: String, basis: String) -> 
     g : T.GitOut <- Git.runGit(r2, ld_update_argv(t2, c2, b2))
     IO.pure(Ld, ld_update_pick(g, t2, c2))
 
-# The update-ref argv: the target ref, the candidate and the basis it advanced
-# from, so the branch moves only while it still reads as that basis.
-type LAdv is Data:
-  AdvLanded{}
-  AdvMoved{}
-  AdvHeld{path: String}
-  AdvHolderChanged{path: String}
-  AdvRefused{}
-  AdvBroken{detail: String}
-
-# The compare-and-swap where no worktree holds the target.
-type LdAdvCtx is Data:
-  LdAdvContext{claim: U32, guard: String, artifact: String}
-
-type LdAdvObs is Data:
-  LdAdvNoCapture{advance: LAdv}
-  LdAdvCaptured{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>}
-  LdAdvQualified{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>, readback: T.GitOut}
-
-def ld_adv_wrap(advance: LAdv) -> LdAdvObs:
-  +a = advance
-  LdAdvNoCapture{a}
-
-def ld_adv_with(advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>) -> LdAdvObs:
-  +a = advance
-  +c = capture
-  LdAdvCaptured{a, c}
-
-def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
-  +c = capture
-  match c:
-    case Fail{error}:
-      match error:
-        case (code, detail): T.GBroken{detail}
-    case Done{pair}:
-      match pair:
-        case (framing, diagnostics):
-          match Tx.run_res(Done{framing}):
-            case T.RRun{T.SExit{code}, out}: T.GRun{code, out}
-            case T.RRun{T.SSignal{num}, out}: T.GBroken{"the mutation signalled"}
-            case T.RSpawn{detail}: T.GBroken{detail}
-
+def ld_adv_same(same: Bool, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  +cx = ctx
+  match same:
+    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvMoved{}))
+    case True{}:
+      +r2 = repo
+      +t2 = target
+      do IO<LdAdvObs>:
+        gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
+        ld_adv_holder(ld_hold_read(gl, t2), r2, t2, cand, basis, cx)
 def ld_hold_ref(target: String) -> String:
   Tx.str_cat("refs/heads/", target)
 
-# The branch line a worktree report carries when it holds the target.
 # The branch line a worktree report carries when it holds the target.
 def ld_hold_branch(target: String) -> String:
   Tx.str_cat("branch ", ld_hold_ref(target))
@@ -1458,16 +1141,9 @@ def ld_hold_branch(target: String) -> String:
 # whose branch line names the target branch is the worktree that holds it. The
 # path is taken from the line as Git writes it, so a path Git quoted is not a
 # path this module can enter and the advance never runs in one.
-# The holder's block in a `git worktree list --porcelain` report: each block is
-# one "worktree <path>" line and the state lines that follow it, and the block
-# whose branch line names the target branch is the worktree that holds it. The
-# path is taken from the line as Git writes it, so a path Git quoted is not a
-# path this module can enter and the advance never runs in one.
 type LdHoldScan is Data:
   HoldScan{cur: String, found: String, seen: U32}
 
-# The path one worktree-list line names: the line with its label matched off,
-# or the empty string for a line that does not carry the label.
 # One branch line that names the target: the first one records the path of the
 # block it appeared in, and any later one, or one that appeared before any
 # block, makes the listing unusable.
@@ -1494,14 +1170,11 @@ def ld_hold_scan(lines: List<String>, acc: LdHoldScan, +want: String) -> LdHoldS
 
 # The worktree that holds the target: its path, none, or the reason the report
 # cannot be trusted to name exactly one.
-# The worktree that holds the target: its path, none, or the reason the report
-# cannot be trusted to name exactly one.
 type LdHold is Data:
   HoldNone{}
   HoldPath{path: String}
   HoldBlocked{detail: String}
 
-# The holder one report names, or the reason it names no usable one.
 # The holder one report names, or the reason it names no usable one.
 def ld_hold_end(acc: LdHoldScan) -> LdHold:
   match acc:
@@ -1515,8 +1188,6 @@ def ld_hold_of(out: String, target: String) -> LdHold:
 
 # The holder of a listing that ran: the report's holder, or the reason the
 # listing itself cannot be read.
-# The holder of a listing that ran: the report's holder, or the reason the
-# listing itself cannot be read.
 def ld_hold_read(g: T.GitOut, target: String) -> LdHold:
   match g:
     case T.GRun{code, out}:
@@ -1526,27 +1197,28 @@ def ld_hold_read(g: T.GitOut, target: String) -> LdHold:
     case T.GBroken{detail}: HoldBlocked{detail}
 
 # The target commit lookup used by the existing unheld compare-and-swap path.
-def ld_adv_same(same: Bool, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
-  +cx = ctx
-  match same:
-    case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvMoved{}))
-    case True{}:
-      +r2 = repo
-      +t2 = target
-      do IO<LdAdvObs>:
-        gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
-        ld_adv_holder(ld_hold_read(gl, t2), r2, t2, cand, basis, cx)
-      Bool.pick(String, Char.is_eq(c, lc), wt_path_go(rest, lr), "")
+def ld_tip_argv(target: String) -> List<String>:
+  ["rev-parse", "--verify", Tx.str_cat(target, "^{commit}")]
 
-def wt_path(line: String) -> String:
-  wt_path_go(line, "worktree ")
-
+# The exact local target branch commit used to validate a held worktree.
+def ld_target_ref_argv(target: String) -> List<String>:
   ["rev-parse", "--verify", Tx.str_cat(ld_hold_ref(target), "^{commit}")]
 
 # The attached branch name of a worktree, or a nonzero result when detached.
 def ld_head_argv() -> List<String>:
   ["symbolic-ref", "--quiet", "HEAD"]
 
+# The update-ref argv: the target ref, the candidate and the basis it advanced
+# from, so the branch moves only while it still reads as that basis.
+type LAdv is Data:
+  AdvLanded{}
+  AdvMoved{}
+  AdvHeld{path: String}
+  AdvHolderChanged{path: String}
+  AdvRefused{}
+  AdvBroken{detail: String}
+
+# The compare-and-swap where no worktree holds the target.
 def ld_adv_cas(g: T.GitOut) -> LAdv:
   match g:
     case T.GRun{code, out}: Bool.pick(LAdv, U32.is_eq(code, 0), AdvLanded{}, AdvRefused{})
@@ -1667,15 +1339,6 @@ def ld_adv_of(obs: LdAdvObs) -> LAdv:
     case LdAdvCaptured{advance, capture}: advance
     case LdAdvQualified{advance, capture, readback}: advance
 
-def ld_adv_wt_observe(path: String, repo: String, target: String, cand: String) -> IO(LAdv):
-  +p2 = path
-  +r2 = repo
-  +t2 = target
-  +c2 = cand
-  do IO<LAdv>:
-    target_tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
-    ld_adv_wt_observed_target_pick(target_tip, p2, t2, c2)
-
 # Git provides no atomic CLI operation that pins symbolic HEAD across the final identity check
 # and the merge, so a switch in that interval can still direct the merge to another branch. The
 # target claim coordinates participating landings; it does not lock an independent Git process.
@@ -1684,6 +1347,15 @@ def ld_adv_wt_observe_wrapped(path: String, repo: String, target: String, cand: 
   do IO<LdAdvObs>:
     inner : LAdv <- ld_adv_wt_observe(path, repo, target, cand)
     IO.pure(LdAdvObs, ld_adv_with(inner, cp))
+
+def ld_adv_wt_observe(path: String, repo: String, target: String, cand: String) -> IO(LAdv):
+  +p2 = path
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  do IO<LAdv>:
+    target_tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
+    ld_adv_wt_observed_target_pick(target_tip, p2, t2, c2)
 
 def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
   +cx = ctx
@@ -1774,6 +1446,37 @@ def ld_adv_pick(g: T.GitOut, repo: String, target: String, cand: String, basis: 
         ld_adv_same(Tx.str_eq(Tx.trim_nl(out), b2), repo, target, cand, b2, cx),
         IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{"the target commit could not be read before publication"})))
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
+type LdAdvCtx is Data:
+  LdAdvContext{claim: U32, guard: String, artifact: String}
+
+type LdAdvObs is Data:
+  LdAdvNoCapture{advance: LAdv}
+  LdAdvCaptured{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>}
+  LdAdvQualified{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>, readback: T.GitOut}
+
+def ld_adv_wrap(advance: LAdv) -> LdAdvObs:
+  +a = advance
+  LdAdvNoCapture{a}
+
+def ld_adv_with(advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>) -> LdAdvObs:
+  +a = advance
+  +c = capture
+  LdAdvCaptured{a, c}
+
+def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
+  +c = capture
+  match c:
+    case Fail{error}:
+      match error:
+        case (code, detail): T.GBroken{detail}
+    case Done{pair}:
+      match pair:
+        case (framing, diagnostics):
+          match Tx.run_res(Done{framing}):
+            case T.RRun{T.SExit{code}, out}: T.GRun{code, out}
+            case T.RRun{T.SSignal{num}, out}: T.GBroken{"the mutation signalled"}
+            case T.RSpawn{detail}: T.GBroken{detail}
+
 def ld_adv_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +r2 = repo
   +t2 = target
@@ -1800,6 +1503,15 @@ def ld_adv_answer(a: LAdv, target: String, cand: String) -> Ld:
 # Advance the checked candidate from its checked basis. A changed target
 # returns an explicit retry result; the next invocation prepares both trees.
 
+def ld_advance(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
+  +t2 = target
+  +c2 = cand
+  do IO<Ld>:
+    shared : SharedLanding <- shared_landing_run(repo, t2, c2, basis)
+    IO.pure(Ld, ld_advance_shared_answer(shared, t2, c2))
+
+# Stage 1 resolves the worker commit; the pipeline carries the resolved sha
+# so the LAlready answer names the worker commit.
 def ld_resolved_ok(ok: Bool, out: String, worker: String) -> IO(Ld):
   match ok:
     case True{}: IO.pure(Ld, LdWk{worker, Tx.trim_nl(out)})
@@ -2093,6 +1805,19 @@ def ld_go5(r: Ld, repo: String, target: String, script: String, files: List<Stri
 # name that belongs to the worker rather than to the attempt.
 def scratch_prefix(repo: String, worker: String) -> String:
   T.str_cat3(repo, "/.scratch/bend2-land-", Tx.str_cat(worker, "-"))
+
+# The path one worktree-list line names: the line with its label matched off,
+# or the empty string for a line that does not carry the label.
+def wt_path_go(line: String, label: String) -> String:
+  match line label:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{lc, lr}: ""
+    case SCon{c, rest} SNil{}: line
+    case SCon{c, rest} SCon{lc, lr}:
+      Bool.pick(String, Char.is_eq(c, lc), wt_path_go(rest, lr), "")
+
+def wt_path(line: String) -> String:
+  wt_path_go(line, "worktree ")
 
 def scratch_remove1(repo: String, dir: String) -> IO(Unit):
   +r2 = repo
@@ -2407,3 +2132,269 @@ law prepared_holder_discovery_rejects_a_quoted_or_relative_path:
 def prepared_holder_discovery_rejects_a_quoted_or_relative_path():
   {==}
 
+# The public shared boundary. The canonical common directory is read once here, the target
+# claim is taken around the holder selection and the selected advance, and the release runs for
+# every returned advance outcome with its own Result preserved beside the advance observation.
+# A release failure is therefore visible to both adapters and can never read as a landing.
+type SharedLanding is Data:
+  SharedCommonUnreadable{observation: T.GitOut}
+  SharedClaimFailed{error: U32 & String}
+  SharedGuardBusy{target: String}
+  SharedStepFailed{step: String, error: U32 & String, released: Result<U32 & String, Unit>}
+  SharedStepRecordFailed{step: String, record: String, released: Result<U32 & String, Unit>}
+  SharedAdvanced{obs: LdAdvObs, released: Result<U32 & String, Unit>, guard: String, reserved: String}
+
+def shared_parent_path(directory: String, name: String) -> String:
+  +d = directory
+  +n = name
+  Tx.str_cat(d, Tx.str_cat("/", n))
+
+def shared_attempts_parent(common: String) -> String:
+  +c = common
+  Tx.str_cat(c, "/baton2-attempts")
+
+# Every step failure releases the acquired descriptor and keeps its own stage, its complete
+# error or raw record, and the actual release Result.
+def shared_step_failed(step: String, error: U32 & String, handle: U32) -> IO(SharedLanding):
+  +s = step
+  +e = error
+  +h = handle
+  do IO<SharedLanding>:
+    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
+    IO.pure(SharedLanding, SharedStepFailed{s, e, released})
+
+def shared_record_failed(step: String, record: String, handle: U32) -> IO(SharedLanding):
+  +s = step
+  +r = record
+  +h = handle
+  do IO<SharedLanding>:
+    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
+    IO.pure(SharedLanding, SharedStepRecordFailed{s, r, released})
+
+# Admission runs the advance for the reserved directory and releases, carrying the guard and
+# the reserved path forward for the capture sites.
+def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, reserved: String) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +gd = guard
+  +rv = reserved
+  +cx = LdAdvContext{h, gd, shared_parent_path(rv, "stderr")}
+  do IO<SharedLanding>:
+    o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
+    released : Result<U32 & String, Unit> <- Rec.Receipt.release(h)
+    IO.pure(SharedLanding, SharedAdvanced{o, released, gd, rv})
+
+# The attempt name: the bare base for the first attempt, then the base extended with the
+# counter rendered by U32.show. The only refusal past a collision is the U32 maximum, checked
+# before the increment; there is no chosen suffix-length limit.
+def shared_attempt_name(base: String, attempt: U32) -> String:
+  +b = base
+  +n = attempt
+  match U32.is_eq(n, 1):
+    case True{}: b
+    case False{}: Tx.str_cat(b, Tx.str_cat("-", U32.show(n)))
+
+# One self-recursive reservation body. The returned Result, the exact created/existing records
+# and the retry branching all happen here; only nonrecursive helpers produce final outcomes.
+def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, attempt: U32) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +gd = guard
+  +pa = parent
+  +bs = base
+  +n = attempt
+  +name = shared_attempt_name(bs, n)
+  do IO<SharedLanding>:
+    observed : Result<U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, name)
+    match observed:
+      case Fail{error}: shared_step_failed("reserve", error, h)
+      case Done{record}:
+        +r = record
+        match Tx.str_eq(r, Pb.production_record("created", shared_parent_path(pa, name), "0")):
+          case True{}: shared_reserved_continue(h, rp, tg, c, b, gd, shared_parent_path(pa, name))
+          case False{}:
+            match Tx.str_eq(r, Pb.production_record("existing", shared_parent_path(pa, name), "0")):
+              case False{}: shared_record_failed("reserve", r, h)
+              case True{}:
+                match U32.is_lt(n, 4294967295):
+                  case True{}:
+                    +next = U32.add(n, 1)
+                    shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, next)
+                  case False{}: shared_record_failed("reserve-counter-maximum", r, h)
+
+def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +gd = guard
+  +pa = parent
+  +bs = base
+  +r = record
+  match Tx.str_eq(r, Pb.production_record("created", pa, "0")):
+    case True{}: shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1)
+    case False{}: shared_parent_present(h, rp, tg, c, b, gd, pa, bs, r)
+
+def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +gd = guard
+  +pa = parent
+  +bs = base
+  +r = record
+  match Tx.str_eq(r, Pb.production_record("present", pa, "0")):
+    case True{}: shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1)
+    case False{}: shared_record_failed("ensure", r, h)
+
+def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +gd = guard
+  +pa = parent
+  +bs = base
+  match observed:
+    case Fail{error}: shared_step_failed("ensure", error, h)
+    case Done{record}: shared_parent_classified(h, rp, tg, c, b, gd, pa, bs, record)
+
+def shared_token_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, guard: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +cm = common
+  +gd = guard
+  match observed:
+    case Fail{error}: shared_step_failed("token", error, h)
+    case Done{token}:
+      +parent = shared_attempts_parent(cm)
+      +base = Tx.str_cat(token, Tx.str_cat("-", Tx.str_cat(c, Tx.str_cat("-", b))))
+      do IO<SharedLanding>:
+        ensured : Result<U32 & String, String> <- Rec.Receipt.ensure(parent)
+        shared_parent_ensured(h, rp, tg, c, b, gd, parent, base, ensured)
+
+def shared_guard_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, observed: Result<U32 & String, String>) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +cm = common
+  match observed:
+    case Fail{error}: shared_step_failed("guard", error, h)
+    case Done{guard}:
+      do IO<SharedLanding>:
+        token : Result<U32 & String, String> <- Rec.Receipt.attempt_token(tg)
+        shared_token_named(h, rp, tg, c, b, cm, guard, token)
+
+def shared_guarded(handle: U32, repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
+  +h = handle
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +cm = common
+  do IO<SharedLanding>:
+    observed : Result<U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
+    shared_guard_named(h, rp, tg, c, b, cm, observed)
+
+def shared_claim_decided(repo: String, target: String, cand: String, basis: String, common: String, claimed: Result<U32 & String, Maybe<U32>>) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +cm = common
+  match claimed:
+    case Fail{error}: IO.pure(SharedLanding, SharedClaimFailed{error})
+    case Done{held}:
+      match held:
+        case None{}: IO.pure(SharedLanding, SharedGuardBusy{tg})
+        case Some{handle}: shared_guarded(handle, rp, tg, c, b, cm)
+
+def shared_claimed(repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +cm = common
+  do IO<SharedLanding>:
+    claimed : Result<U32 & String, Maybe<U32>> <- Rec.Receipt.claim(cm, tg)
+    shared_claim_decided(rp, tg, c, b, cm, claimed)
+
+def shared_common_read(repo: String, target: String, cand: String, basis: String, observed: T.GitOut) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  +obs = observed
+  match obs:
+    case T.GRun{code, out}:
+      +c0 = code
+      match U32.is_eq(c0, 0):
+        case True{}: shared_claimed(rp, tg, c, b, Tx.trim_nl(out))
+        case False{}: IO.pure(SharedLanding, SharedCommonUnreadable{obs})
+    case T.GBroken{detail}: IO.pure(SharedLanding, SharedCommonUnreadable{obs})
+
+def shared_landing_run(repo: String, target: String, cand: String, basis: String) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  do IO<SharedLanding>:
+    observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
+    shared_common_read(rp, tg, c, b, observed)
+
+def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String) -> FFLD:
+  +s = shared
+  +tg = target
+  +c = cand
+  match s:
+    case SharedCommonUnreadable{observation}: FFDone{T.LBlocked{"the common directory could not be read for the landing claim"}}
+    case SharedClaimFailed{error}:
+      match error:
+        case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the landing claim failed: ", detail)}}
+    case SharedGuardBusy{target}: FFDone{T.LBlocked{"another landing holds the target"}}
+    case SharedStepFailed{step, error, released}:
+      match error:
+        case (code, detail): FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " failed: "), detail)}}
+    case SharedStepRecordFailed{step, record, released}: FFDone{T.LBlocked{Tx.str_cat(Tx.str_cat(step, " refused: "), record)}}
+    case SharedAdvanced{obs, released, guard, reserved}:
+      match released:
+        case Fail{error}:
+          match error:
+            case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", detail)}}
+        case Done{unit}: ff_stage5_adv_answer(ld_adv_of(obs), tg, c)
+
+def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String) -> Ld:
+  +s = shared
+  +tg = target
+  +c = cand
+  match s:
+    case SharedCommonUnreadable{observation}: LdFail{T.FCmd{"land", "the common directory could not be read for the landing claim"}}
+    case SharedClaimFailed{error}:
+      match error:
+        case (code, detail): LdFail{T.FCmd{"land", detail}}
+    case SharedGuardBusy{target}: LdFail{T.FCmd{"land", "another landing holds the target; rerun land-checked to prepare and check against the current target"}}
+    case SharedStepFailed{step, error, released}:
+      match error:
+        case (code, detail): LdFail{T.FCmd{"land", detail}}
+    case SharedStepRecordFailed{step, record, released}: LdFail{T.FCmd{"land", record}}
+    case SharedAdvanced{obs, released, guard, reserved}:
+      match released:
+        case Fail{error}:
+          match error:
+            case (code, detail): LdFail{T.FCmd{"land", detail}}
+        case Done{unit}: ld_adv_answer(ld_adv_of(obs), tg, c)
