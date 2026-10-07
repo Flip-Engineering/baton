@@ -211,7 +211,7 @@ def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) ->
 def primary_command_sql(+event: String) -> String:
   "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.payload_type')='turn.input.user' AND json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='turn_input_user' THEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.payload.command_id'),'') ELSE '' END ELSE '' END;"
 
-def primary_command(db: String, +event: String, previous: String, muse: Bool) -> IO(String):
+def primary_command(db: String, +event: String, +previous: String, muse: Bool) -> IO(String):
   match muse:
     case False{}: IO.pure(String,previous)
     case True{}: do IO<String>:
