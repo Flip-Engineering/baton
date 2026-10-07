@@ -16,16 +16,16 @@ class NativeObservation(RECEIVE.Receive):
     def setUp(self):
         super().setUp()
         fixture = self.fixture.read_text()
-        needle = "            if action.get('stdout_line'):\n"
+        needle = "    action=json.loads(line)\n"
         addition = (
-            "            if 'native_line' in action:\n"
-            "                print(action['native_line'],flush=True)\n"
-            "                reply({'line_written':action['native_line']})\n"
-            "                continue\n"
-            "            if 'native_frame' in action:\n"
-            "                print(json.dumps(action['native_frame']),flush=True)\n"
-            "                reply({'frame_written':True})\n"
-            "                continue\n")
+            "    if 'native_line' in action:\n"
+            "        print(action['native_line'],flush=True)\n"
+            "        reply({'line_written':action['native_line']})\n"
+            "        continue\n"
+            "    if 'native_frame' in action:\n"
+            "        print(json.dumps(action['native_frame']),flush=True)\n"
+            "        reply({'frame_written':True})\n"
+            "        continue\n")
         self.assertIn(needle, fixture)
         self.fixture.write_text(fixture.replace(needle, addition + needle, 1))
 
