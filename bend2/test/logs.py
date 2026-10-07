@@ -725,8 +725,7 @@ while True: time.sleep(1)
         self.stream([self.terminal()])
         generation = self.log
         logs = json.loads(self.call('logs-storage'))['logs']
-        base = next(row for row in logs if row['path'] == str(self.base_log))
-        self.assertEqual(base['attempt'], '')
+        self.assertFalse(any(row['path'] == str(self.base_log) for row in logs))
         entry = next(row for row in logs if row['path'] == str(generation))
         self.assertEqual(entry['attempt'], 'turn-1')
         self.assertEqual(entry['bytes'], generation.stat().st_size)
@@ -748,7 +747,7 @@ while True: time.sleep(1)
         self.assertFalse(generation.exists())
         self.assertFalse((self.cwd / (generation.name + '.pending')).exists())
         self.assertEqual((self.cwd / (generation.name + '.stderr')).read_text(), 'native diagnostics stay\n')
-        self.assertTrue(self.base_log.exists())
+        self.assertFalse(self.base_log.exists())
 
     def test_cleanup_retains_the_generation_of_an_unreported_attempt(self):
         self.stream([self.terminal()])
