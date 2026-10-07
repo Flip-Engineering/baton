@@ -81,7 +81,10 @@ coordinator reads the file size. At the budget the numbered segments shift one
 position up, the replacement of the highest one included, and the live log then
 takes the name `<log>.1` and opens with one `baton_log_rotation` frame naming
 the level, the budget and the numbered segments that held a file when the
-rotation ran. The live log moves exactly once per rotation.
+rotation ran. The live log moves exactly once per rotation. The lines one
+frame contributes pass one rotation check together, so a held update and its
+end land in the same file; a batch can carry the live log past the budget
+the way a single large frame can.
 A budget admits 65536 bytes or more, which holds at least one
 observed frame: a measured OMP seat wrote 47 KB per retained frame, and a
 budget below one frame rotates on every append. The upper bound is the U32
