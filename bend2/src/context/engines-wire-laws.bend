@@ -127,7 +127,7 @@ law wire_plan_value_renders_the_captures_and_availability:
 law wire_plan_identity_changes_when_project_policy_changes:
   {Bool.not(String.eq(Wire.plan_identity(fx_plan()), Wire.plan_identity(Sel.Plan{fx_bind(), "sourceAnalysis",
     Sel.StepsCons{fx_step(), Sel.StepsNil{}}, Eng.ss_one("executeTarget"), Sel.CapNil{}, True{},
-    fx_policy_read_identity()}))) : Bool}
+    fx_policy_read_identity()}))) == True{} : Bool}
 
 def wire_plan_identity_changes_when_project_policy_changes():
   {==}

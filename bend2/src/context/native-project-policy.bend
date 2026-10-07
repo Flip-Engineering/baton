@@ -49,10 +49,13 @@ def members(+object: J.Json) -> J.Json:
 def required_member(value: J.Json, +key: String) -> Bool:
   match value:
     case J.Jobj{+members}:
-      match Req.member_lookup(key, members):
-        case None{}: False{}
-        case Some{value}: True{}
+      member_exists(Req.member_lookup(key, members))
     case other: False{}
+
+def member_exists(found: Maybe<&2, J.Json>) -> Bool:
+  match found:
+    case None{}: False{}
+    case Some{value}: True{}
 
 def text_array_tail(+items: J.Json) -> List<String>:
   match items:
