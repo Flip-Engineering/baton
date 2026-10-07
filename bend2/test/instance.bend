@@ -141,6 +141,14 @@ def printed_line(line: Maybe<String>) -> IO(Unit):
     case None{}: IO.print("observed-eof")
     case Some{text}: IO.print(text)
 
+def commit_step(+handle: U32, commit: Bool) -> IO(Unit):
+  match commit:
+    case True{}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.commit(handle)
+      printed : Unit <- operation("commit",result)
+      IO.pure(Unit,Unit{})
+    case False{}: IO.print("commit-skipped")
+
 # The partially observed attempt. With commit=1 the observer records the
 # checkpoint after reading, which stands for the observation owner's own durable
 # store or report commit. With commit=0 it reads without recording, which is the
@@ -159,14 +167,6 @@ def partial_started(start: P.RetainedStart, payload: String, commit: Bool) -> IO
       recorded : Unit <- commit_step(handle,commit)
       gate : String <- IO.try(String,Text.Text.read("-"))
       IO.print("partial-released")
-
-def commit_step(+handle: U32, commit: Bool) -> IO(Unit):
-  match commit:
-    case True{}: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.commit(handle)
-      printed : Unit <- operation("commit",result)
-      IO.pure(Unit,Unit{})
-    case False{}: IO.print("commit-skipped")
 
 # The held attempt: the observer writes the payload and then stops reading, so
 # its owner keeps the native work and the spool. The driver kills this process
