@@ -226,7 +226,7 @@ def read_raw_after(+db: String, +binding: String, result: Result<&1,&1,U32 & Str
 
 def read_file(+db: String, +binding: String, +path: String) -> IO(RequestDecode):
   do IO<RequestDecode>:
-    result : Result<&1,&1,U32 & String,Raw.RawRead> <- Req.read_utf8(path)
+    result : Result<&1,&1,U32 & String,Raw.RawRead> <- Raw.Raw.read_utf8(path)
     read_raw_after(db, binding, result)
 
 def decoded_subject_path(decoded: RequestDecode) -> String:
