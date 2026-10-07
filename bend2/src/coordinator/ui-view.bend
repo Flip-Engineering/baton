@@ -88,7 +88,7 @@ def open_result(db: String, url: String, opened: Result<&1,&1,U32 & String,Strin
     case Done{+text}: IO.pure(Unit,Unit{})
     case Fail{error}: open_fallback(db,url)
 
-def open_browser(db: String, +url: String) -> IO(Unit):
+def open_browser(+db: String, +url: String) -> IO(Unit):
   do IO<Unit>:
     opened : Result<&1,&1,U32 & String,String> <- Host.Control.launch(Tx.enc_argv(["open",url]),db,"view-open")
     open_result(db,url,opened)
