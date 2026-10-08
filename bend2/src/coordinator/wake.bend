@@ -1,5 +1,5 @@
 import Base
-import ../coordinator/commands.bend as C
+import ./commands.bend as C
 import ./store.bend as Store
 import ./receive.bend as Receive
 import ./delivery.bend as Delivery

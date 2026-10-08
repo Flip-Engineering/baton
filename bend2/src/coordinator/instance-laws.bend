@@ -1,5 +1,5 @@
 import Base
-import ../coordinator/commands.bend as C
+import ./commands.bend as C
 import ./instance.bend as Instance
 
 # The serve snapshot replays every session holding actionable pending input:
