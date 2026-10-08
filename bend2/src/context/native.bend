@@ -522,7 +522,7 @@ def boundary_text(+object: J.Json, +key: String) -> String:
 
 def managed_exit_code(+kind: String, parsed: Maybe<&2, U32>) -> ManagedExit:
   match parsed:
-    case Some{code}:
+    case Some{+code}:
       Bool.pick(ManagedExit, String.eq(kind, "exit"),
         ManagedExit{code, U32.is_eq(code, 0)},
         Bool.pick(ManagedExit, String.eq(kind, "signal"),
