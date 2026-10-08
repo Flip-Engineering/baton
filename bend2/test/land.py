@@ -439,8 +439,17 @@ class Land(unittest.TestCase):
         self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w3')
         self.assertEqual(sorted(self.scratch_trees('w4')),
                          sorted(kept + [pathlib.Path(retry['dir']).name]))
+        now = self.scratch_state('w4')
         for name in state['paths']:
-            self.assertIn(name, self.scratch_trees('w4'), 'an earlier pair tree was removed')
+            self.assertIn(name, now['paths'], 'an earlier pair tree was removed')
+            self.assertEqual(now['heads'][name], state['heads'][name],
+                             f'the earlier tree {name} changed its HEAD')
+            self.assertEqual(now['contents'][name], state['contents'][name],
+                             f'the earlier tree {name} changed its contents')
+            self.assertEqual(now['statuses'][name], state['statuses'][name],
+                             f'the earlier tree {name} changed its status')
+            self.assertIn(str(self.repo / '.scratch' / name), now['registered'],
+                          f'the earlier tree {name} lost its registration')
         unmerged = subprocess.run(
             ['git', '-C', retry['dir'], 'diff', '--name-only', '--diff-filter=U'],
             check=True, text=True, capture_output=True,
@@ -481,8 +490,17 @@ class Land(unittest.TestCase):
         self.assertEqual(again['status'], 'landed')
         self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w5 and w6')
         self.assertEqual(sorted(self.scratch_trees('w6')), sorted(kept + [pathlib.Path(retry['dir']).name]))
+        now = self.scratch_state('w6')
         for name in state['paths']:
-            self.assertIn(name, self.scratch_trees('w6'), 'an earlier pair tree was removed')
+            self.assertIn(name, now['paths'], 'an earlier pair tree was removed')
+            self.assertEqual(now['heads'][name], state['heads'][name],
+                             f'the earlier tree {name} changed its HEAD')
+            self.assertEqual(now['contents'][name], state['contents'][name],
+                             f'the earlier tree {name} changed its contents')
+            self.assertEqual(now['statuses'][name], state['statuses'][name],
+                             f'the earlier tree {name} changed its status')
+            self.assertIn(str(self.repo / '.scratch' / name), now['registered'],
+                          f'the earlier tree {name} lost its registration')
 
     def budget_status(self, tree):
         """The exit status of the selected budget check run in TREE."""
@@ -686,6 +704,9 @@ class Land(unittest.TestCase):
         self.assertEqual(len(targets), 1)
         self.assertEqual((candidates[0] / 'left.txt').read_text(), '4\n')
         self.assertEqual((candidates[0] / 'right.txt').read_text(), '6\n')
+        prior_bytes = {tree.name: ((tree / 'left.txt').read_bytes(), (tree / 'right.txt').read_bytes())
+                       for tree in targets}
+        self.assertEqual(len(prior_bytes), 1)
         # The explicit retry prepares the combination on the moved target,
         # checks it, and blocks on a failure the target does not show.
         again = self.call('land-checked', 'wb', self.repo, 'main',
@@ -702,6 +723,11 @@ class Land(unittest.TestCase):
             self.assertTrue(tree.is_dir(), f'the earlier attempt tree {tree} was removed')
         self.assertEqual([(tree / 'left.txt').read_text() for tree in candidates], ['4\n'])
         self.assertEqual([(tree / 'right.txt').read_text() for tree in candidates], ['6\n'])
+        for tree in targets:
+            self.assertEqual(((tree / 'left.txt').read_bytes(), (tree / 'right.txt').read_bytes()),
+                             prior_bytes[tree.name], f'the earlier target tree {tree.name} changed')
+            self.assertIn(str(tree), self.git('worktree', 'list', '--porcelain'),
+                          f'the earlier target tree {tree.name} lost its registration')
         fresh = [tree for tree in retried if tree not in prior]
         self.assertEqual(len(fresh), 2)
         failed = [tree for tree in fresh if self.budget_status(tree)]
