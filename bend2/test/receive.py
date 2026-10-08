@@ -21,6 +21,12 @@ from unittest.mock import patch
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
 
+
+def _session_lock_path(db, session):
+    info = os.stat(db)
+    key = 'owner-%x-%x' % (info.st_dev, info.st_ino)
+    return os.path.join(os.environ['XDG_RUNTIME_DIR'], 'baton2', key + '.lock-' + session.encode().hex())
+
 FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys,time
 home=pathlib.Path(__file__).resolve().parent
 config=json.loads((home/'fixture.json').read_text())
@@ -82,9 +88,13 @@ def reply(value): stream.write((json.dumps(value)+'\n').encode())
 def progress(action):
     print(json.dumps({'type':'fixture_progress','marker':action['progress'],'native_pid':os.getpid()}),flush=True)
     reply({'progress_written':action['progress']})
+def session_lock_path(db,session):
+    info=os.stat(db)
+    key='owner-%x-%x'%(info.st_dev,info.st_ino)
+    return os.environ['XDG_RUNTIME_DIR']+'/baton2/'+key+'.lock-'+session.encode().hex()
 guard_descriptors=None
 if config.get('inspect_session_guard'):
-    guard=pathlib.Path(str(pathlib.Path(config['db']).resolve())+'.lock-'+model.encode().hex()).stat()
+    guard=os.stat(session_lock_path(config['db'],model))
     guard_descriptors=[]
     for descriptor in os.listdir('/dev/fd'):
         try: info=os.fstat(int(descriptor))
@@ -182,6 +192,15 @@ class Receive(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="receive ' paths ", dir=ROOT / '.scratch/bend2')
         self.addCleanup(self.temp.cleanup)
         self.directory = pathlib.Path(self.temp.name)
+        self.ipc = tempfile.TemporaryDirectory(prefix='baton2-receive-ipc-', dir='/tmp')
+        self.addCleanup(self.ipc.cleanup)
+        original_runtime = os.environ.get('XDG_RUNTIME_DIR')
+        if original_runtime is None:
+            self.addCleanup(os.environ.pop, 'XDG_RUNTIME_DIR', None)
+        else:
+            self.addCleanup(os.environ.__setitem__, 'XDG_RUNTIME_DIR', original_runtime)
+        os.environ['XDG_RUNTIME_DIR'] = self.ipc.name
+        (pathlib.Path(self.ipc.name) / 'baton2').mkdir(mode=0o700)
         self.original_path = os.environ.get('PATH')
         if self.original_path is None:
             self.addCleanup(os.environ.pop, 'PATH', None)
@@ -1010,7 +1029,7 @@ class Receive(unittest.TestCase):
         os.kill(selected['pid'], action)
 
     def session_guard_available(self, session):
-        path = pathlib.Path(str(self.db.resolve()) + '.lock-' + session.encode().hex())
+        path = pathlib.Path(_session_lock_path(self.db, session))
         with path.open('r+b') as stream:
             try:
                 fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1684,7 +1703,7 @@ class Receive(unittest.TestCase):
                              (session, state, owner, generation))
 
     def session_lock_path(self, session):
-        return os.path.realpath(str(self.db)) + '.lock-' + session.encode().hex()
+        return _session_lock_path(self.db, session)
 
     def hold_session_lock(self, session):
         held = os.open(self.session_lock_path(session), os.O_CREAT | os.O_RDWR, 0o600)
