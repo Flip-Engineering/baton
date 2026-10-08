@@ -75,7 +75,7 @@ class NativeObservation(RECEIVE.Receive):
 
         turns = self.coord('turns', 'parent')
         self.assertEqual([row['reportBody'] for row in turns], ['Observed completion text.'])
-        log = (self.directory / 'parent.jsonl').read_text()
+        log = self.output_log('parent').read_text()
         self.assertIn('181 items elided for RPC frame', log)
         self.assertIn('plain string content block', log)
         self.assertIn('not-json', log)
@@ -122,6 +122,7 @@ class NativeObservation(RECEIVE.Receive):
                                  str(self.checkouts / 'parent'), str(task), str(log), ''],
                                 text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
+        log = self.output_log('parent')
 
         turns = self.coord('turns', 'parent')
         self.assertEqual([row['reportBody'] for row in turns], ['Primary completion.'])
@@ -155,14 +156,14 @@ class NativeObservation(RECEIVE.Receive):
             'content': [{'type': 'text', 'text': 'Recovered from the saved assistant message.'}]}}
         self.action(stream, native_frame=assistant)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
-        self.eventually(lambda: (self.directory / 'parent.jsonl').exists() and
-                        'checkpoint-assistant' in (self.directory / 'parent.jsonl').read_text(),
+        self.eventually(lambda: self.output_log('parent').exists() and
+                        'checkpoint-assistant' in self.output_log('parent').read_text(),
                         'the assistant frame was not durably observed')
         barrier = {'type': 'checkpoint-barrier'}
         self.action(stream, native_frame=barrier)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
         self.eventually(lambda: 'checkpoint-barrier' in
-                        (self.directory / 'parent.jsonl').read_text(),
+                        self.output_log('parent').read_text(),
                         'the observer did not finish the assistant checkpoint before the barrier')
 
         observer.kill()
@@ -178,7 +179,7 @@ class NativeObservation(RECEIVE.Receive):
                                 'reattached observer did not store its terminal report')
         self.assertEqual([row['reportBody'] for row in turns],
                          ['Recovered from the saved assistant message.'])
-        log = (self.directory / 'parent.jsonl').read_text()
+        log = self.output_log('parent').read_text()
         self.assertEqual(log.count('checkpoint-assistant'), 1)
         self.assertIn('agent_end', log)
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
@@ -205,12 +206,12 @@ class NativeObservation(RECEIVE.Receive):
             'content': [{'type': 'text', 'text': text}]}}
         self.action(stream, native_frame=assistant)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
-        self.eventually(lambda: (self.directory / 'parent.jsonl').exists() and
-                        'reattach-checkpoint-assistant' in (self.directory / 'parent.jsonl').read_text(),
+        self.eventually(lambda: self.output_log('parent').exists() and
+                        'reattach-checkpoint-assistant' in self.output_log('parent').read_text(),
                         'the complete assistant frame was not logged')
         self.action(stream, native_frame={'type': 'checkpoint-barrier'})
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
-        self.eventually(lambda: 'checkpoint-barrier' in (self.directory / 'parent.jsonl').read_text(),
+        self.eventually(lambda: 'checkpoint-barrier' in self.output_log('parent').read_text(),
                         'observer did not consume the checkpoint barrier')
 
         observer.kill()
@@ -232,7 +233,7 @@ class NativeObservation(RECEIVE.Receive):
                          hashlib.sha256(text.encode()).hexdigest())
         reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
         self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
-        log = (self.directory / 'parent.jsonl').read_text()
+        log = self.output_log('parent').read_text()
         spool = (pathlib.Path(attempt) / 'stdout').read_text()
         self.assertEqual(spool.count('reattach-checkpoint-assistant'), 1)
         self.assertEqual(spool.count('checkpoint-barrier'), 1)

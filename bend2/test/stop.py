@@ -133,11 +133,7 @@ class Stop(unittest.TestCase):
         return self.eventually(answer, 'stopped native process was not reaped')
 
     def output_log(self):
-        with sqlite3.connect(self.db) as database:
-            path, = database.execute(
-                "SELECT log FROM log_generations WHERE session='parent' ORDER BY rowid DESC LIMIT 1"
-            ).fetchone()
-        return pathlib.Path(path)
+        return receive.Receive.output_log(self, 'parent')
 
     def test_idle_stop_preserves_input_refuses_new_execution_and_retries(self):
         self.configure()

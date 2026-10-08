@@ -102,7 +102,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.finish(observer)
         self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
                          ['Report before plain native output.'])
-        log = (self.directory / 'parent.jsonl').read_text()
+        log = self.output_log('parent').read_text()
         self.assertIn(line, log)
         notes = [report for report in self.coord('inbox', 'root')
                  if report['id'] == sealed + ':deferred']

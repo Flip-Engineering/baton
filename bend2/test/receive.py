@@ -298,6 +298,17 @@ class Receive(unittest.TestCase):
         return ['receive', session, str(executable or self.fixture), session, 'low',
                 str(self.directory), str(self.directory / (session + '.jsonl')), '']
 
+    def output_log(self, session):
+        """Return the path registered for the session's current receive attempt."""
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            row = database.execute(
+                "SELECT g.log FROM log_generations g WHERE g.session=? "
+                "ORDER BY CASE WHEN g.attempt=(SELECT id FROM executions WHERE session=g.session) "
+                "THEN 0 ELSE 1 END, g.rowid DESC LIMIT 1", (session,)).fetchone()
+        if row is None:
+            self.fail(f'{session} has no registered output log generation')
+        return pathlib.Path(row[0])
+
     def endpoint(self, session):
         return json.dumps([str(EXE), str(self.db), *self.receive_args(session)[:-1]])
 
@@ -509,7 +520,7 @@ class Receive(unittest.TestCase):
         marker = 'original native waiting for its answer after observer loss'
         self.action(stream, progress=marker)
         self.assertEqual(json.loads(stream.readline()), {'progress_written': marker})
-        log = self.directory / 'parent.jsonl'
+        log = self.output_log('parent')
         self.eventually(lambda: marker in log.read_text(), 'recovered observer did not consume surviving output')
         self.assertEqual([row['id'] for row in self.native_requests()], [request['id']])
         self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
@@ -678,7 +689,7 @@ class Receive(unittest.TestCase):
 
         diagnostic = self.eventually(recovery_reports, 'missing conversation produced no recovery report')[0]
         self.assertIn('conversation', diagnostic['body'])
-        log = self.directory / 'parent.jsonl'
+        log = self.output_log('parent')
         for loss in range(observer_losses):
             if loss == 0:
                 observer.kill()
@@ -841,7 +852,7 @@ class Receive(unittest.TestCase):
         # Reports remain queued while OMP is active; guidance may be steered live.
         self.coord('message', 'second', 'root', 'parent', 'report', 'Queued before observer loss.')
         original_body = 'Original completion retained through observer loss: ' + harness
-        log = self.directory / 'parent.jsonl'
+        log = self.output_log('parent')
         if terminal_before_loss:
             self.action(original, body=original_body, hold_exit=True, report_input=True)
             self.assertEqual(json.loads(original.readline()),
@@ -1053,7 +1064,7 @@ class Receive(unittest.TestCase):
         marker = 'Surviving original stdout after keeper loss.'
         self.action(original, progress=marker)
         self.assertEqual(json.loads(original.readline()), {'progress_written': marker})
-        log = self.directory / 'parent.jsonl'
+        log = self.output_log('parent')
         self.eventually(lambda: log.exists() and marker in log.read_text(),
                         'The observer did not retain surviving native stdout.')
         self.assertFalse(self.session_guard_available('parent'))
@@ -1160,7 +1171,7 @@ class Receive(unittest.TestCase):
         marker = 'current native state observed before observer loss'
         self.action(current, progress=marker)
         self.assertEqual(json.loads(current.readline()), {'progress_written': marker})
-        log = self.directory / 'parent.jsonl'
+        log = self.output_log('parent')
         self.eventually(lambda: marker in log.read_text(), 'current native state was not observed')
         original_report = self.coord('turns', 'parent')[0]
         self.coord('message', 'later-guidance', 'root', 'parent', 'guidance',
@@ -1219,7 +1230,7 @@ class Receive(unittest.TestCase):
         marker = 'original native output after observer loss with stdin already closed'
         self.action(original, progress=marker)
         self.assertEqual(json.loads(original.readline()), {'progress_written': marker})
-        log = self.directory / 'parent.jsonl'
+        log = self.output_log('parent')
         self.eventually(lambda: marker in log.read_text(),
                         'recovery could not read post-loss output while native stdin was closed')
         self.assertTrue(any(p['pid'] == started['pid'] for p in self.owned_processes()))
@@ -1445,7 +1456,7 @@ class Receive(unittest.TestCase):
         self.assertNotEqual(missing.returncode, 0)
         self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['input'])
         startup_report = next(m for m in self.coord('inbox', 'root') if 'without a native result (exit 127)' in m['body'])
-        self.assertIn('Output: '+str(self.directory / 'parent.jsonl'), startup_report['body'])
+        self.assertIn('Output: '+str(self.output_log('parent')), startup_report['body'])
         startup_stderr = pathlib.Path(startup_report['body'].split(' Stderr: ', 1)[1]).read_text()
         self.assertIn(str(self.directory / 'missing executable'), startup_stderr)
         self.assertIn('No such file or directory', startup_stderr)
@@ -1474,7 +1485,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(notified['session'], 'root')
         startup_report = next(m for m in self.coord('inbox', 'root') if 'without a native result (exit 127)' in m['body'])
         self.assertIn(startup_report['body'], notified['prompt'])
-        self.assertIn('Output: '+str(self.directory / 'parent.jsonl'), startup_report['body'])
+        self.assertIn('Output: '+str(self.output_log('parent')), startup_report['body'])
         startup_stderr = pathlib.Path(startup_report['body'].split(' Stderr: ', 1)[1]).read_text()
         self.assertIn(str(self.directory / 'missing executable'), startup_stderr)
         self.assertIn('No such file or directory', startup_stderr)
@@ -2039,7 +2050,7 @@ class Receive(unittest.TestCase):
         marker = 'original native observed by the adopted direct receiver'
         self.action(control, progress=marker)
         self.assertEqual(json.loads(control.readline()), {'progress_written': marker})
-        log = self.directory / 'parent.jsonl'
+        log = self.output_log('parent')
 
         def adopted_output():
             if second.poll() is not None:
