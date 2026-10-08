@@ -1310,19 +1310,32 @@ static int br_ipc_prepare(const char *path) {
   free(copy);
   return error;
 }
-static int br_ipc_directory(char *buffer,size_t size) {
+static int br_ipc_directory(char **directory_out) {
   const char *runtime=getenv("XDG_RUNTIME_DIR"),*home=getenv("HOME");
+  *directory_out=NULL;
   if(runtime && runtime[0]) {
-    int written=snprintf(buffer,size,"%s/baton2",runtime);
-    if(written>0 && (size_t)written<size && !br_ipc_prepare(buffer))return 0;
+    char *directory=br_path(runtime,"baton2");
+    if(!directory)return ENOMEM;
+    int error=br_ipc_prepare(directory);
+    if(!error){*directory_out=directory;return 0;}
+    free(directory);
   }
-  int written=snprintf(buffer,size,"/tmp/baton2-%u",(unsigned)geteuid());
-  if(written>0 && (size_t)written<size && !br_ipc_prepare(buffer))return 0;
+  int fallback_length=snprintf(NULL,0,"/tmp/baton2-%u",(unsigned)geteuid());
+  if(fallback_length<0)return EOVERFLOW;
+  char *fallback=malloc((size_t)fallback_length+1);
+  if(!fallback)return ENOMEM;
+  snprintf(fallback,(size_t)fallback_length+1,"/tmp/baton2-%u",(unsigned)geteuid());
+  int fallback_error=br_ipc_prepare(fallback);
+  if(!fallback_error){*directory_out=fallback;return 0;}
+  free(fallback);
   if(home && home[0]) {
-    written=snprintf(buffer,size,"%s/.local/state/baton2",home);
-    if(written>0 && (size_t)written<size && !br_ipc_prepare(buffer))return 0;
+    char *state=br_path(home,".local/state/baton2");
+    if(!state)return ENOMEM;
+    int error=br_ipc_prepare(state);
+    if(!error){*directory_out=state;return 0;}
+    free(state);
   }
-  return EACCES;
+  return fallback_error?fallback_error:EACCES;
 }
 /* The election key is the physical database identity, so a hard link or a
    symlink alias elects the same owner. */
@@ -1336,6 +1349,12 @@ static char *br_ipc_path(const char *directory,const char *key,const char *suffi
   char *path=malloc(a+b+c+3);
   if(path)snprintf(path,a+b+c+3,"%s/%s%s",directory,key,suffix);
   return path;
+}
+static int br_owner_socket_copy(char *destination,size_t capacity,const char *path) {
+  size_t length=strlen(path);
+  if(length>=capacity)return ENAMETOOLONG;
+  memcpy(destination,path,length+1);
+  return 0;
 }
 /* Replacing a record or the epoch writes a temporary file, syncs it, renames it
    over the target and syncs the directory, so a reader never sees a torn
@@ -1389,7 +1408,8 @@ static int br_epoch_next(const char *directory,const char *path,uint64_t *epoch)
 static int br_owner_record_write(BrOwner *owner) {
   BrOwnerRecord record={.token=owner->token,.epoch=owner->epoch,.device=owner->device,
     .inode=owner->inode,.pid=(int32_t)getpid()};
-  snprintf(record.socket,sizeof(record.socket),"%s",owner->socket_path);
+  int error=br_owner_socket_copy(record.socket,sizeof(record.socket),owner->socket_path);
+  if(error)return error;
   return br_replace(owner->ipc,owner->record_path,&record,sizeof(record),1);
 }
 static int br_owner_record_read(const char *ipc,const char *record_path,BrOwnerRecord *record) {
@@ -2011,7 +2031,6 @@ polled:
    is refused. */
 static int br_owner_bind(BrOwner *owner,const char *database) {
   struct stat info;
-  char ipc[512];
   int error=0;
   owner->database=realpath(database,NULL);
   if(!owner->database)return errno;
@@ -2031,9 +2050,8 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
   if(!error){owner->parent_device=(uint64_t)info.st_dev;owner->parent_inode=(uint64_t)info.st_ino;}
   free(parent);
   if(error)return error;
-  error=br_ipc_directory(ipc,sizeof(ipc));
+  error=br_ipc_directory(&owner->ipc);
   if(error)return error;
-  owner->ipc=strdup(ipc);
   owner->key=br_owner_key(owner->device,owner->inode);
   if(!owner->ipc || !owner->key)return ENOMEM;
   char *lock_path=br_ipc_path(owner->ipc,owner->key,".lock");
@@ -2431,18 +2449,17 @@ static int br_retain(BatonProcessCall *call) {
 static int br_instance_record(const char *canonical,char **ipc_out,char **key_out,char **record_path_out,BrOwnerRecord *record) {
   struct stat info;
   if(stat(canonical,&info))return errno;
-  char ipc[512];
-  int error=br_ipc_directory(ipc,sizeof(ipc));
+  char *ipc=NULL;
+  int error=br_ipc_directory(&ipc);
   if(error)return error;
   char *key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
-  if(!key)return ENOMEM;
+  if(!key){free(ipc);return ENOMEM;}
   char *record_path=br_ipc_path(ipc,key,".record");
-  if(!record_path){free(key);return ENOMEM;}
+  if(!record_path){free(ipc);free(key);return ENOMEM;}
   error=br_owner_record_read(ipc,record_path,record);
-  if(error)free(record_path);
+  if(error) {free(ipc);free(key);free(record_path);}
   else {
-    *ipc_out=strdup(ipc);*key_out=key;*record_path_out=record_path;
-    if(!*ipc_out){free(key);free(record_path);return ENOMEM;}
+    *ipc_out=ipc;*key_out=key;*record_path_out=record_path;
   }
   return error;
 }
@@ -2464,15 +2481,16 @@ static int br_instance_spawn(const char *canonical,pid_t *pid,const char *log_pa
 }
 /* The socket pathname a client would use for this database. A failure detail
    carries it so a caller can tell a missing owner from an unreachable one. */
-static int br_instance_socket_for(const char *database,char *buffer,size_t size) {
+static int br_instance_socket_for(const char *database,char **socket_out) {
+  *socket_out=NULL;
   char *canonical=realpath(database,NULL);
   if(!canonical)return errno;
   struct stat info;
   int error=stat(canonical,&info)?errno:0;
-  char ipc[512];
+  char *ipc=NULL;
   char *key=NULL,*record_path=NULL;
   BrOwnerRecord record={0};
-  if(!error)error=br_ipc_directory(ipc,sizeof(ipc));
+  if(!error)error=br_ipc_directory(&ipc);
   if(!error) {
     key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
     if(!key)error=ENOMEM;
@@ -2483,12 +2501,12 @@ static int br_instance_socket_for(const char *database,char *buffer,size_t size)
   }
   if(!error) {
     if(br_owner_record_read(ipc,record_path,&record)) {
-      char *socket_path=br_ipc_path(ipc,key,".sock");
-      if(socket_path){snprintf(buffer,size,"%s",socket_path);free(socket_path);}
-      else snprintf(buffer,size,"%s",record_path);
-    } else snprintf(buffer,size,"%s",record.socket);
+      *socket_out=br_ipc_path(ipc,key,".sock");
+      if(!*socket_out)*socket_out=strdup(record_path);
+    } else *socket_out=strdup(record.socket);
+    if(!*socket_out)error=ENOMEM;
   }
-  free(key);free(record_path);free(canonical);
+  free(ipc);free(key);free(record_path);free(canonical);
   return error;
 }
 /* Connects to the database owner. The socket pathname comes from the published
@@ -2508,14 +2526,17 @@ static int br_instance_connect(const char *database,int spawn,BrOwnerRecord *rec
       /* The record is only needed to propose a pathname; a first owner writes it. */
       struct stat info;
       if(stat(canonical,&info)) {error=errno;break;}
-      char directory[512];
-      if((error=br_ipc_directory(directory,sizeof(directory))))break;
+      char *directory=NULL;
+      if((error=br_ipc_directory(&directory)))break;
       key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
       record_path=br_ipc_path(directory,key,".sock");
-      if(!key || !record_path){error=ENOMEM;free(key);free(record_path);break;}
-      snprintf(record->socket,sizeof(record->socket),"%s",record_path);
+      if(!key || !record_path){error=ENOMEM;free(directory);free(key);free(record_path);break;}
+      if((error=br_owner_socket_copy(record->socket,sizeof(record->socket),record_path))) {
+        free(directory);free(key);free(record_path);break;
+      }
       char *log_path=br_ipc_path(directory,key,".log");
       if(log_path){if(!owner_log)owner_log=log_path;else free(log_path);}
+      free(directory);
     }
     struct sockaddr_un address;
     int address_error=br_socket_address(&address,record->socket);
@@ -3001,18 +3022,26 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
       call->kind==BP_INSTANCE_OWNER?"owner":call->kind==BP_INSTANCE_ADMIT?"admit":
       call->kind==BP_INSTANCE_ATTACH?"instance_attach":call->kind==BP_INSTANCE_ATTACH_OWNED?"instance_attach_owned":
       call->kind==BP_INSTANCE_SHUTDOWN?"shutdown":call->kind==BP_INSTANCE_RETIRE?"retire":"keeper";
-    size_t n=(call->directory?strlen(call->directory):0)+(call->database?strlen(call->database):0)+640;
-    call->detail=malloc(n);
-    if(call->detail) {
-      char socket[512]="";
-      if(call->database && !br_instance_socket_for(call->database,socket,sizeof(socket)))
-        snprintf(call->detail,n,"%s %s%s%s at %s: %s; inspect manifest, keeper-error and observer.log",
-          operation,call->database,call->database?" ":"",
-          call->directory?call->directory:"",socket,strerror(call->error));
-      else snprintf(call->detail,n,"%s %s%s%s: %s; inspect manifest, keeper-error and observer.log",
-        operation,call->database?call->database:"",call->database?" ":"",
+    char *socket=NULL;
+    int have_socket=call->database && !br_instance_socket_for(call->database,&socket);
+    const char *format=have_socket?
+      "%s %s%s%s at %s: %s; inspect manifest, keeper-error and observer.log":
+      "%s %s%s%s: %s; inspect manifest, keeper-error and observer.log";
+    int needed=have_socket?
+      snprintf(NULL,0,format,operation,call->database,call->database?" ":"",
+        call->directory?call->directory:"",socket,strerror(call->error)):
+      snprintf(NULL,0,format,operation,call->database?call->database:"",call->database?" ":"",
         call->directory?call->directory:"",strerror(call->error));
+    if(needed>=0)call->detail=malloc((size_t)needed+1);
+    if(call->detail) {
+      int written=have_socket?
+        snprintf(call->detail,(size_t)needed+1,format,operation,call->database,call->database?" ":"",
+          call->directory?call->directory:"",socket,strerror(call->error)):
+        snprintf(call->detail,(size_t)needed+1,format,operation,call->database?call->database:"",call->database?" ":"",
+          call->directory?call->directory:"",strerror(call->error));
+      if(written!=needed){free(call->detail);call->detail=NULL;}
     }
+    free(socket);
   }
 }
 
