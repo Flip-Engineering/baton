@@ -15,6 +15,14 @@ type RetainedStart is Data:
   Unstarted{error: String}
 
 
+# The prepared file input variant. The host creates the attempt directory, writes
+# and flushes one private artifact of exactly these bytes inside it before any
+# child is spawned, binds the artifact's name and the digest of its bytes into
+# the admission identity, and leaves the caller's argv to name
+# directory ++ "/" ++ artifact_name. `initial_stdin` is the only initial input.
+def ProcessChild.retain_with_file(directory: String, argv: String, cwd: String, stderr: String, artifact_name: String, artifact_bytes: String, initial_stdin: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,RetainedStart>):
+  import "./process-spawn.c"
+
 def ProcessChild.retain_start(directory: String, argv: String, cwd: String, stderr: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32> & String>):
   import "./process-spawn.c"
 

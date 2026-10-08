@@ -42,6 +42,15 @@ class NativeObservation(RECEIVE.Receive):
             self.assertLess(time.monotonic(), deadline, description)
             time.sleep(.01)
 
+    def shutdown_idle_database_owner(self, description):
+        processes = self.owned_processes()
+        expected = f'{RECEIVE.EXE} --instance-owner {self.db}'
+        self.assertEqual([process['command'] for process in processes], [expected])
+        stopped = subprocess.run([str(RECEIVE.EXE), '--instance-shutdown', str(self.db)],
+                                 capture_output=True, text=True)
+        self.assertEqual(stopped.returncode, 0, stopped.stderr)
+        self.eventually(lambda: not self.owned_processes(), description)
+
     def test_mixed_agent_end_members_preserve_completion_and_raw_frame(self):
         self.player(harness='omp')
         self.coord('message', 'mixed-task', 'root', 'parent', 'task', 'Read this task.')
@@ -83,7 +92,7 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual(self.coord('player', 'parent')['native'], 'omp-native')
         self.assertFalse(any('Native output observation failed' in row['body']
                              for row in self.coord('inbox', 'root')))
-        self.eventually(lambda: not self.owned_processes(), 'native observer processes did not exit')
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
 
     def test_muse_uses_admitted_turn_terminal_and_keeps_later_lifecycle_separate(self):
         self.player(harness='muse')
@@ -186,7 +195,7 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
         self.assertFalse(any('Native output observation failed' in row['body']
                              for row in self.coord('inbox', 'root')))
-        self.eventually(lambda: not self.owned_processes(), 'reattached OMP fixture did not exit')
+        self.shutdown_idle_database_owner('fixture database owner did not exit after OMP completion')
 
     def test_oversized_omp_checkpoint_failure_replays_without_losing_completion(self):
         self.player(harness='omp')
@@ -266,7 +275,7 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual(barrier_frames[0], barrier_frames[1])
         launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
-        self.eventually(lambda: not self.owned_processes(), 'oversized OMP fixture did not exit')
+        self.shutdown_idle_database_owner('fixture database owner did not exit after oversized OMP completion')
 
     def _retained_attempt(self):
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:

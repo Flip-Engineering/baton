@@ -11,6 +11,8 @@ import ./native-requests.bend as NativeRequests
 import ./recruit.bend as Recruit
 import ./land.bend as Land
 import ./knowledge.bend as Knowledge
+import ./ui-subscription.bend as UISubscription
+import ./instance.bend as Instance
 import ./usage.bend as Usage
 import ./logs.bend as Logs
 import ./ui-view.bend as UiView
@@ -20,6 +22,7 @@ import ./wake.bend as Wake
 import ./control-laws.bend as ControlLaws
 import ../host/text.bend as T
 import ../host/process.bend as P
+import ../host/instance.bend as Custody
 
 def output(value: String, empty: Bool) -> IO(Unit):
   match empty:
@@ -84,7 +87,7 @@ def stored_command_entry_uses_the_actual_store(db,command):
   {==}
 
 def usage() -> String:
-  "usage: baton2 DATABASE COMMAND ARGS\nstart SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE\nreceiver SESSION HARNESS_CMD OUTPUT_LOG\ndispatch-file ID SENDER RECIPIENT KIND PATH\ndispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\nstatus --pretty\nplayers --pretty\norchestra --pretty\npending --pretty\nplayer ID --pretty\nsession ID --pretty\ninbox ID --pretty\ndelivery ID --pretty\nturns PLAYER_ID --pretty\nknowledge READER --pretty\nworktree ID --pretty\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nconfigure ID HARNESS MODEL EFFORT HARNESS_CMD OUTPUT_LOG EXPECTED_HARNESS EXPECTED_MODEL EXPECTED_EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nland PLAYER_ID REPO TARGET_BRANCH\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nremote-tip REPO BRANCH REMOTE\nobserved-usage SESSION\nlogs SESSION [LEVEL [BUDGET_BYTES [KEEP_SEGMENTS]]]\nlogs-storage\nlogs-clean SESSION\nview SUBJECT [READER [PORT]]\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nview starts the read-only Orchestra live view for the subject's recorded state under the reader's admitted scope (default: the subject). The loopback server runs until the command exits.\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session\nconfigure updates a registered Player route for its next admitted turn and fences delayed continuations against the expected route.\nComplete stored input remains readable by ID after acknowledgement."
+  "usage: baton2 DATABASE COMMAND ARGS\nstart SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE\nreceiver SESSION HARNESS_CMD OUTPUT_LOG\ndispatch-file ID SENDER RECIPIENT KIND PATH\ndispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\nui-subscribe AFTER GENERATION\nserve\nowner-status\nstatus --pretty\nplayers --pretty\norchestra --pretty\npending --pretty\nplayer ID --pretty\nsession ID --pretty\ninbox ID --pretty\ndelivery ID --pretty\nturns PLAYER_ID --pretty\nknowledge READER --pretty\nworktree ID --pretty\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nconfigure ID HARNESS MODEL EFFORT HARNESS_CMD OUTPUT_LOG EXPECTED_HARNESS EXPECTED_MODEL EXPECTED_EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nland PLAYER_ID REPO TARGET_BRANCH\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nremote-tip REPO BRANCH REMOTE\nobserved-usage SESSION\nlogs SESSION [LEVEL [BUDGET_BYTES [KEEP_SEGMENTS]]]\nlogs-storage\nlogs-clean SESSION\nview SUBJECT [READER [PORT]]\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nview starts the read-only Orchestra live view for the subject's recorded state under the reader's admitted scope. The loopback server runs until the command exits.\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session\nconfigure updates a registered Player route for its next admitted turn and fences delayed continuations against the expected route.\nComplete stored input remains readable by ID after acknowledgement."
 
 # A refused log command names its rule on stderr with status 2, as the stored
 # commands do.
@@ -158,6 +161,12 @@ def execute(db: String, command: C.Command) -> IO(Unit):
       Knowledge.read(db,reader)
     case C.KnowledgePromote{id,promoter,source,destination,finding}:
       Knowledge.promote(db,id,promoter,source,destination,finding)
+    case C.UiSubscribe{after_cursor,generation}:
+      UISubscription.run(db,after_cursor,generation)
+    case C.Serve{}:
+      IO.try(Unit,Instance.serve(db))
+    case C.OwnerStatus{}:
+      IO.try(Unit,Instance.owner_status(db))
     case C.Receive{session,cmd,model,effort,cwd,log,message}:
       IO.try(Unit,Receive.run(db,session,cmd,model,effort,cwd,log,message))
     case C.RunTurn{player,id,cmd,model,effort,cwd,task,log,session}:
@@ -229,6 +238,15 @@ law orchestra_answer_combines_the_role_surfaces:
 def orchestra_answer_combines_the_role_surfaces():
   {==}
 
+law ui_subscription_command_runs_the_native_subscription:
+  for db: String
+  for after_cursor: String
+  for generation: String
+  {execute(db,C.UiSubscribe{after_cursor,generation}) == UISubscription.run(db,after_cursor,generation) : IO(Unit)}
+
+def ui_subscription_command_runs_the_native_subscription(db,after_cursor,generation):
+  {==}
+
 law section_executes_the_stored_command:
   for db: String
   for ensemble: String
@@ -296,6 +314,29 @@ def normal_cli(args: List<String>) -> IO(Unit):
     case db <> rest: execute(db,C.parse(rest))
     case Nil{}: execute("",C.Invalid{})
 
+law ui_subscription_cli_dispatches_after_generation:
+  for db: String
+  for after_cursor: String
+  for generation: String
+  {normal_cli([db,"ui-subscribe",after_cursor,generation]) == UISubscription.run(db,after_cursor,generation) : IO(Unit)}
+
+def ui_subscription_cli_dispatches_after_generation(db,after_cursor,generation):
+  {==}
+
+law serve_cli_drives_the_fixed_coordinator:
+  for db: String
+  {normal_cli([db,"serve"]) == IO.try(Unit,Instance.serve(db)) : IO(Unit)}
+
+def serve_cli_drives_the_fixed_coordinator(db):
+  {==}
+
+law owner_status_cli_reads_the_owner_readiness:
+  for db: String
+  {normal_cli([db,"owner-status"]) == IO.try(Unit,Instance.owner_status(db)) : IO(Unit)}
+
+def owner_status_cli_reads_the_owner_readiness(db):
+  {==}
+
 def keeper_cli(directory: String, lock: String, args: List<String>, internal: Bool) -> IO(Unit):
   match internal:
     case True{}: keeper(directory,U32.read(lock))
@@ -311,8 +352,17 @@ def recover_cli(db: String, session: String, id: String, cursor: String, cmd: St
     case True{}: IO.try(Unit,Receive.recover(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native))
     case False{}: execute("",C.Invalid{})
 
+def instance_shutdown_cli(+database: String, +flag: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(flag,"--instance-shutdown"),
+    IO.try(Unit,Custody.Instance.shutdown(database)),normal_cli([flag,database]))
+
+def instance_owner_cli(+database: String, +flag: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(flag,"--instance-owner"),
+    IO.try(Unit,Custody.Instance.owner(database)),instance_shutdown_cli(database,flag))
+
 def cli(args: List<String>) -> IO(Unit):
   match args:
+    case flag <> database <> Nil{}: instance_owner_cli(database,flag)
     case +flag <> +directory <> +lock <> Nil{}:
       dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
     case flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
@@ -470,4 +520,18 @@ law native_main_passes_the_complete_runtime_arguments:
     cli(args)) : IO(Unit)}
 
 def native_main_passes_the_complete_runtime_arguments():
+  {==}
+
+law internal_instance_owner_entry_runs_native_custody:
+  for database: String
+  {cli(["--instance-owner",database]) == IO.try(Unit,Custody.Instance.owner(database)) : IO(Unit)}
+
+def internal_instance_owner_entry_runs_native_custody(database):
+  {==}
+
+law internal_instance_shutdown_requests_graceful_owner_exit:
+  for database: String
+  {cli(["--instance-shutdown",database]) == IO.try(Unit,Custody.Instance.shutdown(database)) : IO(Unit)}
+
+def internal_instance_shutdown_requests_graceful_owner_exit(database):
   {==}

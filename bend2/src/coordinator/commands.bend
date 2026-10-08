@@ -59,6 +59,9 @@ type Command is Data:
   KnowledgeRead{reader: String}
   KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
   View{subject: String, reader: String, port: String}
+  UiSubscribe{after_cursor: String, generation: String}
+  Serve{}
+  OwnerStatus{}
   Help{}
   Invalid{}
 
@@ -450,6 +453,9 @@ def sql(command: Command) -> String:
     case KnowledgeRead{reader}: ""
     case KnowledgePromote{id,promoter,source,destination,finding}: ""
     case View{subject,reader,port}: ""
+    case UiSubscribe{after_cursor,generation}: ""
+    case Serve{}: ""
+    case OwnerStatus{}: ""
     case Help{}: ""
     case Invalid{}: ""
 
@@ -465,7 +471,9 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"workers"),LegacySubordinates{},
       Bool.pick(Command, String.eq(verb,"players"),Players{},
       Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},
-      Bool.pick(Command, String.eq(verb,"pending"),Pending{},Invalid{})))))))
+      Bool.pick(Command, String.eq(verb,"pending"),Pending{},
+      Bool.pick(Command, String.eq(verb,"serve"),Serve{},
+      Bool.pick(Command, String.eq(verb,"owner-status"),OwnerStatus{},Invalid{})))))))))
     case +verb <> +id <> Nil{}:
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,"","",""},
       Bool.pick(Command,String.eq(verb,"logs-clean"),LogsClean{id},
@@ -476,8 +484,8 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"turns"),Turns{id},
       Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Bool.pick(Command, String.eq(verb,"observed-usage"),ObservedUsage{id},Bool.pick(Command, String.eq(verb,"view"),View{id,id,"7682"},Invalid{})))))))))))))))
     case +verb <> +session <> +id <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"logs"),Logs{session,id,"",""},
-      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"player"),Bool.or(String.eq(verb,"session"),Bool.or(String.eq(verb,"inbox"),Bool.or(String.eq(verb,"delivery"),Bool.or(String.eq(verb,"turns"),Bool.or(String.eq(verb,"knowledge"),String.eq(verb,"worktree"))))))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"player"),PlayerRead{session},Bool.pick(Command,String.eq(verb,"session"),Session{session},Bool.pick(Command,String.eq(verb,"inbox"),Inbox{session},Bool.pick(Command,String.eq(verb,"delivery"),Delivery{session},Bool.pick(Command,String.eq(verb,"turns"),Turns{session},Bool.pick(Command,String.eq(verb,"knowledge"),KnowledgeRead{session},Worktree{session}))))))},Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Bool.pick(Command,String.eq(verb,"view"),View{session,id,"7682"},Invalid{})))))))
+      Bool.pick(Command,String.eq(verb,"ui-subscribe"),UiSubscribe{session,id},Bool.pick(Command,String.eq(verb,"logs"),Logs{session,id,"",""},
+      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"player"),Bool.or(String.eq(verb,"session"),Bool.or(String.eq(verb,"inbox"),Bool.or(String.eq(verb,"delivery"),Bool.or(String.eq(verb,"turns"),Bool.or(String.eq(verb,"knowledge"),String.eq(verb,"worktree"))))))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"player"),PlayerRead{session},Bool.pick(Command,String.eq(verb,"session"),Session{session},Bool.pick(Command,String.eq(verb,"inbox"),Inbox{session},Bool.pick(Command,String.eq(verb,"delivery"),Delivery{session},Bool.pick(Command,String.eq(verb,"turns"),Turns{session},Bool.pick(Command,String.eq(verb,"knowledge"),KnowledgeRead{session},Worktree{session}))))))},Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Bool.pick(Command,String.eq(verb,"view"),View{session,id,"7682"},Invalid{}))))))))
     case +verb <> +id <> +one <> +two <> Nil{}:
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,one,two,""},
       Bool.pick(Command,String.eq(verb,"receiver"),Receiver{id,one,two},Bool.pick(Command, String.eq(verb,"ensemble"),Ensemble{id,one,two},Bool.pick(Command, String.eq(verb,"native-reply"),NativeReply{id,one,two},
@@ -561,8 +569,7 @@ law remote_tip_parser_keeps_the_declared_names:
 def remote_tip_parser_keeps_the_declared_names(repo,branch,remote):
   {==}
 
-# The view command parses its subject, an optional declared reader, and an optional
-# port; the reader defaults to the subject and the port to 7682.
+# The view command parses its subject, optional reader and optional port. The reader defaults to the subject and the port to 7682.
 law view_parser_defaults_reader_and_port:
   for subject: String
   {parse(["view",subject]) == View{subject,subject,"7682"} : Command}
@@ -585,4 +592,54 @@ law view_parser_keeps_the_declared_port:
   {parse(["view",subject,reader,port]) == View{subject,reader,port} : Command}
 
 def view_parser_keeps_the_declared_port(subject,reader,port):
+  {==}
+
+law ui_subscription_parser_keeps_the_cursor_and_generation:
+  for +after_cursor: String
+  for +generation: String
+  {parse(["ui-subscribe",after_cursor,generation]) == UiSubscribe{after_cursor,generation} : Command}
+
+def ui_subscription_parser_keeps_the_cursor_and_generation(after_cursor,generation):
+  {==}
+
+law ui_subscription_parser_rejects_missing_generation:
+  for +after_cursor: String
+  {parse(["ui-subscribe",after_cursor]) == Invalid{} : Command}
+
+def ui_subscription_parser_rejects_missing_generation(after_cursor):
+  {==}
+
+law ui_subscription_parser_rejects_extra_arguments:
+  for +after_cursor: String
+  for +generation: String
+  for +extra: String
+  {parse(["ui-subscribe",after_cursor,generation,extra]) == Invalid{} : Command}
+
+def ui_subscription_parser_rejects_extra_arguments(after_cursor,generation,extra):
+  {==}
+
+law serve_parser_selects_the_fixed_coordinator:
+  {parse(["serve"]) == Serve{} : Command}
+
+def serve_parser_selects_the_fixed_coordinator():
+  {==}
+
+law serve_parser_rejects_extra_arguments:
+  for +extra: String
+  {parse(["serve",extra]) == Invalid{} : Command}
+
+def serve_parser_rejects_extra_arguments(extra):
+  {==}
+
+law owner_status_parser_selects_the_readiness_check:
+  {parse(["owner-status"]) == OwnerStatus{} : Command}
+
+def owner_status_parser_selects_the_readiness_check():
+  {==}
+
+law owner_status_parser_rejects_extra_arguments:
+  for +extra: String
+  {parse(["owner-status",extra]) == Invalid{} : Command}
+
+def owner_status_parser_rejects_extra_arguments(extra):
   {==}
