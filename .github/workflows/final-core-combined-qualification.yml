@@ -1,4 +1,4 @@
-name: Final core and combined context qualification
+name: Consolidated native and context qualification
 
 on:
   push:
@@ -16,12 +16,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - product: core
-            source_sha: 00f41b1bf7770f90abe5252f61fcf1a31605a6ce
-            source_tree: ad09a9114a43960f8a682551d7d24c14868688c4
           - product: combined-context
-            source_sha: bd96bc79d97986acba5691c614c81be18296d7ea
-            source_tree: 8f13b52aabe9badc0b146dfdcf2d089186829080
+            source_sha: 427ed60b6b3f56db125724eeb4c9fcc631839545
+            source_tree: 34f9e76745e9cd7f1109b08058e94e075be79b61
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
@@ -135,46 +132,6 @@ jobs:
               > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/$fixture-fixture-build.exit-status"
             test "$status" = 0
           done
-      - name: Run core behavior suites
-        if: matrix.product == 'core'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd owned
-          evidence="$FINAL_NATIVE_CONTEXT_EVIDENCE/logs"
-          run_py() {
-            local label="$1"; shift
-            local status=0
-            set +e
-            python3 "$@" > "$evidence/$label.stdout" 2> "$evidence/$label.stderr"
-            status=$?
-            set -e
-            printf '%s\n' "$status" > "$evidence/$label.exit-status"
-            sha256sum "$evidence/$label.stdout" "$evidence/$label.stderr" \
-              "$evidence/$label.exit-status" > "$evidence/$label.sha256"
-            return "$status"
-          }
-          failures=0
-          for suite in logs turn process receive configure stop native-observation fixed-coordinator \
-            ui-orchestra-native mcp-root mcp-contract mcp-command control-identity shared-instance \
-            root-wake muse-root; do
-            run_py "$suite" "bend2/test/$suite.py" || failures=$((failures + 1))
-          done
-          node_status=0
-          set +e
-          BATON2_REQUIRE_NATIVE_VIEW=1 BATON2_NATIVE_BINARY="$PWD/.scratch/bend2/baton2" \
-            node --test bend2/test/context-provider.test.mjs bend2/test/provider-availability.mjs \
-              bend2/test/ui-orchestra-server.test.mjs \
-            > "$evidence/node-provider-ui.stdout" 2> "$evidence/node-provider-ui.stderr"
-          node_status=$?
-          set -e
-          printf '%s\n' "$node_status" > "$evidence/node-provider-ui.exit-status"
-          sha256sum "$evidence/node-provider-ui.stdout" "$evidence/node-provider-ui.stderr" \
-            "$evidence/node-provider-ui.exit-status" > "$evidence/node-provider-ui.sha256"
-          printf 'suite_failure_count=%s\nnode_status=%s\n' "$failures" "$node_status" \
-            > "$evidence/core-summary.txt"
-          test "$failures" = 0
-          test "$node_status" = 0
       - name: Run combined context checks and fixtures
         if: matrix.product == 'combined-context'
         shell: bash
@@ -196,6 +153,16 @@ jobs:
             return "$status"
           }
           failures=0
+          for suite in logs turn process receive configure stop native-observation fixed-coordinator \
+            ui-orchestra-native mcp-root mcp-contract mcp-command control-identity root-wake muse-root; do
+            run_recorded "$suite" env BEND="$bend" python3 "bend2/test/$suite.py" \
+              || failures=$((failures + 1))
+          done
+          run_recorded node-provider-ui env BATON2_REQUIRE_NATIVE_VIEW=1 \
+            BATON2_NATIVE_BINARY="$PWD/.scratch/bend2/baton2" node --test \
+            bend2/test/context-provider.test.mjs bend2/test/provider-availability.mjs \
+            bend2/test/ui-orchestra-server.test.mjs bend2/test/context-project-policy.test.mjs \
+            || failures=$((failures + 1))
           run_recorded instance-check-only "$bend" bend2/test/instance.bend --check-only \
             || failures=$((failures + 1))
           run_recorded context-lifecycle env BEND="$bend" python3 bend2/test/context-lifecycle.py \
@@ -203,10 +170,6 @@ jobs:
           run_recorded shared-instance env BEND="$bend" python3 bend2/test/shared-instance.py \
             || failures=$((failures + 1))
           run_recorded selected-context-package python3 bend2/test/package-selected-context.py \
-            || failures=$((failures + 1))
-          run_recorded context-project-policy node --test bend2/test/context-project-policy.test.mjs \
-            || failures=$((failures + 1))
-          run_recorded context-provider node --test bend2/test/context-provider.test.mjs \
             || failures=$((failures + 1))
           printf 'suite_failure_count=%s\n' "$failures" > "$evidence/context-summary.txt"
           test "$failures" = 0
