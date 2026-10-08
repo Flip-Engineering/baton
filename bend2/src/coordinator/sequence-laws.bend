@@ -89,6 +89,42 @@ law sequence_missing_value_refuses:
 def sequence_missing_value_refuses():
   {==}
 
+law sequence_digits_accept_complete_decimal_syntax:
+  {Sequence.digits("1234567890123456789012345678901234567890") == True{} : Bool}
+
+def sequence_digits_accept_complete_decimal_syntax():
+  {==}
+
+law sequence_digits_reject_a_nondigit_suffix:
+  {Sequence.digits("1234567890123456789012345678901234567890x") == False{} : Bool}
+
+def sequence_digits_reject_a_nondigit_suffix():
+  {==}
+
+law sequence_complete_decimal_must_fit_the_database_domain:
+  {Sequence.valid("1234567890123456789012345678901234567890") == False{} : Bool}
+
+def sequence_complete_decimal_must_fit_the_database_domain():
+  {==}
+
+law sequence_zero_is_valid:
+  {Sequence.valid("0") == True{} : Bool}
+
+def sequence_zero_is_valid():
+  {==}
+
+law sequence_decimal_order_compares_different_widths:
+  {Sequence.decimal_le("99","100") == True{} : Bool}
+
+def sequence_decimal_order_compares_different_widths():
+  {==}
+
+law sequence_decimal_order_rejects_the_wider_operand:
+  {Sequence.decimal_le("100","99") == False{} : Bool}
+
+def sequence_decimal_order_rejects_the_wider_operand():
+  {==}
+
 law sequence_maximum_is_valid:
   {Sequence.valid("9223372036854775807") == True{} : Bool}
 

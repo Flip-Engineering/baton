@@ -113,7 +113,9 @@ class ControlIndexMcp(unittest.TestCase):
         for tool in ('baton2_pending', 'baton2_inbox'):
             for key in ('afterSeq', 'throughSeq'):
                 for value in ['', '-1', '+1', '01', ' 1', '1 ', '1\n', '1.0', '1e2',
-                              '١', '9223372036854775808', 1, None, True]:
+                              '١', '9223372036854775808',
+                              '1234567890123456789012345678901234567890',
+                              '1234567890123456789012345678901234567890x', 1, None, True]:
                     with self.subTest(tool=tool, key=key, value=value):
                         result, calls = self.exchange(tool, {'index': True, key: value})
                         self.assertTrue(result.get('isError'), result)

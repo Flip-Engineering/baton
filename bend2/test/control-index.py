@@ -163,7 +163,9 @@ class ControlIndex(unittest.TestCase):
     def test_sequence_invalid_options_and_missing_database_preserve_bytes(self):
         before = self.db.read_bytes()
         for value in ('', '-1', '+1', '01', ' 1', '1 ', '1\n', '1.0', '1e2',
-                      '١', '9223372036854775808', '18446744073709551616', "0' OR 1=1 --"):
+                      '١', '9223372036854775808', '18446744073709551616',
+                      '1234567890123456789012345678901234567890',
+                      '1234567890123456789012345678901234567890x', "0' OR 1=1 --"):
             for flag in ('--after-seq', '--through-seq'):
                 with self.subTest(flag=flag, value=value):
                     self.call('pending', '--index', flag, value, expected=2)

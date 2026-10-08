@@ -573,8 +573,10 @@ function messageReadOptions(options, inbox) {
   if (!options.index && filters.some(key => options[key] !== undefined)) throw new Error('Message filters require index: true');
   for (const key of ['afterSeq', 'throughSeq']) {
     const value = options[key];
-    if (value !== undefined && (/^(0|[1-9][0-9]{0,18})$/.exec(value)?.[0] !== value ||
-        (value.length === 19 && value > '9223372036854775807'))) throw new Error('Invalid sequence bound: ' + key);
+    const maximum = '9223372036854775807';
+    if (value !== undefined && (/^(0|[1-9][0-9]*)$/.exec(value)?.[0] !== value ||
+        value.length > maximum.length || (value.length === maximum.length && value > maximum)))
+      throw new Error('Invalid sequence bound: ' + key);
   }
   const lower = options.afterSeq, upper = options.throughSeq;
   if (lower !== undefined && upper !== undefined &&
