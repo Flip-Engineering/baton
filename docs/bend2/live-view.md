@@ -36,14 +36,13 @@ The server reads the same coordinator database as the CLI. It never writes to it
   client's cursor and pushes player/ensemble/pending/transition frames. The browser
   holds an `EventSource`; it does not poll.
 - Live push requires a committed-change notification from the shared per-DB native
-  owner (#676). That subscription interface is not yet implemented, so the events
-  endpoint currently answers `503 native-owner-subscription-unavailable` and the page
-  reports the stream as unavailable instead of retrying it on a loop. Snapshot reads
-  work without the subscription.
+  owner. An unavailable subscription answers `503 native-owner-subscription-unavailable`;
+  the browser shows the error and continues checking for the subscription. Snapshot
+  reads remain available.
 - On reconnect the browser re-reads the snapshot and resumes the stream at the snapshot
   cursor. A stale or pruned cursor answers `gap`, which forces a fresh snapshot.
-- The projection keeps the newest 10,000 change rows as diagnostic retention. A client
-  whose cursor falls behind the retained minimum gets a `gap` event and re-snapshots.
+- The projection retains committed change rows. A cursor preceding the available
+  history receives a `gap` event and reloads the snapshot.
 
 ## Honesty rules
 
