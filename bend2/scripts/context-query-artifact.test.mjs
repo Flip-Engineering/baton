@@ -155,7 +155,9 @@ test('bootstrap keeps the invocation location and digest consumed by native reco
   assert.equal(persistQueryBootstrap({ ...authority,
     bootstrapText: JSON.stringify(changedDigest) }).reason, 'queryBootstrapIdentityMismatch');
   assert.equal(persistQueryBootstrap({ ...authority,
-    bootstrapText: bootstrapText(root, authority.query) }).status, 'persisted');
+    bootstrapText: JSON.stringify(changedProvider) }).replay, true);
+  assert.equal(persistQueryBootstrap({ ...authority,
+    bootstrapText: bootstrapText(root, authority.query) }).reason, 'queryArtifactReplayMismatch');
 });
 
 test('recovery reads only the bootstrap under the matching owner-worktree marker', (t) => {

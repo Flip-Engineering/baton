@@ -2081,7 +2081,7 @@ class Receive(unittest.TestCase):
         exits = [row for row in self.coord('inbox', 'root') if row['id'].endswith(':exit')]
         self.assertEqual(len(exits), 1)
         self.assertIn('unknown after keeper loss', exits[0]['body'])
-        attempts = sorted(self.directory.glob('*.attempt-*'))
+        attempts = sorted(path for path in self.directory.glob('*.attempt-*') if path.is_dir())
         launches_path = self.directory / 'native-launches.jsonl'
         launches = launches_path.read_text().splitlines() if launches_path.exists() else []
         attempt_evidence = [{
@@ -2097,6 +2097,7 @@ class Receive(unittest.TestCase):
             'nativeLaunches': launches,
         }
         self.assertEqual(len(attempts), 1, json.dumps(evidence, sort_keys=True))
+        self.assertEqual(len(launches), 1, json.dumps(evidence, sort_keys=True))
         self.assertEqual(self.execution('parent')[2], str(attempts[0]))
         self.assertTrue(os.path.isfile(os.path.join(directory, 'acknowledged')))
         self.assertTrue(os.path.isfile(os.path.join(directory, 'released')))

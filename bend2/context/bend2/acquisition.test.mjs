@@ -402,7 +402,11 @@ test('the operand drives the adapter: the base pin and the two non-capture answe
   const base = adapter.sink.baseBendPath(owner);
   assert.equal(base.status, 'captured');
   assert.equal(base.path, realpathSync(paths.base), 'the adapter reports the recorded canonical path');
-  assert.equal(base.digest, basePin.sha256, 'the reported digest is the pinned digest of the accepted bytes');
+  assert.equal(
+    adapter.sink.readSource(base.path, owner),
+    baseBytes.toString('utf8'),
+    'the selected base path reads the retained accepted bytes',
+  );
 
   const sibling = adapter.sink.lookupSource(join(dir, 'LAWS.bend'), owner);
   assert.equal(sibling.status, 'absent', 'a recorded absence reaches the gate as an absence');

@@ -47,7 +47,7 @@ test('selected provider refuses malformed and incomplete invocation frames', () 
 test('provider loads the configured frontend files without staged manifests', () => {
   const result = loadSelectedFrontendPackage();
   assert.equal(result.status, 'loaded');
-  assert.equal(typeof result.files.bend.length, 'number');
-  assert.equal(typeof result.files.main.length, 'number');
+  assert.equal(typeof result.frontendFiles.bend.length, 'number');
+  assert.equal(typeof result.frontendFiles.main.length, 'number');
   result.close();
 });

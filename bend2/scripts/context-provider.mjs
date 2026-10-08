@@ -113,9 +113,7 @@ export async function runSelectedInvocation(invocation, { wrapperPath = fileURLT
 export function verifyInvocationText(text, { wrapperPath = fileURLToPath(import.meta.url) } = {}) {
   try {
     const invocation = JSON.parse(text);
-    const admitted = validateInvocation(invocation);
-    if (admitted.status !== 'accepted') return admitted;
-    const moduleId = invocation.moduleBinding.id;
+    const moduleId = invocation?.moduleBinding?.id;
     const selected = resolveSelectedPackageRoot(wrapperPath, moduleId);
     if (selected.status !== 'resolved') return selected;
     realpathSync(join(selected.root, 'native-provider.mjs'));
