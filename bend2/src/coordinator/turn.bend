@@ -571,7 +571,7 @@ def retained_arguments(omp: Bool, claude: Bool, +cmd: String, +model: String, +e
   Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
 
 # Claude reads one user frame from its input; OMP reads its prompt frames there.
-def retained_input(muse: Bool, omp: Bool, claude: Bool, prompt: String) -> String:
+def retained_input(muse: Bool, omp: Bool, claude: Bool, +prompt: String) -> String:
   Bool.pick(String,muse,"",Bool.pick(String,claude,Claude.user_frame(prompt),Bool.pick(String,omp,Omp.prompt(prompt),prompt)))
 
 # The Muse task file, Claude's single frame and Codex's stdin all close the child's
