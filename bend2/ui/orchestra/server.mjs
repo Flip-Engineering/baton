@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { createNativeOwnerSubscriber } from './native-owner-subscription.mjs';
 
 const CONTRACT_VERSION = 1;
 const TRANSITION_LIMIT = 50;
@@ -404,11 +405,15 @@ function serveAsset(response, assetRoot, pathname) {
 }
 
 export function createOrchestraServer({ databasePath, reader, subject = reader,
-  subscribeCommittedChanges, assetRoot = fileURLToPath(new URL('.', import.meta.url)),
+  subscribeCommittedChanges, baton2Executable,
+  assetRoot = fileURLToPath(new URL('.', import.meta.url)),
   host = '127.0.0.1', port = 0 }) {
   if (host !== '127.0.0.1' && host !== '::1' && host !== 'localhost') {
     throw new Error('The read-only Orchestra UI binds to loopback only.');
   }
+  const committedChanges = typeof subscribeCommittedChanges === 'function'
+    ? subscribeCommittedChanges
+    : baton2Executable ? createNativeOwnerSubscriber(baton2Executable) : undefined;
   const db = new DatabaseSync(databasePath, { readOnly: true });
   const server = createServer((request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
@@ -430,11 +435,11 @@ export function createOrchestraServer({ databasePath, reader, subject = reader,
       const selected = url.searchParams.get('subject') || subject;
       if (since === null) return json(response, 400, { error: 'invalid-cursor' });
       if (!visibleScope(db, reader, selected)) return json(response, 403, { error: 'reader-scope-denied' });
-      if (typeof subscribeCommittedChanges !== 'function') {
+      if (typeof committedChanges !== 'function') {
         return json(response, 503, { error: 'native-owner-subscription-unavailable' });
       }
       void streamEvents(response, db, databasePath, reader, selected, since,
-        url.searchParams.get('generation') || '', subscribeCommittedChanges)
+        url.searchParams.get('generation') || '', committedChanges)
         .catch(() => json(response, 503, { error: 'native-owner-subscription-unavailable' }));
       return;
     }
@@ -457,7 +462,7 @@ function cli(args) {
   const values = new Map();
   for (let i = 0; i < args.length; i += 2) values.set(args[i], args[i + 1]);
   if (!values.get('--database') || !values.get('--reader')) {
-    throw new Error('usage: server.mjs --database PATH --reader SESSION [--subject SESSION] [--host 127.0.0.1] [--port 0]');
+    throw new Error('usage: server.mjs --database PATH --reader SESSION [--subject SESSION] [--baton2 EXECUTABLE] [--host 127.0.0.1] [--port 0]');
   }
   if (!/^[0-9]+$/.test(values.get('--port') || '0')) {
     throw new Error('usage: --port must be a decimal port number (0 selects an ephemeral port)');
@@ -466,6 +471,7 @@ function cli(args) {
     databasePath: values.get('--database'),
     reader: values.get('--reader'),
     subject: values.get('--subject') || values.get('--reader'),
+    baton2Executable: values.get('--baton2') || undefined,
     host: values.get('--host') || '127.0.0.1',
     port: Number(values.get('--port') || 0),
   };

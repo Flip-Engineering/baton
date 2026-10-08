@@ -147,11 +147,11 @@ def node_or_die(node: Result<&1,&1,U32 & String,String>) -> IO(String):
 
 def run_body(subject: String, +reader: String, port: String, +canonical: String) -> IO(Unit):
   do IO<Unit>:
-    executable : String <- IO.try(String,Lock.SessionLock.executable())
+    +executable : String <- IO.try(String,Lock.SessionLock.executable())
     found : Result<&1,&1,U32 & String,String> <- Host.Control.command("node")
     node : String <- node_or_die(found)
     server : String <- resolve_server(executable)
-    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([node,server,"--database",canonical,"--reader",reader,"--subject",subject,"--host","127.0.0.1","--port",port]),".",canonical ++ ".view.stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([node,server,"--database",canonical,"--reader",reader,"--subject",subject,"--host","127.0.0.1","--port",port,"--baton2",executable]),".",canonical ++ ".view.stderr")
     run_started(canonical,reader,spawned)
 
 def canonical_or_die(+db: String, canonical: Result<&1,&1,U32 & String,String>) -> IO(String):
