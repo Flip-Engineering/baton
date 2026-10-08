@@ -356,20 +356,25 @@ def deferred_pending(+pending: String) -> String:
 def deferred_text(id: String, pending: String) -> String:
   "A later native terminal completed after the report " ++ id ++ " was sealed; the episode is retained in the native log" ++ deferred_pending(pending) ++ "."
 
-def write_deferred(+db: String, +player: String, +id: String, recorded: Bool) -> IO(Unit):
+# A later OMP failure sends its observed status and diagnostic to the parent.
+def deferred_failure_text(+id: String, +failure: String, +pending: String) -> String:
+  "A later native terminal failed after the report " ++ id ++ " was sealed: " ++ failure ++ "; the episode is retained in the native log" ++ deferred_pending(pending) ++ "."
+
+def write_deferred(+db: String, +player: String, +id: String, +failure: String, +pending: String, recorded: Bool) -> IO(Unit):
   match recorded:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
-      +pending : String <- IO.try(String,DB.Sql.query(db,deferred_pending_sql(player)))
-      noted : Unit <- report(db,player,id ++ ":deferred",deferred_text(id,Tx.trim_nl(pending)))
+      noted : Unit <- report(db,player,id ++ ":deferred",Bool.pick(String,String.is_empty(failure),deferred_text(id,pending),deferred_failure_text(id,failure,pending)))
       IO.pure(Unit,Unit{})
 
-def record_deferred(+db: String, +player: String, +id: String, later: Bool) -> IO(Unit):
+def record_deferred(+db: String, +player: String, +id: String, +event: String, later: Bool) -> IO(Unit):
   match later:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
       presence : String <- IO.try(String,DB.Sql.query(db,deferred_recorded_sql(id)))
-      written : Unit <- write_deferred(db,player,id,String.eq(presence,"1\n"))
+      pending : String <- IO.try(String,DB.Sql.query(db,deferred_pending_sql(player)))
+      failure : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(" ++ C.omp_terminal_error_text_sql(event) ++ ",'');"))
+      written : Unit <- write_deferred(db,player,id,Tx.trim_nl(failure),Tx.trim_nl(pending),String.eq(presence,"1\n"))
       IO.pure(Unit,Unit{})
 
 def deferred_note(+db: String, player: String, id: String, +event: String, +terminal: String, +primary: String, +current: String, sealed: Bool, muse: Bool) -> IO(Unit):
@@ -378,7 +383,7 @@ def deferred_note(+db: String, player: String, id: String, +event: String, +term
     case True{}: do IO<Unit>:
       query : String <- IO.pure(String,Bool.pick(String,muse,muse_deferred_terminal_sql(event,terminal,primary,current),deferred_terminal_sql(event,terminal)))
       later : String <- IO.try(String,DB.Sql.query(db,query))
-      noted : Unit <- record_deferred(db,player,id,String.eq(later,"1\n"))
+      noted : Unit <- record_deferred(db,player,id,event,String.eq(later,"1\n"))
       IO.pure(Unit,Unit{})
 
 def append_frame(log: String, line: String, keep: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):

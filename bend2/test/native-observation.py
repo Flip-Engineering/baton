@@ -248,6 +248,148 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
         self.shutdown_idle_database_owner('fixture database owner did not exit after OMP completion')
 
+    def test_omp_provider_error_terminal_records_failure_not_success(self):
+        self.player(harness='omp')
+        self.coord('message', 'provider-error-task', 'root', 'parent', 'task', 'Read this task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.assertIn('[id: provider-error-task]', started['prompt'])
+        terminal = {
+            'type': 'agent_end', 'isTerminal': True, 'is_error': False,
+            'messages': [
+                {'role': 'user', 'content': [{'type': 'text', 'text': 'Read this task.'}]},
+                {'role': 'assistant', 'content': [
+                    {'type': 'text', 'text': 'Earlier successful assistant text.'}]},
+                {'role': 'assistant', 'stopReason': 'error', 'errorStatus': 403,
+                 'errorMessage': '403 {"error":{"type":"permission_error","message":"fixture provider refusal"}}',
+                 'content': [{'type': 'text', 'text': 'Unfinished assistant text.'}]},
+                '…[181 items elided for RPC frame]', None, {'metadata': 'retained marker'},
+            ],
+        }
+        self.action(stream, native_frame=terminal)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.action(stream, exit_fixture=True)
+        _, stderr = self.finish(observer, ok=False)
+
+        self.assertIn('Native receive failed;', stderr)
+        turns = self.eventually(lambda: self.coord('turns', 'parent'),
+                                'error terminal did not store its failure report')
+        self.assertEqual(len(turns), 1)
+        body = turns[0]['reportBody']
+        self.assertIn('OMP provider failure', body)
+        self.assertIn('403', body)
+        self.assertIn('fixture provider refusal', body)
+        self.assertNotIn('Earlier successful assistant text.', body)
+        self.assertNotIn('Unfinished assistant text.', body)
+        self.assertNotIn('agent_end', body)
+        log = self.output_log('parent').read_text()
+        self.assertIn('stopReason', log)
+        self.assertIn('errorStatus', log)
+        self.assertTrue(any(row['id'] == 'provider-error-task'
+                            for row in self.coord('inbox', 'parent')))
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
+    def test_omp_late_failure_keeps_the_sealed_result_and_reports_failure(self):
+        self.player(harness='omp')
+        self.coord('message', 'stale-success-task', 'root', 'parent', 'task', 'Read this task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.assertIn('[id: stale-success-task]', started['prompt'])
+        success = {'type': 'agent_end', 'isTerminal': True, 'is_error': False,
+                   'messages': [{'role': 'assistant', 'content': [
+                       {'type': 'text', 'text': 'Stale success text.'}]}]}
+        self.action(stream, native_frame=success)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.eventually(lambda: self.coord('turns', 'parent'),
+                        'first terminal did not seal its report')
+        refusal = {'type': 'agent_end', 'isTerminal': True, 'is_error': False,
+                   'messages': [{'role': 'assistant', 'stopReason': 'error', 'errorStatus': 403,
+                                 'errorMessage': '403 {"error":{"message":"fixture late refusal"}}',
+                                 'content': []}]}
+        self.action(stream, native_frame=refusal)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+        turns = self.eventually(lambda: self.coord('turns', 'parent'),
+                                'sealed success report was not retained')
+        self.assertEqual(turns[0]['reportBody'], 'Stale success text.')
+        reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
+        deferred = next((row for row in reports if row['id'].endswith(':deferred')), None)
+        self.assertIsNotNone(deferred)
+        self.assertIn('failed after the report', deferred['body'])
+        self.assertIn('OMP provider failure', deferred['body'])
+        self.assertIn('fixture late refusal', deferred['body'])
+        self.assertNotIn('Stale success text.', deferred['body'])
+        log = self.output_log('parent').read_text()
+        self.assertIn('Stale success text.', log)
+        self.assertIn('stopReason', log)
+        self.assertIsNotNone(self.coord('delivery', 'stale-success-task')['receipt'])
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            sealed = json.loads(database.execute(
+                'SELECT event FROM turns WHERE id=?', (turns[0]['id'],)).fetchone()[0])
+        self.assertEqual(sealed, success)
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
+    def test_observe_file_reads_mixed_omp_terminals_and_nested_failure(self):
+        self.player(harness='omp')
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                assistant = {'role': 'assistant', 'content': [
+                    {'type': 'text', 'text': 'Observed file completion.'},
+                    'content marker', None, {'metadata': 'content metadata'},
+                ]}
+                if failed:
+                    assistant.update(stopReason='error', errorStatus=403,
+                                     errorMessage='fixture file provider refusal')
+                terminal = {'type': 'agent_end', 'isTerminal': True,
+                            'messages': [assistant, 'message marker', None,
+                                         {'metadata': 'message metadata'}]}
+                event = self.directory / ('mixed-file-' + str(failed) + '.json')
+                event.write_text(json.dumps(terminal))
+                ident = 'mixed-file-' + str(failed)
+                self.coord('observe-file', ident, 'parent', event)
+                body = self.coord('delivery', ident)['body']
+                if failed:
+                    self.assertIn('OMP provider failure', body)
+                    self.assertIn('403', body)
+                    self.assertIn('fixture file provider refusal', body)
+                    self.assertNotIn('Observed file completion.', body)
+                else:
+                    self.assertEqual(body, 'Observed file completion.')
+                self.assertEqual(json.loads(event.read_text()), terminal)
+
+    def test_omp_earlier_error_with_successful_latest_assistant_stays_successful(self):
+        self.player(harness='omp')
+        self.coord('message', 'latest-success-task', 'root', 'parent', 'task', 'Read this task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.assertIn('[id: latest-success-task]', started['prompt'])
+        terminal = {
+            'type': 'agent_end', 'isTerminal': True, 'is_error': False,
+            'messages': [
+                {'role': 'assistant', 'stopReason': 'error', 'errorStatus': 500,
+                 'errorMessage': '500 {"error":{"message":"earlier refusal, superseded"}}',
+                 'content': []},
+                {'role': 'assistant', 'content': [
+                    {'type': 'text', 'text': 'Latest successful assistant text.'}]},
+            ],
+        }
+        self.action(stream, native_frame=terminal)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+
+        turns = self.eventually(lambda: self.coord('turns', 'parent'),
+                                'successful latest assistant did not store its report')
+        self.assertEqual([row['reportBody'] for row in turns],
+                         ['Latest successful assistant text.'])
+        self.assertFalse(any(row['id'] == 'latest-success-task'
+                             for row in self.coord('inbox', 'parent')))
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
     def _retained_attempt(self):
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
             row = database.execute("SELECT directory,id FROM executions WHERE session='parent' AND mode='retained'").fetchone()

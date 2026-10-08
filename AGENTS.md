@@ -31,7 +31,7 @@ the affected real work runs. Issue #598 records this requirement.
 
 Budgets must never control admission, continuation, completion, input acceptance,
 or validation. Do not require callers to estimate input size, task size, tokens,
-cost, duration, retries, or output volume. Do not add budget checks, refusals,
+cost, duration, retries, turns, or output volume. Do not add budget checks, refusals,
 pauses, truncation, or configurable replacements for those controls. Provider
 usage observations report facts. Actual allocation, filesystem and provider
 failures retain their causes and the unfinished work.

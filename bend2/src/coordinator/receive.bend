@@ -58,10 +58,11 @@ def exit_status(failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(1,"Native receive failed; read the retained native log and pending inbox.")})
 
+# A terminal's latest assistant can record an OMP failure with host exit zero.
 def outcome_failed(db: String, outcome: Turn.Outcome) -> IO(Bool):
   match outcome:
     case Turn.Ended{+status,+event,+error}: do IO<Bool>:
-      failure : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(event) ++ "='' THEN 1 ELSE coalesce(json_extract(" ++ C.q(event) ++ ",'$.is_error'),0) END;"))
+      failure : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(event) ++ "='' THEN 1 WHEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.is_error'),0)=1 THEN 1 ELSE " ++ C.omp_terminal_error_sql(event) ++ " END;"))
       IO.pure(Bool,Bool.or(Turn.failed(status,event,error),String.eq(failure,"1\n")))
 
 def continue_if(again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), present: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
