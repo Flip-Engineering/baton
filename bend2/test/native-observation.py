@@ -42,6 +42,15 @@ class NativeObservation(RECEIVE.Receive):
             self.assertLess(time.monotonic(), deadline, description)
             time.sleep(.01)
 
+    def shutdown_idle_database_owner(self, description):
+        processes = self.owned_processes()
+        expected = f'{RECEIVE.EXE} --instance-owner {self.db}'
+        self.assertEqual([process['command'] for process in processes], [expected])
+        stopped = subprocess.run([str(RECEIVE.EXE), '--instance-shutdown', str(self.db)],
+                                 capture_output=True, text=True)
+        self.assertEqual(stopped.returncode, 0, stopped.stderr)
+        self.eventually(lambda: not self.owned_processes(), description)
+
     def test_mixed_agent_end_members_preserve_completion_and_raw_frame(self):
         self.player(harness='omp')
         self.coord('message', 'mixed-task', 'root', 'parent', 'task', 'Read this task.')
@@ -83,7 +92,7 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual(self.coord('player', 'parent')['native'], 'omp-native')
         self.assertFalse(any('Native output observation failed' in row['body']
                              for row in self.coord('inbox', 'root')))
-        self.eventually(lambda: not self.owned_processes(), 'native observer processes did not exit')
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
 
     def test_muse_uses_admitted_turn_terminal_and_keeps_later_lifecycle_separate(self):
         self.player(harness='muse')
@@ -186,7 +195,70 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
         self.assertFalse(any('Native output observation failed' in row['body']
                              for row in self.coord('inbox', 'root')))
-        self.eventually(lambda: not self.owned_processes(), 'reattached OMP fixture did not exit')
+        self.shutdown_idle_database_owner('fixture database owner did not exit after OMP completion')
+
+    def test_omp_completion_survives_observer_reattach(self):
+        self.player(harness='omp')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
+        self.coord('message', 'reattach-checkpoint-task', 'root', 'parent', 'task', 'Retain this complete response.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept('parent')
+        attempt, _ = self.eventually(lambda: self._retained_attempt(), 'retained attempt was not admitted')
+        text = 'The complete native response remains available after observer recovery.'
+        assistant = {'type': 'message_end', 'message': {
+            'id': 'reattach-checkpoint-assistant', 'role': 'assistant', 'provider': 'fixture',
+            'content': [{'type': 'text', 'text': text}]}}
+        self.action(stream, native_frame=assistant)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.eventually(lambda: (self.directory / 'parent.jsonl').exists() and
+                        'reattach-checkpoint-assistant' in (self.directory / 'parent.jsonl').read_text(),
+                        'the complete assistant frame was not logged')
+        self.action(stream, native_frame={'type': 'checkpoint-barrier'})
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.eventually(lambda: 'checkpoint-barrier' in (self.directory / 'parent.jsonl').read_text(),
+                        'observer did not consume the checkpoint barrier')
+
+        observer.kill()
+        observer.wait(timeout=5)
+        resumed = self.spawn(*self.receive_args('parent'))
+        terminal = {'type': 'agent_end', 'isTerminal': True, 'is_error': False, 'messages': []}
+        self.action(stream, native_frame=terminal)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.action(stream, exit_fixture=True)
+        self.finish(resumed)
+
+        turns = self.eventually_slow_case(
+            lambda: self.coord('turns', 'parent'),
+            'reattached observer did not preserve the completion')
+        self.assertEqual(len(turns), 1)
+        report_body = turns[0]['reportBody']
+        self.assertEqual(len(report_body), len(text))
+        self.assertEqual(hashlib.sha256(report_body.encode()).hexdigest(),
+                         hashlib.sha256(text.encode()).hexdigest())
+        reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
+        self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
+        log = (self.directory / 'parent.jsonl').read_text()
+        spool = (pathlib.Path(attempt) / 'stdout').read_text()
+        self.assertEqual(spool.count('reattach-checkpoint-assistant'), 1)
+        self.assertEqual(spool.count('checkpoint-barrier'), 1)
+        assistant_frames = [json.loads(line) for line in log.splitlines()
+                            if 'reattach-checkpoint-assistant' in line]
+        self.assertEqual(len(assistant_frames), 2)
+        self.assertEqual(assistant_frames[0], assistant_frames[1])
+        raw_text = assistant_frames[0]['message']['content'][0]['text']
+        self.assertEqual(len(raw_text), len(text))
+        self.assertEqual(hashlib.sha256(raw_text.encode()).hexdigest(),
+                         hashlib.sha256(text.encode()).hexdigest())
+        barrier_frames = [json.loads(line) for line in log.splitlines()
+                          if 'checkpoint-barrier' in line]
+        self.assertEqual(len(barrier_frames), 2)
+        self.assertEqual(barrier_frames[0], barrier_frames[1])
+        launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
+        self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
+        self.shutdown_idle_database_owner('fixture database owner did not exit after OMP completion')
 
     def _retained_attempt(self):
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
@@ -223,5 +295,6 @@ if __name__ == '__main__':
         'NativeObservation.test_mixed_agent_end_members_preserve_completion_and_raw_frame',
         'NativeObservation.test_muse_uses_admitted_turn_terminal_and_keeps_later_lifecycle_separate',
         'NativeObservation.test_omp_fallback_message_survives_observer_reattach_at_saved_cursor',
+        'NativeObservation.test_omp_completion_survives_observer_reattach',
         'NativeObservation.test_log_write_failure_remains_an_observation_failure',
     ])

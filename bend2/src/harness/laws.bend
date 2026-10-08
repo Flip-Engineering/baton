@@ -40,9 +40,10 @@ law m2_omp_fresh_start_is_the_spawn_attempt:
   for +log: String
   for +sessions: String
   for session: String
-  {Omp.start_player(cmd, model, effort, cwd, log, sessions, session, True{}) == P.ProcessChild.spawn(P.argv(Omp.arguments(cmd,model,effort,sessions)),cwd,log ++ ".stderr") : IO(Result<&1,&1,U32 & String,U32>)}
+  for +stderr: String
+  {Omp.start_player(cmd, model, effort, cwd, sessions, session, True{}, stderr) == P.ProcessChild.spawn(P.argv(Omp.arguments(cmd,model,effort,sessions)),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_omp_fresh_start_is_the_spawn_attempt(cmd, model, effort, cwd, log, sessions, session):
+def m2_omp_fresh_start_is_the_spawn_attempt(cmd, model, effort, cwd, sessions, session, stderr):
   {==}
 
 law m2_claude_start_is_the_spawn_attempt:
@@ -115,9 +116,30 @@ law m5_omp_resume_carries_the_accepted_session:
   for +log: String
   for +sessions: String
   for +session: String
-  {Omp.start_player(cmd, model, effort, cwd, log, sessions, session, False{}) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Omp.arguments(cmd,model,effort,sessions),["--resume",session])),cwd,log ++ ".stderr") : IO(Result<&1,&1,U32 & String,U32>)}
+  for +stderr: String
+  {Omp.start_player(cmd, model, effort, cwd, sessions, session, False{}, stderr) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Omp.arguments(cmd,model,effort,sessions),["--resume",session])),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m5_omp_resume_carries_the_accepted_session(cmd, model, effort, cwd, log, sessions, session):
+def m5_omp_resume_carries_the_accepted_session(cmd, model, effort, cwd, sessions, session, stderr):
+  {==}
+
+law m5_claude_argv_carries_the_accepted_session:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +session: String
+  {Claude.argv(cmd, model, effort, session, False{}) == P.argv(List.append(&1,String,Claude.arguments(cmd,model,effort),["--resume",session])) : String}
+
+def m5_claude_argv_carries_the_accepted_session(cmd, model, effort, session):
+  {==}
+
+law m2_claude_argv_starts_a_fresh_conversation:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +session: String
+  {Claude.argv(cmd, model, effort, session, True{}) == P.argv(Claude.arguments(cmd,model,effort)) : String}
+
+def m2_claude_argv_starts_a_fresh_conversation(cmd, model, effort, session):
   {==}
 
 law m5_claude_resume_carries_the_accepted_session:

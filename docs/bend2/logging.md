@@ -1,44 +1,40 @@
 # Coordinator logs
 
-The coordinator appends native provider frames to each registered public log. It records native stderr, incomplete-frame checkpoints, delivery output, and retained-attempt files under their existing owners.
+The coordinator writes a public JSONL log for each turn and a separate file for the native process's stderr. `log_files` records public log paths. `log_generations` binds generation paths to turn IDs. `log_stderr_runs` records each unique stderr path for a generation.
 
-## Log levels
+## Levels
 
-`logs SESSION` reads a session's effective level. `logs SESSION LEVEL` stores `quiet`, `default`, or `diagnostic`.
+`baton2 DATABASE logs SESSION` reads the configured level. `baton2 DATABASE logs SESSION LEVEL` sets it. The available levels are `default`, `quiet`, and `diagnostic`.
 
-| Level | Frames written to the public log |
-| --- | --- |
-| `default` | Complete frames, plus the newest incomplete `tool_execution_update`, `message_start`, and `message_update` for each open identity. A completing frame supersedes its held prefix. Turn completion writes remaining prefixes. |
-| `quiet` | Terminal frames (`agent_end`, `result`, `turn_end`) and frames outside the coordinator's classification. |
-| `diagnostic` | Every frame verbatim. |
+At `default`, the coordinator retains completed frames and holds the newest `message_update`, `message_start`, and `tool_execution_update` frame for each open identity. A matching end frame either completes or replaces the held state. Turn completion writes any still-open frame. At `quiet`, the coordinator keeps terminal frames and frames whose type is not classified. At `diagnostic`, it keeps every frame. Unknown event types remain in the log at every level.
 
-An unclassified frame is written at every level. The current classification covers the OMP frame vocabulary. Codex, Muse, and Claude frames remain unclassified and are written as received.
+The coordinator appends each retained frame to the generation log. It preserves complete frames, including large frames. The native process writes all stderr bytes to the unique path registered for that run.
 
-A direct turn writes incomplete prefixes to `OUTPUT_LOG.pending`. It syncs the replacement before publishing the name. A later turn appends that checkpoint before its new frames and removes the checkpoint after the append succeeds. Retained receive attempts keep their raw streams in the attempt directory through acknowledgement.
+## Generations and checkpoints
 
-Public logs and their stderr files are append-only. `logs-storage` reports their current sizes. The operating system reports allocation and write failures with their causes; the supervisor records the first failed write for each turn and stops writing that log for the rest of the turn.
+`Logs.attempt_log(BASE, TURN)` names a separate generation file for each turn. A generation path preserves the turn identity and prevents later runs from appending into an earlier run's public log. `OUTPUT_LOG.pending` stores the latest incomplete frames for direct turns. A later turn appends that checkpoint before new frames and removes it after the append succeeds.
 
-## Storage inspection and cleanup
+The attempt directory retains native input, output, and process ownership according to its own lifecycle. The log registry tracks public paths and stderr paths; it does not replace provider conversation stores or retained attempt artifacts.
 
-```text
+## Storage and cleanup
+
+```
 baton2 DATABASE logs-storage
 baton2 DATABASE logs-clean SESSION
 ```
 
-`logs-storage` initializes or migrates the policy schema and reports the database and root-log sizes, the effective level, each registered public log with its current size, stderr size, and checkpoint path and size, and retained attempts with their stream sizes and release, acknowledgement, and report state.
+`logs-storage` reports database, root log, public log, historical numbered segment, checkpoint, attempt, and stderr file sizes. Numbered segments from earlier versions remain visible as historical files.
 
-`logs-clean SESSION` removes only attempt diagnostics eligible under the existing lifecycle rules: native exit, release, acknowledgement, a durable report, no unanswered input, a verified attempt path, and at least one diagnostic file. Diagnostic-level attempts remain available. Cleanup holds the session lock while checking eligibility and removing registered attempt files. A live turn causes `session-busy`; unanswered input causes `pending-input`.
+`logs-clean SESSION` removes eligible completed attempt diagnostics and generation logs. Cleanup requires the existing lifecycle evidence: process exit, release, acknowledgement, report, successful exit, no pending input, a verified attempt path, and a non-diagnostic level. It preserves base logs, numbered historical segments, provider stores, unfinished attempts, and files with incomplete or malformed legacy stderr metadata. Cleanup runs under the session lock.
 
-The registered public logs, their stderr files, checkpoints, database records, and provider conversation stores remain available after attempt cleanup. Old policy schemas migrate to the level-only schema while preserving stored levels and registered log paths.
+The policy migration preserves each session's level and every registered log path. Existing byte and segment-count policy columns are discarded during migration; they no longer affect logging.
 
-## Output failures
+## Write failures
 
-A failed write records the log path and its size when the write was attempted. The turn report retains the native result, and the failure reaches the parent as a native output observation. A delivery whose root-log record cannot be written reports the delivery-log failure while the recipient inbox retains the message.
+The supervisor records the first write error for a turn with the log path and stops appending to that log for the rest of the turn. The turn report keeps the native result, and the failure reaches the parent as a native output observation.
 
-If a native output read fails, the supervisor writes any held prefix frames and an interruption frame as best effort. The turn outcome records the read failure.
+When native output reading fails, the supervisor writes the prefix frames it still holds and one `baton_log_interrupted` frame with the count written. These writes are best effort. A failed log receives no further writes.
 
-## Open work
+## Historical measurements
 
-A receive that attaches to a retained attempt appends its retained frames to the public log again. Lossless reconstruction remains unqualified.
-
-The provider's `set_event_filter` currently accepts `events` and `messageUpdates`. Its complete event vocabulary, the confirmation rule that requires an echoed `events: null`, and the raw terminal evidence of issues #669 and #670 remain open.
+[The 2026-10-06 measurement](measurements/2026-10-06-logging-policy.json) records an earlier policy workload. It remains evidence for the frame-deduplication measurements; its byte and segment settings are historical data.

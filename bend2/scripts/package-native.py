@@ -39,6 +39,15 @@ def file_info(path):
     return {'bytes': path.stat().st_size, 'sha256': sha256(path)}
 
 
+def module_directory_name(module_id):
+    require(isinstance(module_id, str) and module_id, 'A selected module needs a non-empty identity')
+    try:
+        encoded = module_id.encode('utf-8').hex()
+    except UnicodeEncodeError as error:
+        raise RuntimeError('A selected module identity is not valid Unicode') from error
+    return 'm-' + encoded
+
+
 def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + '\n')
 
@@ -94,6 +103,71 @@ def stage_adapters(payload):
             name = harness + '-' + suffix + '.mjs'
             shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
+    ui = directory / 'ui'
+    ui.mkdir()
+    for name in ('server.mjs', 'index.html', 'styles.css', 'app.js'):
+        shutil.copyfile(ROOT / 'bend2/ui/orchestra' / name, ui / name)
+    shutil.copyfile(ROOT / 'bend2/ui/orchestra/native-owner-subscription.mjs',
+                    ui / 'native-owner-subscription.mjs')
+    fixtures = ui / 'fixtures'
+    fixtures.mkdir()
+    for name in ('fixture-small.json', 'fixture-dense.json', 'fixture-gap.json'):
+        shutil.copyfile(ROOT / 'bend2/ui/orchestra/fixtures' / name, fixtures / name)
+    shutil.copyfile(ROOT / 'bend2/scripts/context-provider.mjs', directory / 'context-provider.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/context-project-policy.mjs', directory / 'context-project-policy.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/context-query-artifact.mjs', directory / 'context-query-artifact.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/context-worktree-capture.mjs', directory / 'context-worktree-capture.mjs')
+
+
+def stage_selected_context_payload(payload):
+    source_root = ROOT / 'bend2/context/bend2'
+    declaration_path = source_root / 'selected-module.json'
+    require(declaration_path.is_file() and not declaration_path.is_symlink(),
+            'The selected Bend2 module manifest is unavailable')
+    declaration = json.loads(declaration_path.read_text())
+    require(isinstance(declaration, dict) and isinstance(declaration.get('moduleId'), str)
+            and declaration['moduleId'] and isinstance(declaration.get('protocolVersion'), str)
+            and isinstance(declaration.get('files'), list) and declaration['files'],
+            'The selected Bend2 module manifest has no artifacts')
+
+    module_root = payload / 'lib/context/modules' / module_directory_name(declaration['moduleId'])
+    module_root.mkdir(parents=True)
+    staged_files = []
+    seen = set()
+    for entry in declaration['files']:
+        require(isinstance(entry, dict) and isinstance(entry.get('path'), str),
+                'A selected Bend2 artifact needs a path')
+        relative = PurePosixPath(entry['path'])
+        require(not relative.is_absolute() and relative.parts
+                and '..' not in relative.parts and '.' not in relative.parts,
+                'Unsafe selected Bend2 artifact path: ' + str(relative))
+        name = relative.as_posix()
+        require(name not in seen, 'Duplicate selected Bend2 artifact: ' + name)
+        seen.add(name)
+        source = source_root.joinpath(*relative.parts)
+        resolved = source.resolve()
+        require(resolved.is_relative_to(source_root.resolve()) and source.is_file()
+                and not source.is_symlink(),
+                'Selected Bend2 artifact is missing or outside its module root: ' + name)
+        destination = module_root.joinpath(*relative.parts)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        staged_files.append({'path': name, **file_info(destination)})
+
+    module_manifest = {
+        'schema': 'baton2-selected-module-artifact-v1',
+        'moduleId': declaration['moduleId'],
+        'protocolVersion': declaration['protocolVersion'],
+        'sourceManifest': {'path': 'selected-module.source.json', **file_info(declaration_path)},
+        'files': staged_files,
+    }
+    shutil.copyfile(declaration_path, module_root / 'selected-module.source.json')
+    write_json(module_root / 'manifest.json', module_manifest)
+    module_manifest['manifest'] = {
+        'path': (module_root / 'manifest.json').relative_to(payload).as_posix(),
+        **file_info(module_root / 'manifest.json'),
+    }
+    return module_manifest
 
 
 def stage_notices(payload, compiler_notices, kind='development'):
@@ -194,6 +268,7 @@ def package(args):
         shutil.copyfile(binary, payload / 'bin/baton2')
         (payload / 'bin/baton2').chmod(0o755)
         stage_adapters(payload)
+        selected_context = stage_selected_context_payload(payload)
         terms = stage_notices(payload, compiler_notices, identity['kind'])
         files = [{'path': path.relative_to(payload).as_posix(), **file_info(path)}
                  for path in sorted(payload.rglob('*')) if path.is_file()]
@@ -204,6 +279,7 @@ def package(args):
             'platform': {'system': platform.system(), 'machine': platform.machine(), 'artifact': 'darwin-arm64'},
             'source': source,
             'binary': {'path': 'bin/baton2', **file_info(binary)}, 'files': files,
+            'selected_modules': [selected_context],
             'build': {'command': build_record, 'compiler_archive': {'url': COMPILER_ARCHIVE_URL, **file_info(archive)}},
             'terms': terms,
         }

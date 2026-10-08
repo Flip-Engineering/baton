@@ -2,7 +2,7 @@
 # predicate and transaction; the native connect tests verify stored state and
 # delivery through the real executable.
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ../git/text.bend as Tx
 

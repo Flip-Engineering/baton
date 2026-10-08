@@ -83,7 +83,7 @@ function runTests(tests) {
   const result = spawnSync(process.execPath, ['--test', ...tests.map(test => join('bend2', 'tests', 'context-models', test))], {
     cwd: SCRATCH,
     encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer: Infinity,
   });
   return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 }

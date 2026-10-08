@@ -144,12 +144,29 @@ const TOOLS = [
   },
   {
     name: 'baton2_receiver',
-    description: 'Register a native receive endpoint for an explicit Codex or OMP Player session.',
+    description: 'Register a native receive endpoint for an explicit Codex, OMP, Muse or Claude Code Player session.',
     inputSchema: { type: 'object', properties: {
       player: { type: 'string', description: 'Registered Player session ID' },
       command: { type: 'string', description: 'Native harness executable path or command name' },
       log: { type: 'string', description: 'Native output log path' },
+      cwd: { type: 'string', description: 'Working directory the session turns run in; recorded when supplied' },
     }, required: ['player', 'command', 'log'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_configure',
+    description: 'Change an inactive Player\'s configured provider route for its next admitted turn, keeping its assignment, work and pending input.',
+    inputSchema: { type: 'object', properties: {
+      player: { type: 'string', description: 'Registered Player session ID' },
+      harness: { type: 'string', description: 'Selected provider harness' },
+      model: { type: 'string', description: 'Selected model key' },
+      effort: { type: 'string', description: 'Selected thinking effort' },
+      command: { type: 'string', description: 'Native harness executable path or command name' },
+      log: { type: 'string', description: 'Native output log path' },
+      expectedHarness: { type: 'string', description: 'Recorded harness the caller expects' },
+      expectedModel: { type: 'string', description: 'Recorded model the caller expects' },
+      expectedEffort: { type: 'string', description: 'Recorded effort the caller expects' },
+    }, required: ['player', 'harness', 'model', 'effort', 'command', 'log',
+      'expectedHarness', 'expectedModel', 'expectedEffort'], additionalProperties: false },
   },
   {
     name: 'baton2_dispatch_file',
@@ -221,6 +238,11 @@ const TOOLS = [
   {
     name: 'baton2_status',
     description: 'Show all coordinator sessions and their pending message counts.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'baton2_owner',
+    description: 'Read the elected database owner readiness: generation, committed cursor and gap flag.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -441,7 +463,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-conductor', version: '0.1.0' },
-      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_recruit to assign a Player and its worktree. Use baton2_receiver to register a Player's Codex or OMP receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a recruited Player's task file with its recorded route. Use baton2_inbox or baton2_pending to see pending messages. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes.`,
+      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_recruit to assign a Player and its worktree. Use baton2_receiver to register a Player's Codex, OMP, Muse or Claude Code receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a recruited Player's task file with its recorded route. Use baton2_configure to move an inactive Player to another provider harness, model and effort while keeping its identity, work and pending input. Use baton2_inbox or baton2_pending to see pending messages. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes.`,
     });
     return;
   }
@@ -495,7 +517,12 @@ function handleToolCall(msg) {
           args.effort, args.repo, args.branch, args.workspace, args.base);
         break;
       case 'baton2_receiver':
-        result = coord('receiver', player, args.command, args.log);
+        result = coord('receiver', player, args.command, args.log,
+                       ...(args.cwd === undefined ? [] : [args.cwd]));
+        break;
+      case 'baton2_configure':
+        result = coord('configure', player, args.harness, args.model, args.effort,
+          args.command, args.log, args.expectedHarness, args.expectedModel, args.expectedEffort);
         break;
       case 'baton2_dispatch_file':
         result = coord('dispatch-file', args.id, args.sender ?? sessionId,
@@ -527,6 +554,9 @@ function handleToolCall(msg) {
         break;
       case 'baton2_status':
         result = coord('status');
+        break;
+      case 'baton2_owner':
+        result = coord('owner-status');
         break;
       case 'baton2_inbox':
         result = coord('inbox', args?.recipient ?? sessionId);

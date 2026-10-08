@@ -1,7 +1,7 @@
 import Base
 import ./stop.bend as Stop
 import ./receive.bend as Receive
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ../host/process.bend as P
 import ../host/session-lock.bend as Lock
 import ../host/sqlite.bend as DB
@@ -175,4 +175,13 @@ law stopped_completion_reports_to_the_recorded_upstream_recipient:
   ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT st.report_id,s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','session-stopped','session',s.id,'stopId',st.id,'reason',st.reason,'attempt',st.attempt,'requestedSignal',st.signal,'nativeStatus',st.native_status,'nativeEvent',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'observationError',nullif(" ++ C.q(error) ++ ",''),'output'," ++ C.q(log) ++ ",'workspace',s.workspace,'branch',s.branch,'native',s.native) FROM session_stops st JOIN sessions s ON s.id=st.session WHERE st.session=" ++ C.q(session) ++ " AND st.attempt=" ++ C.q(attempt) ++ " AND st.report_id<>'' AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert() ++ "COMMIT;") : String}
 
 def stopped_completion_reports_to_the_recorded_upstream_recipient(session,attempt,status,event,error,log):
+  {==}
+
+law admitted_stop_clears_only_its_own_claim:
+  for session: String
+  for id: String
+  for reason: String
+  {Stop.stop_claim_sql(session,id,reason) == "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(id) ++ " AND reason=" ++ C.q(reason) ++ ");" : String}
+
+def admitted_stop_clears_only_its_own_claim(session,id,reason):
   {==}

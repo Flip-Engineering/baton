@@ -27,19 +27,8 @@ runtime paths, dependencies and retained state. [Harness setup](../docs/bend2/ha
 describes the qualified routes. [Native artifacts](../docs/bend2/native-artifacts.md)
 describes native packaging and the extracted-artifact runtime smoke.
 
-`bend2/src/coordinator/laws.bend` states the sixteen operative entries of
-[the approved laws](../docs/bend2/laws-proposed.md) over the functions this
-tree implements them with, and proves each one beside its claim. The entry
-module imports that module, so a compile of the entry verifies every
-operative law, and the native build refuses the tree while a law is unproven
-or false.
-
-```sh
-node bend2/scripts/laws-check.mjs
-```
-
-The law check runs compile, mutation and proof-removal diagnostics in a copied
-source tree. Run it directly when reviewing the operative laws.
+Runtime fixtures are available in `bend2/test` and `bend2/tests`. Run checks for
+the affected commands and host behavior on remote validation runners.
 
 `python3 bend2/scripts/compare-coordinators.py --help` describes a repeatable
 comparison of retained coordination operations with a pinned old Baton checkout.
@@ -213,6 +202,25 @@ available. Read `session ID` and `worktree ID`, retry the recorded assignment,
 or recruit a new ID with a new branch and unused path.
 `worktree ID` reads its current Git branch, commit and dirty state.
 
+`configure ID HARNESS MODEL EFFORT HARNESS_CMD OUTPUT_LOG EXPECTED_HARNESS
+EXPECTED_MODEL EXPECTED_EFFORT` moves an existing registered session's next
+admitted turn to another provider route. It keeps the Player's identity,
+parentage, workspace, branch, base, native conversation and every stored
+message, and rebuilds the receiver endpoint from `MODEL` for a Codex or OMP
+route. A Muse or Claude harness keeps no receiver endpoint, because
+`dispatch-turn` reads the recorded route when it launches. The expected route is
+the route the caller read first: a delayed or repeated change that still names
+the old route is refused, so a continuation that lost its transport response
+cannot reconfigure a session whose route already moved. A terminal stop, an
+owned attempt, a harness a Player is not launched with, an empty model or an
+endpoint that is not admissible argv returns `configure-refused` with exit
+status 2. For `codex` and `omp`, an unmapped model key is refused before
+any row is written. `muse` and `claude-code` validate the model when the
+next turn launches. To
+continue a Player whose provider stopped accepting work, read `session` and
+`inbox`, configure the recorded route to an available provider, and deliver the
+retained input again.
+
 `land PLAYER_ID REPO TARGET_BRANCH` looks up the Player's branch from the
 database, verifies the Player tip is a fast-forward from the target, and
 advances the target with a compare-and-swap `update-ref`. The answer is JSON
@@ -325,14 +333,17 @@ A later turn resumes the recorded
 native session. The logical Player and its workspace remain available.
 
 The supervisor retains stdout at `OUTPUT_LOG` and stderr at `OUTPUT_LOG.stderr`.
-The public log applies the session's level to provider frames. At the default
-level it holds the newest `tool_execution_update`, `message_start`, and
-`message_update` for each open identity until a completing frame arrives or the
-turn ends. Public logs append frames at their recorded paths. `logs SESSION
-[LEVEL]` reads or sets the level, `logs-storage` reports registered output and
-attempt files, and `logs-clean` removes eligible attempt diagnostics. The
-[logging guide](../docs/bend2/logging.md) describes the levels and attempt
-cleanup rules.
+The public log keeps the frames that carry a session, actor, turn, message, tool,
+error, exit, delivery or validation identifier. At the default level it drops
+the cumulative `message_update` and `tool_execution_update` snapshots the
+provider resends while a message or a tool call is running, and holds the newest
+`tool_execution_update` of each open call and the newest `message_start` and
+`message_update` of each message until its `tool_execution_end` or
+`message_end` arrives. The coordinator appends complete retained frames to a
+per-turn log and writes native stderr to a separate per-run file. `logs` reads
+and sets the concise level, `logs-storage` reports registered files, and
+`logs-clean` removes eligible completed attempt artifacts. [The log policy](../docs/bend2/logging.md)
+describes the levels and file ownership.
 New supervisors use
 the selected coordinator executable. Keep existing logs at their recorded paths
 when changing the installed coordinator between lanes.
@@ -405,9 +416,12 @@ DB="$STATE/state.db"
 
 `start` configures a native receiver and dispatches the task. It preserves a
 compatible existing Principal's saved conversation and pending input.
-`receiver SESSION HARNESS_COMMAND OUTPUT_LOG` generates the endpoint for an
-existing Codex or OMP session and preserves its saved native ID. It resolves
-executable and log paths and selects the recorded model, effort and workspace.
+`receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]` generates the endpoint for an
+existing Codex, OMP, Muse or Claude Code session and preserves its saved native ID. It resolves
+executable and log paths and selects the recorded model, effort and workspace; the
+optional `CWD` records the working directory the session's turns run in. A session
+that records no model or no working directory is refused, because that endpoint
+would start no turn.
 The configured model Git registry applies to each launched session through the
 installed Node helper; see [series Git identities](../docs/bend2/git-series-identities.md).
 
@@ -482,6 +496,25 @@ Codex retains conversations in its configured storage. Native OMP receive uses
 for sessions with a parent. The Node OMP adapter uses `DATABASE.root-sessions`
 for logical ID `root` and `DATABASE.session-HEX_ID` for other IDs. Each directory
 stores conversations by their native identity; the path does not assign a role.
+
+For Muse, register harness `muse` and use its executable, model and effort in the
+same endpoint. Muse reads its task from `exec --json --prompt-file`, so a Muse
+receive attempt writes the composed pending input at `ATTEMPT.prompt.txt` beside
+the attempt directory and passes that path to the adapter, adding
+`--session-id` for the session's recorded conversation. The attempt closes the
+child's input immediately and reads the child's `--json` stream. A Muse
+Conductor with no recorded conversation starts one and records its identity from
+the session envelope; later messages resume it. The principal `start` command
+accepts `muse` as well as `codex` and `omp`.
+
+For Claude Code, register harness `claude-code` and use its executable, model and
+effort in the same endpoint. Claude reads one user frame from its input, so a
+Claude receive attempt writes the composed pending input as that frame, adds
+`--resume` for the session's recorded conversation and closes the child's input.
+An interactive Claude Code Conductor keeps the channel attachment described
+below; a Claude Player's endpoint is the native receive operation, and the
+principal `start` command accepts `claude-code` as well as `codex`, `omp` and
+`muse`.
 
 Retained OMP children send native input, selection, confirmation and editor
 questions to their registered parent. The question names its request ID and
@@ -670,7 +703,7 @@ native executable or launch wrapper an absolute path:
 ```
 
 The sequence starts real Players on all four routes, interrupts and resumes their
-native sessions, guides a running OMP Player, triggers native Codex and OMP Conductors
+native sessions, guides a running OMP Player, triggers native Codex, OMP and Muse Conductors
 from Player reports, delivers a Claude channel notification, and recovers all
 three Conductors. The Git stage lands reviewed Player commits, exercises a moving
 target and conflict resolution, and pushes to a scratch bare remote whose ref

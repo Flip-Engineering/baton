@@ -26,8 +26,8 @@ def argv(cmd: String, model: String, effort: String, sessions: String, session: 
     case True{}: P.argv(arguments(cmd,model,effort,sessions))
     case False{}: P.argv(List.append(&1,String,arguments(cmd,model,effort,sessions),["--resume",session]))
 
-def start_player(cmd: String, model: String, effort: String, cwd: String, +log: String, sessions: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
-  P.ProcessChild.spawn(argv(cmd,model,effort,sessions,session,fresh),cwd,log ++ ".stderr")
+def start_player(cmd: String, model: String, effort: String, cwd: String, sessions: String, session: String, fresh: Bool, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  P.ProcessChild.spawn(argv(cmd,model,effort,sessions,session,fresh),cwd,stderr)
 
 # The setup asks the server for the documented delta projection (issue #662):
 # events:null forwards every event category and messageUpdates:"delta" replaces

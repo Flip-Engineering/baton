@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import select
+import re
 import shlex
 import shutil
 import subprocess
@@ -43,11 +44,17 @@ class Commands:
     def __init__(self, output, cwd, environment, actor):
         self.output, self.cwd, self.environment, self.actor = output, cwd, environment, actor
         self.number = 0
+        self.last_record = None
+        self.last_record_path = None
 
-    def call(self, name, argv, expected=0, input_data=None):
+    def call(self, name, argv, expected=0, input_data=None, record_environment=False):
         self.number += 1
         prefix = self.output / 'commands' / f'{self.actor}-{os.getpid()}-{self.number}-{name}'
-        row = {'argv': list(map(str, argv)), 'cwd': str(self.cwd), 'started_unix': time.time()}
+        row = {'argv': list(map(str, argv)), 'cwd': str(self.cwd),
+               'expected_exit_code': expected if isinstance(expected, int) else list(expected),
+               'started_unix': time.time()}
+        if record_environment:
+            row['environment'] = dict(sorted(self.environment.items()))
         if input_data is not None:
             prefix.with_suffix('.stdin').write_text(input_data)
             row['stdin'] = record(prefix.with_suffix('.stdin'), self.output)
@@ -62,6 +69,7 @@ class Commands:
         row.update({stream: record(prefix.with_suffix('.' + stream), self.output)
                     for stream in ('stdout', 'stderr')})
         save(prefix.with_suffix('.json'), row)
+        self.last_record, self.last_record_path = row, prefix.with_suffix('.json')
         require(row['exit_code'] in expected if isinstance(expected, tuple) else row['exit_code'] == expected,
                 f'{name} exited {row["exit_code"]}; complete streams: {prefix}.stdout and {prefix}.stderr')
         return prefix.with_suffix('.stdout').read_text()
@@ -332,6 +340,44 @@ def main():
                                                      '-o', 'pid=,ppid=,stat=,lstart=,command='], (0, 1))
         require(not remaining, 'Captured process PIDs remain; inspect the closure command output')
         require(not unavailable.exists(), 'Original build source path became available during the smoke check')
+        package_ui = prefix / 'libexec/baton2/ui'
+        require((package_ui / 'server.mjs').is_file()
+                and (package_ui / 'native-owner-subscription.mjs').is_file(),
+                'The extracted artifact must contain the Orchestra server and native owner adapter')
+        view_test_name = 'view CLI streams a committed native message through the owner subscription'
+        view_test_path = Path(__file__).resolve().parent.parent / 'test/ui-orchestra-server.test.mjs'
+        require(view_test_path.is_file(), f'Public native view test is missing: {view_test_path}')
+        view_environment = {
+            'PATH': environment['PATH'],
+            'BATON2_REQUIRE_NATIVE_VIEW': '1',
+            'BATON2_NATIVE_BINARY': str(binary),
+            'BATON2_PACKAGE_ROOT': str(prefix),
+            'GIT_CONFIG_GLOBAL': os.devnull,
+            'GIT_CONFIG_NOSYSTEM': '1',
+        }
+        view_commands = Commands(output, working, view_environment, 'public-native-view')
+        node_version = view_commands.call('node-version', [node, '--version'], record_environment=True).strip()
+        version = re.match(r'^v([0-9]+)\.', node_version)
+        require(version is not None and int(version.group(1)) >= 22,
+                f'Public native view requires Node 22 or later; found {node_version!r}')
+        view_tap = view_commands.call('committed-message-sse', [
+            node, '--test', '--test-reporter=tap',
+            f'--test-name-pattern=^{view_test_name}$', str(view_test_path),
+        ], record_environment=True)
+        passed_target = re.search(rf'^ok [0-9]+ - {re.escape(view_test_name)}$', view_tap, re.MULTILINE)
+        require(passed_target is not None,
+                'The committed-message public view test did not report an exact TAP pass')
+        require(re.search(r'^# pass 1$', view_tap, re.MULTILINE)
+                and re.search(r'^# fail 0$', view_tap, re.MULTILINE),
+                'The public view TAP result must contain exactly one pass and zero failures')
+        view_source = {'path': str(view_test_path), 'bytes': view_test_path.stat().st_size,
+                       'sha256': digest(view_test_path)}
+        public_view = {
+            'status': 'passed', 'test_name': view_test_name, 'pass_count': 1,
+            'node_version': node_version, 'test_source': view_source,
+            'package_binary': record(binary, output), 'package_root': str(prefix),
+            'command_record': record(view_commands.last_record_path, output),
+        }
         result.update(status='passed', source=manifest['source'], binary_sha256=digest(binary),
                       extracted_prefix=str(prefix), runtime_cwd=str(working), runtime_PATH=environment['PATH'],
                       BEND_present='BEND' in environment, native_self_reexec_verified=True,
@@ -340,6 +386,7 @@ def main():
                       recorded_pids=pids, matching_pids=[], direct_subprocesses_waited=True,
                       native_wait_statuses=None,
                       fixture_python={'path':sys.executable,'sha256':digest(Path(sys.executable))},
+                      public_native_view=public_view, public_native_view_passed=True,
                       scope='Extracted native artifact on this host with system libraries, Git and an external controlled Python fixture. Public land is exercised; no selected landing checks or real provider is run.')
     except Exception as error:
         result['error'] = repr(error)

@@ -1,5 +1,5 @@
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./stop.bend as Stop
 import ./delivery.bend as Delivery
@@ -7,11 +7,12 @@ import ../host/session-lock.bend as Lock
 import ./guidance.bend as Guidance
 import ./native-requests.bend as NativeRequests
 import ./observer-checkpoint.bend as Observer
-import ./logs.bend as Logs
+import ./../coordinator/logs.bend as Logs
 import ../host/log-checkpoint.bend as Checkpoint
 import ../host/sqlite.bend as DB
 import ../host/text.bend as T
 import ../host/process.bend as P
+import ../host/instance.bend as Custody
 import ../git/text.bend as Tx
 import ../harness/claude-player.bend as Claude
 import ../harness/omp-player.bend as Omp
@@ -103,15 +104,19 @@ def prepare_parent(db: String, player: String, id: String, log: String, stderr: 
         case False{}: IO.pure(Unit,Unit{})
         case True{}: prepare_player(db,player,id,log,stderr,error,status,Bool.or(String.eq(status,"start failed"),String.eq(status,"input failed")))
 
-# Failure reports are committed while this invocation still owns the session.
-def prepare(+db: String, +player: String, id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):
-  do IO<Unit>:
-    recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    prepare_parent(db,player,id,log,stderr,outcome,String.eq(recipient,"1\n"))
+def generation_log(+log: String, +id: String) -> String:
+  Logs.attempt_log(log,id)
 
-def record_exit(db: String, player: String, id: String, log: String, outcome: Outcome) -> IO(Unit):
+# Failure reports are committed while this invocation still owns the session.
+def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):
+  do IO<Unit>:
+    +generation : String <- IO.pure(String,generation_log(log,id))
+    recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
+    prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
+
+def record_exit(db: String, player: String, +id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
-    case Ended{status,event,error}: Stop.exited(db,player,id,status,event,error,log)
+    case Ended{status,event,error}: Stop.exited(db,player,id,status,event,error,generation_log(log,id))
 
 def player_finished(+db: String, player: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -530,18 +535,20 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
     case Fail{error}: IO.pure(Outcome,Ended{"start failed","","Player process could not start: " ++ error_text(error)})
     case Done{+handle}:
       do IO<Outcome>:
-        +policy : Logs.Policy <- Logs.open(db,player,log)
-        restored : Result<&1,&1,U32 & String,Unit> <- checkpoint_restore(log)
+        +generation : String <- IO.pure(String,generation_log(log,id))
+        +policy : Logs.Policy <- Logs.open_attempt(db,player,log,id)
+        restored : Result<&1,&1,U32 & String,Unit> <- checkpoint_restore(generation)
         sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness))
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,log,policy,"",False{},handle,harness,"0\n","","","","","","",remember_write("",restored),sender,"",Observer.empty(),False{},Nil{},first)
+        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,"",False{},handle,harness,"0\n","","","","","","",remember_write("",restored),sender,"",Observer.empty(),False{},Nil{},first)
         direct_observed(observation)
 
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
-def retained_output(+db: String, +player: String, id: String, +log: String, +harness: String, attempt: String, +handle: U32) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def retained_output(+db: String, +player: String, +id: String, +log: String, +harness: String, attempt: String, +handle: U32) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
-    +policy : Logs.Policy <- Logs.open(db,player,log)
+    +generation : String <- IO.pure(String,generation_log(log,id))
+    +policy : Logs.Policy <- Logs.open_attempt(db,player,log,id)
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     +checkpoint_state : Observer.State <- Observer.restore(db,handle)
     first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
@@ -553,15 +560,36 @@ def retained_output(+db: String, +player: String, id: String, +log: String, +har
     filter : String <- IO.pure(String,Observer.filter_mode(checkpoint_state))
     codex_log : String <- IO.pure(String,Observer.codex_log(checkpoint_state))
     held : String <- IO.pure(String,Observer.held(checkpoint_state))
-    consume(db,player,id,log,policy,held,False{},handle,harness,cursor,last_message,primary,current,terminal,filter,codex_log,"",sender,attempt,checkpoint_state,False{},Nil{},first)
+    consume(db,player,id,generation,policy,held,False{},handle,harness,cursor,last_message,primary,current,terminal,filter,codex_log,"",sender,attempt,checkpoint_state,False{},Nil{},first)
 
-def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+def muse_retained_arguments(cmd: String, model: String, effort: String, prompt_file: String, +session: String) -> List<String>:
+  List.append(&1,String,Muse.arguments(cmd,model,effort,prompt_file),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session]))
+
+def retained_arguments(omp: Bool, claude: Bool, +cmd: String, +model: String, +effort: String, sessions: String, +native: String) -> String:
+  Bool.pick(String,claude,
+    Claude.argv(cmd,model,effort,native,String.is_empty(native)),
+  Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
+
+# Claude reads one user frame from its input; OMP reads its prompt frames there.
+def retained_input(muse: Bool, omp: Bool, claude: Bool, +prompt: String) -> String:
+  Bool.pick(String,muse,"",Bool.pick(String,claude,Claude.user_frame(prompt),Bool.pick(String,omp,Omp.prompt(prompt),prompt)))
+
+# The Muse task file, Claude's single frame and Codex's stdin all close the child's
+# input; OMP keeps it open for steer frames.
+def retained_keep_stdin(muse: Bool, omp: Bool, claude: Bool) -> U32:
+  Bool.pick(U32,muse,0,Bool.pick(U32,claude,0,Bool.pick(U32,omp,1,0)))
+
+def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
     alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
-    args : String <- IO.pure(String,Bool.pick(String,String.eq(harness,"omp\n"),Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
-    input : String <- IO.pure(String,Bool.pick(String,String.eq(harness,"omp\n"),Omp.prompt(prompt),prompt))
-    P.ProcessChild.retain(directory,args,cwd,directory ++ "/native.stderr",input,Bool.pick(U32,String.eq(harness,"omp\n"),1,0),lock,recovery)
+    +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
+    muse_args : String <- IO.pure(String,P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
+    +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
+    +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
+    args : String <- IO.pure(String,retained_arguments(omp,claude,cmd,model,effort,sessions,native))
+    input : String <- IO.pure(String,retained_input(False{},omp,claude,prompt))
+    Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),String.eq(harness,"muse\n"),Custody.Instance.admit_with_file(db,directory,muse_args,cwd,directory ++ "/native.stderr","prompt.txt",prompt,retained_input(True{},omp,claude,prompt),retained_keep_stdin(True{},omp,claude),Some{lock},recovery),Custody.Instance.admit(db,directory,args,cwd,directory ++ "/native.stderr",input,retained_keep_stdin(False{},omp,claude),Some{lock},recovery))
 
 def claude_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:
@@ -573,14 +601,14 @@ def muse_launch(cmd: String, model: String, effort: String, cwd: String, stderr:
     case True{}: Muse.start_player(cmd,model,effort,cwd,stderr,task)
     case False{}: Muse.resume_player(cmd,model,effort,cwd,stderr,session,task)
 
-def launch(sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
+def launch(sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +stderr: String, +session: String, +harness: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"omp\n"),
-    Omp.start_player(cmd,model,effort,cwd,log,sessions,session,String.is_empty(session)),
+    Omp.start_player(cmd,model,effort,cwd,sessions,session,String.is_empty(session),stderr),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"muse\n"),
-    muse_launch(cmd,model,effort,cwd,log ++ ".stderr",session,task,String.is_empty(session)),
+    muse_launch(cmd,model,effort,cwd,stderr,session,task,String.is_empty(session)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"codex\n"),
-    Codex.start_player(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)),
-    claude_launch(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)))))
+    Codex.start_player(cmd,model,effort,cwd,stderr,session,String.is_empty(session)),
+    claude_launch(cmd,model,effort,cwd,stderr,session,String.is_empty(session)))))
 
 # The state the workspace holds when a turn restarts: the work an interrupted
 # turn had already written.
@@ -621,7 +649,7 @@ def refusal(+log: String, resumable: Bool, +outcome: Outcome) -> IO(Bool):
   match outcome:
     case Ended{status,event,error}:
       do IO<Bool>:
-        text : Result<&1,&1,U32 & String,String> <- T.Text.read(log ++ ".stderr")
+        text : Result<&1,&1,U32 & String,String> <- T.Text.read(log)
         refusal_read(resumable,event,text)
 
 # The refused conversation is gone, so the pending input runs fresh and names
@@ -636,22 +664,24 @@ def supervise_gone(+db: String, +player: String, +id: String, +cmd: String, +mod
     case False{}: IO.pure(Outcome,first)
     case True{}: do IO<Outcome>:
       note : String <- refused_note(cwd,prompt)
-      child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,log,"",harness,task)
+      stderr : String <- Logs.open_stderr_run(db,player,id,generation_log(log,id))
+      child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,stderr,"",harness,task)
       restart(db,player,id,log,note,harness,child)
 
-def supervise_retry(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +native: String, +prompt: String, +first: Outcome) -> IO(Outcome):
+def supervise_retry(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +native: String, +stderr: String, +prompt: String, +first: Outcome) -> IO(Outcome):
   do IO<Outcome>:
     resumable : Bool <- IO.pure(Bool, Bool.not(String.is_empty(native)))
-    gone : Bool <- refusal(log,resumable,first)
+    gone : Bool <- refusal(stderr,resumable,first)
     supervise_gone(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,prompt,first,gone)
 
 def supervise(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String, +harness: String, +sessions: String, +prompt: String) -> IO(Outcome):
   do IO<Outcome>:
     alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
-    child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,log,native,harness,task)
+    +stderr : String <- Logs.open_stderr_run(db,player,id,generation_log(log,id))
+    child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,stderr,native,harness,task)
     first : Outcome <- started(db,player,id,log,prompt,harness,child)
-    supervise_retry(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,native,prompt,first)
+    supervise_retry(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,native,stderr,prompt,first)
 
 def task_read(db: String, player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, harness: String, sessions: String, result: Result<&1,&1,U32 & String,String>) -> IO(Outcome):
   match result:

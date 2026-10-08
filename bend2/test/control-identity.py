@@ -117,6 +117,7 @@ class ControlIdentity(unittest.TestCase):
         self.assertEqual((delivery['sender'], delivery['recipient'], delivery['body']),
                          ('recipient', 'root', report))
         self.assertEqual(self.call('player', 'recipient')['native'], native['native'])
+        controls.shutdown_fixture_owner(self)
         self.eventually(lambda: not self.process_rows())
         for pin in self.pins:
             self.assertEqual(hashlib.sha256(pathlib.Path(pin['copy']).read_bytes()).hexdigest(), pin['sha256'])

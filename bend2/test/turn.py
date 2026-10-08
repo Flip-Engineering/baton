@@ -2,6 +2,7 @@
 import json
 import os
 import pathlib
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -58,8 +59,11 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.assertEqual(p.returncode,0,p.stderr)
         return p.stdout
 
-    def run_turn(self,cmd=None):
-        return self.call('turn','worker','turn-1',str(cmd or self.player),'model','high',str(self.cwd),str(self.task),str(self.log),'')
+    def generation(self,turn_id):
+        return self.cwd / (self.log.name + '.attempt-' + turn_id)
+
+    def run_turn(self,cmd=None,turn_id='turn-1'):
+        return self.call('turn','worker',turn_id,str(cmd or self.player),'model','high',str(self.cwd),str(self.task),str(self.log),'')
 
     def test_native_process_output_becomes_parent_report(self):
         self.run_turn()
@@ -67,15 +71,32 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.assertEqual([m['body'] for m in inbox],['Task recorded.'])
         self.assertEqual((self.cwd/'received.txt').read_text(),self.task.read_text())
         self.assertEqual(json.loads(self.call('player','worker'))['native'],'native-fixture')
-        self.assertEqual(len(self.log.read_text().splitlines()),3)
+        self.assertEqual(len(self.generation('turn-1').read_text().splitlines()),3)
 
     def test_completed_turn_retry_does_not_start_another_process(self):
         self.run_turn()
-        before=self.log.read_text()
+        before=self.generation('turn-1').read_text()
         self.player.unlink()
         self.run_turn()
-        self.assertEqual(self.log.read_text(),before)
+        self.assertEqual(self.generation('turn-1').read_text(),before)
         self.assertEqual(len(json.loads(self.call('inbox','root'))),1)
+
+    def test_two_real_turns_keep_generations_for_one_output_log(self):
+        self.run_turn(turn_id='generation-one')
+        first = self.generation('generation-one')
+        first_bytes = first.read_bytes()
+        self.run_turn(turn_id='generation-two')
+        second = self.generation('generation-two')
+        self.assertTrue(first.is_file())
+        self.assertEqual(first.read_bytes(), first_bytes)
+        self.assertIn(b'Task recorded.', first_bytes)
+        self.assertIn(b'Task recorded.', second.read_bytes())
+        with sqlite3.connect(self.db) as connection:
+            rows = connection.execute('SELECT attempt,log,base FROM log_generations ORDER BY attempt').fetchall()
+        self.assertEqual(rows, [
+            ('generation-one', str(first), str(self.log)),
+            ('generation-two', str(second), str(self.log)),
+        ])
 
     def test_turn_id_owned_by_another_player_does_not_replay_its_report(self):
         self.register('other','root','claude-code','model','high',str(self.cwd),'other-branch','base')
@@ -103,8 +124,8 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         inbox=json.loads(self.call('inbox','root'))
         self.assertTrue(any('without a native result' in m['body'] for m in inbox))
         self.assertTrue(any('exit 7' in m['body'] for m in inbox))
-        self.assertEqual(self.log.read_text(),'unframed startup failure\n')
-        self.assertEqual(pathlib.Path(str(self.log)+'.stderr').read_text(),'diagnosis')
+        self.assertEqual(self.generation('turn-1').read_text(),'unframed startup failure\n')
+        self.assertEqual(pathlib.Path(str(self.generation('turn-1'))+'.stderr').read_text(),'diagnosis')
 
     def test_omp_prompt_session_route_and_terminal_report(self):
         self.register('omp-worker','root','omp','requested-model','high',str(self.cwd),'omp-branch','base')
@@ -132,10 +153,15 @@ assert sys.stdin.read()==''
         self.assertEqual(session['native'],'omp-native')
         self.assertEqual(session['observedModel'],'provider/actual-model')
         self.assertEqual(session['model'],'requested-model')
-        frames=[json.loads(line) for line in self.log.read_text().splitlines()]
+        event_lines=self.generation('omp-turn').read_text().splitlines()
+        frames=[json.loads(line) for line in event_lines]
         self.assertEqual([f for f in frames if f.get('type')=='message_update'], [])
         self.assertEqual([f['partialResult']['content'][0]['text'] for f in frames if f.get('type')=='tool_execution_update'], [self.task.read_text()])
         self.assertEqual([f['type'] for f in frames], ['response','message_end','agent_end','agent_end','tool_execution_update','baton_event_filter'])
+        with sqlite3.connect(self.db) as connection:
+            stored_event=connection.execute('SELECT event FROM turns WHERE id=?',('omp-turn',)).fetchone()[0]
+        self.assertEqual(json.loads(stored_event), next(frame for frame in frames
+                         if frame.get('type') == 'agent_end' and frame.get('isTerminal') is True))
         args=json.loads((self.cwd/'argv.json').read_text())
         self.assertEqual(args[args.index('--mode')+1],'rpc')
         self.assertEqual(args[args.index('--session-dir')+1],str(self.db)+'.sessions')
@@ -171,7 +197,7 @@ assert sys.stdin.read()==''
 ''')
         self.call('turn','omp-worker','retained-turn',str(self.player),'model','low',str(self.cwd),str(self.task),str(self.log),'')
         note='{"type":"baton_event_filter","requested":"delta","active":false,"outcome":"unacknowledged"}'
-        self.assertEqual(self.log.read_text().splitlines(),retained+[terminal,omitted[1],note])
+        self.assertEqual(self.generation('retained-turn').read_text().splitlines(),retained+[terminal,omitted[1],note])
         self.assertEqual(json.loads(self.call('delivery','retained-turn'))['body'],final_text)
 
     def test_omp_empty_terminal_envelope_delivers_streamed_trial_report(self):
@@ -202,7 +228,7 @@ assert sys.stdin.read()==''
         self.assertEqual(json.loads(self.call('delivery','trial-report'))['body'], expected)
         self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'], expected)
         note='{"type":"baton_event_filter","requested":"delta","active":false,"outcome":"unacknowledged"}'
-        self.assertEqual(self.log.read_text().splitlines(),events.splitlines()+[note])
+        self.assertEqual(self.generation('trial-report').read_text().splitlines(),events.splitlines()+[note])
         self.assertEqual([json.loads(line) for line in received.read_text().splitlines()], [expected])
         self.player.unlink()
         self.call('turn','omp-worker','trial-report',str(self.player),'deepseek/deepseek-flash','low',str(self.cwd),str(self.task),str(self.log),'')
@@ -257,7 +283,7 @@ emit({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','cont
 pathlib.Path('emitted.jsonl').write_text(chr(10).join(emitted)+chr(10))
 ''')
         self.call('turn','omp-worker','delta-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
-        frames=[json.loads(line) for line in self.log.read_text().splitlines()]
+        frames=[json.loads(line) for line in self.generation('delta-turn').read_text().splitlines()]
         self.assertEqual([f['type'] for f in frames],['response','response','message_end','agent_end','baton_event_filter'])
         self.assertEqual(frames[0],{'type':'response','id':'baton:filter','command':'set_event_filter','success':True,'data':{'events':None,'messageUpdates':'delta'}})
         self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'delta','active':True})
@@ -282,7 +308,7 @@ print(json.dumps({'type':'message_end','message':{'role':'assistant','provider':
 print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','content':[{'type':'text','text':'refused answer λ'}]}]}),flush=True)
 ''')
         self.call('turn','omp-worker','refused-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
-        frames=[json.loads(line) for line in self.log.read_text().splitlines()]
+        frames=[json.loads(line) for line in self.generation('refused-turn').read_text().splitlines()]
         self.assertEqual([f['type'] for f in frames],['response','response','message_end','agent_end','baton_event_filter'])
         self.assertIs(frames[0]['success'],False)
         self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'delta','active':False,'outcome':'refused'})
@@ -317,7 +343,8 @@ print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assi
             self.task.write_text('run ' + name)
             turn_log = self.log.with_suffix('.' + name + '.jsonl')
             self.call('turn','omp-worker',name + '-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(turn_log),'')
-            frames=[json.loads(line) for line in turn_log.read_text().splitlines()]
+            generated=pathlib.Path(str(turn_log)+'.attempt-'+name+'-turn')
+            frames=[json.loads(line) for line in generated.read_text().splitlines()]
             self.assertEqual(frames[0],reply,name)
             self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'delta','active':False,'outcome':expected[name]},name)
             self.assertEqual(json.loads(self.call('delivery',name + '-turn'))['body'],'partial answer λ',name)

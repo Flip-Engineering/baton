@@ -15,6 +15,19 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
 
+
+def shutdown_fixture_owner(case):
+    config = json.loads((case.directory / 'fixture.json').read_text())
+    argv = [config['exe'], '--instance-shutdown', str(case.db)]
+    result = subprocess.run(argv, env=case.environment, capture_output=True,
+                            text=True, timeout=10)
+    with (case.directory / 'commands.jsonl').open('a') as output:
+        output.write(json.dumps({'argv': argv, 'code': result.returncode,
+                                 'stdout': result.stdout, 'stderr': result.stderr,
+                                 'direct_wait_completed': True}) + '\n')
+    case.assertEqual(result.returncode, 0, result.stderr)
+
+
 FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys
 home=pathlib.Path(__file__).resolve().parent
 config=json.loads((home/'fixture.json').read_text())
@@ -252,6 +265,7 @@ class Control(unittest.TestCase):
                 pass
             connection.close()
         self.server.close()
+        shutdown_fixture_owner(self)
         self.eventually(lambda: not self.process_rows())
 
     def test_start_detaches_native_subscription_and_operator_report(self):
@@ -340,12 +354,14 @@ class Control(unittest.TestCase):
 
     def test_receiver_refuses_unsupported_stopped_and_missing_sessions(self):
         self.root()
-        for harness in ('muse', 'claude-code'):
-            self.recruit(harness, harness)
-            self.call('connect', harness, 'saved-' + harness, '')
-            before = self.call('player', harness)
-            self.call('receiver', harness, self.fixture, self.directory / (harness + '.jsonl'), ok=False)
-            self.assertEqual(self.call('player', harness), before)
+        # A Muse Conductor registers the same native receive endpoint; only the
+        # interactive Claude channel attachment has no receive endpoint.
+        harness = 'claude-code'
+        self.recruit(harness, harness)
+        self.call('connect', harness, 'saved-' + harness, '')
+        before = self.call('player', harness)
+        self.call('receiver', harness, self.fixture, self.directory / (harness + '.jsonl'), ok=False)
+        self.assertEqual(self.call('player', harness), before)
         self.recruit('stopped')
         self.call('message', 'retained', 'root', 'stopped', 'task', self.task.read_text())
         self.call('stop', 'stopped', 'idle-stop', 'Controlled idle stop.')
@@ -471,6 +487,7 @@ class Control(unittest.TestCase):
                     self.eventually(lambda: any(row['id'] == ident for row in self.call('turns', session)))
                     self.assertEqual(self.call('delivery', ident)['recipient'], 'root')
                     self.assertEqual(self.call('player', session)['native'], native)
+                    shutdown_fixture_owner(self)
                     self.eventually(lambda: not self.process_rows())
 
     def test_pretty_reads_preserve_complete_machine_fields_and_long_report(self):

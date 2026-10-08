@@ -1115,6 +1115,29 @@ law m3a_held_advance_is_the_worktree_fast_forward:
 def m3a_held_advance_is_the_worktree_fast_forward(path, repo, target, cand, basis):
   {==}
 
+# The successful holder preflight runs the exact fast-forward command and
+# passes its outcome to the publication observer.
+def held_ready_fast_forward(+path: String, +repo: String, +target: String, +cand: String, +basis: String) -> IO(L.LAdv):
+  +p2 = path
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  +b2 = basis
+  do IO<L.LAdv>:
+    merged : T.GitOut <- P.runGit(p2, ["merge", "--ff-only", c2])
+    L.ld_adv_wt_pick(merged, p2, r2, t2, c2, b2)
+
+law m3a_held_ready_branch_runs_the_fast_forward_command:
+  for path: String
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  {L.ld_adv_wt_head_same(True{}, path, repo, target, cand, basis) == held_ready_fast_forward(path, repo, target, cand, basis) : IO(L.LAdv)}
+
+def m3a_held_ready_branch_runs_the_fast_forward_command(path, repo, target, cand, basis):
+  {==}
+
 
 # The held success arm dispatches through the source-bound publication
 # observer; a zero exit from merge alone is not a landed answer.

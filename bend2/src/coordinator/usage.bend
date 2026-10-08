@@ -4,7 +4,7 @@
 # assistant-message observations under that contract; it does not price tokens,
 # enforce a budget or keep accounting state.
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
 import ../host/text.bend as Text

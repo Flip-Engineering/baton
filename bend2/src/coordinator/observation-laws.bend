@@ -1,6 +1,6 @@
 import Base
 import ./turn.bend as Turn
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 
 law muse_primary_identity_comes_from_the_admitted_turn_input:
   for +event: String

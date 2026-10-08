@@ -19,7 +19,7 @@
 # identity, sender, recipient and body, so the cited evidence travels with the
 # finding and a promotion shares that cited evidence and nothing else.
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 import ../host/text.bend as T
