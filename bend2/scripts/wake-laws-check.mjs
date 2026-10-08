@@ -125,9 +125,9 @@ const mutations = [
   {
     law: 'a_handed_invocation_settles_the_claim_only_while_holding_the_lock',
     file: 'bend2/src/coordinator/receive.bend',
-    description: 'a handed invocation settles the claim from its own count read',
-    find: 'def claim_left(+db: String, +session: String) -> IO(Unit):\n  do IO<Unit>:\n    pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,"0")))\n    left : Unit <- release_if_owed(db,session,Bool.not(String.eq(pending,"0\\n")))\n    IO.pure(Unit,Unit{})',
-    replace: 'def claim_left(+db: String, +session: String) -> IO(Unit):\n  do IO<Unit>:\n    pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,"0")))\n    left : Unit <- release_if_owed(db,session,False{})\n    IO.pure(Unit,Unit{})',
+    description: 'a handed invocation settles the claim for the session it holds the lock on',
+    find: 'def claim_left(+db: String, +session: String) -> IO(Unit):\n  Lock.SessionLock.acquire_session(Unit,db,session,\n    +canonical => lock => settle_owned(canonical,session,lock))',
+    replace: 'def claim_left(+db: String, +session: String) -> IO(Unit):\n  Lock.SessionLock.acquire_session(Unit,db,session,\n    +canonical => lock => settle_owned(canonical,"",lock))',
     entry: ENTRY_MODULE,
   },
 ];
