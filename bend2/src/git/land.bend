@@ -788,13 +788,13 @@ type MutationMode is Data:
 type LdQualified is Data:
   QualDecided{mode: MutationMode, target_ref: LdRead, head_ref: LdRead}
 
-# The association the attempt read before any mutation: the values the association module
-# actually observed, or the step and the observation that refused it. The request operands and
-# the observed candidate, basis, head and common directories are retained here, so no later
-# step re-resolves them.
+# The association the attempt read before any mutation: the request the attempt built and the
+# values the association module returned from it, or the step and the observation that refused it.
+# The intermediate observations each read produced are not retained here: the module returns
+# normalized values and drops every successful observation.
 type AssociationEvidence is Data:
   AssociationMissing{}
-  AssociationObserved{step: String, candidate_oid: String, basis_oid: String, target_head: String, holder_common: String, destination_common: String}
+  AssociationObserved{step: String, request: A.AssociationRequest, candidate_oid: String, basis_oid: String, target_head: String, holder_common: String, destination_common: String}
   AssociationRefused{step: String, observation: T.GitOut}
 
 type LdAdvObs is Data:
@@ -902,13 +902,20 @@ def identity_fields(identity: IdentityEvidence, rest: List<String>) -> List<Stri
     case IdentityMissing{}: Con{"identity-missing", rest}
     case IdentityObserved{common, +observed, target}: Con{"identity-observed", Con{common, Con{target, observation_fields(observed, rest)}}}
 
+# The request the attempt built is written with the association, so the record names the attempt,
+# the target, the destination, the candidate, the basis and the holder the reads used.
+def request_fields(request: A.AssociationRequest, rest: List<String>) -> List<String>:
+  match request:
+    case A.AssociationRequested{attempt, common, target, destination, candidate, basis, holder, retry}:
+      Con{"request", Con{attempt, Con{common, Con{target, Con{destination, Con{candidate, Con{basis, Con{holder, Con{retry, rest}}}}}}}}}
+
 def association_fields(association: AssociationEvidence, rest: List<String>) -> List<String>:
   match association:
     case AssociationMissing{}: Con{"association-missing", rest}
     case AssociationRefused{step, observation}:
       Con{"association-refused", Con{step, observation_fields(observation, rest)}}
-    case AssociationObserved{step, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
-      Con{"association-observed", Con{step, Con{candidate_oid, Con{basis_oid, Con{target_head, Con{holder_common, Con{destination_common, rest}}}}}}}
+    case AssociationObserved{step, request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
+      Con{"association-observed", Con{step, Con{candidate_oid, Con{basis_oid, Con{target_head, Con{holder_common, Con{destination_common, request_fields(request, rest)}}}}}}}
 
 def intent_fields(intent: IntentEvidence, rest: List<String>) -> List<String>:
   match intent:
@@ -1344,8 +1351,60 @@ def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: S
 # holder is the selected read location, which is why the request is built at the selection and
 # not from the caller. The association module never reads the retry field, so the shared path
 # records it empty rather than claiming a retry that did not happen.
-def ld_assoc_request(ctx: LdAdvCtx, holder: String, repo: String, target: String, cand: String, basis: String) -> A.AssociationRequest:
+def ld_assoc_request(+ctx: LdAdvCtx, holder: String, repo: String, target: String, cand: String, basis: String) -> A.AssociationRequest:
   A.AssociationRequested{ladvctx_attempt(ctx), ladvctx_common(ctx), target, repo, cand, basis, holder, ""}
+
+def association_attempt(request: A.AssociationRequest) -> String:
+  match request:
+    case A.AssociationRequested{attempt, common, target, destination, candidate, basis, holder, retry}: attempt
+
+# The returned association is compared, before any mutation, with the operands this attempt fixed
+# and with the read location the route selected: the returned candidate and basis must be the fixed
+# ones, the returned target head must be the basis the target ref was checked against, the request
+# must name the reserved attempt, the target, the destination repository, the candidate, the basis
+# and the selected holder, and both observed commons must be the canonical common the claim answered.
+type AssociationCheck is Data:
+  AssociationAgreed{}
+  AssociationDisagreed{step: String}
+
+def ld_assoc_check(request: A.AssociationRequest, candidate_oid: String, basis_oid: String, target_head: String, holder_common: String, destination_common: String, sel_holder: String, sel_repo: String, sel_target: String, +sel_cand: String, +sel_basis: String, sel_attempt: String, +sel_common: String) -> AssociationCheck:
+  match request:
+    case A.AssociationRequested{attempt, common, target, destination, candidate, basis, holder, retry}:
+      Bool.pick(AssociationCheck, Tx.str_eq(candidate_oid, sel_cand),
+        Bool.pick(AssociationCheck, Tx.str_eq(basis_oid, sel_basis),
+          Bool.pick(AssociationCheck, Tx.str_eq(target_head, sel_basis),
+            Bool.pick(AssociationCheck, Tx.str_eq(candidate, sel_cand),
+              Bool.pick(AssociationCheck, Tx.str_eq(basis, sel_basis),
+                Bool.pick(AssociationCheck, Tx.str_eq(target, sel_target),
+                  Bool.pick(AssociationCheck, Tx.str_eq(destination, sel_repo),
+                    Bool.pick(AssociationCheck, Tx.str_eq(holder, sel_holder),
+                      Bool.pick(AssociationCheck, Tx.str_eq(attempt, sel_attempt),
+                        Bool.pick(AssociationCheck, Tx.str_eq(common, sel_common),
+                          Bool.pick(AssociationCheck, Tx.str_eq(holder_common, sel_common),
+                            Bool.pick(AssociationCheck, Tx.str_eq(destination_common, sel_common),
+                              AssociationAgreed{}, AssociationDisagreed{"destination-common"}),
+                            AssociationDisagreed{"holder-common"}),
+                          AssociationDisagreed{"common"}),
+                        AssociationDisagreed{"attempt"}),
+                      AssociationDisagreed{"holder"}),
+                    AssociationDisagreed{"destination"}),
+                  AssociationDisagreed{"target"}),
+                AssociationDisagreed{"basis"}),
+              AssociationDisagreed{"candidate"}),
+            AssociationDisagreed{"target-head"}),
+          AssociationDisagreed{"returned-basis"}),
+        AssociationDisagreed{"returned-candidate"})
+
+def association_agreed(check: AssociationCheck) -> Bool:
+  match check:
+    case AssociationAgreed{}: True{}
+    case AssociationDisagreed{step}: False{}
+
+def mode_holder(mode: MutationMode, repo: String) -> String:
+  match mode:
+    case MutationHeld{path}: path
+    case MutationUnheld{}: repo
+    case MutationUnknown{}: ""
 
 def ld_adv_association(obs: LdAdvObs) -> AssociationEvidence:
   match obs:
@@ -1361,32 +1420,45 @@ def ld_adv_keep_association(obs: LdAdvObs, evidence: AssociationEvidence) -> LdA
 
 # A refused association stops the attempt before the mutation: the selected mode is retained,
 # no capture was taken, and both post-mutation reads were not performed.
-def ld_adv_unassociated(step: String, observation: T.GitOut, mode: MutationMode) -> LdAdvObs:
+def ld_adv_unassociated(+step: String, +observation: T.GitOut, mode: MutationMode) -> LdAdvObs:
   LdAdvNoCapture{AdvUnassociated{step}, mode, AssociationRefused{step, observation}}
 
-def ld_adv_held_decided(decision: A.Association, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+# A returned association that disagrees with the fixed operands or the selected route stops the
+# attempt before the mutation, retaining the returned values and naming the disagreeing step.
+def ld_adv_mismatched(step: String, request: A.AssociationRequest, candidate_oid: String, basis_oid: String, target_head: String, holder_common: String, destination_common: String, mode: MutationMode) -> LdAdvObs:
+  +s = step
+  +rq = request
+  LdAdvNoCapture{AdvUnassociated{s}, mode, AssociationObserved{s, rq, candidate_oid, basis_oid, target_head, holder_common, destination_common}}
+
+def ld_adv_held_decided(decision: A.Association, +path: String, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match decision:
     case A.AssociationRefused{step, observation}: IO.pure(LdAdvObs, ld_adv_unassociated(step, observation, MutationHeld{path}))
-    case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
-      +ev = AssociationObserved{"associate", candidate_oid, basis_oid, target_head, holder_common, destination_common}
-      do IO<LdAdvObs>:
-        obs : LdAdvObs <- ld_adv_wt(path, repo, target, cand, basis, ctx)
-        IO.pure(LdAdvObs, ld_adv_keep_association(obs, ev))
+    case A.AssociationHeld{+request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
+      match ld_assoc_check(request, candidate_oid, basis_oid, target_head, holder_common, destination_common, path, repo, target, cand, basis, ladvctx_attempt(ctx), ladvctx_common(ctx)):
+        case AssociationDisagreed{step}: IO.pure(LdAdvObs, ld_adv_mismatched(step, request, candidate_oid, basis_oid, target_head, holder_common, destination_common, MutationHeld{path}))
+        case AssociationAgreed{}:
+          +ev = AssociationObserved{"associate", request, candidate_oid, basis_oid, target_head, holder_common, destination_common}
+          do IO<LdAdvObs>:
+            obs : LdAdvObs <- ld_adv_wt(path, repo, target, cand, basis, ctx)
+            IO.pure(LdAdvObs, ld_adv_keep_association(obs, ev))
 
-def ld_adv_unheld_decided(decision: A.Association, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+def ld_adv_unheld_decided(decision: A.Association, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match decision:
     case A.AssociationRefused{step, observation}: IO.pure(LdAdvObs, ld_adv_unassociated(step, observation, MutationUnheld{}))
-    case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
-      +ev = AssociationObserved{"associate", candidate_oid, basis_oid, target_head, holder_common, destination_common}
-      do IO<LdAdvObs>:
-        obs : LdAdvObs <- ld_adv_cas_run(repo, target, cand, basis, ctx)
-        IO.pure(LdAdvObs, ld_adv_keep_association(obs, ev))
+    case A.AssociationHeld{+request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
+      match ld_assoc_check(request, candidate_oid, basis_oid, target_head, holder_common, destination_common, repo, repo, target, cand, basis, ladvctx_attempt(ctx), ladvctx_common(ctx)):
+        case AssociationDisagreed{step}: IO.pure(LdAdvObs, ld_adv_mismatched(step, request, candidate_oid, basis_oid, target_head, holder_common, destination_common, MutationUnheld{}))
+        case AssociationAgreed{}:
+          +ev = AssociationObserved{"associate", request, candidate_oid, basis_oid, target_head, holder_common, destination_common}
+          do IO<LdAdvObs>:
+            obs : LdAdvObs <- ld_adv_cas_run(repo, target, cand, basis, ctx)
+            IO.pure(LdAdvObs, ld_adv_keep_association(obs, ev))
 
 # The association runs once, for the route the holder selection already made, and rides on that
 # route's own observation: an unheld target reads its objects and commons from the destination
 # repository itself, and a held target reads from the selected worktree. A blocked selection
 # runs neither the association nor the mutation.
-def ld_adv_associated(hold: LdHold, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+def ld_adv_associated(hold: LdHold, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match hold:
     case HoldBlocked{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}, MutationUnknown{}))
     case HoldNone{}:
@@ -1550,7 +1622,7 @@ def association_observed(association: AssociationEvidence) -> Bool:
   match association:
     case AssociationMissing{}: False{}
     case AssociationRefused{step, observation}: False{}
-    case AssociationObserved{step, candidate_oid, basis_oid, target_head, holder_common, destination_common}: True{}
+    case AssociationObserved{step, request, candidate_oid, basis_oid, target_head, holder_common, destination_common}: True{}
 
 def intent_observed(intent: IntentEvidence) -> Bool:
   match intent:
@@ -1624,20 +1696,25 @@ def identity_bound(identity: IdentityEvidence, expect: String) -> Bool:
 # own immutable operands, its two common directories agree with each other, and that common is
 # the canonical common the claim answered. The holder path and the reservation are bound by the
 # route that selected them and by the reserved attempt the request carried.
+def qualification_mode(qualification: LdQualified) -> MutationMode:
+  match qualification:
+    case QualDecided{mode, target_ref, head_ref}: mode
+
 def identity_common(identity: IdentityEvidence) -> String:
   match identity:
     case IdentityObserved{common, +observed, target}: common
     case IdentityMissing{}: ""
 
-def association_bound(association: AssociationEvidence, candidate: String, basis: String, common: String) -> Bool:
+# The retained association is admitted only when the request it kept agrees with the attempt's
+# fixed operands, the selected mode's read location, the destination repository and the canonical
+# common, and when the values the association returned agree with that same request. The request
+# must name the reserved attempt; admission requires that name to be present, because the reserved
+# path does not carry the name back for comparison.
+def association_bound(association: AssociationEvidence, candidate: String, basis: String, common: String, repo: String, target: String, qualification: LdQualified) -> Bool:
   match association:
-    case AssociationObserved{step, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
-      Bool.pick(Bool, Tx.str_eq(candidate_oid, candidate),
-        Bool.pick(Bool, Tx.str_eq(basis_oid, basis),
-          Bool.pick(Bool, Tx.str_eq(holder_common, destination_common),
-            Tx.str_eq(holder_common, common),
-            False{}),
-          False{}),
+    case AssociationObserved{step, request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
+      Bool.pick(Bool, Tx.non_empty(association_attempt(request)),
+        association_agreed(ld_assoc_check(request, candidate_oid, basis_oid, target_head, holder_common, destination_common, mode_holder(qualification_mode(qualification), repo), repo, target, candidate, basis, association_attempt(request), common)),
         False{})
     case AssociationMissing{}: False{}
     case AssociationRefused{step, observation}: False{}
@@ -1649,13 +1726,13 @@ def intent_bound(intent: IntentEvidence, reserved: String) -> Bool:
 
 def evidence_complete(evidence: AttemptEvidence) -> Bool:
   match evidence:
-    case AttemptEvidence{reserved, repo, +target, +candidate, +basis, guard, artifact, decision, capture, qualification, release, identity, association, intent}:
+    case AttemptEvidence{reserved, repo, +target, +candidate, +basis, guard, artifact, decision, capture, +qualification, release, +identity, association, intent}:
       Bool.pick(Bool, decision_landed(decision),
         Bool.pick(Bool, capture_landed(capture),
           Bool.pick(Bool, qualification_landed_of(qualification, candidate, target),
             Bool.pick(Bool, T.release_done(release),
               Bool.pick(Bool, identity_bound(identity, target),
-                Bool.pick(Bool, association_bound(association, candidate, basis, identity_common(identity)),
+                Bool.pick(Bool, association_bound(association, candidate, basis, identity_common(identity), repo, target, qualification),
                   Bool.pick(Bool, intent_bound(intent, reserved), True{}, False{}),
                   False{}),
                 False{}),
@@ -2735,17 +2812,36 @@ def fixture_held_qualification(+candidate: String, +target: String) -> LdQualifi
 def fixture_unheld_qualification(+candidate: String) -> LdQualified:
   QualDecided{MutationUnheld{}, ReadObserved{T.GRun{0, Tx.str_cat(candidate, "\n")}}, ReadSkipped{}}
 
+# A request and an observation the admission laws use. The held route reads from the worktree the
+# held qualification names; the unheld route reads from the destination repository itself, which is
+# the repository the fixture evidence carries.
+def fixture_assoc_request(+candidate: String, +basis: String, +target: String, +holder: String, +common: String) -> A.AssociationRequest:
+  A.AssociationRequested{"attempt", common, target, "/repo", candidate, basis, holder, ""}
+
+def fixture_held_association(+common: String, +candidate: String, +basis: String, +target: String) -> AssociationEvidence:
+  AssociationObserved{"associate", fixture_assoc_request(candidate, basis, target, "/holder", common), candidate, basis, basis, common, common}
+
+def fixture_unheld_association(+common: String, +candidate: String, +basis: String, +target: String) -> AssociationEvidence:
+  AssociationObserved{"associate", fixture_assoc_request(candidate, basis, target, "/repo", common), candidate, basis, basis, common, common}
+
+# An association the pre-mutation comparison accepts, for the route it names.
+def fixture_matching_held(+ctx: LdAdvCtx) -> A.Association:
+  A.AssociationHeld{ld_assoc_request(ctx, "/holder", "/r", "tgt", "cand", "base"), "cand", "base", "base", ladvctx_common(ctx), ladvctx_common(ctx)}
+
+def fixture_matching_unheld(+ctx: LdAdvCtx) -> A.Association:
+  A.AssociationHeld{ld_assoc_request(ctx, "/r", "/r", "tgt", "cand", "base"), "cand", "base", "base", ladvctx_common(ctx), ladvctx_common(ctx)}
+
 def fixture_evidence_of(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String, capture: T.CapturedRaw, qualification: LdQualified, identity: IdentityEvidence, association: AssociationEvidence, intent: IntentEvidence) -> AttemptEvidence:
   AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", "/art", AdvLanded{}, capture, qualification, T.ReleaseDone{}, identity, association, intent}
 
 def fixture_held_evidence(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String) -> AttemptEvidence:
-  fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), IdentityObserved{common, T.GRun{0, common}, target}, AssociationObserved{"associate", candidate, basis, target, common, common}, IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"})
+  fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), IdentityObserved{common, T.GRun{0, common}, target}, fixture_held_association(common, candidate, basis, target), IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"})
 
 def fixture_unheld_evidence(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String) -> AttemptEvidence:
-  fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_unheld_qualification(candidate), IdentityObserved{common, T.GRun{0, common}, target}, AssociationObserved{"associate", candidate, basis, target, common, common}, IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"})
+  fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_unheld_qualification(candidate), IdentityObserved{common, T.GRun{0, common}, target}, fixture_unheld_association(common, candidate, basis, target), IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"})
 
 def fixture_release_evidence(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String, release: T.ReleaseRaw) -> AttemptEvidence:
-  AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), release, IdentityObserved{common, T.GRun{0, common}, target}, AssociationObserved{"associate", candidate, basis, target, common, common}, IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"}}
+  AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), release, IdentityObserved{common, T.GRun{0, common}, target}, fixture_held_association(common, candidate, basis, target), IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"}}
 
 def fixture_stages(+reserved: String, evidence: AttemptEvidence, publication: StageResult, qualification: StageResult, readback: StageResult) -> Attestation:
   Attestation{reserved, evidence, publication, qualification, readback}
@@ -3093,13 +3189,13 @@ def a_complete_attempt_is_admitted():
   {==}
 
 law an_absent_capture_is_refused:
-  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
 
 def an_absent_capture_is_refused():
   {==}
 
 law a_missing_identity_is_refused:
-  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification("cand", "tgt"), IdentityMissing{}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification("cand", "tgt"), IdentityMissing{}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
 
 def a_missing_identity_is_refused():
   {==}
@@ -3111,7 +3207,7 @@ def a_missing_association_is_refused():
   {==}
 
 law a_missing_intent_is_refused:
-  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentMissing{})))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentMissing{})))) == False{} : Bool}
 
 def a_missing_intent_is_refused():
   {==}
@@ -3135,13 +3231,13 @@ def a_mismatched_readback_is_refused():
   {==}
 
 law a_rejected_attempt_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt evidence is incomplete"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt evidence is incomplete"}} : FFLD}
 
 def a_rejected_attempt_refuses_the_fast_forward():
   {==}
 
 law a_rejected_attempt_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt evidence is incomplete"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt evidence is incomplete"}} : Ld}
 
 def a_rejected_attempt_refuses_the_advance():
   {==}
@@ -3237,7 +3333,7 @@ law a_complete_unheld_attempt_is_admitted:
 def a_complete_unheld_attempt_is_admitted():
   {==}
 law a_failed_capture_is_refused:
-  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedFailed{13, "i/o error"}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedFailed{13, "i/o error"}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
 
 def a_failed_capture_is_refused():
   {==}
@@ -3334,12 +3430,12 @@ law a_mismatched_readback_refuses_the_advance:
 def a_mismatched_readback_refuses_the_advance():
   {==}
 law incomplete_evidence_with_success_looking_stages_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt evidence is incomplete"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt evidence is incomplete"}} : FFLD}
 
 def incomplete_evidence_with_success_looking_stages_refuses_the_fast_forward():
   {==}
 law incomplete_evidence_with_success_looking_stages_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt evidence is incomplete"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt evidence is incomplete"}} : Ld}
 
 def incomplete_evidence_with_success_looking_stages_refuses_the_advance():
   {==}
@@ -3639,7 +3735,7 @@ law a_created_reservation_continues_to_the_reserved_continue_call:
   for parent: String
   for base: String
   for attempt: U32
-  {shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, attempt, Done{Pb.production_record("created", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0")}) == shared_reserved_continue(handle, repo, target, cand, basis, guard, common, common_observed, shared_parent_path(parent, shared_attempt_name(base, attempt))) : IO(SharedLanding)}
+  {shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, attempt, Done{Pb.production_record("created", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0")}) == shared_reserved_continue(handle, repo, target, cand, basis, guard, common, common_observed, shared_parent_path(parent, shared_attempt_name(base, attempt)), shared_attempt_name(base, attempt)) : IO(SharedLanding)}
 
 def a_created_reservation_continues_to_the_reserved_continue_call(handle,repo,target,cand,basis,guard,common,common_observed,parent,base,attempt):
   {==}
@@ -3692,9 +3788,91 @@ def the_shared_association_request_carries_the_reserved_attempt_and_the_canonica
 
 law an_observed_association_rides_on_the_selected_route_observation:
   for obs: LdAdvObs
-  {ld_adv_association(ld_adv_keep_association(obs, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"})) == AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"} : AssociationEvidence}
+  {ld_adv_association(ld_adv_keep_association(obs, fixture_held_association("/common", "cand", "base", "tgt"))) == fixture_held_association("/common", "cand", "base", "tgt") : AssociationEvidence}
 
 def an_observed_association_rides_on_the_selected_route_observation(obs):
+  {==}
+
+law an_observed_association_rides_on_the_no_capture_observation:
+  {ld_adv_keep_association(LdAdvNoCapture{AdvLanded{}, MutationUnheld{}, AssociationMissing{}}, fixture_held_association("/common", "cand", "base", "tgt")) == LdAdvNoCapture{AdvLanded{}, MutationUnheld{}, fixture_held_association("/common", "cand", "base", "tgt")} : LdAdvObs}
+
+def an_observed_association_rides_on_the_no_capture_observation():
+  {==}
+
+law an_observed_association_rides_on_the_captured_observation:
+  {ld_adv_keep_association(LdAdvCaptured{AdvLanded{}, T.CapturedDone{"exit 0\n", "diag"}, MutationHeld{"/holder"}, AssociationMissing{}}, fixture_held_association("/common", "cand", "base", "tgt")) == LdAdvCaptured{AdvLanded{}, T.CapturedDone{"exit 0\n", "diag"}, MutationHeld{"/holder"}, fixture_held_association("/common", "cand", "base", "tgt")} : LdAdvObs}
+
+def an_observed_association_rides_on_the_captured_observation():
+  {==}
+
+law an_observed_association_rides_on_the_qualified_observation:
+  {ld_adv_keep_association(LdAdvQualified{AdvLanded{}, T.CapturedDone{"exit 0\n", "diag"}, fixture_held_qualification("cand", "tgt"), AssociationMissing{}}, fixture_held_association("/common", "cand", "base", "tgt")) == LdAdvQualified{AdvLanded{}, T.CapturedDone{"exit 0\n", "diag"}, fixture_held_qualification("cand", "tgt"), fixture_held_association("/common", "cand", "base", "tgt")} : LdAdvObs}
+
+def an_observed_association_rides_on_the_qualified_observation():
+  {==}
+
+law the_held_decision_handler_stops_on_a_refused_association:
+  for ctx: LdAdvCtx
+  {ld_adv_held_decided(A.AssociationRefused{"holder-common", T.GBroken{"holder answers /other"}}, "/holder", "/r", "tgt", "cand", "base", ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"holder-common"}, MutationHeld{"/holder"}, AssociationRefused{"holder-common", T.GBroken{"holder answers /other"}}}) : IO(LdAdvObs)}
+
+def the_held_decision_handler_stops_on_a_refused_association(ctx):
+  {==}
+
+law the_unheld_decision_handler_stops_on_a_refused_association:
+  for ctx: LdAdvCtx
+  {ld_adv_unheld_decided(A.AssociationRefused{"common", T.GBroken{"holder answers /other"}}, "/r", "tgt", "cand", "base", ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"common"}, MutationUnheld{}, AssociationRefused{"common", T.GBroken{"holder answers /other"}}}) : IO(LdAdvObs)}
+
+def the_unheld_decision_handler_stops_on_a_refused_association(ctx):
+  {==}
+
+law a_matching_association_continues_the_held_route_into_its_mutation:
+  for ctx: LdAdvCtx
+  {ld_adv_held_decided(fixture_matching_held(ctx), "/holder", "/r", "tgt", "cand", "base", ctx) == (do IO<LdAdvObs>:
+    obs : LdAdvObs <- ld_adv_wt("/holder", "/r", "tgt", "cand", "base", ctx)
+    IO.pure(LdAdvObs, ld_adv_keep_association(obs, AssociationObserved{"associate", ld_assoc_request(ctx, "/holder", "/r", "tgt", "cand", "base"), "cand", "base", "base", ladvctx_common(ctx), ladvctx_common(ctx)}))) : IO(LdAdvObs)}
+
+def a_matching_association_continues_the_held_route_into_its_mutation(ctx):
+  {==}
+
+law a_matching_association_continues_the_unheld_route_into_its_mutation:
+  for ctx: LdAdvCtx
+  {ld_adv_unheld_decided(fixture_matching_unheld(ctx), "/r", "tgt", "cand", "base", ctx) == (do IO<LdAdvObs>:
+    obs : LdAdvObs <- ld_adv_cas_run("/r", "tgt", "cand", "base", ctx)
+    IO.pure(LdAdvObs, ld_adv_keep_association(obs, AssociationObserved{"associate", ld_assoc_request(ctx, "/r", "/r", "tgt", "cand", "base"), "cand", "base", "base", ladvctx_common(ctx), ladvctx_common(ctx)}))) : IO(LdAdvObs)}
+
+def a_matching_association_continues_the_unheld_route_into_its_mutation(ctx):
+  {==}
+
+law a_mismatched_returned_candidate_stops_the_held_route_before_the_mutation:
+  for ctx: LdAdvCtx
+  {ld_adv_held_decided(A.AssociationHeld{ld_assoc_request(ctx, "/holder", "/r", "tgt", "cand", "base"), "other", "base", "base", ladvctx_common(ctx), ladvctx_common(ctx)}, "/holder", "/r", "tgt", "cand", "base", ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"returned-candidate"}, MutationHeld{"/holder"}, AssociationObserved{"returned-candidate", ld_assoc_request(ctx, "/holder", "/r", "tgt", "cand", "base"), "other", "base", "base", ladvctx_common(ctx), ladvctx_common(ctx)}}) : IO(LdAdvObs)}
+
+def a_mismatched_returned_candidate_stops_the_held_route_before_the_mutation(ctx):
+  {==}
+
+law a_mismatched_returned_head_stops_the_unheld_route_before_the_mutation:
+  for ctx: LdAdvCtx
+  {ld_adv_unheld_decided(A.AssociationHeld{ld_assoc_request(ctx, "/r", "/r", "tgt", "cand", "base"), "cand", "base", "other", ladvctx_common(ctx), ladvctx_common(ctx)}, "/r", "tgt", "cand", "base", ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"target-head"}, MutationUnheld{}, AssociationObserved{"target-head", ld_assoc_request(ctx, "/r", "/r", "tgt", "cand", "base"), "cand", "base", "other", ladvctx_common(ctx), ladvctx_common(ctx)}}) : IO(LdAdvObs)}
+
+def a_mismatched_returned_head_stops_the_unheld_route_before_the_mutation(ctx):
+  {==}
+
+law the_held_route_reads_the_association_for_the_selected_path:
+  for ctx: LdAdvCtx
+  {ld_adv_associated(HoldPath{"/holder"}, "/r", "tgt", "cand", "base", ctx) == (do IO<LdAdvObs>:
+    decision : A.Association <- A.Association.decide(ld_assoc_request(ctx, "/holder", "/r", "tgt", "cand", "base"))
+    ld_adv_held_decided(decision, "/holder", "/r", "tgt", "cand", "base", ctx)) : IO(LdAdvObs)}
+
+def the_held_route_reads_the_association_for_the_selected_path(ctx):
+  {==}
+
+law the_unheld_route_reads_the_association_for_the_destination_repository:
+  for ctx: LdAdvCtx
+  {ld_adv_associated(HoldNone{}, "/r", "tgt", "cand", "base", ctx) == (do IO<LdAdvObs>:
+    decision : A.Association <- A.Association.decide(ld_assoc_request(ctx, "/r", "/r", "tgt", "cand", "base"))
+    ld_adv_unheld_decided(decision, "/r", "tgt", "cand", "base", ctx)) : IO(LdAdvObs)}
+
+def the_unheld_route_reads_the_association_for_the_destination_repository(ctx):
   {==}
 
 law a_refused_association_stops_the_attempt_before_the_mutation:
@@ -3722,31 +3900,61 @@ def an_unassociated_decision_is_never_landed():
   {==}
 
 law a_coherent_association_is_bound_to_the_attempt:
-  {association_bound(AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, "cand", "base", "/common") == True{} : Bool}
+  {association_bound(fixture_held_association("/common", "cand", "base", "tgt"), "cand", "base", "/common", "/repo", "tgt", fixture_held_qualification("cand", "tgt")) == True{} : Bool}
 
 def a_coherent_association_is_bound_to_the_attempt():
   {==}
 
-law an_association_whose_holder_common_is_not_the_claim_common_is_not_bound:
-  {association_bound(AssociationObserved{"associate", "cand", "base", "tgt", "/other", "/other"}, "cand", "base", "/common") == False{} : Bool}
+law an_unheld_association_is_bound_for_the_destination_read_location:
+  {association_bound(fixture_unheld_association("/common", "cand", "base", "tgt"), "cand", "base", "/common", "/repo", "tgt", fixture_unheld_qualification("cand")) == True{} : Bool}
 
-def an_association_whose_holder_common_is_not_the_claim_common_is_not_bound():
+def an_unheld_association_is_bound_for_the_destination_read_location():
   {==}
 
-law an_association_whose_two_commons_disagree_is_not_bound:
-  {association_bound(AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/other"}, "cand", "base", "/common") == False{} : Bool}
+law an_association_whose_request_common_is_not_the_claim_common_is_not_bound:
+  {association_bound(fixture_held_association("/other", "cand", "base", "tgt"), "cand", "base", "/common", "/repo", "tgt", fixture_held_qualification("cand", "tgt")) == False{} : Bool}
 
-def an_association_whose_two_commons_disagree_is_not_bound():
+def an_association_whose_request_common_is_not_the_claim_common_is_not_bound():
+  {==}
+
+law an_association_whose_observed_common_is_not_the_claim_common_is_not_bound:
+  {association_bound(AssociationObserved{"associate", fixture_assoc_request("cand", "base", "tgt", "/holder", "/common"), "cand", "base", "base", "/other", "/other"}, "cand", "base", "/common", "/repo", "tgt", fixture_held_qualification("cand", "tgt")) == False{} : Bool}
+
+def an_association_whose_observed_common_is_not_the_claim_common_is_not_bound():
+  {==}
+
+law an_association_whose_returned_head_is_not_the_checked_basis_is_not_bound:
+  {association_bound(AssociationObserved{"associate", fixture_assoc_request("cand", "base", "tgt", "/holder", "/common"), "cand", "base", "other", "/common", "/common"}, "cand", "base", "/common", "/repo", "tgt", fixture_held_qualification("cand", "tgt")) == False{} : Bool}
+
+def an_association_whose_returned_head_is_not_the_checked_basis_is_not_bound():
+  {==}
+
+law an_association_that_read_another_holder_is_not_bound:
+  {association_bound(AssociationObserved{"associate", fixture_assoc_request("cand", "base", "tgt", "/other", "/common"), "cand", "base", "base", "/common", "/common"}, "cand", "base", "/common", "/repo", "tgt", fixture_held_qualification("cand", "tgt")) == False{} : Bool}
+
+def an_association_that_read_another_holder_is_not_bound():
   {==}
 
 law an_association_for_another_candidate_is_not_bound:
-  {association_bound(AssociationObserved{"associate", "other", "base", "tgt", "/common", "/common"}, "cand", "base", "/common") == False{} : Bool}
+  {association_bound(AssociationObserved{"associate", fixture_assoc_request("cand", "base", "tgt", "/holder", "/common"), "other", "base", "base", "/common", "/common"}, "cand", "base", "/common", "/repo", "tgt", fixture_held_qualification("cand", "tgt")) == False{} : Bool}
 
 def an_association_for_another_candidate_is_not_bound():
   {==}
 
+law an_association_without_a_reserved_attempt_name_is_not_bound:
+  {association_bound(AssociationObserved{"associate", A.AssociationRequested{"", "/common", "tgt", "/repo", "cand", "base", "/holder", ""}, "cand", "base", "base", "/common", "/common"}, "cand", "base", "/common", "/repo", "tgt", fixture_held_qualification("cand", "tgt")) == False{} : Bool}
+
+def an_association_without_a_reserved_attempt_name_is_not_bound():
+  {==}
+
+law a_missing_association_is_never_bound:
+  {association_bound(AssociationMissing{}, "cand", "base", "/common", "/repo", "tgt", fixture_held_qualification("cand", "tgt")) == False{} : Bool}
+
+def a_missing_association_is_never_bound():
+  {==}
+
 law a_refused_association_is_never_bound:
-  {association_bound(AssociationRefused{"common", T.GBroken{"holder answers /other"}}, "cand", "base", "/common") == False{} : Bool}
+  {association_bound(AssociationRefused{"common", T.GBroken{"holder answers /other"}}, "cand", "base", "/common", "/repo", "tgt", fixture_held_qualification("cand", "tgt")) == False{} : Bool}
 
 def a_refused_association_is_never_bound():
   {==}
