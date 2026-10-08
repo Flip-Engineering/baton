@@ -281,18 +281,17 @@ def provider_usage_result(+db: String, harness: String, command: String, observe
     case Done{raw}: provider_usage_outcome(db,harness,command,observedAt,Tx.run_res(Done{raw}))
 
 # Each explicit usage read runs one supported harness query in its workspace.
-def provider_usage_command(+db: String, +harness: String, +command: String, +cwd: String) -> IO(String):
-  match String.is_empty(command):
-    case True{}: IO.pure(String,provider_usage_absent(harness,command,"noRecordedHarnessCommand"))
-    case False{}: do IO<String>:
-      observedAt : String <- IO.try(String,DB.Sql.query(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000;"))
-      run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(provider_usage_args(command)),Bool.pick(String,String.is_empty(cwd),".",cwd))
-      provider_usage_result(db,harness,command,Tx.trim_nl(observedAt),run)
+def provider_usage_query(+db: String, harness: String, +command: String, +cwd: String) -> IO(String):
+  do IO<String>:
+    observedAt : String <- IO.try(String,DB.Sql.query(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000;"))
+    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(provider_usage_args(command)),Bool.pick(String,String.is_empty(cwd),".",cwd))
+    provider_usage_result(db,harness,command,Tx.trim_nl(observedAt),run)
 
-def provider_usage(+db: String, +harness: String, command: String, cwd: String) -> IO(String):
-  match String.eq(harness,"omp"):
-    case False{}: IO.pure(String,provider_usage_absent(harness,command,"unsupportedHarness"))
-    case True{}: provider_usage_command(db,harness,command,cwd)
+def provider_usage_command(+db: String, +harness: String, +command: String, cwd: String) -> IO(String):
+  Bool.pick(IO(String),String.is_empty(command),IO.pure(String,provider_usage_absent(harness,command,"noRecordedHarnessCommand")),provider_usage_query(db,harness,command,cwd))
+
+def provider_usage(+db: String, +harness: String, +command: String, cwd: String) -> IO(String):
+  Bool.pick(IO(String),String.eq(harness,"omp"),provider_usage_command(db,harness,command,cwd),IO.pure(String,provider_usage_absent(harness,command,"unsupportedHarness")))
 
 # The conversation projection prints with the provider observation beside it, so
 # conversation token usage keeps its own members.
