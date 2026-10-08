@@ -267,17 +267,18 @@ def provider_usage_answer_sql(harness: String, command: String, observedAt: Stri
   ++ "'detail',CASE WHEN json_valid(t) THEN NULL ELSE t END,"
   ++ "'answer',CASE WHEN json_valid(t) THEN json(t) ELSE NULL END) FROM answer;"
 
+def provider_usage_outcome(+db: String, harness: String, command: String, observedAt: String, outcome: T.RunRes) -> IO(String):
+  match outcome:
+    case T.RRun{T.SExit{0},out}: IO.try(String,DB.Sql.query(db,provider_usage_answer_sql(harness,command,observedAt,out)))
+    case T.RRun{T.SExit{code},out}: IO.pure(String,provider_usage_failed(harness,command,observedAt,"exit",code,out))
+    case T.RRun{T.SSignal{num},out}: IO.pure(String,provider_usage_failed(harness,command,observedAt,"signal",num,out))
+    case T.RSpawn{detail}: IO.pure(String,provider_usage_unknown(harness,command,observedAt,"unreadableProcessStatus","null",detail))
+
 # Preserve the host error code before decoding a completed process answer.
 def provider_usage_result(+db: String, harness: String, command: String, observedAt: String, run: Result<&1,&1,U32 & String,String>) -> IO(String):
   match run:
     case Fail{(code,detail)}: IO.pure(String,provider_usage_unknown(harness,command,observedAt,"usageCommandHostFailure",U32.show(code),detail))
-    case Done{raw}: do IO<String>:
-      outcome : T.RunRes <- IO.pure(T.RunRes,Tx.run_res(Done{raw}))
-      match outcome:
-        case T.RRun{T.SExit{0},out}: IO.try(String,DB.Sql.query(db,provider_usage_answer_sql(harness,command,observedAt,out)))
-        case T.RRun{T.SExit{code},out}: IO.pure(String,provider_usage_failed(harness,command,observedAt,"exit",code,out))
-        case T.RRun{T.SSignal{num},out}: IO.pure(String,provider_usage_failed(harness,command,observedAt,"signal",num,out))
-        case T.RSpawn{detail}: IO.pure(String,provider_usage_unknown(harness,command,observedAt,"unreadableProcessStatus","null",detail))
+    case Done{raw}: provider_usage_outcome(db,harness,command,observedAt,Tx.run_res(Done{raw}))
 
 # Each explicit usage read runs one supported harness query in its workspace.
 def provider_usage_command(+db: String, +harness: String, +command: String, +cwd: String) -> IO(String):
