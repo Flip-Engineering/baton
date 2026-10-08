@@ -56,7 +56,7 @@ law detached_delivery_commits_before_launch_and_checks_refusals:
   {Control.dispatch_body(db,id,sender,recipient,kind,body) == (do IO<String>:
   +saved : String <- IO.try(String,Store.commit(db,C.Message{id,sender,recipient,kind,body}))
   launched : String <- Control.dispatch_admitted(db,id,saved,Bool.or(Store.refused(saved),Tx.starts_with(saved,"{\"error\":\"session-stopped\"")))
-  woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_id(db,id)
+  woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_answer(db,saved)
   IO.pure(String,launched)) : IO(String)}
 
 def detached_delivery_commits_before_launch_and_checks_refusals(db,id,sender,recipient,kind,body):
