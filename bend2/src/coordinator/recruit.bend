@@ -9,7 +9,7 @@ import ../git/types.bend as G
 import ../git/text.bend as Tx
 import ../json/canonical.bend as J
 
-# SQLite text output has one terminating newline.
+# SQLite and Git scalar output has one terminating newline.
 def line_tail(rest: String, original: String, newline: Bool) -> String:
   match newline:
     case True{}: Tx.str_rev(rest)
@@ -68,7 +68,7 @@ def recruit(+db: String,+id: String,+parent: String,harness: String,model: Strin
     base_result : G.GitOut <- Git.runGit(repo,["rev-parse","--verify","--end-of-options",base ++ "^{commit}"])
     commit : String <- git_output("git rev-parse --verify", base_result)
     existing : String <- IO.try(String,Store.apply(db,C.Session{id}))
-    create(db,id,parent,harness,model,effort,repo,branch,absolute(root,path,Tx.starts_with(path,"/")),commit,Bool.not(String.is_empty(existing)))
+    create(db,id,parent,harness,model,effort,repo,branch,absolute(line(root),path,Tx.starts_with(path,"/")),line(commit),Bool.not(String.is_empty(existing)))
 
 def status_json(id: String,path: String,branch: String,commit: String,dirty: Bool) -> String:
   "{\"id\":" ++ J.string_literal(id) ++ ",\"workspace\":" ++ J.string_literal(path) ++ ",\"branch\":" ++ J.string_literal(branch) ++ ",\"commit\":" ++ J.string_literal(commit) ++ ",\"dirty\":" ++ Bool.pick(String,dirty,"true","false") ++ "}"
