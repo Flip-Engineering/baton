@@ -132,6 +132,15 @@ jobs:
             "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.exit-status" \
             > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.sha256"
           if [[ "$status" != 0 ]]; then exit "$status"; fi
+      - name: Print check-only diagnostic output
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' '--- check-only stdout ---'
+          cat "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.stdout"
+          printf '%s\n' '--- check-only stderr ---'
+          cat "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.stderr"
       - name: Retain diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
