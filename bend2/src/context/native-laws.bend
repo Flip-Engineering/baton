@@ -236,11 +236,12 @@ def query_outcome_persistence_uses_the_installed_core_helper():
   {==}
 
 law query_bootstrap_request_binds_its_artifact_authority:
-  {Native.query_bootstrap_request("owner-1", "/work", "query-1", "{\"planValue\":[]}")==
-    J.json_text(J.Jobj{J.Jpair{"owner", J.Jstr{"owner-1"},
+  {Native.query_bootstrap_request("db-1", "owner-1", "/work", "query-1", "{\"planValue\":[]}")==
+    J.json_text(J.Jobj{J.Jpair{"database", J.Jstr{"db-1"},
+      J.Jpair{"owner", J.Jstr{"owner-1"},
       J.Jpair{"worktree", J.Jstr{"/work"},
       J.Jpair{"query", J.Jstr{"query-1"},
-      J.Jpair{"bootstrapText", J.Jstr{"{\"planValue\":[]}"}, J.Jnil{}}}}}}) : String}
+      J.Jpair{"bootstrapText", J.Jstr{"{\"planValue\":[]}"}, J.Jnil{}}}}}}}) : String}
 
 def query_bootstrap_request_binds_its_artifact_authority():
   {==}
