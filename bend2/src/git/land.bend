@@ -2382,6 +2382,13 @@ def shared_token_named(+handle: U32, repo: String, target: String, +cand: String
         ensured : Result<&1, &1, U32 & String, String> <- Rec.Receipt.ensure(parent)
         shared_parent_ensured(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, ensured)
 
+# The guard is the path Rec.Receipt.guard_path returned for this common and target. That call reports
+# naming data, and holding is established by the live claim and by the capture check. Rec.Receipt.claim
+# computes the same naming algorithm internally and answers with a handle. The claim path carries the
+# returned path into shared_reserved_continue's context, into the capture call and into the evidence, and a
+# guard-path failure stops the chain with SharedStepFailed{"guard", ...} before any evidence exists. The
+# artifact destination is checked against the reservation at admission; binding the guard string itself
+# needs the naming algorithm, which receipt.c holds behind Receipt.guard_path.
 def shared_guard_named(+handle: U32, repo: String, +target: String, cand: String, basis: String, common: String, common_observed: T.GitOut, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   match observed:
     case Fail{error}: shared_step_failed("guard", error, handle)
@@ -3681,42 +3688,6 @@ law a_complete_unheld_preparation_continues_into_the_selected_mutation:
 def a_complete_unheld_preparation_continues_into_the_selected_mutation():
   {==}
 
-law the_no_capture_observation_keeps_its_other_fields_when_the_association_is_replaced:
-  {ld_adv_keep_association(LdAdvNoCapture{AdvLanded{}, MutationHeld{"/holder"}, AssociationMissing{}, IntentMissing{}}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt")) == LdAdvNoCapture{AdvLanded{}, MutationHeld{"/holder"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), IntentMissing{}} : LdAdvObs}
-
-def the_no_capture_observation_keeps_its_other_fields_when_the_association_is_replaced():
-  {==}
-
-law the_no_capture_observation_keeps_its_other_fields_when_the_intent_is_replaced:
-  {ld_adv_keep_intent(LdAdvNoCapture{AdvLanded{}, MutationHeld{"/holder"}, AssociationMissing{}, IntentMissing{}}, IntentObserved{"/p/intent", "intent bytes"}) == LdAdvNoCapture{AdvLanded{}, MutationHeld{"/holder"}, AssociationMissing{}, IntentObserved{"/p/intent", "intent bytes"}} : LdAdvObs}
-
-def the_no_capture_observation_keeps_its_other_fields_when_the_intent_is_replaced():
-  {==}
-
-law the_captured_observation_keeps_its_other_fields_when_the_association_is_replaced:
-  {ld_adv_keep_association(LdAdvCaptured{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, MutationHeld{"/holder"}, AssociationMissing{}, IntentMissing{}}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt")) == LdAdvCaptured{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, MutationHeld{"/holder"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), IntentMissing{}} : LdAdvObs}
-
-def the_captured_observation_keeps_its_other_fields_when_the_association_is_replaced():
-  {==}
-
-law the_captured_observation_keeps_its_other_fields_when_the_intent_is_replaced:
-  {ld_adv_keep_intent(LdAdvCaptured{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, MutationHeld{"/holder"}, AssociationMissing{}, IntentMissing{}}, IntentObserved{"/p/intent", "intent bytes"}) == LdAdvCaptured{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, MutationHeld{"/holder"}, AssociationMissing{}, IntentObserved{"/p/intent", "intent bytes"}} : LdAdvObs}
-
-def the_captured_observation_keeps_its_other_fields_when_the_intent_is_replaced():
-  {==}
-
-law the_qualified_observation_keeps_its_other_fields_when_the_association_is_replaced:
-  {ld_adv_keep_association(LdAdvQualified{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), AssociationMissing{}, IntentMissing{}}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt")) == LdAdvQualified{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), IntentMissing{}} : LdAdvObs}
-
-def the_qualified_observation_keeps_its_other_fields_when_the_association_is_replaced():
-  {==}
-
-law the_qualified_observation_keeps_its_other_fields_when_the_intent_is_replaced:
-  {ld_adv_keep_intent(LdAdvQualified{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), AssociationMissing{}, IntentMissing{}}, IntentObserved{"/p/intent", "intent bytes"}) == LdAdvQualified{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), AssociationMissing{}, IntentObserved{"/p/intent", "intent bytes"}} : LdAdvObs}
-
-def the_qualified_observation_keeps_its_other_fields_when_the_intent_is_replaced():
-  {==}
-
 law the_artifact_destination_derived_from_the_reservation_is_bound:
   {artifact_bound(shared_parent_path(fixture_reserved(), "stderr"), fixture_reserved()) == True{} : Bool}
 
@@ -3802,6 +3773,42 @@ law an_attempt_whose_artifact_is_another_reservation_is_not_admitted:
 
 def an_attempt_whose_artifact_is_another_reservation_is_not_admitted():
   {==}
+law the_no_capture_observation_keeps_the_retained_intent_when_the_association_is_replaced:
+  {ld_adv_keep_association(LdAdvNoCapture{AdvLanded{}, MutationHeld{"/holder"}, fixture_held_association("/other", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_bound_intent(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), "tgt", fixture_oid_candidate(), fixture_oid_basis(), IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, ""}, T.GRun{0, ""}})}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt")) == LdAdvNoCapture{AdvLanded{}, MutationHeld{"/holder"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_bound_intent(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), "tgt", fixture_oid_candidate(), fixture_oid_basis(), IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, ""}, T.GRun{0, ""}})} : LdAdvObs}
+
+def the_no_capture_observation_keeps_the_retained_intent_when_the_association_is_replaced():
+  {==}
+
+law the_no_capture_observation_keeps_the_retained_association_when_the_intent_is_replaced:
+  {ld_adv_keep_intent(LdAdvNoCapture{AdvLanded{}, MutationHeld{"/holder"}, fixture_held_association("/other", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_bound_intent(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), "tgt", fixture_oid_candidate(), fixture_oid_basis(), IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, ""}, T.GRun{0, ""}})}, IntentObserved{"/p2/intent", "replacement intent bytes"}) == LdAdvNoCapture{AdvLanded{}, MutationHeld{"/holder"}, fixture_held_association("/other", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), IntentObserved{"/p2/intent", "replacement intent bytes"}} : LdAdvObs}
+
+def the_no_capture_observation_keeps_the_retained_association_when_the_intent_is_replaced():
+  {==}
+
+law the_captured_observation_keeps_the_retained_intent_when_the_association_is_replaced:
+  {ld_adv_keep_association(LdAdvCaptured{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, MutationHeld{"/holder"}, fixture_held_association("/other", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_bound_intent(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), "tgt", fixture_oid_candidate(), fixture_oid_basis(), IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, ""}, T.GRun{0, ""}})}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt")) == LdAdvCaptured{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, MutationHeld{"/holder"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_bound_intent(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), "tgt", fixture_oid_candidate(), fixture_oid_basis(), IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, ""}, T.GRun{0, ""}})} : LdAdvObs}
+
+def the_captured_observation_keeps_the_retained_intent_when_the_association_is_replaced():
+  {==}
+
+law the_captured_observation_keeps_the_retained_association_when_the_intent_is_replaced:
+  {ld_adv_keep_intent(LdAdvCaptured{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, MutationHeld{"/holder"}, fixture_held_association("/other", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_bound_intent(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), "tgt", fixture_oid_candidate(), fixture_oid_basis(), IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, ""}, T.GRun{0, ""}})}, IntentObserved{"/p2/intent", "replacement intent bytes"}) == LdAdvCaptured{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, MutationHeld{"/holder"}, fixture_held_association("/other", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), IntentObserved{"/p2/intent", "replacement intent bytes"}} : LdAdvObs}
+
+def the_captured_observation_keeps_the_retained_association_when_the_intent_is_replaced():
+  {==}
+
+law the_qualified_observation_keeps_the_retained_intent_when_the_association_is_replaced:
+  {ld_adv_keep_association(LdAdvQualified{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), fixture_held_association("/other", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_bound_intent(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), "tgt", fixture_oid_candidate(), fixture_oid_basis(), IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, ""}, T.GRun{0, ""}})}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt")) == LdAdvQualified{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_bound_intent(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), "tgt", fixture_oid_candidate(), fixture_oid_basis(), IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, ""}, T.GRun{0, ""}})} : LdAdvObs}
+
+def the_qualified_observation_keeps_the_retained_intent_when_the_association_is_replaced():
+  {==}
+
+law the_qualified_observation_keeps_the_retained_association_when_the_intent_is_replaced:
+  {ld_adv_keep_intent(LdAdvQualified{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), fixture_held_association("/other", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_bound_intent(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), "tgt", fixture_oid_candidate(), fixture_oid_basis(), IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, ""}, T.GRun{0, ""}})}, IntentObserved{"/p2/intent", "replacement intent bytes"}) == LdAdvQualified{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), fixture_held_association("/other", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), IntentObserved{"/p2/intent", "replacement intent bytes"}} : LdAdvObs}
+
+def the_qualified_observation_keeps_the_retained_association_when_the_intent_is_replaced():
+  {==}
+
 def fixture_held_evidence(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String) -> AttemptEvidence:
   fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), IdentityObserved{common, T.GRun{0, common}, target}, fixture_held_association(common, candidate, basis, target), fixture_held_intent(reserved, common, target, candidate, basis, "/repo", "attempt-1", "/holder"))
 
