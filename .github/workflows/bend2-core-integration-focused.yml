@@ -12,13 +12,13 @@ jobs:
     runs-on: xcode-27
     env:
       BEND_NO_TELEMETRY: '1'
-      PRODUCT_SHA: 32920d39d538c5bcb70f7e92377a97170a88468e
-      PRODUCT_TREE: 36591121ade62960a0228e9bee7c469b8f516ede
+      PRODUCT_SHA: eb4a66c359fe8888753fdc6bd7b06971cea65c25
+      PRODUCT_TREE: 257f3c16c312c5f8cfe5e4354fb5706c765e5a51
     steps:
       - name: Checkout exact product
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: 32920d39d538c5bcb70f7e92377a97170a88468e
+          ref: eb4a66c359fe8888753fdc6bd7b06971cea65c25
           persist-credentials: false
 
       - name: Select Node 22
