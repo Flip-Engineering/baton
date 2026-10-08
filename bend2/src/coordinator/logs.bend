@@ -321,7 +321,7 @@ def write_each(+log: String, lines: List<String>, first: Result<&1,&1,U32 & Stri
       rest : Result<&1,&1,U32 & String,Unit> <- write_each(log,tail,written)
       IO.pure(Result<&1,&1,U32 & String,Unit>,rest)
 
-def write_lines(policy: Policy, log: String, lines: List<String>, stopped: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def write_lines(log: String, lines: List<String>, stopped: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match stopped:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case False{}: write_each(log,lines,Done{Unit{}})
