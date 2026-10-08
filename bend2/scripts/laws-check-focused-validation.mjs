@@ -20,6 +20,26 @@ const SOURCE_TREE = execFileSync('git', ['-C', SOURCE, 'rev-parse', 'HEAD^{tree}
 if (SOURCE_TREE !== '9afffc172eec7b77eb5d3df1a15aaa6cc2e334c5') throw new Error(`source tree mismatch: ${SOURCE_TREE}`);
 const DRIVER_SHA = process.env.BATON2_DRIVER_SHA ?? null;
 const DRIVER_TREE = process.env.BATON2_DRIVER_TREE ?? null;
+const CONTROL_MODE = process.env.BATON2_CONTROL_MODE ?? 'all';
+if (!['all', 'proof-removal-only'].includes(CONTROL_MODE)) throw new Error(`unsupported control mode: ${CONTROL_MODE}`);
+const PRIOR_MUTATION_EVIDENCE = CONTROL_MODE === 'proof-removal-only' ? {
+  runId: process.env.BATON2_PRIOR_MUTATION_RUN ?? null,
+  artifactId: process.env.BATON2_PRIOR_MUTATION_ARTIFACT ?? null,
+  artifactSha256: process.env.BATON2_PRIOR_MUTATION_ARCHIVE_SHA256 ?? null,
+  sourceSha: process.env.BATON2_PRIOR_MUTATION_SOURCE_SHA ?? null,
+  sourceTree: process.env.BATON2_PRIOR_MUTATION_SOURCE_TREE ?? null,
+  driverSha: process.env.BATON2_PRIOR_MUTATION_DRIVER_SHA ?? null,
+  driverTree: process.env.BATON2_PRIOR_MUTATION_DRIVER_TREE ?? null,
+  scope: 'baseline-and-five-positive-mutation-controls',
+  proofRemovalQualification: 'failed-prior-diagnostic-predicate',
+} : null;
+if (CONTROL_MODE === 'proof-removal-only' && (
+  !PRIOR_MUTATION_EVIDENCE.runId || !PRIOR_MUTATION_EVIDENCE.artifactId
+  || !/^[a-f0-9]{64}$/.test(PRIOR_MUTATION_EVIDENCE.artifactSha256 ?? '')
+  || PRIOR_MUTATION_EVIDENCE.sourceSha !== PIN
+  || PRIOR_MUTATION_EVIDENCE.sourceTree !== SOURCE_TREE
+  || !PRIOR_MUTATION_EVIDENCE.sourceTree || !PRIOR_MUTATION_EVIDENCE.driverSha || !PRIOR_MUTATION_EVIDENCE.driverTree
+)) throw new Error('proof-removal-only mode requires immutable same-source positive-control evidence');
 mkdirSync(OUTPUT, { recursive: true });
 const CASES = join(OUTPUT, 'case-tree');
 const LOGS = join(OUTPUT, 'logs');
@@ -27,6 +47,7 @@ mkdirSync(LOGS, { recursive: true });
 const commands = [];
 let inventory = [];
 let selectedNames = [];
+const proofRemovalEvidence = [];
 let gateStatus = 'in_progress';
 const controlFailures = [];
 const lawsCheckPath = join(SOURCE, 'bend2', 'scripts', 'laws-check.mjs');
@@ -81,7 +102,10 @@ function persistSummary() {
     bendVersion: globalThis.bendVersion ?? null,
     lawsCheckSha256: shaFile(lawsCheckPath),
     staticMutationCount: inventory.length,
+    controlMode: CONTROL_MODE,
+    priorMutationEvidence: PRIOR_MUTATION_EVIDENCE,
     focusedMutationNames: selectedNames,
+    proofRemovalEvidence,
     controlFailures,
     compileCount: commands.length,
     commands,
@@ -120,14 +144,26 @@ function restore(relativePath) {
 }
 function removeProof(relativePath, name) {
   const path = join(CASES, relativePath);
-  const lines = readFileSync(path, 'utf8').split('\n');
-  const start = lines.findIndex((line) => line.startsWith(`def ${name}(`));
-  if (start < 0) return false;
+  const source = readFileSync(path, 'utf8');
+  const lines = source.split('\n');
+  const matches = [];
+  for (let i = 0; i < lines.length; i++) if (lines[i].startsWith(`def ${name}(`)) matches.push(i);
+  if (matches.length !== 1) return null;
+  const start = matches[0];
   let end = start + 1;
   while (end < lines.length && (lines[end] === '' || /^\s/.test(lines[end]))) end++;
+  const proofText = lines.slice(start, end).join('\n');
   lines.splice(start, end - start);
-  writeFileSync(path, lines.join('\n'));
-  return true;
+  const mutatedSource = lines.join('\n');
+  writeFileSync(path, mutatedSource);
+  return {
+    sourceSha256: shaBytes(Buffer.from(source)),
+    proofSha256: shaBytes(Buffer.from(proofText)),
+    proofText,
+    startLine: start + 1,
+    endLine: end,
+    mutatedSha256: shaBytes(Buffer.from(mutatedSource)),
+  };
 }
 
 inventory = mutations.map((mutation) => {
@@ -190,7 +226,7 @@ selectedNames = [
 ];
 const selected = selectedNames.map((name) => mutations.find((item) => item.name === name));
 if (selected.some((item) => !item)) throw new Error('focused mutation entry is missing');
-for (const item of selected) {
+if (CONTROL_MODE === 'all') for (const item of selected) {
   const entry = inventory.find((row) => row.name === item.name);
   if (entry.needleOccurrenceLines.length !== 1) throw new Error(`focused needle must occur exactly once: ${item.name}`);
 }
@@ -207,7 +243,7 @@ if (!baselinePassed) {
   persistSummary();
 }
 
-for (const item of selected) {
+if (CONTROL_MODE === 'all') for (const item of selected) {
   restore(item.file);
   const path = join(CASES, item.file);
   const original = readFileSync(path, 'utf8');
@@ -243,10 +279,34 @@ for (const item of selected) {
     persistSummary();
     continue;
   }
+  const proofDir = join(OUTPUT, 'proof-removals');
+  mkdirSync(proofDir, { recursive: true });
+  const proofArtifact = join(proofDir, `${item.law}.proof.txt`);
+  const mutatedArtifact = join(proofDir, `${item.law}.bend`);
+  writeFileSync(proofArtifact, removed.proofText);
+  copyFileSync(join(CASES, declaration[0].path), mutatedArtifact);
+  proofRemovalEvidence.push({
+    law: item.law,
+    lawDeclarationLine: declaration[0].line,
+    functionName: item.law,
+    file: declaration[0].path,
+    startLine: removed.startLine,
+    endLine: removed.endLine,
+    sourceSha256: removed.sourceSha256,
+    proofArtifact: relative(OUTPUT, proofArtifact),
+    proofSha256: shaFile(proofArtifact),
+    mutatedFileArtifact: relative(OUTPUT, mutatedArtifact),
+    mutatedFileSha256: shaFile(mutatedArtifact),
+  });
   const result = bendCheck(`proof-removal-${item.law}`);
   const output = readFileSync(join(OUTPUT, result.stderr.path), 'utf8') + readFileSync(join(OUTPUT, result.stdout.path), 'utf8');
   result.expectedDiagnosticLaw = item.law;
-  result.expectedDiagnosticObserved = result.exitCode !== 0 && output.includes(item.law);
+  result.expectedDiagnostic = 'Error: 1 TODO found. The code is incomplete, and not a valid proof yet.';
+  result.expectedDiagnosticObserved = result.exitCode !== 0
+    && (output.match(/TODO found/g) ?? []).length === 1
+    && /Error: 1 TODO found\.\s+The code is incomplete, and not a valid proof yet\./.test(output);
+  proofRemovalEvidence.at(-1).diagnosticObserved = result.expectedDiagnosticObserved;
+  proofRemovalEvidence.at(-1).stderrSha256 = result.stderr.sha256;
   result.qualification = baselinePassed ? 'qualified' : 'unqualified-baseline-failed';
   result.passed = baselinePassed && result.expectedDiagnosticObserved;
   restore(declaration[0].path);
