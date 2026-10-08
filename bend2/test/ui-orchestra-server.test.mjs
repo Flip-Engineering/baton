@@ -659,3 +659,42 @@ test('view CLI streams a committed native message through the owner subscription
   const afterShutdown = await fetch(`${base}orchestra/snapshot?subject=child&since=0`);
   assert.equal(afterShutdown.status, 200, 'read-only HTTP server stopped with the owner');
 });
+
+test('a held write lock answers recoverably and the view keeps serving', async (t) => {
+  // An ordinary writer holds the database while an actor commits. Both routes must
+  // answer with a state the page already handles, and the process must survive:
+  // the page retries the snapshot and resumes the event connection.
+  const space = fixture();
+  t.after(() => rmSync(space.directory, { recursive: true, force: true }));
+  const server = createOrchestraServer({
+    databasePath: space.databasePath,
+    reader: 'root',
+    subscribeCommittedChanges: commitNotifications().subscribeCommittedChanges,
+  });
+  const base = await listen(server);
+  t.after(() => close(server));
+
+  const healthy = await fetch(`${base}/orchestra/snapshot?subject=child`);
+  assert.equal(healthy.status, 200);
+
+  const writer = new DatabaseSync(space.databasePath);
+  writer.exec('BEGIN EXCLUSIVE');
+  let busySnapshot;
+  let busyEvents;
+  try {
+    busySnapshot = await fetch(`${base}/orchestra/snapshot?subject=child`);
+    busyEvents = await fetch(`${base}/orchestra/events?subject=child`);
+  } finally {
+    writer.exec('ROLLBACK');
+    writer.close();
+  }
+
+  assert.equal(busySnapshot.status, 503);
+  assert.deepEqual(await busySnapshot.json(), { error: 'snapshot-unavailable' });
+  assert.equal(busyEvents.status, 503);
+  assert.deepEqual(await busyEvents.json(), { error: 'database-busy' });
+
+  const recovered = await fetch(`${base}/orchestra/snapshot?subject=child`);
+  assert.equal(recovered.status, 200, 'the view stopped serving after a locked read');
+  assert.equal((await recovered.json()).players[0].id, 'child');
+});

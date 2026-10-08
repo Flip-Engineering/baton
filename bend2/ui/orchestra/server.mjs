@@ -21,6 +21,25 @@ function json(response, status, value) {
   response.end(JSON.stringify(value));
 }
 
+// A read against a database another connection is writing returns busy. That is
+// recoverable: the page retries the snapshot and resumes the event connection,
+// so the server answers with a state the client already handles and stays up.
+const SQLITE_BUSY_CODES = new Set([5, 6, 261]);
+
+function isBusy(error) {
+  if (!error) return false;
+  if (SQLITE_BUSY_CODES.has(error.errcode)) return true;
+  return /database is locked|database table is locked/i.test(String(error.message || ''));
+}
+
+function respondToFailure(response, error) {
+  if (response.headersSent) {
+    try { response.end(); } catch {}
+    return;
+  }
+  json(response, isBusy(error) ? 503 : 500, { error: isBusy(error) ? 'database-busy' : 'server-error' });
+}
+
 function parseCursor(value) {
   if (value === null || value === '') return 0;
   if (!/^\d+$/.test(value)) return null;
@@ -413,7 +432,7 @@ export function createOrchestraServer({ databasePath, reader, subject = reader,
     ? subscribeCommittedChanges
     : baton2Executable ? createNativeOwnerSubscriber(baton2Executable) : undefined;
   const db = new DatabaseSync(databasePath, { readOnly: true });
-  const server = createServer((request, response) => {
+  const handleRequest = (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     if (request.method !== 'GET') return json(response, 405, { error: 'method-not-allowed' });
     if (url.pathname === '/orchestra/snapshot') {
@@ -438,7 +457,13 @@ export function createOrchestraServer({ databasePath, reader, subject = reader,
       }
       void streamEvents(response, db, databasePath, reader, selected, since,
         url.searchParams.get('generation') || '', committedChanges)
-        .catch(() => json(response, 503, { error: 'native-owner-subscription-unavailable' }));
+        .catch(() => {
+          if (response.headersSent) {
+            try { response.end(); } catch {}
+            return;
+          }
+          json(response, 503, { error: 'native-owner-subscription-unavailable' });
+        });
       return;
     }
     if (url.pathname.startsWith('/orchestra/')) return json(response, 404, { error: 'not-found' });
@@ -450,6 +475,13 @@ export function createOrchestraServer({ databasePath, reader, subject = reader,
       return;
     }
     return serveAsset(response, resolve(assetRoot), url.pathname);
+  };
+  const server = createServer((request, response) => {
+    try {
+      handleRequest(request, response);
+    } catch (error) {
+      respondToFailure(response, error);
+    }
   });
   server.on('close', () => db.close());
   server.listen(port, host);
