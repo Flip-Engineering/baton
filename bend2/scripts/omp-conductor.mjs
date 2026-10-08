@@ -207,7 +207,7 @@ function runOmpTurn(prompt, sessionDir, session) {
       process.stderr.write(`omp-conductor: ${event.type}\n`);
       const native = event.type === 'session' ? event.id : null;
       if (native) {
-        execFileSync(COORD, [DB, 'bind', sessionId, native, 'omp', '', '']);
+        execFileSync(COORD, [DB, 'bind', sessionId, native, 'omp', '', ''], { maxBuffer: Infinity });
       }
     });
 

@@ -256,7 +256,6 @@ typedef struct {
   uint64_t incarnation,attempt,manifest,spool_device,spool_inode,offset,length,check;
   BrBirth birth;
 } BrCheckpoint;
-#define BR_CHECKPOINT_STATE_MAX (1u<<20)
 static int br_checkpoint_load(const char *directory,int spool_fd,uint32_t schema,
                               uint64_t *offset,char **state,size_t *length);
 static int br_checkpoint_store(const char *directory,int spool_fd,uint32_t schema,
@@ -706,16 +705,6 @@ static void baton_retained_call(BatonProcessCall *call) {
        committed after its own durable store and reducer effects for that frame.
        It is bound to this attempt's manifest, native process and spool file. */
     if(retained->spool<0) {call->error=EBADF;return;}
-    /* A state too large to checkpoint keeps the previous checkpoint and records
-       the diagnostic, and reports a typed degradation so the observation owner
-       latches advancement off explicitly. Nothing is truncated, and the native
-       result and its source bytes are untouched. */
-    if(call->length>BR_CHECKPOINT_STATE_MAX) {
-      br_file(retained->directory,"checkpoint-error",
-        "state exceeds the checkpoint bound; the previous checkpoint stands\n",67,1);
-      call->error=EOVERFLOW;
-      return;
-    }
     pthread_mutex_lock(&retained->reader);
     call->error=br_checkpoint_store(retained->directory,retained->spool,(uint32_t)call->signal,
       retained->incarnation,(uint64_t)retained->offset,call->text,call->length);
@@ -1254,19 +1243,32 @@ static int br_ipc_prepare(const char *path) {
   free(copy);
   return error;
 }
-static int br_ipc_directory(char *buffer,size_t size) {
+static int br_ipc_directory(char **directory_out) {
   const char *runtime=getenv("XDG_RUNTIME_DIR"),*home=getenv("HOME");
+  *directory_out=NULL;
   if(runtime && runtime[0]) {
-    int written=snprintf(buffer,size,"%s/baton2",runtime);
-    if(written>0 && (size_t)written<size && !br_ipc_prepare(buffer))return 0;
+    char *directory=br_path(runtime,"baton2");
+    if(!directory)return ENOMEM;
+    int error=br_ipc_prepare(directory);
+    if(!error){*directory_out=directory;return 0;}
+    free(directory);
   }
-  int written=snprintf(buffer,size,"/tmp/baton2-%u",(unsigned)geteuid());
-  if(written>0 && (size_t)written<size && !br_ipc_prepare(buffer))return 0;
+  int fallback_length=snprintf(NULL,0,"/tmp/baton2-%u",(unsigned)geteuid());
+  if(fallback_length<0)return EOVERFLOW;
+  char *fallback=malloc((size_t)fallback_length+1);
+  if(!fallback)return ENOMEM;
+  snprintf(fallback,(size_t)fallback_length+1,"/tmp/baton2-%u",(unsigned)geteuid());
+  int fallback_error=br_ipc_prepare(fallback);
+  if(!fallback_error){*directory_out=fallback;return 0;}
+  free(fallback);
   if(home && home[0]) {
-    written=snprintf(buffer,size,"%s/.local/state/baton2",home);
-    if(written>0 && (size_t)written<size && !br_ipc_prepare(buffer))return 0;
+    char *state=br_path(home,".local/state/baton2");
+    if(!state)return ENOMEM;
+    int error=br_ipc_prepare(state);
+    if(!error){*directory_out=state;return 0;}
+    free(state);
   }
-  return EACCES;
+  return fallback_error?fallback_error:EACCES;
 }
 /* The election key is the physical database identity, so a hard link or a
    symlink alias elects the same owner. */
@@ -1280,6 +1282,12 @@ static char *br_ipc_path(const char *directory,const char *key,const char *suffi
   char *path=malloc(a+b+c+3);
   if(path)snprintf(path,a+b+c+3,"%s/%s%s",directory,key,suffix);
   return path;
+}
+static int br_owner_socket_copy(char *destination,size_t capacity,const char *path) {
+  size_t length=strlen(path);
+  if(length>=capacity)return ENAMETOOLONG;
+  memcpy(destination,path,length+1);
+  return 0;
 }
 /* Replacing a record or the epoch writes a temporary file, syncs it, renames it
    over the target and syncs the directory, so a reader never sees a torn
@@ -1333,7 +1341,8 @@ static int br_epoch_next(const char *directory,const char *path,uint64_t *epoch)
 static int br_owner_record_write(BrOwner *owner) {
   BrOwnerRecord record={.token=owner->token,.epoch=owner->epoch,.device=owner->device,
     .inode=owner->inode,.pid=(int32_t)getpid()};
-  snprintf(record.socket,sizeof(record.socket),"%s",owner->socket_path);
+  int error=br_owner_socket_copy(record.socket,sizeof(record.socket),owner->socket_path);
+  if(error)return error;
   return br_replace(owner->ipc,owner->record_path,&record,sizeof(record),1);
 }
 static int br_owner_record_read(const char *ipc,const char *record_path,BrOwnerRecord *record) {
@@ -1394,8 +1403,9 @@ static int br_checkpoint_verified_offset(const char *directory,int spool_fd,uint
   struct stat info;
   if(!error && fstat(fd,&info))error=errno;
   if(!error && memcmp(stored.magic,BR_CHECKPOINT_MAGIC,8))error=EINVAL;
-  if(!error && stored.length>BR_CHECKPOINT_STATE_MAX)error=EOVERFLOW;
-  if(!error && (size_t)info.st_size!=sizeof(stored)+stored.length)error=EINVAL;
+  if(!error && info.st_size<0)error=EINVAL;
+  if(!error && stored.length>SIZE_MAX-sizeof(stored))error=EOVERFLOW;
+  if(!error && (uint64_t)info.st_size!=(uint64_t)sizeof(stored)+stored.length)error=EINVAL;
   BrBirth birth;uint64_t manifest,spool_device,spool_inode;
   if(!error)error=br_checkpoint_custody(directory,spool_fd,&birth,&manifest,&spool_device,&spool_inode);
   if(!error && (stored.birth.pid!=birth.pid || stored.birth.first!=birth.first ||
@@ -1443,7 +1453,6 @@ static int br_checkpoint_custody(const char *directory,int spool_fd,BrBirth *bir
 }
 static int br_checkpoint_store(const char *directory,int spool_fd,uint32_t schema,
                                uint64_t incarnation,uint64_t offset,const char *state,size_t length) {
-  if(length>BR_CHECKPOINT_STATE_MAX)return EOVERFLOW;
   if(length>SIZE_MAX-sizeof(BrCheckpoint))return EOVERFLOW;
   BrBirth birth;uint64_t manifest,spool_device,spool_inode;
   int error=br_checkpoint_custody(directory,spool_fd,&birth,&manifest,&spool_device,&spool_inode);
@@ -1490,8 +1499,9 @@ static int br_checkpoint_load(const char *directory,int spool_fd,uint32_t schema
   if(!error && memcmp(checkpoint.magic,BR_CHECKPOINT_MAGIC,8))error=EINVAL;
   if(!error && checkpoint.schema!=schema)error=EINVAL;
   if(!error && checkpoint.attempt!=br_attempt_identity(directory))error=EINVAL;
-  if(!error && checkpoint.length>BR_CHECKPOINT_STATE_MAX)error=EOVERFLOW;
-  if(!error && (size_t)info.st_size!=sizeof(checkpoint)+checkpoint.length)error=EINVAL;
+  if(!error && info.st_size<0)error=EINVAL;
+  if(!error && checkpoint.length>SIZE_MAX-sizeof(checkpoint))error=EOVERFLOW;
+  if(!error && (uint64_t)info.st_size!=(uint64_t)sizeof(checkpoint)+checkpoint.length)error=EINVAL;
   BrBirth birth;uint64_t manifest,spool_device,spool_inode;
   if(!error)error=br_checkpoint_custody(directory,spool_fd,&birth,&manifest,&spool_device,&spool_inode);
   if(!error && (checkpoint.birth.pid!=birth.pid || checkpoint.birth.first!=birth.first ||
@@ -1860,7 +1870,6 @@ polled:
    is refused. */
 static int br_owner_bind(BrOwner *owner,const char *database) {
   struct stat info;
-  char ipc[512];
   int error=0;
   owner->database=realpath(database,NULL);
   if(!owner->database)return errno;
@@ -1880,9 +1889,8 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
   if(!error){owner->parent_device=(uint64_t)info.st_dev;owner->parent_inode=(uint64_t)info.st_ino;}
   free(parent);
   if(error)return error;
-  error=br_ipc_directory(ipc,sizeof(ipc));
+  error=br_ipc_directory(&owner->ipc);
   if(error)return error;
-  owner->ipc=strdup(ipc);
   owner->key=br_owner_key(owner->device,owner->inode);
   if(!owner->ipc || !owner->key)return ENOMEM;
   char *lock_path=br_ipc_path(owner->ipc,owner->key,".lock");
@@ -2087,18 +2095,17 @@ static int br_retain(BatonProcessCall *call) {
 static int br_instance_record(const char *canonical,char **ipc_out,char **key_out,char **record_path_out,BrOwnerRecord *record) {
   struct stat info;
   if(stat(canonical,&info))return errno;
-  char ipc[512];
-  int error=br_ipc_directory(ipc,sizeof(ipc));
+  char *ipc=NULL;
+  int error=br_ipc_directory(&ipc);
   if(error)return error;
   char *key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
-  if(!key)return ENOMEM;
+  if(!key){free(ipc);return ENOMEM;}
   char *record_path=br_ipc_path(ipc,key,".record");
-  if(!record_path){free(key);return ENOMEM;}
+  if(!record_path){free(ipc);free(key);return ENOMEM;}
   error=br_owner_record_read(ipc,record_path,record);
-  if(error)free(record_path);
+  if(error) {free(ipc);free(key);free(record_path);}
   else {
-    *ipc_out=strdup(ipc);*key_out=key;*record_path_out=record_path;
-    if(!*ipc_out){free(key);free(record_path);return ENOMEM;}
+    *ipc_out=ipc;*key_out=key;*record_path_out=record_path;
   }
   return error;
 }
@@ -2118,43 +2125,18 @@ static int br_instance_spawn(const char *canonical,pid_t *pid,const char *log_pa
   }
   return error;
 }
-/* True when another process holds the election lock for this database. A held
-   lock with no answering socket means the elected owner is wedged or its
-   published record is stale; a caller must see that as a refusal rather than as
-   a connect timeout. */
-static int br_instance_election_held(const char *canonical) {
-  struct stat info;
-  if(stat(canonical,&info))return 0;
-  char ipc[512];
-  if(br_ipc_directory(ipc,sizeof(ipc)))return 0;
-  char *key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
-  if(!key)return 0;
-  char *lock_path=br_ipc_path(ipc,key,".lock");
-  int held=0;
-  if(lock_path) {
-    int fd=open(lock_path,O_CREAT|O_RDWR|O_CLOEXEC,0600);
-    if(fd>=0) {
-      int result;do {result=flock(fd,LOCK_EX|LOCK_NB);}while(result<0 && errno==EINTR);
-      held=result<0;
-      if(!held)flock(fd,LOCK_UN);
-      close(fd);
-    }
-    free(lock_path);
-  }
-  free(key);
-  return held;
-}
 /* The socket pathname a client would use for this database. A failure detail
    carries it so a caller can tell a missing owner from an unreachable one. */
-static int br_instance_socket_for(const char *database,char *buffer,size_t size) {
+static int br_instance_socket_for(const char *database,char **socket_out) {
+  *socket_out=NULL;
   char *canonical=realpath(database,NULL);
   if(!canonical)return errno;
   struct stat info;
   int error=stat(canonical,&info)?errno:0;
-  char ipc[512];
+  char *ipc=NULL;
   char *key=NULL,*record_path=NULL;
   BrOwnerRecord record;
-  if(!error)error=br_ipc_directory(ipc,sizeof(ipc));
+  if(!error)error=br_ipc_directory(&ipc);
   if(!error) {
     key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
     if(!key)error=ENOMEM;
@@ -2165,12 +2147,12 @@ static int br_instance_socket_for(const char *database,char *buffer,size_t size)
   }
   if(!error) {
     if(br_owner_record_read(ipc,record_path,&record)) {
-      char *socket_path=br_ipc_path(ipc,key,".sock");
-      if(socket_path){snprintf(buffer,size,"%s",socket_path);free(socket_path);}
-      else snprintf(buffer,size,"%s",record_path);
-    } else snprintf(buffer,size,"%s",record.socket);
+      *socket_out=br_ipc_path(ipc,key,".sock");
+      if(!*socket_out)*socket_out=strdup(record_path);
+    } else *socket_out=strdup(record.socket);
+    if(!*socket_out)error=ENOMEM;
   }
-  free(key);free(record_path);free(canonical);
+  free(ipc);free(key);free(record_path);free(canonical);
   return error;
 }
 /* Connects to the database owner. The socket pathname comes from the published
@@ -2183,22 +2165,24 @@ static int br_instance_connect(const char *database,int spawn,BrOwnerRecord *rec
   if(!canonical)return errno;
   int socket_fd=-1,started=0,error=0;
   char *owner_log=NULL;
-  for(int attempt=0;!error && attempt<600;attempt++) {
-    if(attempt){struct timespec pause={0,20000000};nanosleep(&pause,NULL);}
+  for(;;) {
     char *ipc=NULL,*key=NULL,*record_path=NULL;
     int record_error=br_instance_record(canonical,&ipc,&key,&record_path,record);
     if(record_error) {
       /* The record is only needed to propose a pathname; a first owner writes it. */
       struct stat info;
       if(stat(canonical,&info)) {error=errno;break;}
-      char directory[512];
-      if((error=br_ipc_directory(directory,sizeof(directory))))break;
+      char *directory=NULL;
+      if((error=br_ipc_directory(&directory)))break;
       key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
       record_path=br_ipc_path(directory,key,".sock");
-      if(!key || !record_path){error=ENOMEM;free(key);free(record_path);break;}
-      snprintf(record->socket,sizeof(record->socket),"%s",record_path);
+      if(!key || !record_path){error=ENOMEM;free(directory);free(key);free(record_path);break;}
+      if((error=br_owner_socket_copy(record->socket,sizeof(record->socket),record_path))) {
+        free(directory);free(key);free(record_path);break;
+      }
       char *log_path=br_ipc_path(directory,key,".log");
       if(log_path){if(!owner_log)owner_log=log_path;else free(log_path);}
+      free(directory);
     }
     struct sockaddr_un address;
     int address_error=br_socket_address(&address,record->socket);
@@ -2215,13 +2199,10 @@ static int br_instance_connect(const char *database,int spawn,BrOwnerRecord *rec
       pid_t pid;
       if((error=br_instance_spawn(canonical,&pid,owner_log)))break;
       started=1;
-    } else if(attempt>50 && br_instance_election_held(canonical)) {
-      /* Another owner holds the election lock and no socket answers it. */
-      error=EBUSY;
-      break;
     }
     error=0;
-    if(attempt==599)error=ETIMEDOUT;
+    struct timespec pause={0,20000000};
+    nanosleep(&pause,NULL);
   }
   free(canonical);
   free(owner_log);
@@ -2247,30 +2228,28 @@ static int br_instance_exchange(int socket_fd,BrInstanceFrame frame,const char *
   return error;
 }
 /* Sends one database-level request. The reply must carry the published owner
-   incarnation and epoch; a stale socket from an earlier owner is retried once
-   against the record that owner left. */
+   incarnation and epoch; a stale socket is retried against the current record. */
 static int br_instance_request(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply) {
-  BrOwnerRecord record;
-  int socket_fd=-1;
-  int error=br_instance_connect(database,1,&record,&socket_fd);
-  if(error)return error;
-  frame.owner=record.token;frame.epoch=record.epoch;
-  error=br_instance_exchange(socket_fd,frame,payload,rights,reply);
-  close(socket_fd);
-  if(error)return error;
-  if(reply->error==ESTALE) {
-    /* Another incarnation replaced the owner between the record read and the
-       request; read the record again and retry exactly once. */
-    socket_fd=-1;
-    if((error=br_instance_connect(database,0,&record,&socket_fd)))return error;
+  int first=1;
+  for(;;) {
+    BrOwnerRecord record;
+    int socket_fd=-1;
+    int error=br_instance_connect(database,first,&record,&socket_fd);
+    first=0;
+    if(error)return error;
     frame.owner=record.token;frame.epoch=record.epoch;
     error=br_instance_exchange(socket_fd,frame,payload,rights,reply);
     close(socket_fd);
     if(error)return error;
+    if(reply->error==ESTALE || (reply->owner &&
+       (reply->owner!=record.token || reply->epoch!=record.epoch))) {
+      struct timespec pause={0,20000000};
+      nanosleep(&pause,NULL);
+      continue;
+    }
+    if(reply->error)return reply->error;
+    return 0;
   }
-  if(reply->owner && (reply->owner!=record.token || reply->epoch!=record.epoch))return ESTALE;
-  if(reply->error)return reply->error;
-  return 0;
 }
 /* Connects to the attempt's own socket and writes its directory-addressed
    request. The caller reads the reply on the same socket. */
@@ -2532,18 +2511,26 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
       call->kind==BP_INSTANCE_OWNER?"owner":call->kind==BP_INSTANCE_ADMIT?"admit":
       call->kind==BP_INSTANCE_ATTACH?"instance_attach":call->kind==BP_INSTANCE_ATTACH_OWNED?"instance_attach_owned":
       call->kind==BP_INSTANCE_SHUTDOWN?"shutdown":call->kind==BP_INSTANCE_RETIRE?"retire":"keeper";
-    size_t n=(call->directory?strlen(call->directory):0)+(call->database?strlen(call->database):0)+640;
-    call->detail=malloc(n);
-    if(call->detail) {
-      char socket[512]="";
-      if(call->database && !br_instance_socket_for(call->database,socket,sizeof(socket)))
-        snprintf(call->detail,n,"%s %s%s%s at %s: %s; inspect manifest, keeper-error and observer.log",
-          operation,call->database,call->database?" ":"",
-          call->directory?call->directory:"",socket,strerror(call->error));
-      else snprintf(call->detail,n,"%s %s%s%s: %s; inspect manifest, keeper-error and observer.log",
-        operation,call->database?call->database:"",call->database?" ":"",
+    char *socket=NULL;
+    int have_socket=call->database && !br_instance_socket_for(call->database,&socket);
+    const char *format=have_socket?
+      "%s %s%s%s at %s: %s; inspect manifest, keeper-error and observer.log":
+      "%s %s%s%s: %s; inspect manifest, keeper-error and observer.log";
+    int needed=have_socket?
+      snprintf(NULL,0,format,operation,call->database,call->database?" ":"",
+        call->directory?call->directory:"",socket,strerror(call->error)):
+      snprintf(NULL,0,format,operation,call->database?call->database:"",call->database?" ":"",
         call->directory?call->directory:"",strerror(call->error));
+    if(needed>=0)call->detail=malloc((size_t)needed+1);
+    if(call->detail) {
+      int written=have_socket?
+        snprintf(call->detail,(size_t)needed+1,format,operation,call->database,call->database?" ":"",
+          call->directory?call->directory:"",socket,strerror(call->error)):
+        snprintf(call->detail,(size_t)needed+1,format,operation,call->database?call->database:"",call->database?" ":"",
+          call->directory?call->directory:"",strerror(call->error));
+      if(written!=needed){free(call->detail);call->detail=NULL;}
     }
+    free(socket);
   }
 }
 
