@@ -43,7 +43,7 @@ function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1', origi
     keeperPath,
     originAttempt,
     owner,
-    ownerWitness: 'owner-token:1',
+    ownerWitness: '1:1',
     physicalRoleKey: 'c'.repeat(64),
     planIdentity: 'plan-identity-1',
     planValue: '[]',
@@ -122,7 +122,7 @@ test('persists one immutable canonical bootstrap bound to owner, query and priva
   const root = worktree(t);
   const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-1' };
   const first = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
-  assert.equal(first.status, 'persisted');
+  assert.equal(first.status, 'persisted', JSON.stringify(first));
   assert.equal(lstatSync(first.path).mode & 0o777, 0o600);
   const replay = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
   assert.equal(replay.status, 'persisted');
