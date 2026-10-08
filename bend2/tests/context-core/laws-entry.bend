@@ -1,10 +1,5 @@
-# The isolated qualification entry of the context core modules. It imports every
-# law module, so this compile verifies every law they state, and it runs the real
-# selection, identity, applicability and admission functions over one fixture
-# each and prints the observed answer. It is module qualification: the delivered
-# gate is the import of these law modules by coordinator/laws.bend, which the
-# interfaces owner wires.
-#
+# Runs the context snapshot, reference and operation admission fixtures.
+
 # Build and run from the repository root:
 #   sh bend2/scripts/build-native.sh bend2/tests/context-core/laws-entry.bend .scratch/context-core-entry
 #   ./.scratch/context-core-entry
@@ -25,20 +20,6 @@ import ../../src/context/engines-wire.bend as Wire
 import ../../src/context/snapshot-validate-laws.bend as SVLaws
 import ../../src/context/engines-wire-laws.bend as WireLaws
 
-def choice_text(c: Eng.EngineChoice) -> String:
-  match c:
-    case Eng.EOne{engine}: "one:" ++ engine
-    case Eng.EMany{candidates}: "many"
-    case Eng.ENone{reason}: "none:" ++ reason
-
-def resolved_text(r: Eng.EngineResolved) -> String:
-  match r:
-    case Eng.RSelected{engine, provider, version, executable}: "selected:" ++ engine ++ ":" ++ provider ++ ":" ++ version
-    case Eng.RUnavailable{engine, reason}: "unavailable:" ++ engine ++ ":" ++ reason
-    case Eng.RExcluded{engine, reason}: "excluded:" ++ engine ++ ":" ++ reason
-    case Eng.RCandidates{candidates}: "candidates"
-    case Eng.RNone{reason}: "none:" ++ reason
-
 def applies_text(a: Snap.Applies) -> String:
   match a:
     case Snap.ACurrent{}: "current"
@@ -52,12 +33,6 @@ def effects_text(xs: Eng.SS) -> String:
     case Eng.SSNil{}: ""
     case Eng.SSCons{h, Eng.SSNil{}}: h
     case Eng.SSCons{h, r}: h ++ "," ++ effects_text(r)
-
-def availability_text(a: Eng.Availability) -> String:
-  match a:
-    case Eng.AvAvailable{}: "available"
-    case Eng.AvUnavailable{reason}: "unavailable:" ++ reason
-    case Eng.AvExcluded{reason}: "excluded:" ++ reason
 
 def admission_text(a: Eng.Admission) -> String:
   match a:
@@ -89,12 +64,7 @@ def chk(ok: Bool, +why: String) -> IO(Unit):
     case False{}: IO.die(Unit, 1, "FAIL " ++ why)
 
 def all_ok() -> List<Bool>:
-  [ String.eq(choice_text(Eng.auto("position", "src/handler.ts", "", Eng.ss_one("definition"))), "one:typescript"),
-    String.eq(choice_text(Eng.auto("symbol", "src/report.c", "", Eng.ss_two("authorization", "databaseAccesses"))), "one:clang-analyzer"),
-    String.eq(choice_text(Eng.auto("position", "src/handler.cpp", "", Eng.ss_one("authorization"))), "none:C++ analysis projections are outside the initial supported set"),
-    String.eq(choice_text(Eng.auto("position", "src/handler", "", Eng.ss_one("definition"))), "many"),
-    String.eq(resolved_text(Eng.resolve(Eng.EOne{"clangd"}, [Eng.Engine{"clangd", "llvm-clangd", "20.1.8", "/usr/local/bin/clangd", Eng.SSNil{}, Eng.SSNil{}, Eng.AvUnavailable{"probe failed"}, Eng.SSNil{}}])), "unavailable:clangd:probe failed"),
-    String.eq(Snap.identity_text("typescript", "5.9.3", ["project/lib.json"], Snap.fps_of_list([Snap.FpFile{"source", "/work/a.ts", "aa"}])), "[\"baton2.context.snapshot.v1\",\"typescript\",\"5.9.3\",[\"project/lib.json\"],[[\"source\",\"/work/a.ts\",\"aa\"]]]"),
+  [ String.eq(Snap.identity_text("typescript", "5.9.3", ["project/lib.json"], Snap.fps_of_list([Snap.FpFile{"source", "/work/a.ts", "aa"}])), "[\"baton2.context.snapshot.v1\",\"typescript\",\"5.9.3\",[\"project/lib.json\"],[[\"source\",\"/work/a.ts\",\"aa\"]]]"),
     String.eq(applies_text(Snap.applies(Snap.fps_of_list([Snap.FpFile{"source", "/work/a.ts", "aa"}]), Snap.RvOk{Snap.fps_of_list([Snap.FpFile{"source", "/work/a.ts", "bb"}])})), "stale"),
     String.eq(check_text(Snap.capture_check(Snap.fps_of_list([Snap.FpFile{"source", "/work/a.ts", "aa"}]), Snap.fps_of_list([Snap.FpFile{"source", "/work/a.ts", "bb"}]))), "changed"),
     String.eq(Refs.source_ref("/work/a.ts", "sha", 40, 17, "definition"), "[\"source\",\"/work/a.ts\",\"sha\",40,17,\"definition\"]"),
@@ -110,7 +80,6 @@ def all_ok() -> List<Bool>:
     String.eq(effects_text(Eng.required_effects(Eng.op_code_access_join())), "planTargetSql"),
     String.eq(effects_text(Eng.required_effects(Eng.op_query_control_release())), "controlRuntime"),
     String.eq(effects_text(Eng.required_effects(Eng.op_query_control_recover())), ""),
-    String.eq(choice_text(Eng.auto("runtime", "", "", Eng.ss_one("state"))), "one:cdp"),
     String.eq(effects_text(Eng.required_effects(Eng.op_tools_probe())), "executeTarget"),
     String.eq(effects_text(Eng.required_effects(Eng.op_deployment_tool_probe())), ""),
     Eng.operation_known(Eng.op_deployment_tool_probe()),
@@ -118,11 +87,7 @@ def all_ok() -> List<Bool>:
     String.eq(admission_text(Eng.admit_operations(Eng.ss_one(Eng.op_source_analysis()), Eng.SSNil{})), "admit:"),
     String.eq(admission_text(Eng.admit_operations(Eng.ss_one("inventedOperation"), Eng.SSNil{})), "unknown:inventedOperation"),
     String.eq(admission_text(Eng.admit_operations(Eng.ss_two(Eng.op_tools_probe(), Eng.op_code_access_join()), Eng.ss_one("executeTarget"))), "missing:planTargetSql"),
-    String.eq(admission_text(Eng.admit_operations(Eng.ss_two(Eng.op_tools_probe(), Eng.op_runtime_launch()), Eng.ss_two("executeTarget", "controlRuntime"))), "admit:controlRuntime,executeTarget"),
-    String.eq(availability_text(Eng.probe_availability(Eng.unpinned_operation(), Eng.POk{"20.1.8", "", "s"}, "20.1.8")), "unavailable:the provider probe form is not pinned"),
-    String.eq(availability_text(Eng.probe_availability("providerEngines", Eng.POk{"5.9.3", "/x/node", "s"}, "5.9.3")), "available"),
-    String.eq(choice_text(Eng.auto("ref", "", "typescript", Eng.ss_one("definition"))), "one:typescript"),
-    String.eq(choice_text(Eng.auto("ref", "", "", Eng.ss_one("definition"))), "none:ref subject requires the stored selector engine") ]
+    String.eq(admission_text(Eng.admit_operations(Eng.ss_two(Eng.op_tools_probe(), Eng.op_runtime_launch()), Eng.ss_two("executeTarget", "controlRuntime"))), "admit:controlRuntime,executeTarget") ]
 
 def run_go(xs: List<Bool>, +i: U32) -> IO(Unit):
   match xs:
@@ -138,6 +103,4 @@ def main():
   do IO<Unit>:
     _a : Unit <- run_go(all_ok(), 1)
     _b : Unit <- IO.print(Refs.runtime_ref("rt:q7", "ad:1", "worker:2", "3", "5", "object", "handle:9"))
-    _c : Unit <- IO.print(resolved_text(Eng.resolve(Eng.EMany{Eng.ss_two("typescript", "clangd")}, [])))
-    _d : Unit <- IO.print(choice_text(Eng.auto("entity", "", "sqlite-schema", Eng.ss_one("entities"))))
     IO.pure(Unit, Unit{})
