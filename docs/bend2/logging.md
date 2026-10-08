@@ -86,10 +86,9 @@ rotation ran. The live log moves exactly once per rotation. The lines one
 frame contributes pass one rotation check together, so a held update and its
 end land in the same file; a batch can carry the live log past the budget
 the way a single large frame can.
-A budget admits 65536 bytes or more, which holds at least one
-observed frame: a measured OMP seat wrote 47 KB per retained frame, and a
-budget below one frame rotates on every append. The upper bound is the U32
-representation. `keep_segments` accepts positive U32 values. Rotation,
+A budget accepts positive U32 values. A frame larger than the threshold stays
+complete and can trigger rotation before the next append. `keep_segments`
+accepts positive U32 values. Rotation,
 inspection, and cleanup enumerate the canonical numbered files in the log's
 directory. Their work follows the existing files. The policy migration retains
 stored rows and the registered log paths. A migration that fails because a
