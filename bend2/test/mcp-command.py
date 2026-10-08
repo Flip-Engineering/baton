@@ -139,6 +139,22 @@ class McpCommand(unittest.TestCase):
         self.command(tool='baton2_receiver', arguments=arguments,
                      session='associate', expected_args=argv)
 
+    def test_landing_forwards_optional_reviewed_commit(self):
+        for tool, command, extra in (
+                ('baton2_land', 'land', {}),
+                ('baton2_land_checked', 'land-checked', {'check': 'check.sh', 'files': 'file.txt'})):
+            for selected in (None, 'reviewed-source'):
+                with self.subTest(tool=tool, commit=selected):
+                    args = {'player': 'worker', 'repo': '/repository', 'target': 'main', **extra}
+                    argv = [command, 'worker', '/repository', 'main', *extra.values()]
+                    if selected is not None:
+                        args['commit'] = selected
+                        argv += ['--commit', selected]
+                    self.command(tool=tool, arguments=args, expected_args=argv)
+                    schema = self.tools[tool]['inputSchema']
+                    self.assertEqual(schema['properties']['commit']['type'], 'string')
+                    self.assertNotIn('commit', schema['required'])
+
     def test_configure_forwards_the_requested_and_expected_route(self):
         arguments, argv = self.native_controls()['baton2_configure']
         self.command(tool='baton2_configure', arguments=arguments,

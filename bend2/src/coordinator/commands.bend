@@ -39,6 +39,8 @@ type Command is Data:
   Pending{}
   Inbox{id: String}
   Land{player: String, repo: String, target: String}
+  LandAt{player: String, repo: String, target: String, commit: String}
+  LandCheckedAt{player: String, repo: String, target: String, check: String, files: String, commit: String}
   LandChecked{player: String, repo: String, target: String, check: String, files: String}
   Push{repo: String, branch: String, remote: String}
   RemoteTip{repo: String, branch: String, remote: String}
@@ -443,6 +445,8 @@ def sql(command: Command) -> String:
     case StatusPretty{}: ""
     case Pretty{read}: ""
     case Land{player,repo,target}: ""
+    case LandAt{player,repo,target,commit}: ""
+    case LandCheckedAt{player,repo,target,check,files,commit}: ""
     case LandChecked{player,repo,target,check,files}: ""
     case Push{repo,branch,remote}: ""
     case RemoteTip{repo,branch,remote}: ""
@@ -610,9 +614,9 @@ def parse(args: List<String>) -> Command:
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
       parse_verb_four_args(verb,id,one,two,three)
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
-      parse_verb_five_args(verb,id,one,two,three,four)
-    case +verb <> session <> cmd <> model <> effort <> cwd <> log <> message <> Nil{}:
-      parse_receive(verb,session,cmd,model,effort,cwd,log,message)
+      Bool.pick(Command, Bool.and(String.eq(verb,"land"),String.eq(three,"--commit")), LandAt{id,one,two,four}, parse_verb_five_args(verb,id,one,two,three,four))
+    case +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
+      Bool.pick(Command, Bool.and(String.eq(verb,"land-checked"),String.eq(log,"--commit")), LandCheckedAt{session,cmd,model,effort,cwd,message}, parse_receive(verb,session,cmd,model,effort,cwd,log,message))
     case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
       parse_verb_nine_args(verb,player,id,cmd,model,effort,cwd,task,log,session)
     case _: Invalid{}

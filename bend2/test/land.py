@@ -106,6 +106,62 @@ class Land(unittest.TestCase):
         )
         return self.git('rev-parse', branch).strip()
 
+    def test_reviewed_commit_lands_ancestor_while_player_continues(self):
+        reviewed = self.recruit_and_commit()
+        wt = self.repo / 'wt'
+        (wt / 'later.txt').write_text('work after review\n')
+        subprocess.run(['git', '-C', str(wt), 'add', 'later.txt'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(wt), 'commit', '-q', '-m', 'later work'], check=True, capture_output=True)
+        later = self.git('rev-parse', 'w1-branch').strip()
+
+        result = self.call('land', 'w1', self.repo, 'main', '--commit', reviewed)
+
+        self.assertEqual(result['status'], 'landed')
+        self.assertEqual(result['commit'], reviewed)
+        self.assertEqual(self.git('rev-parse', 'main').strip(), reviewed)
+        self.assertEqual(self.git('rev-parse', 'w1-branch').strip(), later)
+        self.assertNotIn('later.txt', self.git('ls-tree', '-r', '--name-only', 'main').splitlines())
+        self.assertEqual((wt / 'later.txt').read_text(), 'work after review\n')
+
+    def test_checked_reviewed_commit_keeps_later_work_on_player_branch(self):
+        (self.repo / 'check-pass.sh').write_text('test "$(cat file.txt)" = "worker change for w1"\n')
+        self.git('add', 'check-pass.sh')
+        self.git('commit', '-q', '-m', 'check fixture')
+        self.base = self.git('rev-parse', 'HEAD').strip()
+        reviewed = self.recruit_and_commit()
+        wt = self.repo / 'wt'
+        (wt / 'file.txt').write_text('later work\n')
+        self.git('-C', str(wt), 'add', 'file.txt')
+        self.git('-C', str(wt), 'commit', '-q', '-m', 'later work')
+        later = self.git('rev-parse', 'w1-branch').strip()
+
+        result = self.call('land-checked', 'w1', self.repo, 'main',
+                           'check-pass.sh', 'file.txt', '--commit', reviewed)
+
+        self.assertEqual(result['status'], 'landed')
+        self.assertEqual((self.repo / 'file.txt').read_text(), 'worker change for w1')
+        self.assertEqual(self.tracked_status(), '')
+        self.assertEqual(self.git('rev-parse', 'w1-branch').strip(), later)
+        self.assertEqual((wt / 'file.txt').read_text(), 'later work\n')
+
+    def test_unrelated_reviewed_commit_preserves_target_and_scratch(self):
+        worker = self.recruit_and_commit()
+        self.git('commit', '-q', '--allow-empty', '-m', 'unrelated target work')
+        target = self.git('rev-parse', 'main').strip()
+        scratch = self.scratch_paths('w1')
+        for command in ('land', 'land-checked'):
+            with self.subTest(command=command):
+                args = [] if command == 'land' else ['unused-check.sh', 'file.txt']
+                result = subprocess.run(
+                    [str(EXE), str(self.db), command, 'w1', str(self.repo), 'main',
+                     *args, '--commit', target], text=True, capture_output=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('not an ancestor', result.stderr)
+                self.assertEqual(self.git('rev-parse', 'main').strip(), target)
+                self.assertEqual(self.git('rev-parse', 'w1-branch').strip(), worker)
+                self.assertEqual(self.tracked_status(), '')
+                self.assertEqual(self.scratch_paths('w1'), scratch)
+
     def test_fast_forward_landing(self):
         commit = self.recruit_and_commit()
         result = self.call('land', 'w1', self.repo, 'main')

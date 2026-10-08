@@ -712,9 +712,6 @@ def storage(+db: String) -> IO(String):
     root : U32 <- IO.try(U32,F.Files.size(db ++ ".root.log"))
     IO.pure(String,storage_json(db,database,root,logs,attempts,stderr_runs))
 
-def clean_pending_sql(+session: String) -> String:
-  "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL;"
-
 def clean_json(session: String, removed: String, attempt_files: String, attempt_logs: String) -> String:
   "{\"session\":" ++ J.string_literal(session) ++ ",\"removed\":[" ++ removed ++ "],\"attemptFiles\":[" ++ attempt_files ++ "],\"attemptLogs\":[" ++ attempt_logs ++ "]}"
 

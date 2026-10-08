@@ -38,7 +38,7 @@ def instructions(executable: String, database: String, +session: String) -> Stri
   ++ "  " ++ command ++ " recruit PLAYER " ++ shell(session) ++ " HARNESS MODEL EFFORT REPO BRANCH PATH BASE\n"
   ++ "  " ++ command ++ " receiver PLAYER HARNESS_CMD OUTPUT_LOG\n  " ++ command ++ " dispatch-file ID " ++ shell(session) ++ " PLAYER task TASK_FILE\n"
   ++ "  " ++ command ++ " dispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\n  " ++ command ++ " status --pretty\n"
-  ++ "  " ++ command ++ " message ID " ++ shell(session) ++ " PLAYER guidance BODY\n  " ++ command ++ " land-checked PLAYER REPO TARGET CHECK FILES\n"
+  ++ "  " ++ command ++ " message ID " ++ shell(session) ++ " PLAYER guidance BODY\n  " ++ command ++ " land-checked PLAYER REPO TARGET CHECK FILES [--commit COMMIT]\nland and land-checked default to the recorded branch tip; --commit selects an ancestor.\n"
   ++ "  " ++ command ++ " role SESSION\n  " ++ command ++ " role SESSION player|principal-conductor|associate-conductor|operator\n  " ++ command ++ " ensemble ENSEMBLE\n  " ++ command ++ " ensemble ENSEMBLE OWNER [loose|tight]\n  " ++ command ++ " ensemble-member ENSEMBLE OWNER PLAYER add|remove\n  " ++ command ++ " section ENSEMBLE SECTION [OWNER CAPABILITY]\n  " ++ command ++ " section-member ENSEMBLE SECTION OWNER PLAYER add|remove\n"
   ++ "  " ++ command ++ " native-reply " ++ shell(session) ++ " REQUEST RESPONSE_JSON\n  " ++ command ++ " native-reply-file " ++ shell(session) ++ " REQUEST PATH\n"
   ++ "  " ++ command ++ " record FINDING_ID " ++ shell(session) ++ " CLAIM message:MESSAGE_ID LIMITS\n  " ++ command ++ " knowledge " ++ shell(session) ++ "\n"
