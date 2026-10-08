@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,6 +49,18 @@ class SelectedContextPackageTest(unittest.TestCase):
         manifest_path.write_text(json.dumps(manifest))
         with self.assertRaisesRegex(RuntimeError, 'Unsafe selected Bend2 artifact path'):
             PACKAGE.stage_selected_context_payload(self.payload)
+
+    def test_staged_provider_executes_and_returns_a_source_analysis_result(self):
+        module_root = self.payload / 'lib/context/modules/m-62656e6432'
+        PACKAGE.stage_selected_context_payload(self.payload)
+        repository = Path(__file__).resolve().parents[2]
+        integration = repository / 'bend2/context/bend2/native-provider.integration.mjs'
+        result = subprocess.run([
+            'node', str(integration), str(module_root), str(repository),
+            'bend2/context/bend2/fixtures/valid.bend',
+        ], cwd=repository, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout)['status'], 'passed', result.stdout)
 
 if __name__ == '__main__':
     unittest.main()
