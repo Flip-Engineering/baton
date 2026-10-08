@@ -984,8 +984,10 @@ def managed_recovery_verified(+db: String, +worktree: String,
                               +bootstrap: ManagedQuery.Bootstrap,
                               +bootstrap_digest: String, verified: Bool) -> IO(Unit):
   Bool.pick(IO(Unit), verified,
-    managed_recovery_attach_binding(db, worktree, bootstrap_digest, bootstrap,
-      DB.Sql.binding(db)),
+    do IO<Unit>:
+      binding : Result<&1,&1,U32 & String,String> <- DB.Sql.binding(db)
+      managed_recovery_attach_binding(db, worktree, bootstrap_digest, bootstrap,
+        binding),
     IO.die(Unit, 3, "managedRecoveryInvocationMismatch"))
 
 def managed_recovery_attach(+db: String, +worktree: String,
