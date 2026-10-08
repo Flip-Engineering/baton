@@ -2276,6 +2276,27 @@ def shared_reserved_attested(repo: String, +target: String, cand: String, basis:
   +rel = T.release_raw_of(released)
   ld_attest_admit(AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), rel, IdentityObserved{common, common_observed, target}, ld_adv_association(obs), ld_adv_intent(obs), reservation})
 
+# The landing path and the shared path name the same attempt directory: the landing chain derives it as
+# attempt_directory_for(common, attempt), and the shared reservation is that same common, the attempts parent
+# and the attempt name. Stating the agreement is what binds the two paths' artifact destinations.
+law the_landing_attempt_directory_is_the_shared_reservation_path:
+  for common: String
+  for attempt: String
+  {Lg.attempt_directory_for(common, attempt) == shared_parent_path(shared_attempts_parent(common), attempt) : String}
+
+def the_landing_attempt_directory_is_the_shared_reservation_path(common,attempt):
+  {==}
+
+# The artifact destination the landing chain hands the guarded capture is the same destination the shared
+# evidence carries: both are the reservation's stderr path.
+law the_landing_artifact_is_the_shared_reservation_derived_artifact:
+  for common: String
+  for attempt: String
+  {Lg.attempt_artifact_for(common, attempt) == shared_parent_path(shared_parent_path(shared_attempts_parent(common), attempt), "stderr") : String}
+
+def the_landing_artifact_is_the_shared_reservation_derived_artifact(common,attempt):
+  {==}
+
 # A host capture that failed carries its own code and detail into the captured observation and the broken
 # advance, with the mode and the empty association and intent slots spelled literally.
 law a_failed_capture_reports_its_own_code_and_detail:
