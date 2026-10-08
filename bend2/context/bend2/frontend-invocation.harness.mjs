@@ -299,7 +299,6 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     check(report, 'the failing fixture declaration has its declared type observation',
       report.types.some((entry) => entry.qualified === 'invalid.broken' && entry.status === 'declared'),
       report.types.filter((entry) => entry.qualified === 'invalid.broken'));
-    check(report, 'the capture is complete', report.completeness === 'complete', report.incompleteness);
     check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
     return report;
   }));

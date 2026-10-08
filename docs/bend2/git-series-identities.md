@@ -46,6 +46,26 @@ The registry has explicit exact-model mappings and series directories:
 }
 ```
 
+The registry may set one shared author and committer with a top-level
+`attribution` object:
+
+```json
+{
+  "attribution": {
+    "name": "Flip - Baton",
+    "email": "baton@flip.engineering"
+  }
+}
+```
+
+The helper applies these fields to Git author and committer headers for every
+selected series. Registry attribution takes precedence over a selected
+`identity-series.json` `authorEmail`. The helper uses that per-series email
+when no shared attribution is configured, and the verified App bot email when
+the identity has no `authorEmail`. Its default name is `Flip Baton - SERIES`.
+The `github` identity selects the App installation, signing key and token
+permissions.
+
 Each public identity has this shape. Replace the unset GitHub values with
 verified App, bot, installation and repository metadata before launch:
 
@@ -77,8 +97,8 @@ The bot login is `SLUG[bot]`; the commit email is
 public user metadata. GitHub's own action documents this
 [email format](https://github.com/actions/create-github-app-token#configure-git-cli-for-an-apps-bot-user).
 `displaySeries` must match the selected label: `GPT`, `Muse`, `DeepSeek`,
-`Claude`, `GLM` or `Kimi`. The helper adds `Flip Baton - ` to that verified
-label for commit names. GitHub controls the App account login's `[bot]` suffix;
+`Claude`, `GLM` or `Kimi`. The default commit name is `Flip Baton - ` followed
+by that verified label. GitHub controls the App account login's `[bot]` suffix;
 the bot login, numeric ID, noreply email and authenticated actor stay unchanged.
 Each App registration's `name` also uses `Flip Baton - SERIES`. GitHub's action
 interface derives a normalized lowercase, hyphenated label from that name.

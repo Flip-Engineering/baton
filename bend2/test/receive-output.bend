@@ -1,6 +1,5 @@
 import Base
 import ../src/coordinator/receive.bend as Receive
-import ../src/coordinator/receive-laws.bend as ReceiveLaws
 import ../src/coordinator/turn.bend as Turn
 import ../src/host/text.bend as Text
 import ../src/git/process.bend as Process

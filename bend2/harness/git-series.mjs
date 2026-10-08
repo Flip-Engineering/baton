@@ -74,7 +74,21 @@ export function selected_identity(registry_path, model_key = null, series_key = 
   require(github.repositoryFullName === REPOSITORY, 'The App identity must name Flip-Engineering/baton.');
   require(isDeepStrictEqual(github.permissions, PERMISSIONS),
     'The App identity permissions differ from the approved permissions.');
-  return [series_key, directory, github];
+  let author_name = 'Flip Baton - ' + SERIES_LABELS[series_key];
+  let author_email = Object.hasOwn(identity, 'authorEmail') ? identity.authorEmail : github.commitEmail;
+  if (Object.hasOwn(registry, 'attribution')) {
+    const attribution = registry.attribution;
+    require(object(attribution), 'The registry attribution must contain a name and email.');
+    author_name = attribution.name;
+    author_email = attribution.email;
+    require(typeof author_name === 'string' && author_name.length > 0
+      && author_name === author_name.trim() && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}<>]/u.test(author_name),
+    'The commit attribution requires a nonempty plain name.');
+  }
+  require(typeof author_email === 'string' && !/[\s\p{Cc}<>,;()"\\]/u.test(author_email)
+    && /^[^@]+@[^@]+\.[^@]+$/.test(author_email),
+  'The commit attribution requires a plain email address.');
+  return [series_key, directory, github, author_email, author_name];
 }
 
 function credential_config(key) {
@@ -138,15 +152,15 @@ export function runtime_pairs(environment) {
   return pairs;
 }
 
-export function scoped_environment(registry_path, series_key, github, inherited) {
+export function scoped_environment(registry_path, series_key, github, inherited,
+  author_email = github.commitEmail, author_name = 'Flip Baton - ' + SERIES_LABELS[series_key]) {
   const environment = { ...inherited }, pairs = runtime_pairs(environment);
   for (const key of Object.keys(environment)) {
     if (/^GIT_CONFIG_(KEY|VALUE)_[0-9]+$/.test(key)) delete environment[key];
   }
   for (const key of ['GIT_CONFIG_PARAMETERS', 'GH_TOKEN', 'GITHUB_TOKEN']) delete environment[key];
-  const name = 'Flip Baton - ' + SERIES_LABELS[series_key];
-  Object.assign(environment, { GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: github.commitEmail,
-    GIT_COMMITTER_NAME: name, GIT_COMMITTER_EMAIL: github.commitEmail });
+  Object.assign(environment, { GIT_AUTHOR_NAME: author_name, GIT_AUTHOR_EMAIL: author_email,
+    GIT_COMMITTER_NAME: author_name, GIT_COMMITTER_EMAIL: author_email });
   const helper = '!' + [process.execPath, fileURLToPath(import.meta.url), 'helper',
     '--registry', registry_path, '--series-key', series_key].map(shell_quote).join(' ');
   const deny = [process.execPath, fileURLToPath(import.meta.url), 'deny-askpass'].map(shell_quote).join(' ');
@@ -199,8 +213,8 @@ export function launch(args, inherited = process.env, execute = exec_command) {
     require(observed.length && observed.every(model => model === args.model_key),
       'The native model option differs from the explicit exact model key.');
   }
-  const [series_key, , github] = selected_identity(registry_path, args.model_key, args.series_key);
-  const environment = scoped_environment(registry_path, series_key, github, inherited);
+  const [series_key, , github, author_email, author_name] = selected_identity(registry_path, args.model_key, args.series_key);
+  const environment = scoped_environment(registry_path, series_key, github, inherited, author_email, author_name);
   if (series_key === 'gpt') {
     delete environment.OPENAI_API_KEY;
     delete environment.CODEX_API_KEY;
