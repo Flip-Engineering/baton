@@ -268,7 +268,6 @@ law m17_missing_native_result_reports_to_the_parent:
   for +db: String
   for +player: String
   for +id: String
-  for +log: String
   for +stderr: String
   for +status: String
   {Turn.result_missing(db, player, id, log, stderr, status, False{}) == Turn.report(db, player, id, "Player process ended without a native result (" ++ status ++ "). Output: " ++ log ++ ". Stderr: " ++ stderr) : IO(Unit)}
@@ -1099,11 +1098,12 @@ law m2_omp_launch_reaches_the_omp_adapter:
   for +effort: String
   for +cwd: String
   for +log: String
+  for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "omp\n", task) == Omp.start_player(cmd, model, effort, cwd, log, sessions, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "omp\n", task) == Omp.start_player(cmd, model, effort, cwd, sessions, session, String.is_empty(session), stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_omp_launch_reaches_the_omp_adapter(sessions, cmd, model, effort, cwd, log, session, task):
+def m2_omp_launch_reaches_the_omp_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
   {==}
 
 law m2_muse_launch_reaches_the_muse_adapter:
@@ -1112,12 +1112,12 @@ law m2_muse_launch_reaches_the_muse_adapter:
   for +model: String
   for +effort: String
   for +cwd: String
-  for +log: String
+  for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "muse\n", task) == Turn.muse_launch(cmd, model, effort, cwd, log ++ ".stderr", session, task, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "muse\n", task) == Turn.muse_launch(cmd, model, effort, cwd, stderr, session, task, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_muse_launch_reaches_the_muse_adapter(sessions, cmd, model, effort, cwd, log, session, task):
+def m2_muse_launch_reaches_the_muse_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
   {==}
 
 law m2_codex_launch_reaches_the_codex_adapter:
@@ -1126,12 +1126,12 @@ law m2_codex_launch_reaches_the_codex_adapter:
   for +model: String
   for +effort: String
   for +cwd: String
-  for +log: String
+  for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "codex\n", task) == Codex.start_player(cmd, model, effort, cwd, log ++ ".stderr", session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "codex\n", task) == Codex.start_player(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_codex_launch_reaches_the_codex_adapter(sessions, cmd, model, effort, cwd, log, session, task):
+def m2_codex_launch_reaches_the_codex_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
   {==}
 
 law m2_any_other_harness_launch_reaches_the_claude_adapter:
@@ -1140,12 +1140,12 @@ law m2_any_other_harness_launch_reaches_the_claude_adapter:
   for +model: String
   for +effort: String
   for +cwd: String
-  for +log: String
+  for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "claude-code\n", task) == Turn.claude_launch(cmd, model, effort, cwd, log ++ ".stderr", session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", task) == Turn.claude_launch(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_any_other_harness_launch_reaches_the_claude_adapter(sessions, cmd, model, effort, cwd, log, session, task):
+def m2_any_other_harness_launch_reaches_the_claude_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
   {==}
 
 law m5_a_fresh_claude_turn_starts_a_session:

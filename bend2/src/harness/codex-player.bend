@@ -13,8 +13,5 @@ def argv(cmd: String, model: String, effort: String, session: String, fresh: Boo
 def start_player(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   P.ProcessChild.spawn(argv(cmd,model,effort,session,fresh),cwd,stderr)
 
-def start_player_bounded(cmd: String, model: String, effort: String, cwd: String, +stderr: String, session: String, fresh: Bool, limit: U32) -> IO(Result<&1,&1,U32 & String,U32>):
-  P.ProcessChild.spawn_with_file_bounded(argv(cmd,model,effort,session,fresh),cwd,stderr,limit,stderr ++ ".full",stderr ++ ".meta")
-
 def input(handle: U32, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.ProcessChild.write(handle,text)

@@ -55,9 +55,9 @@ static Term baton_find_file_run(Env e,Term *f,IoWork *w) {
 static void __attribute__((constructor)) baton_find_file_use(void) {io_eff(CID_FILES_FIND_SUFFIX,baton_find_file_run,0);}
 #endif
 
-/* Log retention reads one file's size and moves or removes Baton2-owned log
-   files. A missing path reports zero bytes; a rename or removal of a missing
-   path succeeds, so a rotation shift with nothing to move is a no-op. */
+/* Log inspection reads a file's size. Cleanup removes named Baton2-owned log
+   artifacts. A missing path reports zero bytes, and removing a missing path
+   succeeds. */
 typedef struct { char *path,*target; size_t size; int error; } BatonFileOp;
 
 static u32 baton_file_size(BatonFileOp *call) {

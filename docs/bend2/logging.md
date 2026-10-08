@@ -1,287 +1,40 @@
-# Coordinator log policy
+# Coordinator logs
 
-This document describes the files the coordinator writes during a native turn,
-which of them Baton2 owns, and the commands that inspect and reclaim their
-space. `bend2/src/coordinator/logs.bend` implements the policy and
-`bend2/src/coordinator/turn.bend` applies it to each native frame.
+The coordinator writes a public JSONL log for each turn and a separate file for the native process's stderr. `log_files` records public log paths. `log_generations` binds generation paths to turn IDs. `log_stderr_runs` records each unique stderr path for a generation.
 
-## Producers and ownership
+## Levels
 
-| Path | Writer | Owner |
-| --- | --- | --- |
-| `OUTPUT_LOG` | the turn or receive supervisor, one JSON frame per line | Baton2 |
-| `OUTPUT_LOG.attempt-<turn>` | one attempt generation beside the base log, named by `Logs.attempt_log` | Baton2 |
-| `OUTPUT_LOG.pending` | atomic latest incomplete frames for a direct turn | Baton2 |
-| `OUTPUT_LOG.stderr` | the native process's stderr file | Baton2 |
-| `<database>.root.log` | each successful message delivery | Baton2 |
-| `<database>.dispatch-*` | a detached coordinator delivery | Baton2 |
-| `<database>.attempt-*/` | the retained keeper: `stdout` until acknowledgement unlinks it, `native.stderr`, `keeper.log`, `manifest`, the release and acknowledgement markers, and `observer.log` only when the keeper respawns the recovery observer | Baton2 |
-| `<database>` | sessions, messages, turns, executions and the log policy | Baton2 |
-| `<database>.sessions`, `<database>.root-sessions`, `<database>.session-<hex>` | the OMP provider conversation store | provider |
-| Codex, Claude and Muse conversation stores | those harnesses | provider |
+`baton2 DATABASE logs SESSION` reads the configured level. `baton2 DATABASE logs SESSION LEVEL` sets it. The available levels are `default`, `quiet`, and `diagnostic`.
 
-The coordinator writes the public log, its stderr file and the coordinator's own
-records. Rotation and cleanup address only the logs the `log_files` registry
-names for a session, so a provider conversation store, a retained attempt
-directory, a checkpoint worktree and a harness history outside that registry
-keep their contents.
+At `default`, the coordinator retains completed frames and holds the newest `message_update`, `message_start`, and `tool_execution_update` frame for each open identity. A matching end frame either completes or replaces the held state. Turn completion writes any still-open frame. At `quiet`, the coordinator keeps terminal frames and frames whose type is not classified. At `diagnostic`, it keeps every frame. Unknown event types remain in the log at every level.
 
-## Retention levels
+The coordinator appends each retained frame to the generation log. It preserves complete frames, including large frames. The native process writes all stderr bytes to the unique path registered for that run.
 
-`logs SESSION` reads the effective policy. `logs SESSION LEVEL [BUDGET_BYTES
-[KEEP_SEGMENTS]]` stores one; omitted values keep the stored value.
+## Generations and checkpoints
 
-| Level | Frames the public log receives |
-| --- | --- |
-| `default` | Keeps complete frames and holds the newest `tool_execution_update`, `message_start`, and `message_update` for each open identity. Tool completion writes its latest partial result before the final result. Message completion supersedes its held start and update. Turn completion writes the remaining incomplete frames. |
-| `quiet` | Terminal frames (`agent_end`, `result`, `turn_end`) and every frame the classification does not name. |
-| `diagnostic` | Every frame verbatim. |
+`Logs.attempt_log(BASE, TURN)` names a separate generation file for each turn. A generation path preserves the turn identity and prevents later runs from appending into an earlier run's public log. `OUTPUT_LOG.pending` stores the latest incomplete frames for direct turns. A later turn appends that checkpoint before new frames and removes it after the append succeeds.
 
-A frame whose JSON `type` is outside the classification keeps its own line at
-every level. The classification covers the OMP frame vocabulary
-(`message_update`, `tool_execution_update`, `response`, `message_end`,
-`tool_execution_start`, `tool_execution_end`, `agent_end`,
-`extension_ui_request`); a Codex, Muse or Claude frame therefore keeps its
-default record until its types are classified.
+The attempt directory retains native input, output, and process ownership according to its own lifecycle. The log registry tracks public paths and stderr paths; it does not replace provider conversation stores or retained attempt artifacts.
 
-## Default trace inventory
-
-At `default`, one OMP turn writes complete frames once and holds the newest
-snapshot per open identity:
-
-| Frame | Disposition at `default` |
-| --- | --- |
-| `message_update` | held newest per `messageId`; dropped when its `message_end` arrives; flushed at turn end when the end never arrives |
-| `tool_execution_update` | held newest per `toolCallId`; written before its `tool_execution_end`; flushed at turn end when the end never arrives |
-| `message_start` | held per `messageId`; dropped when its `message_end` arrives |
-| `message_end`, `tool_execution_start`, `tool_execution_end`, `response` | written complete |
-| `agent_end`, `result`, `turn_end` | written complete |
-| unclassified `type` | written complete |
-
-Final payloads stay inline. Terminal frames carry the full result text.
-The default writes each complete frame once and holds one newest snapshot
-per open identity. A measured OMP seat wrote 47 KB per
-retained frame with 95.8% of a 773 MB log in cumulative
-`tool_execution_update` snapshots; the 2026-10-06 workload retains 26,164,652
-bytes before the policy and 112 after it on the same `tool_execution_update`
-batch.
-
-A direct turn atomically replaces `OUTPUT_LOG.pending` when its incomplete
-frames change. The replacement is synced before its name becomes visible.
-An observer process killed during a tool call leaves the newest observed
-partial result in that file. A later direct turn appends the checkpoint to the
-public log before new frames and removes it after that append succeeds.
-A retained receive attempt keeps its raw stream in the attempt directory until acknowledgement removes it.
-The checkpoint contains frames the provider emitted; provider filtering can
-reduce the available partial information.
-
-## Rotation
-
-`budget_bytes` sets the rotation threshold for each public log. Before a frame is written, the
-coordinator reads the file size. At the budget the numbered segments shift one
-position up, the replacement of the highest one included, and the live log then
-takes the name `<log>.1` and opens with one `baton_log_rotation` frame naming
-the level, the budget and the numbered segments that held a file when the
-rotation ran. The live log moves exactly once per rotation. The lines one
-frame contributes pass one rotation check together, so a held update and its
-end land in the same file; a batch can carry the live log past the budget
-the way a single large frame can.
-A budget accepts positive U32 values. A frame larger than the threshold stays
-complete and can trigger rotation before the next append. `keep_segments`
-accepts positive U32 values. Rotation,
-inspection, and cleanup enumerate the canonical numbered files in the log's
-directory. Their work follows the existing files. The policy migration retains
-stored rows and the registered log paths. A migration that fails because a
-stored row violates the current constraint refuses the command with a nonzero
-exit and the constraint reason; the original rows survive unchanged and the
-next call retries the migration.
-A reader following the
-log by path reopens it after a change of
-name. Each step is one `rename`, so a concurrent reader sees either the old or
-the new name for each segment.
-
-A session with unacknowledged input rotates nothing. The shift overwrites the
-oldest numbered segment whether or not the unlink ran, so a rotation that would
-drop it is skipped and the live log records
-`{"type":"baton_log_rotation","skipped":"pending-input",...}` while it keeps
-growing. The coordinator refreshes pending input protection during the turn and before
-rotation. Acknowledged input lets a subsequent frame rotate. For every other session
-the oldest segment leaves the count: a retained receive keeps the same frames in
-its attempt directory, every report and terminal frame is in the database, and
-the note names the numbered segments that held a file when the rotation ran, so
-a rename whose source was already gone is visible. A step that fails stops the
-chain: the remaining segments stay where they are, the frame the step was
-rotating for is still appended, and each append that could not rotate writes one
-`baton_log_rotation` frame with `"failed":true` naming the error. Appends
-continue after a failed rotation; an append that fails itself stops that log for
-the rest of the turn.
-
-The defaults are 32 MiB and two retained segments. A measured OMP seat wrote
-47 KB per retained frame and one live log reached 773 MB, of which 95.8% of
-bytes were `tool_execution_update` snapshots. A session eligible for rotation retains the live log and two numbered segments.
-A single frame can exceed the remaining budget. Pending input protects its
-existing evidence and permits the public log to exceed that threshold.
-
-## Attempt generations
-
-`Logs.attempt_log(BASE, TURN)` names `<base>.attempt-<turn>`.
-`Logs.open_attempt` registers that path and reads the session policy. A new
-attempt starts a new file, so a resumed receiver stops appending into the
-previous attempt's live file; resuming one fixed path re-appends into the same
-bytes, which re-expands a compressed 740 MB codec log and a 592 MB structure
-log on readback. The suffix holds no bare number, so the segment scan skips
-generations and rotation bounds each generation file under the session budget.
-
-`Logs.open_attempt` writes one `log_generations` row per generation file with
-the session, the raw attempt id, the file path, and the base log path. The
-`executions` table keeps one live row per session, so the registry is the
-record that still binds a superseded generation to its attempt after a later
-turn replaces the row. `Logs.attempt_code` percent-encodes the file-name form
-of an attempt id: letters, digits, dash and underscore pass through, and every
-other codepoint becomes a percent hex escape. `Logs.attempt_of` parses the
-file name only and uses the final `.attempt-` marker, so markers in a parent
-directory or base name do not change the registered attempt identity.
-Consumers reading `OUTPUT_LOG` keep reading the base path;
-generation files are additional, and cleanup removes only eligible
-generations. `Logs.open_attempt` has no Turn caller in this tree.
-
-The Turn owner adopts this by rebinding the log path once per turn to
-`Logs.attempt_log(log, id)` before `Logs.open` in `Turn.started` and
-`Turn.retained_output`, and by using the rebound path for the checkpoint
-restore and the stderr sidecar. Root moved resumed receivers to fresh
-continuation paths (`<name>-continuation-<epoch>.jsonl`, receipt
-`/private/tmp/baton-cleanup-20261006/fresh-continuation-logs-20261007.json`);
-generations apply the same pattern at the log registry. Duplicate consumer
-incarnations append duplicate frames into the same generation file. Rotation
-still bounds the file and cleanup stays gated on exit and acknowledgement, so
-a live incarnation blocks removal. The log layer keeps every unique frame; one
-authorized reducer per attempt is owned by the receive, host, and turn lanes.
-
-## Storage inspection and cleanup
+## Storage and cleanup
 
 ```
 baton2 DATABASE logs-storage
 baton2 DATABASE logs-clean SESSION
 ```
 
-`logs-storage` initializes or migrates the policy schema and inspects the
-registered artifact files. Its answer names the
-database and root-log sizes, the defaults, one entry per registered public log
-with its live size, its attempt identity (the turn id for a generation path,
-empty for the base log), its stderr size, its incomplete checkpoint path and
-size, and its numbered segments, and one entry
-per attempt directory with the sizes of its `stdout`, `native.stderr`,
-`observer.log` and `keeper.log` sampled at inspection time, so a removed or
-never-written file reports 0 and the manifest's size is not counted in the
-retained byte total, plus its release and
-acknowledgement markers. Each attempt entry also names the retained terminal
-event: its type, its character count, and its message count, read from the
-matching `turns` row; an attempt without a turn row reports an empty type and
-zero counts. A segment the session's `keep_segments` no longer
-covers is marked `"eligible": true`.
+`logs-storage` reports database, root log, public log, historical numbered segment, checkpoint, attempt, and stderr file sizes. Numbered segments from earlier versions remain visible as historical files.
 
-`logs-clean SESSION` removes the segments marked eligible for that session and
-answers with each removed path, its index and its size. Its `attemptLogs`
-answer removes the live file of a generation whose attempt is cleanup-eligible
-under the same decision that releases retained attempt diagnostics: exited,
-released, acknowledged, reported, exit 0, no pending input, no diagnostic
-policy. A generation whose live attempt row is gone resolves through the
-registry instead. The newest registered generation stays. An older registered
-generation leaves when the session holds no unanswered input, the policy
-level is not diagnostic, a report row exists for the attempt, the release and
-acknowledgement markers exist, and the file is nonempty. A file with no
-registry row keeps the suffix fallback and the live attempt decision.
-An empty stale `.pending` sidecar leaves with its generation; a
-nonempty one stays, and the `.stderr` sidecar stays in all cases. It reads the
-same eligibility rule `logs-storage` reports. The base live log,
-`OUTPUT_LOG.stderr`, the incomplete checkpoint, attempt directories, pending
-messages and provider stores stay untouched. A live turn holds the session
-lock; cleanup reports `"skipped":"session-busy"` when that lock is held. A
-session with unacknowledged input removes nothing and its answer names
-`"skipped":"pending-input"` and the pending count. A session with no registered
-log answers with an empty removal list.
+`logs-clean SESSION` removes eligible completed attempt diagnostics and generation logs. Cleanup requires the existing lifecycle evidence: process exit, release, acknowledgement, report, successful exit, no pending input, a verified attempt path, and a non-diagnostic level. It preserves base logs, numbered historical segments, provider stores, unfinished attempts, and files with incomplete or malformed legacy stderr metadata. Cleanup runs under the session lock.
+
+The policy migration preserves each session's level and every registered log path. Existing byte and segment-count policy columns are discarded during migration; they no longer affect logging.
 
 ## Write failures
 
-The supervisor records the first write error of a turn once, with the log path
-and the size the log held when the write was attempted, and stops appending to
-that log for the rest of the turn. The turn's report keeps the native result,
-and the failure reaches the parent as a native output observation. A delivery
-whose `<database>.root.log` record cannot be written answers with a failure
-that names the delivery log; the endpoint has already run and the recipient's
-inbox holds the message.
+The supervisor records the first write error for a turn with the log path and stops appending to that log for the rest of the turn. The turn report keeps the native result, and the failure reaches the parent as a native output observation.
 
-A turn whose native output read fails writes the prefix frames it still holds
-and then one `baton_log_interrupted` frame naming how many it wrote, so the
-partial output is in the log and its interruption is named. Both writes are
-best effort: a log that already failed takes neither. The frame appears only
-when a read fails while the turn holds prefix frames. A failure on the first
-read holds nothing, so neither write emits a line; the turn outcome still
-names the read failure.
+When native output reading fails, the supervisor writes the prefix frames it still holds and one `baton_log_interrupted` frame with the count written. These writes are best effort. A failed log receives no further writes.
 
-## Measurement
+## Historical measurements
 
-`python3 bend2/scripts/measure-omp-stream.py --exe EXECUTABLE --output
-DIRECTORY` starts a provider-free OMP receiver and measures the bytes each
-frame batch contributes to the retained log. The batches are `small` and
-`cumulative` `message_update` frames, `tool` `tool_execution_update` frames,
-and a `raw` batch that fixes the retention semantics of frames that name
-`message_update` in unusual ways. The
-[2026-10-06 measurement](measurements/2026-10-06-logging-policy.json) records
-26,164,652 retained bytes before the policy and 112 after it on the same
-`tool_execution_update` workload.
-
-A 6,710-byte native reader report (orchestra seq 15411) holds 5,342 bytes in
-restated turn-gate status lines: 13 "Verification turn closed" lines with 10
-"No completion claimed" and 10 cursor-tracking restatements. Those lines are
-report message prose, not frames the log policy classifies, so no log-policy
-rule addresses them. Fewer restatements per turn is turn-gate behavior.
-
-Five retained `agent_end` events hold 889,320 to 1,024,862 characters with 71
-to 216 messages each. Every message body is unique within its event. Each
-event holds 1 to 4 user texts, 34 to 70 thinking blocks, 33 to 116 tool calls
-with matching tool results, and 21 to 86 assistant texts. The 251 thinking
-blocks hold 844,942 characters, about 65% of the text bytes. Exact-duplicate
-text parts cover 60,794 of 1,287,560 bytes (4.7%). The final message holds
-3,342 to 8,369 characters; over 99% of each event is history. Across 3,702
-turns the event size median is 624 characters, p90 133,742, p99 593,996; 520
-events pass 100KB and 52 pass 500KB.
-
-Native Codex traces show one start and one completion per command id, so no
-deduplication applies. One 1,311-line session holds 536 command ids with
-exactly one `item.started` and one `item.completed` each and 11,381,350
-completed-output bytes; a second 371-line session holds 157 ids with zero
-repeats. The 128 ids shared across the two sessions name different commands
-with different outputs, so ids reset across turns and must never coalesce
-across them. An earlier grouping by command-text prefix reported repeated
-frames; that grouping mixed distinct executions and is withdrawn. Every
-completed execution is unique evidence: the default keeps all of them within
-the rotation bound, with terminal outcomes inline. The shape-faithful
-reference batch is
-[bend2/test/fixtures/codex-trace-audit-20261007.jsonl](../test/fixtures/codex-trace-audit-20261007.jsonl)
-with outputs replaced by equal-length runs and user paths redacted.
-
-Remote qualification of the generation registry ran on atari-homelab with
-Bend 2.0.25, clang-19, and SQLite 3.46: the native build passes,
-`bend2/test/logs.py` runs 43 tests green, and `bend2/test/turn.py` runs 17
-tests green. Four registry tests cover superseded removal after the
-executions row moves on, retention of an unacknowledged failed generation,
-an encoded slash identity bound to the registered attempt, and a dotted
-identity under a parent directory carrying its own `.attempt-` marker.
-
-## Open work
-
-A receive that attaches to a retained attempt reads the attempt from its first
-frame and appends each retained frame to the public log again. Its public frames remain subject to the rotation threshold and pending input
-protection. A lossless reconstruction watermark remains unqualified.
-
-The provider's `set_event_filter` accepts `events` and `messageUpdates` alone,
-so the reduction of intermediate tool output is the coordinator's own. The
-`events` array can name the categories the server sends; the complete event
-vocabulary, the interaction with the confirmation rule that requires an echoed
-`events: null`, and the raw terminal evidence of issues #669 and #670 remain
-open.
-
-`<log>.stderr` rotates with no bound: the native process holds the descriptor
-the keeper opened, so a rotation rule for it requires a change at that
-boundary.
+[The 2026-10-06 measurement](measurements/2026-10-06-logging-policy.json) records an earlier policy workload. It remains evidence for the frame-deduplication measurements; its byte and segment settings are historical data.
