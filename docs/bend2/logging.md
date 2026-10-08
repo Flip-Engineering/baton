@@ -10,6 +10,7 @@ space. `bend2/src/coordinator/logs.bend` implements the policy and
 | Path | Writer | Owner |
 | --- | --- | --- |
 | `OUTPUT_LOG` | the turn or receive supervisor, one JSON frame per line | Baton2 |
+| `OUTPUT_LOG.attempt-<turn>` | one attempt generation beside the base log, named by `Logs.attempt_log` | Baton2 |
 | `OUTPUT_LOG.pending` | atomic latest incomplete frames for a direct turn | Baton2 |
 | `OUTPUT_LOG.stderr` | the native process's stderr file | Baton2 |
 | `<database>.root.log` | each successful message delivery | Baton2 |
@@ -122,6 +123,41 @@ bytes were `tool_execution_update` snapshots. A session eligible for rotation re
 A single frame can exceed the remaining budget. Pending input protects its
 existing evidence and permits the public log to exceed that threshold.
 
+## Attempt generations
+
+`Logs.attempt_log(BASE, TURN)` names `<base>.attempt-<turn>`.
+`Logs.open_attempt` registers that path and reads the session policy. A new
+attempt starts a new file, so a resumed receiver stops appending into the
+previous attempt's live file; resuming one fixed path re-appends into the same
+bytes, which re-expands a compressed 740 MB codec log and a 592 MB structure
+log on readback. The suffix holds no bare number, so the segment scan skips
+generations and rotation bounds each generation file under the session budget.
+
+`Logs.open_attempt` writes one `log_generations` row per generation file with
+the session, the raw attempt id, the file path, and the base log path. The
+`executions` table keeps one live row per session, so the registry is the
+record that still binds a superseded generation to its attempt after a later
+turn replaces the row. `Logs.attempt_code` percent-encodes the file-name form
+of an attempt id: letters, digits, dash and underscore pass through, and every
+other codepoint becomes a percent hex escape. `Logs.attempt_of` parses the
+file name only and uses the final `.attempt-` marker, so markers in a parent
+directory or base name do not change the registered attempt identity.
+Consumers reading `OUTPUT_LOG` keep reading the base path;
+generation files are additional, and cleanup removes only eligible
+generations. `Logs.open_attempt` has no Turn caller in this tree.
+
+The Turn owner adopts this by rebinding the log path once per turn to
+`Logs.attempt_log(log, id)` before `Logs.open` in `Turn.started` and
+`Turn.retained_output`, and by using the rebound path for the checkpoint
+restore and the stderr sidecar. Root moved resumed receivers to fresh
+continuation paths (`<name>-continuation-<epoch>.jsonl`, receipt
+`/private/tmp/baton-cleanup-20261006/fresh-continuation-logs-20261007.json`);
+generations apply the same pattern at the log registry. Duplicate consumer
+incarnations append duplicate frames into the same generation file. Rotation
+still bounds the file and cleanup stays gated on exit and acknowledgement, so
+a live incarnation blocks removal. The log layer keeps every unique frame; one
+authorized reducer per attempt is owned by the receive, host, and turn lanes.
+
 ## Storage inspection and cleanup
 
 ```
@@ -132,21 +168,36 @@ baton2 DATABASE logs-clean SESSION
 `logs-storage` initializes or migrates the policy schema and inspects the
 registered artifact files. Its answer names the
 database and root-log sizes, the defaults, one entry per registered public log
-with its live size, its stderr size, its incomplete checkpoint path and size,
-and its numbered segments, and one entry
+with its live size, its attempt identity (the turn id for a generation path,
+empty for the base log), its stderr size, its incomplete checkpoint path and
+size, and its numbered segments, and one entry
 per attempt directory with the sizes of its `stdout`, `native.stderr`,
 `observer.log` and `keeper.log` sampled at inspection time, so a removed or
 never-written file reports 0 and the manifest's size is not counted in the
 retained byte total, plus its release and
-acknowledgement markers. A segment the session's `keep_segments` no longer
+acknowledgement markers. Each attempt entry also names the retained terminal
+event: its type, its character count, and its message count, read from the
+matching `turns` row; an attempt without a turn row reports an empty type and
+zero counts. A segment the session's `keep_segments` no longer
 covers is marked `"eligible": true`.
 
 `logs-clean SESSION` removes the segments marked eligible for that session and
-answers with each removed path, its index and its size. It reads the same
-eligibility rule `logs-storage` reports. The live log, `OUTPUT_LOG.stderr`,
-the incomplete checkpoint, attempt directories, pending messages and provider
-stores stay untouched. A live turn holds the session lock; cleanup reports
-`"skipped":"session-busy"` when that lock is held. A
+answers with each removed path, its index and its size. Its `attemptLogs`
+answer removes the live file of a generation whose attempt is cleanup-eligible
+under the same decision that releases retained attempt diagnostics: exited,
+released, acknowledged, reported, exit 0, no pending input, no diagnostic
+policy. A generation whose live attempt row is gone resolves through the
+registry instead. The newest registered generation stays. An older registered
+generation leaves when the session holds no unanswered input, the policy
+level is not diagnostic, a report row exists for the attempt, the release and
+acknowledgement markers exist, and the file is nonempty. A file with no
+registry row keeps the suffix fallback and the live attempt decision.
+An empty stale `.pending` sidecar leaves with its generation; a
+nonempty one stays, and the `.stderr` sidecar stays in all cases. It reads the
+same eligibility rule `logs-storage` reports. The base live log,
+`OUTPUT_LOG.stderr`, the incomplete checkpoint, attempt directories, pending
+messages and provider stores stay untouched. A live turn holds the session
+lock; cleanup reports `"skipped":"session-busy"` when that lock is held. A
 session with unacknowledged input removes nothing and its answer names
 `"skipped":"pending-input"` and the pending count. A session with no registered
 log answers with an empty removal list.
@@ -180,6 +231,44 @@ and a `raw` batch that fixes the retention semantics of frames that name
 [2026-10-06 measurement](measurements/2026-10-06-logging-policy.json) records
 26,164,652 retained bytes before the policy and 112 after it on the same
 `tool_execution_update` workload.
+
+A 6,710-byte native reader report (orchestra seq 15411) holds 5,342 bytes in
+restated turn-gate status lines: 13 "Verification turn closed" lines with 10
+"No completion claimed" and 10 cursor-tracking restatements. Those lines are
+report message prose, not frames the log policy classifies, so no log-policy
+rule addresses them. Fewer restatements per turn is turn-gate behavior.
+
+Five retained `agent_end` events hold 889,320 to 1,024,862 characters with 71
+to 216 messages each. Every message body is unique within its event. Each
+event holds 1 to 4 user texts, 34 to 70 thinking blocks, 33 to 116 tool calls
+with matching tool results, and 21 to 86 assistant texts. The 251 thinking
+blocks hold 844,942 characters, about 65% of the text bytes. Exact-duplicate
+text parts cover 60,794 of 1,287,560 bytes (4.7%). The final message holds
+3,342 to 8,369 characters; over 99% of each event is history. Across 3,702
+turns the event size median is 624 characters, p90 133,742, p99 593,996; 520
+events pass 100KB and 52 pass 500KB.
+
+Native Codex traces show one start and one completion per command id, so no
+deduplication applies. One 1,311-line session holds 536 command ids with
+exactly one `item.started` and one `item.completed` each and 11,381,350
+completed-output bytes; a second 371-line session holds 157 ids with zero
+repeats. The 128 ids shared across the two sessions name different commands
+with different outputs, so ids reset across turns and must never coalesce
+across them. An earlier grouping by command-text prefix reported repeated
+frames; that grouping mixed distinct executions and is withdrawn. Every
+completed execution is unique evidence: the default keeps all of them within
+the rotation bound, with terminal outcomes inline. The shape-faithful
+reference batch is
+[bend2/test/fixtures/codex-trace-audit-20261007.jsonl](../test/fixtures/codex-trace-audit-20261007.jsonl)
+with outputs replaced by equal-length runs and user paths redacted.
+
+Remote qualification of the generation registry ran on atari-homelab with
+Bend 2.0.25, clang-19, and SQLite 3.46: the native build passes,
+`bend2/test/logs.py` runs 43 tests green, and `bend2/test/turn.py` runs 17
+tests green. Four registry tests cover superseded removal after the
+executions row moves on, retention of an unacknowledged failed generation,
+an encoded slash identity bound to the registered attempt, and a dotted
+identity under a parent directory carrying its own `.attempt-` marker.
 
 ## Open work
 
