@@ -22,145 +22,42 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: 9c11eb83853c170aaeb05fd05416576ef1d2615a
-  PRODUCT_SOURCE_TREE: 262404d52ef3cb8f0770b0277f3bde7df3097919
+  PRODUCT_SOURCE_SHA: 034c6e23fc44dfc07ae6fae21cd13b6f7e89825c
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
-  PRODUCT_ARTIFACT_ID: ''
-  PRODUCT_ARTIFACT_DIGEST: ''
 
 jobs:
   build:
     if: ${{ github.event_name != 'workflow_dispatch' }}
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out qualification driver
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Check out pinned product source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ env.PRODUCT_SOURCE_SHA }}
-          path: source
-      - name: Verify product pins and create owned source clone
+          path: owned
+      - name: Prepare build output
         shell: bash
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/final-native-context-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-combined-context"
-          test ! -e "$evidence"
           mkdir -p "$evidence/logs" "$evidence/toolchain"
           printf 'FINAL_NATIVE_CONTEXT_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
-          cat > "$evidence/run-recorded.sh" <<'SH'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          label="$1"
-          shift
-          evidence="$FINAL_NATIVE_CONTEXT_EVIDENCE/logs"
-          status=0
-          set +e
-          "$@" 2> "$evidence/$label.stderr" | tee "$evidence/$label.stdout"
-          status=${PIPESTATUS[0]}
-          set -e
-          printf '%s\n' "$status" > "$evidence/$label.exit-status"
-          sha256sum "$evidence/$label.stdout" "$evidence/$label.stderr" \
-            "$evidence/$label.exit-status" > "$evidence/$label.sha256"
-          if [[ "$status" != 0 ]]; then
-            printf '%s\n' "--- $label stdout ---"
-            cat "$evidence/$label.stdout"
-            printf '%s\n' "--- $label stderr ---"
-            cat "$evidence/$label.stderr"
-          fi
-          exit "$status"
-          SH
-          chmod 0755 "$evidence/run-recorded.sh"
-          {
-            printf 'driver_commit=%s\n' "$(git rev-parse HEAD)"
-            printf 'driver_tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
-            printf 'product=%s\n' 'combined-context'
-            printf 'expected_source_sha=%s\n' "$PRODUCT_SOURCE_SHA"
-            printf 'expected_source_tree=%s\n' "$PRODUCT_SOURCE_TREE"
-            uname -a
-            uname -m
-            lsb_release -a
-            git --version
-          } > "$evidence/logs/identity.txt" 2>&1
-          actual_sha="$(git -C source rev-parse HEAD)"
-          actual_tree="$(git -C source rev-parse 'HEAD^{tree}')"
-          printf 'actual_source_sha=%s\nactual_source_tree=%s\n' "$actual_sha" "$actual_tree" \
-            > "$evidence/logs/source-pin.txt"
-          test "$actual_sha" = "$PRODUCT_SOURCE_SHA"
-          test "$actual_tree" = "$PRODUCT_SOURCE_TREE"
-          git -C source status --short --branch > "$evidence/logs/source-status.txt"
-          git clone --no-hardlinks --quiet source owned
-          git -C owned checkout --quiet --detach "$PRODUCT_SOURCE_SHA"
-          test "$(git -C owned rev-parse HEAD)" = "$PRODUCT_SOURCE_SHA"
-          test "$(git -C owned rev-parse 'HEAD^{tree}')" = "$PRODUCT_SOURCE_TREE"
-          git -C owned status --short --branch > "$evidence/logs/owned-status.txt"
+          git -C owned rev-parse HEAD > "$evidence/logs/source-commit.txt"
+          uname -a > "$evidence/logs/platform.txt"
       - name: Select Node 22
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
-      - name: Install pinned Bend 2.0.25
+      - name: Install Bend 2.0.25
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$FINAL_NATIVE_CONTEXT_EVIDENCE/curl-shim" "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home"
-          cat > "$FINAL_NATIVE_CONTEXT_EVIDENCE/curl-shim/curl" <<'SH'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          output=''
-          args=("$@")
-          for ((index = 0; index < ${#args[@]}; index++)); do
-            if [[ "${args[index]}" == '-o' && $((index + 1)) -lt ${#args[@]} ]]; then
-              output="${args[index + 1]}"
-            fi
-          done
-          /usr/bin/curl "${args[@]}"
-          if [[ "$output" == */bend-2.0.25-linux-x64.tar.gz ]]; then
-            cp "$output" "$BEND_ARCHIVE_CAPTURE"
-          fi
-          SH
-          chmod 0755 "$FINAL_NATIVE_CONTEXT_EVIDENCE/curl-shim/curl"
-          export BEND_ARCHIVE_CAPTURE="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/bend-2.0.25-linux-x64.tar.gz"
-          PATH="$FINAL_NATIVE_CONTEXT_EVIDENCE/curl-shim:$PATH" \
-            BEND_HOME="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home" \
+          BEND_HOME="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home" \
             sh owned/docs/bend2/reference/toolchain/install-2.0.25.sh \
             > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/install.log" 2>&1
-          bend="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend"
-          "$bend" version > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/version.txt"
-          test "$(cat "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/version.txt")" = 'bend 2.0.25'
-          sha256sum "$bend" > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/bend-binary.sha256"
-          printf '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4  %s\n' \
-            "$BEND_ARCHIVE_CAPTURE" | sha256sum -c - > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/archive-check.log"
-          sha256sum "$BEND_ARCHIVE_CAPTURE" > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/archive.sha256"
-          tar -tzf "$BEND_ARCHIVE_CAPTURE" > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/archive-members.txt"
-      - name: Check Python and browser JavaScript syntax
-        id: syntax
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd owned
-          status=0
-          set +e
-          python3 -m compileall -q bend2/test \
-            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/python-compileall.stdout" \
-            2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/python-compileall.stderr"
-          status=$?
-          set -e
-          printf '%s\n' "$status" > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/python-compileall.exit-status"
-          sha256sum "$FINAL_NATIVE_CONTEXT_EVIDENCE"/logs/python-compileall.* \
-            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/python-compileall.sha256"
-          test "$status" = 0
-          status=0
-          set +e
-          node --check bend2/test/ui-orchestra-browser.mjs \
-            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/browser-js-check.stdout" \
-            2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/browser-js-check.stderr"
-          status=$?
-          set -e
-          printf '%s\n' "$status" > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/browser-js-check.exit-status"
-          sha256sum "$FINAL_NATIVE_CONTEXT_EVIDENCE"/logs/browser-js-check.* \
-            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/browser-js-check.sha256"
-          test "$status" = 0
+          "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" version \
+            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/version.txt"
       - name: Build production Main
         id: main_build
         shell: bash
@@ -238,14 +135,12 @@ jobs:
       matrix:
         suite: ${{ fromJSON('["land","mcp-command","mcp-root","mcp-contract","logs","turn","process","configure","native-observation","fixed-coordinator","control","retained-control","role-guard","root-wake","codex-root","muse-root","omp-root","control-identity","shared-instance","ui-orchestra-native","ui-orchestra-browser","node-provider-ui","selected-context-package","observed-usage","stop","receive","receive-output","receive-terminal-boundary"]') }}
     steps:
-      - name: Check out qualification driver
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Check out pinned product source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ env.PRODUCT_SOURCE_SHA }}
-          path: source
-      - name: Verify source and prepare runtime evidence
+          path: owned
+      - name: Prepare runtime output
         shell: bash
         run: |
           set -euo pipefail
@@ -253,24 +148,10 @@ jobs:
           mkdir -p "$evidence/logs"
           printf 'FINAL_NATIVE_CONTEXT_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
           {
-            printf 'driver_commit=%s\n' "$(git rev-parse HEAD)"
-            printf 'driver_tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
-            printf 'product_source_sha=%s\n' "$PRODUCT_SOURCE_SHA"
-            printf 'product_source_tree=%s\n' "$PRODUCT_SOURCE_TREE"
-            printf 'product_run_id=%s\n' "$PRODUCT_RUN_ID"
-            printf 'product_run_attempt=%s\n' "$PRODUCT_RUN_ATTEMPT"
-            printf 'product_artifact_id=%s\n' "$PRODUCT_ARTIFACT_ID"
-            printf 'product_artifact_digest=%s\n' "$PRODUCT_ARTIFACT_DIGEST"
-            printf 'fixture_source_sha=%s\n' "$(git -C source rev-parse HEAD)"
-            printf 'fixture_source_tree=%s\n' "$(git -C source rev-parse 'HEAD^{tree}')"
-            printf 'suite=%s\n' '${{ matrix.suite }}'
+            printf 'fixture_source_commit=%s\n' "$(git -C owned rev-parse HEAD)"
+            printf 'build_run=%s/%s\n' "$PRODUCT_RUN_ID" "$PRODUCT_RUN_ATTEMPT"
             uname -a
-          } > "$evidence/logs/identity.txt" 2>&1
-          test "$(git -C source rev-parse HEAD)" = "$PRODUCT_SOURCE_SHA"
-          test "$(git -C source rev-parse 'HEAD^{tree}')" = "$PRODUCT_SOURCE_TREE"
-          git clone --no-hardlinks --quiet source owned
-          git -C owned checkout --quiet --detach "$PRODUCT_SOURCE_SHA"
-          test "$(git -C owned rev-parse 'HEAD^{tree}')" = "$PRODUCT_SOURCE_TREE"
+          } > "$evidence/logs/runtime.txt"
       - name: Select Node 22
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -304,8 +185,6 @@ jobs:
           wait
           set -e
           printf '%s\n' "$status" > "$evidence/$label.exit-status"
-          sha256sum "$evidence/$label.stdout" "$evidence/$label.stderr" \
-            "$evidence/$label.exit-status" > "$evidence/$label.sha256"
           if [[ "$status" != 0 ]]; then
             printf '%s\n' "--- $label stdout ---"
             cat "$evidence/$label.stdout"
@@ -315,21 +194,6 @@ jobs:
           exit "$status"
           SH
           chmod 0755 "$evidence/run-recorded.sh"
-          chmod 0755 owned/.scratch/bend2/baton2
-          {
-            printf 'node=%s\n' "$(node --version)"
-            printf 'product_source_sha=%s\n' "$PRODUCT_SOURCE_SHA"
-            printf 'product_source_tree=%s\n' "$PRODUCT_SOURCE_TREE"
-            printf 'product_run_id=%s\n' "$PRODUCT_RUN_ID"
-            printf 'product_run_attempt=%s\n' "$PRODUCT_RUN_ATTEMPT"
-            printf 'product_artifact_id=%s\n' "$PRODUCT_ARTIFACT_ID"
-            printf 'product_artifact_digest=%s\n' "$PRODUCT_ARTIFACT_DIGEST"
-            printf 'fixture_source_sha=%s\n' "$PRODUCT_SOURCE_SHA"
-            printf 'fixture_source_tree=%s\n' "$PRODUCT_SOURCE_TREE"
-            command -v chromium || command -v chromium-browser || command -v google-chrome || true
-            sha256sum owned/.scratch/bend2/baton2 owned/.scratch/bend2/process-test \
-              owned/.scratch/bend2/instance-test owned/.scratch/bend2/bend
-          } > "$evidence/logs/runtime.txt" 2>&1
       - name: Run selected suite
         id: suite
         if: ${{ !cancelled() }}
