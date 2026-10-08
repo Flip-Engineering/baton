@@ -465,26 +465,6 @@ def sql(command: Command) -> String:
     case Help{}: ""
     case Invalid{}: ""
 
-def parse(args: List<String>) -> Command:
-  match args:
-    case +verb <> Nil{}:
-      parse_verb_only(verb)
-    case +verb <> +id <> Nil{}:
-      parse_verb_id(verb,id)
-    case +verb <> +session <> +id <> Nil{}:
-      parse_verb_session_id(verb,session,id)
-    case +verb <> +id <> +one <> +two <> Nil{}:
-      parse_verb_three_args(verb,id,one,two)
-    case +verb <> +id <> +one <> +two <> +three <> Nil{}:
-      parse_verb_four_args(verb,id,one,two,three)
-    case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
-      parse_verb_five_args(verb,id,one,two,three,four)
-    case +verb <> session <> cmd <> model <> effort <> cwd <> log <> message <> Nil{}:
-      parse_receive(verb,session,cmd,model,effort,cwd,log,message)
-    case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
-      parse_verb_nine_args(verb,player,id,cmd,model,effort,cwd,task,log,session)
-    case _: Invalid{}
-
 def parse_verb_only(+verb: String) -> Command:
   match verb:
     case "context-engines": ContextEngines{}
@@ -615,6 +595,26 @@ def parse_verb_nine_args(+verb: String, +player: String, +id: String, +cmd: Stri
     case "start": Start{player,id,cmd,model,effort,cwd,task,log,session}
     case "turn": RunTurn{player,id,cmd,model,effort,cwd,task,log,session}
     case "recruit": Recruit{player,id,cmd,model,effort,cwd,task,log,session}
+    case _: Invalid{}
+
+def parse(args: List<String>) -> Command:
+  match args:
+    case +verb <> Nil{}:
+      parse_verb_only(verb)
+    case +verb <> +id <> Nil{}:
+      parse_verb_id(verb,id)
+    case +verb <> +session <> +id <> Nil{}:
+      parse_verb_session_id(verb,session,id)
+    case +verb <> +id <> +one <> +two <> Nil{}:
+      parse_verb_three_args(verb,id,one,two)
+    case +verb <> +id <> +one <> +two <> +three <> Nil{}:
+      parse_verb_four_args(verb,id,one,two,three)
+    case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
+      parse_verb_five_args(verb,id,one,two,three,four)
+    case +verb <> session <> cmd <> model <> effort <> cwd <> log <> message <> Nil{}:
+      parse_receive(verb,session,cmd,model,effort,cwd,log,message)
+    case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
+      parse_verb_nine_args(verb,player,id,cmd,model,effort,cwd,task,log,session)
     case _: Invalid{}
 
 law help_word_selects_the_help_command:
