@@ -29,7 +29,7 @@ env:
 jobs:
   build:
     if: ${{ github.event_name != 'workflow_dispatch' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, baton2-native-linux-x64]
     steps:
       - name: Check out pinned product source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
