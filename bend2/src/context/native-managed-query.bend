@@ -241,25 +241,6 @@ def readiness_true(+value: J.Json, +key: String) -> Bool:
 def readiness_false(+value: J.Json, +key: String) -> Bool:
   readiness_is_false(readiness_member(value, key))
 
-def readiness_key_allowed(+key: String) -> Bool:
-  Bool.or(String.eq(key, "schema"), Bool.or(String.eq(key, "state"),
-  Bool.or(String.eq(key, "handle"), Bool.or(String.eq(key, "directory"),
-  Bool.or(String.eq(key, "ownerIncarnation"), Bool.or(String.eq(key, "ownerEpoch"),
-  Bool.or(String.eq(key, "ownerAttempt"), Bool.or(String.eq(key, "guardDevice"),
-  Bool.or(String.eq(key, "guardInode"), Bool.or(String.eq(key, "guard"),
-  Bool.or(String.eq(key, "observer_ready"), Bool.or(String.eq(key, "native_pid"),
-  Bool.or(String.eq(key, "status_known"), Bool.or(String.eq(key, "status"),
-  Bool.or(String.eq(key, "spawn_latched"), Bool.or(String.eq(key, "cancelled"),
-  Bool.or(String.eq(key, "identity"), Bool.or(String.eq(key, "expectedBinding"),
-  Bool.or(String.eq(key, "grant"), String.eq(key, "rejection"))))))))))))))))))))
-
-def readiness_members_allowed(+members: J.Json) -> Bool:
-  match members:
-    case J.Jpair{key, value, +rest}:
-      Bool.and(readiness_key_allowed(key), readiness_members_allowed(rest))
-    case J.Jnil{}: True{}
-    case other: False{}
-
 def readiness_member_present(found: Maybe<&2, J.Json>) -> Bool:
   match found:
     case Some{value}: True{}
@@ -268,37 +249,15 @@ def readiness_member_present(found: Maybe<&2, J.Json>) -> Bool:
 def readiness_has(+members: J.Json, +key: String) -> Bool:
   readiness_member_present(Req.member_lookup(key, members))
 
-def readiness_required_members(+members: J.Json) -> Bool:
-  Bool.and(readiness_has(members, "schema"),
-  Bool.and(readiness_has(members, "state"),
-  Bool.and(readiness_has(members, "handle"),
-  Bool.and(readiness_has(members, "directory"),
-  Bool.and(readiness_has(members, "ownerIncarnation"),
-  Bool.and(readiness_has(members, "ownerEpoch"),
-  Bool.and(readiness_has(members, "ownerAttempt"),
-  Bool.and(readiness_has(members, "guardDevice"),
-  Bool.and(readiness_has(members, "guardInode"),
-  Bool.and(readiness_has(members, "guard"),
-  Bool.and(readiness_has(members, "observer_ready"),
-  Bool.and(readiness_has(members, "native_pid"),
-  Bool.and(readiness_has(members, "status_known"),
-  Bool.and(readiness_has(members, "status"),
-  Bool.and(readiness_has(members, "spawn_latched"),
-  Bool.and(readiness_has(members, "cancelled"),
-  Bool.and(readiness_has(members, "identity"),
-  Bool.and(readiness_has(members, "expectedBinding"),
-  Bool.and(readiness_has(members, "grant"), readiness_has(members, "rejection"))))))))))))))))))))
-
-def readiness_closed(+value: J.Json) -> Bool:
+def readiness_object(+value: J.Json) -> Bool:
   match value:
-    case J.Jobj{+members}:
-      Bool.and(readiness_required_members(members), readiness_members_allowed(members))
+    case J.Jobj{+members}: True{}
     case other: False{}
 
 def keeper_readiness_from_host(+bootstrap: Bootstrap, +expected_binding: String,
                                +owner_witness: String, +value: J.Json) -> KeeperReadiness:
   Bool.pick(KeeperReadiness,
-    Bool.and(readiness_closed(value),
+    Bool.and(readiness_object(value),
     Bool.and(String.eq(readiness_text(value, "schema"), "baton2-host-ready-v1"),
     Bool.and(String.eq(readiness_text(value, "state"), "ready"),
     Bool.and(String.eq(readiness_text(value, "directory"), bootstrap_keeper_path(bootstrap)),
@@ -406,7 +365,7 @@ def custody_transition_matches(+bootstrap: Bootstrap, +current_witness: String,
         custody_transition_mode_matches(bootstrap, current_witness, value)))))))
     case other: False{}
 
-# Recovery readiness is derived from the attached keeper's closed host record.
+# Recovery readiness is derived from the attached keeper's host record.
 # It accepts only a live process with unknown terminal status or an exited
 # process with a durable terminal status, and requires the typed witness
 # transition returned by the elected owner.
@@ -419,7 +378,7 @@ def keeper_recovery_readiness_from_host(+bootstrap: Bootstrap,
     Bool.and(custody_transition_matches(bootstrap, owner_witness, transition),
     Bool.and(custody_transition_pid_matches(transition, value),
     Bool.and(custody_transition_host_status_matches(transition, value),
-    Bool.and(readiness_closed(value),
+    Bool.and(readiness_object(value),
     Bool.and(String.eq(readiness_text(value, "schema"), "baton2-host-ready-v1"),
     Bool.and(recovery_state_latch_matches(readiness_text(value, "state"), value),
     Bool.and(recovery_state_status_matches(readiness_text(value, "state"), value),
