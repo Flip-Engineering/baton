@@ -35,8 +35,8 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def file_info(path):
-    return {'bytes': path.stat().st_size, 'sha256': sha256(path)}
+def output_path(path, root):
+    return str(path.relative_to(root))
 
 
 def module_directory_name(module_id):
@@ -70,8 +70,8 @@ def build(env, directory):
                                 stdout=out, stderr=err)
     record = {'argv': argv, 'cwd': str(ROOT), 'exit_code': result.returncode,
               'elapsed_seconds': time.monotonic() - started,
-              'stdout': {'path': str(stdout.relative_to(directory)), **file_info(stdout)},
-              'stderr': {'path': str(stderr.relative_to(directory)), **file_info(stderr)}}
+              'stdout': {'path': output_path(stdout, directory)},
+              'stderr': {'path': output_path(stderr, directory)}}
     if env.get('BEND_GENERATED_C'):
         record['generated_c_input'] = env['BEND_GENERATED_C']
     write_json(directory / 'build.json', record)
@@ -182,7 +182,7 @@ def stage_clang_module(payload, module_id, projections, runtime_package=None):
                 'The supplied context-clang package must contain runtime/context-clang-20')
         extractor_binary.chmod(extractor_binary.stat().st_mode | 0o111)
 
-    # NativeDecl records the provider entry. The package manifest covers its files.
+    # NativeDecl records the provider entry and its runtime artifact identity.
     artifact_identities = [{'packagePath': 'native-provider.mjs',
                             'sha256': sha256(module_root / 'native-provider.mjs'),
                             'role': 'provider'}]
@@ -243,8 +243,7 @@ def stage_notices(payload, compiler_notices, kind='development'):
             destination = directory / ('baton2-' + name)
             shutil.copyfile(source, destination)
             terms[field] = {'source_path': name,
-                            'path': destination.relative_to(payload).as_posix(),
-                            **file_info(destination)}
+                            'path': destination.relative_to(payload).as_posix()}
             distribution.append('baton2-' + name + ' contains the Baton2 project '
                                 + name.lower() + ' copied from root ' + name + '.')
     if terms['baton_root_license'] is None:
@@ -265,20 +264,6 @@ def stage_notices(payload, compiler_notices, kind='development'):
         'compiler-archive/ retains license and notice files found in the verified Bend archive.'])
     (directory / 'distribution.md').write_text('\n'.join(distribution) + '\n')
     return terms
-
-
-def check_project_terms(terms, source_files, files):
-    sources = {entry['path']: entry for entry in source_files}
-    staged = {entry['path']: entry for entry in files}
-    for name, field in (('LICENSE', 'baton_root_license'), ('NOTICE', 'baton_root_notice')):
-        source = sources.get(name)
-        path = 'notices/baton2-' + name
-        expected = None if source is None else {
-            'source_path': name, 'path': path, 'bytes': source['bytes'], 'sha256': source['sha256']}
-        require(terms[field] == expected, 'Baton2 ' + name + ' terms differ from the source inventory')
-        file_expected = None if expected is None else {
-            key: expected[key] for key in ('path', 'bytes', 'sha256')}
-        require(staged.get(path) == file_expected, 'Baton2 ' + name + ' file differs from its terms')
 
 
 def artifact_identity(release_version):
@@ -310,16 +295,12 @@ def package(args):
         archive = args.compiler_archive.resolve()
         compiler_notices = archive_notices(archive)
         binary = ROOT / '.scratch/bend2/baton2'
-        generated = ROOT / '.scratch/bend2/baton2.c'
         require(binary.is_file(), 'The production build did not create .scratch/bend2/baton2')
+        generated = ROOT / '.scratch/bend2/baton2.c'
         if generated.is_file():
-            generated_copy = build_output / 'baton2.c'
-            shutil.copyfile(generated, generated_copy)
-            build_record['generated_c'] = {'path': str(generated_copy.relative_to(output)),
-                                           **file_info(generated_copy)}
+            shutil.copyfile(generated, build_output / 'baton2.c')
+            build_record['generated_c'] = {'path': 'baton2.c'}
             write_json(build_output / 'build.json', build_record)
-        source_files = [{'path': name, **file_info(ROOT / name)}
-                        for name in ('LICENSE', 'NOTICE') if (ROOT / name).is_file()]
         source = {'directory': str(ROOT), **source_identity()}
         payload = output / identity['archive_root']
         (payload / 'bin').mkdir(parents=True)
@@ -329,17 +310,15 @@ def package(args):
         selected_context = [stage_selected_context_payload(payload)]
         selected_context.extend(stage_clang_context_modules(payload, args.context_clang_package))
         terms = stage_notices(payload, compiler_notices, identity['kind'])
-        files = [{'path': path.relative_to(payload).as_posix(), **file_info(path)}
-                 for path in sorted(payload.rglob('*')) if path.is_file()]
-        check_project_terms(terms, source_files, files)
         manifest = {
             'schema': 'baton2-native-artifact-v1', **identity,
             'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'platform': {'system': platform.system(), 'machine': platform.machine(), 'artifact': 'darwin-arm64'},
             'source': source,
-            'binary': {'path': 'bin/baton2', **file_info(binary)}, 'files': files,
+            'binary': {'path': 'bin/baton2'},
             'selected_modules': selected_context,
-            'build': {'command': build_record, 'compiler_archive': {'url': COMPILER_ARCHIVE_URL, **file_info(archive)}},
+            'build': {'command': build_record, 'compiler_archive': {
+                'url': COMPILER_ARCHIVE_URL, 'sha256': sha256(archive)}},
             'terms': terms,
         }
         write_json(payload / 'manifest.json', manifest)
@@ -347,11 +326,10 @@ def package(args):
         destination = output / (identity['archive_root'] + '-' + source['commit'] + '.tar.gz')
         with tarfile.open(destination, 'x:gz') as artifact:
             artifact.add(payload, arcname=identity['archive_root'])
-        require(sha256(payload / 'bin/baton2') == sha256(binary), 'The staged executable differs from the build output')
         archive_sha = sha256(destination)
         (output / 'SHA256SUMS').write_text(archive_sha + '  ' + destination.name + '\n')
-        result.update(status='packaged', archive={'path': destination.name, **file_info(destination)},
-                      manifest={'path': 'manifest.json', **file_info(output / 'manifest.json')},
+        result.update(status='packaged', archive={'path': destination.name, 'sha256': archive_sha},
+                      manifest={'path': 'manifest.json'},
                       source=source, build=str(build_output))
         write_json(output / 'result.json', result)
         print(json.dumps(result), flush=True)

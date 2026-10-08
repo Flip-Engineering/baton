@@ -259,7 +259,7 @@ def recover_if_dead(+db: String, +session: String, dead: Bool) -> IO(Unit):
     case True{}: Store.record_owner_death(db,session)
 
 def wake_admit(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, state: String, +dead: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  wake_stand(db,session,Bool.pick(String,dead,"0",cursor),launch,lock,wake_held(state,dead))
+  wake_stand(db,session,cursor,launch,lock,wake_held(state,dead))
 
 # Owner-fenced admission under the lock. The wake reads the claim row and the
 # host custody of the recorded attempt, repairs stale execution metadata when
@@ -278,7 +278,8 @@ def wake_fenced(+db: String, +session: String, +cursor: String, launch: String -
       +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
       +dead : Bool <- custody_dead(db,trimmed,String.is_empty(trimmed))
       recovered : Unit <- recover_if_dead(db,session,dead)
-      wake_admit(db,session,cursor,launch,lock,state,dead)
+      replay_cursor : String = Bool.pick(String,Bool.and(dead,Bool.not(String.is_empty(trimmed))),"0",cursor)
+      wake_admit(db,session,replay_cursor,launch,lock,state,dead)
 
 def wake_owned(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match lock:

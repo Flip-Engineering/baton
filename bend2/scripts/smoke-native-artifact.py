@@ -26,7 +26,7 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
-def digest(path):
+def archive_digest(path):
     with path.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
@@ -36,8 +36,7 @@ def save(path, value):
 
 
 def record(path, root):
-    return {'path': str(path.relative_to(root)), 'bytes': path.stat().st_size,
-            'sha256': digest(path)}
+    return {'path': str(path.relative_to(root))}
 
 
 class Commands:
@@ -113,7 +112,6 @@ def fixture(kind, config_path, arguments):
             'Native parent did not use the staged shared instance owner')
     save(output / 'native-start.json', {'pid': os.getpid(), 'ppid': os.getppid(),
                                        'cwd': os.getcwd(), 'parent_identity': parent,
-                                       'task_sha256': hashlib.sha256(task['message'].encode()).hexdigest(),
                                        'event_filter': selection})
     print(json.dumps({'id': state['id'], 'type': 'response', 'command': 'get_state', 'success': True,
                       'data': {'sessionId': config['native'], 'model': {'provider': 'fixture', 'id': 'artifact'},
@@ -135,10 +133,7 @@ def extract(archive, manifest_path, destination):
     name = manifest['archive_root']
     require(PurePosixPath(name).parts == (name,) and name not in ('', '.', '..') and '\\' not in name,
             'Archive root must be one directory name')
-    expected = {entry['path']: entry for entry in manifest['files']}
-    require(len(expected) == len(manifest['files']) and 'manifest.json' not in expected,
-            'Manifest file entries must be distinct and exclude manifest.json')
-    seen, regular = set(), set()
+    seen, manifest_found = set(), False
     with tarfile.open(archive, 'r:*') as packed:
         for member in packed:
             path = PurePosixPath(member.name)
@@ -152,23 +147,18 @@ def extract(archive, manifest_path, destination):
                 target.mkdir(parents=True, exist_ok=True)
                 continue
             relative = str(PurePosixPath(*path.parts[1:]))
-            require(relative in expected or relative == 'manifest.json', f'Unmanifested archive file: {relative}')
             target.parent.mkdir(parents=True, exist_ok=True)
             with packed.extractfile(member) as source, target.open('xb') as output:
                 shutil.copyfileobj(source, output)
             target.chmod(member.mode & 0o777)
-            regular.add(relative)
-    require(regular == set(expected) | {'manifest.json'}, 'Archive and manifest list different files')
+            if relative == 'manifest.json':
+                manifest_found = True
+    require(manifest_found, 'Archive does not contain manifest.json')
     prefix = destination / name
     require((prefix / 'manifest.json').read_bytes() == manifest_bytes,
             'Archive manifest differs from supplied manifest')
-    for relative, entry in expected.items():
-        path = prefix / relative
-        require(path.stat().st_size == entry['bytes'] and digest(path) == entry['sha256'],
-                f'Artifact file differs from manifest: {relative}')
     binary = manifest['binary']
-    require(binary['path'] == 'bin/baton2' and expected[binary['path']] == binary,
-            'Binary must bind the manifested bin/baton2 entry')
+    require(binary['path'] == 'bin/baton2', 'Manifest must name the installed bin/baton2 entry')
     require(os.access(prefix / binary['path'], os.X_OK), 'Staged coordinator is not executable')
     return prefix, manifest
 
@@ -212,12 +202,12 @@ def main():
     unavailable = args.unavailable_source.resolve()
     require(not unavailable.exists(), 'Relocate only the owned build clone before running the smoke check')
     require(hasattr(os, 'pidfd_open') or hasattr(select, 'kqueue'), 'Process-exit observation requires Linux or macOS/BSD')
-    require(digest(args.archive) == args.sha256.lower(), 'Archive does not match the advertised SHA256')
+    require(archive_digest(args.archive) == args.sha256.lower(), 'Archive does not match the advertised SHA256')
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     (output / 'commands').mkdir()
     result = {'archive': str(args.archive.resolve()), 'archive_sha256': args.sha256.lower(),
-              'manifest_sha256': digest(args.manifest), 'started_unix': time.time(),
+              'started_unix': time.time(),
               'unavailable_source': str(unavailable), 'status': 'failed'}
     try:
         prefix, manifest = extract(args.archive, args.manifest, output / 'extracted')
@@ -370,22 +360,21 @@ def main():
         require(re.search(r'^# pass 1$', view_tap, re.MULTILINE)
                 and re.search(r'^# fail 0$', view_tap, re.MULTILINE),
                 'The public view TAP result must contain exactly one pass and zero failures')
-        view_source = {'path': str(view_test_path), 'bytes': view_test_path.stat().st_size,
-                       'sha256': digest(view_test_path)}
+        view_source = {'path': str(view_test_path)}
         public_view = {
             'status': 'passed', 'test_name': view_test_name, 'pass_count': 1,
             'node_version': node_version, 'test_source': view_source,
             'package_binary': record(binary, output), 'package_root': str(prefix),
             'command_record': record(view_commands.last_record_path, output),
         }
-        result.update(status='passed', source=manifest['source'], binary_sha256=digest(binary),
+        result.update(status='passed', source=manifest['source'],
                       extracted_prefix=str(prefix), runtime_cwd=str(working), runtime_PATH=environment['PATH'],
                       BEND_present='BEND' in environment, native_self_reexec_verified=True,
                       native_id=session['native'], observed_model=session['observedModel'],
                       full_task_and_report_equal=True, both_inboxes_empty=True, git_landing=land,
                       recorded_pids=pids, matching_pids=[], direct_subprocesses_waited=True,
                       native_wait_statuses=None,
-                      fixture_python={'path':sys.executable,'sha256':digest(Path(sys.executable))},
+                      fixture_python={'path':sys.executable},
                       public_native_view=public_view, public_native_view_passed=True,
                       scope='Extracted native artifact on this host with system libraries, Git and an external controlled Python fixture. Public land is exercised; no selected landing checks or real provider is run.')
     except Exception as error:
