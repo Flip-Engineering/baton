@@ -297,7 +297,7 @@ def provider_usage(+db: String, +harness: String, +command: String, cwd: String)
 # conversation token usage keeps its own members.
 def print_with_provider(+db: String, conversation: String, +provider: String) -> IO(Unit):
   do IO<Unit>:
-    spliced : String <- IO.try(String,DB.Sql.query(db,"SELECT json_patch(" ++ C.q(conversation) ++ ",json_object('providerUsage',json(" ++ C.q(provider) ++ ")));"))
+    spliced : String <- IO.try(String,DB.Sql.query(db,"SELECT json_set(" ++ C.q(conversation) ++ ",'$.providerUsage',json(" ++ C.q(provider) ++ "));"))
     IO.print(spliced)
 
 # --- the command ------------------------------------------------------------

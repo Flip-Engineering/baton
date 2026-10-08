@@ -4150,7 +4150,8 @@ static Term baton_process_pack(Env e, IoWork *w) {
     else if(call->kind==BP_INPUT_CLOSED) value=(Term)call->signal;
     else if(call->kind==BP_WAIT) value=io_str(e,call->text,call->length);
     else if(call->kind==BP_INSTANCE_STATE || call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_JOB ||
-            call->kind==BP_INSTANCE_NOTICE || call->kind==BP_INSTANCE_OWNER_WITNESS)
+            call->kind==BP_INSTANCE_NOTICE || call->kind==BP_INSTANCE_OWNER_WITNESS ||
+            call->kind==BP_INSTANCE_ENSURE_OWNER_WITNESS)
       value=io_str(e,call->text?call->text:"",call->length);
     else if(call->kind==BP_INSTANCE_RECOVER)
       value=io_tup(e,(Term)call->handle,io_str(e,call->text?call->text:"",call->length));

@@ -112,7 +112,8 @@ class ObservedUsage(unittest.TestCase):
                                     'limits': [{'used': 100, 'limit': 100}],
                                     'metadata': {'source': 'provider'}}],
                        'accountsWithoutUsage': [{'provider': 'other-provider'}],
-                       'disabledCredentials': [], 'capacity': {'additionalFact': 'retained'}}
+                       'disabledCredentials': [], 'capacity': {'additionalFact': 'retained'},
+                       'unreportedScope': None}
         workspace, command = self.provider_command(json.dumps(observation), identity_prefix=True)
         status = self.call('status')
         self.assertEqual(status.returncode, 0, status.stderr)
