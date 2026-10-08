@@ -361,7 +361,7 @@ def models_query(+db: String, +session: String, +harness: String, +command: Stri
 def models_command(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String) -> IO(Unit):
   do IO<Unit>:
     +argv : String <- IO.pure(String,models_argv(harness,model))
-    answer : String <- IO.pure(String,Bool.pick(String,models_supported(harness),
+    +answer : String <- IO.pure(String,Bool.pick(String,models_supported(harness),
       Bool.pick(String,String.is_empty(command),models_unknown(session,harness,command,model,cwd,argv,"noRecordedHarnessCommand"),""),
       models_unknown(session,harness,command,model,cwd,argv,"unsupportedHarness")))
     Bool.pick(IO(Unit),String.is_empty(answer),models_query(db,session,harness,command,model,cwd),models_print(db,answer))
