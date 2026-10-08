@@ -13,9 +13,9 @@ law parentless_request_preserves_its_error_after_control_output:
   for attempt: String
   for event: String
   for -tasks: List<Chan(Result<&1,&1,U32 & String,String>)>
-  {Requests.record(db,player,turn,attempt,event,tasks,False{}) == (do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
+  {Requests.record(db,player,turn,attempt,event,tasks,False{}) == (do IO<Requests.Observation>:
     shown : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output("Native OMP UI request is unsupported for a session without a registered parent; its full frame remains in the native log.\n")
-    IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,"Native OMP UI request has no registered parent; interaction requires a registered parent."))) : IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String)}
+    IO.pure(Requests.Observation,Requests.Observation{tasks,error: "Native OMP UI request has no registered parent; interaction requires a registered parent.",incomplete: False{}})) : IO(Requests.Observation)}
 
 def parentless_request_preserves_its_error_after_control_output(db,player,turn,attempt,event,tasks):
   {==}
@@ -43,7 +43,7 @@ law native_question_failed_record_cannot_wake:
   for +code: U32
   for +text: String
   for -tasks: List<Chan(Result<&1,&1,U32 & String,String>)>
-  {Requests.saved(db,tasks,Fail{(code,text)}) == IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,U32.show(code) ++ ": " ++ text)) : IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String)}
+  {Requests.saved(db,tasks,Fail{(code,text)}) == IO.pure(Requests.Observation,Requests.Observation{tasks,error: U32.show(code) ++ ": " ++ text,incomplete: True{}}) : IO(Requests.Observation)}
 
 def native_question_failed_record_cannot_wake(db,code,text,tasks):
   {==}

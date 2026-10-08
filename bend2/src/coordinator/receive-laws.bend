@@ -121,7 +121,7 @@ law completion_without_parent_returns_output_failure:
   for +status: String
   for +event: String
   for error: String
-  {Turn.finish_parent(db,player,id,log,Turn.Ended{status,event,error},False{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+  {Turn.finish_parent(db,player,id,log,Turn.Ended{status,event,error,False{}},False{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
     output : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'error'," ++ C.q(error) ++ ");"))
     Text.Text.control_output(output)) : IO(Result<&1,&1,U32 & String,Unit>)}
 
@@ -459,7 +459,8 @@ def settle_attempt_before_joining_continuation(+db: String, +session: String, id
     continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Receive.continue_pending(db,session,cursor,again))
     finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
-    ack : Result<&1,&1,U32 & String,Unit> <- Receive.acknowledge_if_succeeded(failed,acknowledge)
+    stopped : Bool <- Stop.stopped(db,session)
+    ack : Result<&1,&1,U32 & String,Unit> <- Receive.acknowledge_if_observed(Bool.and(Receive.native_observation_failed(outcome),Bool.not(stopped)),acknowledge)
     status : Result<&1,&1,U32 & String,Unit> <- Receive.exit_status(failed)
     next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))
@@ -479,14 +480,12 @@ law completed_attempt_settles_before_continuation_joins:
 def completed_attempt_settles_before_continuation_joins(db,session,id,log,cursor,outcome,deliveries,again,acknowledge):
   {==}
 
-# A failed report, commit, or native outcome skips the acknowledgement, so
-# the attempt is never acknowledged or retired and stays recorded for
-# same-attempt recovery.
-law failed_completion_skips_acknowledgement:
+# An incomplete native observation keeps the attempt available for recovery.
+law incomplete_observation_skips_acknowledgement:
   for -acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.acknowledge_if_succeeded(True{},acknowledge) == IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.acknowledge_if_observed(True{},acknowledge) == IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def failed_completion_skips_acknowledgement(acknowledge):
+def incomplete_observation_skips_acknowledgement(acknowledge):
   {==}
 
 # Retirement follows acknowledgment on the same attempt handle: the shared
@@ -558,7 +557,7 @@ def direct_turn_refuses_unreleased_receive(args):
 # The native birth and output observations remain host obligations.
 law adopted_unknown_attempt_replays_the_retained_inbox:
   for cursor: String
-  {Receive.reconciled_cursor(cursor,True{},Turn.Ended{"unknown after keeper loss","",""}) == "0" : String}
+  {Receive.reconciled_cursor(cursor,True{},Turn.Ended{"unknown after keeper loss","","",True{}}) == "0" : String}
 
 def adopted_unknown_attempt_replays_the_retained_inbox(cursor):
   {==}
@@ -573,21 +572,21 @@ def fresh_attempt_preserves_its_input_cursor(cursor,outcome):
 
 law adopted_known_native_failure_preserves_its_input_cursor:
   for cursor: String
-  {Receive.reconciled_cursor(cursor,True{},Turn.Ended{"exit 1","",""}) == cursor : String}
+  {Receive.reconciled_cursor(cursor,True{},Turn.Ended{"exit 1","","",False{}}) == cursor : String}
 
 def adopted_known_native_failure_preserves_its_input_cursor(cursor):
   {==}
 
 law adopted_terminal_result_preserves_its_input_cursor:
   for cursor: String
-  {Receive.reconciled_cursor(cursor,True{},Turn.Ended{"unknown after keeper loss","retained result",""}) == cursor : String}
+  {Receive.reconciled_cursor(cursor,True{},Turn.Ended{"unknown after keeper loss","retained result","",False{}}) == cursor : String}
 
 def adopted_terminal_result_preserves_its_input_cursor(cursor):
   {==}
 
 law adopted_observation_error_preserves_its_input_cursor:
   for cursor: String
-  {Receive.reconciled_cursor(cursor,True{},Turn.Ended{"unknown after keeper loss","","retained read failed"}) == cursor : String}
+  {Receive.reconciled_cursor(cursor,True{},Turn.Ended{"unknown after keeper loss","","retained read failed",True{}}) == cursor : String}
 
 def adopted_observation_error_preserves_its_input_cursor(cursor):
   {==}
