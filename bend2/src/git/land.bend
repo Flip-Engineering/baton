@@ -2276,40 +2276,40 @@ def shared_reserved_attested(repo: String, +target: String, cand: String, basis:
   +rel = T.release_raw_of(released)
   ld_attest_admit(AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), rel, IdentityObserved{common, common_observed, target}, ld_adv_association(obs), ld_adv_intent(obs), reservation})
 
+# A host capture that failed carries its own code and detail into the captured observation and the broken
+# advance, with the mode and the empty association and intent slots spelled literally.
+law a_failed_capture_reports_its_own_code_and_detail:
+  {ld_adv_cas_capture("tgt", "0123456789abcdef0123456789abcdef01234567", "/repo", Fail{(13, "capture failed")}) == IO.pure(LdAdvObs, LdAdvCaptured{AdvBroken{"capture failed"}, T.CapturedFailed{13, "capture failed"}, MutationUnheld{}, AssociationMissing{}, IntentMissing{}}) : IO(LdAdvObs)}
+
+def a_failed_capture_reports_its_own_code_and_detail():
+  {==}
+
+# A successful host capture still runs the real target read: the equation states the Git call, binds its
+# return to the existing read-back handler, and leaves that handler's own outcomes to the laws above.
+law a_successful_capture_runs_the_target_read_and_continues_to_the_read_back:
+  {ld_adv_cas_qualified("tgt", "0123456789abcdef0123456789abcdef01234567", T.CapturedDone{"exit 0\nrest", "diagnostics"}, T.GRun{0, ""}, "/repo") == (do IO<LdAdvObs>:
+    after : T.GitOut <- Git.runGit("/repo", ld_target_ref_argv("tgt"))
+    ld_adv_cas_readback("tgt", "0123456789abcdef0123456789abcdef01234567", T.CapturedDone{"exit 0\nrest", "diagnostics"}, after)) : IO(LdAdvObs)}
+
+def a_successful_capture_runs_the_target_read_and_continues_to_the_read_back():
+  {==}
+
 law a_successful_unheld_capture_reads_back_the_advanced_candidate:
-  {ld_adv_cas_readback("tgt", "0123456789abcdef0123456789abcdef01234567", T.CapturedDone{"exit 0\nrest", "diagnostics"}, T.GRun{0, Tx.str_cat("0123456789abcdef0123456789abcdef01234567", "\n")}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, QualDecided{MutationUnheld{}, ld_adv_read(T.GRun{0, Tx.str_cat("0123456789abcdef0123456789abcdef01234567", "\n")}), ReadSkipped{}})) : IO(LdAdvObs)}
+  {ld_adv_cas_readback("tgt", "0123456789abcdef0123456789abcdef01234567", T.CapturedDone{"exit 0\nrest", "diagnostics"}, T.GRun{0, Tx.str_cat("0123456789abcdef0123456789abcdef01234567", "\n")}) == IO.pure(LdAdvObs, LdAdvQualified{AdvLanded{},, T.CapturedDone{"exit 0\nrest", "diagnostics"},, QualDecided{MutationUnheld{}, ReadObserved{T.GRun{0, Tx.str_cat("0123456789abcdef0123456789abcdef01234567", "\n")}}, ReadSkipped{}}, AssociationMissing{}, IntentMissing{}}) : IO(LdAdvObs)}
 
 def a_successful_unheld_capture_reads_back_the_advanced_candidate():
   {==}
 
 law a_unheld_capture_whose_target_moved_reports_moved:
-  {ld_adv_cas_readback("tgt", "0123456789abcdef0123456789abcdef01234567", T.CapturedDone{"exit 0\nrest", "diagnostics"}, T.GRun{0, "other\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvMoved{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, QualDecided{MutationUnheld{}, ld_adv_read(T.GRun{0, "other\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
+  {ld_adv_cas_readback("tgt", "0123456789abcdef0123456789abcdef01234567", T.CapturedDone{"exit 0\nrest", "diagnostics"}, T.GRun{0, "other\n"}) == IO.pure(LdAdvObs, LdAdvQualified{AdvMoved{},, T.CapturedDone{"exit 0\nrest", "diagnostics"},, QualDecided{MutationUnheld{}, ReadObserved{T.GRun{0, "other\n"}}, ReadSkipped{}}, AssociationMissing{}, IntentMissing{}}) : IO(LdAdvObs)}
 
 def a_unheld_capture_whose_target_moved_reports_moved():
   {==}
 
 law an_unheld_capture_whose_read_back_fails_is_broken:
-  {ld_adv_cas_readback("tgt", "0123456789abcdef0123456789abcdef01234567", T.CapturedDone{"exit 0\nrest", "diagnostics"}, T.GRun{7, "readback failed\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"the target could not be read back after the advance"}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, QualDecided{MutationUnheld{}, ld_adv_read(T.GRun{7, "readback failed\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
+  {ld_adv_cas_readback("tgt", "0123456789abcdef0123456789abcdef01234567", T.CapturedDone{"exit 0\nrest", "diagnostics"}, T.GRun{7, "readback failed\n"}) == IO.pure(LdAdvObs, LdAdvQualified{AdvBroken{"the target could not be read back after the advance"},, T.CapturedDone{"exit 0\nrest", "diagnostics"},, QualDecided{MutationUnheld{}, ReadObserved{T.GRun{7, "readback failed\n"}}, ReadSkipped{}}, AssociationMissing{}, IntentMissing{}}) : IO(LdAdvObs)}
 
 def an_unheld_capture_whose_read_back_fails_is_broken():
-  {==}
-
-law a_held_capture_on_its_own_target_is_landed:
-  {ld_adv_wt_head_decided("/holder", "tgt", T.CapturedDone{"exit 0\nrest", "diagnostics"}, T.GRun{0, "tip\n"}, T.GRun{0, "refs/heads/tgt\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, QualDecided{MutationHeld{"/holder"}, ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GRun{0, "refs/heads/tgt\n"})})) : IO(LdAdvObs)}
-
-def a_held_capture_on_its_own_target_is_landed():
-  {==}
-
-law a_held_capture_on_another_target_changes_the_holder:
-  {ld_adv_wt_head_decided("/holder", "tgt", T.CapturedDone{"exit 0\nrest", "diagnostics"}, T.GRun{0, "tip\n"}, T.GRun{0, "refs/heads/other\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvHolderChanged{"/holder"}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, QualDecided{MutationHeld{"/holder"}, ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GRun{0, "refs/heads/other\n"})})) : IO(LdAdvObs)}
-
-def a_held_capture_on_another_target_changes_the_holder():
-  {==}
-
-law a_held_capture_whose_head_read_is_broken_reports_the_detail:
-  {ld_adv_wt_head_decided("/holder", "tgt", T.CapturedDone{"exit 0\nrest", "diagnostics"}, T.GRun{0, "tip\n"}, T.GBroken{"head unreadable"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"head unreadable"}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, QualDecided{MutationHeld{"/holder"}, ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GBroken{"head unreadable"})})) : IO(LdAdvObs)}
-
-def a_held_capture_whose_head_read_is_broken_reports_the_detail():
   {==}
 
 # The unheld capture call: the context's claim, guard and reservation-derived artifact are exactly the
