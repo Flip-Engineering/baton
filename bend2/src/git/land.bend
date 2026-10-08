@@ -821,6 +821,7 @@ type IdentityEvidence is Data:
 type IntentStage is Data:
   IntentStageAbsent{}
   IntentStagePresent{raw: String, path: String}
+  IntentStageFailed{code: U32, detail: String}
 
 # The three holder observations a held route performs. An unheld route performs none of them, and that
 # absence is stated rather than filled with a repository observation.
@@ -1529,23 +1530,87 @@ def ld_adv_mismatched(step: String, request: A.AssociationRequest, candidate_oid
 # The comparison the caller made is matched here as a parameter. A disagreement stops the attempt
 # with the returned association retained; an agreement continues into the selected mutation, and
 # the association rides on that mutation's own observation.
+# The intent file the attempt publishes under its own reservation: the reserved attempt directory and
+# one fixed name, so the path the producer admits is the path the request named.
+def shared_intent_path(ctx: LdAdvCtx) -> String:
+  Tx.str_cat(Lg.attempt_directory_for(ladvctx_common(ctx), ladvctx_attempt(ctx)), "/intent")
+
+def shared_intent_content(candidate: String, basis: String, target: String) -> String:
+  Lg.intent_content(candidate, basis, target)
+
+def shared_intent_input(ctx: LdAdvCtx, holder: String, repo: String, target: String, cand: String, basis: String) -> I.IntentInput:
+  I.IntentRequested{ladvctx_attempt(ctx), ladvctx_common(ctx), target, repo, cand, basis, shared_intent_path(ctx), holder, ""}
+
+# An intent the attempt could not publish, qualify or confirm stops the attempt before the mutation.
+# The stage it did reach is retained with its own record or error, and the stages it did not reach are
+# stated as absent.
+def ld_adv_intent_stopped(intent: I.IntentInput, step: String, holder_path: String, repo: String, target: String, cand: String, basis: String, ev: AssociationEvidence, published: IntentStage, content: IntentStage, held: Bool) -> LdAdvObs:
+  +s = step
+  +mode = Bool.pick(MutationMode, held, MutationHeld{holder_path}, MutationUnheld{})
+  +bound = IntentBound{intent, published, content, IntentStageAbsent{}, HolderAbsent{}}
+  LdAdvNoCapture{AdvIntentRefused{s}, mode, ev, bound}
+
+# The intent the attempt did publish, qualify and confirm continues into the selected mutation with its
+# evidence attached to that mutation's own observation.
+def ld_adv_intent_applied(intent: I.IntentInput, published: String, intent_path: String, content: String, +qualified_raw: String, +qualified_path: String, holder: HolderObservation, +ev: AssociationEvidence, holder_path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, held: Bool) -> IO(LdAdvObs):
+  +assoc = ev
+  +bound = IntentBound{intent, IntentStagePresent{published, intent_path}, IntentStagePresent{content, intent_path}, IntentStagePresent{qualified_raw, qualified_path}, holder}
+  do IO<LdAdvObs>:
+    obs : LdAdvObs <- Bool.pick(IO(LdAdvObs), held, ld_adv_wt(holder_path, repo, target, cand, basis, ctx), ld_adv_cas_run(repo, target, cand, basis, ctx))
+    IO.pure(LdAdvObs, ld_adv_keep_intent(ld_adv_keep_association(obs, assoc), bound))
+
+def ld_adv_intent_qualified(prepared: I.IntentPrepared, intent: I.IntentInput, published: String, intent_path: String, content: String, ev: AssociationEvidence, holder_path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, held: Bool) -> IO(LdAdvObs):
+  match prepared:
+    case I.IntentObserved{request, raw, qualified_path, head, index, status}:
+      ld_adv_intent_applied(intent, published, intent_path, content, raw, qualified_path, HolderPresent{head, index, status}, ev, holder_path, repo, target, cand, basis, ctx, held)
+    case I.IntentUnready{step, reason, raw}:
+      IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, "qualification-unready", holder_path, repo, target, cand, basis, ev, IntentStagePresent{published, intent_path}, IntentStagePresent{content, intent_path}, held))
+    case I.IntentPending{request, raw, pending}:
+      IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, "qualification-pending", holder_path, repo, target, cand, basis, ev, IntentStagePresent{published, intent_path}, IntentStagePresent{content, intent_path}, held))
+    case I.IntentHostFailed{step, request, error}:
+      match error:
+        case T.HostError{code, detail}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, "qualification-host-failed", holder_path, repo, target, cand, basis, ev, IntentStagePresent{published, intent_path}, IntentStageFailed{code, detail}, held))
+
+def ld_adv_intent_published(published: P.IntentPublish, intent: I.IntentInput, ev: AssociationEvidence, holder_path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, held: Bool) -> IO(LdAdvObs):
+  +assoc = ev
+  match published:
+    case P.IntentBytesPublished{request, raw, path, content}:
+      do IO<LdAdvObs>:
+        prepared : I.IntentPrepared <- I.Intent.prepare(intent)
+        ld_adv_intent_qualified(prepared, intent, raw, path, content, assoc, holder_path, repo, target, cand, basis, ctx, held)
+    case P.PublishRefused{request, step, name, raw}:
+      IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, "publication-refused", holder_path, repo, target, cand, basis, assoc, IntentStagePresent{raw, shared_intent_path(ctx)}, IntentStageAbsent{}, held))
+    case P.PublishExistingPending{request, raw, path}:
+      IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, "publication-existing-pending", holder_path, repo, target, cand, basis, assoc, IntentStagePresent{raw, path}, IntentStageAbsent{}, held))
+    case P.PublishContentMismatch{request, raw, expected, found}:
+      IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, "publication-content-mismatch", holder_path, repo, target, cand, basis, assoc, IntentStagePresent{raw, shared_intent_path(ctx)}, IntentStagePresent{found, shared_intent_path(ctx)}, held))
+    case P.PublishReadbackFailed{request, publication, path, error}:
+      match error:
+        case T.HostError{code, detail}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, "publication-readback-failed", holder_path, repo, target, cand, basis, assoc, IntentStagePresent{publication, path}, IntentStageFailed{code, detail}, held))
+    case P.PublishHostFailed{step, request, error}:
+      match error:
+        case T.HostError{code, detail}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, "publication-host-failed", holder_path, repo, target, cand, basis, assoc, IntentStageFailed{code, detail}, IntentStagePresent{shared_intent_content(cand, basis, target), shared_intent_path(ctx)}, held))
+
+def ld_adv_intent_begin(ctx: LdAdvCtx, holder_path: String, repo: String, target: String, cand: String, basis: String, ev: AssociationEvidence, held: Bool) -> IO(LdAdvObs):
+  +intent = shared_intent_input(ctx, holder_path, repo, target, cand, basis)
+  +content = shared_intent_content(cand, basis, target)
+  do IO<LdAdvObs>:
+    published : P.IntentPublish <- P.Intent.publish_intent(intent, Lg.attempt_directory_for(ladvctx_common(ctx), ladvctx_attempt(ctx)), "intent", content)
+    ld_adv_intent_published(published, intent, ev, holder_path, repo, target, cand, basis, ctx, held)
+
 def ld_adv_held_compared(check: AssociationCheck, +request: A.AssociationRequest, candidate_oid: String, basis_oid: String, target_head: String, holder_common: String, destination_common: String, reads: A.AssocReads, +path: String, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match check:
     case AssociationDisagreed{step}: IO.pure(LdAdvObs, ld_adv_mismatched(step, request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads, MutationHeld{path}))
     case AssociationAgreed{}:
       +ev = AssociationObserved{"associate", request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads}
-      do IO<LdAdvObs>:
-        obs : LdAdvObs <- ld_adv_wt(path, repo, target, cand, basis, ctx)
-        IO.pure(LdAdvObs, ld_adv_keep_association(obs, ev))
+      ld_adv_intent_begin(ctx, path, repo, target, cand, basis, ev, True{})
 
 def ld_adv_unheld_compared(check: AssociationCheck, +request: A.AssociationRequest, candidate_oid: String, basis_oid: String, target_head: String, holder_common: String, destination_common: String, reads: A.AssocReads, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match check:
     case AssociationDisagreed{step}: IO.pure(LdAdvObs, ld_adv_mismatched(step, request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads, MutationUnheld{}))
     case AssociationAgreed{}:
       +ev = AssociationObserved{"associate", request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads}
-      do IO<LdAdvObs>:
-        obs : LdAdvObs <- ld_adv_cas_run(repo, target, cand, basis, ctx)
-        IO.pure(LdAdvObs, ld_adv_keep_association(obs, ev))
+      ld_adv_intent_begin(ctx, repo, repo, target, cand, basis, ev, False{})
 
 def ld_adv_held_decided(decision: A.Association, +path: String, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match decision:
@@ -1886,8 +1951,61 @@ def association_bound(association: AssociationEvidence, +candidate: String, +bas
     case AssociationMissing{}: False{}
     case AssociationRefused{request, step, observation, reads}: False{}
 
-def intent_bound(intent: IntentEvidence, reserved: String) -> Bool:
+def shared_intent_path_of(common: String, reserved: String, attempt: String) -> String:
+  Tx.str_cat(Lg.attempt_directory_for(common, attempt), "/intent")
+
+def intent_request_bound(request: I.IntentInput, reserved: String, common: String, target: String, candidate: String, basis: String, holder: String) -> Bool:
+  Bool.pick(Bool, Tx.str_eq(I.requested_common(request), common),
+    Bool.pick(Bool, Tx.str_eq(I.requested_target(request), target),
+      Bool.pick(Bool, Tx.str_eq(I.requested_candidate(request), candidate),
+        Bool.pick(Bool, Tx.str_eq(I.requested_basis(request), basis),
+          Bool.pick(Bool, Tx.str_eq(I.requested_path(request), shared_intent_path_of(common, reserved, I.requested_attempt(request))),
+            Tx.str_eq(I.requested_holder(request), holder),
+            False{}),
+          False{}),
+        False{}),
+      False{}),
+    False{})
+
+def intent_publication_bound(publication: IntentStage, request: I.IntentInput) -> Bool:
+  match publication:
+    case IntentStagePresent{raw, path}: Bool.pick(Bool, Tx.non_empty(raw), Tx.str_eq(path, I.requested_path(request)), False{})
+    case IntentStageAbsent{}: False{}
+    case IntentStageFailed{code, detail}: False{}
+
+def intent_content_bound(content: IntentStage, candidate: String, basis: String, target: String) -> Bool:
+  match content:
+    case IntentStagePresent{raw, path}: Tx.str_eq(raw, shared_intent_content(candidate, basis, target))
+    case IntentStageAbsent{}: False{}
+    case IntentStageFailed{code, detail}: False{}
+
+def intent_qualification_bound(qualification: IntentStage, request: I.IntentInput) -> Bool:
+  match qualification:
+    case IntentStagePresent{raw, path}: Bool.pick(Bool, Tx.non_empty(raw), Tx.str_eq(path, I.requested_path(request)), False{})
+    case IntentStageAbsent{}: False{}
+    case IntentStageFailed{code, detail}: False{}
+
+def intent_holder_bound(observations: HolderObservation, holder: String) -> Bool:
+  match observations:
+    case HolderPresent{head, index, status}: Tx.non_empty(holder)
+    case HolderAbsent{}: Tx.non_empty(holder)
+
+# The retained intent is admitted only when the request it kept names the attempt's own reservation and
+# the fixed operands, when the publication and qualification records were produced for the intent path
+# that request names, when the content read back is the production content for the fixed candidate,
+# basis and target, and when a held route retained its three holder observations.
+def intent_bound(intent: IntentEvidence, reserved: String, common: String, target: String, candidate: String, basis: String, holder: String) -> Bool:
   match intent:
+    case IntentBound{request, publication, content, qualification, observations}:
+      Bool.pick(Bool, intent_request_bound(request, reserved, common, target, candidate, basis, holder),
+        Bool.pick(Bool, intent_publication_bound(publication, request),
+          Bool.pick(Bool, intent_content_bound(content, candidate, basis, target),
+            Bool.pick(Bool, intent_qualification_bound(qualification, request),
+              intent_holder_bound(observations, holder),
+              False{}),
+            False{}),
+          False{}),
+        False{})
     case IntentObserved{path, raw}: Tx.non_empty(raw)
     case IntentMissing{}: False{}
 
@@ -1900,7 +2018,7 @@ def evidence_complete(evidence: AttemptEvidence) -> Bool:
             Bool.pick(Bool, T.release_done(release),
               Bool.pick(Bool, identity_bound(identity, target),
                 Bool.pick(Bool, association_bound(association, candidate, basis, identity_common(identity), repo, target, qualification, reserved, reservation),
-                  Bool.pick(Bool, intent_bound(intent, reserved), True{}, False{}),
+                  Bool.pick(Bool, intent_bound(intent, reserved, identity_common(identity), target, candidate, basis, mode_holder(qualification_mode(qualification), repo)), True{}, False{}),
                   False{}),
                 False{}),
               False{}),
@@ -1945,7 +2063,7 @@ def ld_adv_of(obs: LdAdvObs) -> LAdv:
 
 def shared_reserved_attested(repo: String, +target: String, cand: String, basis: String, +guard: String, +common: String, +common_observed: T.GitOut, +reserved: String, +reservation: ReservationIdentity, +obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>) -> IO(SharedLanding):
   +rel = T.release_raw_of(released)
-  ld_attest_admit(AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), rel, IdentityObserved{common, common_observed, target}, ld_adv_association(obs), IntentMissing{}, reservation})
+  ld_attest_admit(AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), rel, IdentityObserved{common, common_observed, target}, ld_adv_association(obs), ld_adv_intent(obs), reservation})
 
 def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, common: String, common_observed: T.GitOut, reserved: String, attempt_name: String, attempt_parent: String) -> IO(SharedLanding):
   +h = handle
@@ -3841,7 +3959,7 @@ law the_attested_attempt_retains_the_identity_observation:
   for reservation: ReservationIdentity
   for obs: LdAdvObs
   {shared_reserved_attested(repo, target, cand, basis, guard, common, common_observed, reserved, reservation, obs, Done{Unit{}}) == (do IO<SharedLanding>:
-    attestation : Attestation <- ld_attest(reserved, AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), T.ReleaseDone{}, IdentityObserved{common, common_observed, target}, ld_adv_association(obs), IntentMissing{}, reservation})
+    attestation : Attestation <- ld_attest(reserved, AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), T.ReleaseDone{}, IdentityObserved{common, common_observed, target}, ld_adv_association(obs), ld_adv_intent(obs), reservation})
     IO.pure(SharedLanding, SharedAdvanced{attestation})) : IO(SharedLanding)}
 
 def the_attested_attempt_retains_the_identity_observation(repo,target,cand,basis,guard,common,common_observed,reserved,reservation,obs):
@@ -3860,7 +3978,7 @@ law a_failed_release_still_retains_the_identity_observation:
   for code: U32
   for detail: String
   {shared_reserved_attested(repo, target, cand, basis, guard, common, common_observed, reserved, reservation, obs, Fail{(code, detail)}) == (do IO<SharedLanding>:
-    attestation : Attestation <- ld_attest(reserved, AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), T.ReleaseFailed{code, detail}, IdentityObserved{common, common_observed, target}, ld_adv_association(obs), IntentMissing{}, reservation})
+    attestation : Attestation <- ld_attest(reserved, AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), T.ReleaseFailed{code, detail}, IdentityObserved{common, common_observed, target}, ld_adv_association(obs), ld_adv_intent(obs), reservation})
     IO.pure(SharedLanding, SharedAdvanced{attestation})) : IO(SharedLanding)}
 
 def a_failed_release_still_retains_the_identity_observation(repo,target,cand,basis,guard,common,common_observed,reserved,reservation,obs,code,detail):
@@ -4068,8 +4186,8 @@ def the_unheld_decision_handler_stops_on_a_refused_association(ctx):
 law a_matching_association_continues_the_held_route_into_its_mutation:
   for ctx: LdAdvCtx
   {ld_adv_held_decided(fixture_matching_held(ctx), "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == (do IO<LdAdvObs>:
-    obs : LdAdvObs <- ld_adv_wt("/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx)
-    IO.pure(LdAdvObs, ld_adv_keep_association(obs, AssociationObserved{"associate", ld_assoc_request(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}))) : IO(LdAdvObs)}
+    published : P.IntentPublish <- P.Intent.publish_intent(shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), Lg.attempt_directory_for(ladvctx_common(ctx), ladvctx_attempt(ctx)), "intent", shared_intent_content(fixture_oid_candidate(), fixture_oid_basis(), "tgt"))
+    ld_adv_intent_published(published, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), AssociationObserved{"associate", ld_assoc_request(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, True{})) : IO(LdAdvObs)}
 
 def a_matching_association_continues_the_held_route_into_its_mutation(ctx):
   {==}
@@ -4077,8 +4195,8 @@ def a_matching_association_continues_the_held_route_into_its_mutation(ctx):
 law a_matching_association_continues_the_unheld_route_into_its_mutation:
   for ctx: LdAdvCtx
   {ld_adv_unheld_decided(fixture_matching_unheld(ctx), "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == (do IO<LdAdvObs>:
-    obs : LdAdvObs <- ld_adv_cas_run("/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx)
-    IO.pure(LdAdvObs, ld_adv_keep_association(obs, AssociationObserved{"associate", ld_assoc_request(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}))) : IO(LdAdvObs)}
+    published : P.IntentPublish <- P.Intent.publish_intent(shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), Lg.attempt_directory_for(ladvctx_common(ctx), ladvctx_attempt(ctx)), "intent", shared_intent_content(fixture_oid_candidate(), fixture_oid_basis(), "tgt"))
+    ld_adv_intent_published(published, shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), AssociationObserved{"associate", ld_assoc_request(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, False{})) : IO(LdAdvObs)}
 
 def a_matching_association_continues_the_unheld_route_into_its_mutation(ctx):
   {==}
