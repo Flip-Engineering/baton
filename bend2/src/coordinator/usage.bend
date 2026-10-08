@@ -10,6 +10,9 @@ import ../git/text.bend as Tx
 import ../git/process.bend as Process
 import ../git/types.bend as T
 import ../json/canonical.bend as J
+import ../harness/codex-player.bend as Codex
+import ../harness/omp-player.bend as Omp
+import ../harness/muse-player.bend as Muse
 
 # --- the recorded source ----------------------------------------------------
 
@@ -300,6 +303,69 @@ def print_with_provider(+db: String, conversation: String, +provider: String) ->
     spliced : String <- IO.try(String,DB.Sql.query(db,"SELECT json_set(" ++ C.q(conversation) ++ ",'$.providerUsage',json(" ++ C.q(provider) ++ "));"))
     IO.print(spliced)
 
+# --- the model discovery read ------------------------------------------------
+
+# The model read reports the configured harness's current catalog or profile.
+def models_args(+harness: String, +command: String, model: String) -> List<String>:
+  Bool.pick(List<String>,String.eq(harness,"codex"),Codex.models_args(command),
+  Bool.pick(List<String>,String.eq(harness,"omp"),Omp.models_args(command),
+  Bool.pick(List<String>,String.eq(harness,"muse"),Muse.models_args(command,model),Nil{})))
+
+def models_argv(+harness: String, model: String) -> String:
+  Bool.pick(String,String.eq(harness,"codex"),lines_array(["debug","models"]),
+  Bool.pick(String,String.eq(harness,"omp"),lines_array(["models","--json"]),
+  Bool.pick(String,String.eq(harness,"muse"),lines_array(["model-profile","show",model]),"[]")))
+
+def models_unknown(+session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, reason: String) -> String:
+  "{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"unknown\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":" ++ argv ++ ",\"workspace\":" ++ J.string_literal(cwd) ++ ",\"requestedModel\":" ++ J.string_literal(model) ++ ",\"reason\":" ++ J.string_literal(reason) ++ "}"
+
+def models_raw_failure(+session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, status: String, code: U32, +stdout: String) -> String:
+  "{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"unknown\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":" ++ argv ++ ",\"workspace\":" ++ J.string_literal(cwd) ++ ",\"requestedModel\":" ++ J.string_literal(model) ++ ",\"process\":{\"status\":" ++ J.string_literal(status) ++ ",\"code\":" ++ U32.show(code) ++ "},\"raw\":" ++ J.string_literal(stdout) ++ "}"
+
+def models_json_answer(+session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, +stdout: String) -> String:
+  "WITH answer(text) AS (SELECT " ++ C.q(stdout) ++ ") SELECT json_object('schema','baton2-model-discovery-v1','state',CASE WHEN json_valid(text) THEN 'reported' ELSE 'unknown' END,'session'," ++ C.q(session) ++ ",'harness'," ++ C.q(harness) ++ ",'command'," ++ C.q(command) ++ ",'argv',json(" ++ C.q(argv) ++ "),'workspace'," ++ C.q(cwd) ++ ",'requestedModel',nullif(" ++ C.q(model) ++ ",''),'response',CASE WHEN json_valid(text) THEN json(text) END,'raw',text,'reason',CASE WHEN json_valid(text) THEN NULL ELSE 'providerOutputNotJson' END) FROM answer;"
+
+def models_text_answer(+session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, +stdout: String) -> String:
+  "{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"reported\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":" ++ argv ++ ",\"workspace\":" ++ J.string_literal(cwd) ++ ",\"requestedModel\":" ++ J.string_literal(model) ++ ",\"modelExistence\":\"unknown\",\"profileText\":" ++ J.string_literal(stdout) ++ "}"
+
+def models_outcome(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, outcome: T.RunRes) -> IO(String):
+  match outcome:
+    case T.RSpawn{detail}: IO.pure(String,models_unknown(session,harness,command,model,cwd,argv,"processStatusUnavailable: " ++ detail))
+    case T.RRun{T.SExit{0},out}:
+      Bool.pick(IO(String),String.eq(harness,"muse"),IO.pure(String,models_text_answer(session,harness,command,model,cwd,argv,out)),IO.try(String,DB.Sql.query(db,models_json_answer(session,harness,command,model,cwd,argv,out))))
+    case T.RRun{T.SExit{code},out}: IO.pure(String,models_raw_failure(session,harness,command,model,cwd,argv,"exit",code,out))
+    case T.RRun{T.SSignal{num},out}: IO.pure(String,models_raw_failure(session,harness,command,model,cwd,argv,"signal",num,out))
+
+def models_result(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, run: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match run:
+    case Fail{(code,detail)}:
+      IO.pure(String,"{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"unknown\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":" ++ argv ++ ",\"workspace\":" ++ J.string_literal(cwd) ++ ",\"requestedModel\":" ++ J.string_literal(model) ++ ",\"reason\":\"providerCommandHostFailure\",\"code\":" ++ U32.show(code) ++ ",\"detail\":" ++ J.string_literal(detail) ++ "}")
+    case Done{raw}: models_outcome(db,session,harness,command,model,cwd,argv,Tx.run_res(Done{raw}))
+
+def models_supported(+harness: String) -> Bool:
+  Bool.or(String.eq(harness,"codex"),Bool.or(String.eq(harness,"omp"),String.eq(harness,"muse")))
+
+def models_print(db: String, answer: String) -> IO(Unit):
+  do IO<Unit>:
+    observed : String <- IO.try(String,DB.Sql.query(db,"SELECT json_set(" ++ C.q(answer) ++ ",'$.observedAt',CAST(strftime('%s','now') AS INTEGER)*1000);"))
+    IO.print(observed)
+
+def models_query(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String) -> IO(Unit):
+  do IO<Unit>:
+    +argv : String <- IO.pure(String,models_argv(harness,model))
+    +args : List<String> <- IO.pure(List<String>,models_args(harness,command,model))
+    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(args),Bool.pick(String,String.is_empty(cwd),".",cwd))
+    answer : String <- models_result(db,session,harness,command,model,cwd,argv,run)
+    models_print(db,answer)
+
+def models_command(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String) -> IO(Unit):
+  do IO<Unit>:
+    +argv : String <- IO.pure(String,models_argv(harness,model))
+    answer : String <- Bool.pick(String,models_supported(harness),
+      Bool.pick(String,String.is_empty(command),models_unknown(session,harness,command,model,cwd,argv,"noRecordedHarnessCommand"),""),
+      models_unknown(session,harness,command,model,cwd,argv,"unsupportedHarness"))
+    Bool.pick(IO(Unit),String.is_empty(answer),models_query(db,session,harness,command,model,cwd),models_print(db,answer))
+
 # --- the command ------------------------------------------------------------
 
 def usage_registered(saved: String) -> IO(Unit):
@@ -345,3 +411,13 @@ def observed_usage(+db: String, +session: String) -> IO(Unit):
     empty : Bool <- IO.pure(Bool,String.is_empty(file))
     picked : Unit <- Bool.pick(IO(Unit),empty,usage_unavailable(db,session,Tx.trim_nl(native),Tx.trim_nl(harness),provider),usage_selected(db,session,Tx.trim_nl(native),Tx.trim_nl(harness),file,provider))
     IO.pure(Unit,Unit{})
+
+def models(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    found : String <- IO.try(String,Store.apply(db,C.Session{session}))
+    present : Unit <- usage_registered(found)
+    +harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +model : String <- IO.try(String,DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +cwd : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(workspace,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +command : String <- IO.try(String,DB.Sql.query(db,harness_command_sql(session)))
+    models_command(db,session,Tx.trim_nl(harness),Tx.trim_nl(command),Tx.trim_nl(model),Tx.trim_nl(cwd))

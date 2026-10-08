@@ -2,6 +2,9 @@ import Base
 import ../host/process.bend as P
 import ../json/canonical.bend as J
 
+def models_args(cmd: String) -> List<String>:
+  [cmd,"debug","models"]
+
 def arguments(model: String, effort: String) -> List<String>:
   ["--json","--model",model,"-c","model_reasoning_effort=" ++ J.string_literal(effort),"--dangerously-bypass-approvals-and-sandbox","-"]
 

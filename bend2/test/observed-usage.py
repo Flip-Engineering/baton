@@ -58,6 +58,12 @@ class ObservedUsage(unittest.TestCase):
                                 for entry in rows))
         return path
 
+    def models(self, session='reader'):
+        result = self.call('models', session)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        return json.loads(result.stdout)
+
     def read(self, session='reader'):
         result = self.call('observed-usage', session)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -155,6 +161,87 @@ class ObservedUsage(unittest.TestCase):
         self.assertEqual(answer['providerUsage']['state'], 'unknown')
         self.assertEqual(answer['providerUsage']['condition'], 'malformedUsageJson')
         self.assertIn('Actual non-JSON provider response', answer['providerUsage']['detail'])
+
+    def test_models_runs_the_recorded_omp_catalog_in_its_workspace_and_keeps_json(self):
+        catalog = {'models': [{'provider': 'fixture-provider', 'selector': 'fixture/model',
+                               'metadata': {'context': 8192, 'extra': ['kept', None]}}],
+                   'other': {'provider-specific': True}}
+        workspace, command = self.provider_command(json.dumps(catalog), identity_prefix=True)
+        answer = self.models()
+        self.assertEqual(answer['state'], 'reported')
+        self.assertEqual(answer['harness'], 'omp')
+        self.assertEqual(answer['command'], command)
+        self.assertEqual(answer['argv'], ['models', '--json'])
+        self.assertEqual(answer['workspace'], str(workspace))
+        self.assertEqual(answer['response'], catalog)
+        self.assertEqual(answer['raw'], json.dumps(catalog) + '\n')
+        self.assertEqual(json.loads((workspace / 'queried.json').read_text()),
+                         {'argv': ['models', '--json'], 'cwd': str(workspace)})
+
+    def test_models_uses_the_recorded_codex_catalog_command(self):
+        catalog = {'models': [{'slug': 'provider-model', 'metadata': {'retained': None}}]}
+        workspace, _ = self.provider_command(json.dumps(catalog))
+        with sqlite3.connect(self.db) as database:
+            database.execute("UPDATE sessions SET harness='codex' WHERE id='reader'")
+        answer = self.models()
+        self.assertEqual(answer['response'], catalog)
+        self.assertEqual(json.loads((workspace / 'queried.json').read_text()),
+                         {'argv': ['debug', 'models'], 'cwd': str(workspace)})
+
+    def test_models_keeps_unparseable_catalog_bytes(self):
+        raw = 'provider returned text that is not JSON'
+        workspace, command = self.provider_command(raw)
+        answer = self.models()
+        self.assertEqual(answer['state'], 'unknown')
+        self.assertEqual(answer['reason'], 'providerOutputNotJson')
+        self.assertEqual(answer['raw'], raw + '\n')
+        self.assertEqual(answer['command'], command)
+        self.assertEqual(json.loads((workspace / 'queried.json').read_text()),
+                         {'argv': ['models', '--json'], 'cwd': str(workspace)})
+
+    def test_models_keeps_muse_profile_text_without_claiming_model_existence(self):
+        profile = 'model: requested-but-unverified\nprovider: fixture\nprofile: retained text'
+        workspace, command = self.provider_command(profile)
+        with sqlite3.connect(self.db) as database:
+            database.execute("UPDATE sessions SET harness='muse', model='requested-but-unverified' WHERE id='reader'")
+        answer = self.models()
+        self.assertEqual(answer['state'], 'reported')
+        self.assertEqual(answer['harness'], 'muse')
+        self.assertEqual(answer['command'], command)
+        self.assertEqual(answer['argv'], ['model-profile', 'show', 'requested-but-unverified'])
+        self.assertEqual(answer['requestedModel'], 'requested-but-unverified')
+        self.assertEqual(answer['modelExistence'], 'unknown')
+        self.assertEqual(answer['profileText'], profile + '\n')
+        self.assertEqual(json.loads((workspace / 'queried.json').read_text()),
+                         {'argv': ['model-profile', 'show', 'requested-but-unverified'],
+                          'cwd': str(workspace)})
+
+    def test_models_reports_provider_failure_and_unknown_routes_without_gating(self):
+        workspace, command = self.provider_command('provider says unavailable', exit_code=7)
+        answer = self.models()
+        self.assertEqual(answer['state'], 'unknown')
+        self.assertEqual(answer['command'], command)
+        self.assertEqual(answer['process'], {'status': 'exit', 'code': 7})
+        self.assertEqual(answer['raw'], 'provider says unavailable\n')
+        marker = workspace / 'queried.json'
+        marker.unlink()
+        (workspace / 'provider fixture').unlink()
+        host_failure = self.models()
+        self.assertEqual(host_failure['state'], 'unknown')
+        self.assertEqual(host_failure['reason'], 'providerCommandHostFailure')
+        self.assertEqual(host_failure['code'], 2)
+        self.assertFalse(marker.exists())
+        with sqlite3.connect(self.db) as database:
+            database.execute("UPDATE sessions SET harness='claude-code' WHERE id='reader'")
+        unsupported = self.models()
+        self.assertEqual(unsupported['state'], 'unknown')
+        self.assertEqual(unsupported['reason'], 'unsupportedHarness')
+        self.assertFalse(marker.exists())
+        with sqlite3.connect(self.db) as database:
+            database.execute("UPDATE sessions SET harness='omp',endpoint='[]' WHERE id='reader'")
+        missing = self.models()
+        self.assertEqual(missing['state'], 'unknown')
+        self.assertEqual(missing['reason'], 'noRecordedHarnessCommand')
 
     def test_unsupported_provider_harness_does_not_run_a_usage_command(self):
         self.write([])

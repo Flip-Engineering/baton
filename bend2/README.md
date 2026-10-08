@@ -282,6 +282,15 @@ read as the remote operand and answers `failed` with the read's own status.
 .scratch/bend2/baton2 state.db remote-tip /path/to/repo target-branch origin
 ```
 
+`models SESSION` queries the session's recorded harness in its recorded
+workspace. Codex and OMP return model catalogs; Muse returns the requested
+model's profile text with model existence recorded as unknown. The response
+retains the complete provider output, observation time and process errors.
+
+`observed-usage SESSION` also queries OMP account usage through the recorded
+harness command. `providerUsage` contains that provider answer beside the
+conversation totals.
+
 `observed-usage SESSION` projects the usage the session's own recorded native
 conversation states. Only persisted assistant messages that carry an object
 usage contribute, and each contributes under its persisted entry identity. The

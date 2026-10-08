@@ -1,6 +1,9 @@
 import Base
 import ../host/process.bend as P
 
+def models_args(cmd: String, model: String) -> List<String>:
+  [cmd,"model-profile","show",model]
+
 def arguments(cmd: String, model: String, effort: String, task: String) -> List<String>:
   [cmd,"exec","--json","--prompt-file",task,"--model",model,"--reasoning-effort",effort,"--yolo"]
 

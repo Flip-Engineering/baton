@@ -45,6 +45,7 @@ type Command is Data:
   Push{repo: String, branch: String, remote: String}
   RemoteTip{repo: String, branch: String, remote: String}
   ObservedUsage{session: String}
+  Models{session: String}
   Logs{session: String, level: String}
   LogsStorage{}
   LogsClean{session: String}
@@ -451,6 +452,7 @@ def sql(command: Command) -> String:
     case Push{repo,branch,remote}: ""
     case RemoteTip{repo,branch,remote}: ""
     case ObservedUsage{session}: ""
+    case Models{session}: ""
     case Logs{session,level}: ""
     case LogsStorage{}: ""
     case LogsClean{session}: ""
@@ -511,6 +513,7 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "turns": Turns{id}
     case "knowledge": KnowledgeRead{id}
     case "observed-usage": ObservedUsage{id}
+    case "models": Models{id}
     case "view": View{id,id,"7682"}
     case _: Invalid{}
 

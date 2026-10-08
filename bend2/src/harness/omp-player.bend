@@ -18,6 +18,9 @@ def resume_file(primary: String, alternate: String, +session: String, enabled: B
       +first : String <- IO.try(String,F.Files.find_suffix(primary,"_" ++ session ++ ".jsonl"))
       select_file(alternate,session,first,Bool.not(String.is_empty(first)))
 
+def models_args(cmd: String) -> List<String>:
+  [cmd,"models","--json"]
+
 def arguments(cmd: String, model: String, effort: String, sessions: String) -> List<String>:
   [cmd,"--mode","rpc","--model",model,"--thinking",effort,"--approval-mode","yolo","--session-dir",sessions]
 
