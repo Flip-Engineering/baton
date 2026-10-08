@@ -109,8 +109,8 @@ def fixture(kind, config_path, arguments):
     require(config['task'] in task['message'], 'The native prompt lost the task body')
     parent = commands.call('parent-identity', [config['ps'], '-ww', '-p', str(os.getppid()),
                                               '-o', 'pid=,ppid=,lstart=,command='])
-    require(config['exe'] in parent and '--host-process-keeper' in parent,
-            'Native parent did not reexecute the staged coordinator keeper')
+    require(config['exe'] in parent and '--instance-owner' in parent,
+            'Native parent did not use the staged shared instance owner')
     save(output / 'native-start.json', {'pid': os.getpid(), 'ppid': os.getppid(),
                                        'cwd': os.getcwd(), 'parent_identity': parent,
                                        'task_sha256': hashlib.sha256(task['message'].encode()).hexdigest(),
