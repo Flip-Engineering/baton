@@ -323,23 +323,14 @@ def run_res_fields(fs: List<String>, rest: String) -> T.RunRes:
 def run_res_line(line: String, rest: String) -> T.RunRes:
   run_res_fields(split_spaces(line), rest)
 
-# Add a character only while it belongs to the status line.
-def run_res_append(newline: Bool, c: Char, +line: String) -> String:
-  match newline:
-    case True{}: line
-    case False{}: SCon{c, line}
-
 # Read only through the first newline and preserve the remaining output.
-def run_res_scan(out: String, newline: Bool, +line: String) -> T.RunRes:
-  match newline:
-    case True{}: run_res_line(str_rev(line), out)
-    case False{}:
-      match out:
-        case SNil{}: T.RSpawn{"process answered no status line"}
-        case SCon{+c, +rest}:
-          +next_newline = is_nl(c)
-          +next_line = run_res_append(next_newline, c, line)
-          run_res_scan(rest, next_newline, next_line)
+def run_res_scan(out: String, +line: String) -> T.RunRes:
+  match out:
+    case SNil{}: T.RSpawn{"process answered no status line"}
+    case SCon{+c, +rest}:
+      Bool.pick(Unit -> T.RunRes, is_nl(c),
+        u => run_res_line(str_rev(line), rest),
+        u => run_res_scan(rest, SCon{c, line}))(Unit{})
 
 # A run answer "exit 3\nrest" or "signal 9\nrest": the status and the output
 # that followed the status line.
@@ -348,4 +339,4 @@ def run_res(r: Result<&1, &1, U32 & String, String>) -> T.RunRes:
     case Fail{error}:
       (code, text) = error
       T.RSpawn{text}
-    case Done{value}: run_res_scan(value, False{}, SNil{})
+    case Done{value}: run_res_scan(value, SNil{})
