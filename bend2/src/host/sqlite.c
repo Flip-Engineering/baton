@@ -68,14 +68,14 @@ static int baton_sql_row(void *context, int count, char **values, char **columns
     const char *value = values[i] ? values[i] : "";
     size_t n = strlen(value);
     char *next = realloc(call->output, call->length + n + 2);
-    if (!next) return 1;
+    if (!next) return SQLITE_NOMEM;
     call->output = next;
     memcpy(next + call->length, value, n);
     call->length += n;
     next[call->length++] = i + 1 == count ? '\n' : '\t';
     next[call->length] = 0;
   }
-  return 0;
+  return SQLITE_OK;
 }
 
 static int baton_sql_busy(void *context, int tries) {
