@@ -757,6 +757,7 @@ type LAdv is Data:
   AdvMoved{}
   AdvHeld{path: String}
   AdvHolderChanged{path: String}
+  AdvUnassociated{step: String}
   AdvRefused{}
   AdvBroken{detail: String}
 
@@ -769,6 +770,7 @@ def ff_stage5_adv_answer(+a: LAdv, target: String, cand: String) -> FFLD:
     case AdvMoved{}: FFDone{T.LBlocked{"target moved during landing; retry"}}
     case AdvHeld{path}: FFDone{T.LBlocked{Tx.str_cat("the target is held by a worktree: ", path)}}
     case AdvHolderChanged{path}: FFDone{T.LBlocked{Tx.str_cat("the holder changed: ", path)}}
+    case AdvUnassociated{step}: FFDone{T.LBlocked{Tx.str_cat("the association was refused at ", step)}}
     case AdvRefused{}: FFDone{T.LBlocked{"git update-ref failed; inspect the target and retry"}}
     case AdvBroken{detail}: FFDone{T.LBlocked{detail}}
 
@@ -786,6 +788,15 @@ type MutationMode is Data:
 type LdQualified is Data:
   QualDecided{mode: MutationMode, target_ref: LdRead, head_ref: LdRead}
 
+# The association the attempt read before any mutation: the values the association module
+# actually observed, or the step and the observation that refused it. The request operands and
+# the observed candidate, basis, head and common directories are retained here, so no later
+# step re-resolves them.
+type AssociationEvidence is Data:
+  AssociationMissing{}
+  AssociationObserved{step: String, candidate_oid: String, basis_oid: String, target_head: String, holder_common: String, destination_common: String}
+  AssociationRefused{step: String, observation: T.GitOut}
+
 type LdAdvObs is Data:
   LdAdvNoCapture{advance: LAdv, mode: MutationMode, association: AssociationEvidence}
   LdAdvCaptured{advance: LAdv, capture: T.CapturedRaw, mode: MutationMode, association: AssociationEvidence}
@@ -802,10 +813,6 @@ type LdAdvObs is Data:
 type IdentityEvidence is Data:
   IdentityMissing{}
   IdentityObserved{common: String, observed: T.GitOut, target: String}
-
-type AssociationEvidence is Data:
-  AssociationMissing{}
-  AssociationObserved{step: String, candidate_oid: String, basis_oid: String, target_head: String, holder_common: String, destination_common: String}
 
 type IntentEvidence is Data:
   IntentMissing{}
@@ -898,6 +905,8 @@ def identity_fields(identity: IdentityEvidence, rest: List<String>) -> List<Stri
 def association_fields(association: AssociationEvidence, rest: List<String>) -> List<String>:
   match association:
     case AssociationMissing{}: Con{"association-missing", rest}
+    case AssociationRefused{step, observation}:
+      Con{"association-refused", Con{step, observation_fields(observation, rest)}}
     case AssociationObserved{step, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
       Con{"association-observed", Con{step, Con{candidate_oid, Con{basis_oid, Con{target_head, Con{holder_common, Con{destination_common, rest}}}}}}}
 
@@ -912,6 +921,7 @@ def decision_fields(decision: LAdv, rest: List<String>) -> List<String>:
     case AdvMoved{}: Con{"decision-moved", rest}
     case AdvHeld{path}: Con{"decision-held", Con{path, rest}}
     case AdvHolderChanged{path}: Con{"decision-holder-changed", Con{path, rest}}
+    case AdvUnassociated{step}: Con{"decision-unassociated", Con{step, rest}}
     case AdvRefused{}: Con{"decision-refused", rest}
     case AdvBroken{detail}: Con{"decision-broken", Con{detail, rest}}
 
@@ -968,18 +978,28 @@ def shared_record_failed(step: String, record: String, handle: U32) -> IO(Shared
     IO.pure(SharedLanding, SharedStepRecordFailed{s, r, T.release_raw_of(released)})
 
 type LdAdvCtx is Data:
-  LdAdvContext{claim: U32, guard: String, artifact: String}
+  LdAdvContext{claim: U32, guard: String, artifact: String, attempt: String, common: String}
 def ladvctx_claim(context: LdAdvCtx) -> U32:
   match context:
-    case LdAdvContext{claim, guard, artifact}: claim
+    case LdAdvContext{claim, guard, artifact, attempt, common}: claim
 
 def ladvctx_guard(context: LdAdvCtx) -> String:
   match context:
-    case LdAdvContext{claim, guard, artifact}: guard
+    case LdAdvContext{claim, guard, artifact, attempt, common}: guard
 
 def ladvctx_artifact(context: LdAdvCtx) -> String:
   match context:
-    case LdAdvContext{claim, guard, artifact}: artifact
+    case LdAdvContext{claim, guard, artifact, attempt, common}: artifact
+
+# The reserved attempt's own name, as the reservation recorded it.
+def ladvctx_attempt(context: LdAdvCtx) -> String:
+  match context:
+    case LdAdvContext{claim, guard, artifact, attempt, common}: attempt
+
+# The canonical common directory the claim answered.
+def ladvctx_common(context: LdAdvCtx) -> String:
+  match context:
+    case LdAdvContext{claim, guard, artifact, attempt, common}: common
 
 # The target commit lookup used by the existing unheld compare-and-swap path.
 def ld_tip_argv(target: String) -> List<String>:
@@ -1318,11 +1338,67 @@ def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: S
   do IO<LdAdvObs>:
     target_tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
     ld_adv_wt_target_pick(target_tip, p2, r2, t2, c2, b2, cx)
-def ld_adv_holder(hold: LdHold, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+# The association read the attempt performs before its mutation, from the operands it already
+# fixed: the reserved attempt's own name, the canonical common the claim answered, the
+# destination repository used for the target read, and the immutable candidate and basis. The
+# holder is the selected read location, which is why the request is built at the selection and
+# not from the caller. The association module never reads the retry field, so the shared path
+# records it empty rather than claiming a retry that did not happen.
+def ld_assoc_request(ctx: LdAdvCtx, holder: String, repo: String, target: String, cand: String, basis: String) -> A.AssociationRequest:
+  A.AssociationRequested{ladvctx_attempt(ctx), ladvctx_common(ctx), target, repo, cand, basis, holder, ""}
+
+def ld_adv_association(obs: LdAdvObs) -> AssociationEvidence:
+  match obs:
+    case LdAdvNoCapture{advance, mode, association}: association
+    case LdAdvCaptured{advance, capture, mode, association}: association
+    case LdAdvQualified{advance, capture, qualification, association}: association
+
+def ld_adv_keep_association(obs: LdAdvObs, evidence: AssociationEvidence) -> LdAdvObs:
+  match obs:
+    case LdAdvNoCapture{advance, mode, association}: LdAdvNoCapture{advance, mode, evidence}
+    case LdAdvCaptured{advance, capture, mode, association}: LdAdvCaptured{advance, capture, mode, evidence}
+    case LdAdvQualified{advance, capture, qualification, association}: LdAdvQualified{advance, capture, qualification, evidence}
+
+# A refused association stops the attempt before the mutation: the selected mode is retained,
+# no capture was taken, and both post-mutation reads were not performed.
+def ld_adv_unassociated(step: String, observation: T.GitOut, mode: MutationMode) -> LdAdvObs:
+  LdAdvNoCapture{AdvUnassociated{step}, mode, AssociationRefused{step, observation}}
+
+def ld_adv_held_decided(decision: A.Association, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  match decision:
+    case A.AssociationRefused{step, observation}: IO.pure(LdAdvObs, ld_adv_unassociated(step, observation, MutationHeld{path}))
+    case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
+      +ev = AssociationObserved{"associate", candidate_oid, basis_oid, target_head, holder_common, destination_common}
+      do IO<LdAdvObs>:
+        obs : LdAdvObs <- ld_adv_wt(path, repo, target, cand, basis, ctx)
+        IO.pure(LdAdvObs, ld_adv_keep_association(obs, ev))
+
+def ld_adv_unheld_decided(decision: A.Association, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+  match decision:
+    case A.AssociationRefused{step, observation}: IO.pure(LdAdvObs, ld_adv_unassociated(step, observation, MutationUnheld{}))
+    case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
+      +ev = AssociationObserved{"associate", candidate_oid, basis_oid, target_head, holder_common, destination_common}
+      do IO<LdAdvObs>:
+        obs : LdAdvObs <- ld_adv_cas_run(repo, target, cand, basis, ctx)
+        IO.pure(LdAdvObs, ld_adv_keep_association(obs, ev))
+
+# The association runs once, for the route the holder selection already made, and rides on that
+# route's own observation: an unheld target reads its objects and commons from the destination
+# repository itself, and a held target reads from the selected worktree. A blocked selection
+# runs neither the association nor the mutation.
+def ld_adv_associated(hold: LdHold, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   match hold:
-    case HoldNone{}: ld_adv_cas_run(repo, target, cand, basis, ctx)
-    case HoldPath{path}: ld_adv_wt(path, repo, target, cand, basis, ctx)
     case HoldBlocked{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}, MutationUnknown{}))
+    case HoldNone{}:
+      do IO<LdAdvObs>:
+        decision : A.Association <- A.Association.decide(ld_assoc_request(ctx, repo, repo, target, cand, basis))
+        ld_adv_unheld_decided(decision, repo, target, cand, basis, ctx)
+    case HoldPath{path}:
+      +p2 = path
+      do IO<LdAdvObs>:
+        decision : A.Association <- A.Association.decide(ld_assoc_request(ctx, p2, repo, target, cand, basis))
+        ld_adv_held_decided(decision, p2, repo, target, cand, basis, ctx)
+
 def ld_adv_same(same: Bool, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   match same:
     case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvMoved{}, MutationUnknown{}))
@@ -1331,7 +1407,7 @@ def ld_adv_same(same: Bool, repo: String, target: String, cand: String, basis: S
       +t2 = target
       do IO<LdAdvObs>:
         gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
-        ld_adv_holder(ld_hold_read(gl, t2), r2, t2, cand, basis, ctx)
+        ld_adv_associated(ld_hold_read(gl, t2), r2, t2, cand, basis, ctx)
 # The holder is read only for a target that still reads as the basis, so a
 # moved target answers the movement before any worktree is touched.
 def ld_adv_pick(g: T.GitOut, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
@@ -1473,6 +1549,7 @@ def identity_observed(identity: IdentityEvidence) -> Bool:
 def association_observed(association: AssociationEvidence) -> Bool:
   match association:
     case AssociationMissing{}: False{}
+    case AssociationRefused{step, observation}: False{}
     case AssociationObserved{step, candidate_oid, basis_oid, target_head, holder_common, destination_common}: True{}
 
 def intent_observed(intent: IntentEvidence) -> Bool:
@@ -1486,6 +1563,7 @@ def decision_landed(decision: LAdv) -> Bool:
     case AdvMoved{}: False{}
     case AdvHeld{path}: False{}
     case AdvHolderChanged{path}: False{}
+    case AdvUnassociated{step}: False{}
     case AdvRefused{}: False{}
     case AdvBroken{detail}: False{}
 
@@ -1542,11 +1620,27 @@ def identity_bound(identity: IdentityEvidence, expect: String) -> Bool:
       Bool.pick(Bool, Tx.str_eq(target, expect), Bool.pick(Bool, observation_succeeded(observed), Tx.str_eq(observation_value(observed), common), False{}), False{})
     case IdentityMissing{}: False{}
 
-def association_bound(association: AssociationEvidence, candidate: String, basis: String) -> Bool:
+# The held association is admitted only when its resolved candidate and basis are the attempt's
+# own immutable operands, its two common directories agree with each other, and that common is
+# the canonical common the claim answered. The holder path and the reservation are bound by the
+# route that selected them and by the reserved attempt the request carried.
+def identity_common(identity: IdentityEvidence) -> String:
+  match identity:
+    case IdentityObserved{common, +observed, target}: common
+    case IdentityMissing{}: ""
+
+def association_bound(association: AssociationEvidence, candidate: String, basis: String, common: String) -> Bool:
   match association:
     case AssociationObserved{step, candidate_oid, basis_oid, target_head, holder_common, destination_common}:
-      Bool.pick(Bool, Tx.str_eq(candidate_oid, candidate), Tx.str_eq(basis_oid, basis), False{})
+      Bool.pick(Bool, Tx.str_eq(candidate_oid, candidate),
+        Bool.pick(Bool, Tx.str_eq(basis_oid, basis),
+          Bool.pick(Bool, Tx.str_eq(holder_common, destination_common),
+            Tx.str_eq(holder_common, common),
+            False{}),
+          False{}),
+        False{})
     case AssociationMissing{}: False{}
+    case AssociationRefused{step, observation}: False{}
 
 def intent_bound(intent: IntentEvidence, reserved: String) -> Bool:
   match intent:
@@ -1561,7 +1655,7 @@ def evidence_complete(evidence: AttemptEvidence) -> Bool:
           Bool.pick(Bool, qualification_landed_of(qualification, candidate, target),
             Bool.pick(Bool, T.release_done(release),
               Bool.pick(Bool, identity_bound(identity, target),
-                Bool.pick(Bool, association_bound(association, candidate, basis),
+                Bool.pick(Bool, association_bound(association, candidate, basis, identity_common(identity)),
                   Bool.pick(Bool, intent_bound(intent, reserved), True{}, False{}),
                   False{}),
                 False{}),
@@ -1607,9 +1701,9 @@ def ld_adv_of(obs: LdAdvObs) -> LAdv:
 
 def shared_reserved_attested(repo: String, +target: String, cand: String, basis: String, +guard: String, +common: String, +common_observed: T.GitOut, +reserved: String, +obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>) -> IO(SharedLanding):
   +rel = T.release_raw_of(released)
-  ld_attest_admit(AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), rel, IdentityObserved{common, common_observed, target}, AssociationMissing{}, IntentMissing{}})
+  ld_attest_admit(AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), rel, IdentityObserved{common, common_observed, target}, ld_adv_association(obs), IntentMissing{}})
 
-def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, common: String, common_observed: T.GitOut, reserved: String) -> IO(SharedLanding):
+def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, common: String, common_observed: T.GitOut, reserved: String, attempt_name: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -1619,7 +1713,8 @@ def shared_reserved_continue(handle: U32, repo: String, target: String, cand: St
   +cm = common
   +cobs = common_observed
   +rv = reserved
-  +cx = LdAdvContext{h, gd, shared_parent_path(rv, "stderr")}
+  +an = attempt_name
+  +cx = LdAdvContext{h, gd, shared_parent_path(rv, "stderr"), an, cm}
   do IO<SharedLanding>:
     o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
     released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(h)
@@ -1644,7 +1739,7 @@ def shared_reserve_observed(+handle: U32, +repo: String, +target: String, +cand:
       +created_ok = Tx.str_eq(record, Pb.production_record("created", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0"))
       +existing_ok = Tx.str_eq(record, Pb.production_record("existing", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0"))
       Bool.pick(IO(SharedLanding), created_ok,
-        shared_reserved_continue(handle, repo, target, cand, basis, guard, common, common_observed, shared_parent_path(parent, shared_attempt_name(base, attempt))),
+        shared_reserved_continue(handle, repo, target, cand, basis, guard, common, common_observed, shared_parent_path(parent, shared_attempt_name(base, attempt)), shared_attempt_name(base, attempt)),
         Bool.pick(IO(SharedLanding), existing_ok,
           Bool.pick(IO(SharedLanding), U32.is_lt(attempt, 4294967295),
             do IO<SharedLanding>:
@@ -2116,6 +2211,7 @@ def ld_adv_answer(+a: LAdv, target: String, cand: String) -> Ld:
     case AdvMoved{}: LdDone{T.LBlocked{"target moved during checked landing; rerun land-checked to prepare and check against the current target"}}
     case AdvHeld{path}: LdDone{T.LBlocked{ld_adv_held_text(target, path) ++ "rerun land-checked to prepare and check against the current target"}}
     case AdvHolderChanged{path}: LdDone{T.LBlocked{ld_adv_holder_changed_text(target, path)}}
+    case AdvUnassociated{step}: LdDone{T.LBlocked{Tx.str_cat("the association was refused at ", step)}}
     case AdvRefused{}: LdFail{T.FCmd{"land", "git update-ref failed; inspect the target and rerun land-checked to prepare and check a new candidate"}}
     case AdvBroken{detail}: LdFail{T.FCmd{"land", detail}}
 
@@ -3125,7 +3221,7 @@ law a_malformed_mutation_framing_is_not_landed_evidence:
 def a_malformed_mutation_framing_is_not_landed_evidence():
   {==}
 law a_held_refusal_retains_the_selected_path:
-  {ld_adv_wt_head_same(False{}, "/holder", "/r", "tgt", "cand", "base", LdAdvContext{1, "g", "/art"}) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvHolderChanged{"/holder"}, MutationHeld{"/holder"}}) : IO(LdAdvObs)}
+  {ld_adv_wt_head_same(False{}, "/holder", "/r", "tgt", "cand", "base", LdAdvContext{1, "g", "/art", "attempt", "/common"}) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvHolderChanged{"/holder"}, MutationHeld{"/holder"}, AssociationMissing{}}) : IO(LdAdvObs)}
 
 def a_held_refusal_retains_the_selected_path():
   {==}
@@ -3410,7 +3506,7 @@ law the_attested_attempt_retains_the_identity_observation:
   for reserved: String
   for obs: LdAdvObs
   {shared_reserved_attested(repo, target, cand, basis, guard, common, common_observed, reserved, obs, Done{Unit{}}) == (do IO<SharedLanding>:
-    attestation : Attestation <- ld_attest(reserved, AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), T.ReleaseDone{}, IdentityObserved{common, common_observed, target}, AssociationMissing{}, IntentMissing{}})
+    attestation : Attestation <- ld_attest(reserved, AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), T.ReleaseDone{}, IdentityObserved{common, common_observed, target}, ld_adv_association(obs), IntentMissing{}})
     IO.pure(SharedLanding, SharedAdvanced{attestation})) : IO(SharedLanding)}
 
 def the_attested_attempt_retains_the_identity_observation(repo,target,cand,basis,guard,common,common_observed,reserved,obs):
@@ -3428,7 +3524,7 @@ law a_failed_release_still_retains_the_identity_observation:
   for code: U32
   for detail: String
   {shared_reserved_attested(repo, target, cand, basis, guard, common, common_observed, reserved, obs, Fail{(code, detail)}) == (do IO<SharedLanding>:
-    attestation : Attestation <- ld_attest(reserved, AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), T.ReleaseFailed{code, detail}, IdentityObserved{common, common_observed, target}, AssociationMissing{}, IntentMissing{}})
+    attestation : Attestation <- ld_attest(reserved, AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), T.ReleaseFailed{code, detail}, IdentityObserved{common, common_observed, target}, ld_adv_association(obs), IntentMissing{}})
     IO.pure(SharedLanding, SharedAdvanced{attestation})) : IO(SharedLanding)}
 
 def a_failed_release_still_retains_the_identity_observation(repo,target,cand,basis,guard,common,common_observed,reserved,obs,code,detail):
@@ -3578,4 +3674,79 @@ law an_existing_reservation_at_the_maximum_retains_its_record:
   {shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, 4294967295, Done{Pb.production_record("existing", shared_parent_path(parent, shared_attempt_name(base, 4294967295)), "0")}) == shared_record_failed("reserve-counter-maximum", Pb.production_record("existing", shared_parent_path(parent, shared_attempt_name(base, 4294967295)), "0"), handle) : IO(SharedLanding)}
 
 def an_existing_reservation_at_the_maximum_retains_its_record(handle,repo,target,cand,basis,guard,common,common_observed,parent,base):
+  {==}
+
+law a_blocked_selection_runs_no_association_and_no_mutation:
+  for ctx: LdAdvCtx
+  {ld_adv_associated(HoldBlocked{"the worktree listing could not be read"}, "/r", "tgt", "cand", "base", ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvBroken{"the worktree listing could not be read"}, MutationUnknown{}, AssociationMissing{}}) : IO(LdAdvObs)}
+
+def a_blocked_selection_runs_no_association_and_no_mutation(ctx):
+  {==}
+
+law the_shared_association_request_carries_the_reserved_attempt_and_the_canonical_common:
+  for ctx: LdAdvCtx
+  {ld_assoc_request(ctx, "/holder", "/repo", "tgt", "cand", "base") == A.AssociationRequested{ladvctx_attempt(ctx), ladvctx_common(ctx), "tgt", "/repo", "cand", "base", "/holder", ""} : A.AssociationRequest}
+
+def the_shared_association_request_carries_the_reserved_attempt_and_the_canonical_common(ctx):
+  {==}
+
+law an_observed_association_rides_on_the_selected_route_observation:
+  for obs: LdAdvObs
+  {ld_adv_association(ld_adv_keep_association(obs, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"})) == AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"} : AssociationEvidence}
+
+def an_observed_association_rides_on_the_selected_route_observation(obs):
+  {==}
+
+law a_refused_association_stops_the_attempt_before_the_mutation:
+  {ld_adv_unassociated("holder-common", T.GBroken{"holder answers /other for the requested /common"}, MutationHeld{"/holder"}) == LdAdvNoCapture{AdvUnassociated{"holder-common"}, MutationHeld{"/holder"}, AssociationRefused{"holder-common", T.GBroken{"holder answers /other for the requested /common"}}} : LdAdvObs}
+
+def a_refused_association_stops_the_attempt_before_the_mutation():
+  {==}
+
+law a_refused_association_leaves_the_post_mutation_reads_unperformed:
+  {ld_adv_qualification(ld_adv_unassociated("holder-common", T.GBroken{"holder answers /other for the requested /common"}, MutationHeld{"/h"})) == QualDecided{MutationHeld{"/h"}, ReadSkipped{}, ReadSkipped{}} : LdQualified}
+
+def a_refused_association_leaves_the_post_mutation_reads_unperformed():
+  {==}
+
+law a_refused_association_captures_nothing:
+  {ld_adv_capture(ld_adv_unassociated("holder-common", T.GBroken{"holder answers /other"}, MutationUnheld{})) == T.CapturedAbsent{} : T.CapturedRaw}
+
+def a_refused_association_captures_nothing():
+  {==}
+
+law an_unassociated_decision_is_never_landed:
+  {decision_landed(AdvUnassociated{"holder-common"}) == False{} : Bool}
+
+def an_unassociated_decision_is_never_landed():
+  {==}
+
+law a_coherent_association_is_bound_to_the_attempt:
+  {association_bound(AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, "cand", "base", "/common") == True{} : Bool}
+
+def a_coherent_association_is_bound_to_the_attempt():
+  {==}
+
+law an_association_whose_holder_common_is_not_the_claim_common_is_not_bound:
+  {association_bound(AssociationObserved{"associate", "cand", "base", "tgt", "/other", "/other"}, "cand", "base", "/common") == False{} : Bool}
+
+def an_association_whose_holder_common_is_not_the_claim_common_is_not_bound():
+  {==}
+
+law an_association_whose_two_commons_disagree_is_not_bound:
+  {association_bound(AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/other"}, "cand", "base", "/common") == False{} : Bool}
+
+def an_association_whose_two_commons_disagree_is_not_bound():
+  {==}
+
+law an_association_for_another_candidate_is_not_bound:
+  {association_bound(AssociationObserved{"associate", "other", "base", "tgt", "/common", "/common"}, "cand", "base", "/common") == False{} : Bool}
+
+def an_association_for_another_candidate_is_not_bound():
+  {==}
+
+law a_refused_association_is_never_bound:
+  {association_bound(AssociationRefused{"common", T.GBroken{"holder answers /other"}}, "cand", "base", "/common") == False{} : Bool}
+
+def a_refused_association_is_never_bound():
   {==}
