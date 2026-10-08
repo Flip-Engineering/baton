@@ -3,6 +3,7 @@ import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./stop.bend as Stop
 import ./delivery.bend as Delivery
+import ./control.bend as Control
 import ../host/session-lock.bend as Lock
 import ../host/control.bend as HostControl
 import ./guidance.bend as Guidance
@@ -748,7 +749,7 @@ def replay_result(result: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 &
     case Fail{error}: Fail{error}
     case Done{unit}: Done{None{}}
 
-def choose(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, +task: String, log: String, session: String, harness: String, replay: Bool) -> IO(Result<&1,&1,U32 & String,Maybe<Outcome>>):
+def choose(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, session: String, harness: String, replay: Bool) -> IO(Result<&1,&1,U32 & String,Maybe<Outcome>>):
   match replay:
     case True{}:
       do IO<Result<&1,&1,U32 & String,Maybe<Outcome>>>:
@@ -758,6 +759,7 @@ def choose(+db: String, +player: String, +id: String, cmd: String, model: String
     case False{}: do IO<Result<&1,&1,U32 & String,Maybe<Outcome>>>:
       allowed : Bool <- Stop.admit(db,player,id,"direct","")
       admitted : Unit <- Stop.admitted(allowed)
+      receiver : Unit <- Control.default_receiver(db,player,cmd,model,effort,cwd,log)
       prompt : Result<&1,&1,U32 & String,String> <- T.Text.read(task)
       result : Outcome <- task_read(db,player,id,cmd,model,effort,cwd,task,log,session,harness,db ++ ".sessions",prompt)
       IO.pure(Result<&1,&1,U32 & String,Maybe<Outcome>>,Done{Some{result}})

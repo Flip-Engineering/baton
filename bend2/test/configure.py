@@ -158,18 +158,29 @@ class Configure(unittest.TestCase):
         self.assertIn('does not resolve the recorded model ;', empty['stderr'])
         self.assertEqual(self.assignment('leaf'), before)
 
-    def test_route_change_to_a_harness_without_a_receiver_keeps_no_endpoint(self):
+    def test_route_change_to_muse_and_claude_keeps_delivery_available(self):
         self.root()
         self.recruit('leaf')
-        self.call('receiver', 'leaf', self.fixture, self.directory / 'leaf.jsonl')
-        changed = self.route('leaf', 'muse', 'muse-spark-1.3-contributor', 'high',
-                             ('omp', 'kimi-code/k3', 'low'))
-        self.assertEqual((changed['harness'], changed['model'], changed['effort']),
-                         ('muse', 'muse-spark-1.3-contributor', 'high'))
-        self.assertEqual(changed['endpoint'], '')
-        self.assertIsNone(changed['endpointArgv'])
-        self.assertEqual(changed['parent'], 'root')
-        self.assertEqual(changed['branch'], 'leaf-branch')
+        expected = ('omp', 'kimi-code/k3', 'low')
+        for harness in ('muse', 'claude-code'):
+            with self.subTest(harness=harness):
+                log = self.directory / (harness + '-configured.jsonl')
+                changed = self.route('leaf', harness, 'gpt-6-astra', 'high', expected, log=log)
+                self.assertEqual((changed['harness'], changed['model'], changed['effort']),
+                                 (harness, 'gpt-6-astra', 'high'))
+                self.assertEqual(changed['endpointArgv'],
+                                 self.receiver_endpoint('leaf', 'gpt-6-astra', log))
+                self.assertEqual(changed['parent'], 'root')
+                self.assertEqual(changed['branch'], 'leaf-branch')
+                message = harness + '-configured-task'
+                self.dispatch('dispatch-file', message, 'root', 'leaf', 'task', self.task)
+                stream, native = self.accept('leaf')
+                self.assertIn('[id: ' + message + ']', native['prompt'])
+                self.assertEqual(native['args'][native['args'].index('--model') + 1], 'gpt-6-astra')
+                self.finish(stream)
+                self.exited('leaf')
+                self.assertEqual(self.call('delivery', message)['receipt'], 'fixture-native-reviewed')
+                expected = (harness, 'gpt-6-astra', 'high')
 
     def test_the_configured_route_launches_its_next_receive_with_the_new_model(self):
         self.root()

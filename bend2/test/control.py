@@ -517,6 +517,73 @@ class Control(unittest.TestCase):
                     shutdown_fixture_owner(self)
                     self.eventually(lambda: not self.process_rows())
 
+    def test_direct_turn_delivers_pending_input_after_native_exit(self):
+        self.root()
+        for launch in ('dispatch-turn', 'turn'):
+            for harness in ('muse', 'omp', 'claude-code', 'codex'):
+                with self.subTest(launch=launch, harness=harness):
+                    session = launch + '-' + harness
+                    assignment = self.recruit(session, harness)
+                    native = 'saved-' + session
+                    self.call('connect', session, native, '')
+                    ident = session + '-initial'
+                    log = self.directory / (ident + '.jsonl')
+                    child = None
+                    if launch == 'dispatch-turn':
+                        self.dispatch(launch, session, ident, self.fixture, log, self.task)
+                    else:
+                        child = subprocess.Popen([
+                            str(EXE), str(self.db), 'turn', session, ident, str(self.fixture),
+                            session, 'low', assignment['workspace'], str(self.task), str(log), native],
+                            env=self.environment, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+                    stream, start = self.accept(session)
+                    self.assertEqual(start['resume'], native)
+                    endpoint = self.call('session', session)['endpointArgv']
+                    self.assertEqual(endpoint, [str(EXE.resolve()), str(self.db.resolve()),
+                                               'receive', session, str(self.fixture), session,
+                                               'low', assignment['workspace'], str(log.resolve())])
+                    messages = [(session + '-pending-first', 'Finish the first pending task λ.'),
+                                (session + '-pending-second', 'Finish the second pending task 🙂.')]
+                    for message, body in messages:
+                        self.call('message', message, 'root', session, 'task', body)
+                        self.assertIsNone(self.call('delivery', message)['receipt'])
+                    self.finish(stream, 'The initial direct turn ended.')
+                    continued, resumed = self.accept(session)
+                    self.assertEqual(resumed['native'], native)
+                    self.assertEqual(resumed['cwd'], assignment['workspace'])
+                    for message, body in messages:
+                        self.assertIn('[id: ' + message + ']', resumed['prompt'])
+                        self.assertIn(body, resumed['prompt'])
+                        self.assertIsNone(self.call('delivery', message)['receipt'])
+                    self.finish(continued, 'Both pending tasks were handled.')
+                    self.exited(session)
+                    for message, _ in messages:
+                        self.assertEqual(self.call('delivery', message)['receipt'],
+                                         'fixture-native-reviewed')
+                    self.assertEqual(self.call('inbox', session), [])
+                    self.assertEqual(self.call('session', session)['endpointArgv'], endpoint)
+                    self.assertEqual(self.call('session', 'root')['endpoint'], '')
+                    if child is not None:
+                        stdout, stderr = child.communicate()
+                        self.assertEqual(child.returncode, 0, stderr)
+                    shutdown_fixture_owner(self)
+                    self.eventually(lambda: not self.process_rows())
+
+    def test_direct_turn_preserves_a_configured_receiver(self):
+        self.root()
+        assignment = self.recruit('configured', 'muse')
+        self.receiver('configured')
+        endpoint = self.call('session', 'configured')['endpointArgv']
+        self.dispatch('dispatch-turn', 'configured', 'configured-turn', self.fixture,
+                      self.directory / 'direct.jsonl', self.task)
+        stream, _ = self.accept('configured')
+        self.assertEqual(self.call('session', 'configured')['endpointArgv'], endpoint)
+        self.finish(stream)
+        self.exited('configured')
+        self.assertEqual(self.call('session', 'configured')['endpointArgv'], endpoint)
+        self.assertEqual(self.call('session', 'configured')['workspace'], assignment['workspace'])
+
     def test_pretty_reads_preserve_complete_machine_fields_and_long_report(self):
         self.root()
         self.recruit('leaf', 'muse')

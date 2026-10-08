@@ -134,13 +134,11 @@ def receiver(+db: String, +session: String, cmd: String, log: String, +cwd: Stri
     receiver_result(saved,Tx.starts_with(saved,"{\"error\":\"receiver-refused\""))
 
 # An existing Player changes its configured provider route in place. The stored
-# endpoint follows a Codex or OMP route; a harness the receiver does not launch
-# keeps no receiver endpoint. The model key is resolved through the configured
-# series registry while the operator is present, so an unmapped key is refused
-# before any row is written.
+# endpoint launches the selected adapter through receive. The model key is
+# resolved through the configured series registry while the operator is present.
 def configure_endpoint(+db: String, +id: String, +harness: String, +cmd: String, +log: String, +model: String) -> IO(String):
   do IO<String>:
-    receiver_harness : Bool <- IO.pure(Bool,Bool.or(String.eq(harness,"codex"),String.eq(harness,"omp")))
+    receiver_harness : Bool <- IO.pure(Bool,Bool.or(String.eq(harness,"codex"),Bool.or(String.eq(harness,"omp"),Bool.or(String.eq(harness,"muse"),String.eq(harness,"claude-code")))))
     Bool.pick(IO(String),receiver_harness,configured_endpoint(db,id,cmd,log,model),IO.pure(String,""))
 
 def configure_result(saved: String, denied: Bool) -> IO(String):
@@ -254,6 +252,25 @@ def recorded_field(db: String, player: String, column: String) -> IO(String):
   do IO<String>:
     value : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ column ++ " FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     IO.pure(String,Tx.trim_nl(value))
+
+# A direct turn records its launch arguments as the default wake route. An
+# existing receiver keeps its configured arguments.
+def default_receiver_absent(+db: String, +player: String, cmd: String, +model: String, effort: String, cwd: String, log: String, absent: Bool) -> IO(Unit):
+  match absent:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      +executable : String <- IO.try(String,Lock.SessionLock.executable())
+      database : String <- IO.try(String,Lock.SessionLock.canonical(db))
+      output : String <- IO.try(String,Host.Control.output(log))
+      identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
+      endpoint : String <- IO.pure(String,"[" ++ strings(identity_args([executable,database,"receive",player,cmd,model,effort,cwd,output],model,identity)) ++ "]")
+      saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(player) ++ " AND coalesce(endpoint,'')='';"))
+      IO.pure(Unit,Unit{})
+
+def default_receiver(+db: String, +player: String, cmd: String, model: String, effort: String, cwd: String, log: String) -> IO(Unit):
+  do IO<Unit>:
+    endpoint : String <- recorded_field(db,player,"endpoint")
+    default_receiver_absent(db,player,cmd,model,effort,cwd,log,String.is_empty(endpoint))
 
 def dispatch_turn(+db: String, +player: String, +id: String, +cmd: String, log: String, +task: String) -> IO(String):
   do IO<String>:
