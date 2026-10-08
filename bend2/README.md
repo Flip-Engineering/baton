@@ -25,7 +25,7 @@ executable at `.scratch/bend2/baton2`. Host bindings execute on Bend IO threads.
 The [native installation procedure](../docs/bend2/installation.md) covers staging,
 runtime paths, dependencies and retained state. [Harness setup](../docs/bend2/harness-setup.md)
 describes the qualified routes. [Native artifacts](../docs/bend2/native-artifacts.md)
-describes the exact-source packaging and extracted-use gates.
+describes native packaging and the extracted-artifact runtime smoke.
 
 `bend2/src/coordinator/laws.bend` states the sixteen operative entries of
 [the approved laws](../docs/bend2/laws-proposed.md) over the functions this
@@ -38,9 +38,8 @@ or false.
 node bend2/scripts/laws-check.mjs
 ```
 
-This is the negative control for that gate. It removes one law's proof at a
-time in a copy of the tree and requires the entry's compile to fail, so a law
-whose proof the gate does not require is reported rather than assumed.
+The law check runs compile, mutation and proof-removal diagnostics in a copied
+source tree. Run it directly when reviewing the operative laws.
 
 `python3 bend2/scripts/compare-coordinators.py --help` describes a repeatable
 comparison of retained coordination operations with a pinned old Baton checkout.
