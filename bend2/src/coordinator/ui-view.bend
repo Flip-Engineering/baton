@@ -4,7 +4,6 @@
 # exits. The server reads only committed coordinator state through the native_changes
 # projection; it never writes to the database.
 import Base
-import ../host/text.bend as T
 import ../host/process.bend as P
 import ../host/control.bend as Host
 import ../host/session-lock.bend as Lock

@@ -13,15 +13,13 @@
 # Applicability is the pure comparison of the recorded identity with a fresh
 # revalidation: current when every recorded input still matches, stale with the
 # changed input paths named when one does not, unknown when a required safe
-# probe failed. A runtime observation is current only in its own live epoch and
-# historical otherwise. A catalog snapshot identity carries the schema-level
+# probe failed. A catalog snapshot identity carries the schema-level
 # fields only; the raw data version is reported separately and never makes a
 # schema stale.
 
 import Base
 import ../json/canonical.bend as J
 import ./engines.bend as Eng
-import ./runtime/cdp-runtime.bend as R
 
 # --- captured input identities ----------------------------------------------
 # One captured input, as a provider supplies it. The kinds are the ones the
@@ -215,94 +213,6 @@ def capture_check(recorded: Fps, verified: Fps) -> CaptureCheck:
 # data version is not consulted.
 def applies_catalog(+path: String, +recorded_digest: String, +current_digest: String) -> Applies:
   Bool.pick(Applies, String.eq(recorded_digest, current_digest), ACurrent{}, AStale{Eng.ss_one(path)})
-
-# --- runtime references ------------------------------------------------------
-# Recorded-stop liveness is the owned CDP model: `R.StopLiveness`, `R.Liveness`,
-# `R.stop_is_live` and `R.pause_scoped_admitted` in
-# context/runtime/cdp-runtime.bend. This module consumes those types and
-# predicates and defines no second interpretation of them.
-type RuntimeIdentity is Data:
-  RId{runtime: String, adapter: String, thread: String, epoch: String, mutation: String}
-
-def same_runtime_identity(+a: RuntimeIdentity, +b: RuntimeIdentity) -> Bool:
-  match a:
-    case RId{runtime, adapter, thread, epoch, mutation}:
-      match b:
-        case RId{other_runtime, other_adapter, other_thread, other_epoch, other_mutation}:
-          Bool.and(String.eq(runtime, other_runtime),
-          Bool.and(String.eq(adapter, other_adapter),
-          Bool.and(String.eq(thread, other_thread),
-          Bool.and(String.eq(epoch, other_epoch), String.eq(mutation, other_mutation)))))
-
-# What the caller observed through the owned contract: the canonical identity it
-# reports now, the target liveness fact, whether the reference names a live
-# thread, the recorded-stop liveness the caller carries, whether the caller's
-# record is stopped, and whether the reference kind is pause-scoped (kind frame,
-# scope or object). A caller-supplied flag is evidence only and confers no
-# stop authority.
-type RuntimeNow is Data:
-  Now{identity: RuntimeIdentity, target: R.Liveness, thread_live: Bool, stop: R.StopLiveness, record_stopped: Bool, pause_scoped: Bool}
-
-def now_identity(r: RuntimeNow) -> RuntimeIdentity:
-  match r:
-    case Now{identity, target, thread_live, stop, record_stopped, pause_scoped}: identity
-
-def now_target(r: RuntimeNow) -> R.Liveness:
-  match r:
-    case Now{identity, target, thread_live, stop, record_stopped, pause_scoped}: target
-
-def now_thread_live(r: RuntimeNow) -> Bool:
-  match r:
-    case Now{identity, target, thread_live, stop, record_stopped, pause_scoped}: thread_live
-
-def now_stop(r: RuntimeNow) -> R.StopLiveness:
-  match r:
-    case Now{identity, target, thread_live, stop, record_stopped, pause_scoped}: stop
-
-def now_record_stopped(r: RuntimeNow) -> Bool:
-  match r:
-    case Now{identity, target, thread_live, stop, record_stopped, pause_scoped}: record_stopped
-
-def now_pause_scoped(r: RuntimeNow) -> Bool:
-  match r:
-    case Now{identity, target, thread_live, stop, record_stopped, pause_scoped}: pause_scoped
-
-def target_exited(l: R.Liveness) -> Bool:
-  match l:
-    case R.LivenessExited{}: True{}
-    case R.LivenessUnknown{}: False{}
-    case R.LivenessLive{}: False{}
-
-# Steps one to three follow the owned caller contract's order: the pause-scoped
-# kind's stop requirement, then a live thread, then the canonical identity.
-# Step four is this module's own freshness check for the target-exit fact the
-# owned model records in the stop. This answers applicability; it is not the
-# admission gate. The owned caller runs its own decode, its refOutsidePause and
-# refStopNotLive refusals, its refThreadUnknown refusal and the production
-# identity checks before it uses this answer, and a refusal the owned gate makes
-# is not softened here.
-def rref_target(+now: RuntimeNow) -> Applies:
-  Bool.pick(Applies, target_exited(now_target(now)), AHistorical{"runtime target exited"}, ACurrent{})
-
-
-def rref_identity(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
-  Bool.pick(Applies, same_runtime_identity(recorded, now_identity(now)), rref_target(now), AHistorical{"runtime identity changed"})
-
-def rref_thread(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
-  Bool.pick(Applies, now_thread_live(now), rref_identity(recorded, now), AUnknown{"runtime thread is not live"})
-
-def rref_pause(+recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
-  Bool.pick(Applies, Bool.and(now_record_stopped(now), R.stop_is_live(now_stop(now))), rref_thread(recorded, now),
-    AUnknown{"a pause-scoped reference requires a live recorded stop in a stopped runtime"})
-
-def rref_scope(+recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
-  Bool.pick(Applies, now_pause_scoped(now), rref_pause(recorded, now), rref_thread(recorded, now))
-
-# A non-pause-scoped kind acquires no paused-state requirement and no stop
-# requirement; `R.stop_is_live` is the owned liveness test and is False for an
-# absent, historical or unknown stop.
-def applies_runtime_ref(recorded: RuntimeIdentity, now: RuntimeNow) -> Applies:
-  rref_scope(recorded, now)
 
 # --- connection binding ------------------------------------------------------
 # A catalog snapshot and its target plan share one live connection and read

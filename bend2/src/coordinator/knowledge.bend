@@ -22,7 +22,6 @@ import Base
 import ../coordinator/commands.bend as C
 import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
-import ../host/text.bend as T
 
 # The notice a record writes for the author's immediate parent.
 def notice_id(finding: String) -> String:

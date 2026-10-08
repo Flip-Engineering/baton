@@ -21,7 +21,6 @@
 import Base
 import ../json/canonical.bend as J
 import ./request.bend as Req
-import ./contracts.bend as Context
 
 # ---------------------------------------------------------------------------
 # Object member access over the request tree.

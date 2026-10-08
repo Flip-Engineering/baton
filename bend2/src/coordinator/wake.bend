@@ -1,6 +1,5 @@
 import Base
 import ../coordinator/commands.bend as C
-import ./store.bend as Store
 import ./receive.bend as Receive
 import ../host/sqlite.bend as DB
 import ../host/session-lock.bend as Lock

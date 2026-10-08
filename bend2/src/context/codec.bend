@@ -21,7 +21,6 @@ import ./contracts.bend as Context
 import ./request.bend as Req
 import ./raw.bend as Raw
 import ./operations.bend as Ops
-import ../git/text.bend as Tx
 import ../json/uint-decoder.bend as Uint
 import ./engines.bend as Eng
 import ./refs.bend as Refs
