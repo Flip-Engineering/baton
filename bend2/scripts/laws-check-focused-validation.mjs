@@ -161,17 +161,20 @@ const multipleNames = new Set([
 const missingNeedles = inventory.filter((item) => item.needleOccurrenceLines.length === 0);
 const multipleNeedles = inventory.filter((item) => item.needleOccurrenceLines.length > 1);
 const badLaws = inventory.filter((item) => item.lawDefinitions.length !== 1);
-if (missingNeedles.length || badLaws.length || multipleNeedles.length !== multipleNames.size || multipleNeedles.some((item) => !multipleNames.has(item.name)) || [...multipleNames].some((name) => !multipleNeedles.some((item) => item.name === name))) {
-  writeJson(join(OUTPUT, 'inventory.json'), { sourceSha: SOURCE_SHA, inventory, missingNeedles, multipleNeedles, badLaws });
-  throw new Error('all-152 static inventory does not match the pinned occurrence contract');
+const duplicateNames = inventory.filter((item, index) => inventory.findIndex((other) => other.name === item.name) !== index);
+if (missingNeedles.length || badLaws.length || duplicateNames.length || multipleNeedles.length !== multipleNames.size || multipleNeedles.some((item) => !multipleNames.has(item.name)) || [...multipleNames].some((name) => !multipleNeedles.some((item) => item.name === name))) {
+  writeJson(join(OUTPUT, 'inventory.json'), { sourceSha: SOURCE_SHA, sourceTree: SOURCE_TREE, inventory, missingNeedles, multipleNeedles, duplicateNames, badLaws });
+  throw new Error('complete runtime mutation inventory does not match the pinned occurrence contract');
 }
 writeJson(join(OUTPUT, 'inventory.json'), {
-  schema: 'laws-check-focused-static-inventory-v1',
+  schema: 'laws-check-complete-static-inventory-v1',
   sourceSha: SOURCE_SHA,
+  sourceTree: SOURCE_TREE,
   lawsCheckSha256: shaFile(lawsCheckPath),
   mutationCount: inventory.length,
   missingNeedles,
   multipleNeedles,
+  duplicateNames,
   lawDefinitionErrors: badLaws,
   entries: inventory,
 });

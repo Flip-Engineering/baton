@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: Flip-Engineering/baton
-          ref: 9fabe2f20a9171512fb1e152ed65687ebc3e0fdc
+          ref: 50ff4ffbbf6a92c6e1dce58b4eaa777704702daa
           path: source
           persist-credentials: false
 
