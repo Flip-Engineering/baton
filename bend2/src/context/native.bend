@@ -167,7 +167,7 @@ def query_bootstrap_request(+database: String, +owner: String, +worktree: String
     J.Jpair{"owner", J.Jstr{owner},
     J.Jpair{"worktree", J.Jstr{worktree},
       J.Jpair{"query", J.Jstr{query},
-      J.Jpair{"bootstrapText", J.Jstr{bootstrap_text}, J.Jnil{}}}}}})
+      J.Jpair{"bootstrapText", J.Jstr{bootstrap_text}, J.Jnil{}}}}}}})
 
 def query_outcome_request(+database: String, +owner: String, +worktree: String, +query: String,
                           +bootstrap_digest: String, +exit_status: U32,
@@ -178,7 +178,7 @@ def query_outcome_request(+database: String, +owner: String, +worktree: String, 
       J.Jpair{"query", J.Jstr{query},
         J.Jpair{"bootstrapSha256", J.Jstr{bootstrap_digest},
           J.Jpair{"exitStatus", J.Jint{exit_status},
-            J.Jpair{"eventFrame", J.Jstr{event_frame}, J.Jnil{}}}}}}}})
+            J.Jpair{"eventFrame", J.Jstr{event_frame}, J.Jnil{}}}}}}}}})
 
 def query_source_request(+owner: String, +worktree: String, +cwd: String,
                          +path: String) -> String:
