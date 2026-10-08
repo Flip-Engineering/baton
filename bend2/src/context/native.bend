@@ -647,7 +647,10 @@ def managed_store_cursor(+db: String,
   match result:
     case Fail{(code, message)}: IO.die(Unit, code, "managedOwnerNoticeCursor:" ++ message)
     case Done{+rows}:
-      managed_store_publish_result(Custody.Instance.publish_commit(db, Tx.trim_nl(rows)))
+      do IO<Unit>:
+        published : Result<&1,&1,U32 & String,Unit> <-
+          Custody.Instance.publish_commit(db, Tx.trim_nl(rows))
+        managed_store_publish_result(published)
 
 def managed_store_disposition(+requested_state: String,
                               decoded: ProjectPolicyJson) -> ManagedStoreDisposition:
