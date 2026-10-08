@@ -3,7 +3,6 @@
 /* Orchestra live view. Read-only. All DOM text via textContent. */
 
 const CONTRACT_VERSION = 1;
-const TRANSITION_LIMIT = 50;
 
 const state = {
   apiBase: "",
@@ -398,7 +397,7 @@ function renderTransitions() {
     el.transitions.appendChild(li);
     return;
   }
-  for (const t of state.transitions.slice(0, TRANSITION_LIMIT)) {
+  for (const t of state.transitions) {
     const li = document.createElement("li");
     const when = document.createElement("time");
     text(when, t.at || "time unrecorded");
@@ -585,7 +584,6 @@ function connectEvents() {
     try { t = JSON.parse(ev.data); } catch (e) { return; }
     if (!t) return;
     state.transitions.unshift(t);
-    state.transitions = state.transitions.slice(0, TRANSITION_LIMIT);
     if (ev.lastEventId) setCursor(ev.lastEventId);
     renderTransitions();
     clearGapNotice();
