@@ -1244,16 +1244,14 @@ def managed_prepare_result(+db: String, +binding: String, +launch: ManagedLaunch
                            result: Result<&1,&1,U32 & String,U32 & String & String>) -> IO(Unit):
   match result:
     case Fail{error}: IO.die(Unit, 3, "managedKeeperPrepare")
-    case Done{+prepared}:
-      match prepared:
-        case (handle, (identity, host_json)):
-          Bool.pick(IO(Unit), String.eq(identity,
-            ManagedQuery.bootstrap_text(launch_bootstrap(launch))),
-            do IO<Unit>:
-              readiness : ManagedQuery.KeeperReadiness <- decode_managed_readiness(
-                db, binding, launch_bootstrap(launch), host_json)
-              managed_submit_start(db, binding, launch, handle, readiness),
-            IO.die(Unit, 3, "managedKeeperIdentityMismatch"))
+    case Done{(handle, (identity, host_json))}:
+      Bool.pick(IO(Unit), String.eq(identity,
+        ManagedQuery.bootstrap_text(launch_bootstrap(launch))),
+        do IO<Unit>:
+          readiness : ManagedQuery.KeeperReadiness <- decode_managed_readiness(
+            db, binding, launch_bootstrap(launch), host_json)
+          managed_submit_start(db, binding, launch, handle, readiness),
+        IO.die(Unit, 3, "managedKeeperIdentityMismatch"))
 
 def managed_prepare_roles(+db: String, +binding: String, +owner: String,
                           +query: String, +request: String, +cwd: String,
