@@ -263,6 +263,82 @@ def hex_decode(s: String) -> String:
   hex_cat_go(hex_pairs_go(s, SNil{}, Nil{}), SNil{})
 
 # The argv encoding of the process effect: each element as its UTF-8 byte
+# The expected guard path for a common directory and a target ref, spelled by the same rule receipt.c
+# implements: the common, then /baton2-landing, then / plus the encoded target plus .lock. The encoding
+# leaves ASCII letters, digits, dot, underscore and hyphen unchanged and writes every other unsigned UTF-8
+# byte as a percent sign and two lowercase hexadecimal digits, percent itself included. Each byte of a
+# multi-byte character is written, so a code point is not one byte here. Receipt.guard_path is the producer
+# of the observed path; this function is the expected naming and states no observation.
+def ref_hyphen_dot_underscore(code: U32) -> Bool:
+  Bool.pick(Bool, U32.is_eq(code, 45), True{},
+    Bool.pick(Bool, U32.is_eq(code, 46), True{}, U32.is_eq(code, 95)))
+def ref_is_literal(code: U32) -> Bool:
+  Bool.pick(Bool, U32.is_lt(code, 48), False{},
+    Bool.pick(Bool, U32.is_lt(code, 58), True{},
+      Bool.pick(Bool, U32.is_lt(code, 65), False{},
+        Bool.pick(Bool, U32.is_lt(code, 91), True{},
+          Bool.pick(Bool, U32.is_lt(code, 97), ref_hyphen_dot_underscore(code),
+            Bool.pick(Bool, U32.is_lt(code, 123), True{}, False{}))))))
+
+
+def ref_hex_digit(n: U32) -> Char:
+  Bool.pick(Char, U32.is_lt(n, 10), Char.from_u32(U32.add(48, n)), Char.from_u32(U32.add(87, n)))
+
+def ref_byte(u: U32, rest: String) -> String:
+  +hi = U32.shrn(u, 4)
+  +lo = U32.and(u, 15)
+  str_cat("%", str_cat(one_char(ref_hex_digit(hi)), str_cat(one_char(ref_hex_digit(lo)), rest)))
+
+def ref_bytes2(b1: U32, b2: U32, rest: String) -> String:
+  ref_byte(b1, ref_byte(b2, rest))
+
+def ref_bytes3(b1: U32, b2: U32, b3: U32, rest: String) -> String:
+  ref_byte(b1, ref_byte(b2, ref_byte(b3, rest)))
+
+def ref_bytes4(b1: U32, b2: U32, b3: U32, b4: U32, rest: String) -> String:
+  ref_byte(b1, ref_byte(b2, ref_byte(b3, ref_byte(b4, rest))))
+
+def ref_cont(b: U32) -> U32:
+  U32.or(128, U32.and(b, 63))
+
+def ref_char_code(code: U32, width: U32, rest: String) -> String:
+  Bool.pick(String, U32.is_eq(width, 1), ref_byte(code, rest),
+    Bool.pick(String, U32.is_eq(width, 2), ref_bytes2(U32.or(192, U32.and(U32.shrn(code, 6), 31)), ref_cont(code), rest),
+      Bool.pick(String, U32.is_eq(width, 3),
+        ref_bytes3(U32.or(224, U32.and(U32.shrn(code, 12), 15)), ref_cont(U32.shrn(code, 6)), ref_cont(code), rest),
+        ref_bytes4(U32.or(240, U32.and(U32.shrn(code, 18), 7)), ref_cont(U32.shrn(code, 12)), ref_cont(U32.shrn(code, 6)), ref_cont(code), rest))))
+
+def ref_char(c: Char, rest: String) -> String:
+  +code = Char.to_u32(c)
+  Bool.pick(String, ref_is_literal(code), str_cat(one_char(c), rest),
+    ref_char_code(code, char_bytes(c), rest))
+
+def ref_encode_go(s: String, acc: String) -> String:
+  match s:
+    case SNil{}: acc
+    case SCon{c, rest}:
+      +acc2 = acc
+      ref_encode_go(rest, ref_char(c, acc2))
+
+def ref_encode(s: String) -> String:
+  ref_encode_go(s, "")
+
+def carries_nul_go(s: String) -> Bool:
+  match s:
+    case SNil{}: False{}
+    case SCon{c, rest}:
+      Bool.pick(Bool, is_nul(c), True{}, carries_nul_go(rest))
+
+def carries_nul(s: String) -> Bool:
+  carries_nul_go(s)
+
+# An empty target and an embedded NUL in either operand are refused by the producer, so the expected rule
+# answers None for them rather than naming a path.
+def expected_guard_path(common: String, target: String) -> Maybe<String>:
+  Bool.pick(Maybe<String>, Bool.pick(Bool, String.is_empty(target), False{}, Bool.pick(Bool, carries_nul(common), False{}, Bool.pick(Bool, carries_nul(target), False{}, True{}))),
+    Some{str_cat(common, str_cat("/baton2-landing", str_cat("/", str_cat(ref_encode(target), ".lock"))))},
+    None{})
+
 def enc_argv_go(xs: List<String>, acc: String) -> String:
   match xs:
     case Nil{}: acc
