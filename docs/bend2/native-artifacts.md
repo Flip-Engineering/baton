@@ -1,6 +1,6 @@
 # Native artifacts
 
-bend2/scripts/package-native.py builds the production coordinator and packages a Darwin arm64 development or release archive. The package contains the native executable, the Codex, OMP and MCP adapters, Git helper, notices, and a manifest. The manifest records source commit, tree, source file hashes, target platform, built binary and package file hashes, and the compiler archive used for license notices. Full build stdout and stderr and generated C are retained beside the archive in the output directory.
+`bend2/scripts/package-native.py` builds the production coordinator and packages a Darwin arm64 development or release archive. The package contains the native executable, harness adapters, Git helper, Orchestra UI, selected context providers, notices, and a manifest. The manifest records the source commit, target platform, package file hashes, and compiler archive used for license notices. Build output and generated C are retained beside the archive.
 
 ## Build and package
 
@@ -26,7 +26,9 @@ python3 "$BATON2_SOURCE/bend2/scripts/package-native.py" \
   --compiler-archive "$BATON2_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
 ~~~
 
-The package command runs [build-native.sh](../../scripts/build-native.sh) once. It retains the complete build stdout and stderr, along with generated C when available. Native runtime checks are available through `check-native.sh`:
+The package command runs [build-native.sh](../../bend2/scripts/build-native.sh) once. `--generated-c /path/to/baton2.c` compiles an existing production C translation unit with the package host's compiler and links its native entry point. The generated C retains platform-specific implementations selected by the C compiler. The build record includes the supplied C path and complete output.
+
+For direct native builds, `BEND_GENERATED_C=/path/to/baton2.c` selects this input. Native runtime checks are available through `check-native.sh`:
 
 ~~~sh
 sh bend2/scripts/check-native.sh
@@ -34,7 +36,7 @@ sh bend2/scripts/check-native.sh
 
 ## Exercise the extracted artifact
 
-The native workflow moves its owned build source directory, then runs [smoke-native-artifact.py](../../scripts/smoke-native-artifact.py) against the archive and manifest. The smoke checks archive paths and file hashes, then starts the extracted coordinator from a separate working directory with the source path unavailable. A controlled OMP fixture exercises recruitment, receive-owner reexecution, report delivery and acknowledgment, repository commit and public landing. The fixture uses no real provider.
+The native workflow moves its owned build source directory, then runs [smoke-native-artifact.py](../../bend2/scripts/smoke-native-artifact.py) against the archive and manifest. The smoke checks archive paths and file hashes, then starts the extracted coordinator from a separate working directory with the source path unavailable. A controlled OMP fixture exercises recruitment, receive-owner reexecution, report delivery and acknowledgment, repository commit and public landing.
 
 For a manual smoke, use the archive filename, SHA256 from SHA256SUMS, and manifest produced by packaging:
 
@@ -58,6 +60,6 @@ Packaging copies the project LICENSE and NOTICE when present, and retains the pi
 
 ## Continuous integration
 
-[.github/workflows/bend2-native.yml](../../.github/workflows/bend2-native.yml) builds and packages the Darwin arm64 artifact, runs the extracted-artifact smoke, and retains the package, build output and smoke output. The workflow uses the xcode-27 arm64 runner.
+[.github/workflows/bend2-native.yml](../../.github/workflows/bend2-native.yml) builds and packages the Darwin arm64 artifact on `macos-15`, runs the extracted-artifact smoke, and retains the package, build output and smoke output.
 
-The workflow produces development artifacts. Package generation and the provider-free smoke do not establish real-provider qualification, package-manager installation, signing, or public release delivery.
+The workflow produces development artifacts. Real-provider execution, installation, signing, and release publication have separate delivery records.

@@ -57,8 +57,7 @@ def git(*args):
 
 
 def source_identity():
-    return {'commit': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}'),
-            'bend2_tree': git('rev-parse', 'HEAD:bend2'), 'status': git('status', '--porcelain=v1')}
+    return {'commit': git('rev-parse', 'HEAD'), 'status': git('status', '--porcelain=v1')}
 
 
 def build(env, directory):
@@ -73,6 +72,8 @@ def build(env, directory):
               'elapsed_seconds': time.monotonic() - started,
               'stdout': {'path': str(stdout.relative_to(directory)), **file_info(stdout)},
               'stderr': {'path': str(stderr.relative_to(directory)), **file_info(stderr)}}
+    if env.get('BEND_GENERATED_C'):
+        record['generated_c_input'] = env['BEND_GENERATED_C']
     write_json(directory / 'build.json', record)
     require(result.returncode == 0, 'Native build failed; full output is retained in ' + str(directory))
     return record
@@ -156,6 +157,77 @@ def stage_selected_context_payload(payload):
             'path': module_root.relative_to(payload).as_posix()}
 
 
+def stage_clang_module(payload, module_id, projections, runtime_package=None):
+    source = ROOT / 'bend2/context/clang'
+    module_source = source / 'modules' / module_id
+    module_root = payload / 'lib/context/modules' / module_directory_name(module_id)
+    module_root.mkdir(parents=True)
+    for name in ('native-provider.mjs', 'shared.mjs'):
+        source_file = module_source / name if name == 'native-provider.mjs' else source / 'modules/shared.mjs'
+        destination = module_root / name
+        shutil.copyfile(source_file, destination)
+    adapter_dir = module_root / 'adapter'
+    adapter_dir.mkdir()
+    adapter_names = ['common.mjs', 'lsp.mjs', 'clangd.mjs'] if module_id == 'clangd' else [
+        'common.mjs', 'clang-analyzer.mjs']
+    for name in adapter_names:
+        source_file = source / 'adapter' / name
+        destination = adapter_dir / name
+        shutil.copyfile(source_file, destination)
+    if runtime_package is not None:
+        runtime_root = module_root / 'runtime'
+        shutil.copytree(runtime_package, runtime_root)
+        extractor_binary = runtime_root / 'context-clang-20'
+        require(extractor_binary.is_file(),
+                'The supplied context-clang package must contain runtime/context-clang-20')
+        extractor_binary.chmod(extractor_binary.stat().st_mode | 0o111)
+
+    # NativeDecl records the provider entry. The package manifest covers its files.
+    artifact_identities = [{'packagePath': 'native-provider.mjs',
+                            'sha256': sha256(module_root / 'native-provider.mjs'),
+                            'role': 'provider'}]
+    operation = {
+        'schema': 'baton2-native-operation-v1', 'operation': 'sourceAnalysis',
+        'implements': 'sourceAnalysis', 'subjectSchema': 'baton2.context.clang.subject.v1',
+        'optionsSchema': 'baton2.context.clang.options.v1', 'projections': projections,
+        'effects': [], 'dependencies': [], 'execution': 'managed',
+        'resultSchema': 'baton2.context.clang.source-analysis.result.v1',
+        'referenceSchema': 'baton2.context.clang.reference.v1',
+        'eventSchema': 'baton2.context.clang.source-analysis.event.v1',
+        'lifetimeProfile': '',
+    }
+    declaration = {
+        'schema': 'baton2-native-module-declaration-v1', 'moduleId': module_id,
+        'revision': 'development', 'protocolVersion': '2',
+        'packageIdentity': 'baton2-context-' + module_id,
+        'entry': {'artifact': 'native-provider.mjs', 'argv': ['--invoke']},
+        'artifactIdentities': artifact_identities,
+        'dependencies': [],
+        'schemaIdentities': [operation['subjectSchema'], operation['optionsSchema'],
+                             operation['resultSchema'], operation['referenceSchema'],
+                             operation['eventSchema']],
+        'applicability': [{'kind': 'pathSuffixAny',
+                           'values': ['.c', '.h', '.cc', '.cpp', '.cxx', '.hpp']}],
+        'operations': [operation],
+        'runtime': {'name': 'node', 'minimumVersion': '22.15'},
+        'readiness': {'status': 'ready', 'operations': ['sourceAnalysis']},
+    }
+    write_json(module_root / 'native-provider.declaration.json', declaration)
+    return {'moduleId': module_id, 'protocolVersion': '2',
+            'path': module_root.relative_to(payload).as_posix()}
+
+
+def stage_clang_context_modules(payload, runtime_package=None):
+    selected = []
+    selected.append(stage_clang_module(payload, 'clangd',
+        ['definition', 'type', 'references', 'calls', 'callers', 'diagnostics']))
+    if runtime_package is not None:
+        require(runtime_package.is_dir(), 'The supplied context-clang package is unavailable')
+        selected.append(stage_clang_module(payload, 'clang-analyzer',
+            ['type', 'calls', 'diagnostics', 'authorization', 'databaseAccesses', 'flow'], runtime_package))
+    return selected
+
+
 def stage_notices(payload, compiler_notices, kind='development'):
     directory = payload / 'notices'
     directory.mkdir()
@@ -232,6 +304,8 @@ def package(args):
         identity = artifact_identity(args.release_version)
         compiler = args.bend.resolve()
         env = dict(os.environ, BEND=str(compiler))
+        if args.generated_c is not None:
+            env['BEND_GENERATED_C'] = str(args.generated_c.resolve())
         build_record = build(env, build_output)
         archive = args.compiler_archive.resolve()
         compiler_notices = archive_notices(archive)
@@ -245,16 +319,15 @@ def package(args):
                                            **file_info(generated_copy)}
             write_json(build_output / 'build.json', build_record)
         source_files = [{'path': name, **file_info(ROOT / name)}
-                        for name in git('ls-files', 'bend2', 'docs/bend2/reference', '.github/workflows/bend2-native.yml',
-                                        'LICENSE', 'NOTICE').splitlines()
-                        if (ROOT / name).is_file()]
-        source = {'directory': str(ROOT), **source_identity(), 'files': source_files}
+                        for name in ('LICENSE', 'NOTICE') if (ROOT / name).is_file()]
+        source = {'directory': str(ROOT), **source_identity()}
         payload = output / identity['archive_root']
         (payload / 'bin').mkdir(parents=True)
         shutil.copyfile(binary, payload / 'bin/baton2')
         (payload / 'bin/baton2').chmod(0o755)
         stage_adapters(payload)
-        selected_context = stage_selected_context_payload(payload)
+        selected_context = [stage_selected_context_payload(payload)]
+        selected_context.extend(stage_clang_context_modules(payload, args.context_clang_package))
         terms = stage_notices(payload, compiler_notices, identity['kind'])
         files = [{'path': path.relative_to(payload).as_posix(), **file_info(path)}
                  for path in sorted(payload.rglob('*')) if path.is_file()]
@@ -265,7 +338,7 @@ def package(args):
             'platform': {'system': platform.system(), 'machine': platform.machine(), 'artifact': 'darwin-arm64'},
             'source': source,
             'binary': {'path': 'bin/baton2', **file_info(binary)}, 'files': files,
-            'selected_modules': [selected_context],
+            'selected_modules': selected_context,
             'build': {'command': build_record, 'compiler_archive': {'url': COMPILER_ARCHIVE_URL, **file_info(archive)}},
             'terms': terms,
         }
@@ -294,6 +367,10 @@ def main():
     parser.add_argument('--bend', required=True, type=Path, help='installed Bend compiler')
     parser.add_argument('--compiler-archive', required=True, type=Path,
                         help='verified official Bend 2.0.25 archive used for license notices')
+    parser.add_argument('--generated-c', type=Path,
+                        help='compile a generated production C file on the package host')
+    parser.add_argument('--context-clang-package', type=Path,
+                        help='already-built context-clang-20 runtime package, including the executable and linked libraries')
     parser.add_argument('--release-version', help='version identifier for a release archive; requires the project root LICENSE')
     args = parser.parse_args()
     package(args)

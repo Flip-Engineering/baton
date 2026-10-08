@@ -107,6 +107,7 @@ type Entry is Data:
 type Rule is Data:
   RPath{value: String}
   RPathSuffix{value: String}
+  RPathSuffixAny{values: Eng.SS}
   RManifest{value: String}
   RSubject{value: String}
   RProjection{value: String}
@@ -567,11 +568,18 @@ def path_suffix_member(+paths: Eng.SS, +suffix: String) -> Bool:
     case Eng.SSCons{+head, +rest}:
       Bool.or(String.ends_with(head, suffix), path_suffix_member(rest, suffix))
 
+def path_suffix_any(+paths: Eng.SS, +suffixes: Eng.SS) -> Bool:
+  match suffixes:
+    case Eng.SSNil{}: False{}
+    case Eng.SSCons{+head, +rest}:
+      Bool.or(path_suffix_member(paths, head), path_suffix_any(paths, rest))
+
 def rule_holds(+rule: Rule, +paths: Eng.SS, +manifests: Eng.SS, +subject: String,
                +projections: Eng.SS) -> Bool:
   match rule:
     case RPath{value}: Eng.ss_member(paths, value)
     case RPathSuffix{value}: path_suffix_member(paths, value)
+    case RPathSuffixAny{values}: path_suffix_any(paths, values)
     case RManifest{value}: Eng.ss_member(manifests, value)
     case RSubject{value}: String.eq(subject, value)
     case RProjection{value}: Eng.ss_member(projections, value)

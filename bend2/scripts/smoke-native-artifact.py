@@ -94,10 +94,10 @@ def fixture(kind, config_path, arguments):
     if request.get('type') == 'set_event_filter':
         selection = config.get('event_filter', 'delta')
         if selection == 'delta':
-            require(request.get('events') is None and request.get('messageUpdates') == 'delta',
+            require(request.get('messageUpdates') == 'delta',
                     'The setup filter request lost the documented delta selection')
             print(json.dumps({'type': 'response', 'id': request.get('id'), 'command': 'set_event_filter',
-                              'success': True, 'data': {'events': None, 'messageUpdates': 'delta'}}), flush=True)
+                              'success': True, 'data': {'events': request.get('events'), 'messageUpdates': 'delta'}}), flush=True)
         else:
             print(json.dumps({'type': 'response', 'id': request.get('id'), 'command': 'set_event_filter',
                               'success': False, 'error': 'Unknown request type set_event_filter'}), flush=True)

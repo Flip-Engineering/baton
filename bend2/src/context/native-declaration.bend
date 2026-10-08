@@ -107,19 +107,24 @@ def operations_tail(+items: J.Json) -> Decl.Ops:
     case J.Jarr{+head, +tail}: Decl.OpsCons{operation(head), operations_tail(tail)}
     case other: Decl.OpsNil{}
 
+def rule_value(+value: J.Json) -> Decl.Rule:
+  Bool.pick(Decl.Rule, String.eq(text_field(value, "kind"), "path"),
+    Decl.RPath{text_field(value, "value")},
+  Bool.pick(Decl.Rule, String.eq(text_field(value, "kind"), "manifest"),
+    Decl.RManifest{text_field(value, "value")},
+  Bool.pick(Decl.Rule, String.eq(text_field(value, "kind"), "subject"),
+    Decl.RSubject{text_field(value, "value")},
+  Bool.pick(Decl.Rule, String.eq(text_field(value, "kind"), "pathSuffix"),
+    Decl.RPathSuffix{text_field(value, "value")},
+  Bool.pick(Decl.Rule, String.eq(text_field(value, "kind"), "pathSuffixAny"),
+    Decl.RPathSuffixAny{strings(member(value, "values"))},
+    Decl.RProjection{text_field(value, "value")})))))
+
 def rules_tail(+items: J.Json) -> Decl.Rules:
   match items:
     case J.Jarr{J.Jnil{}, J.Jnil{}}: Decl.RulesNil{}
     case J.Jarr{+head, +tail}:
-      Bool.pick(Decl.Rules, String.eq(text_field(head, "kind"), "path"),
-        Decl.RulesCons{Decl.RPath{text_field(head, "value")}, rules_tail(tail)},
-      Bool.pick(Decl.Rules, String.eq(text_field(head, "kind"), "manifest"),
-        Decl.RulesCons{Decl.RManifest{text_field(head, "value")}, rules_tail(tail)},
-      Bool.pick(Decl.Rules, String.eq(text_field(head, "kind"), "subject"),
-        Decl.RulesCons{Decl.RSubject{text_field(head, "value")}, rules_tail(tail)},
-      Bool.pick(Decl.Rules, String.eq(text_field(head, "kind"), "pathSuffix"),
-        Decl.RulesCons{Decl.RPathSuffix{text_field(head, "value")}, rules_tail(tail)},
-        Decl.RulesCons{Decl.RProjection{text_field(head, "value")}, rules_tail(tail)}))))
+      Decl.RulesCons{rule_value(head), rules_tail(tail)}
     case other: Decl.RulesNil{}
 
 def decl_artifact(+entry: J.Json, +artifacts: Decl.Arts) -> Decl.Art:
@@ -169,15 +174,24 @@ def operation_fields_valid(+items: J.Json) -> Bool:
     case J.Jarr{+head, +tail}: Bool.and(operation_field_valid(head), operation_fields_rest(tail))
     case other: False{}
 
-def applicability_rule_valid(+rule: J.Json) -> Bool:
-  Bool.and(Req.is_jobj(rule),
-  Bool.and(Req.keys_allowed(Req.words_from(["kind", "value"]), object_members(rule)),
-  Bool.and(Bool.not(String.is_empty(text_field(rule, "value"))),
+def applicability_rule_value_valid(+rule: J.Json) -> Bool:
+  Bool.pick(Bool, String.eq(text_field(rule, "kind"), "pathSuffixAny"),
+    Bool.and(is_array(member(rule, "values")), string_array_valid(member(rule, "values"))),
+    Bool.not(String.is_empty(text_field(rule, "value"))))
+
+def applicability_rule_kind_valid(+rule: J.Json) -> Bool:
   Bool.or(String.eq(text_field(rule, "kind"), "path"),
   Bool.or(String.eq(text_field(rule, "kind"), "pathSuffix"),
+  Bool.or(String.eq(text_field(rule, "kind"), "pathSuffixAny"),
   Bool.or(String.eq(text_field(rule, "kind"), "manifest"),
   Bool.or(String.eq(text_field(rule, "kind"), "subject"),
-           String.eq(text_field(rule, "kind"), "projection"))))))))
+          String.eq(text_field(rule, "kind"), "projection"))))))
+
+def applicability_rule_valid(+rule: J.Json) -> Bool:
+  Bool.and(Req.is_jobj(rule),
+  Bool.and(Req.keys_allowed(Req.words_from(["kind", "value", "values"]), object_members(rule)),
+  Bool.and(applicability_rule_value_valid(rule),
+           applicability_rule_kind_valid(rule))))
 
 def applicability_rules_rest(+items: J.Json) -> Bool:
   match items:
