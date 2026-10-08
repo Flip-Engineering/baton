@@ -580,10 +580,6 @@ class Land(unittest.TestCase):
         self.git('checkout', '-q', '--detach')
         return listener
 
-    def watch_until_closed(self, endpoint):
-        """Close ENDPOINT when the watcher's owner finishes; the reader sees EOF then."""
-        endpoint.close()
-
     def completion_watch(self):
         """A pair whose read end becomes readable when its write end is closed."""
         watch, done = socket.socketpair()
@@ -663,9 +659,7 @@ class Land(unittest.TestCase):
 
         # The worker's completion arrives on its own pair, so a landing that exits before
         # its check stage connects is reported at once instead of leaving accept blocked.
-        notify = socket.socketpair()
-        self.addCleanup(notify[0].close)
-        self.addCleanup(notify[1].close)
+        watch, done = self.completion_watch()
 
         def held_landing():
             try:
@@ -674,22 +668,14 @@ class Land(unittest.TestCase):
             except BaseException as error:
                 first['error'] = error
             finally:
-                notify[1].close()
+                done.close()
 
         thread = threading.Thread(target=held_landing)
         thread.start()
         connection = None
         try:
-            readable, _, _ = select.select([notify[0], self.check_socket], [], [])
-            if notify[0] in readable:
-                self.fail(f'the landing finished before its check stage reported readiness: {first}')
-            connection, _ = self.check_socket.accept()
-            ready = b''
-            while len(ready) < len(b'ready'):
-                chunk = connection.recv(len(b'ready') - len(ready))
-                self.assertTrue(chunk, f'the check stage closed before readiness: {ready!r}')
-                ready += chunk
-            self.assertEqual(ready, b'ready')
+            connection = self.awaiting_completion(watch, self.check_socket, first)
+            self.assertEqual(self.reading_exact(connection, 5, watch, first), b'ready')
             state = self.scratch_state('w1')
             self.assertEqual(len(state['paths']), 2)
             later = self.call('land-checked', 'w1', self.repo, 'main',
