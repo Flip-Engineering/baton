@@ -587,7 +587,8 @@ def retained_arguments(omp: Bool, claude: Bool, +cmd: String, +model: String, +e
 
 def retained_identity_arguments(args: String, model: String, identity: String & String) -> String:
   (registry,helper)=identity
-  P.argv(Bool.pick(List<String>,String.is_empty(registry),Nil{},["node",helper,"launch","--registry",registry,"--model-key",model,"--"])) ++ args
+  +configured=registry
+  P.argv(Bool.pick(List<String>,String.is_empty(configured),Nil{},["node",helper,"launch","--registry",configured,"--model-key",model,"--"])) ++ args
 
 # Claude reads one user frame from its input; OMP reads its prompt frames there.
 # The OMP frames carry the filter request for the session log level read
