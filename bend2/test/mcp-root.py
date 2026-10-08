@@ -228,7 +228,8 @@ class McpRoot(unittest.TestCase):
         self.coord('report', 'after', 'w1', 'After attachment.')
         pending = json.loads(self.coord('inbox', 'root'))
         self.assertEqual([row['id'] for row in pending], ['before', 'after'])
-        self.assertTrue(all(row['receipt'] is None for row in pending))
+        for row in pending:
+            self.assertIsNone(json.loads(self.coord('delivery', row['id']))['receipt'])
         note = read_mcp(proc)
         self.assertEqual(json.loads(note['params']['meta']['messageIds']), ['after'])
         self.assertIn('After attachment.', note['params']['content'])
