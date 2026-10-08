@@ -17,11 +17,11 @@ jobs:
       matrix:
         include:
           - product: core
-            source_sha: 66dfe10ce964dadee59cdfe47d199887b9dac887
-            source_tree: 68690f966de8bda8e5892c607cee36d6da9d3185
+            source_sha: 689739660b11afe2cd736b62cb1701d5d6d7b7ad
+            source_tree: 90abe5dffd5b10c2c02eac632a842335dfdfc75a
           - product: combined-context
-            source_sha: 41895e7e7cda459ca49fce430bd05642576908f9
-            source_tree: a6ddf61e4f2d76e0382e0ab7810f1a5b0c50c334
+            source_sha: d94a9a827129300daffe9215342ba093525ebf30
+            source_tree: 5eb95e59acb774bd368db7c66871b47638372111
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
