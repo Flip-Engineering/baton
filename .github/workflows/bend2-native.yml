@@ -12,8 +12,6 @@ permissions:
 jobs:
   darwin-arm64:
     runs-on: xcode-27
-    env:
-      BEND_NO_TELEMETRY: '1'
     steps:
       - name: Checkout exact source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -25,7 +23,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Create owned build clone and preserve compiler archive
+      - name: Create owned build clone and install pinned compiler
         shell: bash
         run: |
           set -euo pipefail
@@ -44,12 +42,11 @@ jobs:
             -o "$archive" > "$run/toolchain/download.log" 2>&1
           printf 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31  %s\n' "$archive" | \
             shasum -a 256 -c - > "$run/toolchain/archive-check.log" 2>&1
-          tar -tzf "$archive" > "$run/toolchain/archive-members.txt"
           test ! -e "$run/toolchain-home"
           BEND_HOME="$run/toolchain-home" sh "$run/build-source/docs/bend2/reference/toolchain/install-2.0.25.sh" \
             > "$run/toolchain/install.log" 2>&1
 
-      - name: Run complete exact-source gates and package
+      - name: Build and package native artifact
         shell: bash
         run: |
           set -euo pipefail
@@ -71,7 +68,7 @@ jobs:
           sha=$(awk '{print $1}' "$BATON2_NATIVE_RUN/package/SHA256SUMS")
           python3 "$GITHUB_WORKSPACE/bend2/scripts/smoke-native-artifact.py" \
             --archive "$archive" --sha256 "$sha" \
-            --provenance "$BATON2_NATIVE_RUN/package/manifest.json" \
+            --manifest "$BATON2_NATIVE_RUN/package/manifest.json" \
             --unavailable-source "$build" --output "$BATON2_NATIVE_RUN/smoke"
 
       - name: Retain native artifact and validation evidence
