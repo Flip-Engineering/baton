@@ -492,7 +492,32 @@ class Land(unittest.TestCase):
         self.assertEqual(result['status'], 'landed')
         self.assertEqual(self.scratch_trees('w1'), [])
 
-    def test_refused_attempt_keeps_its_scratch_trees_until_the_next_attempt(self):
+    def test_landed_attempt_leaves_unrelated_prunable_worktree_metadata(self):
+        self.git('branch', 'unrelated', self.base)
+        unrelated = self.directory / 'unrelated-worktree'
+        subprocess.run(['git', '-C', str(self.repo), 'worktree', 'add', '-q',
+                        str(unrelated), 'unrelated'], check=True, capture_output=True)
+        unavailable = self.directory / 'unrelated-worktree-unavailable'
+        check_marker = self.directory / 'check-ran-once'
+        check = self.repo / 'check-pass.sh'
+        check.write_text(
+            f'if [ -e {shlex.quote(str(check_marker))} ]; then '
+            f'mv -- {shlex.quote(str(unrelated))} {shlex.quote(str(unavailable))}; '
+            f'else touch {shlex.quote(str(check_marker))}; fi\n'
+            'exit 0\n')
+        self.git('add', 'check-pass.sh')
+        self.git('commit', '-q', '-m', 'check fixture')
+        self.git('checkout', '-q', '--detach')
+        self.recruit_and_commit()
+
+        result = self.call('land-checked', 'w1', self.repo, 'main',
+                           'check-pass.sh', 'file.txt')
+        self.assertEqual(result['status'], 'landed')
+        after = self.git('worktree', 'list', '--porcelain')
+        self.assertIn(f'worktree {unrelated}\n', after)
+        self.assertIn('prunable', after)
+
+    def test_refused_attempts_keep_earlier_scratch_work(self):
         (self.repo / 'check-blocked.sh').write_text(
             'test -f "$1" && { echo 6161 6161 6161 2d; exit 1; }\n'
             'exit 0\n')
@@ -505,13 +530,27 @@ class Land(unittest.TestCase):
         refused = self.call('land-checked', 'w1', self.repo, 'main',
                             'check-blocked.sh', 'file.txt')
         self.assertEqual(refused['status'], 'blocked')
-        kept = self.scratch_trees('w1')
-        self.assertEqual(len(kept), 2)
-        self.assertIn(f'{kept[0]}-target', kept)
+        first = self.scratch_paths('w1')
+        self.assertEqual(len(first), 2)
+        first_names = {path.name for path in first}
+        candidate = next(path for path in first if not path.name.endswith('-target'))
+        self.assertIn(f'{candidate.name}-target', first_names)
+        note = candidate / 'earlier-attempt-notes.txt'
+        note.write_text('keep this refused attempt work\n')
+
+        refused_again = self.call('land-checked', 'w1', self.repo, 'main',
+                                  'check-blocked.sh', 'file.txt')
+        self.assertEqual(refused_again['status'], 'blocked')
+        second_names = {path.name for path in self.scratch_paths('w1')}
+        self.assertEqual(len(second_names), 4)
+        self.assertTrue(first_names.issubset(second_names))
+        self.assertEqual(note.read_text(), 'keep this refused attempt work\n')
+
         landed = self.call('land-checked', 'w1', self.repo, 'main',
                            'check-pass.sh', 'file.txt')
         self.assertEqual(landed['status'], 'landed')
-        self.assertEqual(self.scratch_trees('w1'), [])
+        self.assertEqual({path.name for path in self.scratch_paths('w1')}, second_names)
+        self.assertEqual(note.read_text(), 'keep this refused attempt work\n')
 
     def test_fast_forward_repeated_landing_keeps_one_result(self):
         commit = self.recruit_and_commit()
@@ -706,6 +745,12 @@ class Land(unittest.TestCase):
         moved, under = self.land_under_a_move('w6', 'w5')
         self.assertEqual(under['status'], 'blocked')
         self.assertIn('target moved', under['reason'])
+        first_paths = self.scratch_paths('w6')
+        self.assertEqual(len(first_paths), 2)
+        first_names = {path.name for path in first_paths}
+        earlier_candidate = next(path for path in first_paths if not path.name.endswith('-target'))
+        note = earlier_candidate / 'earlier-attempt-notes.txt'
+        note.write_text('keep this conflicted predecessor work\n')
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         self.assertEqual(self.git('rev-parse', 'wf').strip(), player)
         self.assertEqual(len(self.scratch_trees('w6')), 2)
@@ -713,6 +758,10 @@ class Land(unittest.TestCase):
                           'check-plain.sh', 'file.txt')
         self.assertEqual(retry['status'], 'conflict')
         self.assertEqual(retry['files'], 'file.txt')
+        conflict_names = {path.name for path in self.scratch_paths('w6')}
+        self.assertEqual(len(conflict_names), 3)
+        self.assertTrue(first_names.issubset(conflict_names))
+        self.assertEqual(note.read_text(), 'keep this conflicted predecessor work\n')
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         wt = self.repo / 'wt6'
         rebase = subprocess.run(['git', '-C', str(wt), 'rebase', 'main'],
@@ -727,7 +776,8 @@ class Land(unittest.TestCase):
                           'check-plain.sh', 'file.txt')
         self.assertEqual(again['status'], 'landed')
         self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w5 and w6')
-        self.assertEqual(self.scratch_trees('w6'), [])
+        self.assertEqual({path.name for path in self.scratch_paths('w6')}, conflict_names)
+        self.assertEqual(note.read_text(), 'keep this conflicted predecessor work\n')
 
     def fixture_status(self, tree):
         """The exit status of the selected identity check run in TREE."""

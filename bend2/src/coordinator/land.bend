@@ -55,8 +55,8 @@ def show_checked_outcome(result: Result<&1,&1,G.GitFail,G.LandOutcome>) -> IO(Un
     case Fail{error}: IO.die(Unit,1,G.fail_text(error))
     case Done{outcome}: show_outcome(outcome)
 
-# One attempt's scratch path comes from the Git landing module, which drops the
-# trees the player's earlier attempt kept before this attempt prepares its own.
+# One attempt's scratch path comes from the Git landing module; earlier refused
+# or conflicted attempt trees remain available to the player.
 def run_checked(+db: String, +player: String, +repo: String, +target: String, +check: String, +files: String, +branch: String) -> IO(Unit):
   do IO<Unit>:
     ts_raw : String <- IO.try(String, DB.Sql.query(db, "" ++ "SELECT hex(randomblob(8));"))
