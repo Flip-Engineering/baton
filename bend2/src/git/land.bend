@@ -693,8 +693,8 @@ def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo:
           ff_stage5_blocked(Tx.str_cat("release failed: ", Tx.str_cat(T.release_detail(released), Tx.str_cat("; artifact ", artifact))))))
     case Lg.LandingClaimFailed{error}: ff_stage5_blocked(Tx.str_cat("claim failed: ", T.host_detail(error)))
     case Lg.LandingGuardBusy{target}: ff_stage5_blocked("guard busy")
-    case Lg.LandingAssociationRefused{request, step, observation, reads, released}: ff_stage5_blocked(Tx.str_cat("association refused at ", step))
-    case Lg.LandingOldValueMismatch{expected, found, reads, released}: ff_stage5_blocked("old target moved during landing; retry")
+    case Lg.LandingAssociationRefused{request, step, observation, reads, prior, released}: ff_stage5_blocked(Tx.str_cat("association refused at ", step))
+    case Lg.LandingOldValueMismatch{expected, found, reads, prior, released}: ff_stage5_blocked("old target moved during landing; retry")
     case Lg.LandingPublishRefused{outcome, reads, released}: ff_stage5_blocked("intent publication refused")
 
 def ff_stage5_named(candidate: String, old: String, repo: String, target: String, common: String, guard: String, observed: Result<&1, &1, U32 & String, String>) -> IO(FFLD):
@@ -928,18 +928,18 @@ def identity_fields(identity: IdentityEvidence, rest: List<String>) -> List<Stri
 # The request the attempt built is written with the association, so the record names the attempt,
 # the target, the destination, the candidate, the basis and the holder the reads used.
 # Each of the six read positions is written with the observation it produced, or as skipped.
-def read_fields(read: A.AssocRead, rest: List<String>) -> List<String>:
+def association_read_fields(read: A.AssocRead, rest: List<String>) -> List<String>:
   match read:
     case A.AssocReadPerformed{observation}: Con{"performed", observation_fields(observation, rest)}
     case A.AssocReadSkipped{}: Con{"skipped", rest}
 
 def reads_fields(+reads: A.AssocReads, rest: List<String>) -> List<String>:
-  Con{"reads", read_fields(A.reads_candidate_of(reads),
-    read_fields(A.reads_basis_of(reads),
-      read_fields(A.reads_target_of(reads),
-        read_fields(A.reads_ancestor_of(reads),
-          read_fields(A.reads_holder_of(reads),
-            read_fields(A.reads_destination_of(reads), rest))))))}}
+  Con{"reads", association_read_fields(A.reads_candidate_of(reads),
+    association_read_fields(A.reads_basis_of(reads),
+      association_read_fields(A.reads_target_of(reads),
+        association_read_fields(A.reads_ancestor_of(reads),
+          association_read_fields(A.reads_holder_of(reads),
+            association_read_fields(A.reads_destination_of(reads), rest))))))}}
 
 def request_fields(request: A.AssociationRequest, rest: List<String>) -> List<String>:
   match request:
@@ -1769,16 +1769,6 @@ def identity_bound(identity: IdentityEvidence, expect: String) -> Bool:
 # own immutable operands, its two common directories agree with each other, and that common is
 # the canonical common the claim answered. The holder path and the reservation are bound by the
 # route that selected them and by the reserved attempt the request carried.
-# The ancestor read follows the target's actual form: a present target was checked, an absent one
-# was not, and the two cases are required to match.
-def association_ancestor_bound(target: A.AssocRead, ancestor: A.AssocRead) -> Bool:
-  match target:
-    case A.AssocReadPerformed{observation}:
-      match observation:
-        case T.GRun{code, out}: Bool.pick(Bool, U32.is_eq(code, 0), association_read_ok(ancestor), A.read_skipped(ancestor))
-        case T.GBroken{detail}: False{}
-    case A.AssocReadSkipped{}: False{}
-
 def association_read_ok(read: A.AssocRead) -> Bool:
   match read:
     case A.AssocReadPerformed{observation}: observation_succeeded(observation)
@@ -1786,6 +1776,17 @@ def association_read_ok(read: A.AssocRead) -> Bool:
 
 # The target read is the one position the chain may find absent: exit one is a performed read whose
 # bytes are retained, so an absent target is not confused with a read that never ran.
+# The ancestor read follows the target's own contract: code zero is a present target whose
+# ancestor was checked, code one is an absent target whose ancestor was not, and any other code or
+# a broken read fails the contract rather than being read as absence.
+def association_ancestor_bound(target: A.AssocRead, +ancestor: A.AssocRead) -> Bool:
+  match target:
+    case A.AssocReadPerformed{observation}:
+      match observation:
+        case T.GRun{code, out}: Bool.pick(Bool, U32.is_eq(code, 0), association_read_ok(ancestor), Bool.pick(Bool, U32.is_eq(code, 1), A.read_skipped(ancestor), False{}))
+        case T.GBroken{detail}: False{}
+    case A.AssocReadSkipped{}: False{}
+
 def association_target_read_ok(read: A.AssocRead) -> Bool:
   match read:
     case A.AssocReadPerformed{observation}:
@@ -1839,7 +1840,7 @@ def identity_common(identity: IdentityEvidence) -> String:
 # reservation the evidence retained independently of its path.
 def association_bound(association: AssociationEvidence, +candidate: String, +basis: String, +common: String, +repo: String, +target: String, +qualification: LdQualified, +reserved: String, +reservation: ReservationIdentity) -> Bool:
   match association:
-    case AssociationObserved{step, +request, candidate_oid, basis_oid, target_head, holder_common, destination_common, +reads}:
+    case AssociationObserved{step, +request, +candidate_oid, +basis_oid, +target_head, +holder_common, +destination_common, +reads}:
       Bool.pick(Bool, association_step_accepted(step),
         Bool.pick(Bool, mode_selected(qualification_mode(qualification)),
           Bool.pick(Bool, reservation_bound(reserved, reservation, common),
@@ -3029,10 +3030,10 @@ def fixture_unheld_association(+common: String, +candidate: String, +basis: Stri
 
 # An association the pre-mutation comparison accepts, for the route it names.
 def fixture_matching_held(+ctx: LdAdvCtx) -> A.Association:
-  A.AssociationHeld{ld_assoc_request(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads()}
+  A.AssociationHeld{ld_assoc_request(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}
 
 def fixture_matching_unheld(+ctx: LdAdvCtx) -> A.Association:
-  A.AssociationHeld{ld_assoc_request(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads()}
+  A.AssociationHeld{ld_assoc_request(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}
 
 def fixture_evidence_of(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String, capture: T.CapturedRaw, qualification: LdQualified, identity: IdentityEvidence, association: AssociationEvidence, intent: IntentEvidence) -> AttemptEvidence:
   AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", "/art", AdvLanded{}, capture, qualification, T.ReleaseDone{}, identity, association, intent, ReservationObserved{shared_attempts_parent(common), "attempt-1"}}
@@ -3276,9 +3277,9 @@ def a_nonzero_holder_read_is_failure_evidence():
   {==}
 
 law a_matching_target_read_continues_to_the_holder_read:
-  {ld_adv_wt_target_decided("/p", "/r", "tgt", fixture_oid_candidate(), T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "cand\n"}) == (do IO<LdAdvObs>:
+  {ld_adv_wt_target_decided("/p", "/r", "tgt", fixture_oid_candidate(), T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, Tx.str_cat(fixture_oid_candidate(), "\n")}) == (do IO<LdAdvObs>:
     head : T.GitOut <- Git.runGit("/p", ld_head_argv())
-    ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "cand\n"}, head)) : IO(LdAdvObs)}
+    ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, Tx.str_cat(fixture_oid_candidate(), "\n")}, head)) : IO(LdAdvObs)}
 
 def a_matching_target_read_continues_to_the_holder_read():
   {==}
@@ -3461,19 +3462,19 @@ def an_unheld_capture_failure_keeps_its_selected_mode():
   {==}
 
 law an_unheld_success_needs_the_exact_candidate_and_a_skipped_head:
-  {qualification_landed_of(QualDecided{MutationUnheld{}, ReadObserved{T.GRun{0, "cand\n"}}, ReadSkipped{}}, fixture_oid_candidate(), "tgt") == True{} : Bool}
+  {qualification_landed_of(QualDecided{MutationUnheld{}, ReadObserved{T.GRun{0, Tx.str_cat(fixture_oid_candidate(), "\n")}}, ReadSkipped{}}, fixture_oid_candidate(), "tgt") == True{} : Bool}
 
 def an_unheld_success_needs_the_exact_candidate_and_a_skipped_head():
   {==}
 
 law a_held_success_needs_the_candidate_and_the_symbolic_target_head:
-  {qualification_landed_of(QualDecided{MutationHeld{"/holder"}, ReadObserved{T.GRun{0, "cand\n"}}, ReadObserved{T.GRun{0, "refs/heads/tgt\n"}}}, fixture_oid_candidate(), "tgt") == True{} : Bool}
+  {qualification_landed_of(QualDecided{MutationHeld{"/holder"}, ReadObserved{T.GRun{0, Tx.str_cat(fixture_oid_candidate(), "\n")}}, ReadObserved{T.GRun{0, "refs/heads/tgt\n"}}}, fixture_oid_candidate(), "tgt") == True{} : Bool}
 
 def a_held_success_needs_the_candidate_and_the_symbolic_target_head():
   {==}
 
 law a_held_attempt_without_a_head_read_is_not_landed:
-  {qualification_landed_of(QualDecided{MutationHeld{"/holder"}, ReadObserved{T.GRun{0, "cand\n"}}, ReadSkipped{}}, fixture_oid_candidate(), "tgt") == False{} : Bool}
+  {qualification_landed_of(QualDecided{MutationHeld{"/holder"}, ReadObserved{T.GRun{0, Tx.str_cat(fixture_oid_candidate(), "\n")}}, ReadSkipped{}}, fixture_oid_candidate(), "tgt") == False{} : Bool}
 
 def a_held_attempt_without_a_head_read_is_not_landed():
   {==}
@@ -3485,13 +3486,13 @@ def a_wrong_candidate_read_is_not_landed():
   {==}
 
 law a_wrong_symbolic_head_is_not_landed:
-  {qualification_landed_of(QualDecided{MutationHeld{"/holder"}, ReadObserved{T.GRun{0, "cand\n"}}, ReadObserved{T.GRun{0, "refs/heads/other\n"}}}, fixture_oid_candidate(), "tgt") == False{} : Bool}
+  {qualification_landed_of(QualDecided{MutationHeld{"/holder"}, ReadObserved{T.GRun{0, Tx.str_cat(fixture_oid_candidate(), "\n")}}, ReadObserved{T.GRun{0, "refs/heads/other\n"}}}, fixture_oid_candidate(), "tgt") == False{} : Bool}
 
 def a_wrong_symbolic_head_is_not_landed():
   {==}
 
 law an_unknown_mode_is_not_landed:
-  {qualification_landed_of(QualDecided{MutationUnknown{}, ReadObserved{T.GRun{0, "cand\n"}}, ReadObserved{T.GRun{0, "refs/heads/tgt\n"}}}, fixture_oid_candidate(), "tgt") == False{} : Bool}
+  {qualification_landed_of(QualDecided{MutationUnknown{}, ReadObserved{T.GRun{0, Tx.str_cat(fixture_oid_candidate(), "\n")}}, ReadObserved{T.GRun{0, "refs/heads/tgt\n"}}}, fixture_oid_candidate(), "tgt") == False{} : Bool}
 
 def an_unknown_mode_is_not_landed():
   {==}
@@ -4345,13 +4346,13 @@ def an_association_whose_candidate_read_answers_another_value_is_not_bound():
   {==}
 
 law an_association_whose_target_read_was_skipped_is_not_bound:
-  {association_bound(AssociationObserved{"associate", fixture_assoc_request(fixture_oid_candidate(), fixture_oid_basis(), "tgt", "/holder", "/common"), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", A.AssocReads{A.AssocReadPerformed{T.GRun{0, "cand\n"}}, A.AssocReadPerformed{T.GRun{0, "base\n"}}, A.AssocReadSkipped{}, A.AssocReadSkipped{}, A.AssocReadPerformed{T.GRun{0, "/common\n"}}, A.AssocReadPerformed{T.GRun{0, "/common\n"}}}}, fixture_oid_candidate(), fixture_oid_basis(), "/common", "/repo", "tgt", fixture_held_qualification(fixture_oid_candidate(), "tgt"), fixture_reserved(), fixture_reservation()) == False{} : Bool}
+  {association_bound(AssociationObserved{"associate", fixture_assoc_request(fixture_oid_candidate(), fixture_oid_basis(), "tgt", "/holder", "/common"), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", A.AssocReads{A.AssocReadPerformed{T.GRun{0, Tx.str_cat(fixture_oid_candidate(), "\n")}}, A.AssocReadPerformed{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}}, A.AssocReadSkipped{}, A.AssocReadSkipped{}, A.AssocReadPerformed{T.GRun{0, "/common\n"}}, A.AssocReadPerformed{T.GRun{0, "/common\n"}}}}, fixture_oid_candidate(), fixture_oid_basis(), "/common", "/repo", "tgt", fixture_held_qualification(fixture_oid_candidate(), "tgt"), fixture_reserved(), fixture_reservation()) == False{} : Bool}
 
 def an_association_whose_target_read_was_skipped_is_not_bound():
   {==}
 
 law an_association_whose_holder_read_is_skipped_is_not_bound:
-  {association_bound(AssociationObserved{"associate", fixture_assoc_request(fixture_oid_candidate(), fixture_oid_basis(), "tgt", "/holder", "/common"), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", A.AssocReads{A.AssocReadPerformed{T.GRun{0, "cand\n"}}, A.AssocReadPerformed{T.GRun{0, "base\n"}}, A.AssocReadPerformed{T.GRun{0, "base\n"}}, A.AssocReadPerformed{T.GRun{0, ""}}, A.AssocReadSkipped{}, A.AssocReadSkipped{}}}, fixture_oid_candidate(), fixture_oid_basis(), "/common", "/repo", "tgt", fixture_held_qualification(fixture_oid_candidate(), "tgt"), fixture_reserved(), fixture_reservation()) == False{} : Bool}
+  {association_bound(AssociationObserved{"associate", fixture_assoc_request(fixture_oid_candidate(), fixture_oid_basis(), "tgt", "/holder", "/common"), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", A.AssocReads{A.AssocReadPerformed{T.GRun{0, Tx.str_cat(fixture_oid_candidate(), "\n")}}, A.AssocReadPerformed{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}}, A.AssocReadPerformed{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}}, A.AssocReadPerformed{T.GRun{0, ""}}, A.AssocReadSkipped{}, A.AssocReadSkipped{}}}, fixture_oid_candidate(), fixture_oid_basis(), "/common", "/repo", "tgt", fixture_held_qualification(fixture_oid_candidate(), "tgt"), fixture_reserved(), fixture_reservation()) == False{} : Bool}
 
 def an_association_whose_holder_read_is_skipped_is_not_bound():
   {==}
@@ -4363,26 +4364,26 @@ def a_refused_shared_association_keeps_the_reads_it_reached():
   {==}
 
 law the_six_read_positions_are_written_in_order_with_their_own_observations:
-  {reads_fields(A.AssocReads{A.AssocReadPerformed{T.GRun{0, "aa\n"}}, A.AssocReadSkipped{}, A.AssocReadPerformed{T.GRun{1, ""}}, A.AssocReadPerformed{T.GRun{0, "cc\n"}}, A.AssocReadPerformed{T.GRun{0, "dd\n"}}, A.AssocReadSkipped{}}, Con{"suffix", Nil{}}) == Con{"reads", Con{"performed", Con{"run", Con{"0", Con{"aa\n", Con{"skipped", Con{"performed", Con{"run", Con{"1", Con{"", Con{"performed", Con{"run", Con{"0", Con{"cc\n", Con{"performed", Con{"run", Con{"0", Con{"dd\n", Con{"skipped", Con{"suffix", Nil{}}}}}}}}}}}}}}}}}}}}}}} : List<String>}
+  {reads_fields(A.AssocReads{A.AssocReadPerformed{T.GRun{0, "aa\n"}}, A.AssocReadSkipped{}, A.AssocReadPerformed{T.GRun{1, ""}}, A.AssocReadPerformed{T.GRun{0, "cc\n"}}, A.AssocReadPerformed{T.GRun{0, "dd\n"}}, A.AssocReadSkipped{}}, Con{"suffix", Nil{}}) == Con{"reads", Con{"performed", Con{"run", Con{"0", Con{"aa\n", Con{"skipped", Con{"performed", Con{"run", Con{"1", Con{"", Con{"performed", Con{"run", Con{"0", Con{"cc\n", Con{"performed", Con{"run", Con{"0", Con{"dd\n", Con{"skipped", Con{"suffix", Nil{}}}}}}}}}}}}}}}}}}}}} : List<String>}
 
 def the_six_read_positions_are_written_in_order_with_their_own_observations():
   {==}
 
 law the_request_is_written_before_the_reads:
-  {request_fields(A.AssociationRequested{"a1", "/cm", "tgt", "/repo", "c1", "b1", "/holder", "r1"}, Con{"zz", Nil{}}) == Con{"request", Con{"a1", Con{"/cm", Con{"tgt", Con{"/repo", Con{"c1", Con{"b1", Con{"/holder", Con{"r1", Con{"zz", Nil{}}}}}}}}}}}} : List<String>}
+  {request_fields(A.AssociationRequested{"a1", "/cm", "tgt", "/repo", "c1", "b1", "/holder", "r1"}, Con{"zz", Nil{}}) == Con{"request", Con{"a1", Con{"/cm", Con{"tgt", Con{"/repo", Con{"c1", Con{"b1", Con{"/holder", Con{"r1", Con{"zz", Nil{}}}}}}}}}}} : List<String>}
 
 def the_request_is_written_before_the_reads():
   {==}
 
 law the_association_record_writes_its_reads_before_the_suffix:
   for request: A.AssociationRequest
-  {association_fields(AssociationObserved{"associate", request, "c", "b", "b", "/common", "/common", A.AssocReads{A.AssocReadPerformed{T.GRun{0, "aa\n"}}, A.AssocReadSkipped{}, A.AssocReadSkipped{}, A.AssocReadSkipped{}, A.AssocReadSkipped{}, A.AssocReadPerformed{T.GRun{0, "ff\n"}}}}, Con{"suffix", Nil{}}) == Con{"association-observed", Con{"associate", Con{"c", Con{"b", Con{"b", Con{"/common", Con{"/common", request_fields(request, Con{"reads", Con{"performed", Con{"run", Con{"0", Con{"aa\n", Con{"skipped", Con{"skipped", Con{"skipped", Con{"skipped", Con{"performed", Con{"run", Con{"0", Con{"ff\n", Con{"suffix", Nil{}}}}}}}}}}}}}}}}}}}}}}}}}}}} : List<String>}
+  {association_fields(AssociationObserved{"associate", request, "c", "b", "b", "/common", "/common", A.AssocReads{A.AssocReadPerformed{T.GRun{0, "aa\n"}}, A.AssocReadSkipped{}, A.AssocReadSkipped{}, A.AssocReadSkipped{}, A.AssocReadSkipped{}, A.AssocReadPerformed{T.GRun{0, "ff\n"}}}}, Con{"suffix", Nil{}}) == Con{"association-observed", Con{"associate", Con{"c", Con{"b", Con{"b", Con{"/common", Con{"/common", request_fields(request, Con{"reads", Con{"performed", Con{"run", Con{"0", Con{"aa\n", Con{"skipped", Con{"skipped", Con{"skipped", Con{"skipped", Con{"performed", Con{"run", Con{"0", Con{"ff\n", Con{"suffix", Nil{}}}}}}}}}}}}}}})}}}}}}} : List<String>}
 
 def the_association_record_writes_its_reads_before_the_suffix(request):
   {==}
 
 law an_association_whose_normalized_candidate_is_not_a_supported_name_is_not_bound:
-  {association_bound(AssociationObserved{"associate", fixture_assoc_request("cand", fixture_oid_basis(), "tgt", "/holder", "/common"), "cand", fixture_oid_basis(), "cand", "/common", "/common", fixture_reads_of("cand", fixture_oid_basis(), "/common")}, "cand", fixture_oid_basis(), "/common", "/repo", "tgt", fixture_held_qualification("cand", "tgt"), fixture_reserved(), fixture_reservation()) == False{} : Bool}
+  {association_bound(AssociationObserved{"associate", fixture_assoc_request("cand", fixture_oid_basis(), "tgt", "/holder", "/common"), "cand", fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads_of("cand", fixture_oid_basis(), "/common")}, "cand", fixture_oid_basis(), "/common", "/repo", "tgt", fixture_held_qualification("cand", "tgt"), fixture_reserved(), fixture_reservation()) == False{} : Bool}
 
 def an_association_whose_normalized_candidate_is_not_a_supported_name_is_not_bound():
   {==}
@@ -4397,4 +4398,10 @@ law an_association_whose_ancestor_read_failed_is_not_bound:
   {association_bound(AssociationObserved{"associate", fixture_assoc_request(fixture_oid_candidate(), fixture_oid_basis(), "tgt", "/holder", "/common"), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", A.AssocReads{A.AssocReadPerformed{T.GRun{0, Tx.str_cat(fixture_oid_candidate(), "\n")}}, A.AssocReadPerformed{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}}, A.AssocReadPerformed{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}}, A.AssocReadPerformed{T.GRun{128, ""}}, A.AssocReadPerformed{T.GRun{0, "/common\n"}}, A.AssocReadPerformed{T.GRun{0, "/common\n"}}}}, fixture_oid_candidate(), fixture_oid_basis(), "/common", "/repo", "tgt", fixture_held_qualification(fixture_oid_candidate(), "tgt"), fixture_reserved(), fixture_reservation()) == False{} : Bool}
 
 def an_association_whose_ancestor_read_failed_is_not_bound():
+  {==}
+
+law the_two_common_positions_are_written_with_their_own_spellings:
+  {reads_fields(A.AssocReads{A.AssocReadSkipped{}, A.AssocReadSkipped{}, A.AssocReadSkipped{}, A.AssocReadSkipped{}, A.AssocReadPerformed{T.GRun{0, "/common\n"}}, A.AssocReadPerformed{T.GRun{0, "/common"}}}, Con{"suffix", Nil{}}) == Con{"reads", Con{"skipped", Con{"skipped", Con{"skipped", Con{"skipped", Con{"performed", Con{"run", Con{"0", Con{"/common\n", Con{"performed", Con{"run", Con{"0", Con{"/common", Con{"suffix", Nil{}}}}}}}}}}}}}}} : List<String>}
+
+def the_two_common_positions_are_written_with_their_own_spellings():
   {==}

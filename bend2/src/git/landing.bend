@@ -32,10 +32,10 @@ type LandingRequest is Data:
 type Landing is Data:
   LandingClaimFailed{error: T.HostError}
   LandingGuardBusy{target: String}
-  LandingAssociationRefused{request: A.AssociationRequest, step: String, observation: T.GitOut, reads: A.AssocReads, released: T.ReleaseRaw}
-  LandingOldValueMismatch{expected: String, found: String, reads: A.AssocReads, released: T.ReleaseRaw}
+  LandingAssociationRefused{request: A.AssociationRequest, step: String, observation: T.GitOut, reads: A.AssocReads, prior: A.AssocReads, released: T.ReleaseRaw}
+  LandingOldValueMismatch{expected: String, found: String, reads: A.AssocReads, prior: A.AssocReads, released: T.ReleaseRaw}
   LandingPublishRefused{outcome: P.IntentPublish, reads: A.AssocReads, released: T.ReleaseRaw}
-  LandingHeld{request: LandingRequest, candidate: String, basis: String, published: String,
+  LandingHeld{request: LandingRequest, candidate: String, basis: String, published: P.IntentPublish,
               mutation: T.CapturedRaw, reads: A.AssocReads, prior: A.AssocReads, released: T.ReleaseRaw}
 
 # The attempt scratch is derived from the canonical common directory and the attempt name:
@@ -136,8 +136,8 @@ def Landing.released(request: LandingRequest, handle: U32, outcome: Landing, rel
 
 def replace_release(outcome: Landing, release: T.ReleaseRaw) -> Landing:
   match outcome:
-    case LandingAssociationRefused{request, step, observation, reads, released}: LandingAssociationRefused{request, step, observation, reads, release}
-    case LandingOldValueMismatch{expected, found, reads, released}: LandingOldValueMismatch{expected, found, reads, release}
+    case LandingAssociationRefused{request, step, observation, reads, prior, released}: LandingAssociationRefused{request, step, observation, reads, prior, release}
+    case LandingOldValueMismatch{expected, found, reads, prior, released}: LandingOldValueMismatch{expected, found, reads, prior, release}
     case LandingPublishRefused{outcome, reads, released}: LandingPublishRefused{outcome, reads, release}
     case LandingHeld{request, candidate, basis, published, mutation, reads, prior, released}: LandingHeld{request, candidate, basis, published, mutation, reads, prior, release}
     case LandingClaimFailed{error}: LandingClaimFailed{error}
@@ -151,14 +151,14 @@ def Landing.stopped(request: LandingRequest, handle: U32, outcome: Landing) -> I
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(h)
     Landing.released(req, h, prior, T.release_raw_of(released))
 
-def Landing.associations(landing_request: LandingRequest, handle: U32, published: String, observation: A.Association, prior: A.AssocReads) -> IO(Landing):
+def Landing.associations(landing_request: LandingRequest, handle: U32, published: P.IntentPublish, observation: A.Association, prior: A.AssocReads) -> IO(Landing):
   match observation:
     case A.AssociationRefused{request, step, observation, reads}:
-      Landing.stopped(landing_request, handle, LandingAssociationRefused{request, step, observation, reads, T.ReleaseUnperformed{}})
+      Landing.stopped(landing_request, handle, LandingAssociationRefused{request, step, observation, reads, prior, T.ReleaseUnperformed{}})
     case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads}:
       Landing.old_value_checked(handle, landing_request, published, candidate_oid, basis_oid, target_head, reads, prior)
 
-def Landing.old_value_checked(handle: U32, request: LandingRequest, published: String, candidate: String, basis: String, head: String, reads: A.AssocReads, prior: A.AssocReads) -> IO(Landing):
+def Landing.old_value_checked(handle: U32, request: LandingRequest, published: P.IntentPublish, candidate: String, basis: String, head: String, reads: A.AssocReads, prior: A.AssocReads) -> IO(Landing):
   +h = handle
   +req = request
   +pub = published
@@ -170,10 +170,10 @@ def Landing.old_value_checked(handle: U32, request: LandingRequest, published: S
   +expected = expected_head(landingreq_old_target(req))
   Bool.pick(IO(Landing), Tx.str_eq(found, expected),
     Landing.mutated(h, req, cand, base, pub, seen, before),
-    Landing.stopped(req, h, LandingOldValueMismatch{expected, found, seen, T.ReleaseUnperformed{}}))
+    Landing.stopped(req, h, LandingOldValueMismatch{expected, found, seen, before, T.ReleaseUnperformed{}}))
 # The mutation runs through the guarded capture with the live claim descriptor, so the child
 # inherits the lock and the artifact retains the diagnostics and the terminal outcome.
-def Landing.mutated(handle: U32, request: LandingRequest, candidate: String, basis: String, published: String, reads: A.AssocReads, prior: A.AssocReads) -> IO(Landing):
+def Landing.mutated(handle: U32, request: LandingRequest, candidate: String, basis: String, published: P.IntentPublish, reads: A.AssocReads, prior: A.AssocReads) -> IO(Landing):
   +h = handle
   +req = request
   +pub = published
@@ -186,7 +186,7 @@ def Landing.mutated(handle: U32, request: LandingRequest, candidate: String, bas
     observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(argv, landingreq_repository(req), h, landingreq_guard(req), landingreq_artifact(req))
     Landing.release(h, req, cand, base, pub, T.captured_raw_of(observed), seen, before)
 
-def Landing.release(handle: U32, request: LandingRequest, candidate: String, basis: String, published: String, mutation: T.CapturedRaw, reads: A.AssocReads, prior: A.AssocReads) -> IO(Landing):
+def Landing.release(handle: U32, request: LandingRequest, candidate: String, basis: String, published: P.IntentPublish, mutation: T.CapturedRaw, reads: A.AssocReads, prior: A.AssocReads) -> IO(Landing):
   +h = handle
   +req = request
   +cand = candidate
@@ -204,14 +204,14 @@ def Landing.release(handle: U32, request: LandingRequest, candidate: String, bas
 def Landing.published(handle: U32, landing_request: LandingRequest, outcome: P.IntentPublish, +reads: A.AssocReads) -> IO(Landing):
   match outcome:
     case P.IntentBytesPublished{request, raw, path, content}:
-      Landing.associate_now(handle, landing_request, raw, reads)
+      Landing.associate_now(handle, landing_request, outcome, reads)
     case P.PublishRefused{request, step, name, raw}: Landing.stopped(landing_request, handle, LandingPublishRefused{P.PublishRefused{request, step, name, raw}, reads, T.ReleaseUnperformed{}})
     case P.PublishExistingPending{request, raw, path}: Landing.stopped(landing_request, handle, LandingPublishRefused{P.PublishExistingPending{request, raw, path}, reads, T.ReleaseUnperformed{}})
     case P.PublishContentMismatch{request, raw, expected, found}: Landing.stopped(landing_request, handle, LandingPublishRefused{P.PublishContentMismatch{request, raw, expected, found}, reads, T.ReleaseUnperformed{}})
     case P.PublishReadbackFailed{request, publication, path, error}: Landing.stopped(landing_request, handle, LandingPublishRefused{P.PublishReadbackFailed{request, publication, path, error}, reads, T.ReleaseUnperformed{}})
     case P.PublishHostFailed{step, request, error}: Landing.stopped(landing_request, handle, LandingPublishRefused{P.PublishHostFailed{step, request, error}, reads, T.ReleaseUnperformed{}})
 
-def Landing.associate_now(handle: U32, request: LandingRequest, published: String, prior: A.AssocReads) -> IO(Landing):
+def Landing.associate_now(handle: U32, request: LandingRequest, published: P.IntentPublish, prior: A.AssocReads) -> IO(Landing):
   +h = handle
   +req = request
   +pub = published
@@ -233,7 +233,7 @@ def Landing.claimed_associated(handle: U32, request: LandingRequest) -> IO(Landi
 def Landing.association_before_publish(handle: U32, landing_request: LandingRequest, observation: A.Association) -> IO(Landing):
   match observation:
     case A.AssociationRefused{request, step, observation, reads}:
-      Landing.stopped(landing_request, handle, LandingAssociationRefused{request, step, observation, reads, T.ReleaseUnperformed{}})
+      Landing.stopped(landing_request, handle, LandingAssociationRefused{request, step, observation, reads, A.reads_none(), T.ReleaseUnperformed{}})
     case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads}:
       Landing.publish_now(handle, landing_request, candidate_oid, basis_oid, reads)
 
@@ -320,10 +320,11 @@ law an_absent_old_target_consumes_an_absent_head:
   for artifact: String
   for attempt_directory: String
   for repository: String
-  {Landing.old_value_checked(1, LandingRequested{intent, name, "", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "", A.reads_none(), A.reads_none()) == (do IO<Landing>:
+  for published: P.IntentPublish
+  {Landing.old_value_checked(1, LandingRequested{intent, name, "", content, guard, artifact, attempt_directory, repository}, published, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "", A.reads_none(), A.reads_none()) == (do IO<Landing>:
     observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"update-ref", Con{qualified_target(intent_target(intent)), Con{"0123456789abcdef0123456789abcdef01234567", Con{mutation_old_value(""), Nil{}}}}}}), repository, 1, guard, artifact)
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(1)
-    IO.pure(Landing, LandingHeld{LandingRequested{intent, name, "", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "published", T.captured_raw_of(observed), A.reads_none(), A.reads_none(), T.release_raw_of(released)})) : IO(Landing)}
+    IO.pure(Landing, LandingHeld{LandingRequested{intent, name, "", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", published, T.captured_raw_of(observed), A.reads_none(), A.reads_none(), T.release_raw_of(released)})) : IO(Landing)}
 
 def an_absent_old_target_consumes_an_absent_head(intent,name,content,guard,artifact,attempt_directory,repository):
   {==}
@@ -336,10 +337,11 @@ law a_present_old_target_matching_the_head_consumes_it:
   for artifact: String
   for attempt_directory: String
   for repository: String
-  {Landing.old_value_checked(1, LandingRequested{intent, name, "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222", A.reads_none(), A.reads_none()) == (do IO<Landing>:
+  for published: P.IntentPublish
+  {Landing.old_value_checked(1, LandingRequested{intent, name, "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, published, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222", A.reads_none(), A.reads_none()) == (do IO<Landing>:
     observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"update-ref", Con{qualified_target(intent_target(intent)), Con{"0123456789abcdef0123456789abcdef01234567", Con{mutation_old_value("2222222222222222222222222222222222222222"), Nil{}}}}}}), repository, 1, guard, artifact)
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(1)
-    IO.pure(Landing, LandingHeld{LandingRequested{intent, name, "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "published", T.captured_raw_of(observed), A.reads_none(), A.reads_none(), T.release_raw_of(released)})) : IO(Landing)}
+    IO.pure(Landing, LandingHeld{LandingRequested{intent, name, "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", published, T.captured_raw_of(observed), A.reads_none(), A.reads_none(), T.release_raw_of(released)})) : IO(Landing)}
 
 def a_present_old_target_matching_the_head_consumes_it(intent,name,content,guard,artifact,attempt_directory,repository):
   {==}
@@ -352,9 +354,10 @@ law a_present_old_target_differing_from_the_head_is_refused:
   for artifact: String
   for attempt_directory: String
   for repository: String
-  {Landing.old_value_checked(1, LandingRequested{intent, name, "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "3333333333333333333333333333333333333333", A.reads_none(), A.reads_none()) == (do IO<Landing>:
+  for published: P.IntentPublish
+  {Landing.old_value_checked(1, LandingRequested{intent, name, "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, published, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "3333333333333333333333333333333333333333", A.reads_none(), A.reads_none()) == (do IO<Landing>:
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(1)
-    IO.pure(Landing, LandingOldValueMismatch{"2222222222222222222222222222222222222222", "3333333333333333333333333333333333333333", T.release_raw_of(released), A.reads_none()})) : IO(Landing)}
+    IO.pure(Landing, LandingOldValueMismatch{"2222222222222222222222222222222222222222", "3333333333333333333333333333333333333333", A.reads_none(), A.reads_none(), T.release_raw_of(released)})) : IO(Landing)}
 
 def a_present_old_target_differing_from_the_head_is_refused(intent,name,content,guard,artifact,attempt_directory,repository):
   {==}
@@ -368,7 +371,24 @@ def a_busy_guard_refuses_before_any_effect(request):
 
 law a_release_failure_keeps_the_earlier_refusal:
   for request: LandingRequest
-  {replace_release(LandingOldValueMismatch{"a", "b", T.ReleaseUnperformed{}, A.reads_none()}, T.ReleaseFailed{13, "release failed"}) == LandingOldValueMismatch{"a", "b", T.ReleaseFailed{13, "release failed"}, A.reads_none()} : Landing}
+  {replace_release(LandingOldValueMismatch{"a", "b", A.reads_none(), A.reads_none(), T.ReleaseUnperformed{}}, T.ReleaseFailed{13, "release failed"}) == LandingOldValueMismatch{"a", "b", A.reads_none(), A.reads_none(), T.ReleaseFailed{13, "release failed"} : Landing}
 
 def a_release_failure_keeps_the_earlier_refusal(request):
+  {==}
+
+law a_release_failure_keeps_both_association_records_and_the_publication:
+  for request: LandingRequest
+  for published: P.IntentPublish
+  for candidate: String
+  for basis: String
+  for mutation: T.CapturedRaw
+  {replace_release(LandingHeld{request, candidate, basis, published, mutation, A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "post\n"}}), A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "pre\n"}}), T.ReleaseUnperformed{}}, T.ReleaseFailed{13, "release failed"}) == LandingHeld{request, candidate, basis, published, mutation, A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "post\n"}}), A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "pre\n"}}), T.ReleaseFailed{13, "release failed"}} : Landing}
+
+def a_release_failure_keeps_both_association_records_and_the_publication(request, published, candidate, basis, mutation):
+  {==}
+
+law a_release_failure_keeps_the_refused_request_and_both_records:
+  {replace_release(LandingAssociationRefused{A.AssociationRequested{"a1", "/cm", "tgt", "/repo", "c1", "b1", "/holder", "r1"}, "holder-common", T.GRun{128, ""}, A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "post\n"}}), A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "pre\n"}}), T.ReleaseUnperformed{}}, T.ReleaseFailed{13, "release failed"}) == LandingAssociationRefused{A.AssociationRequested{"a1", "/cm", "tgt", "/repo", "c1", "b1", "/holder", "r1"}, "holder-common", T.GRun{128, ""}, A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "post\n"}}), A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "pre\n"}}), T.ReleaseFailed{13, "release failed"}} : Landing}
+
+def a_release_failure_keeps_the_refused_request_and_both_records():
   {==}

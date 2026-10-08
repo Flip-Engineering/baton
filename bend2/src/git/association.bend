@@ -484,7 +484,7 @@ def a_broken_read_is_a_failure_and_not_an_absent_ref():
 law a_failed_candidate_read_is_refused_with_its_own_observation:
   for request: AssociationRequest
   for reads: AssocReads
-  {Association.decide_observed(request, T.GRun{128, ""}, reads) == IO.pure(Association, AssociationRefused{request, "candidate", T.GRun{128, ""}, reads}) : IO(Association)}
+  {Association.decide_observed(request, T.GRun{128, ""}, reads) == IO.pure(Association, AssociationRefused{request, "candidate", T.GRun{128, ""}, reads_candidate(reads, AssocReadPerformed{T.GRun{128, ""}})}) : IO(Association)}
 
 def a_failed_candidate_read_is_refused_with_its_own_observation(request, reads):
   {==}
@@ -492,31 +492,31 @@ def a_failed_candidate_read_is_refused_with_its_own_observation(request, reads):
 law a_candidate_answer_that_is_not_an_object_name_is_refused:
   for request: AssociationRequest
   for reads: AssocReads
-  {Association.decide_observed(request, T.GRun{0, "not-an-object-name"}, reads) == IO.pure(Association, AssociationRefused{request, "candidate", T.GRun{0, "not-an-object-name"}, reads}) : IO(Association)}
+  {Association.decide_observed(request, T.GRun{0, "not-an-object-name"}, reads) == IO.pure(Association, AssociationRefused{request, "candidate", T.GRun{0, "not-an-object-name"}, reads_candidate(reads, AssocReadPerformed{T.GRun{0, "not-an-object-name"}})}) : IO(Association)}
 
 def a_candidate_answer_that_is_not_an_object_name_is_refused(request, reads):
   {==}
 
 # The retention equations: each handler keeps the reads performed before it, leaves the positions it
 # never reached skipped, and keeps the observation the refusing read actually produced.
-law a_failed_basis_read_is_refused_and_keeps_the_incoming_reads:
+law a_failed_basis_read_is_recorded_in_its_position_and_refused:
   for request: AssociationRequest
   for candidate_oid: String
   for reads: AssocReads
-  {basis_checked(request, candidate_oid, T.GRun{128, "fatal: not a git repository\n"}, reads) == IO.pure(Association, AssociationRefused{request, "basis", T.GRun{128, "fatal: not a git repository\n"}, reads}) : IO(Association)}
+  {basis_checked(request, candidate_oid, T.GRun{128, "fatal: not a git repository\n"}, reads) == IO.pure(Association, AssociationRefused{request, "basis", T.GRun{128, "fatal: not a git repository\n"}, reads_basis(reads, AssocReadPerformed{T.GRun{128, "fatal: not a git repository\n"}})}) : IO(Association)}
 
-def a_failed_basis_read_is_refused_and_keeps_the_incoming_reads(request, candidate_oid, reads):
+def a_failed_basis_read_is_recorded_in_its_position_and_refused(request, candidate_oid, reads):
   {==}
 
-law a_failed_ancestor_read_is_refused_and_keeps_the_incoming_reads:
+law a_failed_ancestor_read_is_recorded_in_its_position_and_refused:
   for request: AssociationRequest
   for candidate_oid: String
   for basis_oid: String
   for head: String
   for reads: AssocReads
-  {ancestor_decided(request, candidate_oid, basis_oid, head, T.GRun{1, ""}, reads) == IO.pure(Association, AssociationRefused{request, "ancestor", T.GRun{1, ""}, reads}) : IO(Association)}
+  {ancestor_decided(request, candidate_oid, basis_oid, head, T.GRun{1, ""}, reads) == IO.pure(Association, AssociationRefused{request, "ancestor", T.GRun{1, ""}, reads_ancestor(reads, AssocReadPerformed{T.GRun{1, ""}})}) : IO(Association)}
 
-def a_failed_ancestor_read_is_refused_and_keeps_the_incoming_reads(request, candidate_oid, basis_oid, head, reads):
+def a_failed_ancestor_read_is_recorded_in_its_position_and_refused(request, candidate_oid, basis_oid, head, reads):
   {==}
 
 law an_absent_target_skips_the_ancestor_read:
@@ -527,16 +527,6 @@ law an_absent_target_skips_the_ancestor_read:
   {ancestor_read(request, candidate_oid, basis_oid, "", reads) == holder_read(request, candidate_oid, basis_oid, "", reads) : IO(Association)}
 
 def an_absent_target_skips_the_ancestor_read(request, candidate_oid, basis_oid, reads):
-  {==}
-
-law an_absent_target_read_is_carried_as_the_target_head:
-  for request: AssociationRequest
-  for candidate_oid: String
-  for basis_oid: String
-  for reads: AssocReads
-  {target_decided(request, candidate_oid, basis_oid, T.GRun{1, ""}, reads) == ancestor_read(request, candidate_oid, basis_oid, "", reads) : IO(Association)}
-
-def an_absent_target_read_is_carried_as_the_target_head(request, candidate_oid, basis_oid, reads):
   {==}
 
 law a_requested_common_answer_returns_the_held_decision_with_the_reads:
@@ -606,4 +596,15 @@ law an_absent_target_read_is_recorded_and_skips_the_ancestor:
   {target_decided(request, candidate, basis, T.GRun{1, ""}, reads) == ancestor_read(request, candidate, basis, "", reads_target(reads, AssocReadPerformed{T.GRun{1, ""}})) : IO(Association)}
 
 def an_absent_target_read_is_recorded_and_skips_the_ancestor(request, candidate, basis, reads):
+  {==}
+
+law the_holder_read_is_recorded_in_its_own_position:
+  for request: AssociationRequest
+  for candidate: String
+  for basis: String
+  for head: String
+  for reads: AssocReads
+  {holder_decided(request, candidate, basis, head, T.GRun{0, "/common\n"}, reads) == destination_read(request, candidate, basis, head, "/common", reads_holder(reads, AssocReadPerformed{T.GRun{0, "/common\n"}})) : IO(Association)}
+
+def the_holder_read_is_recorded_in_its_own_position(request, candidate, basis, head, reads):
   {==}
