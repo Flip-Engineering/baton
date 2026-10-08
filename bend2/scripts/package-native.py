@@ -152,7 +152,7 @@ def stage_selected_context_payload(payload):
         destination = module_root.joinpath(*relative.parts)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
-        staged_files.append({'path': name, 'bytes': entry.get('bytes'), 'sha256': entry.get('sha256')})
+        staged_files.append({'path': name, **file_info(destination)})
 
     module_manifest = {
         'schema': 'baton2-selected-module-artifact-v1',
