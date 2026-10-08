@@ -17,7 +17,7 @@ jobs:
       - name: Checkout the immutable product commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: 790e9781caf665f9345159d5ee2dc4c27e6f8d29
+          ref: c66ce19e826b96795d29723427623fbd2fe2f4cd
           persist-credentials: false
 
       - name: Select Node 22
@@ -57,10 +57,10 @@ jobs:
             echo "kernel $(uname -s) $(uname -m) $(uname -r)"
             echo "archive_sha256 $(shasum -a 256 "$run/toolchain/bend-2.0.25-darwin-arm64.tar.gz" | awk '{print $1}')"
             echo "compiler_sha256 $(shasum -a 256 "$bend" | awk '{print $1}')"
-            echo "bend_version $("$bend" version 2>&1 | head -3 | tr '\n' ' ')"
+            echo "bend_version $("$bend" version 2>&1 | tr '\n' ' ')"
             echo "node $(node --version) $(command -v node)"
             echo "python $(python3 --version) $(command -v python3)"
-            echo "cc $(cc --version 2>&1 | head -1) $(command -v cc)"
+            echo "cc $(cc --version 2>&1 | tr '\n' ' ') $(command -v cc)"
             echo "ld_library_path ${LD_LIBRARY_PATH:-unset}"
             echo "cwd $GITHUB_WORKSPACE/bend2"
             echo "command $bend <module> --check-only"
@@ -101,9 +101,9 @@ jobs:
               "argv %s\ncwd %s\nexit %s\nclassification %s\nseconds %.1f\n" %
               (" ".join(argv), workspace, code, kind, seconds))
             with open(err_path, "rb") as err_file:
-              head = err_file.read(2400)
+              head = err_file.read()
             print("== %s exit=%s classification=%s seconds=%.1f" % (module, code, kind, seconds))
-            print(head.decode("utf-8", "replace")[:600])
+            print(head.decode("utf-8", "replace"))
             if kind != "completed" or code != 0:
               failures.append(module)
           print("SUMMARY modules=%d failures=%s" % (len(modules), failures or "none"))
@@ -195,9 +195,9 @@ jobs:
               "argv %s\ncwd %s\ncommon %s\nexit %s\nclassification %s\nseconds %.1f\n" %
               (" ".join(argv), workspace, common, code, kind, seconds))
           with open(stderr_path, encoding="utf-8", errors="replace") as err_file:
-              err_head = err_file.read(2000)
+              err_head = err_file.read()
           print("== guard-naming comparison exit=%s classification=%s seconds=%.1f" % (code, kind, seconds))
-          print(err_head[:600])
+          print(err_head)
           verdict_path = os.path.join(evidence, "guard-naming.verdict")
           if kind != "completed" or code != 0:
               open(verdict_path, "w").write("classification %s\nexit %s\nverdict unperformed\n" % (kind, code))
@@ -223,17 +223,17 @@ jobs:
                   continue
               fields = line.split("\t")
               if len(fields) != 10 or fields[0] != "case" or fields[2] != "pure" or fields[4] != "encoded" or fields[6] != "guard" or fields[8] != "token":
-                  malformed.append(line[:200])
+                  malformed.append(line)
                   continue
               try:
                   name, pure, encoded, guard, token = (json.loads(fields[1]), json.loads(fields[3]),
                                                        json.loads(fields[5]), json.loads(fields[7]), json.loads(fields[9]))
               except ValueError as error:
-                  malformed.append("%s (%s)" % (line[:120], error))
+                  malformed.append("%s (%s)" % (line, error))
                   continue
               if not (isinstance(name, str) and isinstance(encoded, str) and isinstance(guard, str)
                       and isinstance(token, str) and (pure is None or isinstance(pure, str))):
-                  malformed.append("field types %s" % line[:120])
+                  malformed.append("field types %s" % line)
                   continue
               if name not in expected:
                   unexpected.append(name)
