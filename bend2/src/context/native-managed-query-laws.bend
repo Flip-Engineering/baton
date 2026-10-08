@@ -102,7 +102,7 @@ def custody_transition_json(+current_witness: String, +mode: String) -> J.Json:
   J.Jpair{"custodyMode", J.Jstr{mode},
   J.Jpair{"observation", J.Jstr{"live"},
   J.Jpair{"historicalGuard", J.Jstr{"not-carried"},
-  J.Jpair{"terminalStatus", J.Jstr{"unavailable"}, J.Jnil{}}}}}}}}}}}}
+  J.Jpair{"terminalStatus", J.Jstr{"unavailable"}, J.Jnil{}}}}}}}}}}}}}}
 
 def custody_transition_exited_json(+current_witness: String, +mode: String) -> J.Json:
   J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-custody-transition-v1"},
@@ -116,7 +116,7 @@ def custody_transition_exited_json(+current_witness: String, +mode: String) -> J
   J.Jpair{"custodyMode", J.Jstr{mode},
   J.Jpair{"observation", J.Jstr{"exited"},
   J.Jpair{"historicalGuard", J.Jstr{"not-carried"},
-  J.Jpair{"terminalStatus", J.Jstr{"known"}, J.Jnil{}}}}}}}}}}}}
+  J.Jpair{"terminalStatus", J.Jstr{"known"}, J.Jnil{}}}}}}}}}}}}}}
 
 law host_readiness_requires_the_bootstrap_digest_and_current_owner_witness:
   {Managed.keeper_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",

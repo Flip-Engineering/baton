@@ -534,7 +534,7 @@ def recovery_owner_loss_mutations(+handle: U32) -> IO(Unit):
     acknowledge_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.acknowledge(handle)
     operation("recovery-acknowledge",acknowledge_result)
 
-def recovery_terminal_observation(handle: U32) -> IO(Unit):
+def recovery_terminal_observation(+handle: U32) -> IO(Unit):
   do IO<Unit>:
     status : String <- IO.try(String,P.ProcessChild.wait(handle))
     printed : Unit <- IO.print("native-final-observation:" ++ status)
@@ -545,7 +545,7 @@ def recovery_observation_after_gate(+handle: U32, +phase: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(phase,"owner-loss"),
     recovery_owner_loss_mutations(handle),recovery_terminal_observation(handle))
 
-def recovery_observation_attached(handle: U32, +transition: String,
+def recovery_observation_attached(+handle: U32, +transition: String,
                                   +phase: String) -> IO(Unit):
   do IO<Unit>:
     printed : Unit <- IO.print("recovery-transition:" ++ transition)
