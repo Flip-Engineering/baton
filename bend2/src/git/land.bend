@@ -2276,6 +2276,49 @@ def shared_reserved_attested(repo: String, +target: String, cand: String, basis:
   +rel = T.release_raw_of(released)
   ld_attest_admit(AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), rel, IdentityObserved{common, common_observed, target}, ld_adv_association(obs), ld_adv_intent(obs), reservation})
 
+law the_reserved_continuation_runs_the_selected_route_and_releases_before_attesting:
+  for handle: U32
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  for guard: String
+  for common: String
+  for common_observed: T.GitOut
+  for reserved: String
+  for attempt_name: String
+  for attempt_parent: String
+  {shared_reserved_continue(handle, repo, target, cand, basis, guard, common, common_observed, reserved, attempt_name, attempt_parent) == (do IO<SharedLanding>:
+    o : LdAdvObs <- ld_adv_run(repo, target, cand, basis, LdAdvContext{handle, guard, shared_parent_path(reserved, "stderr"), attempt_name, common, reserved})
+    released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(handle)
+    shared_reserved_attested(repo, target, cand, basis, guard, common, common_observed, reserved, ReservationObserved{attempt_parent, attempt_name}, o, released)) : IO(SharedLanding)}
+
+def the_reserved_continuation_runs_the_selected_route_and_releases_before_attesting():
+  {==}
+
+# The evidence the reserved continuation attests: the guard and the reservation-derived artifact destination
+# are the same operands the capture call used, the capture and qualification are the ones the attempt
+# observation returned, and the release is the raw result of the same release call.
+law the_attested_evidence_carries_the_guard_and_the_reservation_derived_artifact:
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  for guard: String
+  for common: String
+  for common_observed: T.GitOut
+  for reserved: String
+  for reservation: ReservationIdentity
+  for obs: LdAdvObs
+  for released: Result<&1, &1, U32 & String, Unit>
+  {shared_reserved_attested(repo, target, cand, basis, guard, common, common_observed, reserved, reservation, obs, released) == ld_attest_admit(AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), T.release_raw_of(released), IdentityObserved{common, common_observed, target}, ld_adv_association(obs), ld_adv_intent(obs), reservation}) : IO(SharedLanding)}
+
+def the_attested_evidence_carries_the_guard_and_the_reservation_derived_artifact():
+  {==}
+
+# The reserved continuation hands the capture the context whose guard is the claim's guard and whose artifact
+# is the reservation's stderr path, then releases the claim, then attests the observation it ran. The
+# mutation, the release and the attestation are the real calls, in that order.
 def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, common: String, common_observed: T.GitOut, reserved: String, attempt_name: String, attempt_parent: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
