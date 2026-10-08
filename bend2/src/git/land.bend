@@ -1856,6 +1856,133 @@ def ld_adv_intent_begin(+ctx: LdAdvCtx, mode: MutationMode, +repo: String, +targ
     published : Pb.IntentPublish <- Pb.Intent.publish_intent(intent, ladvctx_reserved(cx), "intent", content)
     ld_adv_intent_published(published, intent, expected, ev, m, repo, target, cand, basis, cx, holder)
 
+law a_content_mismatch_stops_the_held_route_with_qualification_unperformed:
+  for ctx: LdAdvCtx
+  {ld_adv_intent_published(Pb.PublishContentMismatch{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "record bytes", "expected bytes", "found bytes"}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"publication-content-mismatch"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishContentMismatch{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "record bytes", "expected bytes", "found bytes"}}, IntentUnprepared{}, IntentHolderUnperformed{}}})} : IO(LdAdvObs)}
+
+def a_content_mismatch_stops_the_held_route_with_qualification_unperformed(ctx):
+  {==}
+law a_readback_failure_stops_the_held_route_with_qualification_unperformed:
+  for ctx: LdAdvCtx
+  {ld_adv_intent_published(Pb.PublishReadbackFailed{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publication", shared_intent_path(ctx), T.HostError{1, "no such file"}}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"publication-readback-failed"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishReadbackFailed{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publication", shared_intent_path(ctx), T.HostError{1, "no such file"}}}, IntentUnprepared{}, IntentHolderUnperformed{}}})} : IO(LdAdvObs)}
+
+def a_readback_failure_stops_the_held_route_with_qualification_unperformed(ctx):
+  {==}
+law a_publication_host_failure_stops_the_held_route_with_qualification_unperformed:
+  for ctx: LdAdvCtx
+  {ld_adv_intent_published(Pb.PublishHostFailed{"readback", shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), T.HostError{5, "i/o error"}}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"publication-host-failed"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishHostFailed{"readback", shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), T.HostError{5, "i/o error"}}}, IntentUnprepared{}, IntentHolderUnperformed{}}})} : IO(LdAdvObs)}
+
+def a_publication_host_failure_stops_the_held_route_with_qualification_unperformed(ctx):
+  {==}
+law a_qualification_host_failure_stops_the_held_route_before_the_holder:
+  for ctx: LdAdvCtx
+  {ld_adv_intent_qualified(Fail{8 & "i/o error"}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"qualification-host-failed"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualificationFailed{"qualify", T.HostError{8, "i/o error"}}, IntentHolderUnperformed{}}})} : IO(LdAdvObs)}
+
+def a_qualification_host_failure_stops_the_held_route_before_the_holder(ctx):
+  {==}
+law a_pending_qualification_stops_the_held_route_before_the_holder:
+  for ctx: LdAdvCtx
+  {ld_adv_intent_verdict(shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, "record bytes", It.VerdictPending{"pending bytes", shared_intent_path(ctx), "the record waits"}, fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"qualification-pending"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualificationRefused{"pending bytes", shared_intent_path(ctx), "the record waits", ""}, IntentHolderUnperformed{}}})} : IO(LdAdvObs)}
+
+def a_pending_qualification_stops_the_held_route_before_the_holder(ctx):
+  {==}
+law a_refused_qualification_stops_the_held_route_before_the_holder:
+  for ctx: LdAdvCtx
+  {ld_adv_intent_verdict(shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, "record bytes", It.VerdictRefused{"refused bytes", "the record names another path"}, fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"qualification-refused"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualificationRefused{"refused bytes", shared_intent_path(ctx), "", "the record names another path"}, IntentHolderUnperformed{}}})} : IO(LdAdvObs)}
+
+def a_refused_qualification_stops_the_held_route_before_the_holder(ctx):
+  {==}
+law an_unknown_route_stops_the_held_handler_without_a_holder_read:
+  for ctx: LdAdvCtx
+  {ld_adv_intent_held(shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), "admitted bytes", shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, "/holder", fixture_matching_held_evidence(ctx), MutationUnknown{}, "r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"route-unknown"}, MutationUnknown{}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualified{"admitted bytes", shared_intent_path(ctx)}, IntentHolderUnperformed{}}})} : IO(LdAdvObs)}
+
+def an_unknown_route_stops_the_held_handler_without_a_holder_read(ctx):
+  {==}
+
+# The evidence builder the mismatch laws share, so each law varies one operand of a complete record.
+def fixture_intent_of(request: It.IntentInput, reserved: String, publication: IntentPublication, preparation: IntentPreparation, holder: IntentHolderReads) -> IntentEvidence:
+  IntentBound{request, intent_expected_path(reserved), publication, preparation, holder}
+
+def fixture_held_intent_bound(+reserved: String, +common: String, holder: IntentHolderReads) -> IntentEvidence:
+  fixture_bound_intent(fixture_intent_request(reserved, "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", common), reserved, "tgt", fixture_oid_candidate(), fixture_oid_basis(), holder)
+
+law a_failed_head_holder_read_is_not_bound:
+  {intent_bound(fixture_held_intent_bound(fixture_reserved(), "/common", IntentHolderRead{T.GRun{128, "fatal: not a git repository"}, T.GRun{0, ""}, T.GRun{0, ""}}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == False{}} : Bool}
+
+def a_failed_head_holder_read_is_not_bound():
+  {==}
+law a_wrong_head_holder_read_is_not_bound:
+  {intent_bound(fixture_held_intent_bound(fixture_reserved(), "/common", IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_candidate(), "\n")}, T.GRun{0, ""}, T.GRun{0, ""}}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == False{}} : Bool}
+
+def a_wrong_head_holder_read_is_not_bound():
+  {==}
+law a_dirty_index_holder_read_is_not_bound:
+  {intent_bound(fixture_held_intent_bound(fixture_reserved(), "/common", IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, "M\\tfile"}, T.GRun{0, ""}}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == False{}} : Bool}
+
+def a_dirty_index_holder_read_is_not_bound():
+  {==}
+law a_dirty_status_holder_read_is_not_bound:
+  {intent_bound(fixture_held_intent_bound(fixture_reserved(), "/common", IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, ""}, T.GRun{0, "?? file"}}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == False{}} : Bool}
+
+def a_dirty_status_holder_read_is_not_bound():
+  {==}
+law a_complete_held_holder_read_is_bound:
+  {intent_bound(fixture_held_intent_bound(fixture_reserved(), "/common", IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, ""}, T.GRun{0, ""}}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == True{}} : Bool}
+
+def a_complete_held_holder_read_is_bound():
+  {==}
+law a_request_for_another_target_is_not_bound:
+  {intent_bound(fixture_intent_of(fixture_intent_request(fixture_reserved(), "/repo", "other", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), IntentPublished{Pb.IntentBytesPublished{fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), Pb.production_record("published", intent_expected_path(fixture_reserved()), "0"), intent_expected_path(fixture_reserved()), Lg.intent_content(fixture_oid_candidate(), fixture_oid_basis(), "tgt")}}, IntentQualified{Pb.production_record("qualified", intent_expected_path(fixture_reserved()), "0"), intent_expected_path(fixture_reserved())}, IntentHolderUnperformed{}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == False{}} : Bool}
+
+def a_request_for_another_target_is_not_bound():
+  {==}
+law a_publication_for_another_path_is_not_bound:
+  {intent_bound(fixture_intent_of(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), IntentPublished{Pb.IntentBytesPublished{fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), Pb.production_record("published", "/elsewhere", "0"), "/elsewhere", Lg.intent_content(fixture_oid_candidate(), fixture_oid_basis(), "tgt")}}, IntentQualified{Pb.production_record("qualified", intent_expected_path(fixture_reserved()), "0"), intent_expected_path(fixture_reserved())}, IntentHolderUnperformed{}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == False{}} : Bool}
+
+def a_publication_for_another_path_is_not_bound():
+  {==}
+law a_publication_record_for_another_path_is_not_bound:
+  {intent_bound(fixture_intent_of(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), IntentPublished{Pb.IntentBytesPublished{fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), Pb.production_record("published", "/elsewhere", "0"), intent_expected_path(fixture_reserved()), Lg.intent_content(fixture_oid_candidate(), fixture_oid_basis(), "tgt")}}, IntentQualified{Pb.production_record("qualified", intent_expected_path(fixture_reserved()), "0"), intent_expected_path(fixture_reserved())}, IntentHolderUnperformed{}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == False{}} : Bool}
+
+def a_publication_record_for_another_path_is_not_bound():
+  {==}
+law a_publication_for_another_content_is_not_bound:
+  {intent_bound(fixture_intent_of(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), IntentPublished{Pb.IntentBytesPublished{fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), Pb.production_record("published", intent_expected_path(fixture_reserved()), "0"), intent_expected_path(fixture_reserved()), Lg.intent_content(fixture_oid_basis(), fixture_oid_candidate(), "tgt")}}, IntentQualified{Pb.production_record("qualified", intent_expected_path(fixture_reserved()), "0"), intent_expected_path(fixture_reserved())}, IntentHolderUnperformed{}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == False{}} : Bool}
+
+def a_publication_for_another_content_is_not_bound():
+  {==}
+law a_qualification_record_for_another_path_is_not_bound:
+  {intent_bound(fixture_intent_of(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), IntentPublished{Pb.IntentBytesPublished{fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), Pb.production_record("published", intent_expected_path(fixture_reserved()), "0"), intent_expected_path(fixture_reserved()), Lg.intent_content(fixture_oid_candidate(), fixture_oid_basis(), "tgt")}}, IntentQualified{Pb.production_record("qualified", "/elsewhere", "0"), intent_expected_path(fixture_reserved())}, IntentHolderUnperformed{}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == False{}} : Bool}
+
+def a_qualification_record_for_another_path_is_not_bound():
+  {==}
+law a_complete_producer_shaped_intent_is_bound:
+  {intent_bound(fixture_intent_of(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), IntentPublished{Pb.IntentBytesPublished{fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), Pb.production_record("published", intent_expected_path(fixture_reserved()), "0"), intent_expected_path(fixture_reserved()), Lg.intent_content(fixture_oid_candidate(), fixture_oid_basis(), "tgt")}}, IntentQualified{Pb.production_record("qualified", intent_expected_path(fixture_reserved()), "0"), intent_expected_path(fixture_reserved())}, IntentHolderUnperformed{}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == True{}} : Bool}
+
+def a_complete_producer_shaped_intent_is_bound():
+  {==}
+law a_held_decided_mismatch_stops_with_the_performed_reads:
+  for ctx: LdAdvCtx
+  {ld_adv_intent_decided(False{}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), "admitted bytes", shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, ""}, T.GRun{0, ""}}, fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"intent-mismatch"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualified{"admitted bytes", shared_intent_path(ctx)}, IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, ""}, T.GRun{0, ""}}}})} : IO(LdAdvObs)}
+
+def a_held_decided_mismatch_stops_with_the_performed_reads(ctx):
+  {==}
+law the_unready_holder_evidence_serializes_its_own_step_and_reason:
+  {intent_holder_fields(IntentHolderUnready{"holder", "the worktree is unready", "record bytes"}, Nil{}) == Con{"holder-unready", Con{"holder", Con{"the worktree is unready", Con{"record bytes", Nil{}}}}}} : List<String>}
+
+def the_unready_holder_evidence_serializes_its_own_step_and_reason():
+  {==}
+law the_observed_holder_evidence_serializes_its_three_reads:
+  {intent_holder_fields(IntentHolderRead{T.GRun{0, "abc\\n"}, T.GRun{0, ""}, T.GRun{0, ""}}, Nil{}) == Con{"holder-read", Con{"run", Con{"0", Con{"abc\\n", Con{"run", Con{"0", Con{"", Con{"run", Con{"0", Con{"", Nil{}}}}}}}}}}}}} : List<String>}
+
+def the_observed_holder_evidence_serializes_its_three_reads():
+  {==}
+law the_failed_holder_evidence_serializes_its_step_and_host_error:
+  {intent_holder_fields(IntentHolderFailed{"holder", fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), T.HostError{8, "i/o error"}}, Nil{}) == Con{"holder-failed", Con{"holder", Con{"host-error", Con{"8", Con{"i/o error", Con{"intent-request", Con{"attempt-1", Con{"/common", Con{"tgt", Con{"/repo", Con{fixture_oid_candidate(), Con{fixture_oid_basis(), Con{intent_expected_path(fixture_reserved()), Con{"/holder", Con{"", Nil{}}}}}}}}}}}}}}}}}}} : List<String>}
+
+def the_failed_holder_evidence_serializes_its_step_and_host_error():
+  {==}
+
 def ld_adv_held_compared(check: AssociationCheck, +request: A.AssociationRequest, candidate_oid: String, basis_oid: String, target_head: String, holder_common: String, destination_common: String, reads: A.AssocReads, +path: String, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match check:
     case AssociationDisagreed{step}: IO.pure(LdAdvObs, ld_adv_mismatched(step, request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads, MutationHeld{path}))
