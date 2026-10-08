@@ -507,7 +507,7 @@ def boundary_member(+object: J.Json, +key: String) -> J.Json:
 def boundary_text(+object: J.Json, +key: String) -> String:
   Req.text_of(boundary_member(object, key))
 
-def managed_exit_code(+kind: String, parsed: Maybe<U32>) -> ManagedExit:
+def managed_exit_code(+kind: String, +parsed: Maybe<U32>) -> ManagedExit:
   match parsed:
     case Some{+code}:
       Bool.pick(ManagedExit, String.eq(kind, "exit"),
@@ -1232,7 +1232,6 @@ def managed_prepare_owner(+db: String, +binding: String, +owner: String,
                           +physical_identity: String, +lock: U32,
                           +budget: U32) -> IO(Unit):
   do IO<Unit>:
-    owner_ready : Unit <- IO.try(Unit, Instance.owner(db))
     owner_witness : String <- IO.try(String, Instance.owner_witness(db))
     origin_attempt : String <- owner_origin_attempt(db, binding, owner)
     managed_prepare_roles(db, binding, owner, query, request, cwd, worktree,

@@ -3252,7 +3252,7 @@ static int br_instance_request(const char *database,BrInstanceFrame frame,const 
 }
 static void br_instance_owner_witness(BatonProcessCall *call) {
   BrOwnerRecord record={0};int socket_fd=-1;
-  call->error=br_instance_connect(call->database,0,&record,&socket_fd);
+  call->error=br_instance_connect(call->database,1,&record,&socket_fd);
   if(socket_fd>=0)close(socket_fd);
   if(call->error)return;
   char text[64];
