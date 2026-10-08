@@ -5,12 +5,6 @@ import Base
 def ProcessChild.spawn(argv: String, cwd: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./process-spawn.c"
 
-# Retains full producer stderr at spool. After wait, stderr contains at most
-# stderr_limit bytes and meta records exact observed/retained counts, truncation,
-# and the spool path. The configured ceiling is source-controlled by the caller.
-def ProcessChild.spawn_with_file_bounded(argv: String, cwd: String, stderr: String, stderr_limit: U32, spool: String, meta: String) -> IO(Result<&1,&1,U32 & String,U32>):
-  import "./process-spawn.c"
-
 type RetainedStart is Data:
   Retained{handle: U32}
   Unstarted{error: String}
@@ -22,13 +16,6 @@ type RetainedStart is Data:
 # the admission identity, and leaves the caller's argv to name
 # directory ++ "/" ++ artifact_name. `initial_stdin` is the only initial input.
 def ProcessChild.retain_with_file(directory: String, argv: String, cwd: String, stderr: String, artifact_name: String, artifact_bytes: String, initial_stdin: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,RetainedStart>):
-  import "./process-spawn.c"
-
-# The bounded variant retains the complete stderr stream at stderr ++ ".full".
-# After the child exits it writes at most stderr_limit bytes to stderr and records
-# the observed and retained byte counts plus the full-spool path in stderr ++ ".meta".
-# The limit is positive and is part of the durable attempt manifest.
-def ProcessChild.retain_with_file_bounded(directory: String, argv: String, cwd: String, stderr: String, stderr_limit: U32, artifact_name: String, artifact_bytes: String, initial_stdin: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,RetainedStart>):
   import "./process-spawn.c"
 
 def ProcessChild.retain_start(directory: String, argv: String, cwd: String, stderr: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32> & String>):
