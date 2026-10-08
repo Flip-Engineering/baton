@@ -13,6 +13,28 @@ EXE = ROOT / '.scratch/bend2/baton2'
 CODEX_CONDUCTOR_SCRIPT = ROOT / 'bend2/scripts/codex-conductor.mjs'
 
 
+def install_public_queue_codex(testcase, directory):
+    directory = pathlib.Path(directory)
+    calls = directory / 'public-queue-calls.jsonl'
+    executable = directory / 'codex'
+    executable.write_text(
+        '#!' + sys.executable + '\n'
+        + 'import json,pathlib,sys\n'
+        + f'args=sys.argv[1:]\nwith pathlib.Path({str(calls)!r}).open("a") as output:\n'
+        + '    output.write(json.dumps(args) + chr(10))\n'
+        + "thread=args[args.index('--thread')+1]\n"
+        + 'print("Queued message fixture-submission for thread " + thread, flush=True)\n')
+    executable.chmod(0o700)
+    previous = os.environ.get('PATH')
+    if previous is None:
+        testcase.addCleanup(os.environ.pop, 'PATH', None)
+        os.environ['PATH'] = str(directory)
+    else:
+        testcase.addCleanup(os.environ.__setitem__, 'PATH', previous)
+        os.environ['PATH'] = str(directory) + os.pathsep + previous
+    return calls
+
+
 class CodexRootAdapter(unittest.TestCase):
     """Test the Codex Conductor adapter's report-triggered delivery and message formatting."""
 
@@ -20,6 +42,7 @@ class CodexRootAdapter(unittest.TestCase):
         if not EXE.exists():
             self.skipTest(f'Coordinator not built at {EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
+        install_public_queue_codex(self, self.temp.name)
         self.repo = pathlib.Path(self.temp.name) / 'repository'
         self.repo.mkdir()
         self.checkouts = pathlib.Path(self.temp.name) / 'checkouts'
@@ -350,6 +373,7 @@ class CodexRootEndToEnd(unittest.TestCase):
             self.skipTest(f'Coordinator not built at {EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.directory = pathlib.Path(self.temp.name)
+        install_public_queue_codex(self, self.directory)
         self.repo = self.directory / 'repository'
         self.repo.mkdir()
         self.db = self.directory / 'state.db'

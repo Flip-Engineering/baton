@@ -240,8 +240,11 @@ class FixedCoordinator(unittest.TestCase):
                     raise
 
     def recruit(self, name, harness):
-        return self.coord('recruit', name, 'root', harness, name, 'low', str(self.repo),
-                          name + '-branch', str(self.checkouts / name), self.base)
+        session = self.coord('recruit', name, 'root', harness, name, 'low', str(self.repo),
+                             name + '-branch', str(self.checkouts / name), self.base)
+        if harness == 'codex':
+            self.coord('connect', name, 'native-' + name, '')
+        return session
 
     def receiver(self, name, log=None):
         return self.coord('receiver', name, str(self.fixture), str(log or self.co_dir / (name + '.jsonl')))

@@ -183,7 +183,10 @@ class Receive(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.directory = pathlib.Path(self.temp.name)
         self.original_path = os.environ.get('PATH')
-        self.addCleanup(self.restore_path)
+        if self.original_path is None:
+            self.addCleanup(os.environ.pop, 'PATH', None)
+        else:
+            self.addCleanup(os.environ.__setitem__, 'PATH', self.original_path)
         self.repo = self.directory / 'repository'
         self.repo.mkdir()
         self.checkouts = self.directory / 'checkouts'
@@ -225,12 +228,6 @@ class Receive(unittest.TestCase):
         self.coord('role', 'root', 'principal-conductor')
         self.coord('attach', 'operator', 'terminal', '', '')
         self.coord('role', 'operator', 'operator')
-
-    def restore_path(self):
-        if self.original_path is None:
-            os.environ.pop('PATH', None)
-        else:
-            os.environ['PATH'] = self.original_path
 
     def close_children(self):
         for stream, connection in self.controls:
