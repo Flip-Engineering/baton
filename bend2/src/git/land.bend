@@ -818,6 +818,9 @@ type IntentPreparation is Data:
 type IntentHolderReads is Data:
   IntentHolderUnperformed{}
   IntentHolderRead{head: T.GitOut, index: T.GitOut, status: T.GitOut}
+  IntentHolderUnready{step: String, reason: String, raw: String}
+  IntentHolderPending{request: It.IntentInput, raw: String, pending: String}
+  IntentHolderFailed{step: String, request: It.IntentInput, error: T.HostError}
 
 # The intent evidence: the request the attempt fixed, the path that request was expected to name, the
 # publication outcome, the preparation outcome and the holder reads. The expected path is an operand,
@@ -1034,6 +1037,9 @@ def intent_holder_fields(holder: IntentHolderReads, rest: List<String>) -> List<
   match holder:
     case IntentHolderUnperformed{}: Con{"holder-unperformed", rest}
     case IntentHolderRead{head, index, status}: Con{"holder-read", observation_fields(head, observation_fields(index, observation_fields(status, rest)))}
+    case IntentHolderUnready{step, reason, raw}: Con{"holder-unready", Con{step, Con{reason, Con{raw, rest}}}}
+    case IntentHolderPending{request, raw, pending}: Con{"holder-pending", Con{raw, Con{pending, intent_request_fields(request, rest)}}}
+    case IntentHolderFailed{step, request, error}: Con{"holder-failed", Con{step, host_error_fields(error, intent_request_fields(request, rest))}}
 
 def intent_fields(intent: IntentEvidence, rest: List<String>) -> List<String>:
   match intent:
@@ -1697,10 +1703,16 @@ def intent_holder_bound(reads: IntentHolderReads, mode: MutationMode, basis: Str
               False{}),
             False{})
         case IntentHolderUnperformed{}: False{}
+        case IntentHolderUnready{step, reason, raw}: False{}
+        case IntentHolderPending{request, raw, pending}: False{}
+        case IntentHolderFailed{step, request, error}: False{}
     case MutationUnheld{}:
       match reads:
         case IntentHolderUnperformed{}: True{}
         case IntentHolderRead{head, index, status}: False{}
+        case IntentHolderUnready{step, reason, raw}: False{}
+        case IntentHolderPending{request, raw, pending}: False{}
+        case IntentHolderFailed{step, request, error}: False{}
     case MutationUnknown{}: False{}
 
 
@@ -1727,19 +1739,8 @@ def shared_intent_path(+ctx: LdAdvCtx) -> String:
 def shared_intent_input(+ctx: LdAdvCtx, holder: String, repo: String, target: String, cand: String, basis: String) -> It.IntentInput:
   It.IntentRequested{ladvctx_attempt(ctx), ladvctx_common(ctx), target, repo, cand, basis, shared_intent_path(ctx), holder, ""}
 
-# The selected route's two continuations stay distinct: an unheld attempt keeps MutationUnheld and runs
-# the compare-and-swap, a held one keeps its worktree, and an unknown route asserts nothing.
-def mode_is_unheld(mode: MutationMode) -> Bool:
-  match mode:
-    case MutationUnheld{}: True{}
-    case MutationHeld{path}: False{}
-    case MutationUnknown{}: False{}
-
-def mode_is_selected(mode: MutationMode) -> Bool:
-  match mode:
-    case MutationHeld{path}: True{}
-    case MutationUnheld{}: True{}
-    case MutationUnknown{}: False{}
+# The selected route is matched explicitly at each effect, so an unknown route never selects a
+# mutation and a held observer never runs on an unheld input.
 
 # A stage the attempt could not reach is stated as unperformed, and the stage it did reach keeps its own
 # record, error or performed reads. The attempt stops before the mutation and keeps the selected route.
@@ -1752,65 +1753,83 @@ def ld_adv_intent_accepted(intent: It.IntentInput, expected_path: String, public
   +bound = IntentBound{intent, expected_path, publication, preparation, holder_reads}
   intent_bound(bound, reserved, name, common, repo, target, candidate, basis, holder, mode)
 
+# The two mutations, one for each selected route, so the applied path names the effect it runs.
+def ld_adv_held_mutation(bound: IntentEvidence, path: String, +assoc: AssociationEvidence, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
+  do IO<LdAdvObs>:
+    obs : LdAdvObs <- ld_adv_wt(path, repo, target, cand, basis, ctx)
+    IO.pure(LdAdvObs, ld_adv_keep_intent(ld_adv_keep_association(obs, assoc), bound))
+
+def ld_adv_unheld_mutation(bound: IntentEvidence, +assoc: AssociationEvidence, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
+  do IO<LdAdvObs>:
+    obs : LdAdvObs <- ld_adv_cas_run(repo, target, cand, basis, ctx)
+    IO.pure(LdAdvObs, ld_adv_keep_intent(ld_adv_keep_association(obs, assoc), bound))
+
 def ld_adv_intent_applied(intent: It.IntentInput, expected_path: String, admitted_path: String, published: Pb.IntentPublish, raw: String, holder_reads: IntentHolderReads, +ev: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   +bound = IntentBound{intent, expected_path, IntentPublished{published}, IntentQualified{raw, admitted_path}, holder_reads}
-  +assoc = ev
-  +m = mode
-  do IO<LdAdvObs>:
-    obs : LdAdvObs <- Bool.pick(IO(LdAdvObs), mode_is_unheld(m), ld_adv_cas_run(repo, target, cand, basis, ctx), ld_adv_wt(mode_holder(m, repo), repo, target, cand, basis, ctx))
-    IO.pure(LdAdvObs, ld_adv_keep_intent(ld_adv_keep_association(obs, assoc), bound))
+  match mode:
+    case MutationHeld{path}: ld_adv_held_mutation(bound, path, ev, repo, target, cand, basis, ctx)
+    case MutationUnheld{}: ld_adv_unheld_mutation(bound, ev, repo, target, cand, basis, ctx)
+    case MutationUnknown{}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "route-unknown", mode, ev, IntentPublished{published}, IntentQualified{raw, admitted_path}, holder_reads))
 
 # The comparison is decided by the caller and matched here as a parameter, so a disagreement stops with
 # the retained evidence and runs no capture and no mutation.
-def ld_adv_intent_decided(check: Bool, intent: It.IntentInput, expected_path: String, admitted_path: String, published: Pb.IntentPublish, raw: String, holder_reads: IntentHolderReads, ev: AssociationEvidence, mode: MutationMode, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
+def ld_adv_intent_decided(check: Bool, intent: It.IntentInput, expected_path: String, admitted: String, admitted_path: String, published: Pb.IntentPublish, holder_reads: IntentHolderReads, +ev: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match check:
-    case True{}: ld_adv_intent_applied(intent, expected_path, admitted_path, published, raw, holder_reads, ev, mode, repo, target, cand, basis, ctx)
-    case False{}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "intent-mismatch", mode, ev, IntentPublished{published}, IntentQualified{raw, admitted_path}, holder_reads))
+    case True{}: ld_adv_intent_applied(intent, expected_path, admitted_path, published, admitted, holder_reads, ev, mode, repo, target, cand, basis, ctx)
+    case False{}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "intent-mismatch", mode, ev, IntentPublished{published}, IntentQualified{admitted, admitted_path}, holder_reads))
 
-# The holder helper's own returned request, record and qualified path are the values that continue; the
-# outer operands are expectations, not observations.
-def ld_adv_intent_observed(observed: It.IntentPrepared, intent: It.IntentInput, expected_path: String, published: Pb.IntentPublish, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx, +holder: String) -> IO(LdAdvObs):
+# The holder helper's own returned request, record and qualified path continue; the outer operands are
+# expectations, not observations. A producer fallback other than an observation keeps its own step,
+# record, request and error in the holder field, beside the qualification the verdict admitted.
+def ld_adv_intent_observed(observed: It.IntentPrepared, +intent: It.IntentInput, +expected_path: String, +admitted: String, +admitted_path: String, +published: Pb.IntentPublish, +holder: String, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match observed:
     case It.IntentObserved{request, raw: record, qualified_path, head, index, status}:
       +reads = IntentHolderRead{head, index, status}
-      ld_adv_intent_decided(ld_adv_intent_accepted(request, expected_path, IntentPublished{published}, IntentQualified{record, qualified_path}, reads, ladvctx_reserved(ctx), ladvctx_attempt(ctx), ladvctx_common(ctx), repo, target, cand, basis, holder, mode), request, expected_path, qualified_path, published, record, reads, assoc, mode, repo, target, cand, basis, ctx)
-    case It.IntentUnready{step, reason, raw: record}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "holder-unready", mode, assoc, IntentPublished{published}, IntentQualificationRefused{record, expected_path, "", reason}, IntentHolderUnperformed{}))
-    case It.IntentPending{request, raw: record, pending}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "holder-pending", mode, assoc, IntentPublished{published}, IntentQualificationRefused{record, expected_path, pending, ""}, IntentHolderUnperformed{}))
+      ld_adv_intent_decided(ld_adv_intent_accepted(request, expected_path, IntentPublished{published}, IntentQualified{record, qualified_path}, reads, ladvctx_reserved(ctx), ladvctx_attempt(ctx), ladvctx_common(ctx), repo, target, cand, basis, holder, mode), request, expected_path, record, qualified_path, published, reads, assoc, mode, repo, target, cand, basis, ctx)
+    case It.IntentUnready{step, reason, raw: record}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "holder-unready", mode, assoc, IntentPublished{published}, IntentQualified{admitted, admitted_path}, IntentHolderUnready{step, reason, record}))
+    case It.IntentPending{request, raw: record, pending}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "holder-pending", mode, assoc, IntentPublished{published}, IntentQualified{admitted, admitted_path}, IntentHolderPending{request, record, pending}))
     case It.IntentHostFailed{step, request, error}:
       match error:
-        case T.HostError{code, detail}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "holder-host-failed", mode, assoc, IntentPublished{published}, IntentQualificationFailed{"holder", T.HostError{code, detail}}, IntentHolderUnperformed{}))
+        case T.HostError{code, detail}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "holder-host-failed", mode, assoc, IntentPublished{published}, IntentQualified{admitted, admitted_path}, IntentHolderFailed{step, request, T.HostError{code, detail}}))
 
-# A held route observes the selected worktree; an unheld route performs no holder read at all.
-def ld_adv_intent_held(intent: It.IntentInput, expected_path: String, published: Pb.IntentPublish, raw: String, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx, +holder: String) -> IO(LdAdvObs):
-  Bool.pick(IO(LdAdvObs), mode_is_selected(mode),
-    (do IO<LdAdvObs>:
-      observed : It.IntentPrepared <- It.Intent.observe_holder(intent, raw, expected_path)
-      ld_adv_intent_observed(observed, intent, expected_path, published, assoc, mode, repo, target, cand, basis, ctx, holder)),
-    IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "route-unknown", mode, assoc, IntentPublished{published}, IntentQualified{raw, expected_path}, IntentHolderUnperformed{})))
+# The holder observation runs only on the selected held route, over the admitted record and path the
+# verdict returned rather than the expected operand.
+def ld_adv_intent_observed_from(+intent: It.IntentInput, +expected_path: String, +admitted: String, +admitted_path: String, +published: Pb.IntentPublish, +holder: String, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
+  do IO<LdAdvObs>:
+    observed : It.IntentPrepared <- It.Intent.observe_holder(intent, admitted, admitted_path)
+    ld_adv_intent_observed(observed, intent, expected_path, admitted, admitted_path, published, holder, assoc, mode, repo, target, cand, basis, ctx)
 
-def ld_adv_intent_unheld(intent: It.IntentInput, expected_path: String, admitted_path: String, published: Pb.IntentPublish, raw: String, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx, +holder: String) -> IO(LdAdvObs):
+def ld_adv_intent_held(+intent: It.IntentInput, +expected_path: String, +admitted: String, +admitted_path: String, +published: Pb.IntentPublish, +holder: String, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
+  match mode:
+    case MutationHeld{path}: ld_adv_intent_observed_from(intent, expected_path, admitted, admitted_path, published, holder, assoc, mode, repo, target, cand, basis, ctx)
+    case MutationUnheld{}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "route-unknown", mode, assoc, IntentPublished{published}, IntentQualified{admitted, admitted_path}, IntentHolderUnperformed{}))
+    case MutationUnknown{}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "route-unknown", mode, assoc, IntentPublished{published}, IntentQualified{admitted, admitted_path}, IntentHolderUnperformed{}))
+
+def ld_adv_intent_unheld(+intent: It.IntentInput, +expected_path: String, +admitted: String, +admitted_path: String, +published: Pb.IntentPublish, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx, +holder: String) -> IO(LdAdvObs):
   +reads = IntentHolderUnperformed{}
-  ld_adv_intent_decided(ld_adv_intent_accepted(intent, expected_path, IntentPublished{published}, IntentQualified{raw, admitted_path}, reads, ladvctx_reserved(ctx), ladvctx_attempt(ctx), ladvctx_common(ctx), repo, target, cand, basis, holder, mode), intent, expected_path, admitted_path, published, raw, reads, assoc, mode, repo, target, cand, basis, ctx)
+  ld_adv_intent_decided(ld_adv_intent_accepted(intent, expected_path, IntentPublished{published}, IntentQualified{admitted, admitted_path}, reads, ladvctx_reserved(ctx), ladvctx_attempt(ctx), ladvctx_common(ctx), repo, target, cand, basis, holder, mode), intent, expected_path, admitted, admitted_path, published, reads, assoc, mode, repo, target, cand, basis, ctx)
 
-def ld_adv_intent_verdict(intent: It.IntentInput, expected_path: String, published: Pb.IntentPublish, raw: String, verdict: It.ReceiptVerdict, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx, +holder: String) -> IO(LdAdvObs):
+# The decision the selected route makes over the admitted record and path the verdict returned.
+def ld_adv_intent_admitted(+intent: It.IntentInput, +expected_path: String, +admitted: String, +admitted_path: String, +published: Pb.IntentPublish, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx, +holder: String) -> IO(LdAdvObs):
+  match mode:
+    case MutationHeld{path}: ld_adv_intent_held(intent, expected_path, admitted, admitted_path, published, holder, assoc, mode, repo, target, cand, basis, ctx)
+    case MutationUnheld{}: ld_adv_intent_unheld(intent, expected_path, admitted, admitted_path, published, assoc, mode, repo, target, cand, basis, ctx, holder)
+    case MutationUnknown{}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "route-unknown", mode, assoc, IntentPublished{published}, IntentQualified{admitted, admitted_path}, IntentHolderUnperformed{}))
+
+def ld_adv_intent_verdict(+intent: It.IntentInput, +expected_path: String, +published: Pb.IntentPublish, raw: String, +verdict: It.ReceiptVerdict, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx, +holder: String) -> IO(LdAdvObs):
   match verdict:
-    case It.VerdictAdmitted{raw: admitted, path: admitted_path}:
-      Bool.pick(IO(LdAdvObs), mode_is_unheld(mode),
-        ld_adv_intent_unheld(intent, expected_path, admitted_path, published, raw, assoc, mode, repo, target, cand, basis, ctx, holder),
-        ld_adv_intent_held(intent, expected_path, published, raw, assoc, mode, repo, target, cand, basis, ctx, holder))
-    case It.VerdictPending{raw: pending_raw, path: pending_path, pending}:
-      IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "qualification-pending", mode, assoc, IntentPublished{published}, IntentQualificationRefused{raw, expected_path, pending, ""}, IntentHolderUnperformed{}))
-    case It.VerdictRefused{raw: refused_raw, reason}:
-      IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "qualification-refused", mode, assoc, IntentPublished{published}, IntentQualificationRefused{raw, expected_path, "", reason}, IntentHolderUnperformed{}))
+    case It.VerdictAdmitted{raw: admitted_raw, path: admitted_path}: ld_adv_intent_admitted(intent, expected_path, admitted_raw, admitted_path, published, assoc, mode, repo, target, cand, basis, ctx, holder)
+    case It.VerdictPending{raw: pending_raw, path: pending_path, pending}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "qualification-pending", mode, assoc, IntentPublished{published}, IntentQualificationRefused{pending_raw, pending_path, pending, ""}, IntentHolderUnperformed{}))
+    case It.VerdictRefused{raw: refused_raw, reason}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "qualification-refused", mode, assoc, IntentPublished{published}, IntentQualificationRefused{refused_raw, expected_path, "", reason}, IntentHolderUnperformed{}))
 
-def ld_adv_intent_qualified(host: Result<&1, &1, U32 & String, String>, intent: It.IntentInput, expected_path: String, published: Pb.IntentPublish, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx, +holder: String) -> IO(LdAdvObs):
+def ld_adv_intent_qualified(host: Result<&1, &1, U32 & String, String>, +intent: It.IntentInput, +expected_path: String, +published: Pb.IntentPublish, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx, +holder: String) -> IO(LdAdvObs):
   match host:
     case Fail{error}:
       match error:
         case (code, detail): IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, expected_path, "qualification-host-failed", mode, assoc, IntentPublished{published}, IntentQualificationFailed{"qualify", T.HostError{code, detail}}, IntentHolderUnperformed{}))
-    case Done{raw}: ld_adv_intent_verdict(intent, expected_path, published, raw, It.receipt_verdict(raw, expected_path), assoc, mode, repo, target, cand, basis, ctx, holder)
+    case Done{+raw}: ld_adv_intent_verdict(intent, expected_path, published, raw, It.receipt_verdict(raw, expected_path), assoc, mode, repo, target, cand, basis, ctx, holder)
 
-def ld_adv_intent_published(published: Pb.IntentPublish, intent: It.IntentInput, expected_path: String, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx, +holder: String) -> IO(LdAdvObs):
+def ld_adv_intent_published(published: Pb.IntentPublish, +intent: It.IntentInput, +expected_path: String, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx, +holder: String) -> IO(LdAdvObs):
   match published:
     case Pb.IntentBytesPublished{request, raw, path, content}:
       do IO<LdAdvObs>:
@@ -4397,21 +4416,30 @@ def a_pending_publication_stops_the_unheld_route_without_a_mutation(ctx):
 
 law an_unready_holder_stops_the_held_route_keeping_the_qualification:
   for ctx: LdAdvCtx
-  {ld_adv_intent_observed(It.IntentUnready{"holder", "the worktree is unready", "record bytes"}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"holder-unready"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualificationRefused{"record bytes", shared_intent_path(ctx), "", "the worktree is unready"}, IntentHolderUnperformed{}}} : IO(LdAdvObs)}
+  {ld_adv_intent_observed(It.IntentUnready{"holder", "the worktree is unready", "record bytes"}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), "admitted bytes", shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, "/holder", fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"holder-unready"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualified{"admitted bytes", shared_intent_path(ctx)}, IntentHolderUnready{"holder", "the worktree is unready", "record bytes"}}})} : IO(LdAdvObs)}
+
+def an_unready_holder_stops_the_held_route_keeping_the_qualification(ctx):
+  {==}
 
 def an_unready_holder_stops_the_held_route_keeping_the_qualification(ctx):
   {==}
 
 law a_pending_holder_stops_the_held_route_keeping_the_qualification:
   for ctx: LdAdvCtx
-  {ld_adv_intent_observed(It.IntentPending{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "record bytes", "the holder is a worktree"}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"holder-pending"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualificationRefused{"record bytes", shared_intent_path(ctx), "the holder is a worktree", ""}, IntentHolderUnperformed{}}} : IO(LdAdvObs)}
+  {ld_adv_intent_observed(It.IntentPending{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "record bytes", "the holder answers every read"}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), "admitted bytes", shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, "/holder", fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"holder-pending"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualified{"admitted bytes", shared_intent_path(ctx)}, IntentHolderPending{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "record bytes", "the holder answers every read"}}})} : IO(LdAdvObs)}
+
+def a_pending_holder_stops_the_held_route_keeping_the_qualification(ctx):
+  {==}
 
 def a_pending_holder_stops_the_held_route_keeping_the_qualification(ctx):
   {==}
 
 law a_failed_holder_read_stops_the_held_route_with_the_host_error:
   for ctx: LdAdvCtx
-  {ld_adv_intent_observed(It.IntentHostFailed{"holder", shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), T.HostError{128, "fatal: not a git repository"}}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"holder-host-failed"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualificationFailed{"holder", T.HostError{128, "fatal: not a git repository"}}, IntentHolderUnperformed{}}} : IO(LdAdvObs)}
+  {ld_adv_intent_observed(It.IntentHostFailed{"holder", shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), T.HostError{128, "fatal: not a git repository"}}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), "admitted bytes", shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, "/holder", fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"holder-host-failed"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualified{"admitted bytes", shared_intent_path(ctx)}, IntentHolderFailed{"holder", shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), T.HostError{128, "fatal: not a git repository"}}}})} : IO(LdAdvObs)}
+
+def a_failed_holder_read_stops_the_held_route_with_the_host_error(ctx):
+  {==}
 
 def a_failed_holder_read_stops_the_held_route_with_the_host_error(ctx):
   {==}
