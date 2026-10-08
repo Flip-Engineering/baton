@@ -79,6 +79,7 @@ class Stop(unittest.TestCase):
     receive_args = receive.Receive.receive_args
     endpoint = receive.Receive.endpoint
     connect = receive.Receive.connect
+    prepare_input = receive.Receive.prepare_input
     message = receive.Receive.message
     accept_any = receive.Receive.accept_any
     accept = receive.Receive.accept
@@ -108,7 +109,7 @@ class Stop(unittest.TestCase):
     def begin(self, harness='omp', resist=False):
         self.configure()
         self.player(harness=harness)
-        self.coord('message', 'initial', 'root', 'parent', 'task', 'Make useful progress.')
+        self.prepare_input('initial', 'parent', 'Make useful progress.', kind='task')
         observer = self.spawn(*self.receive_args('parent'))
         stream, started = self.accept_child(observer, 'parent',
                                             'Stop observer exited before native startup')
