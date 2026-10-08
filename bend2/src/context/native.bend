@@ -23,6 +23,7 @@ import ./store.bend as ContextStore
 import ../host/sqlite.bend as DB
 import ../host/process.bend as Process
 import ../host/instance.bend as Instance
+import ../host/instance.bend as Custody
 import ../host/session-lock.bend as Host
 import ../git/process.bend as Git
 import ../git/types.bend as G
@@ -647,7 +648,7 @@ def managed_store_cursor(+db: String,
   match result:
     case Fail{(code, message)}: IO.die(Unit, code, "managedOwnerNoticeCursor:" ++ message)
     case Done{+rows}:
-      managed_store_publish_result(Instance.publish_commit(db, Tx.trim_nl(rows)))
+      managed_store_publish_result(Custody.Instance.publish_commit(db, Tx.trim_nl(rows)))
 
 def managed_store_disposition(+requested_state: String,
                               decoded: ProjectPolicyJson) -> ManagedStoreDisposition:
