@@ -892,7 +892,7 @@ def capture_fields(capture: T.CapturedRaw, rest: List<String>) -> List<String>:
 def identity_fields(identity: IdentityEvidence, rest: List<String>) -> List<String>:
   match identity:
     case IdentityMissing{}: Con{"identity-missing", rest}
-    case IdentityObserved{common, observed, target}: Con{"identity-observed", Con{common, Con{target, observation_fields(observed, rest)}}}
+    case IdentityObserved{common, +observed, target}: Con{"identity-observed", Con{common, Con{target, observation_fields(observed, rest)}}}
 
 def association_fields(association: AssociationEvidence, rest: List<String>) -> List<String>:
   match association:
@@ -1463,7 +1463,7 @@ def capture_observed(capture: T.CapturedRaw) -> Bool:
 def identity_observed(identity: IdentityEvidence) -> Bool:
   match identity:
     case IdentityMissing{}: False{}
-    case IdentityObserved{common, T.GRun{0, common}, target}: True{}
+    case IdentityObserved{common, observed, target}: True{}
 
 def association_observed(association: AssociationEvidence) -> Bool:
   match association:
@@ -1533,7 +1533,7 @@ def qualification_landed_of(qualification: LdQualified, candidate: String, targe
     case QualDecided{mode, target_ref, head_ref}: qualification_landed(mode, target_ref, head_ref, candidate, target)
 def identity_bound(identity: IdentityEvidence, expect: String) -> Bool:
   match identity:
-    case IdentityObserved{common, observed, target}:
+    case IdentityObserved{common, +observed, target}:
       Bool.pick(Bool, Tx.str_eq(target, expect), Bool.pick(Bool, observation_succeeded(observed), Tx.str_eq(observation_value(observed), common), False{}), False{})
     case IdentityMissing{}: False{}
 
@@ -1600,7 +1600,7 @@ def ld_adv_of(obs: LdAdvObs) -> LAdv:
     case LdAdvCaptured{advance, capture, mode}: advance
     case LdAdvQualified{advance, capture, qualification}: advance
 
-def shared_reserved_attested(repo: String, target: String, cand: String, basis: String, +guard: String, +common: String, +common_observed: T.GitOut, +reserved: String, +obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>) -> IO(SharedLanding):
+def shared_reserved_attested(repo: String, +target: String, cand: String, basis: String, +guard: String, +common: String, +common_observed: T.GitOut, +reserved: String, +obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>) -> IO(SharedLanding):
   +rel = T.release_raw_of(released)
   ld_attest_admit(AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), rel, IdentityObserved{common, common_observed, target}, AssociationMissing{}, IntentMissing{}})
 
@@ -1667,38 +1667,42 @@ def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String,
     observed : Result<&1, &1, U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, name)
     shared_reserve_observed(h, rp, tg, c, b, gd, cm, cobs, pa, bs, n, observed)
 
-def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, common: String, common_observed: T.GitOut, parent: String, base: String, record: String) -> IO(SharedLanding):
+def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, +common: String, +common_observed: T.GitOut, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
   +c = cand
   +b = basis
   +gd = guard
+  +cm = common
+  +obs = common_observed
   +pa = parent
   +bs = base
   +r = record
   Bool.pick(IO(SharedLanding), Tx.str_eq(r, Pb.production_record("present", pa, "0")),
     shared_reserve_loop(h, rp, tg, c, b, gd, cm, obs, pa, bs, 1),
     shared_record_failed("ensure", r, h))
-def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, common: String, common_observed: T.GitOut, parent: String, base: String, record: String) -> IO(SharedLanding):
+def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, +common: String, +common_observed: T.GitOut, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
   +c = cand
   +b = basis
   +gd = guard
+  +cm = common
+  +obs = common_observed
   +pa = parent
   +bs = base
   +r = record
   Bool.pick(IO(SharedLanding), Tx.str_eq(r, Pb.production_record("created", pa, "0")),
     shared_reserve_loop(h, rp, tg, c, b, gd, cm, obs, pa, bs, 1),
     shared_parent_present(h, rp, tg, c, b, gd, cm, obs, pa, bs, r))
-def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, common: String, common_observed: T.GitOut, parent: String, base: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
+def shared_parent_ensured(+handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, common: String, common_observed: T.GitOut, parent: String, base: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   match observed:
     case Fail{error}: shared_step_failed("ensure", error, handle)
     case Done{+record}: shared_parent_classified(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, record)
 
-def shared_token_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, common_observed: T.GitOut, guard: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
+def shared_token_named(+handle: U32, repo: String, target: String, +cand: String, +basis: String, +common: String, common_observed: T.GitOut, guard: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   match observed:
     case Fail{error}: shared_step_failed("token", error, handle)
     case Done{token}:
@@ -1708,7 +1712,7 @@ def shared_token_named(handle: U32, repo: String, target: String, cand: String, 
         ensured : Result<&1, &1, U32 & String, String> <- Rec.Receipt.ensure(parent)
         shared_parent_ensured(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, ensured)
 
-def shared_guard_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, common_observed: T.GitOut, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
+def shared_guard_named(+handle: U32, repo: String, +target: String, cand: String, basis: String, common: String, common_observed: T.GitOut, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   match observed:
     case Fail{error}: shared_step_failed("guard", error, handle)
     case Done{guard}:
@@ -1727,7 +1731,7 @@ def shared_guarded(handle: U32, repo: String, target: String, cand: String, basi
     observed : Result<&1, &1, U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
     shared_guard_named(h, rp, tg, c, b, cm, common_observed, observed)
 
-def shared_claim_decided(repo: String, target: String, cand: String, basis: String, common: String, common_observed: T.GitOut, claim_outcome: Result<&1, &1, U32 & String, Maybe<U32>>) -> IO(SharedLanding):
+def shared_claim_decided(repo: String, +target: String, cand: String, basis: String, common: String, common_observed: T.GitOut, claim_outcome: Result<&1, &1, U32 & String, Maybe<U32>>) -> IO(SharedLanding):
   match claim_outcome:
     case Fail{error}: IO.pure(SharedLanding, SharedClaimFailed{shared_error(error)})
     case Done{held}:
@@ -1743,7 +1747,7 @@ def shared_claimed(repo: String, target: String, cand: String, basis: String, co
   +cm = common
   do IO<SharedLanding>:
     claimed : Result<&1, &1, U32 & String, Maybe<U32>> <- Rec.Receipt.claim(cm, tg)
-    shared_claim_decided(rp, tg, c, b, cm, observed, claimed)
+    shared_claim_decided(rp, tg, c, b, cm, common_observed, claimed)
 
 def shared_common_read(repo: String, target: String, cand: String, basis: String, +observed: T.GitOut) -> IO(SharedLanding):
   match observed:
