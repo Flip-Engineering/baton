@@ -1,0 +1,82 @@
+name: bend2-core-integration-focused
+
+'on':
+  push:
+    branches: [codex/validate-core-integration-20261008]
+
+permissions:
+  contents: read
+
+jobs:
+  darwin-arm64:
+    runs-on: xcode-27
+    env:
+      BEND_NO_TELEMETRY: '1'
+      PRODUCT_SHA: 32920d39d538c5bcb70f7e92377a97170a88468e
+      PRODUCT_TREE: 36591121ade62960a0228e9bee7c469b8f516ede
+    steps:
+      - name: Checkout exact product
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 32920d39d538c5bcb70f7e92377a97170a88468e
+          persist-credentials: false
+
+      - name: Select Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+
+      - name: Preserve source and compiler identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          run="$RUNNER_TEMP/baton2-core-focused-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          mkdir -p "$run/evidence" "$run/toolchain"
+          printf 'BATON2_CORE_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          git clone --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$run/source" > "$run/evidence/clone.log" 2>&1
+          git -C "$run/source" checkout --detach "$PRODUCT_SHA" >> "$run/evidence/clone.log" 2>&1
+          test "$(git -C "$run/source" rev-parse HEAD)" = "$PRODUCT_SHA"
+          test "$(git -C "$run/source" rev-parse HEAD^{tree})" = "$PRODUCT_TREE"
+          archive="$run/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz -o "$archive"
+          printf 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31  %s\n' "$archive" | shasum -a 256 -c - > "$run/evidence/compiler-archive-check.log"
+          BEND_HOME="$run/compiler" sh "$run/source/docs/bend2/reference/toolchain/install-2.0.25.sh" > "$run/evidence/compiler-install.log" 2>&1
+          printf '3850c7cd281a687715a181ad6a2ecdef041704f320ea2b4304cf9e802309203c  %s\n' "$run/compiler/bin/bend" | shasum -a 256 -c - > "$run/evidence/compiler-binary-check.log"
+          python3 - <<'PY' > "$run/evidence/runtime.json"
+          import json, os, platform, subprocess
+          print(json.dumps({'product': os.environ['PRODUCT_SHA'], 'tree': os.environ['PRODUCT_TREE'],
+            'driver': os.environ['GITHUB_SHA'], 'system': platform.platform(),
+            'node': subprocess.check_output(['node', '--version'], text=True).strip(),
+            'python': platform.python_version(),
+            'clang': subprocess.check_output(['clang', '--version'], text=True)}, indent=2))
+          PY
+
+      - name: Compile exact production Main
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$BATON2_CORE_RUN/source"
+          BEND="$BATON2_CORE_RUN/compiler/bin/bend" sh bend2/scripts/build-native.sh 2>&1 | tee "$BATON2_CORE_RUN/evidence/build-native.log"
+          shasum -a 256 .scratch/bend2/baton2 > "$BATON2_CORE_RUN/evidence/native-binary.sha256"
+
+      - name: Exercise integrated native features and public view
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$BATON2_CORE_RUN/source"
+          export BEND="$BATON2_CORE_RUN/compiler/bin/bend"
+          for test in configure logs receive stop native-observation mcp-command fixed-coordinator ui-orchestra-native; do
+            sh bend2/scripts/check-unittest.sh "bend2/test/$test.py" 2>&1 | tee "$BATON2_CORE_RUN/evidence/$test.log"
+          done
+          BATON2_REQUIRE_NATIVE_VIEW=1 BATON2_NATIVE_BINARY="$BATON2_CORE_RUN/source/.scratch/bend2/baton2" node --test --test-reporter=tap bend2/test/ui-orchestra-server.test.mjs 2>&1 | tee "$BATON2_CORE_RUN/evidence/ui-orchestra-server.log"
+
+      - name: Retain focused evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: baton2-core-focused-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.BATON2_CORE_RUN }}/evidence/
+          if-no-files-found: error
