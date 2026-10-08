@@ -301,7 +301,8 @@ def sql_quote_go(s: String, +acc: String) -> String:
   match s:
     case SNil{}: acc
     case SCon{+head, +tail}:
-      Bool.pick(String, U32.is_eq(Char.to_u32(head), 39), sql_quote_go(tail, acc ++ "\u{27}\u{27}"), sql_quote_go(tail, acc ++ SCon{head, SNil{}}))
+      sql_quote_go(tail, acc ++ Bool.pick(String, U32.is_eq(Char.to_u32(head), 39),
+        "\u{27}\u{27}", SCon{head, SNil{}}))
 
 def sql_quote(s: String) -> String:
   "\u{27}" ++ sql_quote_go(s, SNil{}) ++ "\u{27}"

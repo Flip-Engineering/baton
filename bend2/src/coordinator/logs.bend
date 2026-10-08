@@ -220,22 +220,27 @@ def step_tool_end(end: Bool, +kind: String, +id: String, +line: String, +held: S
     case True{}: (List.append(&1,String,held_lines(held,"tool_execution_update",id),Con{line,Nil{}}), held_drop(held,"tool_execution_update",id))
     case False{}: step_message_end(String.eq(kind,"message_end"),kind,id,line,held)
 
+def step_prefix(identified: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
+  match identified:
+    case True{}: (Nil{},held_put(held,kind,id,line))
+    case False{}: (Con{line,Nil{}},held)
+
 # A message_update carries the running view of a message the provider resends;
 # the newest one is held like any other prefix frame, so an assistant stream
 # that dies before its message_end still leaves the text it had produced.
 def step_snapshot(snapshot: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
   match snapshot:
-    case True{}: (Nil{}, held_put(held,"message_update",id,line))
+    case True{}: step_prefix(Bool.not(String.is_empty(id)),"message_update",id,line,held)
     case False{}: step_tool_end(String.eq(kind,"tool_execution_end"),kind,id,line,held)
 
 def step_start(start: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
   match start:
-    case True{}: (Nil{}, held_put(held,"message_start",id,line))
+    case True{}: step_prefix(Bool.not(String.is_empty(id)),"message_start",id,line,held)
     case False{}: step_snapshot(String.eq(kind,"message_update"),kind,id,line,held)
 
 def step_update(update: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
   match update:
-    case True{}: (Nil{}, held_put(held,"tool_execution_update",id,line))
+    case True{}: step_prefix(Bool.not(String.is_empty(id)),"tool_execution_update",id,line,held)
     case False{}: step_start(String.eq(kind,"message_start"),kind,id,line,held)
 
 # The lines a frame contributes at the default level.
