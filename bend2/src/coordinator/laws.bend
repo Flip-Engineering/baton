@@ -1236,17 +1236,17 @@ def m13_a_retained_claude_attempt_closes_its_input_as_a_codex_attempt_does():
   {==}
 
 # M-5: the retained Muse and Claude attempts reach the conversation the session
-# recorded.
+# recorded. Production selects the Muse argv through muse_retained_arguments and
+# the Claude argv through the retained selection.
 law m5_the_retained_muse_argv_resumes_the_recorded_conversation:
   for +cmd: String
   for +model: String
   for +effort: String
-  for +task: String
-  for +sessions: String
+  for +prompt_file: String
   for +session: String
-  {Turn.retained_arguments(True{},False{},False{},cmd,model,effort,task,sessions,session) == Muse.argv(cmd,model,effort,task,session,String.is_empty(session)) : String}
+  {Turn.muse_retained_arguments(cmd,model,effort,prompt_file,session) == List.append(&1,String,Muse.arguments(cmd,model,effort,prompt_file),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session])) : List<String>}
 
-def m5_the_retained_muse_argv_resumes_the_recorded_conversation(cmd, model, effort, task, sessions, session):
+def m5_the_retained_muse_argv_resumes_the_recorded_conversation(cmd, model, effort, prompt_file, session):
   {==}
 
 law m5_the_retained_claude_argv_resumes_the_recorded_conversation:
@@ -1256,7 +1256,7 @@ law m5_the_retained_claude_argv_resumes_the_recorded_conversation:
   for +task: String
   for +sessions: String
   for +session: String
-  {Turn.retained_arguments(False{},False{},True{},cmd,model,effort,task,sessions,session) == Claude.argv(cmd,model,effort,session,String.is_empty(session)) : String}
+  {Turn.retained_arguments(False{},True{},cmd,model,effort,task,sessions,session) == Claude.argv(cmd,model,effort,session,String.is_empty(session)) : String}
 
 def m5_the_retained_claude_argv_resumes_the_recorded_conversation(cmd, model, effort, task, sessions, session):
   {==}
