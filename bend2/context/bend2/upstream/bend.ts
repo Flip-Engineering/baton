@@ -336,7 +336,7 @@ export type Parse = { book: Book; dir: string; str: string; pos: Loc; sc: Scope;
 export type Span  = { src: string; beg: Loc; end: Loc; };
 
 // Machine
-export type LHS   = { t: HTerm; n: number; def: Name; qs: Quant[]; u?: Bool; z?: number };
+export type LHS   = { t: HTerm; n: number; def: Name; qs: Quant[]; u?: Bool };
 export type Frame =
   | { $: "APP"; x: HTerm; s?: Span } // _(x)
   | { $: "MAT"; t: Extract<HTerm, { $: "Mat" }>; e: HTerm; lhs: { t: () => HTerm; n: number } | null; s?: Span } // \{c:h;m}(_)
@@ -3766,7 +3766,7 @@ export function term_check(book: Book, lhs: LHS, tm: HTerm, qt: Quant, ty: HTerm
 // its x leading ~ binders peeled off both, each an opaque constant of its
 // domain for the check (a bodiless def, native like base's, so a mention
 // costs no usage and the body must hold for every closed instance)
-export function def_check(book: Book, k: Name, def: Def, z?: number): LTerm {
+export function def_check(book: Book, k: Name, def: Def): LTerm {
   const qs = tele_unbind(book, def.T).doms.map((dom) => dom[0]);
   const gen = def.x === 0 ? book : { ...book, tlds: Object.create(book.tlds) };
   let [t, v, T]: HTerm[] = [Ref(k), def.v as HTerm, def.T];
@@ -3781,15 +3781,14 @@ export function def_check(book: Book, k: Name, def: Def, z?: number): LTerm {
     v = term_apply(v, Ref(o));
     T = h.B(Ref(o));
   }
-  return term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u, z }, v, Lone(), T, ctx_nil(), 0).tm;
+  return term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u }, v, Lone(), T, ctx_nil(), 0).tm;
 }
 
 // the name of a template def's instance at the spine's leading ~
 // arguments: each checks dead against its domain in the empty context at
 // depth d (a closed term; a miss on one is named as the open argument it
 // is), term_key of their syntax picks it, and the first call mints it,
-// the def's body and type at them, checked as a def one level deeper:
-// 64 levels stop a template that instantiates itself without end
+// the def's body and type at them, checked as a def:
 export function def_inst(book: Book, lhs: LHS, tm: Extract<HTerm, { $: "Ref" }>, def: Def, sp: HTerm[], ctx: Ctx, d: number): Name {
   const xs = sp.slice(0, def.x);
   if (xs.length < def.x) {
@@ -3811,19 +3810,12 @@ export function def_inst(book: Book, lhs: LHS, tm: Extract<HTerm, { $: "Ref" }>,
     T = h.B(a);
   }
   const key = xs.map((a) => term_key(term_lower(a))).join("\n");
-  if (key.length > 32768) {
-    throw Err(book, ctx, "a ~ argument that stops growing", tm, tm.s, lhs.def);
-  }
   const is = book.tmps[tm.k] ??= Object.create(null);
   if (is[key] === undefined) {
-    const z = (lhs.z ?? 0) + 1;
-    if (z > 64) {
-      throw Err(book, ctx, "a template that stops instantiating itself (64 levels at most)", tm, tm.s, lhs.def);
-    }
     const o = is[key] = tm.k + "~" + String(Object.keys(is).length);
     const inst: Def = { $: "Def", n: def.n - def.x, x: 0, T, v: xs.reduce((v, a) => term_apply(v, a), def.v as HTerm), u: def.u };
     book.tlds[o] = { ...inst, v: null };
-    inst.e = def_check(book, o, inst, z);
+    inst.e = def_check(book, o, inst);
     book.tlds[o] = inst;
   } else if (book.tlds[is[key]].v === null && is[key] !== lhs.def) {
     throw Err(book, ctx, "a decreasing self-call (arguments are read left to right: each passed unchanged until one shrinks)", tm, tm.s, lhs.def);

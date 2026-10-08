@@ -157,7 +157,7 @@ async function check(): Promise<void> {
   if (ver_newer(last.ver)) {
     cli_say(2, "bend " + last.ver + " is available: run bend update\n"
       + (last.notice === "" ? "" : last.notice.replace(/[\x00-\x1f\x7f]/g, "")
-      .slice(0, 200) + "\n"));
+      + "\n"));
   }
 }
 
