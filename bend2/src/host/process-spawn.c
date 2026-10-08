@@ -3638,10 +3638,10 @@ static int br_instance_attach_owned(BatonProcessCall *call) {
     (BrInstanceFrame){.op=BI_ATTACH,.length=strlen(directory)+1},directory,-1,&reply);
   if(!error) {
     error=br_instance_join(call,directory,reply.owner,reply.epoch);
-    if(error==ECONNREFUSED || error==ENOENT || error==EPIPE)
+    if(error==ECONNREFUSED || error==ENOENT || error==EPIPE || error==ECONNRESET)
       error=br_attach_orphan(call->child,directory,(int)call->lock);
   }
-  else if(error==ENOENT || error==ECONNREFUSED || error==EPIPE) {
+  else if(error==ENOENT || error==ECONNREFUSED || error==EPIPE || error==ECONNRESET) {
     /* An owner elected after this attempt started has no in-memory record of
        it, and an owner that is gone answers nothing at all. The attempt's own
        custody decides both cases: the per-attempt lock, the manifest with its
