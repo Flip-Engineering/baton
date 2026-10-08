@@ -255,6 +255,8 @@ class NativeObservation(RECEIVE.Receive):
         stream, started = self.accept_child(observer, 'parent',
                                             'Observation receive exited before native startup')
         self.assertIn('[id: provider-error-task]', started['prompt'])
+        directory, _ = self.eventually(lambda: self._retained_attempt(),
+                                       'provider error attempt was not registered')
         terminal = {
             'type': 'agent_end', 'isTerminal': True, 'is_error': False,
             'messages': [
@@ -288,6 +290,7 @@ class NativeObservation(RECEIVE.Receive):
         self.assertIn('errorStatus', log)
         self.assertTrue(any(row['id'] == 'provider-error-task'
                             for row in self.coord('inbox', 'parent')))
+        self.assertFalse((pathlib.Path(directory) / 'acknowledged').exists())
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
     def test_omp_late_failure_keeps_the_sealed_result_and_reports_failure(self):
@@ -297,6 +300,7 @@ class NativeObservation(RECEIVE.Receive):
         stream, started = self.accept_child(observer, 'parent',
                                             'Observation receive exited before native startup')
         self.assertIn('[id: stale-success-task]', started['prompt'])
+        self.coord('ack', 'stale-success-task', 'parent', 'native-reviewed')
         success = {'type': 'agent_end', 'isTerminal': True, 'is_error': False,
                    'messages': [{'role': 'assistant', 'content': [
                        {'type': 'text', 'text': 'Stale success text.'}]}]}
@@ -367,6 +371,7 @@ class NativeObservation(RECEIVE.Receive):
         stream, started = self.accept_child(observer, 'parent',
                                             'Observation receive exited before native startup')
         self.assertIn('[id: latest-success-task]', started['prompt'])
+        self.coord('ack', 'latest-success-task', 'parent', 'native-reviewed')
         terminal = {
             'type': 'agent_end', 'isTerminal': True, 'is_error': False,
             'messages': [
