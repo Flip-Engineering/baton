@@ -6,6 +6,7 @@ type Command is Data:
   Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String}
   Start{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String, id: String, task: String}
   Receiver{session: String, cmd: String, log: String}
+  Configure{id: String, harness: String, model: String, effort: String, cmd: String, log: String, expected_harness: String, expected_model: String, expected_effort: String}
   DispatchFile{id: String, sender: String, recipient: String, kind: String, path: String}
   DispatchTurn{player: String, id: String, cmd: String, log: String, task: String}
   StatusPretty{}
@@ -153,6 +154,31 @@ def connect_sql(+id: String, native: String, +endpoint: String) -> String:
   "UPDATE sessions SET native=" ++ q(native) ++ ",endpoint=" ++ q(endpoint) ++ " WHERE id=" ++ q(id) ++ " AND " ++ endpoint_admitted(endpoint) ++ ";"
   ++ "SELECT json_object('error','invalid-endpoint','session'," ++ q(id) ++ ",'condition','Use an empty endpoint to disconnect, or a nonempty JSON array of text arguments with a nonempty executable and no NUL characters.','next','Pass the JSON argv array itself as one ENDPOINT argument; inspect session and inbox, then retry retained input after connecting.') WHERE NOT " ++ endpoint_admitted(endpoint) ++ ";"
   ++ session_result_where("id=" ++ q(id) ++ " AND " ++ endpoint_admitted(endpoint))
+
+# A configured-route change moves one registered session's next admitted turn to
+# another provider harness, model and effort. The predicate names the route the
+# caller expected, so a delayed or repeated continuation cannot reconfigure a
+# session whose recorded route already moved. The update writes that session's own
+# row and nothing else: parent, workspace, branch, base, native conversation,
+# messages, turns, attempts and stops all stay as they are.
+# The predicate is a subquery so it also stands in a SELECT with no FROM clause,
+# which is where the refusal answer is built.
+def configure_matches(session: String, harness: String, model: String, effort: String) -> String:
+  "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ " AND harness=" ++ q(harness) ++ " AND model=" ++ q(model) ++ " AND effort=" ++ q(effort) ++ ")"
+
+def configure_admitted(+session: String, +harness: String, +model: String, +endpoint: String, expected_harness: String, expected_model: String, expected_effort: String) -> String:
+  "(" ++ q(harness) ++ " IN ('codex','omp','muse','claude-code') AND " ++ q(model) ++ "<>'' AND " ++ configure_matches(session,expected_harness,expected_model,expected_effort)
+  ++ " AND NOT " ++ stopped_session_sql(q(session))
+  ++ " AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ q(session) ++ " AND phase<>'exited')"
+  ++ " AND " ++ endpoint_admitted(endpoint) ++ ")"
+
+def configure_update_sql(+session: String, +harness: String, +model: String, +effort: String, +endpoint: String, expected_harness: String, expected_model: String, expected_effort: String, +admitted: String) -> String:
+  "UPDATE sessions SET harness=" ++ q(harness) ++ ",model=" ++ q(model) ++ ",effort=" ++ q(effort) ++ ",endpoint=" ++ q(endpoint) ++ " WHERE id=" ++ q(session) ++ " AND " ++ admitted ++ ";"
+  ++ "SELECT json_object('error','configure-refused','session'," ++ q(session) ++ ",'expected',json_object('harness'," ++ q(expected_harness) ++ ",'model'," ++ q(expected_model) ++ ",'effort'," ++ q(expected_effort) ++ "),'requested',json_object('harness'," ++ q(harness) ++ ",'model'," ++ q(model) ++ ",'effort'," ++ q(effort) ++ "),'condition','A route change requires a registered Player whose recorded harness, model and effort are still the expected route, no owned attempt, no terminal stop, and a launchable harness with a resolvable model key.','next','Read session ID and inbox. Pass the recorded harness, model and effort as the expected route; retry after an active attempt exits; use a supported harness; or recruit a new session for a stopped Player.') WHERE changes()=0;"
+  ++ session_result_where("id=" ++ q(session) ++ " AND changes()=1")
+
+def configure_sql(+session: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> String:
+  configure_update_sql(session,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,configure_admitted(session,harness,model,endpoint,expected_harness,expected_model,expected_effort))
 
 def message_result(id: String) -> String:
   "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ input_state_sql("messages") ++ ") FROM messages WHERE id=" ++ q(id) ++ ";"
@@ -331,6 +357,7 @@ def sql(command: Command) -> String:
     case Receive{session,cmd,model,effort,cwd,log,message}: ""
     case Start{session,harness,cmd,model,effort,cwd,log,id,task}: ""
     case Receiver{session,cmd,log}: ""
+    case Configure{id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort}: ""
     case DispatchFile{id,sender,recipient,kind,path}: ""
     case DispatchTurn{player,id,cmd,log,task}: ""
     case StatusPretty{}: ""
@@ -399,9 +426,12 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"record"),KnowledgeRecord{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"promote"),KnowledgePromote{id,one,two,three,four},Invalid{})))))))))
     case +verb <> session <> cmd <> model <> effort <> cwd <> log <> message <> Nil{}:
       Bool.pick(Command,String.eq(verb,"receive"),Receive{session,cmd,model,effort,cwd,log,message},Invalid{})
+    # configure ID HARNESS MODEL EFFORT HARNESS_CMD OUTPUT_LOG EXPECTED_HARNESS EXPECTED_MODEL
+    # EXPECTED_EFFORT. The nine slot names below keep the shared list shape; each
+    # verb reads them by its own declaration order.
     case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"start"),Start{player,id,cmd,model,effort,cwd,task,log,session},Bool.pick(Command,String.eq(verb,"turn"),RunTurn{player,id,cmd,model,effort,cwd,task,log,session},
-      Bool.pick(Command,String.eq(verb,"recruit"),Recruit{player,id,cmd,model,effort,cwd,task,log,session},Invalid{})))
+      Bool.pick(Command,String.eq(verb,"configure"),Configure{player,id,cmd,model,effort,cwd,task,log,session},Bool.pick(Command,String.eq(verb,"start"),Start{player,id,cmd,model,effort,cwd,task,log,session},Bool.pick(Command,String.eq(verb,"turn"),RunTurn{player,id,cmd,model,effort,cwd,task,log,session},
+      Bool.pick(Command,String.eq(verb,"recruit"),Recruit{player,id,cmd,model,effort,cwd,task,log,session},Invalid{}))))
     case _: Invalid{}
 
 law help_word_selects_the_help_command:
@@ -425,6 +455,23 @@ law message_parser_preserves_the_complete_body:
   {parse(["message",id,sender,recipient,kind,body]) == Message{id,sender,recipient,kind,body} : Command}
 
 def message_parser_preserves_the_complete_body(id,sender,recipient,kind,body):
+  {==}
+
+# The route-change verb keeps the session, the requested route and the expected
+# route the caller supplied, in the declared positions.
+law configure_parser_keeps_the_requested_and_expected_route:
+  for +id: String
+  for +harness: String
+  for +model: String
+  for +effort: String
+  for +cmd: String
+  for +log: String
+  for +expected_harness: String
+  for +expected_model: String
+  for +expected_effort: String
+  {parse(["configure",id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort]) == Configure{id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort} : Command}
+
+def configure_parser_keeps_the_requested_and_expected_route(id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort):
   {==}
 
 # The declared remote read keeps the repository, branch and remote the caller

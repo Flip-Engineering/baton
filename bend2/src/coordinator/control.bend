@@ -123,6 +123,29 @@ def receiver(+db: String, +session: String, cmd: String, log: String) -> IO(Stri
     +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_sql(session,endpoint) ++ "COMMIT;"))
     receiver_result(saved,Tx.starts_with(saved,"{\"error\":\"receiver-refused\""))
 
+# An existing Player changes its configured provider route in place. The stored
+# endpoint follows a Codex or OMP route; a harness the receiver does not launch
+# keeps no receiver endpoint. The model key is resolved through the configured
+# series registry while the operator is present, so an unmapped key is refused
+# before any row is written.
+def configure_endpoint(+db: String, +id: String, +harness: String, +cmd: String, +log: String, +model: String) -> IO(String):
+  do IO<String>:
+    receiver_harness : Bool <- IO.pure(Bool,Bool.or(String.eq(harness,"codex"),String.eq(harness,"omp")))
+    Bool.pick(IO(String),receiver_harness,configured_endpoint(db,id,cmd,log,model),IO.pure(String,""))
+
+def configure_result(saved: String, denied: Bool) -> IO(String):
+  match denied:
+    case True{}: IO.die(String,2,saved)
+    case False{}: IO.pure(String,saved)
+
+def configure(+db: String, +id: String, +harness: String, +model: String, effort: String, cmd: String, log: String, expected_harness: String, expected_model: String, expected_effort: String) -> IO(String):
+  do IO<String>:
+    found : String <- IO.try(String,Store.apply(db,C.Session{id}))
+    accepted : String <- registered(found)
+    endpoint : String <- configure_endpoint(db,id,harness,cmd,log,model)
+    +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.configure_sql(id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort) ++ "COMMIT;"))
+    configure_result(saved,Tx.starts_with(saved,"{\"error\":\"configure-refused\""))
+
 def principal_matches(+session: String, +harness: String, +model: String, +effort: String, +cwd: String) -> String:
   "(id=" ++ C.q(session) ++ " AND parent IS NULL AND harness=" ++ C.q(harness) ++ " AND (model='' OR model=" ++ C.q(model) ++ ") AND (effort='' OR effort=" ++ C.q(effort) ++ ") AND (workspace='' OR workspace=" ++ C.q(cwd) ++ ") AND " ++ C.assigned_role("sessions.id") ++ "<>'operator' AND NOT " ++ C.stopped_session_sql("sessions.id") ++ ")"
 
