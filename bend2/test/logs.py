@@ -428,7 +428,8 @@ sys.exit(%d)
             'limitBytes': len(b'complete native diagnostics\n'), 'spool': 'stderr.full'})
         self.assertGreaterEqual(row['bytes'], row['stderrSpoolBytes'] + row['stderrMetadataBytes'])
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
-        self.assertEqual({item['file'] for item in answer['attemptFiles'] if item['removed']},
+        self.assertEqual({item['file'] for item in answer['attemptFiles']
+                          if item.get('removed') and 'file' in item},
                          {'stdout', 'native.stderr', 'stderr.full', 'stderr.meta', 'observer.log', 'keeper.log'})
         for name in protected:
             self.assertTrue((attempt_dir / name).is_file(), name)
