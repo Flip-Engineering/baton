@@ -1,6 +1,5 @@
 """Integration checks with a controlled native-process protocol fixture."""
 import json
-import hashlib
 import os
 import pathlib
 import sqlite3
@@ -160,18 +159,9 @@ assert sys.stdin.read()==''
         self.assertEqual([f['partialResult']['content'][0]['text'] for f in frames if f.get('type')=='tool_execution_update'], [self.task.read_text()])
         self.assertEqual([f['type'] for f in frames], ['response','message_end','agent_end','agent_end','tool_execution_update','baton_event_filter'])
         with sqlite3.connect(self.db) as connection:
-            projection=connection.execute('SELECT event_sha256,projection,artifact_refs FROM log_terminal_observations WHERE session=? AND turn_id=?',('omp-worker','omp-turn')).fetchone()
             stored_event=connection.execute('SELECT event FROM turns WHERE id=?',('omp-turn',)).fetchone()[0]
-        self.assertIsNotNone(projection)
-        digest,projection_json,artifact_json=projection
-        self.assertEqual(digest,hashlib.sha256(stored_event.encode()).hexdigest())
-        summary=json.loads(projection_json)
-        self.assertEqual(summary['messageCount'],2)
-        self.assertEqual(summary['roleCharacters']['assistant'],len('First answerFull final answer λ'))
-        self.assertEqual(summary['lastMessageCharacters'],len('Full final answer λ'))
-        artifacts=json.loads(artifact_json)
-        self.assertEqual(artifacts['outputLog'],str(self.generation('omp-turn')))
-        self.assertEqual(artifacts['providerSession'],'omp-native')
+        self.assertEqual(json.loads(stored_event), next(frame for frame in frames
+                         if frame.get('type') == 'agent_end' and frame.get('isTerminal') is True))
         args=json.loads((self.cwd/'argv.json').read_text())
         self.assertEqual(args[args.index('--mode')+1],'rpc')
         self.assertEqual(args[args.index('--session-dir')+1],str(self.db)+'.sessions')

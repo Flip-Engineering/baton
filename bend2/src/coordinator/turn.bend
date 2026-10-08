@@ -319,27 +319,10 @@ def observe_sealed(+db: String, id: String, player: String, +event: String, +pri
       state : String <- Bool.pick(IO(String),admitted,completion_state(db,id,player,event),IO.pure(String,""))
       IO.pure(Bool,terminal_observation_sealed(sealed,terminal,admitted,state))
 
-def observe_projection(saved: Result<&1,&1,U32 & String,String>, +db: String, +player: String, +id: String, +line: String, +log: String, project_terminal: Bool) -> IO(Result<&1,&1,U32 & String,String>):
-  match saved:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
-    case Done{value}:
-      match project_terminal:
-        case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{value})
-        case True{}: do IO<Result<&1,&1,U32 & String,String>>:
-          recorded : Unit <- Logs.record_terminal_projection(db,player,id,line,log)
-          IO.pure(Result<&1,&1,U32 & String,String>,Done{value})
-
-def observe_event(+db: String, +player: String, +id: String, +line: String, log: String, relevant: Bool, +sealed: Bool, project_terminal: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def observe_event(db: String, player: String, id: String, line: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
-    case True{}: do IO<Result<&1,&1,U32 & String,String>>:
-      saved : Result<&1,&1,U32 & String,String> <- Store.commit(db,C.Observe{id,player,line,sealed})
-      observe_projection(saved,db,player,id,line,log,project_terminal)
-    case False{}:
-      match project_terminal:
-        case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
-        case True{}: do IO<Result<&1,&1,U32 & String,String>>:
-          recorded : Unit <- Logs.record_terminal_projection(db,player,id,line,log)
-          IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
+    case True{}: Store.commit(db,C.Observe{id,player,line,sealed})
+    case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
 
 # A terminal that completes after the managed completion was sealed cannot be
 # recorded as a report under the sealed identity: the first terminal stays the
@@ -524,10 +507,9 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +next_current : String <- current_command(db,event,current,String.eq(harness,"muse\n"))
         +state : String <- completion_state_event(db,id,player,event,next_primary,String.eq(harness,"muse\n"))
         +observation_sealed : Bool <- observe_sealed(db,id,player,event,next_primary,sealed,String.eq(harness,"muse\n"))
-        +project_terminal : Bool <- primary_terminal(db,event,next_primary,String.eq(harness,"muse\n"))
         conflict_note : Unit <- completion_conflict_note(db,player,id,event,String.eq(state,"conflict"))
         deferred : Unit <- deferred_note(db,player,id,event,terminal,next_primary,next_current,sealed,String.eq(harness,"muse\n"))
-        +observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,log,relevant,observation_sealed,project_terminal)
+        +observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant,observation_sealed)
         +ended : String <- Bool.pick(IO(String),String.eq(harness,"muse\n"),muse_terminal_event(db,event,terminal,next_primary,relevant),terminal_event(db,event,terminal,relevant))
         +codex_state : String <- codex_frames(db,codex_log,line,String.eq(harness,"codex\n"))
         questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String <- NativeRequests.observe(db,player,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))

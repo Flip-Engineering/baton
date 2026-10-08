@@ -47,10 +47,6 @@ def default_segments() -> String:
 def schema() -> String:
   Schema.tables()
 
-# The exact terminal frame bytes receive a SHA-256 when the coordinator observes them.
-def event_sha256(event: String) -> IO(Result<&1,&1,U32 & String,String>):
-  import "./log-digest.c"
-
 type Policy is Data:
   Policy{level: String, budget: U32, segments: U32, pending: Bool, db: String, session: String}
 
@@ -106,7 +102,7 @@ def level_admitted(+level: String) -> String:
   "coalesce(nullif(" ++ C.q(level) ++ ",'')," ++ C.q(default_level()) ++ ") IN ('quiet','default','diagnostic')"
 
 def budget_admitted(+budget: String) -> String:
-  "(nullif(" ++ C.q(budget) ++ ",'') IS NULL OR (" ++ C.q(budget) ++ " NOT GLOB '*[^0-9]*' AND CAST(" ++ C.q(budget) ++ " AS INTEGER) BETWEEN 65536 AND 4294967295))"
+  "(nullif(" ++ C.q(budget) ++ ",'') IS NULL OR (" ++ C.q(budget) ++ " NOT GLOB '*[^0-9]*' AND CAST(" ++ C.q(budget) ++ " AS INTEGER) BETWEEN 1 AND 4294967295))"
 
 def segments_admitted(+segments: String) -> String:
   "(nullif(" ++ C.q(segments) ++ ",'') IS NULL OR (" ++ C.q(segments) ++ " NOT GLOB '*[^0-9]*' AND CAST(" ++ C.q(segments) ++ " AS INTEGER) BETWEEN 1 AND 4294967295))"
@@ -133,7 +129,7 @@ def write_sql(+session: String, +level: String, +budget: String, +segments: Stri
   ++ " WHERE " ++ known(session) ++ " AND " ++ admitted(level,budget,segments)
   ++ " ON CONFLICT(session) DO UPDATE SET level=excluded.level,budget_bytes=excluded.budget_bytes,keep_segments=excluded.keep_segments;"
   ++ "SELECT json_object('error','unknown-session','session'," ++ C.q(session) ++ ",'next','Read session ID; recruit or attach the session before setting its log policy.') WHERE NOT " ++ known(session) ++ ";"
-  ++ "SELECT json_object('error','invalid-log-setting','session'," ++ C.q(session) ++ ",'level'," ++ C.q(level) ++ ",'budgetBytes'," ++ C.q(budget) ++ ",'keepSegments'," ++ C.q(segments) ++ ",'condition','A level is quiet, default or diagnostic; a budget is 65536 bytes or more; a retention count fits a positive unsigned 32-bit integer.','next','Read logs SESSION for the stored policy and retry with admitted values.') WHERE " ++ known(session) ++ " AND NOT " ++ admitted(level,budget,segments) ++ ";"
+  ++ "SELECT json_object('error','invalid-log-setting','session'," ++ C.q(session) ++ ",'level'," ++ C.q(level) ++ ",'budgetBytes'," ++ C.q(budget) ++ ",'keepSegments'," ++ C.q(segments) ++ ",'condition','A level is quiet, default or diagnostic; a budget and retention count fit positive unsigned 32-bit integers.','next','Read logs SESSION for the stored policy and retry with admitted values.') WHERE " ++ known(session) ++ " AND NOT " ++ admitted(level,budget,segments) ++ ";"
   ++ "SELECT json_object('session',session,'level',level,'budgetBytes',budget_bytes,'keepSegments',keep_segments,'registeredLogs',(SELECT count(*) FROM log_files WHERE session=log_policies.session)) FROM log_policies WHERE session=" ++ C.q(session) ++ " AND " ++ admitted(level,budget,segments) ++ ";"
 
 def write(+db: String, session: String, level: String, budget: String, segments: String) -> IO(String):
@@ -678,20 +674,6 @@ def open_attempt_named(empty: Bool, +db: String, +session: String, +base: String
 
 def open_attempt(+db: String, +session: String, +base: String, +attempt: String) -> IO(Policy):
   open_attempt_named(String.is_empty(attempt),db,session,base,attempt)
-
-# The complete native event stays in turns.event. This row stores a bounded
-# reader projection and references to the event, generation log and native
-# provider session observed at the same terminal frame.
-def terminal_projection_sql(+session: String, +id: String, +digest: String, +event: String, +generation: String) -> String:
-  "WITH source(value) AS (VALUES(" ++ C.q(event) ++ ")),roles(role,chars) AS (SELECT json_extract(m.value,'$.role'),sum(length(json_extract(c.value,'$.text'))) FROM source,json_each(source.value,'$.messages') m,json_each(m.value,'$.content') c WHERE json_extract(c.value,'$.type')='text' GROUP BY json_extract(m.value,'$.role'))"
-  ++ " INSERT OR IGNORE INTO log_terminal_observations(session,turn_id,event_sha256,projection,artifact_refs) SELECT " ++ C.q(session) ++ "," ++ C.q(id) ++ "," ++ C.q(digest) ++ ",json_object('eventType',json_extract(source.value,'$.type'),'eventCharacters',length(source.value),'messageCount',coalesce(json_array_length(source.value,'$.messages'),0),'roleCharacters',coalesce((SELECT json_group_object(role,chars) FROM roles),'{}'),'lastMessageCharacters',coalesce((SELECT sum(length(json_extract(c.value,'$.text'))) FROM json_each(source.value,'$.messages') m,json_each(m.value,'$.content') c WHERE CAST(m.key AS INTEGER)=(SELECT max(CAST(last.key AS INTEGER)) FROM json_each(source.value,'$.messages') last WHERE json_type(last.value)='object') AND json_extract(c.value,'$.type')='text'),0)),json_object('event','turns.event','outputLog'," ++ C.q(generation) ++ ",'providerSession',coalesce((SELECT native FROM sessions WHERE id=" ++ C.q(session) ++ "),'')) FROM source;"
-
-def record_terminal_projection(+db: String, +session: String, +id: String, +event: String, +generation: String) -> IO(Unit):
-  do IO<Unit>:
-    ensured : Unit <- Schema.ensure(db)
-    digest : String <- IO.try(String,event_sha256(event))
-    saved : String <- IO.try(String,DB.Sql.query(db,schema() ++ generations_schema() ++ terminal_projection_sql(session,id,digest,event,generation)))
-    IO.pure(Unit,Unit{})
 
 # The file name without its directories, so a marker in a parent directory
 # never resolves as the generation identity.

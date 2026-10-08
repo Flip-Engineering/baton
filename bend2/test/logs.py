@@ -210,7 +210,8 @@ sys.exit(%d)
         self.assertEqual(json.loads(self.call('logs', 'omp-worker', 'diagnostic'))['level'], 'diagnostic')
         self.assertEqual(json.loads(self.call('logs', 'omp-worker'))['budgetBytes'], 1048576)
         self.assertEqual(self.refusal('logs', 'omp-worker', 'loud')['error'], 'invalid-log-setting')
-        self.assertEqual(self.refusal('logs', 'omp-worker', 'default', '12')['error'], 'invalid-log-setting')
+        self.assertEqual(json.loads(self.call('logs', 'omp-worker', 'diagnostic', '12'))['budgetBytes'], 12)
+        self.assertEqual(self.refusal('logs', 'omp-worker', 'default', '0')['error'], 'invalid-log-setting')
         self.assertEqual(self.refusal('logs', 'omp-worker', 'default', '1048576', '0')['error'], 'invalid-log-setting')
         self.assertEqual(self.refusal('logs', 'absent-session', 'default')['error'], 'unknown-session')
         self.assertEqual(json.loads(self.call('logs', 'omp-worker'))['level'], 'diagnostic')
@@ -803,6 +804,20 @@ assert sys.stdin.read()==''
         after = json.loads(self.call('logs', 'omp-worker', 'diagnostic', '', '101'))
         self.assertEqual((after['level'], after['budgetBytes'], after['keepSegments'], after['registeredLogs']),
                          ('diagnostic', 1048576, 101, 1))
+        with sqlite3.connect(self.db) as connection:
+            self.assertEqual(connection.execute('SELECT count(*) FROM log_policies').fetchone()[0], 1)
+            self.assertEqual(connection.execute('SELECT log FROM log_files').fetchone()[0], str(self.log))
+
+    def test_existing_budget_floor_migrates_with_rows_and_registry(self):
+        with sqlite3.connect(self.db) as connection:
+            connection.executescript("CREATE TABLE log_policies(session TEXT PRIMARY KEY,level TEXT NOT NULL,budget_bytes INTEGER NOT NULL CHECK(budget_bytes BETWEEN 65536 AND 4294967295),keep_segments INTEGER NOT NULL CHECK(keep_segments BETWEEN 1 AND 4294967295));"
+                                     "CREATE TABLE log_files(session TEXT NOT NULL,log TEXT NOT NULL,PRIMARY KEY(session,log));")
+            connection.execute('INSERT INTO log_policies VALUES(?,?,?,?)',
+                               ('omp-worker', 'diagnostic', 1048576, 3))
+            connection.execute('INSERT INTO log_files VALUES(?,?)', ('omp-worker', str(self.log)))
+        after = json.loads(self.call('logs', 'omp-worker', 'diagnostic', '12'))
+        self.assertEqual((after['budgetBytes'], after['keepSegments'], after['registeredLogs']),
+                         (12, 3, 1))
         with sqlite3.connect(self.db) as connection:
             self.assertEqual(connection.execute('SELECT count(*) FROM log_policies').fetchone()[0], 1)
             self.assertEqual(connection.execute('SELECT log FROM log_files').fetchone()[0], str(self.log))
