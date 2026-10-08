@@ -985,9 +985,6 @@ law m3b_update_broken_is_not_a_landing:
 def m3b_update_broken_is_not_a_landing(detail, target, cand):
   {==}
 
-# M-3b: the fast-forward compare-and-swap lands while the target is still at
-# the recorded tip.
-# M-3b: the fast-forward compare-and-swap refuses when the target moved.
 # ---------------------------------------------------------------------------
 # M-3c: the answer names the outcome actually reached.
 

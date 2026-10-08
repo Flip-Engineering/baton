@@ -34,8 +34,8 @@
 #
 # The scratch worktrees one attempt prepares, the candidate and the target tree
 # named by appending "-target", are removed when the landing answers landed or
-# already. A refused or conflicted attempt keeps them for the requester, and
-# that worker's next attempt drops them.
+# already. A refused or conflicted attempt keeps them for the requester, and a
+# later attempt names its own path without touching them.
 
 import Base
 import ../host/text.bend as Text
@@ -2260,7 +2260,6 @@ law the_reserved_continuation_runs_the_selected_route_and_releases_before_attest
 def the_reserved_continuation_runs_the_selected_route_and_releases_before_attesting(handle,repo,target,cand,basis,guard,common,common_observed,reserved,attempt_name,attempt_parent):
   {==}
 
-# The attempt name: the bare base for the first attempt, then the base extended with the
 # The next attempt name after a collision. The continuation is a suffix on the name, so the name keeps
 # growing and no counter can wrap.
 def shared_attempt_next_name(name: String) -> String:
@@ -3175,8 +3174,8 @@ def ld_settle(r: Ld, repo: String, scratch: String) -> IO(Ld):
 
 # land prepares the candidate, judges it against the target and advances the
 # target branch. The scratch path must not exist. A landed answer removes the
-# trees it prepared; a refused or conflicted answer keeps them for the
-# requester until that worker's next attempt.
+# trees it prepared; a refused or conflicted answer keeps them for the requester,
+# and a later attempt's start removes nothing.
 def land_checked(repo: String, target: String, worker: String, script: String, files: List<String>, scratch: String) -> IO(Result<&1, &1, T.GitFail, T.LandOutcome>):
   +r2 = repo
   +t2 = target
