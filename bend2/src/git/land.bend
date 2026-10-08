@@ -4583,6 +4583,34 @@ law a_failed_release_still_retains_the_identity_observation:
 
 def a_failed_release_still_retains_the_identity_observation(repo,target,cand,basis,guard,common,common_observed,reserved,reservation,obs,code,detail):
   {==}
+law a_guard_path_failure_keeps_its_step_and_error:
+  {shared_guard_named(1, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/common", T.GRun{0, "/common"}, Fail{7 & "guard path failed"}) == (do IO<SharedLanding>:
+    released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(1)
+    IO.pure(SharedLanding, SharedStepFailed{"guard", T.HostError{7, "guard path failed"}, T.release_raw_of(released)})) : IO(SharedLanding)}
+
+def a_guard_path_failure_keeps_its_step_and_error():
+  {==}
+
+law an_attempt_token_failure_keeps_its_step_and_error:
+  {shared_token_named(1, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/common", T.GRun{0, "/common"}, "the-guard", Fail{9 & "token failed"}) == (do IO<SharedLanding>:
+    released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(1)
+    IO.pure(SharedLanding, SharedStepFailed{"token", T.HostError{9, "token failed"}, T.release_raw_of(released)})) : IO(SharedLanding)}
+
+def an_attempt_token_failure_keeps_its_step_and_error():
+  {==}
+
+law a_claim_failure_keeps_its_error:
+  {shared_claim_decided("/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/common", T.GRun{0, "/common"}, Fail{3 & "claim failed"}) == IO.pure(SharedLanding, SharedClaimFailed{T.HostError{3, "claim failed"}}) : IO(SharedLanding)}
+
+def a_claim_failure_keeps_its_error():
+  {==}
+
+law a_claim_that_finds_the_target_held_reports_the_busy_target:
+  {shared_claim_decided("/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/common", T.GRun{0, "/common"}, Done{None{}}) == IO.pure(SharedLanding, SharedGuardBusy{"tgt"}) : IO(SharedLanding)}
+
+def a_claim_that_finds_the_target_held_reports_the_busy_target():
+  {==}
+
 law the_guard_answer_continues_to_the_real_token_call:
   for handle: U32
   for repo: String
