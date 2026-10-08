@@ -3359,6 +3359,14 @@ def fixture_matching_held(+ctx: LdAdvCtx) -> A.Association:
 def fixture_matching_unheld(+ctx: LdAdvCtx) -> A.Association:
   A.AssociationHeld{ld_assoc_request(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}
 
+# The association evidence the continuation laws feed the intent flow: the same shape the route laws
+# assert, kept once so each refusal law differs only in the publication or holder outcome it names.
+def fixture_matching_held_evidence(+ctx: LdAdvCtx) -> AssociationEvidence:
+  AssociationObserved{"associate", ld_assoc_request(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}
+
+def fixture_matching_unheld_evidence(+ctx: LdAdvCtx) -> AssociationEvidence:
+  AssociationObserved{"associate", ld_assoc_request(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}
+
 def fixture_evidence_of(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String, capture: T.CapturedRaw, qualification: LdQualified, identity: IdentityEvidence, association: AssociationEvidence, intent: IntentEvidence) -> AttemptEvidence:
   AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", "/art", AdvLanded{}, capture, qualification, T.ReleaseDone{}, identity, association, intent, ReservationObserved{shared_attempts_parent(common), "attempt-1"}}
 
@@ -4359,7 +4367,7 @@ law a_matching_association_continues_the_held_route_into_its_mutation:
   for ctx: LdAdvCtx
   {ld_adv_held_decided(fixture_matching_held(ctx), "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == (do IO<LdAdvObs>:
     published : Pb.IntentPublish <- Pb.Intent.publish_intent(shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), ladvctx_reserved(ctx), "intent", Lg.intent_content(fixture_oid_candidate(), fixture_oid_basis(), "tgt"))
-    ld_adv_intent_published(published, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), AssociationObserved{"associate", ld_assoc_request(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}, MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder")) : IO(LdAdvObs)}
+    ld_adv_intent_published(published, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder")) : IO(LdAdvObs)}
 
 def a_matching_association_continues_the_held_route_into_its_mutation(ctx):
   {==}
@@ -4368,9 +4376,51 @@ law a_matching_association_continues_the_unheld_route_into_its_mutation:
   for ctx: LdAdvCtx
   {ld_adv_unheld_decided(fixture_matching_unheld(ctx), "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == (do IO<LdAdvObs>:
     published : Pb.IntentPublish <- Pb.Intent.publish_intent(shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), ladvctx_reserved(ctx), "intent", Lg.intent_content(fixture_oid_candidate(), fixture_oid_basis(), "tgt"))
-    ld_adv_intent_published(published, shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), AssociationObserved{"associate", ld_assoc_request(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}, MutationUnheld{}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/r")) : IO(LdAdvObs)}
+    ld_adv_intent_published(published, shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), fixture_matching_unheld_evidence(ctx), MutationUnheld{}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/r")) : IO(LdAdvObs)}
 
 def a_matching_association_continues_the_unheld_route_into_its_mutation(ctx):
+  {==}
+
+law a_refused_publication_stops_the_held_route_without_a_mutation:
+  for ctx: LdAdvCtx
+  {ld_adv_intent_published(Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"publication-refused"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentUnprepared{}, IntentHolderUnperformed{}}} : IO(LdAdvObs)}
+
+def a_refused_publication_stops_the_held_route_without_a_mutation(ctx):
+  {==}
+
+law a_pending_publication_stops_the_unheld_route_without_a_mutation:
+  for ctx: LdAdvCtx
+  {ld_adv_intent_published(Pb.PublishExistingPending{shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "pending bytes", shared_intent_path(ctx)}, shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), fixture_matching_unheld_evidence(ctx), MutationUnheld{}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/r") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"publication-existing-pending"}, MutationUnheld{}, fixture_matching_unheld_evidence(ctx), IntentBound{shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishExistingPending{shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "pending bytes", shared_intent_path(ctx)}}, IntentUnprepared{}, IntentHolderUnperformed{}}} : IO(LdAdvObs)}
+
+def a_pending_publication_stops_the_unheld_route_without_a_mutation(ctx):
+  {==}
+
+law an_unready_holder_stops_the_held_route_keeping_the_qualification:
+  for ctx: LdAdvCtx
+  {ld_adv_intent_observed(It.IntentUnready{"holder", "the worktree is unready", "record bytes"}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"holder-unready"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualificationRefused{"record bytes", shared_intent_path(ctx), "", "the worktree is unready"}, IntentHolderUnperformed{}}} : IO(LdAdvObs)}
+
+def an_unready_holder_stops_the_held_route_keeping_the_qualification(ctx):
+  {==}
+
+law a_pending_holder_stops_the_held_route_keeping_the_qualification:
+  for ctx: LdAdvCtx
+  {ld_adv_intent_observed(It.IntentPending{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "record bytes", "the holder is a worktree"}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"holder-pending"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualificationRefused{"record bytes", shared_intent_path(ctx), "the holder is a worktree", ""}, IntentHolderUnperformed{}}} : IO(LdAdvObs)}
+
+def a_pending_holder_stops_the_held_route_keeping_the_qualification(ctx):
+  {==}
+
+law a_failed_holder_read_stops_the_held_route_with_the_host_error:
+  for ctx: LdAdvCtx
+  {ld_adv_intent_observed(It.IntentHostFailed{"holder", shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), T.HostError{128, "fatal: not a git repository"}}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"holder-host-failed"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualificationFailed{"holder", T.HostError{128, "fatal: not a git repository"}}, IntentHolderUnperformed{}}} : IO(LdAdvObs)}
+
+def a_failed_holder_read_stops_the_held_route_with_the_host_error(ctx):
+  {==}
+
+law a_decided_mismatch_stops_the_unheld_route_without_a_holder_read:
+  for ctx: LdAdvCtx
+  {ld_adv_intent_decided(False{}, shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, "record bytes", IntentHolderUnperformed{}, fixture_matching_unheld_evidence(ctx), MutationUnheld{}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"intent-mismatch"}, MutationUnheld{}, fixture_matching_unheld_evidence(ctx), IntentBound{shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualified{"record bytes", shared_intent_path(ctx)}, IntentHolderUnperformed{}}} : IO(LdAdvObs)}
+
+def a_decided_mismatch_stops_the_unheld_route_without_a_holder_read(ctx):
   {==}
 
 law a_mismatched_returned_candidate_stops_the_held_route_before_the_mutation:
