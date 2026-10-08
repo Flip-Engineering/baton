@@ -22,8 +22,8 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: cc92440a0671f7f142d65c2450d6e80b9dbe05b2
-  PRODUCT_SOURCE_TREE: d2f687ef65d578554e0e562081e5f44c4987aac1
+  PRODUCT_SOURCE_SHA: 4616962131d0d4d593fe53fd8dbe8ad4c8b9b42f
+  PRODUCT_SOURCE_TREE: fa894d3a2a7cff940b1bc30ee88096c3c94f13db
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
   PRODUCT_ARTIFACT_ID: ''
