@@ -203,7 +203,7 @@ function runCodexTurn(prompt, session) {
       process.stderr.write(`codex-conductor: ${event.type}\n`);
       const native = event.type === 'thread.started' ? event.thread_id : null;
       if (native) {
-        execFileSync(COORD, [DB, 'bind', sessionId, native, 'codex', '', '']);
+        execFileSync(COORD, [DB, 'bind', sessionId, native, 'codex', '', ''], { maxBuffer: Infinity });
       }
     });
 

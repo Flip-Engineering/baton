@@ -24,7 +24,6 @@ const state = {
   ensembleFilter: "all",
   collapsed: new Set(),
   sse: null,
-  reconnectDelay: 1000,
   connected: false,
 };
 
@@ -519,7 +518,6 @@ function connectEvents() {
     if (ev.lastEventId) setCursor(ev.lastEventId);
     else if (msg.cursor) setCursor(msg.cursor);
     state.opened = true;
-    state.reconnectDelay = 1000;
     setConn("live");
     if (state.gapHeld) setNotice(state.gapText);
     else setNotice("");
@@ -631,16 +629,14 @@ async function resnapshotThenResume() {
 }
 
 function scheduleEndpointRetry(cause) {
-  const wait = state.reconnectDelay;
-  state.reconnectDelay = Math.min(state.reconnectDelay * 2, 30000);
+  const wait = 1000;
   setConn("retrying");
   setNotice("Snapshot endpoint unreachable (" + (cause && cause.message ? cause.message : cause) + "). Retrying in " + Math.round(wait / 1000) + "s.");
   setTimeout(resnapshotThenResume, wait);
 }
 
 function scheduleEventsRetry() {
-  const wait = state.reconnectDelay;
-  state.reconnectDelay = Math.min(state.reconnectDelay * 2, 30000);
+  const wait = 1000;
   setConn("retrying");
   setNotice("Event stream unavailable before first hello. Retrying events in " + Math.round(wait / 1000) + "s.");
   setTimeout(async () => {
@@ -653,7 +649,8 @@ function scheduleEventsRetry() {
         const body = await probe.json().catch(() => ({}));
         if (body && body.error === "native-owner-subscription-unavailable") {
           setConn("unavailable");
-          setNotice("Live stream unavailable: the shared owner subscription is not installed yet (#676). The snapshot still updates on Reconnect.");
+          setNotice("Live stream unavailable: the shared owner subscription is not installed yet (#676). The client continues checking for the owner subscription.");
+          scheduleEventsRetry();
           return;
         }
       }
@@ -693,7 +690,6 @@ function init() {
     renderTree();
   });
   document.getElementById("reconnect").addEventListener("click", async () => {
-    state.reconnectDelay = 1000;
     try {
       await loadSnapshot();
       setNotice("");
