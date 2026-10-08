@@ -40,6 +40,7 @@
 import Base
 import ../host/text.bend as Text
 import ./landing.bend as Lg
+import ./association.bend as A
 import ./intent.bend as It
 import ../host/receipt.bend as Rec
 import ./intent-publish.bend as Pb
@@ -786,9 +787,9 @@ type LdQualified is Data:
   QualDecided{mode: MutationMode, target_ref: LdRead, head_ref: LdRead}
 
 type LdAdvObs is Data:
-  LdAdvNoCapture{advance: LAdv, mode: MutationMode}
-  LdAdvCaptured{advance: LAdv, capture: T.CapturedRaw, mode: MutationMode}
-  LdAdvQualified{advance: LAdv, capture: T.CapturedRaw, qualification: LdQualified}
+  LdAdvNoCapture{advance: LAdv, mode: MutationMode, association: AssociationEvidence}
+  LdAdvCaptured{advance: LAdv, capture: T.CapturedRaw, mode: MutationMode, association: AssociationEvidence}
+  LdAdvQualified{advance: LAdv, capture: T.CapturedRaw, qualification: LdQualified, association: AssociationEvidence}
 
 # The public shared boundary. The canonical common directory is read once here, the target
 # claim is taken around the holder selection and the selected advance, and the release runs for
@@ -987,7 +988,7 @@ def ld_tip_argv(target: String) -> List<String>:
 def ld_adv_wrap(advance: LAdv, mode: MutationMode) -> LdAdvObs:
   +a = advance
   +m = mode
-  LdAdvNoCapture{a, m}
+  LdAdvNoCapture{a, m, AssociationMissing{}}
 
 # The worktree that holds the target: its path, none, or the reason the report
 # cannot be trusted to name exactly one.
@@ -1090,7 +1091,7 @@ def ld_adv_with(advance: LAdv, +capture: T.CapturedRaw, mode: MutationMode) -> L
   +a = advance
   +c = capture
   +m = mode
-  LdAdvCaptured{a, c, m}
+  LdAdvCaptured{a, c, m, AssociationMissing{}}
 
 # The exact local target branch commit used to validate a held worktree.
 def ld_target_ref_argv(target: String) -> List<String>:
@@ -1105,15 +1106,15 @@ def ld_adv_cas(g: T.GitOut) -> LAdv:
 
 def ld_adv_capture(obs: LdAdvObs) -> T.CapturedRaw:
   match obs:
-    case LdAdvNoCapture{advance, mode}: T.CapturedAbsent{}
-    case LdAdvCaptured{advance, capture, mode}: capture
-    case LdAdvQualified{advance, capture, qualification}: capture
+    case LdAdvNoCapture{advance, mode, association}: T.CapturedAbsent{}
+    case LdAdvCaptured{advance, capture, mode, association}: capture
+    case LdAdvQualified{advance, capture, qualification, association}: capture
 
 def ld_adv_qualification(obs: LdAdvObs) -> LdQualified:
   match obs:
-    case LdAdvNoCapture{advance, mode}: QualDecided{mode, ReadSkipped{}, ReadSkipped{}}
-    case LdAdvCaptured{advance, capture, mode}: QualDecided{mode, ReadSkipped{}, ReadSkipped{}}
-    case LdAdvQualified{advance, capture, qualification}: qualification
+    case LdAdvNoCapture{advance, mode, association}: QualDecided{mode, ReadSkipped{}, ReadSkipped{}}
+    case LdAdvCaptured{advance, capture, mode, association}: QualDecided{mode, ReadSkipped{}, ReadSkipped{}}
+    case LdAdvQualified{advance, capture, qualification, association}: qualification
 
 def ld_admitted(admission: Admission) -> Bool:
   match admission:
@@ -1126,7 +1127,7 @@ def ld_admission(admission: Admission) -> String:
     case AdmissionRefused{attestation, reason}: reason
 
 def ld_adv_qualified_with(advance: LAdv, +capture: T.CapturedRaw, qualification: LdQualified) -> LdAdvObs:
-  LdAdvQualified{advance, capture, qualification}
+  LdAdvQualified{advance, capture, qualification, AssociationMissing{}}
 
 # A refused mutation still records the target read it performed; HEAD was never reached.
 def ld_adv_read(observation: T.GitOut) -> LdRead:
@@ -1600,9 +1601,9 @@ def ld_attest_admit(+evidence: AttemptEvidence) -> IO(SharedLanding):
 # remain the source candidate before checking which branch the holder has now.
 def ld_adv_of(obs: LdAdvObs) -> LAdv:
   match obs:
-    case LdAdvNoCapture{advance, mode}: advance
-    case LdAdvCaptured{advance, capture, mode}: advance
-    case LdAdvQualified{advance, capture, qualification}: advance
+    case LdAdvNoCapture{advance, mode, association}: advance
+    case LdAdvCaptured{advance, capture, mode, association}: advance
+    case LdAdvQualified{advance, capture, qualification, association}: advance
 
 def shared_reserved_attested(repo: String, +target: String, cand: String, basis: String, +guard: String, +common: String, +common_observed: T.GitOut, +reserved: String, +obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>) -> IO(SharedLanding):
   +rel = T.release_raw_of(released)
