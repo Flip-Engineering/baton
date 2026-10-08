@@ -13,11 +13,11 @@ if (!SOURCE || !BEND || !OUTPUT || !existsSync(join(SOURCE, 'bend2', 'scripts', 
   process.exit(2);
 }
 
-const PIN = '9fabe2f20a9171512fb1e152ed65687ebc3e0fdc';
+const PIN = '50ff4ffbbf6a92c6e1dce58b4eaa777704702daa';
 const SOURCE_SHA = execFileSync('git', ['-C', SOURCE, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 if (SOURCE_SHA !== PIN) throw new Error(`source pin mismatch: ${SOURCE_SHA}`);
 const SOURCE_TREE = execFileSync('git', ['-C', SOURCE, 'rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
-if (SOURCE_TREE !== '927dcb2615fdcfdda0d18746c102a0709ee94b02') throw new Error(`source tree mismatch: ${SOURCE_TREE}`);
+if (SOURCE_TREE !== 'db52c7b5c3166d03d7a58fba3b88eaf9afa5e3b5') throw new Error(`source tree mismatch: ${SOURCE_TREE}`);
 const DRIVER_SHA = process.env.BATON2_DRIVER_SHA ?? null;
 const DRIVER_TREE = process.env.BATON2_DRIVER_TREE ?? null;
 mkdirSync(OUTPUT, { recursive: true });
@@ -129,7 +129,7 @@ function removeProof(relativePath, name) {
 }
 
 inventory = mutations.map((mutation) => {
-  if (!mutation.name || !mutation.file || !mutation.find || !mutation.replace || !mutation.law) throw new Error('mutation metadata is incomplete');
+  if (typeof mutation.name !== 'string' || !mutation.name || typeof mutation.file !== 'string' || !mutation.file || typeof mutation.find !== 'string' || !mutation.find || typeof mutation.replace !== 'string' || typeof mutation.law !== 'string' || !mutation.law) throw new Error('mutation metadata is incomplete');
   const path = join(SOURCE, mutation.file);
   const sourceText = readFileSync(path, 'utf8');
   const lawFiles = lawDefinitions(mutation.law);
@@ -181,6 +181,7 @@ selectedNames = [
   'naming-entry-skips-the-store',
   'm17-refused-conversation-completes-instead',
   'm3a-held-advance-drops-the-fast-forward-requirement',
+  'admitted-wake-skips-the-detached-native-launch',
 ];
 const selected = selectedNames.map((name) => mutations.find((item) => item.name === name));
 if (selected.some((item) => !item)) throw new Error('focused mutation entry is missing');
