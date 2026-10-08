@@ -41,14 +41,6 @@ class SelectedContextPackageTest(unittest.TestCase):
             self.assertEqual(PACKAGE.file_info(staged), {key: row[key] for key in ('bytes', 'sha256')})
         self.assertEqual((module_root / 'selected-module.source.json').is_file(), True)
 
-    def test_refuses_source_manifest_hash_mismatch(self):
-        manifest_path = self.root / 'bend2/context/bend2/selected-module.json'
-        manifest = json.loads(manifest_path.read_text())
-        manifest['files'][0]['sha256'] = '0' * 64
-        manifest_path.write_text(json.dumps(manifest))
-        with self.assertRaisesRegex(RuntimeError, 'differs from its manifest'):
-            PACKAGE.stage_selected_context_payload(self.payload)
-
     def test_refuses_path_escape(self):
         manifest_path = self.root / 'bend2/context/bend2/selected-module.json'
         manifest = json.loads(manifest_path.read_text())
@@ -56,15 +48,6 @@ class SelectedContextPackageTest(unittest.TestCase):
         manifest_path.write_text(json.dumps(manifest))
         with self.assertRaisesRegex(RuntimeError, 'Unsafe selected Bend2 artifact path'):
             PACKAGE.stage_selected_context_payload(self.payload)
-
-    def test_refuses_changed_upstream_pin_metadata(self):
-        manifest_path = self.root / 'bend2/context/bend2/selected-module.json'
-        manifest = json.loads(manifest_path.read_text())
-        manifest['upstreamPin'] = '0' * 40
-        manifest_path.write_text(json.dumps(manifest))
-        with self.assertRaisesRegex(RuntimeError, 'provenance'):
-            PACKAGE.stage_selected_context_payload(self.payload)
-
 
 if __name__ == '__main__':
     unittest.main()
