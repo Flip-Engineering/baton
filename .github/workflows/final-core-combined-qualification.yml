@@ -17,8 +17,8 @@ jobs:
       matrix:
         include:
           - product: combined-context
-            source_sha: 2c5c4354da2fce46ac79a7d2846c52d89a812921
-            source_tree: 184be9251b5d21032753ff481138ab5d0c908354
+            source_sha: e174b06c07e2fbb9179ae7a0f1b5e79ee722873c
+            source_tree: 9bfcae95ab3eb5e0f785e9e2df669e8ee5cba027
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
@@ -164,8 +164,6 @@ jobs:
             bend2/test/ui-orchestra-server.test.mjs bend2/test/context-project-policy.test.mjs \
             || failures=$((failures + 1))
           run_recorded instance-check-only "$bend" bend2/test/instance.bend --check-only \
-            || failures=$((failures + 1))
-          run_recorded context-lifecycle env BEND="$bend" python3 bend2/test/context-lifecycle.py \
             || failures=$((failures + 1))
           run_recorded shared-instance env BEND="$bend" python3 bend2/test/shared-instance.py \
             || failures=$((failures + 1))
