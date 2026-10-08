@@ -4358,8 +4358,8 @@ def the_unheld_decision_handler_stops_on_a_refused_association(ctx):
 law a_matching_association_continues_the_held_route_into_its_mutation:
   for ctx: LdAdvCtx
   {ld_adv_held_decided(fixture_matching_held(ctx), "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == (do IO<LdAdvObs>:
-    obs : LdAdvObs <- ld_adv_wt("/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx)
-    IO.pure(LdAdvObs, ld_adv_keep_association(obs, AssociationObserved{"associate", ld_assoc_request(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}))) : IO(LdAdvObs)}
+    published : Pb.IntentPublish <- Pb.Intent.publish_intent(shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), ladvctx_reserved(ctx), "intent", Lg.intent_content(fixture_oid_candidate(), fixture_oid_basis(), "tgt"))
+    ld_adv_intent_published(published, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), AssociationObserved{"associate", ld_assoc_request(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}, MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/holder")) : IO(LdAdvObs)}
 
 def a_matching_association_continues_the_held_route_into_its_mutation(ctx):
   {==}
@@ -4367,8 +4367,8 @@ def a_matching_association_continues_the_held_route_into_its_mutation(ctx):
 law a_matching_association_continues_the_unheld_route_into_its_mutation:
   for ctx: LdAdvCtx
   {ld_adv_unheld_decided(fixture_matching_unheld(ctx), "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == (do IO<LdAdvObs>:
-    obs : LdAdvObs <- ld_adv_cas_run("/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx)
-    IO.pure(LdAdvObs, ld_adv_keep_association(obs, AssociationObserved{"associate", ld_assoc_request(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}))) : IO(LdAdvObs)}
+    published : Pb.IntentPublish <- Pb.Intent.publish_intent(shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), ladvctx_reserved(ctx), "intent", Lg.intent_content(fixture_oid_candidate(), fixture_oid_basis(), "tgt"))
+    ld_adv_intent_published(published, shared_intent_input(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), AssociationObserved{"associate", ld_assoc_request(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}, MutationUnheld{}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx, "/r")) : IO(LdAdvObs)}
 
 def a_matching_association_continues_the_unheld_route_into_its_mutation(ctx):
   {==}
