@@ -18,8 +18,9 @@
 #      by the caller's identity, and a writer's answer names the stored result only for a delivery
 #      that reached exit 0.
 # M-2  bound: P.git_out, Tx.run_res, Turn.refusal_body, Turn.status_text, Recruit.git_status, the
-#      Git status and create-worktree stage readers, and the adapter dispatch in Turn.input and
-#      Turn.launch. Each carries an observed status or an unresolved one and never invents either.
+#      Git status and create-worktree stage readers, Muse.argv, Claude.argv, and the adapter
+#      dispatch in Turn.input and Turn.launch. Each carries an observed status or an unresolved one
+#      and never invents either.
 # M-3a bound: L.pair_cv, L.pair_targ, L.pair_news, L.run_verdict, L.exit_verdict, L.check_argv and
 #      the Git status stages. A verdict that did not run blocks, a passing candidate contributes
 #      nothing, and each selected file is paired with the candidate and target verdicts of itself.
@@ -29,7 +30,8 @@
 # M-4  bound: Deb.debris_argv, Deb.debris_note, Deb.debris_note_of and the create-worktree stage
 #      readers. The dropped set is named and the work the stages made is kept.
 # M-5  bound: Store.commit and Store.committed, C.sql(Pending/Inbox/Delivery/Bind),
-#      Delivery.wake_sql, Receive.pending_count_sql, P.argv, Turn.remember and Land.require_branch. A
+#      Delivery.wake_sql, Receive.pending_count_sql, P.argv, Turn.remember, Turn.retained_arguments
+#      and Land.require_branch. A
 #      report and its parent delivery are written in one transaction, a transaction that did not
 #      commit delivers nothing, and owed messages are named in the store's own sequence order and
 #      remain owed until receipt. J.json_text is supplementary, not operative: see below.
@@ -48,8 +50,11 @@
 #      Tx.run_res. A verdict, a terminal event and a workspace come from what was observed.
 # M-12 bound: Delivery.after, Delivery.launch, Guidance.send, Receive.continue_if and Turn.close_input. A
 #      command that owes no delivery answers from its own committed result.
-# M-13 bound: Delivery.after, Guidance.relevant and Turn.close_input. The commit path itself invokes
-#      the recipient's registered endpoint, at the frames that carry guidance.
+# M-13 bound: Delivery.after, Guidance.relevant, Turn.close_input and the retained-attempt
+#      input and stdin selections Turn.retained_input and Turn.retained_keep_stdin, whose Muse
+#      and Claude arms the retained-attempt laws state. The
+#      commit path itself invokes the recipient's registered endpoint, at the frames that carry
+#      guidance.
 # M-14 bound: T.fail_text, Receive.registered, Receive.exit_status, Turn.supported_harness,
 #      Land.require_player, Land.require_branch_pick and Recruit.git_status. Each refusal names its
 #      own rule and subject. The Git status and create-worktree reader laws are supplementary: see
@@ -1198,6 +1203,64 @@ law m5_a_resumable_muse_turn_carries_the_recorded_session:
   {Turn.muse_launch(cmd, model, effort, cwd, stderr, session, task, False{}) == Muse.resume_player(cmd, model, effort, cwd, stderr, session, task) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m5_a_resumable_muse_turn_carries_the_recorded_session(cmd, model, effort, cwd, stderr, session, task):
+  {==}
+
+# ---------------------------------------------------------------------------
+# M-13 over the retained receive path. A retained Muse attempt takes the composed
+# input as its own task file, which the host writes inside the attempt directory
+# before the child starts, and writes no bytes to the child's input. A retained
+# Claude attempt carries the composed input as one user frame.
+
+law m13_a_retained_muse_attempt_writes_no_stdin:
+  for +prompt: String
+  {Turn.retained_input(True{},False{},False{},prompt) == "" : String}
+
+def m13_a_retained_muse_attempt_writes_no_stdin(prompt):
+  {==}
+
+law m13_a_retained_muse_attempt_closes_its_input_as_a_codex_attempt_does:
+  {U32.is_eq(Turn.retained_keep_stdin(True{},False{},False{}),Turn.retained_keep_stdin(False{},False{},False{})) == True{} : Bool}
+
+def m13_a_retained_muse_attempt_closes_its_input_as_a_codex_attempt_does():
+  {==}
+
+law m13_a_retained_claude_attempt_carries_the_user_frame:
+  for +prompt: String
+  {Turn.retained_input(False{},False{},True{},prompt) == Claude.user_frame(prompt) : String}
+
+def m13_a_retained_claude_attempt_carries_the_user_frame(prompt):
+  {==}
+
+law m13_a_retained_claude_attempt_closes_its_input_as_a_codex_attempt_does:
+  {U32.is_eq(Turn.retained_keep_stdin(False{},False{},True{}),Turn.retained_keep_stdin(False{},False{},False{})) == True{} : Bool}
+
+def m13_a_retained_claude_attempt_closes_its_input_as_a_codex_attempt_does():
+  {==}
+
+# M-5: the retained Muse and Claude attempts reach the conversation the session
+# recorded. Production selects the Muse argv through muse_retained_arguments and
+# the Claude argv through the retained selection.
+law m5_the_retained_muse_argv_resumes_the_recorded_conversation:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +prompt_file: String
+  for +session: String
+  {Turn.muse_retained_arguments(cmd,model,effort,prompt_file,session) == List.append(&1,String,Muse.arguments(cmd,model,effort,prompt_file),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session])) : List<String>}
+
+def m5_the_retained_muse_argv_resumes_the_recorded_conversation(cmd, model, effort, prompt_file, session):
+  {==}
+
+law m5_the_retained_claude_argv_resumes_the_recorded_conversation:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +task: String
+  for +sessions: String
+  for +session: String
+  {Turn.retained_arguments(False{},True{},cmd,model,effort,task,sessions,session) == Claude.argv(cmd,model,effort,session,String.is_empty(session)) : String}
+
+def m5_the_retained_claude_argv_resumes_the_recorded_conversation(cmd, model, effort, task, sessions, session):
   {==}
 
 # ---------------------------------------------------------------------------

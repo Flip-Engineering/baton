@@ -40,6 +40,33 @@ FIXTURE = FIXTURE.replace("    if action.get('progress'):", """    if action.get
         continue
     if action.get('progress'):""", 1)
 
+# The stop helper runs one turn for each supported retained harness. The shared
+# fixture speaks Codex and OMP; these insertions add the Muse task-file envelope
+# and the Claude user-frame envelope without touching the shared fixture.
+FIXTURE = FIXTURE.replace(r"""omp='--mode' in args""", r"""omp='--mode' in args
+muse='--prompt-file' in args
+claude='--input-format' in args""", 1)
+FIXTURE = FIXTURE.replace(r"""else:
+    prompt=sys.stdin.read()
+    native=resume or native
+    print(json.dumps({'type':'thread.started','thread_id':native}),flush=True)""", r"""elif muse:
+    prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
+    print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'turn.input.user','payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}),flush=True)
+elif claude:
+    prompt=json.loads(sys.stdin.readline())['message']['content']
+    print(json.dumps({'type':'system','subtype':'init','session_id':native}),flush=True)
+else:
+    prompt=sys.stdin.read()
+    native=resume or native
+    print(json.dumps({'type':'thread.started','thread_id':native}),flush=True)""", 1)
+FIXTURE = FIXTURE.replace(r"""        remaining_input=sys.stdin.read()
+    elif failure:""", r"""        remaining_input=sys.stdin.read()
+    elif muse:
+        print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.terminal.completed','payload':{'kind':'run_terminal','terminal':'completed','command_id':'fixture-primary','text':body}}),flush=True)
+    elif claude:
+        print(json.dumps({'type':'result','session_id':native,'result':body,'is_error':failure}),flush=True)
+    elif failure:""", 1)
+
 
 class Stop(unittest.TestCase):
     setUp = receive.Receive.setUp
@@ -165,6 +192,12 @@ class Stop(unittest.TestCase):
 
     def test_retained_codex_stop_preserves_work_and_exits_native_and_tool(self):
         self.retained_stop_preserves_work_native_identity_receipts_and_output('codex')
+
+    def test_retained_muse_stop_preserves_work_and_exits_native_and_tool(self):
+        self.retained_stop_preserves_work_native_identity_receipts_and_output('muse')
+
+    def test_retained_claude_code_stop_preserves_work_and_exits_native_and_tool(self):
+        self.retained_stop_preserves_work_native_identity_receipts_and_output('claude-code')
 
     def test_explicit_force_reaches_same_term_resistant_attempt_after_observer_loss(self):
         observer, stream, started = self.begin(resist=True)
