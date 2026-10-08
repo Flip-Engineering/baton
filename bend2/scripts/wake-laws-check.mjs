@@ -17,11 +17,12 @@
 
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const ENTRY = join('bend2', 'src', 'coordinator', 'main.bend');
-const SCRATCH = join(ROOT, '.scratch', 'bend2-wake-laws-check');
+const SCRATCH = join(tmpdir(), `bend2-wake-laws-check-${process.pid}`);
 const ENV = { ...process.env, BEND_NO_TELEMETRY: '1' };
 
 function resolveBend() {
