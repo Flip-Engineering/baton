@@ -1637,6 +1637,14 @@ def ld_adv_intent_observed(observed: It.IntentPrepared, intent: It.IntentInput, 
       match error:
         case T.HostError{code, detail}: IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, shared_intent_path(ctx), "holder-host-failed", holder_path, repo, target, cand, basis, assoc, IntentPublished{published}, IntentQualificationFailed{"holder", T.HostError{code, detail}}, True{}))
 
+def ld_adv_intent_held(intent: It.IntentInput, published: Pb.IntentPublish, raw: String, assoc: AssociationEvidence, holder_path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, held: Bool) -> IO(LdAdvObs):
+  Bool.pick(IO(LdAdvObs), held,
+    (do IO<LdAdvObs>:
+      observed : It.IntentPrepared <- It.Intent.observe_holder(intent, raw, shared_intent_path(ctx))
+      ld_adv_intent_observed(observed, intent, published, raw, assoc, holder_path, repo, target, cand, basis, ctx)),
+    ld_adv_intent_applied(intent, published, raw, IntentHolderUnperformed{}, assoc, holder_path, repo, target, cand, basis, ctx, False{}))
+
+
 # The qualification verdict is a parameter here, so the match is on a parameter rather than on a
 # computed scrutinee.
 def ld_adv_intent_verdict(intent: It.IntentInput, published: Pb.IntentPublish, raw: String, verdict: It.ReceiptVerdict, assoc: AssociationEvidence, holder_path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
@@ -1648,13 +1656,6 @@ def ld_adv_intent_verdict(intent: It.IntentInput, published: Pb.IntentPublish, r
       IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, shared_intent_path(ctx), "qualification-pending", holder_path, repo, target, cand, basis, assoc, IntentPublished{published}, IntentQualificationRefused{raw, path, pending, ""}, True{}))
     case It.VerdictRefused{raw: refused_raw, reason}:
       IO.pure(LdAdvObs, ld_adv_intent_stopped(intent, shared_intent_path(ctx), "qualification-refused", holder_path, repo, target, cand, basis, assoc, IntentPublished{published}, IntentQualificationRefused{raw, path, "", reason}, True{}))
-
-def ld_adv_intent_held(intent: It.IntentInput, published: Pb.IntentPublish, raw: String, assoc: AssociationEvidence, holder_path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, held: Bool) -> IO(LdAdvObs):
-  Bool.pick(IO(LdAdvObs), held,
-    (do IO<LdAdvObs>:
-      observed : It.IntentPrepared <- It.Intent.observe_holder(intent, raw, shared_intent_path(ctx))
-      ld_adv_intent_observed(observed, intent, published, raw, assoc, holder_path, repo, target, cand, basis, ctx)),
-    ld_adv_intent_applied(intent, published, raw, IntentHolderUnperformed{}, assoc, holder_path, repo, target, cand, basis, ctx, False{}))
 
 def ld_adv_intent_qualified(host: Result<&1, &1, U32 & String, String>, intent: It.IntentInput, published: Pb.IntentPublish, assoc: AssociationEvidence, holder_path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +path = shared_intent_path(ctx)
