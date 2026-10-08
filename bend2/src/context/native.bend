@@ -1013,7 +1013,7 @@ def managed_recovery_attached_result(+db: String, +binding: String,
                                      attached: Result<&1,&1,U32 & String,U32 & String>) -> IO(Unit):
   match attached:
     case Fail{error}: IO.die(Unit, 3, "managedRecoveryAttachUnavailable")
-    case Done{(handle, +transition)}:
+    case Done{(+handle, +transition)}:
       do IO<Unit>:
         state : Result<&1,&1,U32 & String,String> <- Custody.Instance.state(handle)
         managed_recovery_state_result(db, binding, bootstrap, worktree,
