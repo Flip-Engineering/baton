@@ -6,7 +6,6 @@ import { DatabaseSync } from 'node:sqlite';
 import { createNativeOwnerSubscriber } from './native-owner-subscription.mjs';
 
 const CONTRACT_VERSION = 1;
-const TRANSITION_LIMIT = 50;
 const CONTENT_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
   ['.html', 'text/html; charset=utf-8'],
@@ -173,7 +172,7 @@ function snapshot(db, reader, subject, since) {
       SELECT change_id AS seq, recorded_at AS at, session_id AS session,
              kind, summary
         FROM native_changes WHERE session_id IN (${placeholders})
-       ORDER BY change_id DESC LIMIT ?`, ...scope, TRANSITION_LIMIT)
+       ORDER BY change_id DESC`, ...scope)
       .map((row) => ({ seq: row.seq, at: row.at, session: row.session, kind: row.kind, summary: row.summary }));
     const selection = {
       mode: subject === reader ? 'all' : 'subtree',
@@ -201,11 +200,11 @@ function writeEvent(response, event, id, data) {
   response.write(`id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-function eventRows(db, cursor, limit = 100) {
+function eventRows(db, cursor) {
   return rows(db, `
     SELECT change_id AS id, recorded_at AS at, session_id AS session,
            entity, entity_id AS entityId, operation, kind, summary
-      FROM native_changes WHERE change_id > ? ORDER BY change_id LIMIT ?`, cursor, limit);
+      FROM native_changes WHERE change_id > ? ORDER BY change_id`, cursor);
 }
 
 function ensembleHasVisibleMember(db, id, scope) {
@@ -339,7 +338,6 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
             summary: change.summary,
           });
         }
-        if (batch.rows.length === 100) pumpAgain = true;
       } while (pumpAgain && !closed);
     } catch (error) {
       endWithGap('event-read-failed');

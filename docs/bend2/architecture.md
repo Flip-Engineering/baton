@@ -146,9 +146,7 @@ keeps every frame the classification names, except the cumulative
 each message wait in memory for their `tool_execution_end` or `message_end`,
 and the turn writes whatever is still held when it ends. Frames the
 classification does not name, including every Codex, Muse and Claude frame,
-keep their own line. Stderr has a separate file. The log rotates at the
-session's byte budget; `logs`, `logs-storage` and `logs-clean` read and set the
-policy and reclaim eligible rotated segments. Terminal output becomes a parent
+keep their own line. Stderr has a separate file. The coordinator appends retained frames to per-turn public logs. `logs` reads or sets the concise log level; `logs-storage` reports registered files; `logs-clean` removes eligible completed attempt artifacts. Terminal output becomes a parent
 report. If OMP omits the terminal
 message list, the latest assistant `message_end` supplies the report.
 Start failures, output-observation failures and exits without a native result

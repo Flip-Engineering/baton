@@ -351,12 +351,11 @@ the cumulative `message_update` and `tool_execution_update` snapshots the
 provider resends while a message or a tool call is running, and holds the newest
 `tool_execution_update` of each open call and the newest `message_start` and
 `message_update` of each message until its `tool_execution_end` or
-`message_end` arrives. The log rotates
-at the session's byte budget and retains the segments the session's retention
-count covers. `logs`, `logs-storage` and `logs-clean` read and set that policy,
-report the storage each producer uses, and remove eligible rotated segments;
-[the log policy](../docs/bend2/logging.md) describes the levels, the defaults
-and the ownership boundaries.
+`message_end` arrives. The coordinator appends complete retained frames to a
+per-turn log and writes native stderr to a separate per-run file. `logs` reads
+and sets the concise level, `logs-storage` reports registered files, and
+`logs-clean` removes eligible completed attempt artifacts. [The log policy](../docs/bend2/logging.md)
+describes the levels and file ownership.
 New supervisors use
 the selected coordinator executable. Keep existing logs at their recorded paths
 when changing the installed coordinator between lanes.

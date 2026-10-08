@@ -365,89 +365,6 @@ static int br_write_all(int fd,const void *data,size_t length) {
   }
   return 0;
 }
-static char *br_json_escape(const char *text) {
-  size_t length=strlen(text);
-  if(length>(SIZE_MAX-1)/6)return NULL;
-  char *escaped=malloc(length*6+1);
-  if(!escaped)return NULL;
-  static const char hex[]="0123456789abcdef";size_t out=0;
-  for(size_t i=0;i<length;i++) {
-    unsigned char c=(unsigned char)text[i];
-    if(c=='"' || c=='\\') {escaped[out++]='\\';escaped[out++]=(char)c;}
-    else if(c<0x20) {escaped[out++]='\\';escaped[out++]='u';escaped[out++]='0';escaped[out++]='0';escaped[out++]=hex[c>>4];escaped[out++]=hex[c&15];}
-    else escaped[out++]=(char)c;
-  }
-  escaped[out]=0;return escaped;
-}
-static int br_stderr_meta(const char *meta,const char *spool,uint32_t limit,
-                          uint64_t observed,uint64_t retained,int error) {
-  char *escaped=br_json_escape(spool);
-  if(!escaped)return ENOMEM;
-  size_t capacity=strlen(escaped)+256;
-  char *record=malloc(capacity);
-  if(!record){free(escaped);return ENOMEM;}
-  int n=error?snprintf(record,capacity,
-    "{\"schema\":\"baton2-stderr-v1\",\"status\":\"unavailable\",\"error\":%d,\"observedBytes\":null,\"retainedBytes\":null,\"truncated\":null,\"spool\":\"%s\"}\n",error,escaped)
-    :snprintf(record,capacity,
-    "{\"schema\":\"baton2-stderr-v1\",\"status\":\"complete\",\"truncated\":%s,\"observedBytes\":%llu,\"retainedBytes\":%llu,\"spool\":\"%s\",\"limitBytes\":%u}\n",
-    observed>retained?"true":"false",(unsigned long long)observed,(unsigned long long)retained,escaped,limit);
-  free(escaped);
-  int fd=open(meta,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC|O_NOFOLLOW,0600);
-  int result=fd<0?errno:br_write_all(fd,record,(size_t)n);
-  if(fd>=0) {
-    if(!result && fsync(fd))result=errno;
-    close(fd);
-  }
-  free(record);
-  return result;
-}
-static void br_stderr_processing_error(const char *meta,int error) {
-  size_t length=strlen(meta);
-  if(length>SIZE_MAX-sizeof(".processing-error"))return;
-  char *marker=malloc(length+sizeof(".processing-error"));
-  if(!marker)return;
-  memcpy(marker,meta,length);memcpy(marker+length,".processing-error",sizeof(".processing-error"));
-  int fd=open(marker,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC|O_NOFOLLOW,0600);
-  if(fd>=0) {
-    char text[96];
-    int n=snprintf(text,sizeof(text),"stderr metadata finalization failed: %d\n",error);
-    br_write_all(fd,text,(size_t)n);
-    fsync(fd);
-    close(fd);
-  }
-  free(marker);
-}
-static int br_finalize_stderr(const char *target,const char *spool,const char *meta,uint32_t limit) {
-  int source=open(spool,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
-  int error=source<0?errno:0;
-  struct stat info;
-  uint64_t observed=0,retained=0;
-  if(!error && fstat(source,&info))error=errno;
-  if(!error && fsync(source))error=errno;
-  if(!error && (!S_ISREG(info.st_mode) || info.st_size<0))error=EINVAL;
-  if(!error) {
-    observed=(uint64_t)info.st_size;
-    retained=observed<limit?observed:limit;
-    int dest=open(target,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC|O_NOFOLLOW,0600);
-    if(dest<0)error=errno;
-    char buffer[16384];
-    uint64_t copied=0;
-    while(!error && copied<retained) {
-      size_t want=(size_t)((retained-copied)<sizeof(buffer)?retained-copied:sizeof(buffer));
-      ssize_t n=read(source,buffer,want);
-      if(n<0 && errno==EINTR)continue;
-      if(n<=0){error=n<0?errno:EIO;break;}
-      error=br_write_all(dest,buffer,(size_t)n);
-      copied+=(uint64_t)n;
-    }
-    if(!error && fsync(dest))error=errno;
-    if(dest>=0)close(dest);
-  }
-  if(source>=0)close(source);
-  int result=br_stderr_meta(meta,spool,limit,observed,retained,error);
-  if(result)br_stderr_processing_error(meta,result);
-  return result;
-}
 static int br_read_all(int fd,void *data,size_t length) {
   char *bytes=data;
   while(length) {
@@ -2498,10 +2415,9 @@ done:
   return 0;
 }
 /* Writes the attempt manifest that custody and recovery both read. */
-/* A prepared artifact name is one safe path component: non-empty, no separator,
-   no traversal, bounded length. */
+/* A prepared artifact name is one non-empty path component with no traversal. */
 static int br_artifact_name_ok(const char *name,size_t length) {
-  if(!name || !length || length>255)return EINVAL;
+  if(!name || !length)return EINVAL;
   if(name[0]=='.' && (!name[1] || (name[1]=='.' && !name[2])))return EINVAL;
   if(strchr(name,'/') || strchr(name,'\\'))return EINVAL;
   if(strlen(name)!=length)return EINVAL;
@@ -3873,7 +3789,7 @@ static int br_recovery(BatonProcessCall *call) {
    quantity, so it crosses this boundary as text and a malformed or oversized
    value is refused here. */
 static int br_parse_u64(const char *text,size_t length,uint64_t *value) {
-  if(!text || !length || length>20)return EINVAL;
+  if(!text || !length)return EINVAL;
   uint64_t result=0;
   for(size_t i=0;i<length;i++) {
     if(text[i]<'0' || text[i]>'9')return EINVAL;
