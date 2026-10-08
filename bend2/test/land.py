@@ -184,23 +184,34 @@ class Land(unittest.TestCase):
         return sorted(p.name for p in (self.repo / '.scratch').glob(f'bend2-land-{player}-*'))
 
     def scratch_state(self, player):
-        """Observed state of WORKER's scratch trees: exact paths, per-tree HEAD, registration."""
+        """Observed state of WORKER's scratch trees, with each Git observation required to succeed."""
         paths = self.scratch_paths(player)
-        heads = {}
+        heads, statuses, contents = {}, {}, {}
         for tree in paths:
             head = subprocess.run(['git', '-C', str(tree), 'rev-parse', 'HEAD'],
                                   capture_output=True, text=True)
-            heads[tree.name] = head.stdout.strip() if head.returncode == 0 else ''
+            self.assertEqual(head.returncode, 0,
+                             f'rev-parse HEAD failed for {tree.name}: {head.stderr.strip()}')
+            heads[tree.name] = head.stdout.strip()
+            status = subprocess.run(['git', '-C', str(tree), 'status', '--porcelain'],
+                                    capture_output=True, text=True)
+            self.assertEqual(status.returncode, 0,
+                             f'status failed for {tree.name}: {status.stderr.strip()}')
+            statuses[tree.name] = status.stdout
+            contents[tree.name] = {f.name: f.read_bytes() for f in sorted(tree.glob('*.txt'))}
         registered = sorted(line.split(' ', 1)[1].strip()
                             for line in self.git('worktree', 'list', '--porcelain').splitlines()
                             if line.startswith('worktree '))
-        return {'paths': [tree.name for tree in paths], 'heads': heads, 'registered': registered}
+        return {'paths': [tree.name for tree in paths], 'heads': heads, 'statuses': statuses,
+                'contents': contents, 'registered': registered}
 
     def assert_scratch_state(self, player, state):
-        """The same paths, the same per-tree HEADs and the same registration as STATE."""
+        """The same paths, HEADs, contents, statuses and registration as STATE."""
         now = self.scratch_state(player)
         self.assertEqual(now['paths'], state['paths'])
         self.assertEqual(now['heads'], state['heads'])
+        self.assertEqual(now['statuses'], state['statuses'])
+        self.assertEqual(now['contents'], state['contents'])
         for name in state['paths']:
             tree = str(self.repo / '.scratch' / name)
             self.assertIn(tree, now['registered'],
@@ -570,12 +581,19 @@ class Land(unittest.TestCase):
             process.communicate()
 
     def test_a_held_attempts_scratch_trees_survive_a_later_same_worker_attempt(self):
-        """A second attempt by the same worker leaves the held attempt's trees alone."""
-        # Readiness is this attempt's own check stage reporting over the socket, so
-        # the later attempt starts while the first is provably inside its check.
+        """A held attempt keeps its trees while a later same-worker attempt refuses."""
+        # Readiness is this attempt's own check stage reporting over the socket, so the
+        # later attempt starts while the first is provably inside its check, and the
+        # later candidate check fails, so that attempt is refused before any mutation.
         self.waiting_checks()
+        (self.repo / 'check-blocked.sh').write_text(
+            'test -f "$1" && { echo 6161 6161 6161 2d; exit 1; }\n'
+            'exit 0\n')
+        self.git('add', 'check-blocked.sh')
+        self.git('commit', '-q', '-m', 'blocking check fixture')
         self.git('checkout', '-q', '--detach')
         self.recruit_and_commit()
+        target_before = self.git('rev-parse', 'main').strip()
         first = {}
 
         def held_landing():
@@ -590,12 +608,19 @@ class Land(unittest.TestCase):
         connection = None
         try:
             connection, _ = self.check_socket.accept()
-            self.assertEqual(connection.recv(6), b'ready')
+            ready = b''
+            while len(ready) < len(b'ready'):
+                chunk = connection.recv(len(b'ready') - len(ready))
+                self.assertTrue(chunk, f'the check stage closed before readiness: {ready!r}')
+                ready += chunk
+            self.assertEqual(ready, b'ready')
             state = self.scratch_state('w1')
             self.assertEqual(len(state['paths']), 2)
             later = self.call('land-checked', 'w1', self.repo, 'main',
-                              'check-plain.sh', 'file.txt')
-            self.assertIn(later['status'], ('blocked', 'landed'))
+                              'check-blocked.sh', 'file.txt')
+            self.assertEqual(later['status'], 'blocked')
+            self.assertIn('new failures', later['reason'])
+            self.assertEqual(self.git('rev-parse', 'main').strip(), target_before)
             now = self.scratch_state('w1')
             for name in state['paths']:
                 tree = str(self.repo / '.scratch' / name)
@@ -605,13 +630,16 @@ class Land(unittest.TestCase):
                 self.assertIn(tree, now['registered'],
                               f'the held attempt tree {name} lost its worktree registration')
         finally:
-            if connection is not None:
-                connection.sendall(b'1')
-                connection.close()
-            thread.join(timeout=60)
-            self.assertFalse(thread.is_alive(), 'the held landing did not finish')
+            try:
+                if connection is not None:
+                    connection.sendall(b'1')
+            finally:
+                if connection is not None:
+                    connection.close()
+                thread.join()
         self.assertIn('result', first)
         self.assertEqual(first['result']['status'], 'landed')
+        self.assertNotEqual(self.git('rev-parse', 'main').strip(), target_before)
 
     def scratch_paths(self, player):
         """The scratch trees an attempt by WORKER left under the repository."""
