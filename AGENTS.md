@@ -19,6 +19,15 @@ in `docs/bend2/host-crash-2026-10-05.md`.
 
 # Banned runtime patterns
 
+## No budget control flow
+
+Budgets must never control admission, continuation, completion, input acceptance,
+or validation. Do not require callers to estimate input size, task size, tokens,
+cost, duration, retries, or output volume. Do not add budget checks, refusals,
+pauses, truncation, or configurable replacements for those controls. Provider
+usage observations report facts. Actual allocation, filesystem and provider
+failures retain their causes and the unfinished work.
+
 ## No pausing, idling or truncating agents
 
 Baton never deliberately pauses, idles or truncates an agent's work. When an agent's turn ends,
