@@ -126,45 +126,39 @@ jobs:
           case_file="$workspace/bend2/test/guard-naming-compare.bend"
           cat > "$case_file" <<BEND
           # Cross-boundary comparison of the pure expected guard naming with the producer's observed
-          # naming, run on the remote lane. One line per case carries the pure value, the pure encoded
-          # target, the observed guard result and the observed token result, each tagged and escaped so a
-          # payload cannot forge a field. The compiler's stdout, stderr and exit status stay separate.
+          # naming, run on the remote lane. One field-separated record per case carries the case label, the
+          # pure naming or null, the pure encoded target, the observed guard result and the observed token
+          # result. Every payload is a JSON string literal, so a space, a tab or a control byte in a host
+          # detail survives the record and cannot forge a field. The compiler's stdout, stderr and exit
+          # status stay in their own files. The common directory is fixture setup: this comparison names
+          # paths and reads no guard state.
           import Base
           import ../src/git/text.bend as Tx
+          import ../src/json/canonical.bend as J
           import ../src/host/receipt.bend as Rec
 
-          def esc_char(+c: Char) -> String:
-            +code = Char.to_u32(c)
-            Bool.pick(String, U32.is_lt(code, 33), Tx.ref_byte_piece(code),
-              Bool.pick(String, U32.is_lt(code, 127), Tx.one_char(c), Tx.ref_byte_piece(code)))
-
-          def esc_go(s: String, out: List<String>) -> List<String>:
-            match s:
-              case SNil{}: out
-              case SCon{c, rest}:
-                +out2 = out
-                esc_go(rest, List.append(&1, String, out2, esc_char(c)))
-
-          def esc(+s: String) -> String:
-            Tx.join("", esc_go(s, Nil{}))
-
-          def render_maybe(+m: Maybe<String>) -> String:
+          def render_maybe(m: Maybe<String>) -> String:
             match m:
-              case None{}: "none:"
-              case Some{s}: Tx.str_cat("some:", esc(s))
+              case None{}: "null"
+              case Some{s}: J.string_literal(s)
 
-          def render_result(+r: Result<&1, &1, U32 & String, String>) -> String:
+          def render_error(e: U32 & String) -> String:
+            match e:
+              case (code, detail): J.string_literal(Tx.str_cat("fail:", Tx.str_cat(U32.show(code), Tx.str_cat(":", detail))))
+
+          def render_result(r: Result<&1, &1, U32 & String, String>) -> String:
             match r:
-              case Fail{error}:
-                match error:
-                  case (code, detail): Tx.str_cat("fail:", Tx.str_cat(U32.show(code), Tx.str_cat(":", esc(detail))))
-              case Done{s}: Tx.str_cat("done:", esc(s))
+              case Fail{error}: render_error(error)
+              case Done{s}: J.string_literal(Tx.str_cat("ok:", s))
+
+          def record(name: String, common: String, target: String, pure: Maybe<String>, guard: Result<&1, &1, U32 & String, String>, token: Result<&1, &1, U32 & String, String>) -> String:
+            Tx.str_cat("case\t", Tx.str_cat(J.string_literal(name), Tx.str_cat("\tpure\t", Tx.str_cat(render_maybe(pure), Tx.str_cat("\tencoded\t", Tx.str_cat(J.string_literal(Tx.ref_encode(target)), Tx.str_cat("\tguard\t", Tx.str_cat(render_result(guard), Tx.str_cat("\ttoken\t", render_result(token))))))))))
 
           def report(+name: String, +common: String, +target: String) -> IO(Unit):
             do IO<Unit>:
               g : Result<&1, &1, U32 & String, String> <- Rec.Receipt.guard_path(common, target)
               t : Result<&1, &1, U32 & String, String> <- Rec.Receipt.attempt_token(target)
-              IO.print(Tx.str_cat("case ", Tx.str_cat(name, Tx.str_cat(" pure ", Tx.str_cat(render_maybe(Tx.expected_guard_path(common, target)), Tx.str_cat(" encoded ", Tx.str_cat(esc(Tx.ref_encode(target)), Tx.str_cat(" guard ", Tx.str_cat(render_result(g), Tx.str_cat(" token ", render_result(t)))))))))))
+              IO.print(record(name, common, target, Tx.expected_guard_path(common, target), g, t))
 
           def main() -> IO<Unit>:
             do IO<Unit>:
@@ -184,9 +178,9 @@ jobs:
               n : Unit <- report("nul-common", Tx.one_char(Char.from_u32(0)), "main")
               IO.print("guard-naming-comparison-complete")
           BEND
-          python3 - "$case_file" "$workspace" "$bend" "$evidence" <<'PY'
-          import os, re, subprocess, sys, time
-          case_file, workspace, bend, evidence = sys.argv[1:5]
+          python3 - "$case_file" "$workspace" "$bend" "$evidence" "$common" <<'PY'
+          import json, os, subprocess, sys, time
+          case_file, workspace, bend, evidence, common = sys.argv[1:6]
           argv = [bend, "bend2/test/guard-naming-compare.bend"]
           stdout_path = os.path.join(evidence, "guard-naming.stdout")
           stderr_path = os.path.join(evidence, "guard-naming.stderr")
@@ -202,18 +196,21 @@ jobs:
                   code, kind = None, "launch-failed"
           seconds = time.time() - started
           open(os.path.join(evidence, "guard-naming.meta"), "w").write(
-              "argv %s\ncwd %s\nexit %s\nclassification %s\nseconds %.1f\n" %
-              (" ".join(argv), workspace, code, kind, seconds))
+              "argv %s\ncwd %s\ncommon %s\nexit %s\nclassification %s\nseconds %.1f\n" %
+              (" ".join(argv), workspace, common, code, kind, seconds))
           with open(stderr_path, encoding="utf-8", errors="replace") as err_file:
               err_head = err_file.read(2000)
           print("== guard-naming comparison exit=%s classification=%s seconds=%.1f" % (code, kind, seconds))
           print(err_head[:600])
+          verdict_path = os.path.join(evidence, "guard-naming.verdict")
           if kind != "completed" or code != 0:
-              open(os.path.join(evidence, "guard-naming.verdict"), "w").write(
-                  "classification %s\nexit %s\nverdict unperformed\n" % (kind, code))
+              open(verdict_path, "w").write("classification %s\nexit %s\nverdict unperformed\n" % (kind, code))
               print("COMPARISON classification=%s exit=%s verdict=unperformed" % (kind, code))
               sys.exit(1)
           raw = open(stdout_path, encoding="utf-8", errors="replace").read()
+          marker = "guard-naming-comparison-complete"
+          lines = raw.splitlines()
+          trailing = [i for i, line in enumerate(lines) if line == marker]
           expected = {"plain-main", "plain-other", "slash", "percent", "mixed", "punctuation", "space",
                       "two-byte", "three-byte", "four-byte", "adjacent-two-byte", "empty-target",
                       "nul-target", "nul-common"}
@@ -223,57 +220,66 @@ jobs:
                           "adjacent-two-byte": "%c3%a9%c3%a8"}
           fail_empty = "fail:22:target is empty or truncated at NUL"
           fail_common = "fail:22:common directory contains NUL"
-          tag = re.compile(r"^case (\S+) pure (\S*) encoded (\S*) guard (\S*) token (\S*)$")
-          records, duplicates, malformed = {}, [], []
-          for line in raw.splitlines():
-              if line == "guard-naming-comparison-complete":
+          problems, duplicates, malformed = [], [], []
+          records, unexpected = {}, []
+          for line in lines:
+              if line == marker:
                   continue
-              m = tag.match(line)
-              if not m:
+              fields = line.split("\t")
+              if len(fields) != 10 or fields[0] != "case" or fields[2] != "pure" or fields[4] != "encoded" or fields[6] != "guard" or fields[8] != "token":
                   malformed.append(line[:200])
                   continue
-              if m.group(1) in records:
-                  duplicates.append(m.group(1))
-              records[m.group(1)] = (m.group(2), m.group(3), m.group(4), m.group(5))
-          problems = []
+              try:
+                  name, pure, encoded, guard, token = (json.loads(fields[1]), json.loads(fields[3]),
+                                                       json.loads(fields[5]), json.loads(fields[7]), json.loads(fields[9]))
+              except ValueError as error:
+                  malformed.append("%s (%s)" % (line[:120], error))
+                  continue
+              if name not in expected:
+                  unexpected.append(name)
+                  continue
+              if name in records:
+                  duplicates.append(name)
+              records[name] = (pure, encoded, guard, token)
           if malformed:
               problems.append("malformed records: %s" % "; ".join(malformed))
           if duplicates:
               problems.append("duplicate case labels: %s" % ",".join(sorted(duplicates)))
+          if unexpected:
+              problems.append("unexpected case labels: %s" % ",".join(sorted(unexpected)))
           if set(records) != expected:
-              problems.append("case set differs: missing %s unexpected %s" %
-                              (sorted(expected - set(records)), sorted(set(records) - expected)))
-          if "guard-naming-comparison-complete" not in raw:
-              problems.append("the program did not reach its final line")
-          for name, (pure, encoded, guard, token) in sorted(records.items()):
+              problems.append("case set differs: missing %s" % sorted(expected - set(records)))
+          if len(trailing) != 1 or trailing[0] != len(lines) - 1:
+              problems.append("the final marker is not exactly one line at the end of the output")
+          for name in sorted(set(records) & expected):
+              pure, encoded, guard, token = records[name]
               if name in ("empty-target", "nul-target"):
-                  if pure != "none:":
-                      problems.append("%s pure %s, wanted none:" % (name, pure))
+                  if pure is not None:
+                      problems.append("%s pure %r, wanted null" % (name, pure))
                   if guard != fail_empty:
-                      problems.append("%s guard %s, wanted %s" % (name, guard, fail_empty))
+                      problems.append("%s guard %r, wanted %r" % (name, guard, fail_empty))
                   if token != fail_empty:
-                      problems.append("%s token %s, wanted %s" % (name, token, fail_empty))
-              elif name == "nul-common":
-                  if pure != "none:":
-                      problems.append("nul-common pure %s, wanted none:" % pure)
+                      problems.append("%s token %r, wanted %r" % (name, token, fail_empty))
+                  continue
+              if name == "nul-common":
+                  if pure is not None:
+                      problems.append("nul-common pure %r, wanted null" % (pure,))
                   if guard != fail_common:
-                      problems.append("nul-common guard %s, wanted %s" % (guard, fail_common))
-                  if token != "done:main":
-                      problems.append("nul-common token %s, wanted done:main" % token)
-              else:
-                  want = encoded_want[name]
-                  if encoded != want:
-                      problems.append("%s encoded %s, wanted %s" % (name, encoded, want))
-                  if token != "done:" + want:
-                      problems.append("%s token %s, wanted done:%s" % (name, token, want))
-                  if not pure.startswith("some:"):
-                      problems.append("%s pure %s, wanted a some: naming" % (name, pure))
-                  elif pure[5:] != guard[len("done:"):]:
-                      problems.append("%s pure %s differs from guard %s" % (name, pure, guard))
-                  elif not guard.startswith("done:"):
-                      problems.append("%s guard %s, wanted a done: result" % (name, guard))
-          open(os.path.join(evidence, "guard-naming.verdict"), "w").write(
-              "cases %d\nproblems %s\n" % (len(records), problems or "none"))
+                      problems.append("nul-common guard %r, wanted %r" % (guard, fail_common))
+                  if token != "ok:main":
+                      problems.append("nul-common token %r, wanted 'ok:main'" % (token,))
+                  continue
+              want_path = common + "/baton2-landing/" + encoded_want[name] + ".lock"
+              if encoded != encoded_want[name]:
+                  problems.append("%s encoded %r, wanted %r" % (name, encoded, encoded_want[name]))
+              if token != "ok:" + encoded_want[name]:
+                  problems.append("%s token %r, wanted %r" % (name, token, "ok:" + encoded_want[name]))
+              if pure != want_path:
+                  problems.append("%s pure %r, wanted %r" % (name, pure, want_path))
+              if guard != "ok:" + want_path:
+                  problems.append("%s guard %r, wanted %r" % (name, guard, "ok:" + want_path))
+          open(verdict_path, "w").write("cases %d\nunexpected %s\nproblems %s\n" %
+                                        (len(records), unexpected or "none", problems or "none"))
           print("COMPARISON cases=%d problems=%s" % (len(records), problems or "none"))
           sys.exit(1 if problems else 0)
           PY
