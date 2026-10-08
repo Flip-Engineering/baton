@@ -382,7 +382,7 @@ def bootstrap_from_json(+value: J.Json, +expected_owner: String,
       +invocation_path = Req.text_of(readiness_member(value, "invocationPath"))
       +invocation_sha256 = Req.text_of(readiness_member(value, "invocationSha256"))
       Bool.pick(BootstrapDecode,
-        Bool.and(String.eq(readiness_text(value, "schema"), "baton2-managed-context-bootstrap-v1"),
+        Bool.and(String.eq(readiness_text(value, "schema"), "baton2-managed-context-bootstrap-v2"),
         Bool.and(String.eq(query, expected_query),
         Bool.and(String.eq(owner, expected_owner),
         Bool.and(Nat.is_eq(String.length(guard_key), 64n),
@@ -424,7 +424,7 @@ def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
         source_identity, plan_value, plan_identity, result_schema, artifact_path,
         artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
         owner_witness, recovery_argv, executable_path, runtime_path, provider_path, invocation_path, invocation_sha256}:
-      J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-managed-context-bootstrap-v1"},
+      J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-managed-context-bootstrap-v2"},
       J.Jpair{"artifactPath", J.Jstr{artifact_path},
       J.Jpair{"artifactSha256", J.Jstr{artifact_sha256},
       J.Jpair{"cwd", J.Jstr{cwd},

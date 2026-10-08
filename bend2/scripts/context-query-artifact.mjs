@@ -63,7 +63,18 @@ function immutableWrite(path, bytes) {
   }
 }
 
-function decodeBootstrap(bytes, { owner, worktree, query, artifactPath }) {
+function databaseParent(database) {
+  if (typeof database !== 'string' || database.length === 0 || !isAbsolute(database)) {
+    throw new Error('canonical database path is required');
+  }
+  const canonical = realpathSync(database);
+  if (canonical !== database || !lstatSync(canonical).isFile()) {
+    throw new Error('database path is not a canonical regular file');
+  }
+  return dirname(canonical);
+}
+
+function decodeBootstrap(bytes, { database, owner, worktree, query, artifactPath }) {
   try {
     const text = bytes.toString('utf8');
     if (!text.endsWith('\n') || text.slice(0, -1).includes('\n')) return refusal('queryBootstrapFramingInvalid');
@@ -73,7 +84,7 @@ function decodeBootstrap(bytes, { owner, worktree, query, artifactPath }) {
       'artifactSha256', 'keeperPath', 'guardIdentity', 'guardKey', 'physicalRoleKey',
       'ownerWitness', 'sourceIdentity', 'recoveryArgv', 'executablePath',
       'runtimePath', 'providerPath', 'invocationPath', 'invocationSha256'];
-    if (!exactKeys(value, fields) || value.schema !== 'baton2-managed-context-bootstrap-v1'
+    if (!exactKeys(value, fields) || value.schema !== 'baton2-managed-context-bootstrap-v2'
         || value.query !== query || value.owner !== owner || value.artifactPath !== artifactPath
         || typeof value.databaseBinding !== 'string' || value.databaseBinding.length === 0
         || typeof value.request !== 'string' || value.request.length === 0
@@ -104,7 +115,7 @@ function decodeBootstrap(bytes, { owner, worktree, query, artifactPath }) {
           !== JSON.stringify(['context-role', value.databaseBinding, 'query', query, 'starter', '0'])) {
       return refusal('queryBootstrapIdentityMismatch');
     }
-    if (value.keeperPath !== join(artifactPath, value.guardKey)) {
+    if (value.keeperPath !== join(databaseParent(database), value.guardKey)) {
       return refusal('queryBootstrapKeeperMismatch');
     }
     const root = realpathSync(worktree);
@@ -133,26 +144,26 @@ function readBootstrap(path, authority) {
   }
 }
 
-export function readQueryBootstrap({ owner, worktree, query, bootstrapPath } = {}) {
+export function readQueryBootstrap({ database, owner, worktree, query, bootstrapPath } = {}) {
   if (typeof bootstrapPath !== 'string') return refusal('queryBootstrapPathMissing');
   const prepared = prepareQueryArtifact({ owner, worktree, query });
   if (prepared.status !== 'prepared') return prepared;
   const expectedPath = join(prepared.path, 'bootstrap.json');
   if (bootstrapPath !== expectedPath) return refusal('queryBootstrapPathMismatch', expectedPath);
-  const loaded = readBootstrap(bootstrapPath, { owner: prepared.owner,
+  const loaded = readBootstrap(bootstrapPath, { database, owner: prepared.owner,
     worktree: prepared.worktree, query: prepared.query, artifactPath: prepared.path });
   if (loaded.status !== 'loaded') return loaded;
   return Object.freeze({ status: 'loaded', owner, worktree: prepared.worktree,
     query, path: bootstrapPath, sha256: sha256(loaded.bytes), value: loaded.value });
 }
 
-export function persistQueryBootstrap({ owner, worktree, query, bootstrapText } = {}) {
+export function persistQueryBootstrap({ database, owner, worktree, query, bootstrapText } = {}) {
   if (typeof bootstrapText !== 'string') return refusal('queryBootstrapMissing');
   const prepared = prepareQueryArtifact({ owner, worktree, query });
   if (prepared.status !== 'prepared') return prepared;
   const path = join(prepared.path, 'bootstrap.json');
   const bytes = Buffer.from(bootstrapText + '\n');
-  const decoded = decodeBootstrap(bytes, { owner: prepared.owner, worktree: prepared.worktree,
+  const decoded = decodeBootstrap(bytes, { database, owner: prepared.owner, worktree: prepared.worktree,
     query: prepared.query,
     artifactPath: prepared.path });
   if (decoded.status !== 'loaded') return decoded;
@@ -162,7 +173,7 @@ export function persistQueryBootstrap({ owner, worktree, query, bootstrapText } 
     query, path, sha256: saved.sha256, replay: saved.status === 'replayed' });
 }
 
-export function persistQueryOutcome({ owner, worktree, query, bootstrapSha256,
+export function persistQueryOutcome({ database, owner, worktree, query, bootstrapSha256,
   exitStatus, eventFrame = '' } = {}) {
   if (typeof bootstrapSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(bootstrapSha256)
       || !Number.isInteger(exitStatus) || exitStatus < 0 || exitStatus > 255
@@ -170,7 +181,7 @@ export function persistQueryOutcome({ owner, worktree, query, bootstrapSha256,
   const prepared = prepareQueryArtifact({ owner, worktree, query });
   if (prepared.status !== 'prepared') return prepared;
   const bootstrapPath = join(prepared.path, 'bootstrap.json');
-  const bootstrap = readBootstrap(bootstrapPath, { owner, worktree: prepared.worktree,
+  const bootstrap = readBootstrap(bootstrapPath, { database, owner, worktree: prepared.worktree,
     query, artifactPath: prepared.path });
   if (bootstrap.status !== 'loaded' || sha256(bootstrap.bytes) !== bootstrapSha256) {
     return refusal('queryOutcomeBootstrapMismatch', bootstrap.reason ?? null);

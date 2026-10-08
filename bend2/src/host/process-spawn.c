@@ -56,7 +56,7 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_WAIT, BP_SIGNAL, BP_PID,
        BP_INSTANCE_PREPARE_WITH_FILE, BP_INSTANCE_START, BP_INSTANCE_CANCEL,
        BP_RETAIN_WITH_FILE_BOUNDED, BP_INSTANCE_PREPARE_WITH_FILE_BOUNDED,
        BP_INSTANCE_ADMIT_WITH_FILE_BOUNDED, BP_SPAWN_WITH_FILE_BOUNDED,
-       BP_INSTANCE_OWNER_WITNESS };
+       BP_INSTANCE_OWNER_WITNESS, BP_INSTANCE_ENSURE_OWNER_WITNESS };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -3335,14 +3335,23 @@ static int br_instance_request_witness(const char *database,BrInstanceFrame fram
 static int br_instance_request(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply) {
   return br_instance_request_witness(database,frame,payload,rights,reply,0,0);
 }
-static void br_instance_owner_witness(BatonProcessCall *call) {
-  BrOwnerRecord record={0};int socket_fd=-1;
-  call->error=br_instance_connect(call->database,1,&record,&socket_fd);
+static void br_instance_owner_witness(BatonProcessCall *call,int spawn) {
+  BrOwnerRecord record={0};BrInstanceFrame reply={0};int socket_fd=-1;
+  call->error=br_instance_connect(call->database,spawn,&record,&socket_fd);
+  if(!call->error) {
+    call->error=br_instance_exchange(socket_fd,
+      (BrInstanceFrame){.op=BI_ENSURE,.owner=record.token,.epoch=record.epoch},
+      NULL,-1,&reply);
+    if(!call->error && (reply.op!=BI_HELLO || reply.length!=sizeof(BrOwnerState)))
+      call->error=EPROTO;
+    if(!call->error && (reply.owner!=record.token || reply.epoch!=record.epoch))
+      call->error=ESTALE;
+  }
   if(socket_fd>=0)close(socket_fd);
   if(call->error)return;
   char text[64];
   int length=snprintf(text,sizeof(text),"%llu:%llu",
-    (unsigned long long)record.token,(unsigned long long)record.epoch);
+    (unsigned long long)reply.owner,(unsigned long long)reply.epoch);
   if(length<=0 || (size_t)length>=sizeof(text)){call->error=EOVERFLOW;return;}
   call->text=strdup(text);
   if(!call->text){call->error=ENOMEM;return;}
@@ -3908,7 +3917,8 @@ static void baton_process_call(IoWork *w) {
   BatonProcessCall *call=(BatonProcessCall *)w->data;
   BatonChild *child=call->child;
   if(call->kind==BP_SPAWN || call->kind==BP_SPAWN_WITH_FILE_BOUNDED) { baton_child_spawn(call);return; }
-  if(call->kind==BP_INSTANCE_OWNER_WITNESS) { br_instance_owner_witness(call);return; }
+  if(call->kind==BP_INSTANCE_OWNER_WITNESS) { br_instance_owner_witness(call,0);return; }
+  if(call->kind==BP_INSTANCE_ENSURE_OWNER_WITNESS) { br_instance_owner_witness(call,1);return; }
   if(call->kind==BP_INSTANCE_SUBSCRIBE) { br_instance_subscribe_call(call);return; }
   if(call->kind==BP_INSTANCE_NOTICE) { br_instance_notice_call(call);return; }
   if(call->kind==BP_INSTANCE_UNSUBSCRIBE) { br_instance_unsubscribe_call(call);return; }
@@ -4122,7 +4132,8 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
     if(kind==BP_KEEPER || kind==BP_ATTACH_OWNED)call->lock=(u32)f[1];
     if(kind==BP_CONTROL_WRITE) {call->text=io_cstr(e,f[1],&length);call->length=length;}
     if(kind==BP_CONTROL_SIGNAL)call->signal=(u32)f[1];
-  } else if(kind==BP_INSTANCE_OWNER || kind==BP_INSTANCE_SHUTDOWN || kind==BP_INSTANCE_OWNER_WITNESS) {
+  } else if(kind==BP_INSTANCE_OWNER || kind==BP_INSTANCE_SHUTDOWN ||
+            kind==BP_INSTANCE_OWNER_WITNESS || kind==BP_INSTANCE_ENSURE_OWNER_WITNESS) {
     u64 length=0;call->database=io_cstr(e,f[0],&length);
     if(strlen(call->database)!=length)call->error=EINVAL;
   } else if(kind==BP_INSTANCE_SUBSCRIBE || kind==BP_INSTANCE_PUBLISH) {
@@ -4233,6 +4244,9 @@ BP_EFFECT(baton_instance_owner,CID_INSTANCE_OWNER,BP_INSTANCE_OWNER)
 #endif
 #ifdef CID_INSTANCE_OWNER_WITNESS
 BP_EFFECT(baton_instance_owner_witness,CID_INSTANCE_OWNER_WITNESS,BP_INSTANCE_OWNER_WITNESS)
+#endif
+#ifdef CID_INSTANCE_ENSURE_OWNER_WITNESS
+BP_EFFECT(baton_instance_ensure_owner_witness,CID_INSTANCE_ENSURE_OWNER_WITNESS,BP_INSTANCE_ENSURE_OWNER_WITNESS)
 #endif
 #ifdef CID_INSTANCE_ADMIT_START
 BP_EFFECT(baton_instance_admit,CID_INSTANCE_ADMIT_START,BP_INSTANCE_ADMIT)
