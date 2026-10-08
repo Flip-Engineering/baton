@@ -1501,13 +1501,13 @@ def ld_adv_unheld_compared(check: AssociationCheck, request: A.AssociationReques
         obs : LdAdvObs <- ld_adv_cas_run(repo, target, cand, basis, ctx)
         IO.pure(LdAdvObs, ld_adv_keep_association(obs, ev))
 
-def ld_adv_held_decided(+decision: A.Association, +path: String, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
+def ld_adv_held_decided(decision: A.Association, +path: String, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match decision:
     case A.AssociationRefused{step, observation}: IO.pure(LdAdvObs, ld_adv_unassociated(step, observation, MutationHeld{path}))
     case A.AssociationHeld{+request, +candidate_oid, +basis_oid, +target_head, +holder_common, +destination_common}:
       ld_adv_held_compared(ld_assoc_check(request, candidate_oid, basis_oid, target_head, holder_common, destination_common, path, repo, target, cand, basis, ladvctx_attempt(ctx), ladvctx_common(ctx)), request, candidate_oid, basis_oid, target_head, holder_common, destination_common, path, repo, target, cand, basis, ctx)
 
-def ld_adv_unheld_decided(+decision: A.Association, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
+def ld_adv_unheld_decided(decision: A.Association, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match decision:
     case A.AssociationRefused{step, observation}: IO.pure(LdAdvObs, ld_adv_unassociated(step, observation, MutationUnheld{}))
     case A.AssociationHeld{+request, +candidate_oid, +basis_oid, +target_head, +holder_common, +destination_common}:
@@ -2904,6 +2904,13 @@ def fixture_unseparated_reserved() -> String:
 def fixture_other_common_reserved() -> String:
   shared_parent_path(shared_attempts_parent("/other"), "attempt-1")
 
+# A second coherent reservation: the same parent, another name, and the path that pair produces.
+def fixture_second_reservation() -> ReservationIdentity:
+  ReservationObserved{shared_attempts_parent("/common"), "attempt-2"}
+
+def fixture_second_reserved() -> String:
+  shared_parent_path(shared_attempts_parent("/common"), "attempt-2")
+
 def fixture_assoc_request_named(+candidate: String, +basis: String, +target: String, +holder: String, +common: String, +attempt: String) -> A.AssociationRequest:
   A.AssociationRequested{attempt, common, target, "/repo", candidate, basis, holder, ""}
 
@@ -3190,7 +3197,7 @@ def a_missing_admission_refuses_the_fast_forward():
   {==}
 
 law a_missing_admission_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path("r"), "0")}, StageSucceeded{"other bytes"})}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record does not read back as published"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{"other bytes"})}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record does not read back as published"}} : Ld}
 
 def a_missing_admission_refuses_the_advance():
   {==}
@@ -3284,19 +3291,19 @@ def a_complete_attempt_is_admitted():
   {==}
 
 law an_absent_capture_is_refused:
-  {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{Tx.str_cat(fixture_reserved(), "/intent"), "intent bytes"})))) == False{} : Bool}
 
 def an_absent_capture_is_refused():
   {==}
 
 law a_missing_identity_is_refused:
-  {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification("cand", "tgt"), IdentityMissing{}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification("cand", "tgt"), IdentityMissing{}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{Tx.str_cat(fixture_reserved(), "/intent"), "intent bytes"})))) == False{} : Bool}
 
 def a_missing_identity_is_refused():
   {==}
 
 law a_missing_association_is_refused:
-  {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationMissing{}, IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationMissing{}, IntentObserved{Tx.str_cat(fixture_reserved(), "/intent"), "intent bytes"})))) == False{} : Bool}
 
 def a_missing_association_is_refused():
   {==}
@@ -3314,25 +3321,25 @@ def a_failed_publication_is_refused():
   {==}
 
 law an_unperformed_qualification_is_refused:
-  {ld_admitted(admission_of(fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageUnperformed{}, StageUnperformed{}))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(fixture_reserved()), "0")}, StageUnperformed{}, StageUnperformed{}))) == False{} : Bool}
 
 def an_unperformed_qualification_is_refused():
   {==}
 
 law a_mismatched_readback_is_refused:
-  {ld_admitted(admission_of(fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path("r"), "0")}, StageSucceeded{"other bytes"}))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{"other bytes"}))) == False{} : Bool}
 
 def a_mismatched_readback_is_refused():
   {==}
 
 law a_rejected_attempt_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt evidence is incomplete"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{Tx.str_cat(fixture_reserved(), "/intent"), "intent bytes"}))}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt evidence is incomplete"}} : FFLD}
 
 def a_rejected_attempt_refuses_the_fast_forward():
   {==}
 
 law a_rejected_attempt_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt evidence is incomplete"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{Tx.str_cat(fixture_reserved(), "/intent"), "intent bytes"}))}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt evidence is incomplete"}} : Ld}
 
 def a_rejected_attempt_refuses_the_advance():
   {==}
@@ -3428,7 +3435,7 @@ law a_complete_unheld_attempt_is_admitted:
 def a_complete_unheld_attempt_is_admitted():
   {==}
 law a_failed_capture_is_refused:
-  {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedFailed{13, "i/o error"}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedFailed{13, "i/o error"}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{Tx.str_cat(fixture_reserved(), "/intent"), "intent bytes"})))) == False{} : Bool}
 
 def a_failed_capture_is_refused():
   {==}
@@ -3475,62 +3482,62 @@ law a_reservation_that_differs_from_the_evidence_refuses_the_advance:
 def a_reservation_that_differs_from_the_evidence_refuses_the_advance():
   {==}
 law a_malformed_publication_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{"garbage"}, StageSucceeded{Pb.production_record("qualified", landing_record_path("r"), "0")}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt record was not published"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{"garbage"}, StageSucceeded{Pb.production_record("qualified", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt record was not published"}} : FFLD}
 
 def a_malformed_publication_refuses_the_fast_forward():
   {==}
 law a_malformed_publication_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{"garbage"}, StageSucceeded{Pb.production_record("qualified", landing_record_path("r"), "0")}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record was not published"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{"garbage"}, StageSucceeded{Pb.production_record("qualified", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record was not published"}} : Ld}
 
 def a_malformed_publication_refuses_the_advance():
   {==}
 law a_wrong_path_publication_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", "/wrong/landing-record", "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path("r"), "0")}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt record was not published"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", "/wrong/landing-record", "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt record was not published"}} : FFLD}
 
 def a_wrong_path_publication_refuses_the_fast_forward():
   {==}
 law a_wrong_path_publication_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", "/wrong/landing-record", "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path("r"), "0")}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record was not published"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", "/wrong/landing-record", "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record was not published"}} : Ld}
 
 def a_wrong_path_publication_refuses_the_advance():
   {==}
 law a_malformed_qualification_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{"garbage"}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt record is not durable"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{"garbage"}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt record is not durable"}} : FFLD}
 
 def a_malformed_qualification_refuses_the_fast_forward():
   {==}
 law a_malformed_qualification_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{"garbage"}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record is not durable"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{"garbage"}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record is not durable"}} : Ld}
 
 def a_malformed_qualification_refuses_the_advance():
   {==}
 law a_wrong_path_qualification_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{Pb.production_record("qualified", "/wrong/landing-record", "0")}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt record is not durable"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{Pb.production_record("qualified", "/wrong/landing-record", "0")}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt record is not durable"}} : FFLD}
 
 def a_wrong_path_qualification_refuses_the_fast_forward():
   {==}
 law a_wrong_path_qualification_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{Pb.production_record("qualified", "/wrong/landing-record", "0")}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record is not durable"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{Pb.production_record("qualified", "/wrong/landing-record", "0")}, StageSucceeded{attempt_record(fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"))})}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record is not durable"}} : Ld}
 
 def a_wrong_path_qualification_refuses_the_advance():
   {==}
 law a_mismatched_readback_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path("r"), "0")}, StageSucceeded{"other bytes"})}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt record does not read back as published"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{"other bytes"})}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt record does not read back as published"}} : FFLD}
 
 def a_mismatched_readback_refuses_the_fast_forward():
   {==}
 law a_mismatched_readback_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path("r"), "0")}, StageSucceeded{"other bytes"})}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record does not read back as published"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{fixture_stages(fixture_reserved(), fixture_held_evidence(fixture_reserved(), "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path(fixture_reserved()), "0")}, StageSucceeded{"other bytes"})}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt record does not read back as published"}} : Ld}
 
 def a_mismatched_readback_refuses_the_advance():
   {==}
 law incomplete_evidence_with_success_looking_stages_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt evidence is incomplete"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{Tx.str_cat(fixture_reserved(), "/intent"), "intent bytes"}))}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt evidence is incomplete"}} : FFLD}
 
 def incomplete_evidence_with_success_looking_stages_refuses_the_fast_forward():
   {==}
 law incomplete_evidence_with_success_looking_stages_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt evidence is incomplete"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{fixture_attestation_of(fixture_reserved(), fixture_evidence_of(fixture_reserved(), "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{Tx.str_cat(fixture_reserved(), "/intent"), "intent bytes"}))}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt evidence is incomplete"}} : Ld}
 
 def incomplete_evidence_with_success_looking_stages_refuses_the_advance():
   {==}
@@ -4188,10 +4195,10 @@ law a_consistent_reservation_under_another_common_is_not_bound:
 def a_consistent_reservation_under_another_common_is_not_bound():
   {==}
 
-law a_reservation_whose_parent_is_not_the_attempts_directory_is_not_bound:
+law a_reserved_path_under_another_common_is_not_bound:
   {reservation_bound(fixture_other_common_reserved(), fixture_reservation(), "/common") == False{} : Bool}
 
-def a_reservation_whose_parent_is_not_the_attempts_directory_is_not_bound():
+def a_reserved_path_under_another_common_is_not_bound():
   {==}
 
 law an_attempt_whose_reserved_path_has_an_inserted_component_is_not_admitted:
@@ -4204,4 +4211,16 @@ law an_attempt_whose_reservation_is_under_another_common_is_not_admitted:
   {ld_admitted(admission_of(fixture_attestation_of(fixture_other_common_reserved(), AttemptEvidence{fixture_other_common_reserved(), "/repo", "tgt", "cand", "base", "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification("cand", "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{Tx.str_cat(fixture_other_common_reserved(), "/intent"), "intent bytes"}, ReservationObserved{shared_attempts_parent("/other"), "attempt-1"}}))) == False{} : Bool}
 
 def an_attempt_whose_reservation_is_under_another_common_is_not_admitted():
+  {==}
+
+law an_association_whose_coherent_reservation_names_another_attempt_is_not_bound:
+  {association_bound(fixture_held_association("/common", "cand", "base", "tgt"), "cand", "base", "/common", "/repo", "tgt", fixture_held_qualification("cand", "tgt"), fixture_second_reserved(), fixture_second_reservation()) == False{} : Bool}
+
+def an_association_whose_coherent_reservation_names_another_attempt_is_not_bound():
+  {==}
+
+law an_attempt_whose_coherent_reservation_names_another_attempt_is_not_admitted:
+  {ld_admitted(admission_of(fixture_attestation_of(fixture_second_reserved(), AttemptEvidence{fixture_second_reserved(), "/repo", "tgt", "cand", "base", "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification("cand", "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", "cand", "base", "tgt"), IntentObserved{Tx.str_cat(fixture_second_reserved(), "/intent"), "intent bytes"}, fixture_second_reservation()}))) == False{} : Bool}
+
+def an_attempt_whose_coherent_reservation_names_another_attempt_is_not_admitted():
   {==}

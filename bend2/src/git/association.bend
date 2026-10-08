@@ -168,16 +168,17 @@ def refuse(step: String, observation: T.GitOut) -> IO(Association):
   +o = observation
   IO.pure(Association, AssociationRefused{s, o})
 
-def requested_compared(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, destination_common: String) -> IO(Association):
+def requested_compared(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, destination_common: String, holder_observed: T.GitOut) -> IO(Association):
   +req = request
   +cand = candidate
   +base = basis
   +tip = head
   +holder_common = common
   +dest_common = destination_common
+  +held_observed = holder_observed
   Bool.pick(IO(Association), Tx.str_eq(holder_common, assocreq_common(req)),
     IO.pure(Association, AssociationHeld{req, cand, base, tip, holder_common, dest_common}),
-    IO.pure(Association, AssociationRefused{"requested-common", T.GBroken{Tx.str_cat("holder answers ", Tx.str_cat(holder_common, Tx.str_cat(" for the requested ", assocreq_common(req))))}}))
+    refuse("requested-common", held_observed))
 
 def common_compared(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, observation: T.GitOut, destination_common: String) -> IO(Association):
   +req = request
@@ -188,8 +189,8 @@ def common_compared(request: AssociationRequest, candidate: String, basis: Strin
   +obs = observation
   +dest_common = destination_common
   Bool.pick(IO(Association), Tx.str_eq(holder_common, dest_common),
-    requested_compared(req, cand, base, tip, holder_common, dest_common),
-    IO.pure(Association, AssociationRefused{"common", obs}))
+    requested_compared(req, cand, base, tip, holder_common, dest_common, obs),
+    refuse("common", obs))
 
 def destination_decided(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, observation: T.GitOut) -> IO(Association):
   +req = request
