@@ -330,7 +330,7 @@ def run_res_append(newline: Bool, c: Char, +line: String) -> String:
     case False{}: SCon{c, line}
 
 # Read only through the first newline and preserve the remaining output.
-def run_res_scan(newline: Bool, out: String, +line: String) -> T.RunRes:
+def run_res_scan(out: String, newline: Bool, +line: String) -> T.RunRes:
   match newline:
     case True{}: run_res_line(str_rev(line), out)
     case False{}:
@@ -339,7 +339,7 @@ def run_res_scan(newline: Bool, out: String, +line: String) -> T.RunRes:
         case SCon{+c, +rest}:
           +next_newline = is_nl(c)
           +next_line = run_res_append(next_newline, c, line)
-          run_res_scan(next_newline, rest, next_line)
+          run_res_scan(rest, next_newline, next_line)
 
 # A run answer "exit 3\nrest" or "signal 9\nrest": the status and the output
 # that followed the status line.
@@ -348,4 +348,4 @@ def run_res(r: Result<&1, &1, U32 & String, String>) -> T.RunRes:
     case Fail{error}:
       (code, text) = error
       T.RSpawn{text}
-    case Done{value}: run_res_scan(False{}, value, SNil{})
+    case Done{value}: run_res_scan(value, False{}, SNil{})

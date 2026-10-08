@@ -97,9 +97,10 @@ clang, and SQLite development headers and libraries. From the source checkout:
 BEND=/path/to/bend/bin/bend sh bend2/scripts/build-native.sh
 ```
 
-The entry imports its operative laws. This build verifies their proofs and
-creates `.scratch/bend2/baton2`. The [build and check instructions](../../bend2/README.md#build-and-check)
-describe the negative controls and native checks used for acceptance.
+The script compiles `bend2/src/coordinator/main.bend` to C and links the native
+entry point against SQLite and the system libraries. It creates
+`.scratch/bend2/baton2`. The [build and check instructions](../../bend2/README.md#build-and-check)
+describe the standalone native checks and runtime fixtures.
 
 Stage the executable and current Git identity helper in an unused prefix you own:
 
