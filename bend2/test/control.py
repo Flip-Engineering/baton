@@ -400,7 +400,7 @@ class Control(unittest.TestCase):
         self.finish(stream, 'Live guidance applied.')
         self.exited('leaf')
         self.assertEqual(self.call('turns', 'leaf')[0]['reportBody'], 'Live guidance applied.')
-        self.assertTrue(log.is_file())
+        self.assertTrue(self.output_log('leaf').is_file())
         denied = self.call('dispatch-file', 'wrong-route', 'operator', 'leaf', 'task', self.task, ok=False)
         self.assertIn('message-route-denied', denied['stderr'])
         self.assertEqual(self.rows("SELECT * FROM messages WHERE id='wrong-route'"), [])
