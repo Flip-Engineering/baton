@@ -124,7 +124,7 @@ def receiver_result(saved: String, denied: Bool) -> IO(String):
     case True{}: IO.die(String,2,saved)
     case False{}: IO.pure(String,saved)
 
-def receiver(+db: String, +session: String, cmd: String, log: String, cwd: String) -> IO(String):
+def receiver(+db: String, +session: String, cmd: String, log: String, +cwd: String) -> IO(String):
   do IO<String>:
     found : String <- IO.try(String,Store.apply(db,C.Session{session}))
     accepted : String <- registered(found)
