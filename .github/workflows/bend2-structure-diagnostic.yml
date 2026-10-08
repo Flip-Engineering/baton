@@ -17,7 +17,7 @@ jobs:
       - name: Checkout the immutable product commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ef0617905c0e135adfcbbec6f5354bf1c195de00
+          ref: 790e9781caf665f9345159d5ee2dc4c27e6f8d29
           persist-credentials: false
 
       - name: Select Node 22
@@ -87,14 +87,12 @@ jobs:
             out_path = os.path.join(evidence, name + ".stdout")
             err_path = os.path.join(evidence, name + ".stderr")
             started = time.time()
-            # The compiler writes straight to the evidence files, so its bytes survive a deadline
-            # without being buffered in this process, and a deadline still leaves what was written.
+            # The compiler writes straight to the evidence files, so its bytes survive in the
+            # artifact without being buffered in this process.
             with open(out_path, "wb") as out_file, open(err_path, "wb") as err_file:
               try:
-                done = subprocess.run(argv, cwd=workspace, stdout=out_file, stderr=err_file, timeout=900)
+                done = subprocess.run(argv, cwd=workspace, stdout=out_file, stderr=err_file)
                 code, kind = done.returncode, "completed"
-              except subprocess.TimeoutExpired:
-                code, kind = None, "deadline-expired"
               except OSError as error:
                 err_file.write(str(error).encode("utf-8"))
                 code, kind = None, "launch-failed"
@@ -187,10 +185,8 @@ jobs:
           started = time.time()
           with open(stdout_path, "wb") as out_file, open(stderr_path, "wb") as err_file:
               try:
-                  done = subprocess.run(argv, cwd=workspace, stdout=out_file, stderr=err_file, timeout=900)
+                  done = subprocess.run(argv, cwd=workspace, stdout=out_file, stderr=err_file)
                   code, kind = done.returncode, "completed"
-              except subprocess.TimeoutExpired:
-                  code, kind = None, "deadline-expired"
               except OSError as error:
                   err_file.write(str(error).encode("utf-8"))
                   code, kind = None, "launch-failed"
