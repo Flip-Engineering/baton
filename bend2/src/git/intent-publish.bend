@@ -489,7 +489,7 @@ def a_name_precondition_admits_the_producer_alphabet():
   {==}
 
 law a_mismatched_requested_path_is_refused_before_any_effect:
-  {Intent.publish_intent(IntentRequested{"a", "/c", "refs/heads/t", "/d", "cand", "base", "/elsewhere", "/h", ""}, "/d", "n", "wanted") == IO.pure(IntentPublish, PublishRefused{IntentRequested{"a", "/c", "refs/heads/t", "/d", "cand", "base", "/elsewhere", "/h", ""}, "association", "n", "/d/n"}) : IO(IntentPublish)}
+  {Intent.publish_intent(I.IntentRequested{"a", "/c", "refs/heads/t", "/d", "cand", "base", "/elsewhere", "/h", ""}, "/d", "n", "wanted") == IO.pure(IntentPublish, PublishRefused{I.IntentRequested{"a", "/c", "refs/heads/t", "/d", "cand", "base", "/elsewhere", "/h", ""}, "association", "n", "/d/n"}) : IO(IntentPublish)}
 
 def a_mismatched_requested_path_is_refused_before_any_effect():
   {==}

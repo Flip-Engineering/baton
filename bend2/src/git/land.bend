@@ -853,7 +853,7 @@ type IdentityEvidence is Data:
 def intent_request_fields(request: It.IntentInput, rest: List<String>) -> List<String>:
   match request:
     case It.IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}:
-      Con{"intent-request", Con{attempt, Con{common, Con{target, Con{destination, Con{candidate, Con{basis, Con{intent_path, Con{holder, Con{retry, rest}}}}}}}}}}}
+      Con{"intent-request", Con{attempt, Con{common, Con{target, Con{destination, Con{candidate, Con{basis, Con{intent_path, Con{holder, Con{retry, rest}}}}}}}}}}
 
 def host_error_fields(error: T.HostError, rest: List<String>) -> List<String>:
   match error:
