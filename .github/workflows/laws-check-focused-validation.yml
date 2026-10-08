@@ -1,0 +1,94 @@
+name: laws-check-focused-validation
+
+'on':
+  push:
+    branches: [codex/laws-check-focused-validation-20261008]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-laws-controls:
+    runs-on: ubuntu-24.04
+    env:
+      BEND_NO_TELEMETRY: '1'
+      BATON2_SOURCE_SHA: 9fabe2f20a9171512fb1e152ed65687ebc3e0fdc
+    steps:
+      - name: Checkout validation driver
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Select Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Checkout exact product source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: Flip-Engineering/baton
+          ref: 9fabe2f20a9171512fb1e152ed65687ebc3e0fdc
+          path: source
+          persist-credentials: false
+
+      - name: Verify pinned source and install Bend 2.0.25
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/laws-check-focused/toolchain" "$RUNNER_TEMP/laws-check-focused/evidence"
+          printf 'BATON2_LAWS_RUN=%s\n' "$RUNNER_TEMP/laws-check-focused" >> "$GITHUB_ENV"
+          driver_sha=$(git rev-parse HEAD)
+          driver_tree=$(git rev-parse 'HEAD^{tree}')
+          printf 'BATON2_DRIVER_SHA=%s\nBATON2_DRIVER_TREE=%s\n' "$driver_sha" "$driver_tree" >> "$GITHUB_ENV"
+          printf '%s\n' "$driver_sha" > "$RUNNER_TEMP/laws-check-focused/evidence/driver.sha"
+          printf '%s\n' "$driver_tree" > "$RUNNER_TEMP/laws-check-focused/evidence/driver.tree"
+          source_sha=$(git -C source rev-parse HEAD)
+          test "$source_sha" = "$BATON2_SOURCE_SHA"
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = 927dcb2615fdcfdda0d18746c102a0709ee94b02
+          printf '%s\n' "$source_sha" > "$RUNNER_TEMP/laws-check-focused/evidence/source.sha"
+          printf '%s\n' "$(git -C source rev-parse 'HEAD^{tree}')" > "$RUNNER_TEMP/laws-check-focused/evidence/source.tree"
+          uname -a > "$RUNNER_TEMP/laws-check-focused/toolchain/runner-uname.log"
+          cat /etc/os-release > "$RUNNER_TEMP/laws-check-focused/toolchain/runner-os-release.log"
+          node --version > "$RUNNER_TEMP/laws-check-focused/toolchain/node-version.log" 2>&1
+          clang --version > "$RUNNER_TEMP/laws-check-focused/toolchain/clang-version.log" 2>&1
+          archive="$RUNNER_TEMP/laws-check-focused/toolchain/bend-2.0.25-linux-x64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-linux-x64.tar.gz \
+            -o "$archive" > "$RUNNER_TEMP/laws-check-focused/toolchain/download.log" 2>&1
+          sha256sum "$archive" > "$RUNNER_TEMP/laws-check-focused/toolchain/archive.sha256"
+          printf '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4  %s\n' "$archive" | \
+            sha256sum -c - > "$RUNNER_TEMP/laws-check-focused/toolchain/archive-check.log" 2>&1
+          BEND_HOME="$RUNNER_TEMP/laws-check-focused/toolchain-home" sh source/docs/bend2/reference/toolchain/install-2.0.25.sh \
+            > "$RUNNER_TEMP/laws-check-focused/toolchain/install.log" 2>&1
+          "$RUNNER_TEMP/laws-check-focused/toolchain-home/bin/bend" version \
+            > "$RUNNER_TEMP/laws-check-focused/toolchain/version.log" 2>&1
+          test "$(cat "$RUNNER_TEMP/laws-check-focused/toolchain/version.log")" = 'bend 2.0.25'
+          sha256sum source/bend2/scripts/laws-check.mjs source/bend2/src/coordinator/turn.bend \
+            source/bend2/src/coordinator/main.bend source/bend2/src/coordinator/receive.bend \
+            source/bend2/src/git/land.bend > "$RUNNER_TEMP/laws-check-focused/evidence/source-files.sha256"
+          sha256sum bend2/scripts/laws-check-focused-validation.mjs .github/workflows/laws-check-focused-validation.yml \
+            > "$RUNNER_TEMP/laws-check-focused/evidence/driver-files.sha256"
+
+      - name: Check source and focused mutation controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$BATON2_LAWS_RUN/evidence/controls"
+          mkdir -p "$output"
+          node bend2/scripts/laws-check-focused-validation.mjs \
+            "$GITHUB_WORKSPACE/source" \
+            "$BATON2_LAWS_RUN/toolchain-home/bin/bend" \
+            "$output" > "$output/driver.stdout" 2> "$output/driver.stderr"
+
+      - name: Retain focused evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: laws-check-focused-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/laws-check-focused/evidence/
+            ${{ runner.temp }}/laws-check-focused/toolchain/
+          if-no-files-found: error
+          include-hidden-files: true
