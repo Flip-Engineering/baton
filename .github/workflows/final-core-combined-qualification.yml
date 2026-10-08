@@ -18,8 +18,8 @@ jobs:
       matrix:
         include:
           - product: combined-context
-            source_sha: fd7023479934818dbd2a52a6d55e9fb97b4d8959
-            source_tree: 2797943f3df4f538e2e1ced0b8df39fcbc5f7db1
+            source_sha: 645961c6406a95942024e29dab16dc3bbfffaed3
+            source_tree: 2e908eafe751141e36fbd5104f0bf721622a23a4
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
@@ -234,10 +234,10 @@ jobs:
         suite: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["control","receive","logs","fixed-coordinator"]' || '["land","mcp-command","mcp-root","mcp-contract","logs","turn","process","configure","native-observation","fixed-coordinator","control","retained-control","role-guard","root-wake","codex-root","muse-root","omp-root","control-identity","shared-instance","ui-orchestra-native","ui-orchestra-browser","node-provider-ui","selected-context-package","observed-usage","stop","receive","receive-output","receive-terminal-boundary"]') }}
     env:
       BEND_NO_TELEMETRY: '1'
-      PRODUCT_SOURCE_SHA: fd7023479934818dbd2a52a6d55e9fb97b4d8959
-      PRODUCT_SOURCE_TREE: 2797943f3df4f538e2e1ced0b8df39fcbc5f7db1
-      FIXTURE_SOURCE_SHA: fd7023479934818dbd2a52a6d55e9fb97b4d8959
-      FIXTURE_SOURCE_TREE: 2797943f3df4f538e2e1ced0b8df39fcbc5f7db1
+      PRODUCT_SOURCE_SHA: 645961c6406a95942024e29dab16dc3bbfffaed3
+      PRODUCT_SOURCE_TREE: 2e908eafe751141e36fbd5104f0bf721622a23a4
+      FIXTURE_SOURCE_SHA: 645961c6406a95942024e29dab16dc3bbfffaed3
+      FIXTURE_SOURCE_TREE: 2e908eafe751141e36fbd5104f0bf721622a23a4
       PRODUCT_RUN_ID: ${{ github.run_id }}
       PRODUCT_RUN_ATTEMPT: ${{ github.run_attempt }}
       PRODUCT_ARTIFACT_ID: ''
