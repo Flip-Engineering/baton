@@ -1,16 +1,5 @@
-# CLAIM: the identity, digest and directory names of one managed semantic role.
-# A role's full identity is the canonical JSON array
-# ["context-role",databaseBinding,subjectKind,subjectId,role,incarnation]; its
-# guard key is the SHA-256 of that identity's exact UTF-8 bytes, written as 64
-# lowercase hexadecimal characters, and the guard lock name the host builds from
-# it is `g.lock-` followed by two hexadecimal characters per key byte.
-#
-# Serves: the role guard, keeper directory and recovery binding of the managed
-# semantic context lifecycle. The digest and the anchor directory creation are
-# foreign host operations and are exercised by the native fixture against known
-# SHA-256 vectors and the host's own lock file; the identity text, the lock
-# naming rule and the admission comparisons are pure functions this module
-# implements.
+# Managed context role identities and keeper directory names. SessionLock uses
+# the physical database identity and the physical-role digest to acquire a lock.
 import Base
 import ../json/canonical.bend as J
 
@@ -73,46 +62,6 @@ def role_guard_key(identity: String) -> IO(Result<&1,&1,U32 & String,String>):
 
 def physical_role_key(identity: String) -> IO(Result<&1,&1,U32 & String,String>):
   role_guard_key(identity)
-
-# The private directory `g` beside the recorded log directory, created with mode
-# 0700 and validated after creation: its canonical parent must be the recorded log
-# directory and its canonical basename must remain `g`. The returned path is the
-# canonical anchor the guard acquisition receives.
-def prepare_guard_anchor(log_dir: String) -> IO(Result<&1,&1,U32 & String,String>):
-  import "./guard-anchor.c"
-
-def hex_digit(+n: U32) -> Char:
-  Bool.pick(Char, U32.is_lt(n, 10), Char.from_u32(U32.add(48, n)), Char.from_u32(U32.add(87, n)))
-
-def str_rev_go(s: String, +acc: String) -> String:
-  match s:
-    case SNil{}: acc
-    case SCon{c, rest}: str_rev_go(rest, SCon{c, acc})
-
-def str_rev(s: String) -> String:
-  str_rev_go(s, SNil{})
-
-# Two hexadecimal characters per key byte, high nibble first. The accumulator is
-# built reversed (low nibble first) and reversed once at the end, which puts the
-# high nibble before the low nibble in the result.
-def hex_expand_go(+s: String, +acc: String) -> String:
-  match s:
-    case SNil{}: str_rev(acc)
-    case SCon{c, rest}:
-      +code = Char.to_u32(c)
-      +acc2 = acc
-      hex_expand_go(rest,
-        SCon{hex_digit(U32.and(code, 15)),
-        SCon{hex_digit(U32.and(U32.shrn(code, 4n), 15)), acc2}})
-
-def hex_expand(+key: String) -> String:
-  hex_expand_go(key, SNil{})
-
-# The host appends `.lock-` and the hex expansion of the key argument to the
-# canonical anchor path, so the guard lock basename is fixed at 135 bytes for a
-# 64-character key and carries no query ID or database path text.
-def guard_lock_name(key: String) -> String:
-  "g.lock-" ++ hex_expand(key)
 
 # The keeper directory of one role is the full-identity digest under the recorded
 # log directory. A raw ID never becomes a path component.

@@ -1343,10 +1343,8 @@ def managed_prepare_anchor(+db: String, +binding: String, +owner: String,
     physical_role_key : String <- IO.try(String,
       ContextIdentity.physical_role_key(physical_identity))
     canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
-    anchor : String <- IO.try(String, ContextIdentity.prepare_guard_anchor(
-      database_parent(canonical_database)))
     lock : Maybe<U32> <- IO.try(Maybe<U32>, Host.SessionLock.try_acquire(
-      anchor, ContextIdentity.guard_lock_name(physical_role_key)))
+      canonical_database, physical_role_key))
     managed_prepare_lock(db, binding, owner, query, request, cwd, worktree,
       source_identity, artifact_path, invocation_text, executable, runtime_path,
       result_schema, artifact_sha256, plan, guard_identity, physical_identity,

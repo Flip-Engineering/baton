@@ -60,5 +60,90 @@ class SelectedContextPackageTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(json.loads(result.stdout)['status'], 'passed', result.stdout)
 
+    def test_installed_native_cli_completes_a_selected_source_analysis(self):
+        repository = Path(__file__).resolve().parents[2]
+        coordinator = repository / '.scratch/bend2/baton2'
+        if not coordinator.is_file():
+            self.skipTest(f'Production coordinator not built at {coordinator}')
+        node = shutil.which('node')
+        if node is None:
+            self.skipTest('Installed context query requires Node.js 22.15 or newer')
+        version = subprocess.run([node, '--version'], capture_output=True, text=True)
+        self.assertEqual(version.returncode, 0, version.stdout + version.stderr)
+        major, minor = (int(part) for part in version.stdout.strip().lstrip('v').split('.')[:2])
+        if (major, minor) < (22, 15):
+            self.skipTest('Installed context query requires Node.js 22.15 or newer')
+
+        previous_root = PACKAGE.ROOT
+        PACKAGE.ROOT = repository
+        try:
+            PACKAGE.stage_adapters(self.payload)
+            PACKAGE.stage_selected_context_payload(self.payload)
+        finally:
+            PACKAGE.ROOT = previous_root
+
+        installed = self.payload / 'bin/baton2'
+        installed.parent.mkdir(parents=True)
+        shutil.copyfile(coordinator, installed)
+        installed.chmod(0o755)
+        database = self.root / 'state.db'
+
+        def invoke(*args, cwd=repository):
+            return subprocess.run([str(installed), str(database), *args], cwd=cwd,
+                                  capture_output=True, text=True)
+
+        attached = invoke('attach', 'validation-root', 'codex', 'fixture-native',
+                          '')
+        self.assertEqual(attached.returncode, 0, attached.stdout + attached.stderr)
+        role = invoke('role', 'validation-root', 'principal-conductor')
+        self.assertEqual(role.returncode, 0, role.stdout + role.stderr)
+
+        project = self.root / 'project'
+        fixture = project / 'bend2/context/bend2/fixtures/valid.bend'
+        fixture.parent.mkdir(parents=True)
+        shutil.copyfile(SOURCE / 'fixtures/valid.bend', fixture)
+        project.mkdir(exist_ok=True)
+        subprocess.run(['git', 'init', '-b', 'main', str(project)], check=True,
+                       capture_output=True, text=True)
+        subprocess.run(['git', 'add', '.'], cwd=project, check=True,
+                       capture_output=True, text=True)
+        subprocess.run(['git', '-c', 'user.name=Context fixture',
+                        '-c', 'user.email=context-fixture@example.invalid',
+                        '-c', 'core.hooksPath=/dev/null',
+                        'commit', '-m', 'Add valid Bend source fixture'],
+                       cwd=project, check=True, capture_output=True, text=True)
+
+        worktree = self.root / 'owner-worktree'
+        recruited = invoke('recruit', 'validation-owner', 'validation-root', 'codex',
+                           'fixture-model', 'low', str(project), 'context-query-fixture',
+                           str(worktree), 'HEAD')
+        self.assertEqual(recruited.returncode, 0, recruited.stdout + recruited.stderr)
+
+        query = 'installed-source-analysis'
+        request = self.root / 'request.json'
+        request.write_text(json.dumps({
+            'version': 1,
+            'subject': {'kind': 'symbol',
+                        'path': 'bend2/context/bend2/fixtures/valid.bend',
+                        'name': 'id'},
+            'select': ['definition'],
+            'cwd': str(worktree),
+        }) + '\n')
+        submitted = invoke('context-query-file', 'validation-owner', query, str(request),
+                           cwd=worktree)
+        self.assertEqual(submitted.returncode, 0, submitted.stdout + submitted.stderr)
+
+        retained = invoke('context-result', query, cwd=worktree)
+        self.assertEqual(retained.returncode, 0, retained.stdout + retained.stderr)
+        envelope = json.loads(retained.stdout)
+        self.assertEqual(envelope['query'], query)
+        self.assertEqual(envelope['owner'], 'validation-owner')
+        self.assertEqual(envelope['state'], 'complete', retained.stdout)
+
+        payload = envelope['result']['payload']
+        self.assertEqual(payload['schema'],
+                         'baton2.context.bend2.source-analysis.result.v1', retained.stdout)
+        self.assertEqual(payload['status'], 'completed', retained.stdout)
+
 if __name__ == '__main__':
     unittest.main()

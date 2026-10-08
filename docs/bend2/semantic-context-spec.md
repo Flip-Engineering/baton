@@ -1560,19 +1560,12 @@ A digest/identity disagreement refuses without replacing existing custody or
 records. The digest identifies a lock filename; acquisition establishes current
 exclusion, and the full identity checks separately bind the operation.
 
-`SessionLock.try_acquire` receives this digest string and the existing private
-directory `<canonical-context-log-directory>/g` as its path anchor. Create that
-fixed-name directory with mode 0700 before acquisition; require its canonical
-parent to be the recorded log directory and its canonical basename to remain
-`g`. The host appends `.lock-` and two hexadecimal characters per key byte, so
-the resulting basename is `g.lock-` plus 128 characters, totaling 135 ASCII bytes.
-Its representation is independent of query ID and database-path lengths.
-Actual filesystem path/allocation errors retain their host failure; no additional
-ID/path-length cutoff is introduced. Ordinary Player turn guards keep their
-existing database-file anchor. Actual role guard handles go to the shared
-prepared keeper; ordinary owner turns remain available. Keeper directories use
-the same full-identity digest under the log directory and validate their retained
-identity before reuse. Raw IDs do not become path components.
+`SessionLock.try_acquire` receives the canonical database path and the
+physical-role digest. The host identifies the database by its device and inode,
+then hex-encodes the digest once in the lock filename under its IPC directory.
+Database aliases share this lock. The prepared keeper receives the acquired
+handle. Keeper directories use the full-identity digest under the context log
+directory. Filesystem and allocation failures retain their host causes.
 
 The persisted recovery argv is the absolute installed Baton executable followed
 by `--recover-context-role`, canonical database path, expected database binding,
