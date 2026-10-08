@@ -227,9 +227,9 @@ def fields_go(rest: String, +cur: String, +fs: Fields) -> Fields:
   match rest:
     case SNil{}: fields_add(fs, cur)
     case SCon{+head, +tail}:
-      Bool.pick(Fields, U32.is_eq(Char.to_u32(head), 9),
-        fields_go(tail, SNil{}, fields_add(fs, cur)),
-        fields_go(tail, cur ++ SCon{head, SNil{}}, fs))
+      Bool.pick(Unit -> Fields, U32.is_eq(Char.to_u32(head), 9),
+        u => fields_go(tail, SNil{}, fields_add(fs, cur)),
+        u => fields_go(tail, cur ++ SCon{head, SNil{}}, fs))(Unit{})
 
 def fields_of(line: String) -> Fields:
   fields_go(line, SNil{}, Fnone{})
