@@ -1165,7 +1165,7 @@ def recover_managed_query(+db: String, +owner: String, +query: String,
                           +directory: String, +worktree: String,
                           +bootstrap_file: String) -> IO(Unit):
   do IO<Unit>:
-    canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
+    +canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
     executable : String <- IO.try(String, Host.SessionLock.executable())
     +database_binding : String <- IO.try(String, DB.Sql.binding(canonical_database))
     runtime : ProviderAnswer <- resolve_node_runtime(worktree)

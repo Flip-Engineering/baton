@@ -39,7 +39,7 @@ def remember_write(previous: String, result: Result<&1,&1,U32 & String,Unit>) ->
     case Fail{error}: remember(previous,Fail{error})
     case Done{unit}: previous
 
-def append_error(previous: String, next: String) -> String:
+def append_error(+previous: String, +next: String) -> String:
   Bool.pick(String,String.is_empty(next),previous,Bool.pick(String,String.is_empty(previous),next,previous ++ "\n" ++ next))
 
 def append_write_error(previous: String, result: Result<&1,&1,U32 & String,Unit>) -> String:
@@ -497,6 +497,11 @@ def checkpoint_restore(+log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(log),
     IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),checkpoint_restore_file(log))
 
+def with_restore_result(-A: Type, result: Result<&1,&1,U32 & String,Unit>, next: String -> Bool -> IO(A)) -> IO(A):
+  match result:
+    case Fail{error}: next(error_text(error),True{})
+    case Done{unit}: next("",False{})
+
 @unsafe
 def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, cursor: String, last_message: String, primary: String, current: String, +terminal: String, filter: String, +requested: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   match result:
@@ -513,7 +518,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
         +status : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
         +flushed : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(log,Logs.flush(held),log_failed)
-        event : String <- codex_finished(db,player,id,codex_log,terminal,String.eq(harness,"codex\n"),Logs.failed_now(log_failed,flushed))
+        +event : String <- codex_finished(db,player,id,codex_log,terminal,String.eq(harness,"codex\n"),Logs.failed_now(log_failed,flushed))
         +checkpoint_done : Result<&1,&1,U32 & String,Unit> <- checkpoint_written(flushed,Bool.and(String.is_empty(attempt),Bool.not(log_failed)),log,"")
         +noted : Result<&1,&1,U32 & String,Unit> <- record_filter(log,filter,requested,String.eq(harness,"omp\n"))
         +closed : Result<&1,&1,U32 & String,String> <- NativeRequests.closed(db,attempt,Bool.not(String.is_empty(attempt)))
@@ -545,17 +550,18 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +ended : String <- Bool.pick(IO(String),String.eq(harness,"muse\n"),muse_terminal_event(db,event,terminal,next_primary,relevant),terminal_event(db,event,terminal,relevant))
         +closed_input : Result<&1,&1,U32 & String,Unit> <- close_input(handle,Bool.not(Bool.and(String.eq(harness,"omp\n"),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended))))))
         +codex_state : String <- codex_frames(db,codex_log,line,String.eq(harness,"codex\n"))
-        questions : NativeRequests.Observation <- NativeRequests.observe(db,player,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
+        questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool <- NativeRequests.observe(db,player,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
         +mode : String <- filter_mode(db,line,String.eq(harness,"omp\n"),requested)
         +next_filter : String <- IO.pure(String,Omp.filter_next(filter,Tx.trim_nl(mode)))
         +next_checkpoint : Observer.State <- IO.pure(Observer.State,Observer.make(next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_held))
         NativeRequests.with_observation(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,questions,wakes => question_error => question_incomplete => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
           +question_text : String <- IO.pure(String,question_error)
-          +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(question_incomplete),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due(checkpoint_state,next_checkpoint))))))
+          +request_incomplete : Bool <- IO.pure(Bool,question_incomplete)
+          +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(request_incomplete),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due(checkpoint_state,next_checkpoint))))))
           +checkpointed : Result<&1,&1,U32 & String,Unit> <- Observer.after_observation(db,handle,next_checkpoint,checkpoint_enabled,observed)
           checkpoint_notice : Unit <- checkpoint_failure_notice(db,player,id,attempt,checkpoint_enabled,checkpointed)
           +next_error : String <- IO.pure(String,append_write_error(append_write_error(append_store_error(append_write_error(append_error(first_error,question_text),written),observed),closed_input),checkpointed))
-          +next_incomplete : Bool <- IO.pure(Bool,Bool.or(incomplete_observation,Bool.or(question_incomplete,Bool.or(observation_store_failed(observed),Bool.or(checkpoint_write_failed(closed_input),Bool.or(checkpoint_write_failed(checkpointed),failed))))))
+          +next_incomplete : Bool <- IO.pure(Bool,Bool.or(incomplete_observation,Bool.or(request_incomplete,Bool.or(observation_store_failed(observed),Bool.or(checkpoint_write_failed(closed_input),Bool.or(checkpoint_write_failed(checkpointed),failed))))))
           next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
           consume(db,player,id,log,current_policy,next_held,failed,handle,harness,next_cursor,message,next_primary,next_current,ended,next_filter,requested,codex_state,next_error,sender,attempt,next_checkpoint,next_incomplete,wakes,next))
 
@@ -574,11 +580,12 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
         +policy : Logs.Policy <- Logs.open_attempt(db,player,log,id)
         +level : String <- IO.pure(String,policy_level(policy))
         +requested : String <- IO.pure(String,Omp.filter_events(level))
-        +restored : Result<&1,&1,U32 & String,Unit> <- checkpoint_restore(generation)
-        sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness,level))
-        first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,"",False{},handle,harness,"0\n","","","","","",requested,"",remember_write("",restored),sender,"",Observer.empty(),checkpoint_write_failed(restored),Nil{},first)
-        direct_observed(observation)
+        restored : Result<&1,&1,U32 & String,Unit> <- checkpoint_restore(generation)
+        with_restore_result(Outcome,restored,restore_error => restore_failed => do IO<Outcome>:
+          sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness,level))
+          first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
+          observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,"",False{},handle,harness,"0\n","","","","","",requested,"",restore_error,sender,"",Observer.empty(),restore_failed,Nil{},first)
+          direct_observed(observation))
 
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
