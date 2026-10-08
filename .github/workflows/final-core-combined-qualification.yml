@@ -22,7 +22,7 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: d417d7763129009fa2ebcc61451bd11ce7f46d5e
+  PRODUCT_SOURCE_SHA: dd4100cab6322a4b3a794809a2de0af1362dd02f
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
 
@@ -123,6 +123,98 @@ jobs:
         with:
           name: final-native-context-combined-context-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-combined-context/
+          if-no-files-found: warn
+          retention-days: 14
+
+  darwin:
+    if: ${{ github.event_name == 'push' }}
+    needs: build
+    runs-on: macos-15
+    steps:
+      - name: Check out product source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
+          path: owned
+      - name: Select Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Prepare Darwin output
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/final-native-context-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-darwin"
+          mkdir -p "$evidence/toolchain"
+          printf 'FINAL_NATIVE_CONTEXT_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+          git -C owned rev-parse HEAD > "$evidence/source-commit.txt"
+          uname -a > "$evidence/platform.txt"
+      - name: Download generated production C from this build
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: final-native-context-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          path: generated
+      - name: Install Bend package notices
+        shell: bash
+        run: |
+          set -euo pipefail
+          BEND_HOME="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home" \
+            sh owned/docs/bend2/reference/toolchain/install-2.0.25.sh \
+            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/install.log" 2>&1
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
+            -o "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/compiler.tar.gz"
+      - name: Compile and package Darwin executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          set +e
+          python3 owned/bend2/scripts/package-native.py \
+            --output "$FINAL_NATIVE_CONTEXT_EVIDENCE/package" \
+            --bend "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" \
+            --compiler-archive "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/compiler.tar.gz" \
+            --generated-c "$GITHUB_WORKSPACE/generated/baton2.c" \
+            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/package.stdout" \
+            2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/package.stderr"
+          status=$?
+          set -e
+          printf '%s\n' "$status" > "$FINAL_NATIVE_CONTEXT_EVIDENCE/package.exit-status"
+          if [[ "$status" != 0 ]]; then
+            cat "$FINAL_NATIVE_CONTEXT_EVIDENCE/package.stderr"
+          fi
+          exit "$status"
+      - name: Exercise extracted Darwin package
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="$GITHUB_WORKSPACE/owned"
+          retained="$GITHUB_WORKSPACE/owned-retained"
+          mv "$build" "$retained"
+          trap 'mv "$retained" "$build"' EXIT
+          archive="$FINAL_NATIVE_CONTEXT_EVIDENCE/package/baton2-development-darwin-arm64-$PRODUCT_SOURCE_SHA.tar.gz"
+          archive_digest=$(awk '{print $1}' "$FINAL_NATIVE_CONTEXT_EVIDENCE/package/SHA256SUMS")
+          status=0
+          set +e
+          python3 "$retained/bend2/scripts/smoke-native-artifact.py" \
+            --archive "$archive" --sha256 "$archive_digest" \
+            --manifest "$FINAL_NATIVE_CONTEXT_EVIDENCE/package/manifest.json" \
+            --unavailable-source "$build" --output "$FINAL_NATIVE_CONTEXT_EVIDENCE/smoke" \
+            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/smoke.stdout" \
+            2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/smoke.stderr"
+          status=$?
+          set -e
+          printf '%s\n' "$status" > "$FINAL_NATIVE_CONTEXT_EVIDENCE/smoke.exit-status"
+          if [[ "$status" != 0 ]]; then
+            cat "$FINAL_NATIVE_CONTEXT_EVIDENCE/smoke.stderr"
+          fi
+          exit "$status"
+      - name: Retain Darwin package and output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-darwin/
           if-no-files-found: warn
           retention-days: 14
 
