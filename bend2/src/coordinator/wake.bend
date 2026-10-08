@@ -22,19 +22,22 @@ def wake_recipient_sql(+id: String) -> String:
   "SELECT coalesce((SELECT recipient FROM messages WHERE id=" ++ C.q(id) ++ " AND receipt IS NULL),'');"
 
 # The admission returns the delivery result. A live receiver owns its queued
-# continuation and starts it through the receive completion path.
+# continuation and starts it through the receive completion path. The admission
+# cursor selects the newly committed message while older input remains owed.
 def launch_wake_target(db: String, target: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,target,"1","")
     IO.pure(Result<&1,&1,U32 & String,Unit>,Delivery.wake_result(delivered))
 
-def drive_session_empty(+db: String, session: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def drive_session_empty(+db: String, session: String, id: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match empty:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case False{}: Receive.wake_due(db,session,"0",target => launch_wake_target(db,target))
+    case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      cursor : String <- IO.try(String,DB.Sql.query(db,"SELECT CAST(seq-1 AS TEXT) FROM messages WHERE id=" ++ C.q(id) ++ ";"))
+      Receive.wake_due(db,session,Tx.trim_nl(cursor),target => launch_wake_target(db,target))
 
-def drive_session(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  drive_session_empty(db,session,String.is_empty(session))
+def drive_session(+db: String, +session: String, id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  drive_session_empty(db,session,id,String.is_empty(session))
 
 def stopped_recipient_sql(id: String) -> String:
   "SELECT EXISTS(SELECT 1 FROM messages m JOIN session_stops st ON st.session=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL);"
@@ -43,7 +46,7 @@ def stopped_recipient_sql(id: String) -> String:
 def drive_recipient(db: String, id: String, session: String, stopped: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match stopped:
     case True{}: launch_wake_target(db,id)
-    case False{}: drive_session(db,session)
+    case False{}: drive_session(db,session,id)
 
 def drive_id_found(+db: String, +id: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match empty:
