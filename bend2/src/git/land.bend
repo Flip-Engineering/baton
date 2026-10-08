@@ -1427,6 +1427,10 @@ def evidence_release(evidence: AttemptEvidence) -> T.ReleaseRaw:
   match evidence:
     case AttemptEvidence{reserved, repo, target, candidate, basis, guard, artifact, decision, capture, qualification, release, identity, association, intent}: release
 
+def evidence_identity(evidence: AttemptEvidence) -> IdentityEvidence:
+  match evidence:
+    case AttemptEvidence{reserved, repo, target, candidate, basis, guard, artifact, decision, capture, qualification, release, identity, association, intent}: identity
+
 def evidence_decision(evidence: AttemptEvidence) -> LAdv:
   match evidence:
     case AttemptEvidence{reserved, repo, target, candidate, basis, guard, artifact, decision, capture, qualification, release, identity, association, intent}: decision
@@ -3334,4 +3338,62 @@ law a_qualified_record_continues_to_the_real_readback:
     ld_attest_readback_seen("r", evidence, StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path("r"), "0")}, seen)) : IO(Attestation)}
 
 def a_qualified_record_continues_to_the_real_readback(evidence):
+  {==}
+
+law the_common_read_threads_its_normalized_value_and_its_observation:
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  for code: U32
+  for out: String
+  {shared_common_read(repo, target, cand, basis, T.GRun{code, out}) == Bool.pick(IO(SharedLanding), U32.is_eq(code, 0), shared_claimed(repo, target, cand, basis, Tx.trim_nl(out), T.GRun{code, out}), IO.pure(SharedLanding, SharedCommonUnreadable{T.GRun{code, out}})) : IO(SharedLanding)}
+
+def the_common_read_threads_its_normalized_value_and_its_observation(repo,target,cand,basis,code,out):
+  {==}
+law the_claim_continues_with_the_original_common_read:
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  for common: String
+  for observed: T.GitOut
+  {shared_claimed(repo, target, cand, basis, common, observed) == (do IO<SharedLanding>:
+    claimed : Result<&1, &1, U32 & String, Maybe<U32>> <- Rec.Receipt.claim(common, target)
+    shared_claim_decided(repo, target, cand, basis, common, observed, claimed)) : IO(SharedLanding)}
+
+def the_claim_continues_with_the_original_common_read(repo,target,cand,basis,common,observed):
+  {==}
+law the_attempt_evidence_retains_its_identity_observation:
+  for common: String
+  for observed: T.GitOut
+  for target: String
+  {evidence_identity(fixture_evidence_of("r", "/common", target, "cand", "base", T.CapturedDone{"exit 0\nrest", "diag"}, fixture_held_qualification("cand", target), IdentityObserved{common, observed, target}, AssociationMissing{}, IntentMissing{})) == IdentityObserved{common, observed, target} : IdentityEvidence}
+
+def the_attempt_evidence_retains_its_identity_observation(common,observed,target):
+  {==}
+law an_identity_with_a_matching_observation_is_bound:
+  {identity_bound(IdentityObserved{"c", T.GRun{0, "c"}, "tgt"}, "tgt") == True{} : Bool}
+
+def an_identity_with_a_matching_observation_is_bound():
+  {==}
+law an_identity_with_a_wrong_target_is_not_bound:
+  {identity_bound(IdentityObserved{"c", T.GRun{0, "c"}, "other"}, "tgt") == False{} : Bool}
+
+def an_identity_with_a_wrong_target_is_not_bound():
+  {==}
+law an_identity_whose_observation_differs_is_not_bound:
+  {identity_bound(IdentityObserved{"c", T.GRun{0, "different"}, "tgt"}, "tgt") == False{} : Bool}
+
+def an_identity_whose_observation_differs_is_not_bound():
+  {==}
+law an_identity_with_a_nonzero_read_is_not_bound:
+  {identity_bound(IdentityObserved{"c", T.GRun{7, "c"}, "tgt"}, "tgt") == False{} : Bool}
+
+def an_identity_with_a_nonzero_read_is_not_bound():
+  {==}
+law an_identity_with_a_broken_read_is_not_bound:
+  {identity_bound(IdentityObserved{"c", T.GBroken{"unreadable"}, "tgt"}, "tgt") == False{} : Bool}
+
+def an_identity_with_a_broken_read_is_not_bound():
   {==}
