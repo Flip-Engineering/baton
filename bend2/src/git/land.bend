@@ -2421,29 +2421,26 @@ def the_reserved_continuation_runs_the_selected_route_and_releases_before_attest
 # The attempt name: the bare base for the first attempt, then the base extended with the
 # counter rendered by U32.show. The only refusal past a collision is the U32 maximum, checked
 # before the increment; there is no chosen suffix-length limit.
-def shared_attempt_name(base: String, attempt: U32) -> String:
-  +b = base
-  +n = attempt
-  Bool.pick(String, U32.is_eq(n, 1),
-    b,
-    Tx.str_cat(b, Tx.str_cat("-", U32.show(n))))
+# The next attempt name after a collision. The continuation is a suffix on the name, so the name keeps
+# growing and no counter can wrap.
+def shared_attempt_next_name(name: String) -> String:
+  +n = name
+  Tx.str_cat(n, "-")
 # One self-recursive reservation body: the returned Result, the exact created/existing records and
 # the retry branching. The retry's next read is inlined below, so this def is whole and no def is
 # used before it is defined; only nonrecursive helpers produce final outcomes.
-def shared_reserve_observed(+handle: U32, +repo: String, +target: String, +cand: String, +basis: String, +guard: String, +common: String, +common_observed: T.GitOut, +parent: String, +base: String, +attempt: U32, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
+def shared_reserve_observed(+handle: U32, +repo: String, +target: String, +cand: String, +basis: String, +guard: String, +common: String, +common_observed: T.GitOut, +parent: String, +name: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   match observed:
     case Fail{error}: shared_step_failed("reserve", error, handle)
     case Done{+record}:
-      +created_ok = Tx.str_eq(record, Pb.production_record("created", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0"))
-      +existing_ok = Tx.str_eq(record, Pb.production_record("existing", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0"))
+      +created_ok = Tx.str_eq(record, Pb.production_record("created", shared_parent_path(parent, name), "0"))
+      +existing_ok = Tx.str_eq(record, Pb.production_record("existing", shared_parent_path(parent, name), "0"))
       Bool.pick(IO(SharedLanding), created_ok,
-        shared_reserved_continue(handle, repo, target, cand, basis, guard, common, common_observed, shared_parent_path(parent, shared_attempt_name(base, attempt)), shared_attempt_name(base, attempt), parent),
+        shared_reserved_continue(handle, repo, target, cand, basis, guard, common, common_observed, shared_parent_path(parent, name), name, parent),
         Bool.pick(IO(SharedLanding), existing_ok,
-          Bool.pick(IO(SharedLanding), U32.is_lt(attempt, 4294967295),
-            do IO<SharedLanding>:
-                retry : Result<&1, &1, U32 & String, String> <- Rec.Receipt.reserve_attempt(parent, shared_attempt_name(base, U32.add(attempt, 1)))
-                shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, U32.add(attempt, 1), retry),
-            shared_record_failed("reserve-counter-maximum", record, handle)),
+          do IO<SharedLanding>:
+              retry : Result<&1, &1, U32 & String, String> <- Rec.Receipt.reserve_attempt(parent, shared_attempt_next_name(name))
+              shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, shared_attempt_next_name(name), retry),
           shared_record_failed("reserve", record, handle)))
 
 # The reservation's first read: the attempt name is bound here and the answer is classified by
@@ -2460,10 +2457,10 @@ def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String,
   +pa = parent
   +bs = base
   +n = attempt
-  +name = shared_attempt_name(bs, n)
+  +name = bs
   do IO<SharedLanding>:
     observed : Result<&1, &1, U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, name)
-    shared_reserve_observed(h, rp, tg, c, b, gd, cm, cobs, pa, bs, n, observed)
+    shared_reserve_observed(h, rp, tg, c, b, gd, cm, cobs, pa, name, observed)
 
 def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, +common: String, +common_observed: T.GitOut, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle
@@ -3153,6 +3150,33 @@ def ld_stage5(repo: String, scratch: String, worker: String, sha: String, tip: S
 
 # The gate: every unjudged run and every candidate failure line the target
 # run does not show blocks; otherwise the advance starts.
+# The checked advance the judged gate reaches once no run is unjudged. It runs the same shared claim, guard,
+# attempt and association entry the checked landing uses, with the checked candidate and the target tip as the
+# basis, and answers from the shared outcome. This is the entry the unjudged-run gate calls, so both public
+# paths reach the shared admission.
+def ld_advance(repo: String, target: String, cand: String, tip: String) -> IO(Ld):
+  +rp = repo
+  +tg = target
+  +c2 = cand
+  +b2 = tip
+  do IO<Ld>:
+    shared : SharedLanding <- shared_landing_run(rp, tg, c2, b2)
+    IO.pure(Ld, ld_advance_shared_answer(shared, tg, c2))
+
+# The same entry, stated as the effect equation: the shared call runs first and its outcome is what the answer
+# is read from.
+law the_judged_advance_runs_the_shared_entry_for_its_operands:
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  {ld_advance(repo, target, cand, basis) == (do IO<Ld>:
+    shared : SharedLanding <- shared_landing_run(repo, target, cand, basis)
+    IO.pure(Ld, ld_advance_shared_answer(shared, target, cand)) : IO(Ld))}
+
+def the_judged_advance_runs_the_shared_entry_for_its_operands(repo,target,cand,basis):
+  {==}
+
 def ld_judged_news(news: List<String>, repo: String, target: String, scratch: String, tip: String, cand: String) -> IO(Ld):
   match news:
     case Nil{}: ld_advance(repo, target, cand, tip)
@@ -4980,44 +5004,13 @@ law a_created_reservation_continues_to_the_reserved_continue_call:
   for common_observed: T.GitOut
   for parent: String
   for base: String
-  for attempt: U32
-  {shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, attempt, Done{Pb.production_record("created", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0")}) == shared_reserved_continue(handle, repo, target, cand, basis, guard, common, common_observed, shared_parent_path(parent, shared_attempt_name(base, attempt)), shared_attempt_name(base, attempt), parent) : IO(SharedLanding)}
+  {shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, Done{Pb.production_record("created", shared_parent_path(parent, base), "0")}) == shared_reserved_continue(handle, repo, target, cand, basis, guard, common, common_observed, shared_parent_path(parent, base), base, parent) : IO(SharedLanding)}
 
-def a_created_reservation_continues_to_the_reserved_continue_call(handle,repo,target,cand,basis,guard,common,common_observed,parent,base,attempt):
+def a_created_reservation_continues_to_the_reserved_continue_call(handle,repo,target,cand,basis,guard,common,common_observed,parent,base):
   {==}
-law an_existing_reservation_continues_to_the_next_reserve_attempt:
-  for handle: U32
-  for repo: String
-  for target: String
-  for cand: String
-  for basis: String
-  for guard: String
-  for common: String
-  for common_observed: T.GitOut
-  for parent: String
-  for base: String
-  {shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, 1, Done{Pb.production_record("existing", shared_parent_path(parent, shared_attempt_name(base, 1)), "0")}) == (do IO<SharedLanding>:
-    retry : Result<&1, &1, U32 & String, String> <- Rec.Receipt.reserve_attempt(parent, shared_attempt_name(base, 2))
-    shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, 2, retry)) : IO(SharedLanding)}
 
 def an_existing_reservation_continues_to_the_next_reserve_attempt(handle,repo,target,cand,basis,guard,common,common_observed,parent,base):
   {==}
-law an_existing_reservation_at_the_maximum_retains_its_record:
-  for handle: U32
-  for repo: String
-  for target: String
-  for cand: String
-  for basis: String
-  for guard: String
-  for common: String
-  for common_observed: T.GitOut
-  for parent: String
-  for base: String
-  {shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, 4294967295, Done{Pb.production_record("existing", shared_parent_path(parent, shared_attempt_name(base, 4294967295)), "0")}) == shared_record_failed("reserve-counter-maximum", Pb.production_record("existing", shared_parent_path(parent, shared_attempt_name(base, 4294967295)), "0"), handle) : IO(SharedLanding)}
-
-def an_existing_reservation_at_the_maximum_retains_its_record(handle,repo,target,cand,basis,guard,common,common_observed,parent,base):
-  {==}
-
 law a_blocked_selection_runs_no_association_and_no_mutation:
   for ctx: LdAdvCtx
   {ld_adv_associated(HoldBlocked{"the worktree listing could not be read"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvBroken{"the worktree listing could not be read"}, MutationUnknown{}, AssociationMissing{}, IntentMissing{}}) : IO(LdAdvObs)}
