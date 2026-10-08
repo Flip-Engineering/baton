@@ -396,7 +396,7 @@ def observed(+db: String, +session: String, +id: String, +log: String, cursor: S
   do IO<Result<&1,&1,U32 & String,Unit>>:
     exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
     closed : Bool <- Stop.stopped(db,session)
-    gone : Bool <- Turn.refusal(attempt ++ "/native",Bool.not(String.is_empty(native)),outcome)
+    gone : Bool <- Turn.refusal(attempt ++ "/native.stderr",Bool.not(String.is_empty(native)),outcome)
     complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",cursor,native,cwd,handle,lock,outcome,deliveries,again,Bool.and(gone,Bool.not(closed)))
 
 def reconciled_cursor(cursor: String, adopted: Bool, outcome: Turn.Outcome) -> String:

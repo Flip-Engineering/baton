@@ -76,8 +76,12 @@ class ReceiveOutput(unittest.TestCase):
             coord('attach', 'parent', 'codex', 'native-parent', '')
             with sqlite3.connect(database) as connection:
                 connection.execute("UPDATE sessions SET parent='root' WHERE id='parent'")
-            coord('report', 'completed', 'parent', 'Exact completion bytes: café λ.')
-            coord('message', 'queued', 'root', 'parent', 'task', 'Queued work.')
+                connection.execute(
+                    "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)",
+                    ('completed', 'parent', 'root', 'report', 'Exact completion bytes: café λ.'))
+                connection.execute(
+                    "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)",
+                    ('queued', 'root', 'parent', 'task', 'Queued work.'))
             coord('connect', 'root', 'native-root',
                   json.dumps([sys.executable, str(directory / 'gate.py'), 'delivery']))
             expected = coord('delivery', 'completed')
