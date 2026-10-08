@@ -10,43 +10,43 @@ on:
         description: Existing product build run containing the selected native binaries
         required: true
         type: string
-        default: '37764922546'
+        default: '37775725123'
       product_run_attempt:
         description: Attempt containing the selected native binaries
         required: true
         type: string
-        default: '3'
+        default: '1'
 
 permissions:
   actions: read
   contents: read
 
+env:
+  BEND_NO_TELEMETRY: '1'
+  PRODUCT_SOURCE_SHA: 2b5686d76e78aea6c10ae3c6a9856d958b1777ce
+  PRODUCT_SOURCE_TREE: f034826e2721a3b43c1e069383a347c89077a758
+  PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
+  PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
+  PRODUCT_ARTIFACT_ID: ${{ github.event_name == 'workflow_dispatch' && '11549099554' || '' }}
+  PRODUCT_ARTIFACT_DIGEST: ${{ github.event_name == 'workflow_dispatch' && 'sha256:f776f64731eaeff7bc8b054c32cb806d6a498830bb6c0fef7c205f7d08f33205' || '' }}
+
 jobs:
   build:
     if: ${{ github.event_name != 'workflow_dispatch' }}
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - product: combined-context
-            source_sha: 2b5686d76e78aea6c10ae3c6a9856d958b1777ce
-            source_tree: f034826e2721a3b43c1e069383a347c89077a758
-    env:
-      BEND_NO_TELEMETRY: '1'
     steps:
       - name: Check out qualification driver
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Check out pinned product source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ matrix.source_sha }}
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
           path: source
       - name: Verify product pins and create owned source clone
         shell: bash
         run: |
           set -euo pipefail
-          evidence="$RUNNER_TEMP/final-native-context-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${{ matrix.product }}"
+          evidence="$RUNNER_TEMP/final-native-context-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-combined-context"
           test ! -e "$evidence"
           mkdir -p "$evidence/logs" "$evidence/toolchain"
           printf 'FINAL_NATIVE_CONTEXT_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
@@ -76,9 +76,9 @@ jobs:
           {
             printf 'driver_commit=%s\n' "$(git rev-parse HEAD)"
             printf 'driver_tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
-            printf 'product=%s\n' '${{ matrix.product }}'
-            printf 'expected_source_sha=%s\n' '${{ matrix.source_sha }}'
-            printf 'expected_source_tree=%s\n' '${{ matrix.source_tree }}'
+            printf 'product=%s\n' 'combined-context'
+            printf 'expected_source_sha=%s\n' "$PRODUCT_SOURCE_SHA"
+            printf 'expected_source_tree=%s\n' "$PRODUCT_SOURCE_TREE"
             uname -a
             uname -m
             lsb_release -a
@@ -88,13 +88,13 @@ jobs:
           actual_tree="$(git -C source rev-parse 'HEAD^{tree}')"
           printf 'actual_source_sha=%s\nactual_source_tree=%s\n' "$actual_sha" "$actual_tree" \
             > "$evidence/logs/source-pin.txt"
-          test "$actual_sha" = '${{ matrix.source_sha }}'
-          test "$actual_tree" = '${{ matrix.source_tree }}'
+          test "$actual_sha" = "$PRODUCT_SOURCE_SHA"
+          test "$actual_tree" = "$PRODUCT_SOURCE_TREE"
           git -C source status --short --branch > "$evidence/logs/source-status.txt"
           git clone --no-hardlinks --quiet source owned
-          git -C owned checkout --quiet --detach '${{ matrix.source_sha }}'
-          test "$(git -C owned rev-parse HEAD)" = '${{ matrix.source_sha }}'
-          test "$(git -C owned rev-parse 'HEAD^{tree}')" = '${{ matrix.source_tree }}'
+          git -C owned checkout --quiet --detach "$PRODUCT_SOURCE_SHA"
+          test "$(git -C owned rev-parse HEAD)" = "$PRODUCT_SOURCE_SHA"
+          test "$(git -C owned rev-parse 'HEAD^{tree}')" = "$PRODUCT_SOURCE_TREE"
           git -C owned status --short --branch > "$evidence/logs/owned-status.txt"
       - name: Select Node 22
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -231,8 +231,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: final-native-context-${{ matrix.product }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/
+          name: final-native-context-combined-context-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-combined-context/
           if-no-files-found: warn
           retention-days: 14
 
@@ -243,24 +243,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["fixed-coordinator","stop","codex-root"]' || '["land","mcp-command","mcp-root","mcp-contract","logs","turn","process","configure","native-observation","fixed-coordinator","control","retained-control","role-guard","root-wake","codex-root","muse-root","omp-root","control-identity","shared-instance","ui-orchestra-native","ui-orchestra-browser","node-provider-ui","selected-context-package","observed-usage","stop","receive","receive-output","receive-terminal-boundary"]') }}
-    env:
-      BEND_NO_TELEMETRY: '1'
-      PRODUCT_SOURCE_SHA: a3d022b689431b4dd5a48957b68774bbbd093f6a
-      PRODUCT_SOURCE_TREE: 3be9159f1b550c0c18ef31ee690973cb825e8783
-      FIXTURE_SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && 'b87e724b051ed5f6db5e7b7a4310551586bd6e92' || 'a3d022b689431b4dd5a48957b68774bbbd093f6a' }}
-      FIXTURE_SOURCE_TREE: ${{ github.event_name == 'workflow_dispatch' && '26049234d547be13d3a78c14c0c9597333a859e7' || '3be9159f1b550c0c18ef31ee690973cb825e8783' }}
-      PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
-      PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
-      PRODUCT_ARTIFACT_ID: ${{ github.event_name == 'workflow_dispatch' && '11543879824' || '' }}
-      PRODUCT_ARTIFACT_DIGEST: ${{ github.event_name == 'workflow_dispatch' && 'sha256:28c5113b7276fc983777f67966b61a3561010fc737131ee3dfe02f79a88c1ba1' || '' }}
+        suite: ${{ fromJSON('["land","mcp-command","mcp-root","mcp-contract","logs","turn","process","configure","native-observation","fixed-coordinator","control","retained-control","role-guard","root-wake","codex-root","muse-root","omp-root","control-identity","shared-instance","ui-orchestra-native","ui-orchestra-browser","node-provider-ui","selected-context-package","observed-usage","stop","receive","receive-output","receive-terminal-boundary"]') }}
     steps:
       - name: Check out qualification driver
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Check out pinned product source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ env.FIXTURE_SOURCE_SHA }}
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
           path: source
       - name: Verify source and prepare runtime evidence
         shell: bash
@@ -283,11 +273,11 @@ jobs:
             printf 'suite=%s\n' '${{ matrix.suite }}'
             uname -a
           } > "$evidence/logs/identity.txt" 2>&1
-          test "$(git -C source rev-parse HEAD)" = "$FIXTURE_SOURCE_SHA"
-          test "$(git -C source rev-parse 'HEAD^{tree}')" = "$FIXTURE_SOURCE_TREE"
+          test "$(git -C source rev-parse HEAD)" = "$PRODUCT_SOURCE_SHA"
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = "$PRODUCT_SOURCE_TREE"
           git clone --no-hardlinks --quiet source owned
-          git -C owned checkout --quiet --detach "$FIXTURE_SOURCE_SHA"
-          test "$(git -C owned rev-parse 'HEAD^{tree}')" = "$FIXTURE_SOURCE_TREE"
+          git -C owned checkout --quiet --detach "$PRODUCT_SOURCE_SHA"
+          test "$(git -C owned rev-parse 'HEAD^{tree}')" = "$PRODUCT_SOURCE_TREE"
       - name: Select Node 22
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -341,8 +331,8 @@ jobs:
             printf 'product_run_attempt=%s\n' "$PRODUCT_RUN_ATTEMPT"
             printf 'product_artifact_id=%s\n' "$PRODUCT_ARTIFACT_ID"
             printf 'product_artifact_digest=%s\n' "$PRODUCT_ARTIFACT_DIGEST"
-            printf 'fixture_source_sha=%s\n' "$FIXTURE_SOURCE_SHA"
-            printf 'fixture_source_tree=%s\n' "$FIXTURE_SOURCE_TREE"
+            printf 'fixture_source_sha=%s\n' "$PRODUCT_SOURCE_SHA"
+            printf 'fixture_source_tree=%s\n' "$PRODUCT_SOURCE_TREE"
             command -v chromium || command -v chromium-browser || command -v google-chrome || true
             sha256sum owned/.scratch/bend2/baton2 owned/.scratch/bend2/process-test \
               owned/.scratch/bend2/instance-test owned/.scratch/bend2/bend
