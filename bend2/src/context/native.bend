@@ -1042,7 +1042,7 @@ def managed_recovery_bootstrap_json(+db: String, +owner: String, +query: String,
     case ProjectPolicyJsonReady{+envelope}:
       +value = boundary_member(envelope, "value")
       bootstrap_text = J.json_text(value)
-      bootstrap_digest = boundary_text(envelope, "sha256")
+      +bootstrap_digest = boundary_text(envelope, "sha256")
       Bool.pick(IO(Unit), Bool.and(
         String.eq(boundary_text(envelope, "status"), "loaded"),
         Bool.and(String.eq(boundary_text(envelope, "owner"), owner),
