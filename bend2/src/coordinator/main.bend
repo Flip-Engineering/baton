@@ -15,6 +15,7 @@ import ./usage.bend as Usage
 import ./logs.bend as Logs
 import ./commands.bend as C
 import ./control.bend as Control
+import ./wake.bend as Wake
 import ./control-laws.bend as ControlLaws
 import ../host/text.bend as T
 import ../host/process.bend as P
@@ -62,16 +63,20 @@ law m1_a_stored_answer_is_written_unchanged:
 def m1_a_stored_answer_is_written_unchanged(h, t):
   {==}
 
-def run(db: String, command: C.Command) -> IO(Unit):
+# A committed message admission is evaluated for a due wake before the entry
+# answers. Refused admissions never reach the driver: Store.apply fails first.
+def run(+db: String, +command: C.Command) -> IO(Unit):
   do IO<Unit>:
-    result : String <- IO.try(String, Store.apply(db,command))
+    +result : String <- IO.try(String, Store.apply(db,command))
+    woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_command(db,command,Done{result})
     print_result(result)
 
 law stored_command_entry_uses_the_actual_store:
   for db: String
   for command: C.Command
   {run(db,command) == (do IO<Unit>:
-    result : String <- IO.try(String,Store.apply(db,command))
+    +result : String <- IO.try(String,Store.apply(db,command))
+    woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_command(db,command,Done{result})
     print_result(result)) : IO(Unit)}
 
 def stored_command_entry_uses_the_actual_store(db,command):
@@ -165,6 +170,10 @@ def execute(db: String, command: C.Command) -> IO(Unit):
       do IO<Unit>:
         response : String <- IO.try(String,T.Text.read(path))
         NativeRequests.reply(db,parent,id,response)
+    case C.ReportFile{id,sender,path}:
+      do IO<Unit>:
+        body : String <- IO.try(String,T.Text.read(path))
+        run(db,C.Report{id,sender,body})
     case C.AskFile{id,player,path}:
       do IO<Unit>:
         body : String <- IO.try(String,T.Text.read(path))
@@ -190,11 +199,22 @@ law player_executes_the_stored_command:
 def player_executes_the_stored_command(db,id):
   {==}
 
+# The orchestra answer combines the players, operators, and ensembles
+# surfaces. The production equation is factored: one surface CTE computes the
+# per-session item, role, and identity once, and both role arrays read that
+# surface. The execute/run law below covers the production path; the assembly
+# pin after it covers the factored structure.
 law orchestra_executes_the_stored_command:
   for db: String
   {execute(db,C.Orchestra{}) == run(db,C.Orchestra{}) : IO(Unit)}
 
 def orchestra_executes_the_stored_command(db):
+  {==}
+
+law orchestra_answer_combines_the_role_surfaces:
+  {C.orchestra_sql() == ("WITH surface AS " ++ C.orchestra_surface() ++ " SELECT json_object('players'," ++ C.orchestra_role_array("<>'operator'") ++ ",'operators'," ++ C.orchestra_role_array("='operator'") ++ ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT " ++ C.ensemble_row("e") ++ " AS item FROM ensembles e ORDER BY e.id)));") : String}
+
+def orchestra_answer_combines_the_role_surfaces():
   {==}
 
 law section_executes_the_stored_command:

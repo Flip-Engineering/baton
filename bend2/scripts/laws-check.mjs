@@ -371,8 +371,8 @@ const MUTATIONS = [
   {
     name: "naming-orchestra-omits-operators",
     file: join('bend2', 'src', 'coordinator', "commands.bend"),
-    find: " ++ \",'operators',\" ++ players_json(assigned_role(\"s.id\") ++ \"='operator'\")",
-    replace: "",
+    find: ",'operators',\", orchestra_role_array(\"='operator'\")",
+    replace: ",'operators',\", \"(SELECT '[]')\"",
     law: "orchestra_reads_players_operators_and_all_ensembles",
   },
   {
