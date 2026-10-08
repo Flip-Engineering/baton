@@ -70,19 +70,19 @@ def name_char_ok(c: Char) -> Bool:
   Bool.pick(Bool, Tx.is_tab(ch),
     False{},
     name_char_ok_next(ch))
-def name_go_char(rest: String, ok: Bool, c: Char) -> Bool:
-  +tail = rest
-  +sofar = ok
-  +here = c
-  Bool.pick(Bool, name_char_ok(here),
-    name_go(tail, sofar),
-    False{})
+# The name check is one self-recursive body: the codebase's rule is that a definition precedes its
+# uses, so the character step is inlined here rather than split into a helper that would call this
+# function before it is defined.
 def name_go(text: String, ok: Bool) -> Bool:
-  match text:
-    case SNil{}: ok
+  +t = text
+  +sofar = ok
+  match t:
+    case SNil{}: sofar
     case SCon{c, rest}:
       +here = c
-      name_go_char(rest, ok, here)
+      Bool.pick(Bool, name_char_ok(here),
+        name_go(rest, sofar),
+        False{})
 
 def name_has_nul_go(text: String) -> Bool:
   match text:
