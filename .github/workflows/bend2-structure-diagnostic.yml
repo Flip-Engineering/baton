@@ -17,7 +17,7 @@ jobs:
       - name: Checkout the immutable product commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: b43e72016e44c4ad007394719c6f15ed3c850432
+          ref: a871aa34486852eb09a218a6e94e23cf05dd2bbb
           persist-credentials: false
 
       - name: Select Node 22
