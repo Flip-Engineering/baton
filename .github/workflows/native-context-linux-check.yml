@@ -1,0 +1,145 @@
+name: Native context Linux Bend check-only diagnostic
+
+on:
+  push:
+    branches:
+      - codex/native-context-linux-diagnostic-luna-20261008
+
+permissions:
+  contents: read
+
+jobs:
+  check-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - product: core
+            source_sha: eb4a66c359fe8888753fdc6bd7b06971cea65c25
+            source_tree: 257f3c16c312c5f8cfe5e4354fb5706c765e5a51
+          - product: managed-context
+            source_sha: 11c5f4e1fe483698e81ee0c69644dae3f805389f
+            source_tree: 7c8e9cb08091058eb5087f9f8ac913362eb06046
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - name: Check out diagnostic driver
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Check out pinned product source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ matrix.source_sha }}
+          path: source
+      - name: Prepare per-product evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/native-context-linux-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${{ matrix.product }}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence/toolchain" "$evidence/logs"
+          printf 'NATIVE_DIAGNOSTIC_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+          printf '%s\n' "$evidence" > "$evidence/logs/evidence-directory.txt"
+          {
+            printf 'driver_commit=%s\n' "$(git rev-parse HEAD)"
+            printf 'driver_tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            printf 'product=%s\n' '${{ matrix.product }}'
+            printf 'expected_source_sha=%s\n' '${{ matrix.source_sha }}'
+            printf 'expected_source_tree=%s\n' '${{ matrix.source_tree }}'
+            uname -a
+            uname -m
+            lsb_release -a
+            git --version
+          } > "$evidence/logs/driver-and-runtime.txt" 2>&1
+      - name: Verify source pin and create ordinary owned clone
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_sha="$(git -C source rev-parse HEAD)"
+          actual_tree="$(git -C source rev-parse 'HEAD^{tree}')"
+          printf 'actual_source_sha=%s\nactual_source_tree=%s\n' "$actual_sha" "$actual_tree" \
+            | tee "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/source-pin.txt"
+          test "$actual_sha" = '${{ matrix.source_sha }}'
+          test "$actual_tree" = '${{ matrix.source_tree }}'
+          git -C source status --short --branch > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/source-status.txt"
+          git clone --no-hardlinks --quiet source owned
+          git -C owned checkout --quiet --detach '${{ matrix.source_sha }}'
+          test "$(git -C owned rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test "$(git -C owned rev-parse 'HEAD^{tree}')" = '${{ matrix.source_tree }}'
+          git -C owned status --short --branch > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/owned-status.txt"
+          git -C owned rev-parse HEAD > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/owned-commit.txt"
+          git -C owned rev-parse 'HEAD^{tree}' > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/owned-tree.txt"
+      - name: Install Bend 2.0.25 with the pinned repository installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$NATIVE_DIAGNOSTIC_EVIDENCE/curl-shim" "$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain-home"
+          cat > "$NATIVE_DIAGNOSTIC_EVIDENCE/curl-shim/curl" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          output=''
+          args=("$@")
+          for ((index = 0; index < ${#args[@]}; index++)); do
+            if [[ "${args[index]}" == '-o' && $((index + 1)) -lt ${#args[@]} ]]; then
+              output="${args[index + 1]}"
+            fi
+          done
+          /usr/bin/curl "${args[@]}"
+          if [[ "$output" == */bend-2.0.25-linux-x64.tar.gz ]]; then
+            cp "$output" "$BEND_ARCHIVE_CAPTURE"
+          fi
+          SH
+          chmod 0755 "$NATIVE_DIAGNOSTIC_EVIDENCE/curl-shim/curl"
+          export BEND_ARCHIVE_CAPTURE="$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain/bend-2.0.25-linux-x64.tar.gz"
+          PATH="$NATIVE_DIAGNOSTIC_EVIDENCE/curl-shim:$PATH" \
+            BEND_HOME="$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain-home" \
+            sh owned/docs/bend2/reference/toolchain/install-2.0.25.sh \
+            > "$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain/install.log" 2>&1
+          bend="$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain-home/bin/bend"
+          "$bend" version | tee "$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain/version.txt"
+          test "$("$bend" version)" = 'bend 2.0.25'
+          sha256sum "$bend" > "$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain/bend-binary.sha256"
+          sha256sum "$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain/bend-2.0.25-linux-x64.tar.gz" \
+            > "$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain/archive.sha256"
+          sha256sum -c "$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain/archive.sha256" \
+            > "$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain/archive-check.log" 2>&1
+          tar -tzf "$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain/bend-2.0.25-linux-x64.tar.gz" \
+            > "$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain/archive-members.txt"
+          {
+            printf 'bend_sha256=%s\n' "$(sha256sum "$bend" | cut -d ' ' -f 1)"
+            printf 'archive_sha256=%s\n' "$(sha256sum "$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain/bend-2.0.25-linux-x64.tar.gz" | cut -d ' ' -f 1)"
+          } > "$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain/manifest.txt"
+      - name: Run file-backed check-only with a deadline
+        shell: bash
+        run: |
+          set -euo pipefail
+          bend="$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain-home/bin/bend"
+          set +e
+          (cd owned && timeout --signal=TERM --kill-after=5s 180s \
+            "$bend" bend2/src/coordinator/main.bend --check-only) \
+            > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.stdout" \
+            2> "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.stderr"
+          status=$?
+          set -e
+          printf '%s\n' "$status" > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.exit-status"
+          if [[ "$status" == 124 || "$status" == 137 ]]; then
+            printf 'deadline_exceeded_after_seconds=180\ntermination_status=%s\n' "$status" \
+              > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.deadline"
+          else
+            printf 'deadline_exceeded_after_seconds=none\n' \
+              > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.deadline"
+          fi
+          sha256sum "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.stdout" \
+            "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.stderr" \
+            "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.exit-status" \
+            > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.sha256"
+          if [[ "$status" != 0 ]]; then exit "$status"; fi
+      - name: Retain diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-linux-diagnostic-${{ matrix.product }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-context-linux-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/
+          if-no-files-found: warn
+          retention-days: 14
