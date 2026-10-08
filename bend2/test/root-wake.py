@@ -328,7 +328,7 @@ class RootWake(unittest.TestCase):
 
         # The lead's second completion reaches the live root, and the root's own drain
         # then consumes that report and the late input in one turn.
-        self.eventually(lambda: len(self.calls('lead')) == 2, 'the lead started a third turn.')
+        self.completed('lead', 2)
         self.release('root', 2)
         root_drain = self.eventually(lambda: self.calls('root')[2:3], 'the root never drained its late input.')
         self.assertIn('Late report for the Codex root.', root_drain[0]['prompt'])

@@ -46,10 +46,10 @@ def report(db: String, player: String, id: String, body: String) -> IO(Unit):
     written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
     IO.pure(Unit,Unit{})
 
-def diagnostic(db: String, player: String, id: String, text: String, empty: Bool) -> IO(Unit):
+def diagnostic(db: String, player: String, id: String, text: String, event: String, empty: Bool) -> IO(Unit):
   match empty:
     case True{}: IO.pure(Unit,Unit{})
-    case False{}: report(db,player,id ++ ":observation","Native output observation failed: " ++ text)
+    case False{}: report(db,player,id ++ ":observation","Native output observation failed: " ++ text ++ Bool.pick(String,String.is_empty(event),"","\nNative event: " ++ event))
 
 def checkpoint_write_failed(result: Result<&1,&1,U32 & String,Unit>) -> Bool:
   match result:
@@ -85,16 +85,16 @@ def combine(first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U32 & S
 def delivery_result(+error: String) -> Result<&1,&1,U32 & String,Unit>:
   Bool.pick(Result<&1,&1,U32 & String,Unit>,String.is_empty(error),Done{Unit{}},Fail{(1,error)})
 
-def prepare_finished(+db: String, +player: String, +id: String, log: String, stderr: String, +error: String, +status: String) -> IO(Unit):
+def prepare_finished(+db: String, +player: String, +id: String, log: String, stderr: String, +error: String, +status: String, event: String) -> IO(Unit):
   do IO<Unit>:
     result : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM turns WHERE id=" ++ C.q(id) ++ ";"))
-    noted : Unit <- diagnostic(db,player,id,error,String.is_empty(error))
+    noted : Unit <- diagnostic(db,player,id,error,event,String.is_empty(error))
     missing : Unit <- result_missing(db,player,id,log,stderr,status,String.eq(result,"1\n"))
     exit_failure(db,player,id,status,String.eq(status,"exit 0"))
 
-def prepare_player(db: String, player: String, id: String, log: String, stderr: String, error: String, status: String, early: Bool) -> IO(Unit):
+def prepare_player(db: String, player: String, id: String, log: String, stderr: String, error: String, status: String, event: String, early: Bool) -> IO(Unit):
   match early:
-    case False{}: prepare_finished(db,player,id,log,stderr,error,status)
+    case False{}: prepare_finished(db,player,id,log,stderr,error,status,event)
     case True{}: report(db,player,id,error)
 
 def prepare_parent(db: String, player: String, id: String, log: String, stderr: String, outcome: Outcome, parent: Bool) -> IO(Unit):
@@ -102,7 +102,7 @@ def prepare_parent(db: String, player: String, id: String, log: String, stderr: 
     case Ended{+status,event,error}:
       match parent:
         case False{}: IO.pure(Unit,Unit{})
-        case True{}: prepare_player(db,player,id,log,stderr,error,status,Bool.or(String.eq(status,"start failed"),String.eq(status,"input failed")))
+        case True{}: prepare_player(db,player,id,log,stderr,error,status,event,Bool.or(String.eq(status,"start failed"),String.eq(status,"input failed")))
 
 def generation_log(+log: String, +id: String) -> String:
   Logs.attempt_log(log,id)

@@ -46,6 +46,7 @@ class McpRoot(unittest.TestCase):
         if not EXE.exists():
             self.skipTest(f'Coordinator not built at {EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
+        self.addCleanup(self.temp.cleanup)
         self.repo = pathlib.Path(self.temp.name) / 'repository'
         self.repo.mkdir()
         self.checkouts = pathlib.Path(self.temp.name) / 'checkouts'
@@ -65,9 +66,6 @@ class McpRoot(unittest.TestCase):
         """Recruit the session into this suite's fixture repository."""
         return self.coord('recruit', name, parent, harness, model, effort, str(self.repo),
                           branch or (name + '-branch'), str(self.checkouts / name), self.base)
-
-    def tearDown(self):
-        self.temp.cleanup()
 
     def coord(self, *args, ok=True):
         p = subprocess.run(

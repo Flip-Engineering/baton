@@ -795,7 +795,7 @@ assert sys.stdin.read()==''
         self.assertEqual((self.cwd / (first.name + ".stderr")).read_text(), "native diagnostics stay" + chr(10))
         self.assertTrue(second.exists())
 
-    def test_unwritable_log_reports_the_failure_and_keeps_the_report(self):
+    def test_unwritable_log_retains_the_terminal_in_the_failure_report(self):
         unwritable = self.cwd / 'log-directory'
         unwritable.mkdir()
         self.events.write_text(json.dumps({'type': 'response', 'id': 'r1', 'command': 'probe'}) + '\n'
@@ -814,9 +814,14 @@ assert sys.stdin.read()==''
                   str(self.cwd), str(self.task), str(self.base_log), '')
         inbox = json.loads(self.call('inbox', 'root'))
         bodies = [message['body'] for message in inbox]
-        self.assertEqual(len([body for body in bodies if 'Native output observation failed' in body]), 1, bodies)
-        self.assertTrue(any(str(blocked_generation) in body for body in bodies), bodies)
-        self.assertTrue(any('Answer despite an unwritable log' in body for body in bodies), bodies)
+        failures = [body for body in bodies if 'Native output observation failed' in body]
+        self.assertEqual(len(failures), 1, bodies)
+        self.assertIn(str(blocked_generation), failures[0])
+        self.assertIn('Is a directory', failures[0])
+        event = json.loads(failures[0].split('\nNative event: ', 1)[1])
+        self.assertEqual(event, json.loads(self.terminal('Answer despite an unwritable log')))
+        self.assertEqual(json.loads(self.call('turns', 'omp-worker')), [])
+        self.assertTrue(any('Player process ended without a native result' in body for body in bodies), bodies)
 
 if __name__ == '__main__':
     unittest.main()
