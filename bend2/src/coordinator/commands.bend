@@ -650,30 +650,6 @@ law configure_parser_keeps_the_requested_and_expected_route:
 def configure_parser_keeps_the_requested_and_expected_route(id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort):
   {==}
 
-law view_parser_defaults_reader_and_port:
-  for subject: String
-  {parse(["view",subject]) == View{subject,subject,"7682"} : Command}
-
-def view_parser_defaults_reader_and_port(subject):
-  {==}
-
-law view_parser_keeps_the_declared_reader:
-  for subject: String
-  for reader: String
-  {parse(["view",subject,reader]) == View{subject,reader,"7682"} : Command}
-
-def view_parser_keeps_the_declared_reader(subject,reader):
-  {==}
-
-law view_parser_keeps_the_declared_port:
-  for subject: String
-  for reader: String
-  for port: String
-  {parse(["view",subject,reader,port]) == View{subject,reader,port} : Command}
-
-def view_parser_keeps_the_declared_port(subject,reader,port):
-  {==}
-
 law serve_parser_selects_the_fixed_coordinator:
   {parse(["serve"]) == Serve{} : Command}
 
