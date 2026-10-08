@@ -675,7 +675,7 @@ def reconcile_admission_association(+bootstrap: Bootstrap, +role: String,
                                     +incarnation: String,
                                     +admission: Admission.Admission,
                                     recovery: Bool,
-                                    +association: Result<&1,&1,U32 & String,Admission.ManagedAssociation>) -> StartDecision:
+                                    association: Result<&1,&1,U32 & String,Admission.ManagedAssociation>) -> StartDecision:
   match association:
     case Fail{error}: StartHeld{"committedDecisionAssociationUnavailable"}
     case Done{+stored}:
@@ -694,7 +694,7 @@ def reconciled_admission_decision(+bootstrap: Bootstrap, +role: String,
                                   +incarnation: String,
                                   +admission: Admission.Admission,
                                   recovery: Bool,
-                                  +association: Result<&1,&1,U32 & String,Admission.ManagedAssociation>) -> StartDecision:
+                                  association: Result<&1,&1,U32 & String,Admission.ManagedAssociation>) -> StartDecision:
   Bool.pick(StartDecision,
     rejection_identity_match(bootstrap_owner(bootstrap), bootstrap_request(bootstrap),
       bootstrap_keeper_path(bootstrap), bootstrap_cwd(bootstrap),
