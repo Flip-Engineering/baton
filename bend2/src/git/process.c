@@ -151,9 +151,9 @@ static void git_proc_call_with_stderr(IoWork* w, int stderr_fd, int claim_fd) {
        action below clears it, for this child alone. */
     transferred = fcntl(claim_fd, F_DUPFD_CLOEXEC, 3);
     if (transferred < 0) { int e = errno; close(fds[0]); close(fds[1]); w->code = e; return; }
-    int attempts = 0;
     while (transferred == fds[0] || transferred == fds[1]) {
-      if (++attempts > 64) { close(transferred); close(fds[0]); close(fds[1]); w->code = EMFILE; return; }
+      /* The duplicate is closed before the next call, so the number it held is free again and a
+         real fcntl failure or a repeat of the same number is the exit; no attempt count stops it. */
       int again = fcntl(claim_fd, F_DUPFD_CLOEXEC, 3);
       if (again < 0) { int e = errno; close(transferred); close(fds[0]); close(fds[1]); w->code = e; return; }
       if (again == transferred) { close(transferred); close(fds[0]); close(fds[1]); w->code = EBUSY; return; }
