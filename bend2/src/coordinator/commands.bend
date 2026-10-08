@@ -465,60 +465,156 @@ def sql(command: Command) -> String:
     case Help{}: ""
     case Invalid{}: ""
 
-def help_verb(+verb: String) -> Bool:
-  Bool.or(String.eq(verb,"help"),String.eq(verb,"--help"))
-
 def parse(args: List<String>) -> Command:
   match args:
     case +verb <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"logs-storage"),LogsStorage{},
-      Bool.pick(Command,help_verb(verb),Help{},
-      Bool.pick(Command, String.eq(verb,"status"),Status{},
-      Bool.pick(Command, String.eq(verb,"workers"),LegacySubordinates{},
-      Bool.pick(Command, String.eq(verb,"players"),Players{},
-      Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},
-      Bool.pick(Command, String.eq(verb,"pending"),Pending{},
-      Bool.pick(Command,String.eq(verb,"context-engines"),ContextEngines{},Bool.pick(Command,String.eq(verb,"serve"),Serve{},Bool.pick(Command,String.eq(verb,"owner-status"),OwnerStatus{},Invalid{}))))))))))
+      parse_verb_only(verb)
     case +verb <> +id <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"context-result"),ContextResult{id},
-      Bool.pick(Command,String.eq(verb,"logs"),Logs{id,""},
-      Bool.pick(Command,String.eq(verb,"logs-clean"),LogsClean{id},
-      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"players"),Bool.or(String.eq(verb,"orchestra"),String.eq(verb,"pending"))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"players"),Players{},Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},Pending{}))},Bool.pick(Command,Bool.and(String.eq(verb,"status"),String.eq(id,"--pretty")),StatusPretty{},Bool.pick(Command,String.eq(verb,"player"),PlayerRead{id},Bool.pick(Command, String.eq(verb,"role"),RoleRead{id},Bool.pick(Command, String.eq(verb,"ensemble"),EnsembleRead{id},Bool.pick(Command, String.eq(verb,"inbox"),Inbox{id},
-      Bool.pick(Command, String.eq(verb,"session"),Session{id},
-      Bool.pick(Command, String.eq(verb,"delivery"),Delivery{id},
-      Bool.pick(Command, String.eq(verb,"worktree"),Worktree{id},
-      Bool.pick(Command, String.eq(verb,"turns"),Turns{id},
-      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Bool.pick(Command, String.eq(verb,"observed-usage"),ObservedUsage{id},Bool.pick(Command, String.eq(verb,"view"),View{id,id,"7682"},Invalid{}))))))))))))))))
+      parse_verb_id(verb,id)
     case +verb <> +session <> +id <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"ui-subscribe"),UiSubscribe{session,id},Bool.pick(Command,String.eq(verb,"logs"),Logs{session,id},
-      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"player"),Bool.or(String.eq(verb,"session"),Bool.or(String.eq(verb,"inbox"),Bool.or(String.eq(verb,"delivery"),Bool.or(String.eq(verb,"turns"),Bool.or(String.eq(verb,"knowledge"),String.eq(verb,"worktree"))))))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"player"),PlayerRead{session},Bool.pick(Command,String.eq(verb,"session"),Session{session},Bool.pick(Command,String.eq(verb,"inbox"),Inbox{session},Bool.pick(Command,String.eq(verb,"delivery"),Delivery{session},Bool.pick(Command,String.eq(verb,"turns"),Turns{session},Bool.pick(Command,String.eq(verb,"knowledge"),KnowledgeRead{session},Worktree{session}))))))},Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Bool.pick(Command,String.eq(verb,"view"),View{session,id,"7682"},Invalid{}))))))))
+      parse_verb_session_id(verb,session,id)
     case +verb <> +id <> +one <> +two <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"context-query-file"),ContextQueryFile{id,one,two},
-      Bool.pick(Command,String.eq(verb,"receiver"),Receiver{id,one,two,""},Bool.pick(Command, String.eq(verb,"ensemble"),Ensemble{id,one,two},Bool.pick(Command, String.eq(verb,"native-reply"),NativeReply{id,one,two},
-      Bool.pick(Command, String.eq(verb,"native-reply-file"),NativeReplyFile{id,one,two},
-      Bool.pick(Command, String.eq(verb,"stop"),Stop{id,one,two},
-      Bool.pick(Command, String.eq(verb,"report"),Report{id,one,two},
-      Bool.pick(Command, String.eq(verb,"report-file"),ReportFile{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ack"),Ack{id,one,two},
-      Bool.pick(Command, String.eq(verb,"observe-file"),ObserveFile{id,one,two},
-      Bool.pick(Command, String.eq(verb,"connect"),Connect{id,one,two},
-      Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},
-      Bool.pick(Command, String.eq(verb,"push"),Push{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ask"),Ask{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Bool.pick(Command, String.eq(verb,"remote-tip"),RemoteTip{id,one,two},Bool.pick(Command, String.eq(verb,"view"),View{id,one,two},Invalid{})))))))))))))))))
+      parse_verb_three_args(verb,id,one,two)
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"receiver"),Receiver{id,one,two,three},
-      Bool.pick(Command,String.eq(verb,"section"),Section{id,one,two,three},Bool.pick(Command, String.eq(verb,"ensemble-member"),EnsembleMember{id,one,two,three},Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{}))))
+      parse_verb_four_args(verb,id,one,two,three)
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"dispatch-turn"),DispatchTurn{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"dispatch-file"),DispatchFile{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"section-member"),SectionMember{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"land-checked"),LandChecked{id,one,two,three,four},
-      Bool.pick(Command, String.eq(verb,"bind"),Bind{id,one,two,three,four},
-      Bool.pick(Command, String.eq(verb,"message"),Message{id,one,two,three,four},
-      Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"record"),KnowledgeRecord{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"promote"),KnowledgePromote{id,one,two,three,four},Invalid{})))))))))
+      parse_verb_five_args(verb,id,one,two,three,four)
     case +verb <> session <> cmd <> model <> effort <> cwd <> log <> message <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"receive"),Receive{session,cmd,model,effort,cwd,log,message},Invalid{})
+      parse_receive(verb,session,cmd,model,effort,cwd,log,message)
     case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"configure"),Configure{player,id,cmd,model,effort,cwd,task,log,session},Bool.pick(Command,String.eq(verb,"start"),Start{player,id,cmd,model,effort,cwd,task,log,session},Bool.pick(Command,String.eq(verb,"turn"),RunTurn{player,id,cmd,model,effort,cwd,task,log,session},
-      Bool.pick(Command,String.eq(verb,"recruit"),Recruit{player,id,cmd,model,effort,cwd,task,log,session},Invalid{}))))
+      parse_verb_nine_args(verb,player,id,cmd,model,effort,cwd,task,log,session)
+    case _: Invalid{}
+
+def parse_verb_only(+verb: String) -> Command:
+  match verb:
+    case "context-engines": ContextEngines{}
+    case "logs-storage": LogsStorage{}
+    case "help": Help{}
+    case "--help": Help{}
+    case "status": Status{}
+    case "workers": LegacySubordinates{}
+    case "players": Players{}
+    case "orchestra": Orchestra{}
+    case "pending": Pending{}
+    case "serve": Serve{}
+    case "owner-status": OwnerStatus{}
+    case _: Invalid{}
+
+def parse_verb_id(+verb: String, +id: String) -> Command:
+  match verb:
+    case "context-result": ContextResult{id}
+    case "logs": Logs{id,""}
+    case "logs-clean": LogsClean{id}
+    case "players": match id:
+      case "--pretty": Pretty{Players{}}
+      case _: Invalid{}
+    case "orchestra": match id:
+      case "--pretty": Pretty{Orchestra{}}
+      case _: Invalid{}
+    case "pending": match id:
+      case "--pretty": Pretty{Pending{}}
+      case _: Invalid{}
+    case "status": match id:
+      case "--pretty": StatusPretty{}
+      case _: Invalid{}
+    case "player": PlayerRead{id}
+    case "role": RoleRead{id}
+    case "ensemble": EnsembleRead{id}
+    case "inbox": Inbox{id}
+    case "session": Session{id}
+    case "delivery": Delivery{id}
+    case "worktree": Worktree{id}
+    case "turns": Turns{id}
+    case "knowledge": KnowledgeRead{id}
+    case "observed-usage": ObservedUsage{id}
+    case "view": View{id,id,"7682"}
+    case _: Invalid{}
+
+def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Command:
+  match verb:
+    case "ui-subscribe": UiSubscribe{session,id}
+    case "logs": Logs{session,id}
+    case "player": match id:
+      case "--pretty": Pretty{PlayerRead{session}}
+      case _: Invalid{}
+    case "session": match id:
+      case "--pretty": Pretty{Session{session}}
+      case _: Invalid{}
+    case "inbox": match id:
+      case "--pretty": Pretty{Inbox{session}}
+      case _: Invalid{}
+    case "delivery": match id:
+      case "--pretty": Pretty{Delivery{session}}
+      case _: Invalid{}
+    case "turns": match id:
+      case "--pretty": Pretty{Turns{session}}
+      case _: Invalid{}
+    case "knowledge": match id:
+      case "--pretty": Pretty{KnowledgeRead{session}}
+      case _: Invalid{}
+    case "worktree": match id:
+      case "--pretty": Pretty{Worktree{session}}
+      case _: Invalid{}
+    case "section": SectionRead{session,id}
+    case "role": Role{session,id}
+    case "ensemble": Ensemble{session,id,"loose"}
+    case "force-stop": ForceStop{session,id}
+    case "view": View{session,id,"7682"}
+    case _: Invalid{}
+
+def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String) -> Command:
+  match verb:
+    case "context-query-file": ContextQueryFile{id,one,two}
+    case "receiver": Receiver{id,one,two,""}
+    case "ensemble": Ensemble{id,one,two}
+    case "native-reply": NativeReply{id,one,two}
+    case "native-reply-file": NativeReplyFile{id,one,two}
+    case "stop": Stop{id,one,two}
+    case "report": Report{id,one,two}
+    case "report-file": ReportFile{id,one,two}
+    case "ack": Ack{id,one,two}
+    case "observe-file": ObserveFile{id,one,two}
+    case "connect": Connect{id,one,two}
+    case "land": Land{id,one,two}
+    case "push": Push{id,one,two}
+    case "ask": Ask{id,one,two}
+    case "ask-file": AskFile{id,one,two}
+    case "remote-tip": RemoteTip{id,one,two}
+    case "view": View{id,one,two}
+    case _: Invalid{}
+
+def parse_verb_four_args(+verb: String, +id: String, +one: String, +two: String, +three: String) -> Command:
+  match verb:
+    case "receiver": Receiver{id,one,two,three}
+    case "section": Section{id,one,two,three}
+    case "ensemble-member": EnsembleMember{id,one,two,three}
+    case "attach": Attach{id,one,two,three}
+    case _: Invalid{}
+
+def parse_verb_five_args(+verb: String, +id: String, +one: String, +two: String, +three: String, +four: String) -> Command:
+  match verb:
+    case "dispatch-turn": DispatchTurn{id,one,two,three,four}
+    case "dispatch-file": DispatchFile{id,one,two,three,four}
+    case "section-member": SectionMember{id,one,two,three,four}
+    case "land-checked": LandChecked{id,one,two,three,four}
+    case "bind": Bind{id,one,two,three,four}
+    case "message": Message{id,one,two,three,four}
+    case "message-file": MessageFile{id,one,two,three,four}
+    case "record": KnowledgeRecord{id,one,two,three,four}
+    case "promote": KnowledgePromote{id,one,two,three,four}
+    case _: Invalid{}
+
+def parse_receive(+verb: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> Command:
+  match verb:
+    case "receive": Receive{session,cmd,model,effort,cwd,log,message}
+    case _: Invalid{}
+
+def parse_verb_nine_args(+verb: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> Command:
+  match verb:
+    case "configure": Configure{player,id,cmd,model,effort,cwd,task,log,session}
+    case "start": Start{player,id,cmd,model,effort,cwd,task,log,session}
+    case "turn": RunTurn{player,id,cmd,model,effort,cwd,task,log,session}
+    case "recruit": Recruit{player,id,cmd,model,effort,cwd,task,log,session}
     case _: Invalid{}
 
 law help_word_selects_the_help_command:
