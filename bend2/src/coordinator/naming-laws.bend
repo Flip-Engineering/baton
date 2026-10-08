@@ -269,7 +269,7 @@ law named_commands_execute_the_committed_query_and_classify_its_answer:
     ensured : Unit <- Store.ensure_before_begin(db)
     queried : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,Store.commit_sql(command))
     published : Result<&1,&1,U32 & String,String> <- Store.publish_after_commit(db,queried)
-    Store.committed(db,command,published)) : IO(Result<&1,&1,U32 & String,String>)}
+    Store.committed(published)) : IO(Result<&1,&1,U32 & String,String>)}
 
 def named_commands_execute_the_committed_query_and_classify_its_answer(db,command):
   {==}
@@ -277,7 +277,7 @@ def named_commands_execute_the_committed_query_and_classify_its_answer(db,comman
 law invalid_role_returns_structured_exit_two:
   for db: String
   for command: C.Command
-  {Store.committed(db,command,Done{"{\"error\":\"invalid-role\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"invalid-role\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}")}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.committed(Done{"{\"error\":\"invalid-role\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"invalid-role\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}")}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def invalid_role_returns_structured_exit_two(db,command):
   {==}
@@ -285,7 +285,7 @@ def invalid_role_returns_structured_exit_two(db,command):
 law refused_section_returns_structured_exit_two:
   for db: String
   for command: C.Command
-  {Store.committed(db,command,Done{"{\"error\":\"section-refused\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"section-refused\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}")}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.committed(Done{"{\"error\":\"section-refused\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"section-refused\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}")}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def refused_section_returns_structured_exit_two(db,command):
   {==}

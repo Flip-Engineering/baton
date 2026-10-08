@@ -18,3 +18,7 @@ def start_player(cmd: String, model: String, effort: String, cwd: String, stderr
 
 def input(handle: U32, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.ProcessChild.write(handle,text)
+
+# The public Unix daemon queues input for the recorded Codex thread.
+def queue_admission(thread: String, pointer: String) -> List<String>:
+  ["codex","queue","--remote","unix://","--thread",thread,"--message",pointer]

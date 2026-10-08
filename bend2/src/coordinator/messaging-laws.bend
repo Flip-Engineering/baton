@@ -180,7 +180,7 @@ law denied_message_routes_cannot_deliver:
   for db: String
   for command: C.Command
   for saved: String
-  {Store.route_accepted(db,command,saved,True{}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,saved)}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.route_accepted(saved,True{}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,saved)}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def denied_message_routes_cannot_deliver(db,command,saved):
   {==}
@@ -189,7 +189,7 @@ law accepted_message_routes_continue_existing_stop_and_delivery_checks:
   for db: String
   for command: C.Command
   for +saved: String
-  {Store.route_accepted(db,command,saved,False{}) == Store.accepted(db,command,saved,Tx.starts_with(saved,"{\"error\":\"session-stopped\"")) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.route_accepted(saved,False{}) == Store.accepted(saved,Tx.starts_with(saved,"{\"error\":\"session-stopped\"")) : IO(Result<&1,&1,U32 & String,String>)}
 
 def accepted_message_routes_continue_existing_stop_and_delivery_checks(db,command,saved):
   {==}
@@ -198,7 +198,7 @@ law committed_message_routes_refuse_before_endpoint_delivery:
   for db: String
   for command: C.Command
   for +saved: String
-  {Store.committed(db,command,Done{saved}) == Store.route_accepted(db,command,saved,Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""))))) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.committed(Done{saved}) == Store.route_accepted(saved,Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""))))) : IO(Result<&1,&1,U32 & String,String>)}
 
 def committed_message_routes_refuse_before_endpoint_delivery(db,command,saved):
   {==}

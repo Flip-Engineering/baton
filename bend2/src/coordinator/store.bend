@@ -2,19 +2,18 @@ import Base
 import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
 import ../coordinator/commands.bend as C
-import ./delivery.bend as Delivery
 import ../git/text.bend as Tx
 
-def accepted(db: String, command: C.Command, saved: String, stopped: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def accepted(saved: String, stopped: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match stopped:
     case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Session is terminally stopped; input was not committed. Read its session and retained inbox, or recruit a new session.")})
-    case False{}: Delivery.after(db,command,saved)
+    case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
 
-# Endpoint delivery starts after the message transaction commits.
-def route_accepted(db: String, command: C.Command, +saved: String, denied: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+# The caller drives delivery after the committed admission is accepted.
+def route_accepted(+saved: String, denied: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match denied:
     case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,saved)})
-    case False{}: accepted(db,command,saved,Tx.starts_with(saved,"{\"error\":\"session-stopped\""))
+    case False{}: accepted(saved,Tx.starts_with(saved,"{\"error\":\"session-stopped\""))
 
 def naming_refused(+saved: String) -> Bool:
   Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-role\""),Tx.starts_with(saved,"{\"error\":\"section-refused\""))
@@ -87,10 +86,10 @@ law rolled_back_transaction_publishes_nothing:
 def rolled_back_transaction_publishes_nothing(db):
   {==}
 
-def committed(db: String, command: C.Command, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+def committed(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
-    case Done{+saved}: route_accepted(db,command,saved,refused(saved))
+    case Done{+saved}: route_accepted(saved,refused(saved))
 
 # The single statement a commit runs: schema, command SQL, one transaction.
 def commit_sql(command: C.Command) -> String:
@@ -99,10 +98,10 @@ def commit_sql(command: C.Command) -> String:
 def commit(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
   transact_sql(db,commit_sql(command))
 
-def apply(+db: String, +command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
+def apply(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     result : Result<&1,&1,U32 & String,String> <- commit(db,command)
-    committed(db,command,result)
+    committed(result)
 
 
 # Wake-claim transitions for issue #685. The table is owned by this module:

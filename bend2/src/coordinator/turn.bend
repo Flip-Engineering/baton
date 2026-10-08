@@ -46,7 +46,7 @@ def report(db: String, player: String, id: String, body: String) -> IO(Unit):
     written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
     IO.pure(Unit,Unit{})
 
-def diagnostic(db: String, player: String, id: String, text: String, event: String, empty: Bool) -> IO(Unit):
+def diagnostic(db: String, player: String, id: String, text: String, +event: String, empty: Bool) -> IO(Unit):
   match empty:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: report(db,player,id ++ ":observation","Native output observation failed: " ++ text ++ Bool.pick(String,String.is_empty(event),"","\nNative event: " ++ event))

@@ -33,7 +33,7 @@ def print_result(+result: String) -> IO(Unit):
 def run(+db: String, +command: C.Command) -> IO(Unit):
   do IO<Unit>:
     +result : String <- IO.try(String, Store.apply(db,command))
-    woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_command(db,command,Done{result})
+    woken : Unit <- IO.try(Unit,Wake.drive_command(db,command,Done{result}))
     print_result(result)
 
 def usage() -> String:

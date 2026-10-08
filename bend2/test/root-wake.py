@@ -1,13 +1,8 @@
-"""Integration tests for committed-report completion and the late-message wake race.
+"""Exercise default report delivery and input committed during a live turn.
 
-A committed report invokes its recipient's recorded endpoint, and each harness this
-runtime supports starts a turn from that endpoint: Codex and OMP through the native
-receive operation, Muse through the same operation with its task in a prompt file.
-These tests drive the real coordinator over one database holding all three harnesses,
-with a controlled fixture that speaks each adapter's protocol. They cover the
-parentless principal root addressed through the operator-role rule, the three-hop
-report chain, and the case where input committed while a turn is live is consumed by
-a later turn exactly once.
+The coordinator launches detached delivery for an admitted message. Registered CLI
+sessions receive through their endpoint; an endpointless Codex thread uses the public
+daemon queue. Fixtures cover receipt ownership, parent reports and continued input.
 """
 import importlib.util
 import json
@@ -229,6 +224,40 @@ class RootWake(unittest.TestCase):
             own = {ident for call in self.calls(session) for ident in self.prompt_ids(call)}
             self.assertTrue(all(stored[ident]['recipient'] == session for ident in own),
                             f'{session} consumed a row addressed to another session')
+
+    def test_endpointless_codex_root_queues_pending_input(self):
+        queued = self.directory / 'queue-arguments.json'
+        command = self.directory / 'codex'
+        command.write_text('#!' + sys.executable + '\n'
+                           + 'import json,pathlib,sys\n'
+                           + f'with pathlib.Path({str(queued)!r}).open("a") as calls:\n'
+                           + '    calls.write(json.dumps(sys.argv[1:]) + chr(10))\n'
+                           + 'print("Queued message fixture-submission for thread native-app-root", flush=True)\n')
+        command.chmod(0o700)
+        self.environment['PATH'] = str(self.directory) + os.pathsep + self.environment.get('PATH', '')
+        self.coord('attach', 'root', 'codex', 'native-app-root', '')
+        self.recruit('child', 'root', 'omp')
+        self.coord('report', 'app-root-report', 'child', 'Read the completed child work.')
+        delivery_log = pathlib.Path(str(self.db) + '.root.log')
+        self.eventually(lambda: delivery_log.exists() and 'fixture-submission' in delivery_log.read_text(),
+                        'the queue submission result was not retained')
+        self.eventually(lambda: not any('--dispatch-message' in process['command']
+                                        for process in self.owned_processes()),
+                        'the queue delivery process did not finish')
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 1, calls)
+        arguments = calls[0]
+        self.assertEqual(arguments[:6], ['queue', '--remote', 'unix://', '--thread',
+                                         'native-app-root', '--message'])
+        pointer = json.loads(arguments[6].splitlines()[1])
+        self.assertEqual(pointer, {'database': str(self.db), 'message': 'app-root-report',
+                                   'recipient': 'root'})
+        message = json.loads(self.coord('delivery', 'app-root-report'))
+        self.assertEqual(message['body'], 'Read the completed child work.')
+        self.assertIsNone(message['receipt'])
+        self.assertEqual(json.loads(self.coord('turns', 'root')), [])
+        root = json.loads(self.coord('session', 'root'))
+        self.assertEqual((root['native'], root['endpoint']), ('native-app-root', ''))
 
     def test_codex_root_endpoint_wakes_the_root_and_routes_to_the_operator(self):
         self.release('root', 1)

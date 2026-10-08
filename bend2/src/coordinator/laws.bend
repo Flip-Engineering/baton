@@ -69,104 +69,6 @@ def m1_unstarted_delivery_is_not_an_acceptance(saved, log, detail):
   {==}
 
 # ---------------------------------------------------------------------------
-# M-12: no mandatory wait for managed work to finish before its acceptance is
-# acknowledged. A command that owes no delivery answers from its own committed
-# result, and a write whose recipient has no registered endpoint answers at
-# once with the stored identity.
-
-law m12_no_delivery_owes_no_wait:
-  for +db: String
-  for +saved: String
-  {Delivery.after(db, C.Status{}, saved) == IO.pure(Result<&1,&1,U32 & String,String>, Done{saved}) : IO(Result<&1,&1,U32 & String,String>)}
-
-def m12_no_delivery_owes_no_wait(db, saved):
-  {==}
-
-law m12_absent_receiver_answers_at_once:
-  for +db: String
-  for +id: String
-  for +saved: String
-  for +argv: String
-  {Delivery.launch(db, id, saved, argv, True{}) == IO.pure(Result<&1,&1,U32 & String,String>, Done{saved}) : IO(Result<&1,&1,U32 & String,String>)}
-
-def m12_absent_receiver_answers_at_once(db, id, saved, argv):
-  {==}
-
-# ---------------------------------------------------------------------------
-# M-13: required progress notifications reach the agent interface without an
-# agent-invoked fetch. The commit path itself invokes the recipient's recorded
-# endpoint, for every command that owes a notification and for a terminal
-# native event.
-
-law m13_report_invokes_the_registered_endpoint:
-  for +db: String
-  for +id: String
-  for +sender: String
-  for +body: String
-  for +saved: String
-  {Delivery.after(db, C.Report{id, sender, body}, saved) == Delivery.deliver(db, id, "1", saved) : IO(Result<&1,&1,U32 & String,String>)}
-
-def m13_report_invokes_the_registered_endpoint(db, id, sender, body, saved):
-  {==}
-
-law m13_ask_invokes_the_registered_endpoint:
-  for +db: String
-  for +id: String
-  for +player: String
-  for +body: String
-  for +saved: String
-  {Delivery.after(db, C.Ask{id, player, body}, saved) == Delivery.deliver(db, id, "1", saved) : IO(Result<&1,&1,U32 & String,String>)}
-
-def m13_ask_invokes_the_registered_endpoint(db, id, player, body, saved):
-  {==}
-
-law m13_message_invokes_the_registered_endpoint:
-  for +db: String
-  for +id: String
-  for +sender: String
-  for +recipient: String
-  for +kind: String
-  for +body: String
-  for +saved: String
-  {Delivery.after(db, C.Message{id, sender, recipient, kind, body}, saved) == Delivery.deliver(db, id, "1", saved) : IO(Result<&1,&1,U32 & String,String>)}
-
-def m13_message_invokes_the_registered_endpoint(db, id, sender, recipient, kind, body, saved):
-  {==}
-
-law m13_terminal_event_invokes_the_registered_endpoint:
-  for +db: String
-  for +id: String
-  for +player: String
-  for +event: String
-  for +saved: String
-  for +sealed: Bool
-  {Delivery.after(db, C.Observe{id, player, event, sealed}, saved) == Delivery.observe_delivery(db, id, event, saved, sealed) : IO(Result<&1,&1,U32 & String,String>)}
-
-def m13_terminal_event_invokes_the_registered_endpoint(db, id, player, event, saved, sealed):
-  {==}
-
-law the_sealed_observation_delivers_nothing:
-  for +db: String
-  for +id: String
-  for +event: String
-  for +saved: String
-  {Delivery.observe_delivery(db, id, event, saved, True{}) == IO.pure(Result<&1,&1,U32 & String,String>,Done{saved}) : IO(Result<&1,&1,U32 & String,String>)}
-
-def the_sealed_observation_delivers_nothing(db, id, event, saved):
-  {==}
-
-law the_live_observation_delivers_its_terminal:
-  for +db: String
-  for +id: String
-  for +event: String
-  for +saved: String
-  {Delivery.observe_delivery(db, id, event, saved, False{}) == Delivery.deliver(db, id, C.terminal(event), saved) : IO(Result<&1,&1,U32 & String,String>)}
-
-def the_live_observation_delivers_its_terminal(db, id, event, saved):
-  {==}
-
-
-# ---------------------------------------------------------------------------
 # M-17: no silent abandonment of accepted, unsettled work. A player process
 # that ended with a failure reports to its parent, and an unsettled delivery
 # names the inbox and the log that continue it.
@@ -671,7 +573,7 @@ def m14_player_conflict_output_is_refused():
 law m14_player_conflict_returns_the_structured_refusal:
   for db: String
   for command: C.Command
-  {Store.committed(db,command,Done{"{\"error\":\"player-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"player-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}")}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.committed(Done{"{\"error\":\"player-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"player-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}")}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def m14_player_conflict_returns_the_structured_refusal(db,command):
   {==}
@@ -928,7 +830,7 @@ law m5_a_failed_transaction_delivers_nothing:
   for +command: C.Command
   for +code: U32
   for +text: String
-  {Store.committed(db, command, Fail{(code, text)}) == IO.pure(Result<&1,&1,U32 & String,String>, Fail{(code, text)}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.committed(Fail{(code, text)}) == IO.pure(Result<&1,&1,U32 & String,String>, Fail{(code, text)}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def m5_a_failed_transaction_delivers_nothing(db, command, code, text):
   {==}
@@ -1372,7 +1274,7 @@ law stopped_input_reports_use_the_recorded_upstream_recipient:
   for +id: String
   {Delivery.handoff_sql(id) == (
   "BEGIN IMMEDIATE;INSERT INTO messages(id,sender,recipient,kind,body) SELECT 'stopped-input:' || lower(hex(m.id)),s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','stopped-recipient-input','recipient',s.id,'stopId',st.id,'originalMessage',m.id,'originalSender',m.sender,'originalKind',m.kind,'originalBody',m.body,'retainedWorkSession',m.sender,'disposition','The original message and work remain available. The stopped recipient has not accepted or reviewed this input.') FROM messages m JOIN sessions s ON s.id=m.recipient JOIN session_stops st ON st.session=s.id WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert()
-  ++ "SELECT coalesce((SELECT n.id FROM messages n WHERE n.id='stopped-input:' || lower(hex(" ++ C.q(id) ++ ")) AND (n.receipt IS NOT NULL OR EXISTS(SELECT 1 FROM sessions p WHERE p.id=n.recipient AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=p.id) AND CASE WHEN json_valid(p.endpoint) THEN json_type(p.endpoint)='array' AND json_array_length(p.endpoint)>0 ELSE 0 END))),'');COMMIT;") : String}
+  ++ "SELECT coalesce((SELECT n.id FROM messages n WHERE n.id='stopped-input:' || lower(hex(" ++ C.q(id) ++ ")) AND (n.receipt IS NOT NULL OR EXISTS(SELECT 1 FROM sessions p WHERE p.id=n.recipient AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=p.id) AND (CASE WHEN json_valid(p.endpoint) THEN json_type(p.endpoint)='array' AND json_array_length(p.endpoint)>0 ELSE 0 END OR p.harness='codex')))),'');COMMIT;") : String}
 
 def stopped_input_reports_use_the_recorded_upstream_recipient(id):
   {==}
