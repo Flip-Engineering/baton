@@ -10,6 +10,7 @@
 # Promoted from: docs/bend2/examples/arch-replay-stop.bend
 
 import Base
+import ../host/text.bend as Text
 
 type CaseRow is Data:
   CaseRow{name: String, basis: String, integrity: String, rowSeq: U32, rowTargets: U32, readerCursor: U32}
@@ -117,13 +118,6 @@ def emit_lines(lines: List<&2, String>) -> IO(Unit):
         u : Unit <- emit_line(h)
         emit_lines(t)
 
-def read_go(m: File & Result<&1, &1, (U32 & String), String>) -> IO(Unit):
-  (f, r) = m
-  do IO<Unit>:
-    text : String <- IO.pass(String, r)
-    u : Unit <- emit_lines(String.lines(text))
-    File.close(f)
-
 def corpus_path_or_default(arg: Maybe<&1, String>) -> String:
   match arg:
     case None{}:
@@ -137,6 +131,5 @@ def corpus_path(argv: List<&1, String>) -> String:
 def main() -> IO(Unit):
   do IO<Unit>:
     argv : List<String> <- IO.args()
-    f : File <- IO.try(File, File.open(corpus_path(argv), "r"))
-    m : File & Result<&1, &1, (U32 & String), String> <- File.read(f, 8192)
-    read_go(m)
+    text : String <- IO.try(String, Text.read(corpus_path(argv)))
+    emit_lines(String.lines(text))

@@ -676,15 +676,15 @@ class Land(unittest.TestCase):
         self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w5 and w6')
         self.assertEqual(self.scratch_trees('w6'), [])
 
-    def budget_status(self, tree):
-        """The exit status of the selected budget check run in TREE."""
+    def fixture_status(self, tree):
+        """The exit status of the selected identity check run in TREE."""
         return subprocess.run(
-            [sys.executable, 'budget-selected.py'],
+            [sys.executable, 'identity-selected.py'],
             cwd=tree, capture_output=True, text=True,
         ).returncode
 
     def holding_checks(self):
-        """The budget fixture: a selected check and a check script that waits.
+        """The identity fixture: a selected check and a check script that waits.
 
         The first check run of the landing under test takes an attempt-local
         marker directory outside the checked trees, reports the outcome it
@@ -692,14 +692,14 @@ class Land(unittest.TestCase):
         runs of that attempt find the marker and return their own verdict at
         once. A failing run prints the four hex failure-identity fields.
         """
-        marker = self.directory / 'budget-held'
-        (self.repo / 'budget-selected.py').write_text(
+        marker = self.directory / 'identity-held'
+        (self.repo / 'identity-selected.py').write_text(
             'import pathlib, unittest\n'
-            'class Budget(unittest.TestCase):\n'
-            '    def test_capacity(self):\n'
+            'class Identity(unittest.TestCase):\n'
+            '    def test_distinct_ids(self):\n'
             '        left = int(pathlib.Path("left.txt").read_text())\n'
             '        right = int(pathlib.Path("right.txt").read_text())\n'
-            '        self.assertLessEqual(left + right, 10)\n'
+            '        self.assertNotEqual(left, right)\n'
             'if __name__ == "__main__":\n'
             '    unittest.main()\n')
         listener = socket.socket()
@@ -730,14 +730,14 @@ class Land(unittest.TestCase):
             '    if released != b"1":\n'
             '        raise SystemExit("the check was not released")\n'
             'if run.returncode:\n'
-            '    fields = [selected, "Budget.test_capacity", "assertion", "-"]\n'
+            '    fields = [selected, "Identity.test_distinct_ids", "assertion", "-"]\n'
             '    print(" ".join(field.encode().hex() for field in fields))\n'
             'raise SystemExit(run.returncode)\n')
         (self.repo / 'left.txt').write_text('4\n')
-        (self.repo / 'right.txt').write_text('4\n')
-        self.git('add', 'budget-selected.py', 'check-held.sh', 'check-held.py',
+        (self.repo / 'right.txt').write_text('5\n')
+        self.git('add', 'identity-selected.py', 'check-held.sh', 'check-held.py',
                  'left.txt', 'right.txt')
-        self.git('commit', '-q', '-m', 'budget fixtures')
+        self.git('commit', '-q', '-m', 'identity fixtures')
         self.base = self.git('rev-parse', 'HEAD').strip()
         self.git('checkout', '-q', '--detach')
         return listener
@@ -782,15 +782,15 @@ class Land(unittest.TestCase):
         listener = self.holding_checks()
         a_commit = self.recruit_and_write('wa', 'wa-branch', 'wta', 'left.txt', '6\n')
         b_commit = self.recruit_and_write('wb', 'wb-branch', 'wtb', 'right.txt', '6\n')
-        self.assertEqual(self.budget_status(self.repo / 'wta'), 0)
-        self.assertEqual(self.budget_status(self.repo / 'wtb'), 0)
-        under = self.start_landing('wb', 'check-held.sh', 'budget-selected.py')
+        self.assertEqual(self.fixture_status(self.repo / 'wta'), 0)
+        self.assertEqual(self.fixture_status(self.repo / 'wtb'), 0)
+        under = self.start_landing('wb', 'check-held.sh', 'identity-selected.py')
         self.addCleanup(self.stop_landing, under)
         held, event = self.accept_check(listener)
         self.assertTrue(event['passed'], event)
         self.assertEqual((event['left'], event['right']), (4, 6))
         moved = self.call('land-checked', 'wa', self.repo, 'main',
-                          str(ROOT / 'bend2/scripts/check-unittest.sh'), 'budget-selected.py')
+                          str(ROOT / 'bend2/scripts/check-unittest.sh'), 'identity-selected.py')
         self.assertEqual(moved['status'], 'landed')
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         held.sendall(b'1')
@@ -805,7 +805,7 @@ class Land(unittest.TestCase):
         self.assertIn('rerun land-checked', result['reason'])
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         self.assertEqual(self.git('show', 'main:left.txt').strip(), '6')
-        self.assertEqual(self.git('show', 'main:right.txt').strip(), '4')
+        self.assertEqual(self.git('show', 'main:right.txt').strip(), '5')
         self.assertEqual(self.git('rev-parse', 'wa-branch').strip(), a_commit)
         self.assertEqual(self.git('rev-parse', 'wb-branch').strip(), b_commit)
         self.assertEqual((self.repo / 'wtb' / 'right.txt').read_text(), '6\n')
@@ -820,26 +820,26 @@ class Land(unittest.TestCase):
         # The explicit retry prepares the combination on the moved target,
         # checks it, and blocks on a failure the target does not show.
         again = self.call('land-checked', 'wb', self.repo, 'main',
-                          str(ROOT / 'bend2/scripts/check-unittest.sh'), 'budget-selected.py')
+                          str(ROOT / 'bend2/scripts/check-unittest.sh'), 'identity-selected.py')
         self.assertEqual(again['status'], 'blocked')
         self.assertIn('new failures', again['reason'])
-        self.assertIn('budget-selected.py'.encode().hex(), again['reason'])
+        self.assertIn('identity-selected.py'.encode().hex(), again['reason'])
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         self.assertEqual(self.git('rev-parse', 'wb-branch').strip(), b_commit)
         retried = self.scratch_paths('wb')
         self.assertEqual(len(retried), 2)
-        failed = [tree for tree in retried if self.budget_status(tree)]
+        failed = [tree for tree in retried if self.fixture_status(tree)]
         self.assertEqual(len(failed), 1)
         self.assertEqual((failed[0] / 'left.txt').read_text(), '6\n')
         self.assertEqual((failed[0] / 'right.txt').read_text(), '6\n')
         checked_target = [tree for tree in retried if tree.name.endswith('-target')]
         self.assertEqual(len(checked_target), 1)
-        self.assertEqual(self.budget_status(checked_target[0]), 0)
+        self.assertEqual(self.fixture_status(checked_target[0]), 0)
         self.assertEqual((checked_target[0] / 'left.txt').read_text(), '6\n')
-        self.assertEqual((checked_target[0] / 'right.txt').read_text(), '4\n')
+        self.assertEqual((checked_target[0] / 'right.txt').read_text(), '5\n')
         final = self.directory / 'final-target'
         self.git('worktree', 'add', '--detach', str(final), 'main')
-        self.assertEqual(self.budget_status(final), 0)
+        self.assertEqual(self.fixture_status(final), 0)
 
 if __name__ == '__main__':
     unittest.main()
