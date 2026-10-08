@@ -326,18 +326,14 @@ A later turn resumes the recorded
 native session. The logical Player and its workspace remain available.
 
 The supervisor retains stdout at `OUTPUT_LOG` and stderr at `OUTPUT_LOG.stderr`.
-The public log keeps the frames that carry a session, actor, turn, message, tool,
-error, exit, delivery or validation identifier. At the default level it drops
-the cumulative `message_update` and `tool_execution_update` snapshots the
-provider resends while a message or a tool call is running, and holds the newest
-`tool_execution_update` of each open call and the newest `message_start` and
-`message_update` of each message until its `tool_execution_end` or
-`message_end` arrives. The log rotates
-at the session's byte budget and retains the segments the session's retention
-count covers. `logs`, `logs-storage` and `logs-clean` read and set that policy,
-report the storage each producer uses, and remove eligible rotated segments;
-[the log policy](../docs/bend2/logging.md) describes the levels, the defaults
-and the ownership boundaries.
+The public log applies the session's level to provider frames. At the default
+level it holds the newest `tool_execution_update`, `message_start`, and
+`message_update` for each open identity until a completing frame arrives or the
+turn ends. Public logs append frames at their recorded paths. `logs SESSION
+[LEVEL]` reads or sets the level, `logs-storage` reports registered output and
+attempt files, and `logs-clean` removes eligible attempt diagnostics. The
+[logging guide](../docs/bend2/logging.md) describes the levels and attempt
+cleanup rules.
 New supervisors use
 the selected coordinator executable. Keep existing logs at their recorded paths
 when changing the installed coordinator between lanes.

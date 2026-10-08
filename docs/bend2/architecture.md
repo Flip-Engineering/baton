@@ -140,16 +140,15 @@ path for OMP conversation storage. The lock records no durable session state.
 | Muse | `exec --json --prompt-file`, with `--session-id` for resume. Session and terminal envelopes supply native identity, model and report text. |
 
 The supervisor drains native output and records relevant events. The public log
-keeps every frame the classification names, except the cumulative
-`message_update` and `tool_execution_update` snapshots: the newest
-`tool_execution_update` of each open call and the newest `message_start` of
-each message wait in memory for their `tool_execution_end` or `message_end`,
-and the turn writes whatever is still held when it ends. Frames the
+applies the session's level. At `default`, it holds the newest
+`tool_execution_update`, `message_start`, and `message_update` for each open
+identity until a completing frame arrives or the turn ends. Frames the
 classification does not name, including every Codex, Muse and Claude frame,
-keep their own line. Stderr has a separate file. The log rotates at the
-session's byte budget; `logs`, `logs-storage` and `logs-clean` read and set the
-policy and reclaim eligible rotated segments. Terminal output becomes a parent
-report. If OMP omits the terminal
+keep their own line. Stderr has a separate file, and public logs append frames
+at their recorded paths. `logs SESSION [LEVEL]` reads or sets the level;
+`logs-storage` reports registered output and attempt files; `logs-clean`
+removes eligible attempt diagnostics. Terminal output becomes a parent report.
+If OMP omits the terminal
 message list, the latest assistant `message_end` supplies the report.
 Start failures, output-observation failures and exits without a native result
 also produce parent reports. The parent decides the next task; a turn ending

@@ -205,7 +205,10 @@ impl/src/surface-capability-resolution.mjs:59-83): `catalog`, `describe`, `invok
 **33 core verbs across 8 tools.** Everything else an orchestrator might need is one
 `baton_surface invoke` away; everything else entirely is the CLI's.
 
-## 3. Progressive disclosure and the byte budget
+## 3. Historical Baton1 MCP surface measurements
+
+This section records the Baton1 MCP design and its historical measurements. The current Baton2
+implementation has no tool-size limit or validation based on output-schema bytes.
 
 **Law (b).** `tools/list` on the default surface carries the core tools and nothing else. The
 rest opens through `baton_surface`: `catalog` lists the capability inventory this deployment
@@ -213,32 +216,17 @@ profile serves (the landed mechanism), `describe` answers one capability's live 
 posture, `invoke` routes it through the authority it already has. A caller that knows a legacy
 spelling gets taught the core verb by the refusal (§8) without a `tools/list` round trip.
 
-**Landed (#314 lane 1; #317 added the eighth tool).** `tools/list` over the served surface carries
-the core tools and nothing else (row 314-a green). The byte budget measured at #314 landing (7
-tools, 19,707 B against 7 × 3,038 = 21,266 B) has not been re-measured against the eighth tool;
-whoever next touches this section should re-run row 314-b's measurement rather than trust this
-stale figure. The 51 non-core flat tools (52 including `baton_services_list`) stay reachable through
+**Landed (#314 lane 1; #317 added the eighth tool).** `tools/list` over the served surface carried
+the core tools and nothing else (row 314-a green). At #314 landing, seven tools serialized to
+19,707 bytes, compared with the derived 21,266-byte measurement. That measurement predates the
+eighth tool. The 51 non-core flat tools (52 including `baton_services_list`) stayed reachable through
 `baton_surface`, and a flat spelling the core folds in refuses with `movedTo` (§8, row 314-g).
 The six unified `baton_surface_*` spellings stay accepted as unadvertised aliases of their core
 verb: the CLI's own MCP client (`configured-mcp-client.mjs`, `baton surface … --mcp`) speaks them,
 and §0 keeps the CLI unchanged.
 
-The byte budget is **derived, never a bare ceiling** (docs/43): the red file carries the
-designed core tool definitions as executable data, and
-
-```
-budget = 7 × S_max
-S_max = the largest designed core tool definition's serialized bytes
-      = 3,038 bytes (baton_swarm, measured from the red file's table at authoring)
-budget = 21,266 bytes
-```
-
-measured over the `tools/list` result as served (production wrapper included). Against the
-measured present that is 64,629 → ≤ 21,266 bytes and 58 → 7 tools — a 3× context cut on every
-turn of every agent client. Adding an eighth tool fails the name-set pin (§2); growing a
-description or a field set past the budget fails the byte pin; both are a decision with a red
-row, never drift. A designed schema that shrinks lowers the budget at the same edit — the
-number is recomputed from the table, not restated by hand.
+The Baton1 red file also checked the tool-name set and serialized schema size. Those checks record
+the historical implementation and do not impose a Baton2 tool-size requirement.
 
 ## 4. One entry story
 
@@ -548,7 +536,6 @@ and they ride their core verb instead of refusing (§3).
 | the session notification method | beside `WAKE_NOTIFICATION_METHOD`, impl/src/mcp-northbound.mjs:926 |
 | the rebind authority and re-attestation rule | `BatonWebApplicationFacade`, impl/src/mcp-web-bridge.mjs |
 | the migration table | docs/49 §7, pinned executable in the red file |
-| the byte budget | derived by the red file from its own designed table — never a hand-typed constant |
 
 ## 11. Implementation lanes
 
@@ -598,10 +585,8 @@ keeps the headed sections it cites.
 
 ## 12. Open questions
 
-1. **`outputSchema` on the core tools.** This design pins the receipt/wake shape by behavior
-   (314-d2) and keeps it OUT of the advertised schema to protect the byte budget. If MCP
-   clients come to weight `outputSchema` for routing, declaring it is a budgeted growth — the
-   §3 pin is exactly the decision point.
+1. **`outputSchema` on the core tools.** The Baton1 surface omitted it and checked the
+   receipt/wake shape by behavior (314-d2).
 2. **A `runId` axis on the wake filter.** The #294 filter vocabulary is
    kinds/swarms/participants/since; a run.start handoff correlates by the frame's `runId` field
    client-side. A `runs` filter axis is a wake-stream change this design deliberately does not
