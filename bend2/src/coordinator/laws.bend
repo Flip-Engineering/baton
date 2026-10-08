@@ -96,7 +96,7 @@ import ./connect-laws.bend as ConnectLaws
 import ./naming-laws.bend as NamingLaws
 import ./delivery.bend as Delivery
 import ./turn.bend as Turn
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./receive.bend as Receive
 import ./guidance.bend as Guidance
 import ./land.bend as Land
@@ -111,6 +111,8 @@ import ../host/laws.bend as HostLaws
 import ../json/laws.bend as JsonLaws
 import ../json/canonical.bend as J
 import ../context/codec-schema-integration-laws.bend as CodecSchemaLaws
+import ../context/native-laws.bend as ContextNativeLaws
+import ../context/native-managed-query-laws.bend as ContextManagedLaws
 import ../git/laws.bend as GitLaws
 import ../git/types.bend as T
 import ../git/text.bend as Tx

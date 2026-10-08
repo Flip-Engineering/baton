@@ -23,7 +23,7 @@ import ../host/session-lock.bend as Lock
 import ./turn.bend as Turn
 import ./delivery.bend as Delivery
 import ./native-requests.bend as NativeRequests
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 import ../host/text.bend as Text

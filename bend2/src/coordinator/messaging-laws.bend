@@ -2,7 +2,7 @@
 # admission and policy declarations to their actual SQL constructors. SQLite
 # relation evaluation is exercised by the native messaging test.
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ../git/text.bend as Tx
 

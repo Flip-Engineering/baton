@@ -59,6 +59,10 @@ type Command is Data:
   KnowledgeRead{reader: String}
   KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
   View{subject: String, reader: String, port: String}
+  UiSubscribe{after_cursor: String, generation: String}
+  ContextEngines{}
+  ContextQueryFile{owner: String, query: String, path: String}
+  ContextResult{query: String}
   Help{}
   Invalid{}
 
@@ -450,6 +454,10 @@ def sql(command: Command) -> String:
     case KnowledgeRead{reader}: ""
     case KnowledgePromote{id,promoter,source,destination,finding}: ""
     case View{subject,reader,port}: ""
+    case UiSubscribe{after_cursor,generation}: ""
+    case ContextEngines{}: ""
+    case ContextQueryFile{owner,query,path}: ""
+    case ContextResult{query}: ""
     case Help{}: ""
     case Invalid{}: ""
 
@@ -465,8 +473,10 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"workers"),LegacySubordinates{},
       Bool.pick(Command, String.eq(verb,"players"),Players{},
       Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},
-      Bool.pick(Command, String.eq(verb,"pending"),Pending{},Invalid{})))))))
+      Bool.pick(Command, String.eq(verb,"pending"),Pending{},
+      Bool.pick(Command,String.eq(verb,"context-engines"),ContextEngines{},Invalid{}))))))))
     case +verb <> +id <> Nil{}:
+      Bool.pick(Command,String.eq(verb,"context-result"),ContextResult{id},
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,"","",""},
       Bool.pick(Command,String.eq(verb,"logs-clean"),LogsClean{id},
       Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"players"),Bool.or(String.eq(verb,"orchestra"),String.eq(verb,"pending"))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"players"),Players{},Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},Pending{}))},Bool.pick(Command,Bool.and(String.eq(verb,"status"),String.eq(id,"--pretty")),StatusPretty{},Bool.pick(Command,String.eq(verb,"player"),PlayerRead{id},Bool.pick(Command, String.eq(verb,"role"),RoleRead{id},Bool.pick(Command, String.eq(verb,"ensemble"),EnsembleRead{id},Bool.pick(Command, String.eq(verb,"inbox"),Inbox{id},
@@ -474,11 +484,12 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"delivery"),Delivery{id},
       Bool.pick(Command, String.eq(verb,"worktree"),Worktree{id},
       Bool.pick(Command, String.eq(verb,"turns"),Turns{id},
-      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Bool.pick(Command, String.eq(verb,"observed-usage"),ObservedUsage{id},Bool.pick(Command, String.eq(verb,"view"),View{id,id,"7682"},Invalid{})))))))))))))))
+      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Bool.pick(Command, String.eq(verb,"observed-usage"),ObservedUsage{id},Bool.pick(Command, String.eq(verb,"view"),View{id,id,"7682"},Invalid{}))))))))))))))))
     case +verb <> +session <> +id <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"logs"),Logs{session,id,"",""},
-      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"player"),Bool.or(String.eq(verb,"session"),Bool.or(String.eq(verb,"inbox"),Bool.or(String.eq(verb,"delivery"),Bool.or(String.eq(verb,"turns"),Bool.or(String.eq(verb,"knowledge"),String.eq(verb,"worktree"))))))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"player"),PlayerRead{session},Bool.pick(Command,String.eq(verb,"session"),Session{session},Bool.pick(Command,String.eq(verb,"inbox"),Inbox{session},Bool.pick(Command,String.eq(verb,"delivery"),Delivery{session},Bool.pick(Command,String.eq(verb,"turns"),Turns{session},Bool.pick(Command,String.eq(verb,"knowledge"),KnowledgeRead{session},Worktree{session}))))))},Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Bool.pick(Command,String.eq(verb,"view"),View{session,id,"7682"},Invalid{})))))))
+      Bool.pick(Command,String.eq(verb,"ui-subscribe"),UiSubscribe{session,id},Bool.pick(Command,String.eq(verb,"logs"),Logs{session,id,"",""},
+      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"player"),Bool.or(String.eq(verb,"session"),Bool.or(String.eq(verb,"inbox"),Bool.or(String.eq(verb,"delivery"),Bool.or(String.eq(verb,"turns"),Bool.or(String.eq(verb,"knowledge"),String.eq(verb,"worktree"))))))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"player"),PlayerRead{session},Bool.pick(Command,String.eq(verb,"session"),Session{session},Bool.pick(Command,String.eq(verb,"inbox"),Inbox{session},Bool.pick(Command,String.eq(verb,"delivery"),Delivery{session},Bool.pick(Command,String.eq(verb,"turns"),Turns{session},Bool.pick(Command,String.eq(verb,"knowledge"),KnowledgeRead{session},Worktree{session}))))))},Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Bool.pick(Command,String.eq(verb,"view"),View{session,id,"7682"},Invalid{}))))))))
     case +verb <> +id <> +one <> +two <> Nil{}:
+      Bool.pick(Command,String.eq(verb,"context-query-file"),ContextQueryFile{id,one,two},
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,one,two,""},
       Bool.pick(Command,String.eq(verb,"receiver"),Receiver{id,one,two},Bool.pick(Command, String.eq(verb,"ensemble"),Ensemble{id,one,two},Bool.pick(Command, String.eq(verb,"native-reply"),NativeReply{id,one,two},
       Bool.pick(Command, String.eq(verb,"native-reply-file"),NativeReplyFile{id,one,two},
@@ -491,4 +502,146 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},
       Bool.pick(Command, String.eq(verb,"push"),Push{id,one,two},
       Bool.pick(Command, String.eq(verb,"ask"),Ask{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Bool.pick(Command, String.eq(verb,"remote-tip"),RemoteTip{id,one,two},Bool.pick(Command, String.eq(verb,"view"),View{id,one,two},Invalid{})))))))))))))))))
+      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Bool.pick(Command, String.eq(verb,"remote-tip"),RemoteTip{id,one,two},Bool.pick(Command, String.eq(verb,"view"),View{id,one,two},Invalid{}))))))))))))))))))
+    case +verb <> +id <> +one <> +two <> +three <> Nil{}:
+      Bool.pick(Command,String.eq(verb,"logs"),Logs{id,one,two,three},
+      Bool.pick(Command,String.eq(verb,"section"),Section{id,one,two,three},Bool.pick(Command, String.eq(verb,"ensemble-member"),EnsembleMember{id,one,two,three},Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{}))))
+    case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
+      Bool.pick(Command,String.eq(verb,"dispatch-turn"),DispatchTurn{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"dispatch-file"),DispatchFile{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"section-member"),SectionMember{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"land-checked"),LandChecked{id,one,two,three,four},
+      Bool.pick(Command, String.eq(verb,"bind"),Bind{id,one,two,three,four},
+      Bool.pick(Command, String.eq(verb,"message"),Message{id,one,two,three,four},
+      Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"record"),KnowledgeRecord{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"promote"),KnowledgePromote{id,one,two,three,four},Invalid{})))))))))
+    case +verb <> session <> cmd <> model <> effort <> cwd <> log <> message <> Nil{}:
+      Bool.pick(Command,String.eq(verb,"receive"),Receive{session,cmd,model,effort,cwd,log,message},Invalid{})
+    case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
+      Bool.pick(Command,String.eq(verb,"configure"),Configure{player,id,cmd,model,effort,cwd,task,log,session},Bool.pick(Command,String.eq(verb,"start"),Start{player,id,cmd,model,effort,cwd,task,log,session},Bool.pick(Command,String.eq(verb,"turn"),RunTurn{player,id,cmd,model,effort,cwd,task,log,session},
+      Bool.pick(Command,String.eq(verb,"recruit"),Recruit{player,id,cmd,model,effort,cwd,task,log,session},Invalid{}))))
+    case _: Invalid{}
+
+law help_word_selects_the_help_command:
+  {parse(["help"]) == Help{} : Command}
+
+def help_word_selects_the_help_command():
+  {==}
+
+law help_flag_selects_the_help_command:
+  {parse(["--help"]) == Help{} : Command}
+
+def help_flag_selects_the_help_command():
+  {==}
+
+law context_engines_has_a_single_command_word:
+  {parse(["context-engines"]) == ContextEngines{} : Command}
+
+def context_engines_has_a_single_command_word():
+  {==}
+
+law context_query_file_binds_owner_query_and_path:
+  for +owner: String
+  for +query: String
+  for +path: String
+  {parse(["context-query-file",owner,query,path]) == ContextQueryFile{owner,query,path} : Command}
+
+def context_query_file_binds_owner_query_and_path(owner,query,path):
+  {==}
+
+law context_result_selects_the_retained_query:
+  for +query: String
+  {parse(["context-result",query]) == ContextResult{query} : Command}
+
+def context_result_selects_the_retained_query(query):
+  {==}
+
+law context_query_rejects_surplus_arguments:
+  for +owner: String
+  for +query: String
+  for +path: String
+  {parse(["context-query-file",owner,query,path,"extra"]) == Invalid{} : Command}
+
+def context_query_rejects_surplus_arguments(owner,query,path):
+  {==}
+
+law message_parser_preserves_the_complete_body:
+  for id: String
+  for sender: String
+  for recipient: String
+  for kind: String
+  for body: String
+  {parse(["message",id,sender,recipient,kind,body]) == Message{id,sender,recipient,kind,body} : Command}
+
+def message_parser_preserves_the_complete_body(id,sender,recipient,kind,body):
+  {==}
+
+# The declared remote read keeps the repository, branch and remote the caller
+# supplied, in that order, and reads no default.
+law remote_tip_parser_keeps_the_declared_names:
+  for +repo: String
+  for +branch: String
+  for +remote: String
+  {parse(["remote-tip",repo,branch,remote]) == RemoteTip{repo,branch,remote} : Command}
+
+def remote_tip_parser_keeps_the_declared_names(repo,branch,remote):
+  {==}
+
+law ui_subscription_parser_keeps_the_cursor_and_generation:
+  for +after_cursor: String
+  for +generation: String
+  {parse(["ui-subscribe",after_cursor,generation]) == UiSubscribe{after_cursor,generation} : Command}
+
+def ui_subscription_parser_keeps_the_cursor_and_generation(after_cursor,generation):
+  {==}
+
+law ui_subscription_parser_rejects_missing_generation:
+  for +after_cursor: String
+  {parse(["ui-subscribe",after_cursor]) == Invalid{} : Command}
+
+def ui_subscription_parser_rejects_missing_generation(after_cursor):
+  {==}
+
+law ui_subscription_parser_rejects_extra_arguments:
+  for +after_cursor: String
+  for +generation: String
+  for +extra: String
+  {parse(["ui-subscribe",after_cursor,generation,extra]) == Invalid{} : Command}
+
+def ui_subscription_parser_rejects_extra_arguments(after_cursor,generation,extra):
+  {==}
+
+law configure_parser_keeps_the_requested_and_expected_route:
+  for +id: String
+  for +harness: String
+  for +model: String
+  for +effort: String
+  for +cmd: String
+  for +log: String
+  for +expected_harness: String
+  for +expected_model: String
+  for +expected_effort: String
+  {parse(["configure",id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort]) == Configure{id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort} : Command}
+
+def configure_parser_keeps_the_requested_and_expected_route(id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort):
+  {==}
+
+law view_parser_defaults_reader_and_port:
+  for subject: String
+  {parse(["view",subject]) == View{subject,subject,"7682"} : Command}
+
+def view_parser_defaults_reader_and_port(subject):
+  {==}
+
+law view_parser_keeps_the_declared_reader:
+  for subject: String
+  for reader: String
+  {parse(["view",subject,reader]) == View{subject,reader,"7682"} : Command}
+
+def view_parser_keeps_the_declared_reader(subject,reader):
+  {==}
+
+law view_parser_keeps_the_declared_port:
+  for subject: String
+  for reader: String
+  for port: String
+  {parse(["view",subject,reader,port]) == View{subject,reader,port} : Command}
+
+def view_parser_keeps_the_declared_port(subject,reader,port):
+  {==}

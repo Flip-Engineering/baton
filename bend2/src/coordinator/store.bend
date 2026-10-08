@@ -1,7 +1,7 @@
 import Base
 import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./delivery.bend as Delivery
 import ../git/text.bend as Tx
 

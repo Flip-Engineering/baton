@@ -44,6 +44,15 @@ def file_info(path):
     return {'bytes': path.stat().st_size, 'sha256': sha256(path)}
 
 
+def module_directory_name(module_id):
+    require(isinstance(module_id, str) and module_id, 'A selected module needs a non-empty identity')
+    try:
+        encoded = module_id.encode('utf-8').hex()
+    except UnicodeEncodeError as error:
+        raise RuntimeError('A selected module identity is not valid Unicode') from error
+    return 'm-' + encoded
+
+
 def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + '\n')
 
@@ -249,6 +258,134 @@ def stage_adapters(payload):
     fixtures.mkdir()
     for name in ('fixture-small.json', 'fixture-dense.json', 'fixture-gap.json'):
         shutil.copyfile(ROOT / 'bend2/ui/orchestra/fixtures' / name, fixtures / name)
+    shutil.copyfile(ROOT / 'bend2/scripts/context-provider.mjs', directory / 'context-provider.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/context-project-policy.mjs', directory / 'context-project-policy.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/context-query-artifact.mjs', directory / 'context-query-artifact.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/context-worktree-capture.mjs', directory / 'context-worktree-capture.mjs')
+
+
+def stage_selected_context_payload(payload):
+    source_root = ROOT / 'bend2/context/bend2'
+    declaration_path = source_root / 'selected-module.json'
+    require(declaration_path.is_file() and not declaration_path.is_symlink(),
+            'The selected Bend2 module manifest is unavailable')
+    declaration = json.loads(declaration_path.read_text())
+    require(set(declaration) == {'schema', 'moduleId', 'protocolVersion', 'upstreamPin',
+                                'providerArtifacts', 'files'},
+            'The selected Bend2 module manifest has an unsupported shape')
+    require(declaration['schema'] == 'baton2-selected-context-payload-v1'
+            and declaration['moduleId'] == 'bend2'
+            and declaration['protocolVersion'] == '2',
+            'The selected Bend2 module manifest identity is unsupported')
+    require(isinstance(declaration['files'], list) and declaration['files'],
+            'The selected Bend2 module manifest has no artifacts')
+
+    module_root = payload / 'lib/context/modules' / module_directory_name(declaration['moduleId'])
+    module_root.mkdir(parents=True)
+    staged_files = []
+    seen = set()
+    for entry in declaration['files']:
+        require(isinstance(entry, dict) and set(entry) == {'path', 'bytes', 'sha256'},
+                'A selected Bend2 artifact entry has an unsupported shape')
+        relative = PurePosixPath(entry['path'])
+        require(not relative.is_absolute() and relative.parts
+                and '..' not in relative.parts and '.' not in relative.parts,
+                'Unsafe selected Bend2 artifact path: ' + str(relative))
+        name = relative.as_posix()
+        require(name not in seen, 'Duplicate selected Bend2 artifact: ' + name)
+        seen.add(name)
+        source = source_root.joinpath(*relative.parts)
+        resolved = source.resolve()
+        require(resolved.is_relative_to(source_root.resolve()) and source.is_file()
+                and not source.is_symlink(),
+                'Selected Bend2 artifact is missing or outside its module root: ' + name)
+        observed = file_info(source)
+        require(observed['bytes'] == entry['bytes']
+                and observed['sha256'] == entry['sha256'],
+                'Selected Bend2 artifact differs from its manifest: ' + name)
+        destination = module_root.joinpath(*relative.parts)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        staged_files.append({'path': destination.relative_to(module_root).as_posix(), **file_info(destination)})
+
+    provider_path = module_root / 'native-provider.declaration.json'
+    require(provider_path.is_file(), 'The selected Bend2 provider declaration is not staged')
+    provider = json.loads(provider_path.read_text())
+    require(provider.get('schema') == 'baton2-native-module-declaration-v1'
+            and provider.get('moduleId') == declaration['moduleId']
+            and provider.get('protocolVersion') == declaration['protocolVersion'],
+            'The selected Bend2 provider declaration does not match its package manifest')
+    entry = provider.get('entry')
+    require(isinstance(entry, dict) and isinstance(entry.get('artifact'), str)
+            and entry['artifact'] in seen and isinstance(entry.get('argv'), list)
+            and all(isinstance(arg, str) for arg in entry['argv']),
+            'The selected Bend2 provider entry is not in the manifested artifact set')
+    artifact_identities = provider.get('artifactIdentities')
+    require(isinstance(artifact_identities, list) and artifact_identities,
+            'The selected Bend2 provider has no artifact identities')
+    for artifact in artifact_identities:
+        require(isinstance(artifact, dict)
+                and set(artifact) == {'packagePath', 'sha256', 'role'}
+                and artifact['packagePath'] in seen
+                and isinstance(artifact['sha256'], str)
+                and isinstance(artifact['role'], str),
+                'The selected Bend2 provider artifact identity is incomplete')
+        staged = module_root / artifact['packagePath']
+        require(PurePosixPath(artifact['packagePath']).as_posix() == artifact['packagePath']
+                and staged.is_file() and sha256(staged) == artifact['sha256'],
+                'The selected Bend2 provider artifact identity differs from staged bytes')
+    upstream = {
+        'bend.ts': '93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85',
+        'main.ts': '92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e',
+        'comp.ts': 'ad8b82137e5decf588d507d008cb8ccf24bd0b94043de8bd6e048d0faedcf959',
+        'base.bend': 'e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798',
+        'LICENSE': COMPILER_LICENSE_SHA256,
+    }
+    for name, expected in upstream.items():
+        path = module_root / 'upstream' / name
+        require(path.is_file() and not path.is_symlink() and sha256(path) == expected,
+                'Selected Bend2 frontend input differs from the pinned source: ' + name)
+        require(name != 'LICENSE' or expected == COMPILER_LICENSE_SHA256,
+                'Selected Bend2 source license differs from the pinned reference license')
+    source_manifest = json.loads(declaration_path.read_text())
+    require(source_manifest.get('upstreamPin') == 'a49524265bdfa5753a4bf38e25f0574a705dd868'
+            and source_manifest.get('providerArtifacts') == artifact_identities,
+            'Selected Bend2 source manifest provenance does not match the provider declaration')
+    expected_source_files = {entry['path']: {'path': entry['path'], 'bytes': entry['bytes'], 'sha256': entry['sha256']}
+                             for entry in declaration['files']}
+    require(source_manifest.get('files') == [expected_source_files[name] for name in sorted(expected_source_files)],
+            'Selected Bend2 source manifest file inventory differs from its package declaration')
+    for name, expected in upstream.items():
+        path = 'upstream/' + name
+        require(expected_source_files.get(path, {}).get('sha256') == expected,
+                'Selected Bend2 source manifest omits a pinned frontend file: ' + name)
+    schemas = provider.get('schemaIdentities')
+    require(isinstance(schemas, list) and schemas
+            and all(isinstance(schema, str) for schema in schemas),
+            'The selected Bend2 provider has no schema identities')
+    require(isinstance(provider.get('operations'), list) and provider['operations']
+            and all(isinstance(operation, dict)
+                    and isinstance(operation.get('operation'), str)
+                    and isinstance(operation.get('implements'), str)
+                    and operation.get('resultSchema') in schemas
+                    and operation.get('eventSchema') in schemas
+                    for operation in provider['operations']),
+            'The selected Bend2 provider operation declaration is incomplete')
+
+    module_manifest = {
+        'schema': 'baton2-selected-module-artifact-v1',
+        'moduleId': declaration['moduleId'],
+        'protocolVersion': declaration['protocolVersion'],
+        'sourceManifest': {'path': 'selected-module.source.json', **file_info(declaration_path)},
+        'files': staged_files,
+    }
+    shutil.copyfile(declaration_path, module_root / 'selected-module.source.json')
+    write_json(module_root / 'manifest.json', module_manifest)
+    module_manifest['manifest'] = {
+        'path': (module_root / 'manifest.json').relative_to(payload).as_posix(),
+        **file_info(module_root / 'manifest.json'),
+    }
+    return module_manifest
 
 
 def stage_notices(payload, archive_notices, kind='development'):
@@ -362,6 +499,7 @@ def package(args):
         shutil.copyfile(binary, payload / 'bin/baton2')
         (payload / 'bin/baton2').chmod(0o755)
         stage_adapters(payload)
+        selected_context = stage_selected_context_payload(payload)
         shutil.copytree(logs, payload / 'logs')
         terms = stage_notices(payload, notices, identity['kind'])
         generated_dir = output / 'generated'
@@ -381,6 +519,7 @@ def package(args):
             'source': {'commit': final['head'], 'tree': final['tree'], 'bend2_tree': final['bend2_tree'],
                        'directory': str(ROOT), 'status': final['status'], 'files': source_files},
             'binary': {'path': 'bin/baton2', **file_info(binary)}, 'files': files,
+            'selected_modules': [selected_context],
             'build': {'inputs_before': before_inputs, 'inputs_after': after_inputs,
                       'input_capture_boundary': input_boundary, 'compiler_archive': archive,
                       'generated_c': {'path': str(generated), **file_info(generated)},
