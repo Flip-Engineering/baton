@@ -161,10 +161,7 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
                                                                 WHERE session='worker')
                                              ORDER BY seq''').fetchall()
             print('pending inputs admitted for worker: ' + json.dumps(pending_inputs), flush=True)
-            self.assertEqual(len(pending_inputs), 3, pending_inputs)
-            self.assertIn(('task-worker', 'task', 'root', None), pending_inputs)
-            self.assertTrue(all(row[1] in ('task', 'guidance', 'recovery')
-                                and row[3] is None for row in pending_inputs), pending_inputs)
+            self.assertEqual(pending_inputs, [('task-worker', 'task', 'root', None)])
             events = {row[0]: json.loads(row[1]) for row in db.execute(
                 'SELECT id,event FROM turns WHERE worker IN (?,?)',
                 ('worker', 'failed-worker'))}

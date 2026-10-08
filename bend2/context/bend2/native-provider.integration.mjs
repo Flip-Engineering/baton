@@ -37,7 +37,7 @@ const invocation = (overrides = {}) => ({
 });
 
 const completed = await invokeSourceAnalysis(invocation(), { cwd: worktree, packageRoot });
-assert.equal(completed.type, 'event');
+assert.equal(completed.type, 'event', JSON.stringify(completed));
 assert.equal(completed.version, 2);
 assert.equal(completed.query, 'integration-query-1');
 assert.equal(completed.owner, 'integration-owner-1');
