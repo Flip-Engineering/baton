@@ -1,0 +1,24 @@
+test_abrupt_observer_exit_preserves_latest_incomplete_frame (__main__.Logs.test_abrupt_observer_exit_preserves_latest_incomplete_frame) ... ok
+test_attempt_cleanup_rejects_symlink_diagnostic_file (__main__.Logs.test_attempt_cleanup_rejects_symlink_diagnostic_file) ... ok
+test_attempt_with_pending_input_is_retained (__main__.Logs.test_attempt_with_pending_input_is_retained) ... ok
+test_attempt_without_durable_turn_record_is_retained (__main__.Logs.test_attempt_without_durable_turn_record_is_retained) ... ok
+test_cleanup_during_a_live_turn_keeps_registered_output (__main__.Logs.test_cleanup_during_a_live_turn_keeps_registered_output) ... ok
+test_cleanup_removes_only_reported_settled_attempt_diagnostics (__main__.Logs.test_cleanup_removes_only_reported_settled_attempt_diagnostics) ... ok
+test_default_policy_drops_snapshot_frames_and_keeps_evidence (__main__.Logs.test_default_policy_drops_snapshot_frames_and_keeps_evidence) ... ok
+test_diagnostic_level_keeps_snapshot_frames (__main__.Logs.test_diagnostic_level_keeps_snapshot_frames) ... ok
+test_diagnostic_policy_retains_attempt_files (__main__.Logs.test_diagnostic_policy_retains_attempt_files) ... ok
+test_existing_policy_migrates_to_level_only_schema_and_keeps_registry (__main__.Logs.test_existing_policy_migrates_to_level_only_schema_and_keeps_registry) ... ok
+test_failed_migration_preserves_original_rows_and_refuses_success (__main__.Logs.test_failed_migration_preserves_original_rows_and_refuses_success) ... ok
+test_failed_native_turn_retains_attempt_diagnostics (__main__.Logs.test_failed_native_turn_retains_attempt_diagnostics) ... ok
+test_interrupted_tool_call_keeps_only_its_last_update (__main__.Logs.test_interrupted_tool_call_keeps_only_its_last_update) ... ok
+test_later_direct_turn_preserves_an_earlier_checkpoint (__main__.Logs.test_later_direct_turn_preserves_an_earlier_checkpoint) ... ok
+test_message_start_is_kept_only_without_its_message_end (__main__.Logs.test_message_start_is_kept_only_without_its_message_end) ... ok
+test_policy_read_and_level_setting (__main__.Logs.test_policy_read_and_level_setting) ... ok
+test_quiet_level_keeps_terminal_and_unclassified_frames_alone (__main__.Logs.test_quiet_level_keeps_terminal_and_unclassified_frames_alone) ... ok
+test_unfinished_assistant_message_keeps_latest_update (__main__.Logs.test_unfinished_assistant_message_keeps_latest_update) ... ok
+test_unwritable_log_reports_the_failure_and_keeps_the_report (__main__.Logs.test_unwritable_log_reports_the_failure_and_keeps_the_report) ... ok
+
+----------------------------------------------------------------------
+Ran 19 tests in 6.614s
+
+OK
