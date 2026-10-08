@@ -22,7 +22,7 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: 5109594090205886a8a5aedc08cc52fd27b0aa59
+  PRODUCT_SOURCE_SHA: 1d44dca46585a267f481860b46cfcf991f870693
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
 
@@ -225,7 +225,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON('["land","mcp-command","mcp-root","mcp-contract","logs","turn","process","configure","native-observation","fixed-coordinator","control","retained-control","role-guard","messaging","native-cli","root-wake","codex-root","muse-root","omp-root","control-identity","shared-instance","ui-orchestra-native","ui-orchestra-browser","node-provider-ui","selected-context-package","observed-usage","stop","receive","receive-output","receive-terminal-boundary"]') }}
+        suite: ${{ fromJSON('["land","mcp-command","mcp-root","mcp-contract","logs","turn","process","configure","native-observation","fixed-coordinator","control","retained-control","role-guard","messaging","naming","knowledge","native-cli","root-wake","codex-root","muse-root","omp-root","control-identity","shared-instance","ui-orchestra-native","ui-orchestra-browser","node-provider-ui","selected-context-package","observed-usage","stop","receive","receive-output","receive-terminal-boundary"]') }}
     steps:
       - name: Check out pinned product source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
