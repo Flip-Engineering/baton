@@ -11,7 +11,7 @@ def managed_bootstrap() -> Managed.Bootstrap:
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
     "[]", "plan-identity", "result-v1", "/work/.baton/context-artifacts/q",
     "/logs/keeper-q", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "owner-token:1", "native-recover-argv", "/opt/baton2/bin/baton2",
+    "7:1", "native-recover-argv", "/opt/baton2/bin/baton2",
     "/usr/bin/node", "/opt/baton2/libexec/baton2/context-provider.mjs",
     "/logs/keeper-q/invocation.json",
     "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
@@ -78,7 +78,7 @@ def ready_host_json(+state: String, +binding: String, +incarnation: U32, +epoch:
   J.Jpair{"guardInode", J.Jint{1},
   J.Jpair{"guard", J.Jstr{"1:1"},
   J.Jpair{"observer_ready", J.Jtrue{},
-  J.Jpair{"native_pid", J.Jint{0},
+  J.Jpair{"native_pid", J.Jint{4321},
   J.Jpair{"status", J.Jint{0},
   J.Jpair{"identity", J.Jstr{"fixed"},
   J.Jpair{"expectedBinding", J.Jstr{binding},
@@ -89,6 +89,34 @@ def ready_host_json(+state: String, +binding: String, +incarnation: U32, +epoch:
   J.Jpair{"grant", J.Jstr{""},
   J.Jpair{"rejection", J.Jstr{""},
   J.Jpair{"status_known", json_bool(status_known), J.Jnil{}}}}}}}}}}}}}}}}}}}}}}
+
+def custody_transition_json(+current_witness: String, +mode: String) -> J.Json:
+  J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-custody-transition-v1"},
+  J.Jpair{"directory", J.Jstr{"/logs/keeper-q"},
+  J.Jpair{"oldOwnerWitness", J.Jstr{"7:1"},
+  J.Jpair{"currentOwnerWitness", J.Jstr{current_witness},
+  J.Jpair{"attemptManifest", J.Jstr{"0123456789abcdef"},
+  J.Jpair{"ownerAttempt", J.Jint{2},
+  J.Jpair{"nativePid", J.Jint{4321},
+  J.Jpair{"nativeBirth", J.Jstr{"4321:12345:123"},
+  J.Jpair{"custodyMode", J.Jstr{mode},
+  J.Jpair{"observation", J.Jstr{"live"},
+  J.Jpair{"historicalGuard", J.Jstr{"not-carried"},
+  J.Jpair{"terminalStatus", J.Jstr{"unavailable"}, J.Jnil{}}}}}}}}}}}}
+
+def custody_transition_exited_json(+current_witness: String, +mode: String) -> J.Json:
+  J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-custody-transition-v1"},
+  J.Jpair{"directory", J.Jstr{"/logs/keeper-q"},
+  J.Jpair{"oldOwnerWitness", J.Jstr{"7:1"},
+  J.Jpair{"currentOwnerWitness", J.Jstr{current_witness},
+  J.Jpair{"attemptManifest", J.Jstr{"0123456789abcdef"},
+  J.Jpair{"ownerAttempt", J.Jint{2},
+  J.Jpair{"nativePid", J.Jint{4321},
+  J.Jpair{"nativeBirth", J.Jstr{"4321:12345:123"},
+  J.Jpair{"custodyMode", J.Jstr{mode},
+  J.Jpair{"observation", J.Jstr{"exited"},
+  J.Jpair{"historicalGuard", J.Jstr{"not-carried"},
+  J.Jpair{"terminalStatus", J.Jstr{"known"}, J.Jnil{}}}}}}}}}}}}
 
 law host_readiness_requires_the_bootstrap_digest_and_current_owner_witness:
   {Managed.keeper_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
@@ -108,14 +136,16 @@ def changed_host_owner_witness_holds_managed_start():
 
 law recovery_accepts_attached_ready_process_state:
   {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    custody_transition_json("7:1", "same-owner-observer"),
     ready_host_json("ready", "binding-digest", 7, 1, False{}, False{}, False{})) ==
-    Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
+    Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
 
 def recovery_accepts_attached_ready_process_state():
   {==}
 
 law recovery_accepts_attached_running_process_state:
   {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    custody_transition_json("7:1", "same-owner-observer"),
     ready_host_json("running", "binding-digest", 7, 1, True{}, False{}, False{})) ==
     Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
 
@@ -124,6 +154,7 @@ def recovery_accepts_attached_running_process_state():
 
 law recovery_requires_a_latched_running_process:
   {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    custody_transition_json("7:1", "same-owner-observer"),
     ready_host_json("running", "binding-digest", 7, 1, False{}, False{}, False{})) ==
     Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
 
@@ -132,6 +163,7 @@ def recovery_requires_a_latched_running_process():
 
 law recovery_refuses_a_cancelled_attached_keeper:
   {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    custody_transition_json("7:1", "same-owner-observer"),
     ready_host_json("running", "binding-digest", 7, 1, True{}, False{}, True{})) ==
     Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
 
@@ -140,6 +172,7 @@ def recovery_refuses_a_cancelled_attached_keeper():
 
 law recovery_accepts_attached_exited_process_state:
   {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    custody_transition_exited_json("7:1", "same-owner-observer"),
     ready_host_json("exited", "binding-digest", 7, 1, True{}, True{}, False{})) ==
     Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
 
@@ -148,6 +181,7 @@ def recovery_accepts_attached_exited_process_state():
 
 law recovery_requires_a_known_exit_status:
   {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    custody_transition_json("7:1", "same-owner-observer"),
     ready_host_json("exited", "binding-digest", 7, 1, True{}, False{}, False{})) ==
     Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
 
@@ -156,26 +190,38 @@ def recovery_requires_a_known_exit_status():
 
 law recovery_accepts_attached_uncertain_process_state:
   {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    custody_transition_json("7:1", "same-owner-observer"),
     ready_host_json("uncertain", "binding-digest", 7, 1, True{}, False{}, False{})) ==
-    Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
+    Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
 
 def recovery_accepts_attached_uncertain_process_state():
   {==}
 
 law recovery_accepts_attached_failed_process_state:
   {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
+    custody_transition_json("7:1", "same-owner-observer"),
     ready_host_json("failed", "binding-digest", 7, 1, True{}, False{}, False{})) ==
-    Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
+    Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
 
 def recovery_accepts_attached_failed_process_state():
   {==}
 
-law recovery_requires_the_original_owner_witness:
-  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
-    ready_host_json("running", "binding-digest", 8, 1, True{}, False{}, False{})) ==
+law recovery_accepts_a_typed_owner_incarnation_transition:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "8:2",
+    custody_transition_json("8:2", "owner-rebound-monitor"),
+    ready_host_json("running", "binding-digest", 8, 2, True{}, False{}, False{})) ==
+    Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
+
+def recovery_accepts_a_typed_owner_incarnation_transition():
+  {==}
+
+law recovery_refuses_transition_mode_that_does_not_match_incarnations:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "8:2",
+    custody_transition_json("8:2", "same-owner-observer"),
+    ready_host_json("running", "binding-digest", 8, 2, True{}, False{}, False{})) ==
     Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
 
-def recovery_requires_the_original_owner_witness():
+def recovery_refuses_transition_mode_that_does_not_match_incarnations():
   {==}
 
 def managed_submission() -> Service.Submission:

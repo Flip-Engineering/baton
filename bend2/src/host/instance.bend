@@ -50,6 +50,13 @@ def Instance.cancel(handle: U32, bootstrap: String, decision: String, owner_witn
 def Instance.attach(database: String, directory: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./process-spawn.c"
 
+# Reattaches a managed attempt under the elected owner after validating its
+# sealed bootstrap, admission record and native process birth. A changed owner
+# incarnation receives an observation-only monitor and a custody transition
+# receipt; the historical session guard is not carried to the recovery caller.
+def Instance.recover(database: String, directory: String, bootstrap: String, old_owner_witness: String, expected_current_owner_witness: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
+  import "./process-spawn.c"
+
 # Reads the attached attempt's durable host lifecycle record and actual observer
 # readiness, owner witness, and process status.
 def Instance.state(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):
