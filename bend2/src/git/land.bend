@@ -2205,6 +2205,12 @@ def association_bound(association: AssociationEvidence, +candidate: String, +bas
     case AssociationMissing{}: False{}
     case AssociationRefused{request, step, observation, reads}: False{}
 
+# The artifact destination the capture wrote to. The chain derives it from the reservation as
+# shared_parent_path(reserved, "stderr") and hands the same value to the capture, so admission compares the
+# stored derivation against the reservation the evidence carries instead of trusting the field.
+def artifact_bound(artifact: String, +reserved: String) -> Bool:
+  Tx.str_eq(artifact, shared_parent_path(reserved, "stderr"))
+
 def evidence_complete(evidence: AttemptEvidence) -> Bool:
   match evidence:
     case AttemptEvidence{+reserved, +repo, +target, +candidate, +basis, guard, artifact, decision, capture, +qualification, release, +identity, association, intent, +reservation}:
@@ -2214,7 +2220,7 @@ def evidence_complete(evidence: AttemptEvidence) -> Bool:
             Bool.pick(Bool, T.release_done(release),
               Bool.pick(Bool, identity_bound(identity, target),
                 Bool.pick(Bool, association_bound(association, candidate, basis, identity_common(identity), repo, target, qualification, reserved, reservation),
-                  Bool.pick(Bool, intent_bound(intent, reserved, reservation_name(reservation), identity_common(identity), repo, target, candidate, basis, mode_holder(qualification_mode(qualification), repo), qualification_mode(qualification)), True{}, False{}),
+                  Bool.pick(Bool, intent_bound(intent, reserved, reservation_name(reservation), identity_common(identity), repo, target, candidate, basis, mode_holder(qualification_mode(qualification), repo), qualification_mode(qualification)), Bool.pick(Bool, artifact_bound(artifact, reserved), True{}, False{}), False{}),
                   False{}),
                 False{}),
               False{}),
@@ -3392,7 +3398,7 @@ def fixture_matching_unheld_evidence(+ctx: LdAdvCtx) -> AssociationEvidence:
   AssociationObserved{"associate", ld_assoc_request(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}
 
 def fixture_evidence_of(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String, capture: T.CapturedRaw, qualification: LdQualified, identity: IdentityEvidence, association: AssociationEvidence, intent: IntentEvidence) -> AttemptEvidence:
-  AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", "/art", AdvLanded{}, capture, qualification, T.ReleaseDone{}, identity, association, intent, ReservationObserved{shared_attempts_parent(common), "attempt-1"}}
+  AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", shared_parent_path(reserved, "stderr"), AdvLanded{}, capture, qualification, T.ReleaseDone{}, identity, association, intent, ReservationObserved{shared_attempts_parent(common), "attempt-1"}}
 
 def fixture_intent_request(+reserved: String, +repo: String, +target: String, +candidate: String, +basis: String, holder: String, name: String, common: String) -> It.IntentInput:
   It.IntentRequested{name, common, target, repo, candidate, basis, intent_expected_path(reserved), holder, ""}
@@ -3671,6 +3677,65 @@ law a_complete_unheld_preparation_continues_into_the_selected_mutation:
 def a_complete_unheld_preparation_continues_into_the_selected_mutation():
   {==}
 
+law the_no_capture_observation_keeps_its_other_fields_when_the_association_is_replaced:
+  {ld_adv_keep_association(LdAdvNoCapture{AdvLanded{}, MutationHeld{"/holder"}, AssociationMissing{}, IntentMissing{}}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt")) == LdAdvNoCapture{AdvLanded{}, MutationHeld{"/holder"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), IntentMissing{}} : LdAdvObs}
+
+def the_no_capture_observation_keeps_its_other_fields_when_the_association_is_replaced():
+  {==}
+
+law the_no_capture_observation_keeps_its_other_fields_when_the_intent_is_replaced:
+  {ld_adv_keep_intent(LdAdvNoCapture{AdvLanded{}, MutationHeld{"/holder"}, AssociationMissing{}, IntentMissing{}}, IntentObserved{"/p/intent", "intent bytes"}) == LdAdvNoCapture{AdvLanded{}, MutationHeld{"/holder"}, AssociationMissing{}, IntentObserved{"/p/intent", "intent bytes"}} : LdAdvObs}
+
+def the_no_capture_observation_keeps_its_other_fields_when_the_intent_is_replaced():
+  {==}
+
+law the_captured_observation_keeps_its_other_fields_when_the_association_is_replaced:
+  {ld_adv_keep_association(LdAdvCaptured{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, MutationHeld{"/holder"}, AssociationMissing{}, IntentMissing{}}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt")) == LdAdvCaptured{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, MutationHeld{"/holder"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), IntentMissing{}} : LdAdvObs}
+
+def the_captured_observation_keeps_its_other_fields_when_the_association_is_replaced():
+  {==}
+
+law the_captured_observation_keeps_its_other_fields_when_the_intent_is_replaced:
+  {ld_adv_keep_intent(LdAdvCaptured{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, MutationHeld{"/holder"}, AssociationMissing{}, IntentMissing{}}, IntentObserved{"/p/intent", "intent bytes"}) == LdAdvCaptured{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, MutationHeld{"/holder"}, AssociationMissing{}, IntentObserved{"/p/intent", "intent bytes"}} : LdAdvObs}
+
+def the_captured_observation_keeps_its_other_fields_when_the_intent_is_replaced():
+  {==}
+
+law the_qualified_observation_keeps_its_other_fields_when_the_association_is_replaced:
+  {ld_adv_keep_association(LdAdvQualified{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), AssociationMissing{}, IntentMissing{}}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt")) == LdAdvQualified{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), IntentMissing{}} : LdAdvObs}
+
+def the_qualified_observation_keeps_its_other_fields_when_the_association_is_replaced():
+  {==}
+
+law the_qualified_observation_keeps_its_other_fields_when_the_intent_is_replaced:
+  {ld_adv_keep_intent(LdAdvQualified{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), AssociationMissing{}, IntentMissing{}}, IntentObserved{"/p/intent", "intent bytes"}) == LdAdvQualified{AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), AssociationMissing{}, IntentObserved{"/p/intent", "intent bytes"}} : LdAdvObs}
+
+def the_qualified_observation_keeps_its_other_fields_when_the_intent_is_replaced():
+  {==}
+
+law the_artifact_destination_derived_from_the_reservation_is_bound:
+  {artifact_bound(shared_parent_path(fixture_reserved(), "stderr"), fixture_reserved()) == True{} : Bool}
+
+def the_artifact_destination_derived_from_the_reservation_is_bound():
+  {==}
+
+law an_artifact_under_another_reservation_is_not_bound:
+  {artifact_bound(shared_parent_path(fixture_middle_reserved(), "stderr"), fixture_reserved()) == False{} : Bool}
+
+def an_artifact_under_another_reservation_is_not_bound():
+  {==}
+
+law an_artifact_without_the_reservation_prefix_is_not_bound:
+  {artifact_bound("stderr", fixture_reserved()) == False{} : Bool}
+
+def an_artifact_without_the_reservation_prefix_is_not_bound():
+  {==}
+
+law an_attempt_whose_artifact_is_another_reservation_is_not_admitted:
+  {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), AttemptEvidence{fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "g", shared_parent_path(fixture_middle_reserved(), "stderr"), AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1", "/holder"), fixture_reservation()}))) == False{} : Bool}
+
+def an_attempt_whose_artifact_is_another_reservation_is_not_admitted():
+  {==}
 def fixture_held_evidence(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String) -> AttemptEvidence:
   fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), IdentityObserved{common, T.GRun{0, common}, target}, fixture_held_association(common, candidate, basis, target), fixture_held_intent(reserved, common, target, candidate, basis, "/repo", "attempt-1", "/holder"))
 
@@ -3693,7 +3758,7 @@ def fixture_held_intent_bound(+reserved: String, +common: String, holder: Intent
 
 
 def fixture_release_evidence(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String, release: T.ReleaseRaw) -> AttemptEvidence:
-  AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), release, IdentityObserved{common, T.GRun{0, common}, target}, fixture_held_association(common, candidate, basis, target), fixture_held_intent(reserved, common, target, candidate, basis, "/repo", "attempt-1", "/holder"), ReservationObserved{shared_attempts_parent(common), "attempt-1"}}
+  AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", shared_parent_path(reserved, "stderr"), AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), release, IdentityObserved{common, T.GRun{0, common}, target}, fixture_held_association(common, candidate, basis, target), fixture_held_intent(reserved, common, target, candidate, basis, "/repo", "attempt-1", "/holder"), ReservationObserved{shared_attempts_parent(common), "attempt-1"}}
 
 def fixture_stages(+reserved: String, evidence: AttemptEvidence, publication: StageResult, qualification: StageResult, readback: StageResult) -> Attestation:
   Attestation{reserved, evidence, publication, qualification, readback}
@@ -4979,19 +5044,19 @@ def an_attempt_whose_requested_attempt_is_another_name_is_not_admitted():
   {==}
 
 law an_attempt_whose_retained_reservation_name_differs_is_not_admitted:
-  {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), AttemptEvidence{fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "other", "/holder"), ReservationObserved{shared_attempts_parent("/common"), "other"}}))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), AttemptEvidence{fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "g", shared_parent_path(fixture_reserved(), "stderr"), AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "other", "/holder"), ReservationObserved{shared_attempts_parent("/common"), "other"}}))) == False{} : Bool}
 
 def an_attempt_whose_retained_reservation_name_differs_is_not_admitted():
   {==}
 
 law an_attempt_whose_reserved_path_differs_is_not_admitted:
-  {ld_admitted(admission_of(fixture_attestation_of(fixture_middle_reserved(), AttemptEvidence{fixture_middle_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_middle_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1", "/holder"), fixture_reservation()}))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of(fixture_middle_reserved(), AttemptEvidence{fixture_middle_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "g", shared_parent_path(fixture_middle_reserved(), "stderr"), AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_middle_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1", "/holder"), fixture_reservation()}))) == False{} : Bool}
 
 def an_attempt_whose_reserved_path_differs_is_not_admitted():
   {==}
 
 law an_attempt_without_a_retained_reservation_is_not_admitted:
-  {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), AttemptEvidence{fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1", "/holder"), ReservationMissing{}}))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), AttemptEvidence{fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "g", shared_parent_path(fixture_reserved(), "stderr"), AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1", "/holder"), ReservationMissing{}}))) == False{} : Bool}
 
 def an_attempt_without_a_retained_reservation_is_not_admitted():
   {==}
@@ -5027,13 +5092,13 @@ def a_reserved_path_under_another_common_is_not_bound():
   {==}
 
 law an_attempt_whose_reserved_path_has_an_inserted_component_is_not_admitted:
-  {ld_admitted(admission_of(fixture_attestation_of(fixture_middle_reserved(), AttemptEvidence{fixture_middle_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_middle_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1", "/holder"), fixture_reservation()}))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of(fixture_middle_reserved(), AttemptEvidence{fixture_middle_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "g", shared_parent_path(fixture_middle_reserved(), "stderr"), AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_middle_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1", "/holder"), fixture_reservation()}))) == False{} : Bool}
 
 def an_attempt_whose_reserved_path_has_an_inserted_component_is_not_admitted():
   {==}
 
 law an_attempt_whose_reservation_is_under_another_common_is_not_admitted:
-  {ld_admitted(admission_of(fixture_attestation_of(fixture_other_common_reserved(), AttemptEvidence{fixture_other_common_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_other_common_reserved(), "/other", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1", "/holder"), ReservationObserved{shared_attempts_parent("/other"), "attempt-1"}}))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of(fixture_other_common_reserved(), AttemptEvidence{fixture_other_common_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "g", shared_parent_path(fixture_other_common_reserved(), "stderr"), AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_other_common_reserved(), "/other", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1", "/holder"), ReservationObserved{shared_attempts_parent("/other"), "attempt-1"}}))) == False{} : Bool}
 
 def an_attempt_whose_reservation_is_under_another_common_is_not_admitted():
   {==}
@@ -5045,7 +5110,7 @@ def an_association_whose_coherent_reservation_names_another_attempt_is_not_bound
   {==}
 
 law an_attempt_whose_coherent_reservation_names_another_attempt_is_not_admitted:
-  {ld_admitted(admission_of(fixture_attestation_of(fixture_second_reserved(), AttemptEvidence{fixture_second_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_second_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-2", "/holder"), fixture_second_reservation()}))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of(fixture_second_reserved(), AttemptEvidence{fixture_second_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "g", shared_parent_path(fixture_second_reserved(), "stderr"), AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_second_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-2", "/holder"), fixture_second_reservation()}))) == False{} : Bool}
 
 def an_attempt_whose_coherent_reservation_names_another_attempt_is_not_admitted():
   {==}
