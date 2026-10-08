@@ -20,7 +20,7 @@ jobs:
       - name: Check out immutable candidate source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: c2fad1b41310da86bc48a3c46d30c692b3684a87
+          ref: 3a7503d52545dea6bb781097dbc322a7f1793bbe
           path: candidate
       - name: Select Node 22
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -45,11 +45,11 @@ jobs:
           printf '%s\n' "$actual_tree" | tee "$NATIVE_CONTEXT_RUN/evidence/source-tree.txt"
           git -C candidate status --short --branch > "$NATIVE_CONTEXT_RUN/evidence/source-status.txt"
           printf 'expected_commit=%s\nactual_commit=%s\n' \
-            c2fad1b41310da86bc48a3c46d30c692b3684a87 "$actual_commit"
-          if [[ "$actual_commit" != c2fad1b41310da86bc48a3c46d30c692b3684a87 ]]; then exit 1; fi
+            3a7503d52545dea6bb781097dbc322a7f1793bbe "$actual_commit"
+          if [[ "$actual_commit" != 3a7503d52545dea6bb781097dbc322a7f1793bbe ]]; then exit 1; fi
           printf 'expected_tree=%s\nactual_tree=%s\n' \
-            05dd6f5573def21266e9323bdaff69bcc30bba5e "$actual_tree"
-          if [[ "$actual_tree" != 05dd6f5573def21266e9323bdaff69bcc30bba5e ]]; then exit 1; fi
+            4015ddf05d416c2a8090be4ef7e41ecf3df69a89 "$actual_tree"
+          if [[ "$actual_tree" != 4015ddf05d416c2a8090be4ef7e41ecf3df69a89 ]]; then exit 1; fi
           shasum -a 256 \
             candidate/bend2/src/coordinator/main.bend \
             candidate/bend2/src/context/native.bend \
@@ -63,6 +63,13 @@ jobs:
             candidate/bend2/scripts/context-query-artifact.test.mjs \
             candidate/bend2/test/shared-instance.py \
             candidate/bend2/test/context-lifecycle.py \
+            candidate/bend2/test/ui-orchestra-server.test.mjs \
+            candidate/bend2/test/package-selected-context.py \
+            candidate/bend2/context/bend2/acquisition.test.mjs \
+            candidate/bend2/context/bend2/frontend-adapter.test.mjs \
+            candidate/bend2/context/bend2/native-provider.test.mjs \
+            candidate/bend2/context/bend2/source-binding.test.mjs \
+            candidate/bend2/context/bend2/worktree-capture.test.mjs \
             candidate/bend2/tests/context-lifecycle.bend \
             > "$NATIVE_CONTEXT_RUN/evidence/source-files.sha256"
           {
@@ -97,6 +104,18 @@ jobs:
           test "$("$bend" version)" = 'bend 2.0.25'
           shasum -a 256 "$bend" > "$NATIVE_CONTEXT_RUN/toolchain/bend-binary.sha256"
           shasum -a 256 "$archive" > "$NATIVE_CONTEXT_RUN/toolchain/archive.sha256"
+      - name: Run selected context JavaScript and package tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd candidate
+          node --test bend2/context/bend2/*.test.mjs \
+            bend2/scripts/context-query-artifact.test.mjs \
+            bend2/test/context-project-policy.test.mjs \
+            bend2/test/context-provider.test.mjs \
+            2>&1 | tee "$NATIVE_CONTEXT_RUN/evidence/context-javascript.log"
+          python3 bend2/test/package-selected-context.py \
+            2>&1 | tee "$NATIVE_CONTEXT_RUN/evidence/package-selected-context.log"
       - name: Build production Main
         shell: bash
         run: |
@@ -108,6 +127,15 @@ jobs:
             2>&1 | tee "$NATIVE_CONTEXT_RUN/evidence/main-build.log"
           shasum -a 256 .scratch/bend2/baton2 .scratch/bend2/baton2.c \
             > "$NATIVE_CONTEXT_RUN/evidence/main-artifacts.sha256"
+      - name: Run required native public view acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd candidate
+          BATON2_REQUIRE_NATIVE_VIEW=1 \
+          BATON2_NATIVE_BINARY="$PWD/.scratch/bend2/baton2" \
+            node --test bend2/test/ui-orchestra-server.test.mjs \
+            2>&1 | tee "$NATIVE_CONTEXT_RUN/evidence/native-public-view.log"
       - name: Build and run shared instance controls
         shell: bash
         run: |
