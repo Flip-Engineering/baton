@@ -280,7 +280,6 @@ typedef struct {
   uint64_t incarnation,attempt,manifest,spool_device,spool_inode,offset,length,check;
   BrBirth birth;
 } BrCheckpoint;
-#define BR_CHECKPOINT_STATE_MAX (1u<<20)
 /* A checkpoint whose facts cannot be validated against this attempt is unusable
    and the observer replays from the beginning. A failure to perform the
    validation at all (allocation, device I/O, a descriptor that is no longer
@@ -760,16 +759,6 @@ static void baton_retained_call(BatonProcessCall *call) {
        committed after its own durable store and reducer effects for that frame.
        It is bound to this attempt's manifest, native process and spool file. */
     if(retained->spool<0) {call->error=EBADF;return;}
-    /* A state too large to checkpoint keeps the previous checkpoint and records
-       the diagnostic, and reports a typed degradation so the observation owner
-       latches advancement off explicitly. Nothing is truncated, and the native
-       result and its source bytes are untouched. */
-    if(call->length>BR_CHECKPOINT_STATE_MAX) {
-      br_file(retained->directory,"checkpoint-error",
-        "state exceeds the checkpoint bound; the previous checkpoint stands\n",67,1);
-      call->error=EOVERFLOW;
-      return;
-    }
     pthread_mutex_lock(&retained->reader);
     call->error=br_checkpoint_store(retained->directory,retained->spool,(uint32_t)call->signal,
       retained->incarnation,(uint64_t)retained->offset,call->text,call->length);
@@ -1461,8 +1450,9 @@ static int br_checkpoint_verified_offset(const char *directory,int spool_fd,uint
   struct stat info;
   if(!error && fstat(fd,&info))error=errno;
   if(!error && memcmp(stored.magic,BR_CHECKPOINT_MAGIC,8))error=EINVAL;
-  if(!error && stored.length>BR_CHECKPOINT_STATE_MAX)error=EOVERFLOW;
-  if(!error && (size_t)info.st_size!=sizeof(stored)+stored.length)error=EINVAL;
+  if(!error && info.st_size<0)error=EINVAL;
+  if(!error && stored.length>SIZE_MAX-sizeof(stored))error=EOVERFLOW;
+  if(!error && (uint64_t)info.st_size!=(uint64_t)sizeof(stored)+stored.length)error=EINVAL;
   BrBirth birth;uint64_t manifest,spool_device,spool_inode;
   if(!error)error=br_checkpoint_custody(directory,spool_fd,&birth,&manifest,&spool_device,&spool_inode);
   if(!error && (stored.birth.pid!=birth.pid || stored.birth.first!=birth.first ||
@@ -1510,7 +1500,6 @@ static int br_checkpoint_custody(const char *directory,int spool_fd,BrBirth *bir
 }
 static int br_checkpoint_store(const char *directory,int spool_fd,uint32_t schema,
                                uint64_t incarnation,uint64_t offset,const char *state,size_t length) {
-  if(length>BR_CHECKPOINT_STATE_MAX)return EOVERFLOW;
   if(length>SIZE_MAX-sizeof(BrCheckpoint))return EOVERFLOW;
   BrBirth birth;uint64_t manifest,spool_device,spool_inode;
   int error=br_checkpoint_custody(directory,spool_fd,&birth,&manifest,&spool_device,&spool_inode);
@@ -1557,8 +1546,9 @@ static int br_checkpoint_load(const char *directory,int spool_fd,uint32_t schema
   if(!error && memcmp(checkpoint.magic,BR_CHECKPOINT_MAGIC,8))error=EINVAL;
   if(!error && checkpoint.schema!=schema)error=EINVAL;
   if(!error && checkpoint.attempt!=br_attempt_identity(directory))error=EINVAL;
-  if(!error && checkpoint.length>BR_CHECKPOINT_STATE_MAX)error=EOVERFLOW;
-  if(!error && (size_t)info.st_size!=sizeof(checkpoint)+checkpoint.length)error=EINVAL;
+  if(!error && info.st_size<0)error=EINVAL;
+  if(!error && checkpoint.length>SIZE_MAX-sizeof(checkpoint))error=EOVERFLOW;
+  if(!error && (uint64_t)info.st_size!=(uint64_t)sizeof(checkpoint)+checkpoint.length)error=EINVAL;
   BrBirth birth;uint64_t manifest,spool_device,spool_inode;
   if(!error)error=br_checkpoint_custody(directory,spool_fd,&birth,&manifest,&spool_device,&spool_inode);
   if(!error && (checkpoint.birth.pid!=birth.pid || checkpoint.birth.first!=birth.first ||
