@@ -126,24 +126,25 @@ def execution_input_sql(kind: String) -> String:
 def input_state_sql(+row: String) -> String:
   "CASE WHEN " ++ stopped_session_sql(row ++ ".recipient") ++ " THEN json_object('stopId',(SELECT id FROM session_stops WHERE session=" ++ row ++ ".recipient),'executionDisposition',CASE WHEN " ++ row ++ ".receipt IS NOT NULL THEN 'accepted' WHEN " ++ execution_input_sql(row ++ ".kind") ++ " THEN 'stopped' ELSE 'retained-for-stopped-session' END) ELSE json('{}') END"
 
-# Blocked-cause classification for issue #685. Derived from retained facts in
-# precedence order: terminal stop, harness without receiver support, absent
-# endpoint, failed provider attempt. Capacity refusal has no retained signal
-# in these sources and stays an open evidence question; the classifier
-# carries the four derivable values. The record is session-scoped because two
-# of the five causes fire before any message row exists.
+# Session-state cause for a terminal stop, unsupported route, absent receiver,
+# or failed provider attempt.
 def blocked_endpoint_absent_sql(+session: String) -> String:
-  "(" ++ "(SELECT endpoint FROM sessions WHERE id=" ++ session ++ ")=''"
-  ++ " OR NOT (json_valid((SELECT endpoint FROM sessions WHERE id=" ++ session ++ "))"
-  ++ " AND json_type((SELECT endpoint FROM sessions WHERE id=" ++ session ++ "))='array'"
-  ++ " AND json_array_length((SELECT endpoint FROM sessions WHERE id=" ++ session ++ "))>0"
-  ++ " AND NOT EXISTS(SELECT 1 FROM json_each((SELECT endpoint FROM sessions WHERE id=" ++ session ++ ")) WHERE type<>'text' OR instr(value,char(0))>0)"
-  ++ " AND coalesce(json_extract((SELECT endpoint FROM sessions WHERE id=" ++ session ++ "),'$[0]'),'')<>''))"
+  "(" ++ "(SELECT route.endpoint FROM sessions AS route WHERE route.id=" ++ session ++ ")=''"
+  ++ " OR NOT (json_valid((SELECT route.endpoint FROM sessions AS route WHERE route.id=" ++ session ++ "))"
+  ++ " AND json_type((SELECT route.endpoint FROM sessions AS route WHERE route.id=" ++ session ++ "))='array'"
+  ++ " AND json_array_length((SELECT route.endpoint FROM sessions AS route WHERE route.id=" ++ session ++ "))>0"
+  ++ " AND NOT EXISTS(SELECT 1 FROM json_each((SELECT route.endpoint FROM sessions AS route WHERE route.id=" ++ session ++ ")) WHERE type<>'text' OR instr(value,char(0))>0)"
+  ++ " AND coalesce(json_extract((SELECT route.endpoint FROM sessions AS route WHERE route.id=" ++ session ++ "),'$[0]'),'')<>''))"
+
+# A Codex thread with a native identity can receive committed input through the
+# public App queue even when it has no command-line receiver configuration.
+def direct_app_route_sql(+session: String) -> String:
+  "EXISTS(SELECT 1 FROM sessions AS route WHERE route.id=" ++ session ++ " AND route.harness='codex' AND route.native<>'' AND route.endpoint='')"
 
 def blocked_cause_sql(+session: String) -> String:
   "CASE WHEN " ++ stopped_session_sql(session) ++ " THEN 'terminal-stop'"
-  ++ " WHEN (SELECT harness FROM sessions WHERE id=" ++ session ++ ") NOT IN ('codex','omp') THEN 'harness-unsupported'"
-  ++ " WHEN " ++ blocked_endpoint_absent_sql(session) ++ " THEN 'endpoint-absent'"
+  ++ " WHEN (SELECT route.harness FROM sessions AS route WHERE route.id=" ++ session ++ ") NOT IN ('codex','omp','muse','claude-code') THEN 'harness-unsupported'"
+  ++ " WHEN " ++ blocked_endpoint_absent_sql(session) ++ " AND NOT " ++ direct_app_route_sql(session) ++ " THEN 'endpoint-absent'"
   ++ " WHEN EXISTS(SELECT 1 FROM executions WHERE session=" ++ session ++ " AND phase='exited' AND status<>'exit 0') THEN 'provider-failure'"
   ++ " ELSE '' END"
 

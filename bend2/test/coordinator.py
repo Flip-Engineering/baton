@@ -355,6 +355,26 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(self.call('inbox', 'worker')[0]['body'], text)
         self.assertEqual(len(self.call('status')), 2)
 
+    def test_status_classifies_each_session_route_and_codex_app_root(self):
+        self.call('attach', 'root', 'codex', 'codex-thread', '')
+        omp_endpoint = json.dumps(['/usr/bin/true'])
+        self.call('attach', 'configured-omp', 'omp', 'omp-thread', omp_endpoint)
+        muse_endpoint = json.dumps(['/usr/bin/true'])
+        self.call('attach', 'configured-muse', 'muse', 'muse-thread', muse_endpoint)
+
+        status = {row['id']: row for row in self.call('status')}
+
+        self.assertEqual(status['root']['harness'], 'codex')
+        self.assertEqual(status['root']['native'], 'codex-thread')
+        self.assertEqual(status['root']['endpoint'], '')
+        self.assertEqual(status['root']['blockedCause'], '')
+        self.assertEqual(status['configured-omp']['harness'], 'omp')
+        self.assertEqual(status['configured-omp']['endpoint'], omp_endpoint)
+        self.assertEqual(status['configured-omp']['blockedCause'], '')
+        self.assertEqual(status['configured-muse']['harness'], 'muse')
+        self.assertEqual(status['configured-muse']['endpoint'], muse_endpoint)
+        self.assertEqual(status['configured-muse']['blockedCause'], '')
+
     def test_players_lists_players_with_latest_report(self):
         self.player('other', 'root', 'omp', 'model', 'high', '/wt2', 'br2', 'base2')
         self.call('report', 'r1', 'worker', 'Task completed successfully.')
