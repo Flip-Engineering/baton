@@ -12,13 +12,13 @@ jobs:
     runs-on: xcode-27
     env:
       BEND_NO_TELEMETRY: '1'
-      PRODUCT_SHA: eb4a66c359fe8888753fdc6bd7b06971cea65c25
-      PRODUCT_TREE: 257f3c16c312c5f8cfe5e4354fb5706c765e5a51
+      PRODUCT_SHA: 351c9aba85c69f4e4aab1f86cc31fb0f415fe327
+      PRODUCT_TREE: 9afffc172eec7b77eb5d3df1a15aaa6cc2e334c5
     steps:
       - name: Checkout exact product
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: eb4a66c359fe8888753fdc6bd7b06971cea65c25
+          ref: 351c9aba85c69f4e4aab1f86cc31fb0f415fe327
           persist-credentials: false
 
       - name: Select Node 22
@@ -68,10 +68,26 @@ jobs:
           set -euo pipefail
           cd "$BATON2_CORE_RUN/source"
           export BEND="$BATON2_CORE_RUN/compiler/bin/bend"
-          for test in configure logs receive stop native-observation mcp-command fixed-coordinator ui-orchestra-native; do
-            sh bend2/scripts/check-unittest.sh "bend2/test/$test.py" 2>&1 | tee "$BATON2_CORE_RUN/evidence/$test.log"
+          failed=0
+          for test in configure logs receive stop native-observation mcp-command fixed-coordinator control-identity ui-orchestra-native; do
+            if sh bend2/scripts/check-unittest.sh "bend2/test/$test.py" 2>&1 | tee "$BATON2_CORE_RUN/evidence/$test.log"; then
+              status=0
+            else
+              status=$?
+              failed=1
+            fi
+            printf '{"test":"%s","exitCode":%s}\n' "$test" "$status" >> "$BATON2_CORE_RUN/evidence/test-outcomes.jsonl"
+            shasum -a 256 "$BATON2_CORE_RUN/evidence/$test.log" >> "$BATON2_CORE_RUN/evidence/test-output.sha256"
           done
-          BATON2_REQUIRE_NATIVE_VIEW=1 BATON2_NATIVE_BINARY="$BATON2_CORE_RUN/source/.scratch/bend2/baton2" node --test --test-reporter=tap bend2/test/ui-orchestra-server.test.mjs 2>&1 | tee "$BATON2_CORE_RUN/evidence/ui-orchestra-server.log"
+          if BATON2_REQUIRE_NATIVE_VIEW=1 BATON2_NATIVE_BINARY="$BATON2_CORE_RUN/source/.scratch/bend2/baton2" node --test --test-reporter=tap bend2/test/ui-orchestra-server.test.mjs 2>&1 | tee "$BATON2_CORE_RUN/evidence/ui-orchestra-server.log"; then
+            status=0
+          else
+            status=$?
+            failed=1
+          fi
+          printf '{"test":"ui-orchestra-server","exitCode":%s}\n' "$status" >> "$BATON2_CORE_RUN/evidence/test-outcomes.jsonl"
+          shasum -a 256 "$BATON2_CORE_RUN/evidence/ui-orchestra-server.log" >> "$BATON2_CORE_RUN/evidence/test-output.sha256"
+          exit "$failed"
 
       - name: Retain focused evidence
         if: always()
