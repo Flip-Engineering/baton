@@ -1270,7 +1270,7 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
     canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
     log_directory : String = database_parent(canonical_database)
     +keeper_path : String = ContextIdentity.role_directory(log_directory, guard_key)
-    bootstrap_file : String = artifact_path ++ "/bootstrap.json"
+    +bootstrap_file : String = artifact_path ++ "/bootstrap.json"
     invocation_path : String = keeper_path ++ "/invocation.json"
     provider_path : String = installed_provider_path(executable)
     invocation_sha256 : String <- IO.try(String,
