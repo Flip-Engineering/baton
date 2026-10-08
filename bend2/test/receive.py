@@ -261,6 +261,20 @@ class Receive(unittest.TestCase):
                 return result
             time.sleep(.01)
 
+    def shutdown_idle_database_owner(self, description):
+        expected = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        def idle_processes():
+            processes = self.owned_processes()
+            if not processes or [process['command'] for process in processes] == [expected]:
+                return (processes,)
+            return None
+        processes, = self.eventually(idle_processes, description)
+        if processes:
+            stopped = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                                     capture_output=True, text=True)
+            self.assertEqual(stopped.returncode, 0, stopped.stderr)
+            self.eventually(lambda: not self.owned_processes(), description)
+
     def coord(self, *args, ok=True):
         result = subprocess.run([str(EXE), str(self.db), *map(str, args)],
                                 capture_output=True, text=True)
@@ -303,6 +317,12 @@ class Receive(unittest.TestCase):
 
     def accept(self, session):
         stream, started = self.accept_any()
+        self.assertEqual(started['session'], session)
+        return stream, started
+
+    def accept_child(self, child, session, description=None, failure_stream=None):
+        description = description or f'{session} native did not connect'
+        stream, started = self.accept_or_child_exit(child, description, failure_stream)
         self.assertEqual(started['session'], session)
         return stream, started
 
@@ -356,7 +376,8 @@ class Receive(unittest.TestCase):
                    json.dumps([str(self.fixture), 'answering_parent' if answering else 'parent_endpoint']))
         self.coord('message', 'question-task', 'root', 'parent', 'task', 'Ask for the required input and complete the task.')
         observer = self.spawn(*self.receive_args('parent'))
-        stream, started = self.accept('parent')
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Question observer exited before native startup')
         return observer, stream, started
 
     def test_native_question_parent_answers_and_waits_for_full_report(self):
@@ -387,7 +408,7 @@ class Receive(unittest.TestCase):
         body = 'The requested input was applied.\nThe complete native report is retained.'
         self.action(stream, body=body)
         self.finish(observer)
-        self.eventually(lambda: not self.owned_processes(), 'question worker did not exit naturally')
+        self.shutdown_idle_database_owner('question worker did not exit naturally')
         self.assertEqual(self.coord('inbox', 'root'), [])
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual(self.coord('delivery', request['id'])['receipt'], 'parent-received')
@@ -475,7 +496,7 @@ class Receive(unittest.TestCase):
         output, _ = self.finish(observer, ok=False)
         self.assertIn('unsupported for a session without a registered parent', output)
         self.assertEqual(self.native_requests(), [])
-        self.eventually(lambda: not self.owned_processes(), 'root fixture did not exit naturally')
+        self.shutdown_idle_database_owner('root fixture did not exit naturally')
 
     def test_native_question_survives_observer_loss_and_matches_one_reply(self):
         observer, stream, started = self.start_question_player()
@@ -527,7 +548,7 @@ class Receive(unittest.TestCase):
         self.action(stream, body=body, hold_exit=True, report_input=True)
         self.assertEqual(json.loads(stream.readline()), {'terminal_written': True, 'input_after_prompt': ''})
         self.action(stream, exit_fixture=True)
-        self.eventually(lambda: not self.owned_processes(), 'recovered question worker did not exit naturally')
+        self.shutdown_idle_database_owner('recovered question worker did not exit naturally')
         self.assertEqual(self.coord('inbox', 'root'), [])
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])
@@ -575,7 +596,7 @@ class Receive(unittest.TestCase):
         self.action(stream, body=body, hold_exit=True, report_input=True)
         self.assertEqual(json.loads(stream.readline()), {'terminal_written': True, 'input_after_prompt': ''})
         self.action(stream, exit_fixture=True)
-        self.eventually(lambda: not self.owned_processes(), 'recovered reply processes did not exit naturally')
+        self.shutdown_idle_database_owner('recovered reply processes did not exit naturally')
         self.assertEqual(self.coord('inbox', 'root'), [])
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])
@@ -611,7 +632,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(next(row for row in self.native_requests() if row['id'] == late['id'])['written'], 0)
         self.action(stream, exit_fixture=True)
         self.finish(observer)
-        self.eventually(lambda: not self.owned_processes(), 'native question keeper did not exit naturally')
+        self.shutdown_idle_database_owner('native question keeper did not exit naturally')
         self.assertEqual(self.coord('inbox', 'root'), [])
 
     def exercise_missing_omp_fallback(self, observer_losses):
@@ -693,7 +714,7 @@ class Receive(unittest.TestCase):
             self.finish(observer)
         self.eventually(lambda: not self.coord('inbox', 'parent') and not self.coord('inbox', 'root'),
                         'fresh fallback did not drain the original task and notify its parent')
-        self.eventually(lambda: not self.owned_processes(), 'fallback keeper or observer did not exit naturally')
+        self.shutdown_idle_database_owner('fallback keeper or observer did not exit naturally')
         self.assertEqual(journal.read_text(), partial + completed)
         turns = self.coord('turns', 'parent')
         self.assertEqual([turn['reportBody'] for turn in turns], [body])
@@ -770,7 +791,7 @@ class Receive(unittest.TestCase):
                              [(report['id'],) for report in reports])
         launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual([row['resume'] for row in launches], [missing, ''])
-        self.eventually(lambda: not self.owned_processes(), 'root fallback processes did not exit naturally')
+        self.shutdown_idle_database_owner('root fallback processes did not exit naturally')
 
     def test_stale_shared_omp_refusal_does_not_restart_an_unrelated_failure(self):
         self.player(harness='omp')
@@ -800,7 +821,7 @@ class Receive(unittest.TestCase):
         self.assertTrue(diagnostics, 'the real provider failure was not retained')
         self.assertTrue(any(str(path) in report['body'] for path in diagnostics for report in reports),
                         'parent diagnostic did not name a readable file containing the provider failure')
-        self.eventually(lambda: not self.owned_processes(), 'failed attempt processes did not exit naturally')
+        self.shutdown_idle_database_owner('failed attempt processes did not exit naturally')
 
     def exercise_observer_loss(self, harness, retry, terminal_before_loss=False, evidence=None):
         evidence = evidence if evidence is not None else {}
@@ -904,7 +925,7 @@ class Receive(unittest.TestCase):
         evidence['originalCompletionRetained'] = turns[0]['reportBody'] == original_body
         evidence['retainedNativeFrames'] = [json.loads(line) for line in log.read_text().splitlines()]
         self.assertEqual(self.coord('player', 'parent')['native'], native)
-        self.eventually(lambda: not self.owned_processes(), 'fixture keeper or recovery did not exit')
+        self.shutdown_idle_database_owner('fixture keeper or recovery did not exit')
         return evidence
 
     def test_observer_loss_retry_preserves_native_and_drains_pending_messages(self):
@@ -1082,7 +1103,7 @@ class Receive(unittest.TestCase):
         self.assertTrue(any(row['body'] == pending_body for row in deliveries))
         self.assertTrue(any('unknown after keeper loss' in row['body'] for row in deliveries))
         self.assertEqual(self.coord('player', 'parent')['native'], native_id)
-        self.eventually(lambda: not self.owned_processes(), 'A fixture owner did not exit naturally.')
+        self.shutdown_idle_database_owner('A fixture owner did not exit naturally.')
         self.assertTrue(self.session_guard_available('parent'))
         task = self.directory / 'direct-after-recovery.txt'
         task.write_text('A direct task after the retained Receive completed.')
@@ -1094,7 +1115,7 @@ class Receive(unittest.TestCase):
         self.action(current, body='Direct work after the retained Receive completed.')
         self.assertEqual(current.readline(), b'')
         self.finish(direct)
-        self.eventually(lambda: not self.owned_processes(), 'A direct owner did not exit naturally.')
+        self.shutdown_idle_database_owner('A direct owner did not exit naturally.')
         self.assertTrue(self.session_guard_available('parent'))
 
     def test_keeper_loss_preserves_original_and_drains_pending_input(self):
@@ -1175,7 +1196,7 @@ class Receive(unittest.TestCase):
         ])
         self.assertEqual(turns[0]['id'], original_report['id'])
         self.assertTrue(all(turn['receipt'] == 'native-reviewed' for turn in turns))
-        self.eventually(lambda: not self.owned_processes(), 'keeper or recovery did not exit after replay')
+        self.shutdown_idle_database_owner('keeper or recovery did not exit after replay')
 
     def test_omp_recovery_after_input_closes_defers_guidance_until_native_exit(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
@@ -1239,7 +1260,7 @@ class Receive(unittest.TestCase):
         self.assertEqual([turn['reportBody'] for turn in turns], [original_body, follow_up_body])
         self.assertEqual(turns[0]['id'], original_report['id'])
         self.assertTrue(all(turn['receipt'] == 'native-reviewed' for turn in turns))
-        self.eventually(lambda: not self.owned_processes(), 'keeper or recovery did not exit naturally')
+        self.shutdown_idle_database_owner('keeper or recovery did not exit naturally')
         self.assertEqual(list(self.directory.glob('state.db.attempt-*/observer-error')), [])
         for recovery_log in self.directory.glob('state.db.attempt-*/observer.log'):
             self.assertNotIn('Broken pipe', recovery_log.read_text())
@@ -1503,7 +1524,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.coord('delivery', 'first')['receipt'], 'native-reviewed')
         self.assertIsNone(self.coord('delivery', 'second')['receipt'])
         self.assertEqual([m['id'] for m in self.coord('inbox', 'root')], ['second'])
-        self.eventually(lambda: not self.owned_processes(), 'root success or failure processes did not exit naturally')
+        self.shutdown_idle_database_owner('root success or failure processes did not exit naturally')
 
     def test_root_failed_receive_can_retry_the_same_pending_input(self):
         self.message('input', 'root')

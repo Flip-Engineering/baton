@@ -40,20 +40,12 @@ class NativeObservation(RECEIVE.Receive):
                 return result
             time.sleep(.01)
 
-    def shutdown_idle_database_owner(self, description):
-        processes = self.owned_processes()
-        expected = f'{RECEIVE.EXE} --instance-owner {self.db}'
-        self.assertEqual([process['command'] for process in processes], [expected])
-        stopped = subprocess.run([str(RECEIVE.EXE), '--instance-shutdown', str(self.db)],
-                                 capture_output=True, text=True)
-        self.assertEqual(stopped.returncode, 0, stopped.stderr)
-        self.eventually(lambda: not self.owned_processes(), description)
-
     def test_mixed_agent_end_members_preserve_completion_and_raw_frame(self):
         self.player(harness='omp')
         self.coord('message', 'mixed-task', 'root', 'parent', 'task', 'Read this task.')
         observer = self.spawn(*self.receive_args('parent'))
-        stream, started = self.accept('parent')
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
         self.assertIn('[id: mixed-task]', started['prompt'])
 
         for line in ('', 'not-json', 'null'):
@@ -155,7 +147,8 @@ class NativeObservation(RECEIVE.Receive):
         config_path.write_text(json.dumps(config))
         self.coord('message', 'checkpoint-task', 'root', 'parent', 'task', 'Retain the assistant message before the terminal.')
         observer = self.spawn(*self.receive_args('parent'))
-        stream, started = self.accept('parent')
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
 
         assistant = {'type': 'message_end', 'message': {
             'id': 'checkpoint-assistant', 'role': 'assistant', 'provider': 'fixture',
@@ -203,7 +196,8 @@ class NativeObservation(RECEIVE.Receive):
         config_path.write_text(json.dumps(config))
         self.coord('message', 'reattach-checkpoint-task', 'root', 'parent', 'task', 'Retain this complete response.')
         observer = self.spawn(*self.receive_args('parent'))
-        stream, started = self.accept('parent')
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
         attempt, _ = self.eventually(lambda: self._retained_attempt(), 'retained attempt was not admitted')
         text = 'The complete native response remains available after observer recovery.'
         assistant = {'type': 'message_end', 'message': {
@@ -269,7 +263,8 @@ class NativeObservation(RECEIVE.Receive):
         args = self.receive_args('parent')
         args[-2] = str(self.fixture / 'parent.jsonl')
         observer = self.spawn(*args)
-        stream, _ = self.accept('parent')
+        stream, _ = self.accept_child(observer, 'parent',
+                                      'Observer exited before native startup')
         _, turn_id = self.eventually(lambda: self._retained_attempt(), 'retained attempt was not admitted')
         self.action(stream, native_frame={'type': 'message_end', 'message': {
             'id': 'log-failure-assistant', 'role': 'assistant', 'provider': 'fixture',

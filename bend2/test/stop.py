@@ -82,6 +82,9 @@ class Stop(unittest.TestCase):
     message = receive.Receive.message
     accept_any = receive.Receive.accept_any
     accept = receive.Receive.accept
+    accept_or_child_exit = receive.Receive.accept_or_child_exit
+    accept_child = receive.Receive.accept_child
+    shutdown_idle_database_owner = receive.Receive.shutdown_idle_database_owner
     action = receive.Receive.action
     finish = receive.Receive.finish
     native_requests = receive.Receive.native_requests
@@ -107,7 +110,8 @@ class Stop(unittest.TestCase):
         self.player(harness=harness)
         self.coord('message', 'initial', 'root', 'parent', 'task', 'Make useful progress.')
         observer = self.spawn(*self.receive_args('parent'))
-        stream, started = self.accept('parent')
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Stop observer exited before native startup')
         self.action(stream, ack_only=True)
         self.assertEqual(json.loads(stream.readline()), {'accepted': True})
         self.action(stream, progress='output before terminal stop')
@@ -185,7 +189,7 @@ class Stop(unittest.TestCase):
         self.assertEqual(json.loads(report['body'])['workspace'], str(self.checkouts / 'parent'))
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
         self.assertEqual(self.stop()['nativeStatus'], 'signal 15')
-        self.eventually(lambda: not self.owned_processes(), 'stopped processes remained')
+        self.shutdown_idle_database_owner('stopped processes remained')
 
     def test_retained_omp_stop_preserves_work_and_exits_native_and_tool(self):
         self.retained_stop_preserves_work_native_identity_receipts_and_output('omp')
@@ -221,7 +225,7 @@ class Stop(unittest.TestCase):
         self.assertEqual(forced['attempt'], requested['attempt'])
         completed = self.completed()
         self.assertEqual(completed['nativeStatus'], 'signal 9')
-        self.eventually(lambda: not self.owned_processes(), 'stopped recovery processes remained')
+        self.shutdown_idle_database_owner('stopped recovery processes remained')
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertEqual(self.coord('force-stop', 'parent', 'operator-stop')['nativeStatus'], 'signal 9')
@@ -234,7 +238,8 @@ class Stop(unittest.TestCase):
         task.write_text('Finish this direct turn.')
         direct = self.spawn('turn', 'parent', 'direct-turn', str(self.fixture), 'parent', 'low',
                             str(self.directory), str(task), str(self.directory / 'direct.jsonl'), '')
-        stream, _ = self.accept('parent')
+        stream, _ = self.accept_child(direct, 'parent',
+                                      'Direct turn exited before native startup')
         refused = self.stop(ok=False)
         self.assertNotEqual(refused.returncode, 0)
         self.assertIn('direct turn is unsupported', refused.stderr)
@@ -303,7 +308,7 @@ class Stop(unittest.TestCase):
         self.action(stream, exit_fixture=True)
         self.finish(observer)
         self.assertEqual(self.completed()['nativeStatus'], 'exit 0')
-        self.eventually(lambda: not self.owned_processes(), 'stopped native question processes remained')
+        self.shutdown_idle_database_owner('stopped native question processes remained')
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertEqual(self.coord('delivery', request['id'])['receipt'], 'parent-received')
         self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])

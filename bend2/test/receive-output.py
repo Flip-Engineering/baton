@@ -219,7 +219,7 @@ class NativeFailureOutput(unittest.TestCase):
         self.assertEqual(fixture.coord('inbox', 'root'), [])
         self.assertTrue((attempt / 'released').exists())
         self.assertTrue((attempt / 'acknowledged').exists())
-        fixture.eventually(lambda: not fixture.owned_processes(), 'The fixture retained a process after completion.')
+        fixture.shutdown_idle_database_owner('The fixture retained a process after completion.')
         print(json.dumps({'test': self.id(), 'coordinatorExit': observer.returncode,
                           'nativeWaitStatus': native_status,
                           'nativeExit': os.waitstatus_to_exitcode(native_status), 'stderr': stderr,
@@ -260,7 +260,7 @@ class NativeFailureOutput(unittest.TestCase):
         self.assertEqual(fixture.coord('player', 'parent')['native'], 'native-parent')
         self.assertEqual(fixture.coord('inbox', 'parent'), [])
         self.assertEqual(fixture.coord('inbox', 'root'), [])
-        fixture.eventually(lambda: not fixture.owned_processes(), 'Direct replay left a fixture process.')
+        fixture.shutdown_idle_database_owner('Direct replay left a fixture process.')
         print(json.dumps({'test': self.id(), 'coordinatorExit': child.returncode,
                           'stderr': stderr, 'queuedInputCompleted': True,
                           'nativeIdentity': resumed['native']}))
