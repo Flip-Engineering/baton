@@ -536,7 +536,7 @@ law a_requested_common_answer_returns_the_held_decision_with_the_reads:
   for reads: AssocReads
   {requested_compared(AssociationRequested{"attempt-1", "/common", "tgt", "/repo", "cand", "base", "/holder", ""}, candidate_oid, basis_oid, head, "/common", "/common", T.GRun{0, "/common"}, reads) == IO.pure(Association, AssociationHeld{AssociationRequested{"attempt-1", "/common", "tgt", "/repo", "cand", "base", "/holder", ""}, candidate_oid, basis_oid, head, "/common", "/common", reads}) : IO(Association)}
 
-def a_requested_common_answer_returns_the_held_decision_with_the_reads(request, candidate_oid, basis_oid, head, reads):
+def a_requested_common_answer_returns_the_held_decision_with_the_reads(candidate_oid, basis_oid, head, reads):
   {==}
 
 law the_six_read_positions_start_skipped:
