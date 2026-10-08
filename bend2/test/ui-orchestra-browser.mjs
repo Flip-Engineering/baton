@@ -255,10 +255,11 @@ await until('page reconnects and resumes at its cursor',
 check('no duplicated transitions after reconnect', await evalJs(
   `(() => { const rows = [...document.querySelectorAll('#transitions li')].map((li) => li.textContent); return new Set(rows).size === rows.length; })()`));
 
-// retention gap: prune below the page cursor, then commit; page gaps and resnapshots
+// Remove an unnotified change after the page cursor, then let a later commit reveal the gap.
+baton('message', 'qa-guidance-pruned', 'root', 'worker', 'guidance', 'Committed without a notice.');
 {
   const db = new DatabaseSync(DB);
-  db.exec('DELETE FROM native_changes WHERE change_id <= (SELECT max(change_id) - 1 FROM native_changes)');
+  db.exec('DELETE FROM native_changes WHERE change_id <= (SELECT max(change_id) FROM native_changes)');
   db.close();
 }
 baton('message', 'qa-guidance-3', 'root', 'worker', 'guidance', 'After pruning.');
