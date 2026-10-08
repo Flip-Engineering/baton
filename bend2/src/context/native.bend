@@ -1362,7 +1362,7 @@ def managed_prepare_anchor(+db: String, +binding: String, +owner: String,
   do IO<Unit>:
     guard_identity : String = ContextIdentity.guard_identity(binding,
       ContextIdentity.SubjectQuery{query}, ContextIdentity.RoleStarter{}, "0")
-    physical_identity : String = ContextIdentity.physical_role_identity(
+    +physical_identity : String = ContextIdentity.physical_role_identity(
       ContextIdentity.SubjectQuery{query}, ContextIdentity.RoleStarter{})
     physical_role_key : String <- IO.try(String,
       ContextIdentity.physical_role_key(physical_identity))
