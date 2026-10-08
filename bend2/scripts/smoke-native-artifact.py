@@ -322,8 +322,10 @@ def main():
         parent = json.loads((output / 'parent-delivery.json').read_text())
         require(complete['pid'] == start['pid'] and complete['stdin_eof'], 'Native completion record differs')
         require(parent['message']['body'] == config['report'], 'Parent report body differs')
-        for pid, path in [(start['pid'], helper), (start['ppid'], binary), (parent['pid'], helper)]:
+        for pid, path in [(start['pid'], helper), (parent['pid'], helper)]:
             wait_exit(pid, path, commands, ps)
+        commands.call('instance-shutdown', [binary, '--instance-shutdown', db])
+        wait_exit(start['ppid'], binary, commands, ps)
         records = [json.loads(p.read_text()) for p in (output / 'commands').glob('*.json')]
         pids = sorted({r['pid'] for r in records} | {start['pid'], start['ppid'], parent['pid']})
         remaining = commands.call('process-closure', [ps, '-ww', '-p', ','.join(map(str, pids)),
