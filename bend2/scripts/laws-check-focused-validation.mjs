@@ -200,7 +200,8 @@ mkdirSync(CASES, { recursive: true });
 cpSync(join(SOURCE, 'bend2'), join(CASES, 'bend2'), { recursive: true });
 persistSummary();
 bendCheck('baseline-source-check');
-if (!commands.at(-1).passed) {
+const baselinePassed = commands.at(-1).passed;
+if (!baselinePassed) {
   gateStatus = 'failed';
   controlFailures.push({ phase: 'baseline', name: 'baseline-source-check', exitCode: commands.at(-1).exitCode });
   persistSummary();
@@ -215,9 +216,11 @@ for (const item of selected) {
   const result = bendCheck(`mutation-${item.name}`);
   const output = readFileSync(join(OUTPUT, result.stderr.path), 'utf8') + readFileSync(join(OUTPUT, result.stdout.path), 'utf8');
   result.expectedDiagnosticLaw = item.law;
-  result.passed = result.exitCode !== 0 && output.includes(item.law);
+  result.expectedDiagnosticObserved = result.exitCode !== 0 && output.includes(item.law);
+  result.qualification = baselinePassed ? 'qualified' : 'unqualified-baseline-failed';
+  result.passed = baselinePassed && result.expectedDiagnosticObserved;
   restore(item.file);
-  if (!result.passed) {
+  if (baselinePassed && !result.passed) {
     gateStatus = 'failed';
     controlFailures.push({ phase: 'mutation', name: item.name, law: item.law, exitCode: result.exitCode });
     persistSummary();
@@ -243,9 +246,11 @@ for (const item of selected) {
   const result = bendCheck(`proof-removal-${item.law}`);
   const output = readFileSync(join(OUTPUT, result.stderr.path), 'utf8') + readFileSync(join(OUTPUT, result.stdout.path), 'utf8');
   result.expectedDiagnosticLaw = item.law;
-  result.passed = result.exitCode !== 0 && output.includes(item.law);
+  result.expectedDiagnosticObserved = result.exitCode !== 0 && output.includes(item.law);
+  result.qualification = baselinePassed ? 'qualified' : 'unqualified-baseline-failed';
+  result.passed = baselinePassed && result.expectedDiagnosticObserved;
   restore(declaration[0].path);
-  if (!result.passed) {
+  if (baselinePassed && !result.passed) {
     gateStatus = 'failed';
     controlFailures.push({ phase: 'proof-removal', name: item.name, law: item.law, exitCode: result.exitCode });
     persistSummary();
