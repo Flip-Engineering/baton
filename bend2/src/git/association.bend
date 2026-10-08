@@ -82,11 +82,6 @@ def reads_destination_of(reads: AssocReads) -> AssocRead:
   match reads:
     case AssocReads{candidate, basis, target, ancestor, holder, destination}: destination
 
-def read_observation(read: AssocRead) -> T.GitOut:
-  match read:
-    case AssocReadPerformed{observation}: observation
-    case AssocReadSkipped{}: T.GBroken{"the read was not performed"}
-
 def read_performed(read: AssocRead) -> Bool:
   match read:
     case AssocReadPerformed{observation}: True{}
@@ -249,17 +244,18 @@ def refuse(step: String, request: AssociationRequest, observation: T.GitOut, rea
   +o = observation
   IO.pure(Association, AssociationRefused{req, step, o, reads})
 
-def requested_compared(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, destination_common: String, reads: AssocReads) -> IO(Association):
+def requested_compared(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, destination_common: String, destination_observed: T.GitOut, reads: AssocReads) -> IO(Association):
   +req = request
   +cand = candidate
   +base = basis
   +tip = head
   +holder_common = common
   +dest_common = destination_common
+  +dest_obs = destination_observed
   +seen = reads
   Bool.pick(IO(Association), Tx.str_eq(holder_common, assocreq_common(req)),
     IO.pure(Association, AssociationHeld{req, cand, base, tip, holder_common, dest_common, seen}),
-    refuse("requested-common", req, read_observation(reads_destination_of(seen)), seen))
+    refuse("requested-common", req, dest_obs, seen))
 
 def common_compared(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, observation: T.GitOut, destination_common: String, reads: AssocReads) -> IO(Association):
   +req = request
@@ -271,7 +267,7 @@ def common_compared(request: AssociationRequest, candidate: String, basis: Strin
   +dest_common = destination_common
   +seen = reads
   Bool.pick(IO(Association), Tx.str_eq(holder_common, dest_common),
-    requested_compared(req, cand, base, tip, holder_common, dest_common, seen),
+    requested_compared(req, cand, base, tip, holder_common, dest_common, obs, seen),
     refuse("common", req, obs, seen))
 
 def destination_decided(request: AssociationRequest, candidate: String, basis: String, head: String, common: String, observation: T.GitOut, reads: AssocReads) -> IO(Association):
@@ -281,7 +277,7 @@ def destination_decided(request: AssociationRequest, candidate: String, basis: S
   +tip = head
   +holder_common = common
   +obs = observation
-  +seen = reads
+  +seen = reads_destination(reads, AssocReadPerformed{obs})
   Bool.pick(IO(Association), read_failed(obs),
     refuse("destination-common", req, obs, seen),
     common_compared(req, cand, base, tip, holder_common, obs, oid_of(obs), seen))
@@ -294,8 +290,8 @@ def destination_read(request: AssociationRequest, candidate: String, basis: Stri
   +holder_common = common
   +seen = reads
   do IO<Association>:
-    observed : T.GitOut <- Git.runGit(assocreq_destination(req), ["rev-parse", "--path-format=absolute", "--git-common-dir"])
-    destination_decided(req, cand, base, tip, holder_common, observed, reads_destination(seen, AssocReadPerformed{observed}))
+    +observed : T.GitOut <- Git.runGit(assocreq_destination(req), ["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    destination_decided(req, cand, base, tip, holder_common, observed, seen)
 
 def holder_decided(request: AssociationRequest, candidate: String, basis: String, head: String, observation: T.GitOut, reads: AssocReads) -> IO(Association):
   +req = request
@@ -303,7 +299,7 @@ def holder_decided(request: AssociationRequest, candidate: String, basis: String
   +base = basis
   +tip = head
   +obs = observation
-  +seen = reads
+  +seen = reads_holder(reads, AssocReadPerformed{obs})
   Bool.pick(IO(Association), read_failed(obs),
     refuse("holder-common", req, obs, seen),
     destination_read(req, cand, base, tip, oid_of(obs), seen))
@@ -315,8 +311,8 @@ def holder_read(request: AssociationRequest, candidate: String, basis: String, h
   +tip = head
   +seen = reads
   do IO<Association>:
-    observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["rev-parse", "--path-format=absolute", "--git-common-dir"])
-    holder_decided(req, cand, base, tip, observed, reads_holder(seen, AssocReadPerformed{observed}))
+    +observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    holder_decided(req, cand, base, tip, observed, seen)
 
 def ancestor_decided(request: AssociationRequest, candidate: String, basis: String, head: String, observation: T.GitOut, reads: AssocReads) -> IO(Association):
   +req = request
@@ -324,7 +320,7 @@ def ancestor_decided(request: AssociationRequest, candidate: String, basis: Stri
   +base = basis
   +tip = head
   +obs = observation
-  +seen = reads
+  +seen = reads_ancestor(reads, AssocReadPerformed{obs})
   Bool.pick(IO(Association), read_failed(obs),
     refuse("ancestor", req, obs, seen),
     holder_read(req, cand, base, tip, seen))
@@ -338,8 +334,8 @@ def ancestor_read(request: AssociationRequest, candidate: String, basis: String,
   Bool.pick(IO(Association), Tx.str_eq(tip, ""),
     holder_read(req, cand, base, tip, seen),
     do IO<Association>:
-        observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["merge-base", "--is-ancestor", "--end-of-options", tip, cand])
-        ancestor_decided(req, cand, base, tip, observed, reads_ancestor(seen, AssocReadPerformed{observed})))
+        +observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["merge-base", "--is-ancestor", "--end-of-options", tip, cand])
+        ancestor_decided(req, cand, base, tip, observed, seen))
 
 def target_profile(request: AssociationRequest, candidate: String, basis: String, observation: T.GitOut, reads: AssocReads) -> IO(Association):
   +req = request
@@ -367,7 +363,7 @@ def target_decided(request: AssociationRequest, candidate: String, basis: String
   +cand = candidate
   +base = basis
   +obs = observation
-  +seen = reads
+  +seen = reads_target(reads, AssocReadPerformed{obs})
   Bool.pick(IO(Association), ref_absent(obs),
     ancestor_read(req, cand, base, "", seen),
     target_present(req, cand, base, obs, seen))
@@ -378,8 +374,8 @@ def target_read(request: AssociationRequest, candidate: String, basis: String, r
   +base = basis
   +seen = reads
   do IO<Association>:
-    observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["rev-parse", "--verify", "--quiet", "--end-of-options", Tx.str_cat("refs/heads/", assocreq_target(req))])
-    target_decided(req, cand, base, observed, reads_target(seen, AssocReadPerformed{observed}))
+    +observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["rev-parse", "--verify", "--quiet", "--end-of-options", Tx.str_cat("refs/heads/", assocreq_target(req))])
+    target_decided(req, cand, base, observed, seen)
 
 # An absent target ref is the first landing and is carried as an empty head; a failed read is
 # refused with its own observation, and a present ref must still answer a supported name.
@@ -398,7 +394,7 @@ def basis_checked(request: AssociationRequest, candidate: String, observation: T
   +req = request
   +cand = candidate
   +obs = observation
-  +seen = reads
+  +seen = reads_basis(reads, AssocReadPerformed{obs})
   Bool.pick(IO(Association), read_failed(obs),
     refuse("basis", req, obs, seen),
     basis_profile(req, cand, obs, oid_of(obs), seen))
@@ -408,8 +404,8 @@ def basis_read(request: AssociationRequest, candidate: String, reads: AssocReads
   +cand = candidate
   +seen = reads
   do IO<Association>:
-    observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["rev-parse", "--verify", "--end-of-options", Tx.str_cat(assocreq_basis(req), "^{commit}")])
-    basis_checked(req, cand, observed, reads_basis(seen, AssocReadPerformed{observed}))
+    +observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["rev-parse", "--verify", "--end-of-options", Tx.str_cat(assocreq_basis(req), "^{commit}")])
+    basis_checked(req, cand, observed, seen)
 
 def oid_profile(step: String, request: AssociationRequest, observation: T.GitOut, oid: String, reads: AssocReads) -> IO(Association):
   +s = step
@@ -425,7 +421,7 @@ def oid_checked(step: String, request: AssociationRequest, observation: T.GitOut
   +s = step
   +req = request
   +obs = observation
-  +seen = reads
+  +seen = reads_candidate(reads, AssocReadPerformed{obs})
   Bool.pick(IO(Association), read_failed(obs),
     refuse(s, req, obs, seen),
     oid_profile(s, req, obs, oid_of(obs), seen))
@@ -440,8 +436,8 @@ def Association.decide_observed(request: AssociationRequest, observation: T.GitO
 def Association.decide(request: AssociationRequest) -> IO(Association):
   +req = request
   do IO<Association>:
-    observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["rev-parse", "--verify", "--end-of-options", Tx.str_cat(assocreq_candidate(req), "^{commit}")])
-    Association.decide_observed(req, observed, reads_candidate(reads_none(), AssocReadPerformed{observed}))
+    +observed : T.GitOut <- Git.runGit(assocreq_holder(req), ["rev-parse", "--verify", "--end-of-options", Tx.str_cat(assocreq_candidate(req), "^{commit}")])
+    Association.decide_observed(req, observed, reads_none())
 
 law a_full_lowercase_hex_name_is_an_oid:
   {oid_ok("0123456789abcdef0123456789abcdef01234567") == True{} : Bool}
@@ -549,20 +545,9 @@ law a_requested_common_answer_returns_the_held_decision_with_the_reads:
   for basis_oid: String
   for head: String
   for reads: AssocReads
-  {requested_compared(request, candidate_oid, basis_oid, head, assocreq_common(request), assocreq_common(request), reads) == IO.pure(Association, AssociationHeld{request, candidate_oid, basis_oid, head, assocreq_common(request), assocreq_common(request), reads}) : IO(Association)}
+  {requested_compared(request, candidate_oid, basis_oid, head, assocreq_common(request), assocreq_common(request), T.GRun{0, assocreq_common(request)}, reads) == IO.pure(Association, AssociationHeld{request, candidate_oid, basis_oid, head, assocreq_common(request), assocreq_common(request), reads}) : IO(Association)}
 
 def a_requested_common_answer_returns_the_held_decision_with_the_reads(request, candidate_oid, basis_oid, head, reads):
-  {==}
-
-law a_requested_common_mismatch_keeps_the_destination_observation_and_the_reads:
-  for request: AssociationRequest
-  for candidate_oid: String
-  for basis_oid: String
-  for head: String
-  for reads: AssocReads
-  {requested_compared(request, candidate_oid, basis_oid, head, "/other", "/other", reads) == IO.pure(Association, AssociationRefused{request, "requested-common", read_observation(reads_destination_of(reads)), reads}) : IO(Association)}
-
-def a_requested_common_mismatch_keeps_the_destination_observation_and_the_reads(request, candidate_oid, basis_oid, head, reads):
   {==}
 
 law the_six_read_positions_start_skipped:
@@ -577,8 +562,48 @@ law each_position_stores_the_observation_it_was_given:
 def each_position_stores_the_observation_it_was_given():
   {==}
 
-law a_performed_read_keeps_its_unnormalized_bytes:
-  {read_observation(AssocReadPerformed{T.GRun{0, "/common\n"}}) == T.GRun{0, "/common\n"} : T.GitOut}
+law a_performed_position_keeps_its_unnormalized_bytes:
+  {reads_holder_of(reads_holder(reads_none(), AssocReadPerformed{T.GRun{0, "/common\n"}})) == AssocReadPerformed{T.GRun{0, "/common\n"}} : AssocRead}
 
-def a_performed_read_keeps_its_unnormalized_bytes():
+def a_performed_position_keeps_its_unnormalized_bytes():
+  {==}
+
+law a_requested_common_mismatch_keeps_both_commons_the_destination_bytes_and_the_reason:
+  for reads: AssocReads
+  {requested_compared(AssociationRequested{"attempt-1", "/requested", "tgt", "/repo", "cand", "base", "/holder", ""}, "cand", "base", "base", "/observed", "/observed", T.GRun{0, "/observed\n"}, reads) == IO.pure(Association, AssociationRefused{AssociationRequested{"attempt-1", "/requested", "tgt", "/repo", "cand", "base", "/holder", ""}, "requested-common", T.GRun{0, "/observed\n"}, reads}) : IO(Association)}
+
+def a_requested_common_mismatch_keeps_both_commons_the_destination_bytes_and_the_reason(reads):
+  {==}
+
+law the_two_common_reads_are_recorded_in_their_own_positions:
+  for request: AssociationRequest
+  for candidate: String
+  for basis: String
+  for head: String
+  for reads: AssocReads
+  {destination_decided(request, candidate, basis, head, "/common", T.GRun{0, "/common"}, reads) == common_compared(request, candidate, basis, head, "/common", T.GRun{0, "/common"}, "/common", reads_destination(reads, AssocReadPerformed{T.GRun{0, "/common"}})) : IO(Association)}
+
+def the_two_common_reads_are_recorded_in_their_own_positions(request, candidate, basis, head, reads):
+  {==}
+
+law a_failed_destination_read_is_recorded_in_its_position_and_refused:
+  for request: AssociationRequest
+  for candidate: String
+  for basis: String
+  for head: String
+  for common: String
+  for reads: AssocReads
+  {destination_decided(request, candidate, basis, head, common, T.GRun{128, "fatal: not a git repository\n"}, reads) == IO.pure(Association, AssociationRefused{request, "destination-common", T.GRun{128, "fatal: not a git repository\n"}, reads_destination(reads, AssocReadPerformed{T.GRun{128, "fatal: not a git repository\n"}})}) : IO(Association)}
+
+def a_failed_destination_read_is_recorded_in_its_position_and_refused(request, candidate, basis, head, common, reads):
+  {==}
+
+law an_absent_target_read_is_recorded_and_skips_the_ancestor:
+  for request: AssociationRequest
+  for candidate: String
+  for basis: String
+  for reads: AssocReads
+  {target_decided(request, candidate, basis, T.GRun{1, ""}, reads) == ancestor_read(request, candidate, basis, "", reads_target(reads, AssocReadPerformed{T.GRun{1, ""}})) : IO(Association)}
+
+def an_absent_target_read_is_recorded_and_skips_the_ancestor(request, candidate, basis, reads):
   {==}
