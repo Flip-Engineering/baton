@@ -268,28 +268,28 @@ def hex_decode(s: String) -> String:
 # byte as a percent sign and two lowercase hexadecimal digits, percent itself included. Each byte of a
 # multi-byte character is written, so a code point is not one byte here. Receipt.guard_path is the producer
 # of the observed path; this function is the expected naming and states no observation.
-def ref_punctuation(code: U32) -> Bool:
+def ref_punctuation(+code: U32) -> Bool:
   Bool.pick(Bool, U32.is_eq(code, 45), True{},
     Bool.pick(Bool, U32.is_eq(code, 46), True{}, U32.is_eq(code, 95)))
 
-def ref_digit(code: U32) -> Bool:
+def ref_digit(+code: U32) -> Bool:
   Bool.pick(Bool, U32.is_lt(code, 48), False{}, U32.is_lt(code, 58))
 
-def ref_upper(code: U32) -> Bool:
+def ref_upper(+code: U32) -> Bool:
   Bool.pick(Bool, U32.is_lt(code, 65), False{}, U32.is_lt(code, 91))
 
-def ref_lower(code: U32) -> Bool:
+def ref_lower(+code: U32) -> Bool:
   Bool.pick(Bool, U32.is_lt(code, 97), False{}, U32.is_lt(code, 123))
 
-def ref_is_literal(code: U32) -> Bool:
+def ref_is_literal(+code: U32) -> Bool:
   Bool.pick(Bool, ref_punctuation(code), True{},
     Bool.pick(Bool, ref_digit(code), True{},
       Bool.pick(Bool, ref_upper(code), True{}, ref_lower(code))))
 
-def ref_hex_digit(n: U32) -> Char:
+def ref_hex_digit(+n: U32) -> Char:
   Bool.pick(Char, U32.is_lt(n, 10), Char.from_u32(U32.add(48, n)), Char.from_u32(U32.add(87, n)))
 
-def ref_byte_piece(u: U32) -> String:
+def ref_byte_piece(+u: U32) -> String:
   +hi = U32.shrn(u, 4)
   +lo = U32.and(u, 15)
   str_cat("%", str_cat(one_char(ref_hex_digit(hi)), one_char(ref_hex_digit(lo))))
@@ -309,7 +309,7 @@ def ref_pieces_4(b1: U32, b2: U32, b3: U32, b4: U32) -> List<String>:
 def ref_cont(b: U32) -> U32:
   U32.or(128, U32.and(b, 63))
 
-def ref_pieces_of(code: U32, width: U32) -> List<String>:
+def ref_pieces_of(+code: U32, +width: U32) -> List<String>:
   Bool.pick(List<String>, U32.is_eq(width, 1), ref_pieces_1(code),
     Bool.pick(List<String>, U32.is_eq(width, 2), ref_pieces_2(U32.or(192, U32.and(U32.shrn(code, 6), 31)), ref_cont(code)),
       Bool.pick(List<String>, U32.is_eq(width, 3),
@@ -341,16 +341,16 @@ def carries_nul(s: String) -> Bool:
 
 # An empty target and an embedded NUL in either operand are refused by the producer, so the expected rule
 # answers None for them rather than naming a path.
-def guard_naming_refused(common: String, target: String) -> Bool:
+def guard_naming_refused(common: String, +target: String) -> Bool:
   Bool.pick(Bool, String.is_empty(target), True{},
     Bool.pick(Bool, carries_nul(common), True{}, carries_nul(target)))
 
-def expected_guard_path(common: String, target: String) -> Maybe<String>:
+def expected_guard_path(+common: String, +target: String) -> Maybe<String>:
   Bool.pick(Maybe<String>, guard_naming_refused(common, target),
     None{},
     Some{str_cat(common, str_cat("/baton2-landing", str_cat("/", str_cat(ref_encode(target), ".lock"))))})
 
-def guard_matches(expected: Maybe<String>, guard: String) -> Bool:
+def guard_matches(+expected: Maybe<String>, +guard: String) -> Bool:
   match expected:
     case None{}: False{}
     case Some{path}: str_eq(guard, path)
