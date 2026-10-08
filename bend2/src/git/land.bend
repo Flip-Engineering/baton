@@ -814,9 +814,69 @@ type IdentityEvidence is Data:
   IdentityMissing{}
   IdentityObserved{common: String, observed: T.GitOut, target: String}
 
+# The fixed operands the intent request named, and the two producer outcomes, written whole so the
+# record carries the tags, paths, pending values and payloads the producers returned.
+def intent_request_fields(request: It.IntentInput, rest: List<String>) -> List<String>:
+  match request:
+    case It.IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}:
+      Con{"intent-request", Con{attempt, Con{common, Con{target, Con{destination, Con{candidate, Con{basis, Con{intent_path, Con{holder, Con{retry, rest}}}}}}}}}}}
+
+def host_error_fields(error: T.HostError, rest: List<String>) -> List<String>:
+  match error:
+    case T.HostError{code, detail}: Con{"host-error", Con{U32.show(code), Con{detail, rest}}}
+
+def publish_fields(outcome: Pb.IntentPublish, rest: List<String>) -> List<String>:
+  match outcome:
+    case Pb.IntentBytesPublished{request, raw, path, content}:
+      Con{"published", Con{raw, Con{path, Con{content, intent_request_fields(request, rest)}}}}
+    case Pb.PublishRefused{request, step, name, raw}:
+      Con{"publish-refused", Con{step, Con{name, Con{raw, intent_request_fields(request, rest)}}}}
+    case Pb.PublishExistingPending{request, raw, path}:
+      Con{"publish-existing-pending", Con{raw, Con{path, intent_request_fields(request, rest)}}}
+    case Pb.PublishContentMismatch{request, raw, expected, found}:
+      Con{"publish-content-mismatch", Con{raw, Con{expected, Con{found, intent_request_fields(request, rest)}}}}
+    case Pb.PublishReadbackFailed{request, publication, path, error}:
+      Con{"publish-readback-failed", Con{publication, Con{path, host_error_fields(error, intent_request_fields(request, rest))}}}
+    case Pb.PublishHostFailed{step, request, error}:
+      Con{"publish-host-failed", Con{step, host_error_fields(error, intent_request_fields(request, rest))}}
+
+def prepared_fields(outcome: It.IntentPrepared, rest: List<String>) -> List<String>:
+  match outcome:
+    case It.IntentObserved{request, raw, qualified_path, head, index, status}:
+      Con{"intent-observed", Con{raw, Con{qualified_path, observation_fields(head, observation_fields(index, observation_fields(status, intent_request_fields(request, rest))))}}}
+    case It.IntentUnready{step, reason, raw}:
+      Con{"intent-unready", Con{step, Con{reason, Con{raw, rest}}}}
+    case It.IntentPending{request, raw, pending}:
+      Con{"intent-pending", Con{raw, Con{pending, intent_request_fields(request, rest)}}}
+    case It.IntentHostFailed{step, request, error}:
+      Con{"intent-host-failed", Con{step, host_error_fields(error, intent_request_fields(request, rest))}}
+
+# The whole outcome the intent producer returned, or an explicit statement that no publication was
+# attempted. Keeping the outcome itself keeps its own tag, pending value, path and payload.
+type IntentPublication is Data:
+  IntentUnpublished{}
+  IntentPublished{outcome: Pb.IntentPublish}
+
+# The whole outcome the intent preparation returned, or an explicit statement that qualification was
+# not reached.
+type IntentPreparation is Data:
+  IntentUnprepared{}
+  IntentPrepared{outcome: It.IntentPrepared}
+
+# The three raw results a held route's holder observation produced. An unheld route performs none of
+# them and says so, rather than performing repository reads and discarding them.
+type IntentHolderReads is Data:
+  IntentHolderUnperformed{}
+  IntentHolderRead{head: T.GitOut, index: T.GitOut, status: T.GitOut}
+
+# The intent evidence: the request the attempt fixed, the path that request was expected to name, the
+# publication outcome, the preparation outcome and the holder reads. The expected path is an operand,
+# not an observation, and the older two-field form remains for landing-era evidence.
 type IntentEvidence is Data:
   IntentMissing{}
   IntentObserved{path: String, raw: String}
+  IntentBound{request: It.IntentInput, expected_path: String, publication: IntentPublication,
+              preparation: IntentPreparation, holder: IntentHolderReads}
 
 # The reservation the attempt's path was created under: the parent directory and the name the
 # reserve call used. Retaining both lets admission evaluate the path the name implies and compare
@@ -954,10 +1014,27 @@ def association_fields(association: AssociationEvidence, rest: List<String>) -> 
     case AssociationObserved{step, request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads}:
       Con{"association-observed", Con{step, Con{candidate_oid, Con{basis_oid, Con{target_head, Con{holder_common, Con{destination_common, request_fields(request, reads_fields(reads, rest))}}}}}}}
 
+def intent_publication_fields(publication: IntentPublication, rest: List<String>) -> List<String>:
+  match publication:
+    case IntentUnpublished{}: Con{"publication-unperformed", rest}
+    case IntentPublished{outcome}: Con{"publication-outcome", publish_fields(outcome, rest)}
+
+def intent_preparation_fields(preparation: IntentPreparation, rest: List<String>) -> List<String>:
+  match preparation:
+    case IntentUnprepared{}: Con{"preparation-unperformed", rest}
+    case IntentPrepared{outcome}: Con{"preparation-outcome", prepared_fields(outcome, rest)}
+
+def intent_holder_fields(holder: IntentHolderReads, rest: List<String>) -> List<String>:
+  match holder:
+    case IntentHolderUnperformed{}: Con{"holder-unperformed", rest}
+    case IntentHolderRead{head, index, status}: Con{"holder-read", observation_fields(head, observation_fields(index, observation_fields(status, rest)))}
+
 def intent_fields(intent: IntentEvidence, rest: List<String>) -> List<String>:
   match intent:
     case IntentMissing{}: Con{"intent-missing", rest}
     case IntentObserved{path, raw}: Con{"intent-observed", Con{path, Con{raw, rest}}}
+    case IntentBound{request, expected_path, publication, preparation, holder}:
+      Con{"intent-bound", Con{expected_path, intent_publication_fields(publication, intent_preparation_fields(preparation, intent_holder_fields(holder, intent_request_fields(request, rest))))}}
 
 def decision_fields(decision: LAdv, rest: List<String>) -> List<String>:
   match decision:
@@ -1701,6 +1778,7 @@ def intent_observed(intent: IntentEvidence) -> Bool:
   match intent:
     case IntentMissing{}: False{}
     case IntentObserved{path, raw}: True{}
+    case IntentBound{request, expected_path, publication, preparation, holder}: True{}
 
 def decision_landed(decision: LAdv) -> Bool:
   match decision:
@@ -1853,9 +1931,83 @@ def association_bound(association: AssociationEvidence, +candidate: String, +bas
     case AssociationMissing{}: False{}
     case AssociationRefused{request, step, observation, reads}: False{}
 
-def intent_bound(intent: IntentEvidence, reserved: String) -> Bool:
+# The intent path the attempt's own reservation implies. It is an operand for comparison, never a host
+# result.
+def intent_expected_path(reserved: String) -> String:
+  shared_parent_path(reserved, "intent")
+
+# The request must name the attempt's reservation and every fixed operand, and the path the producer
+# admitted must be that path.
+def intent_request_bound(request: It.IntentInput, reserved: String, name: String, common: String, repo: String, target: String, candidate: String, basis: String, holder: String) -> Bool:
+  Bool.pick(Bool, Tx.str_eq(It.requested_attempt(request), name),
+    Bool.pick(Bool, Tx.str_eq(It.requested_common(request), common),
+      Bool.pick(Bool, Tx.str_eq(It.requested_target(request), target),
+        Bool.pick(Bool, Tx.str_eq(It.requested_destination(request), repo),
+          Bool.pick(Bool, Tx.str_eq(It.requested_candidate(request), candidate),
+            Bool.pick(Bool, Tx.str_eq(It.requested_basis(request), basis),
+              Bool.pick(Bool, Tx.str_eq(It.requested_holder(request), holder),
+                Tx.str_eq(It.requested_path(request), intent_expected_path(reserved)),
+                False{}), False{}), False{}), False{}), False{}), False{}), False{})
+
+# Only the producer's own fresh publication at the expected path is a success. Every refusal outcome
+# and an unperformed publication are refused here and keep their evidence in the record.
+def intent_publication_bound(publication: IntentPublication, expected_path: String) -> Bool:
+  match publication:
+    case IntentPublished{outcome}:
+      match outcome:
+        case Pb.IntentBytesPublished{request, raw, path, content}:
+          Bool.pick(Bool, Tx.non_empty(raw), Bool.pick(Bool, Tx.str_eq(path, expected_path), Tx.non_empty(content), False{}), False{})
+        case Pb.PublishRefused{request, step, name, raw}: False{}
+        case Pb.PublishExistingPending{request, raw, path}: False{}
+        case Pb.PublishContentMismatch{request, raw, expected, found}: False{}
+        case Pb.PublishReadbackFailed{request, publication, path, error}: False{}
+        case Pb.PublishHostFailed{step, request, error}: False{}
+    case IntentUnpublished{}: False{}
+
+# The qualification must be the observed intent of that same path with its producer record.
+def intent_preparation_bound(preparation: IntentPreparation, expected_path: String) -> Bool:
+  match preparation:
+    case IntentPrepared{outcome}:
+      match outcome:
+        case It.IntentObserved{request, raw, qualified_path, head, index, status}:
+          Bool.pick(Bool, Tx.non_empty(raw), Tx.str_eq(qualified_path, expected_path), False{})
+        case It.IntentUnready{step, reason, raw}: False{}
+        case It.IntentPending{request, raw, pending}: False{}
+        case It.IntentHostFailed{step, request, error}: False{}
+    case IntentUnprepared{}: False{}
+
+# A held route must have performed all three holder reads successfully; an unheld route performs none of
+# them and says so. An unknown route asserts nothing.
+def intent_holder_bound(reads: IntentHolderReads, mode: MutationMode) -> Bool:
+  match mode:
+    case MutationHeld{path}:
+      match reads:
+        case IntentHolderRead{head, index, status}:
+          Bool.pick(Bool, observation_succeeded(head),
+            Bool.pick(Bool, Tx.non_empty(observation_value(head)),
+              Bool.pick(Bool, observation_succeeded(index), observation_succeeded(status), False{}),
+              False{}),
+            False{})
+        case IntentHolderUnperformed{}: False{}
+    case MutationUnheld{}:
+      match reads:
+        case IntentHolderUnperformed{}: True{}
+        case IntentHolderRead{head, index, status}: False{}
+    case MutationUnknown{}: False{}
+
+def intent_bound(intent: IntentEvidence, reserved: String, name: String, common: String, repo: String, target: String, candidate: String, basis: String, holder: String, mode: MutationMode) -> Bool:
   match intent:
-    case IntentObserved{path, raw}: Tx.non_empty(raw)
+    case IntentBound{request, expected_path, publication, preparation, holder_reads}:
+      Bool.pick(Bool, Tx.str_eq(expected_path, intent_expected_path(reserved)),
+        Bool.pick(Bool, intent_request_bound(request, reserved, name, common, repo, target, candidate, basis, holder),
+          Bool.pick(Bool, intent_publication_bound(publication, expected_path),
+            Bool.pick(Bool, intent_preparation_bound(preparation, expected_path),
+              intent_holder_bound(holder_reads, mode),
+              False{}),
+            False{}),
+          False{}),
+        False{})
+    case IntentObserved{path, raw}: False{}
     case IntentMissing{}: False{}
 
 def evidence_complete(evidence: AttemptEvidence) -> Bool:
@@ -1867,7 +2019,7 @@ def evidence_complete(evidence: AttemptEvidence) -> Bool:
             Bool.pick(Bool, T.release_done(release),
               Bool.pick(Bool, identity_bound(identity, target),
                 Bool.pick(Bool, association_bound(association, candidate, basis, identity_common(identity), repo, target, qualification, reserved, reservation),
-                  Bool.pick(Bool, intent_bound(intent, reserved), True{}, False{}),
+                  Bool.pick(Bool, intent_bound(intent, reserved, reservation_name(reservation), identity_common(identity), repo, target, candidate, basis, mode_holder(qualification_mode(qualification), repo), qualification_mode(qualification)), True{}, False{}),
                   False{}),
                 False{}),
               False{}),
