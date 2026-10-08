@@ -2037,15 +2037,10 @@ class Receive(unittest.TestCase):
                          ['first', 'second'])
 
     def test_direct_receive_recovers_a_dead_attempt_behind_a_stale_running_phase(self):
-        """Crash recovery through adoption: the native completes while the
-        observer is frozen, then the observer and keepers die before the
-        observer records anything. A direct receive adopts the corpse,
-        records the completed turn from its retained output, and settles
-        the satisfied claim since the input was acknowledged. Nothing is
-        owed, so no second native starts; the single attempt carries the
-        adoption's release and acknowledgement markers. The host still
-        flags the keeperless observation unknown, so the run reports the
-        failure honestly instead of a false success."""
+        """A direct receive reads terminal output after observer and owner loss.
+        The adopted attempt records its report and observation markers, clears
+        the satisfied claim, and retains the unknown native exit status.
+        """
         self.player()
         self.prepare_input('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
@@ -2054,11 +2049,13 @@ class Receive(unittest.TestCase):
         before = self.claim_rows('parent')
         self.assertEqual(len(before), 1)
         directory = self.execution('parent')[2]
-        self.freeze_owned(spare_fixture=True)
-        self.action(control, body='Adopted result complete.')
+        os.kill(first.pid, signal.SIGSTOP)
+        self.action(control, body='Adopted result complete.', hold_exit=True)
+        self.assertEqual(json.loads(control.readline()), {'terminal_written': True})
         self.eventually(lambda: 'Adopted result complete.' in
                         pathlib.Path(directory, 'stdout').read_text(),
-                        'driven native never wrote its completion')
+                        'shared owner never spooled the driven native completion')
+        self.freeze_owned()
         first.kill()
         first.wait()
         self.kill_keeper(first)

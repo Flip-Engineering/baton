@@ -67,7 +67,7 @@ def outcome_failed(db: String, outcome: Turn.Outcome) -> IO(Bool):
 
 def native_observation_failed(outcome: Turn.Outcome) -> Bool:
   match outcome:
-    case Turn.Ended{status,event,error}: Turn.failed(status,event,error)
+    case Turn.Ended{status,event,error}: Bool.or(String.is_empty(event),Bool.not(String.is_empty(error)))
 
 def continue_if(again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), present: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match present:
@@ -318,8 +318,8 @@ def release_observer(lock: Maybe<U32>) -> IO(Unit):
 # recovery. A provider-reported failure in a fully observed terminal event still
 # fails the receive and leaves input owed, while its consumed native attempt can
 # be acknowledged and retired.
-def acknowledge_if_succeeded(failed: Bool, acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match failed:
+def acknowledge_if_observed(incomplete: Bool, acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match incomplete:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case False{}: acknowledge(Unit{})
 
@@ -331,7 +331,7 @@ def finish_pending(+db: String, +session: String, id: String, log: String, curso
     finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     stopped : Bool <- Stop.stopped(db,session)
-    ack : Result<&1,&1,U32 & String,Unit> <- acknowledge_if_succeeded(Bool.and(native_observation_failed(outcome),Bool.not(stopped)),acknowledge)
+    ack : Result<&1,&1,U32 & String,Unit> <- acknowledge_if_observed(Bool.and(native_observation_failed(outcome),Bool.not(stopped)),acknowledge)
     status : Result<&1,&1,U32 & String,Unit> <- exit_status(failed)
     next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))

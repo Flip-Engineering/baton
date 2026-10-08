@@ -1064,11 +1064,13 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
       error=br_file(keeper->directory,"acknowledged","acknowledged\n",13,1);
       if(!error) {
         keeper->finishing=1;
-        char *path=br_path(keeper->directory,"stdout");
-        int cleanup=path?0:ENOMEM;
-        if(path && unlink(path) && errno!=ENOENT)cleanup=errno;
-        free(path);
-        if(cleanup)br_note(keeper,"cleanup-error",cleanup);
+        if(keeper->status==0 && !keeper->status_unavailable) {
+          char *path=br_path(keeper->directory,"stdout");
+          int cleanup=path?0:ENOMEM;
+          if(path && unlink(path) && errno!=ENOENT)cleanup=errno;
+          free(path);
+          if(cleanup)br_note(keeper,"cleanup-error",cleanup);
+        }
       }
     }
   } else error=EINVAL;
@@ -1267,7 +1269,7 @@ static void br_keeper_stop(BrKeeper *keeper) {
 }
 /* Removes the per-attempt listener path only after acknowledgment has made the
    attempt terminal. The manifest's control path was verified before the owner
-   started this keeper; an unacknowledged or failed attempt keeps its socket and
+   started this keeper; an unacknowledged attempt keeps its socket and
    private directory for recovery. */
 static void br_keeper_cleanup_control_path(BrKeeper *keeper) {
   if(!keeper || !br_exists(keeper->directory,"acknowledged"))return;
@@ -2243,7 +2245,8 @@ static int br_owner_loop(BrOwner *owner) {
       keepers[slot]=keeper;bases[slot]=index;apart[slot]=bound;
       fds[index++]=(struct pollfd){keeper->listener,POLLIN,0};
       fds[index++]=(struct pollfd){keeper->client,POLLIN|(keeper->outgoing?POLLOUT:0),0};
-      fds[index++]=(struct pollfd){keeper->watch,POLLIN,0};
+      /* Spool notifications follow the attached observer's ready reply. */
+      fds[index++]=(struct pollfd){keeper->client>=0 && !keeper->ready?-1:keeper->watch,POLLIN,0};
       fds[index++]=(struct pollfd){keeper->wake[0],POLLIN,0};
       fds[index++]=(struct pollfd){keeper->writes?keeper->input:-1,POLLOUT,0};
       fds[index++]=(struct pollfd){keeper->native_life,POLLIN,0};

@@ -223,8 +223,9 @@ class NativeFailureOutput(unittest.TestCase):
         self.assertEqual(fixture.coord('inbox', 'parent'), [])
         self.assertEqual(fixture.coord('inbox', 'root'), [])
         self.assertTrue((attempt / 'released').exists())
-        self.assertFalse((attempt / 'acknowledged').exists(),
-                         'A failed native outcome must keep its retained attempt available for recovery.')
+        self.assertTrue((attempt / 'acknowledged').exists(),
+                        'The fully observed failed attempt was not acknowledged.')
+        self.assertIn('Original native failure retained.', (attempt / 'stdout').read_text())
         fixture.shutdown_idle_database_owner('The fixture retained a process after completion.')
         print(json.dumps({'test': self.id(), 'coordinatorExit': observer.returncode,
                           'nativeWaitStatus': native_status,
