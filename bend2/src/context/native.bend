@@ -1111,7 +1111,28 @@ def managed_recovery_bootstrap_json(+db: String, +owner: String, +query: String,
           bootstrap_digest, ManagedQuery.bootstrap_from_json(value, owner, query)),
         IO.die(Unit, 3, "managedRecoveryBootstrapEnvelope"))
 
-def managed_recovery_provider_answer(+db: String, +owner: String, +query: String,
+def managed_recovery_provider_rows(+db: String, +owner: String, +query: String,
+                                   +directory: String, +worktree: String,
+                                   +bootstrap_file: String, +executable: String,
+                                   +runtime_path: String,
+                                   result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Fail{error}: IO.die(Unit, 3, "managedRecoveryBootstrapRead")
+    case Done{+rows}:
+      managed_recovery_bootstrap_json(db, owner, query, directory, worktree,
+        bootstrap_file, executable, runtime_path, project_policy_json_rows(rows))
+
+def managed_recovery_provider_output(+db: String, +binding: String, +owner: String, +query: String,
+                                     +directory: String, +worktree: String,
+                                     +bootstrap_file: String, +executable: String,
+                                     +runtime_path: String, +value: String) -> IO(Unit):
+  do IO<Unit>:
+    rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+      Req.json_tree_sql(value))
+    managed_recovery_provider_rows(db, owner, query, directory, worktree,
+      bootstrap_file, executable, runtime_path, rows)
+
+def managed_recovery_provider_answer(+db: String, +binding: String, +owner: String, +query: String,
                                      +directory: String, +worktree: String,
                                      +bootstrap_file: String, +executable: String,
                                      +runtime_path: String,
@@ -1119,12 +1140,12 @@ def managed_recovery_provider_answer(+db: String, +owner: String, +query: String
   match answer:
     case ProviderOutput{+value, +status}:
       Bool.pick(IO(Unit), String.eq(status, "exit 0"),
-        managed_recovery_bootstrap_json(db, owner, query, directory, worktree,
-          bootstrap_file, executable, runtime_path, project_policy_json_rows(value)),
+        managed_recovery_provider_output(db, binding, owner, query, directory,
+          worktree, bootstrap_file, executable, runtime_path, value),
         IO.die(Unit, 3, "managedRecoveryBootstrapRead"))
     case other: IO.die(Unit, 3, "managedRecoveryBootstrapRead")
 
-def managed_recovery_provider(+db: String, +owner: String, +query: String,
+def managed_recovery_provider(+db: String, +binding: String, +owner: String, +query: String,
                               +directory: String, +worktree: String,
                               +bootstrap_file: String, +executable: String,
                               runtime: ProviderAnswer) -> IO(Unit):
@@ -1136,7 +1157,7 @@ def managed_recovery_provider(+db: String, +owner: String, +query: String,
             bootstrap_file), worktree, "/dev/null")
         answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
           worktree, SNil{}, spawned)
-        managed_recovery_provider_answer(db, owner, query, directory, worktree,
+        managed_recovery_provider_answer(db, binding, owner, query, directory, worktree,
           bootstrap_file, executable, path, answer)
     case other: IO.die(Unit, 3, "managedRecoveryNodeRuntime")
 
@@ -1146,8 +1167,9 @@ def recover_managed_query(+db: String, +owner: String, +query: String,
   do IO<Unit>:
     canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
     executable : String <- IO.try(String, Host.SessionLock.executable())
+    +database_binding : String <- IO.try(String, DB.Sql.binding(canonical_database))
     runtime : ProviderAnswer <- resolve_node_runtime(worktree)
-    managed_recovery_provider(canonical_database, owner, query, directory, worktree,
+    managed_recovery_provider(canonical_database, database_binding, owner, query, directory, worktree,
       bootstrap_file, executable, runtime)
 
 def managed_readiness_json(+bootstrap: ManagedQuery.Bootstrap,
@@ -1201,30 +1223,46 @@ def managed_bootstrap_persisted(+owner: String, +worktree: String, +query: Strin
       Bool.and(String.eq(boundary_text(value, "owner"), owner),
       Bool.and(String.eq(boundary_text(value, "worktree"), worktree),
       Bool.and(String.eq(boundary_text(value, "query"), query),
-      Bool.and(String.eq(boundary_text(value, "path"), path),
-        Nat.is_eq(String.length(boundary_text(value, "sha256")), 64n))))))
+        String.eq(boundary_text(value, "path"), path)))))
 
-def managed_bootstrap_persist_answer(+owner: String, +worktree: String,
+def managed_bootstrap_persisted_rows(+owner: String, +worktree: String,
                                     +query: String, +path: String,
-                                    answer: ProviderAnswer) -> Bool:
-  match answer:
-    case ProviderRefused{reason}: False{}
-    case ProviderRuntime{path, version}: False{}
-    case ProviderOutput{+value, +status}:
-      Bool.and(String.eq(status, "exit 0"),
-        managed_bootstrap_persisted(owner, worktree, query, path,
-          project_policy_json_rows(value)))
+                                    result: Result<&1,&1,U32 & String,String>) -> Bool:
+  match result:
+    case Fail{error}: False{}
+    case Done{+rows}: managed_bootstrap_persisted(owner, worktree, query,
+      path, project_policy_json_rows(rows))
 
-def managed_bootstrap_digest_result(+owner: String, +worktree: String,
+def managed_bootstrap_persist_answer(+db: String, +binding: String,
+                                    +owner: String, +worktree: String,
+                                    +query: String, +path: String,
+                                    answer: ProviderAnswer) -> IO(Bool):
+  match answer:
+    case ProviderRefused{reason}: IO.pure(Bool, False{})
+    case ProviderRuntime{path, version}: IO.pure(Bool, False{})
+    case ProviderOutput{+value, +status}:
+      Bool.pick(IO(Bool), String.eq(status, "exit 0"),
+        do IO<Bool>:
+          rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+            Req.json_tree_sql(value))
+          IO.pure(Bool, managed_bootstrap_persisted_rows(owner, worktree,
+            query, path, rows)),
+        IO.pure(Bool, False{}))
+
+def managed_bootstrap_digest_result(+db: String, +binding: String,
+                                    +owner: String, +worktree: String,
                                     +query: String, +path: String,
                                     +bootstrap_text: String,
                                     answer: ProviderAnswer) -> IO(String):
-  Bool.pick(IO(String), managed_bootstrap_persist_answer(owner, worktree,
-    query, path, answer),
+  do IO<String>:
+    persisted : Bool <- managed_bootstrap_persist_answer(db, binding, owner,
+      worktree, query, path, answer)
+    Bool.pick(IO(String), persisted,
     IO.try(String, ContextIdentity.role_guard_key(bootstrap_text ++ "\n")),
     IO.die(String, 3, "managedBootstrapPersistence"))
 
-def persist_managed_bootstrap(+database: String, +executable: String, +runtime_path: String,
+def persist_managed_bootstrap(+database: String, +binding: String,
+                              +executable: String, +runtime_path: String,
                               +cwd: String, +owner: String,
                               +worktree: String, +query: String,
                               +path: String, +bootstrap: ManagedQuery.Bootstrap)
@@ -1235,7 +1273,7 @@ def persist_managed_bootstrap(+database: String, +executable: String, +runtime_p
     answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
       cwd, query_bootstrap_request(database, owner, worktree, query,
         ManagedQuery.bootstrap_text(bootstrap)), spawned)
-    managed_bootstrap_digest_result(owner, worktree, query, path,
+    managed_bootstrap_digest_result(database, binding, owner, worktree, query, path,
       ManagedQuery.bootstrap_text(bootstrap), answer)
 
 def managed_prepare_result(+db: String, +binding: String, +launch: ManagedLaunch,
@@ -1281,7 +1319,8 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
       recovery_argv, executable, runtime_path, provider_path, invocation_path,
       invocation_sha256)
     +bootstrap_text : String = ManagedQuery.bootstrap_text(bootstrap)
-    bootstrap_digest : String <- persist_managed_bootstrap(canonical_database, executable, runtime_path,
+    bootstrap_digest : String <- persist_managed_bootstrap(canonical_database, binding,
+      executable, runtime_path,
       cwd, owner, worktree, query, bootstrap_file, bootstrap)
     +launch : ManagedLaunch = ManagedLaunch{bootstrap, invocation_text, executable, runtime_path,
       worktree, bootstrap_digest}
