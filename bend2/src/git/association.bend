@@ -530,12 +530,11 @@ def an_absent_target_skips_the_ancestor_read(request, candidate_oid, basis_oid, 
   {==}
 
 law a_requested_common_answer_returns_the_held_decision_with_the_reads:
-  for request: AssociationRequest
   for candidate_oid: String
   for basis_oid: String
   for head: String
   for reads: AssocReads
-  {requested_compared(request, candidate_oid, basis_oid, head, assocreq_common(request), assocreq_common(request), T.GRun{0, assocreq_common(request)}, reads) == IO.pure(Association, AssociationHeld{request, candidate_oid, basis_oid, head, assocreq_common(request), assocreq_common(request), reads}) : IO(Association)}
+  {requested_compared(AssociationRequested{"attempt-1", "/common", "tgt", "/repo", "cand", "base", "/holder", ""}, candidate_oid, basis_oid, head, "/common", "/common", T.GRun{0, "/common"}, reads) == IO.pure(Association, AssociationHeld{AssociationRequested{"attempt-1", "/common", "tgt", "/repo", "cand", "base", "/holder", ""}, candidate_oid, basis_oid, head, "/common", "/common", reads}) : IO(Association)}
 
 def a_requested_common_answer_returns_the_held_decision_with_the_reads(request, candidate_oid, basis_oid, head, reads):
   {==}
