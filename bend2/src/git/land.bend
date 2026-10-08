@@ -1900,14 +1900,7 @@ def an_unknown_route_stops_the_held_handler_without_a_holder_read(ctx):
   {==}
 
 # The evidence builder the mismatch laws share, so each law varies one operand of a complete record.
-def fixture_intent_of(request: It.IntentInput, reserved: String, publication: IntentPublication, preparation: IntentPreparation, holder: IntentHolderReads) -> IntentEvidence:
-  IntentBound{request, intent_expected_path(reserved), publication, preparation, holder}
 
-def fixture_held_intent_bound(+reserved: String, +common: String, holder: IntentHolderReads) -> IntentEvidence:
-  fixture_bound_intent(fixture_intent_request(reserved, "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", common), reserved, "tgt", fixture_oid_candidate(), fixture_oid_basis(), holder)
-
-law a_failed_head_holder_read_is_not_bound:
-  {intent_bound(fixture_held_intent_bound(fixture_reserved(), "/common", IntentHolderRead{T.GRun{128, "fatal: not a git repository"}, T.GRun{0, ""}, T.GRun{0, ""}}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == False{}} : Bool}
 
 def a_failed_head_holder_read_is_not_bound():
   {==}
@@ -3534,8 +3527,17 @@ def fixture_bound_intent(request: It.IntentInput, +reserved: String, +target: St
   +expected = intent_expected_path(reserved)
   IntentBound{request, expected, IntentPublished{Pb.IntentBytesPublished{request, Pb.production_record("published", expected, "0"), expected, Lg.intent_content(candidate, basis, target)}}, IntentQualified{Pb.production_record("qualified", expected, "0"), expected}, holder}
 
+def fixture_intent_of(request: It.IntentInput, reserved: String, publication: IntentPublication, preparation: IntentPreparation, holder: IntentHolderReads) -> IntentEvidence:
+  IntentBound{request, intent_expected_path(reserved), publication, preparation, holder}
+
 def fixture_held_intent(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String, +repo: String, name: String, +holder: String) -> IntentEvidence:
   fixture_bound_intent(fixture_intent_request(reserved, repo, target, candidate, basis, holder, name, common), reserved, target, candidate, basis, IntentHolderRead{T.GRun{0, Tx.str_cat(basis, "\n")}, T.GRun{0, ""}, T.GRun{0, ""}})
+
+def fixture_held_intent_bound(+reserved: String, +common: String, holder: IntentHolderReads) -> IntentEvidence:
+  fixture_bound_intent(fixture_intent_request(reserved, "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", common), reserved, "tgt", fixture_oid_candidate(), fixture_oid_basis(), holder)
+
+law a_failed_head_holder_read_is_not_bound:
+  {intent_bound(fixture_held_intent_bound(fixture_reserved(), "/common", IntentHolderRead{T.GRun{128, "fatal: not a git repository"}, T.GRun{0, ""}, T.GRun{0, ""}}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == False{}} : Bool}
 
 def fixture_unheld_intent(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String, +repo: String, name: String) -> IntentEvidence:
   fixture_bound_intent(fixture_intent_request(reserved, repo, target, candidate, basis, repo, name, common), reserved, target, candidate, basis, IntentHolderUnperformed{})
@@ -4599,9 +4601,6 @@ law an_unready_holder_stops_the_held_route_keeping_the_qualification:
 def an_unready_holder_stops_the_held_route_keeping_the_qualification(ctx):
   {==}
 
-def an_unready_holder_stops_the_held_route_keeping_the_qualification(ctx):
-  {==}
-
 law a_pending_holder_stops_the_held_route_keeping_the_qualification:
   for ctx: LdAdvCtx
   {ld_adv_intent_observed(It.IntentPending{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "record bytes", "the holder answers every read"}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), "admitted bytes", shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, "/holder", fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"holder-pending"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualified{"admitted bytes", shared_intent_path(ctx)}, IntentHolderPending{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "record bytes", "the holder answers every read"}}})} : IO(LdAdvObs)}
@@ -4609,15 +4608,9 @@ law a_pending_holder_stops_the_held_route_keeping_the_qualification:
 def a_pending_holder_stops_the_held_route_keeping_the_qualification(ctx):
   {==}
 
-def a_pending_holder_stops_the_held_route_keeping_the_qualification(ctx):
-  {==}
-
 law a_failed_holder_read_stops_the_held_route_with_the_host_error:
   for ctx: LdAdvCtx
   {ld_adv_intent_observed(It.IntentHostFailed{"holder", shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), T.HostError{128, "fatal: not a git repository"}}, shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), "admitted bytes", shared_intent_path(ctx), Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}, "/holder", fixture_matching_held_evidence(ctx), MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"holder-host-failed"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(ctx), IntentBound{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(ctx), IntentPublished{Pb.PublishRefused{shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "publish", "intent", "refused bytes"}}, IntentQualified{"admitted bytes", shared_intent_path(ctx)}, IntentHolderFailed{"holder", shared_intent_input(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), T.HostError{128, "fatal: not a git repository"}}}})} : IO(LdAdvObs)}
-
-def a_failed_holder_read_stops_the_held_route_with_the_host_error(ctx):
-  {==}
 
 def a_failed_holder_read_stops_the_held_route_with_the_host_error(ctx):
   {==}
