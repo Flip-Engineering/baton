@@ -201,6 +201,14 @@ class Control(unittest.TestCase):
                                              '', '', '', str(log.resolve())])
         return log
 
+    def output_log(self, session):
+        rows = self.rows(
+            "SELECT g.log FROM log_generations g WHERE g.session=? "
+            "ORDER BY CASE WHEN g.attempt=(SELECT id FROM executions WHERE session=g.session) "
+            "THEN 0 ELSE 1 END, g.rowid DESC LIMIT 1", (session,))
+        self.assertTrue(rows, f'{session} has no registered output log generation')
+        return pathlib.Path(rows[0]['log'])
+
     def dispatch(self, *args):
         result = self.call(*args)
         self.assertEqual(result['state'], 'launched')
@@ -422,7 +430,7 @@ class Control(unittest.TestCase):
             self.assertTrue(stat.S_ISREG(stdout.stat().st_mode))
             self.assertTrue(stat.S_ISREG(stderr.stat().st_mode))
             self.eventually(lambda: self.report_logged(body))
-        frames = [json.loads(line) for line in (self.directory / 'omp-leaf.jsonl').read_text().splitlines()]
+        frames = [json.loads(line) for line in self.output_log('omp-leaf').read_text().splitlines()]
         self.assertIn(text, [frame.get('text') for frame in frames])
 
     def dispatch_log(self, ident, suffix='.stdout'):
