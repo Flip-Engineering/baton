@@ -259,7 +259,7 @@ static void __attribute__((constructor)) baton_regular_file_use(void) {io_eff(CI
    log's basename followed by "." and a positive decimal number, answered
    sorted by number, one per line. A log whose directory is absent answers
    nothing. */
-typedef struct { u32 index; } BatonSegment;
+typedef struct { char *index; } BatonSegment;
 
 typedef struct {
   char *path,*directory,*base,*output;
@@ -270,10 +270,13 @@ typedef struct {
 static int baton_segment_compare(const void *left,const void *right) {
   const BatonSegment *a=(const BatonSegment *)left;
   const BatonSegment *b=(const BatonSegment *)right;
-  return a->index<b->index?-1:a->index>b->index?1:0;
+  size_t a_length=strlen(a->index),b_length=strlen(b->index);
+  if(a_length!=b_length)return a_length<b_length?-1:1;
+  int order=memcmp(a->index,b->index,a_length);
+  return order<0?-1:order>0?1:0;
 }
 
-static int baton_segment_push(BatonSegments *call,BatonSegment **segments,size_t *capacity,u32 index) {
+static int baton_segment_push(BatonSegments *call,BatonSegment **segments,size_t *capacity,const char *index) {
   if(call->count==*capacity) {
     size_t next=*capacity?*capacity*2:16;
     if(next<*capacity || next>SIZE_MAX/sizeof(**segments)) return ENOMEM;
@@ -281,7 +284,9 @@ static int baton_segment_push(BatonSegments *call,BatonSegment **segments,size_t
     if(!grown) return ENOMEM;
     *capacity=next;*segments=grown;
   }
-  (*segments)[call->count++].index=index;
+  char *copy=strdup(index);
+  if(!copy)return ENOMEM;
+  (*segments)[call->count++].index=copy;
   return 0;
 }
 
@@ -302,32 +307,38 @@ static void baton_segments_call(IoWork *w) {
     const char *cursor=digits;
     while(*cursor>='0' && *cursor<='9') cursor++;
     if(*cursor) continue;
-    char *end=NULL;
-    errno=0;
-    unsigned long long index=strtoull(digits,&end,10);
-    if(errno || !end || *end || index>0xffffffffULL) continue;
-    int error=baton_segment_push(call,&segments,&capacity,(u32)index);
+    int error=baton_segment_push(call,&segments,&capacity,digits);
     if(error) {call->error=error;break;}
   }
   closedir(directory);
-  if(call->error) {free(segments);return;}
+  if(call->error) {
+    for(size_t i=0;i<call->count;i++)free(segments[i].index);
+    free(segments);return;
+  }
   qsort(segments,call->count,sizeof(*segments),baton_segment_compare);
   call->capacity=64;call->length=0;call->output=malloc(call->capacity);
-  if(!call->output) {free(segments);call->error=ENOMEM;return;}
+  if(!call->output) {
+    for(size_t i=0;i<call->count;i++)free(segments[i].index);
+    free(segments);call->error=ENOMEM;return;
+  }
   for(size_t i=0;i<call->count;i++) {
-    char text[32];
-    int n=snprintf(text,sizeof(text),"%u\n",(unsigned)segments[i].index);
-    if(n<=0) {call->error=EIO;break;}
-    if(call->length+(size_t)n+1>call->capacity) {
+    size_t n=strlen(segments[i].index);
+    if(call->length>SIZE_MAX-2 || n>SIZE_MAX-call->length-2) {call->error=ENOMEM;break;}
+    if(call->length+n+2>call->capacity) {
       size_t next=call->capacity;
-      while(next<call->length+(size_t)n+1) next*=2;
+      while(next<call->length+n+2) {
+        if(next>SIZE_MAX/2) {next=call->length+n+2;break;}
+        next*=2;
+      }
       char *grown=realloc(call->output,next);
       if(!grown) {call->error=ENOMEM;break;}
       call->output=grown;call->capacity=next;
     }
-    memcpy(call->output+call->length,text,(size_t)n);
-    call->length+=(size_t)n;
+    memcpy(call->output+call->length,segments[i].index,n);
+    call->length+=n;
+    call->output[call->length++]='\n';
   }
+  for(size_t i=0;i<call->count;i++)free(segments[i].index);
   free(segments);
   if(!call->error) call->output[call->length]=0;
 }
