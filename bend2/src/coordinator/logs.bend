@@ -822,7 +822,7 @@ def clean_attempt_log_first(rows: List<String>) -> String:
 
 def clean_stderr_run_file(+db: String, +attempt: String, +stderr_path: String) -> IO(String):
   do IO<String>:
-    health : String <- stderr_generation(db,stderr_path)
+    +health : String <- stderr_generation(db,stderr_path)
     Bool.pick(IO(String),String.eq(health,"legacy"),do IO<String>:
       stderr_size : U32 <- IO.try(U32,F.Files.size(stderr_path))
       stderr : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(stderr_path)
