@@ -82,6 +82,12 @@ def name_go(text: String, ok: Bool) -> Bool:
         name_go(rest, ok),
         False{})
 
+# A name is safe when it is non-empty and every one of its characters is allowed, which is what the
+# laws below state and what the production preflight asks for.
+def name_is_safe(text: String) -> Bool:
+  +t = text
+  Bool.pick(Bool, Tx.non_empty(t), name_go(t, True{}), False{})
+
 def name_has_nul_go(text: String) -> Bool:
   match text:
     case SNil{}: False{}
