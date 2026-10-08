@@ -711,20 +711,7 @@ def ff_stage5_named(candidate: String, old: String, repo: String, target: String
         outcome : Lg.Landing <- Lg.Landing.run(request)
         ff_stage5_outcome(target, candidate, art, repo, outcome)
 
-def ff_stage5_guard_observed(cand: String, old: String, repo: String, target: String, common: String, observed: Result<&1, &1, U32 & String, String>) -> IO(FFLD):
-  match observed:
-    case Fail{error}: ff_stage5_blocked("cannot name the landing guard")
-    case Done{guard}: ff_stage5_guarded_now(cand, old, repo, target, common, guard)
 
-def ff_stage5_guardpath(cand: String, old: String, repo: String, target: String, common: String) -> IO(FFLD):
-  +candidate = cand
-  +tb = old
-  +rp = repo
-  +tg = target
-  +cm = common
-  do IO<FFLD>:
-    guard_g : Result<&1, &1, U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
-    ff_stage5_guard_observed(candidate, tb, rp, tg, cm, guard_g)
 
 def ff_stage5_common(cand: String, old: String, repo: String, target: String, observed: T.GitOut) -> IO(FFLD):
   match observed:
