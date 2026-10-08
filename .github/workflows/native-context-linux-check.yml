@@ -16,12 +16,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - product: core
-            source_sha: eb4a66c359fe8888753fdc6bd7b06971cea65c25
-            source_tree: 257f3c16c312c5f8cfe5e4354fb5706c765e5a51
           - product: managed-context
-            source_sha: 11c5f4e1fe483698e81ee0c69644dae3f805389f
-            source_tree: 7c8e9cb08091058eb5087f9f8ac913362eb06046
+            source_sha: f5aeb11ac418995bbc7ac63b7389d5a1ec732394
+            source_tree: c73eb54a39f34a67137ffd7c0f607de16ab4ea2e
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
