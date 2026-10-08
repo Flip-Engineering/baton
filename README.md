@@ -11,9 +11,8 @@ capability. `orchestra` reads the coordinated system's state. The
 [terminology guide](docs/bend2/terminology.md) describes these commands.
 
 The native coordinator is implemented in Bend 2.0.25 and stores coordination
-state in SQLite. Its entry imports laws over the implementation functions;
-compilation verifies their proofs. Native harnesses provide model access and
-conversation storage through their existing logins.
+state in SQLite. Native harnesses provide model access and conversation storage
+through their existing logins.
 
 ## Installation and use
 

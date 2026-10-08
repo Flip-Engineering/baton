@@ -221,15 +221,17 @@ continue a Player whose provider stopped accepting work, read `session` and
 `inbox`, configure the recorded route to an available provider, and deliver the
 retained input again.
 
-`land PLAYER_ID REPO TARGET_BRANCH` looks up the Player's branch from the
-database, verifies the Player tip is a fast-forward from the target, and
-advances the target with a compare-and-swap `update-ref`. The answer is JSON
+`land PLAYER_ID REPO TARGET_BRANCH [--commit COMMIT]` looks up the Player's branch
+from the database, verifies the selected commit is a fast-forward from the
+target, and advances the target through its holding worktree or a
+compare-and-swap `update-ref`. The answer is JSON
 with a `status` field: `landed` with the new target commit, `already` when the
 target already contains the Player commit, or `blocked` with a reason (the
 Player branch diverged or the target moved during the update). Player branches
 and worktrees are retained after landing.
 
-`land-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES` runs the gated landing.
+`land-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES [--commit COMMIT]`
+runs the checked landing.
 CHECK runs as `/bin/sh CHECK FILE` inside each checked tree, once per selected
 file per tree. `bend2/scripts/check-unittest.sh` judges one selected Python
 test file: a selection under `bend2/test/` builds the coordinator binary in
@@ -252,6 +254,12 @@ If the target moves while checks run, the command returns `blocked` and names
 `land-checked` as the retry. Repeating that command checks the new candidate and
 target before advancing the branch. The Player's branch and worktree remain
 available throughout these attempts.
+
+`--commit COMMIT` selects a reviewed commit from the Player's recorded branch.
+The command resolves the commit, verifies its ancestry on that branch and uses
+the resolved object throughout landing. The Player's later commits and worktree
+remain available. Omitting the option selects the branch's current tip. The MCP
+landing tools accept the same selection through their optional `commit` field.
 
 The squash message describes the Player history above its merge-base with the
 target. A single commit retains its full message. Several commits use the tip
@@ -676,7 +684,7 @@ The existing JSON and replay programs are earlier experiments. Their optional
 runner, `node bend2/scripts/run-checks.mjs`, compares interpreted and native
 output with their `.expected.txt` fixtures. It can install Bend locally if
 absent. Those programs carry no law annotations and no dependence on the
-coordinator's laws module, which the entry imports.
+coordinator entry.
 
 ## Contributor real-route validation
 
@@ -740,8 +748,9 @@ resolve in the Player and both checked trees. Python checks under `bend2/test/`
 need an installed compiler selected through an absolute `BEND` path. An
 unjudged check blocks landing under the documented comparison rules.
 
-Keep each landing target branch unchecked-out. The Associate Conductor reviews
-and lands Player work onto its branch. The Principal reviews and lands that
+Landing advances a checked-out target through its holding worktree. Overlapping
+uncommitted changes return a refusal with the affected worktree. The Associate
+Conductor reviews and lands Player work onto its branch. The Principal reviews and lands that
 branch, publishes the target through `push`, verifies its advertised ref and
 reports to the operator. Retain the database, native stores, logs and worktrees
 for corrections and continued work.
