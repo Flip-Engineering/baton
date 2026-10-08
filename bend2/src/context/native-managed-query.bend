@@ -455,7 +455,7 @@ def bootstrap_from_json(+value: J.Json, +expected_owner: String,
     case other: BootstrapDecodeRefused{"managedBootstrapShape"}
 
 def nullable_text(+value: String) -> J.Json:
-  Bool.pick(J.Json, String.is_empty(value), J.Jnil{}, J.Jstr{value})
+  Bool.pick(J.Json, String.is_empty(value), J.Jnull{}, J.Jstr{value})
 
 def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
   match bootstrap:
