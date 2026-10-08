@@ -1,0 +1,27 @@
+{
+  "source": "logging-impl-20261006-provider.jsonl",
+  "source_sha256": "9dc892779bf6e77c01e1a624d146212a3435f93a99087de24518467db6038096",
+  "task_call": "call_00_BF9yx8K9cfoORRLfR4mO2883",
+  "task_frames": 300,
+  "window_start_line": 7640,
+  "window_lines": 140,
+  "window_bytes": 69001,
+  "window_types": [
+    "message_end",
+    "message_start",
+    "tool_execution_end",
+    "tool_execution_start",
+    "tool_execution_update",
+    "tool_stream_update",
+    "turn_end",
+    "turn_start"
+  ],
+  "frames-task.jsonl": {
+    "bytes": 7206498,
+    "sha256": "18a4bf45c4050198b95adf155cc2e13d788f0f01b78091f0e98097fc13561b4f"
+  },
+  "frames-omp-window.jsonl": {
+    "bytes": 69001,
+    "sha256": "67dec8c12defc55d692091b9a62dc8a88ae824873c97a19d971a2346eee56047"
+  }
+}

@@ -1,0 +1,333 @@
+{
+  "mode": "incomplete",
+  "exe": "/home/atari2036/baton-measure-work/bin/baton2-after-31f261ff",
+  "exe_sha256": "9ce8b5b5ca8a8358d36c095a14d40e9b6da17242f685300d774efa27f003e988",
+  "source_revision_supplied": "31f261ff1dd9535ac0fda9cf60e9940d14ae3b52",
+  "level": "default",
+  "checkpoint_peak_bytes": 335,
+  "checkpoint_held": [
+    "{\"type\": \"message_update\", \"messageId\": \"unfinished-message\", \"message\": {\"id\": \"unfinished-message\", \"role\": \"assistant",
+    "{\"type\": \"tool_execution_update\", \"toolCallId\": \"unfinished\", \"toolName\": \"bash\", \"partialResult\": {\"content\": [{\"type\":"
+  ],
+  "live_log_bytes_before_kill": 0,
+  "after_kill": {
+    "pending_bytes": 335,
+    "pending_lines": [
+      "{\"type\": \"message_update\", \"messageId\": \"unfinished-message\", \"message\": {\"id\": \"unfinished-message\", \"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"partial answer 2\"}]}}",
+      "{\"type\": \"tool_execution_update\", \"toolCallId\": \"unfinished\", \"toolName\": \"bash\", \"partialResult\": {\"content\": [{\"type\": \"text\", \"text\": \"partial 2\"}]}}"
+    ],
+    "log_bytes": 0,
+    "log_lines": []
+  },
+  "restored_lines": [
+    "{\"type\": \"message_update\", \"messageId\": \"unfinished-message\", \"message\": {\"id\": \"unfinished-message\", \"role\": \"assistant",
+    "{\"type\": \"tool_execution_update\", \"toolCallId\": \"unfinished\", \"toolName\": \"bash\", \"partialResult\": {\"content\": [{\"type\":",
+    "{\"type\": \"message_end\", \"messageId\": \"unfinished-message\", \"message\": {\"id\": \"unfinished-message\", \"role\": \"assistant\", ",
+    "{\"type\": \"agent_end\", \"isTerminal\": true, \"messages\": [{\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"resto",
+    "{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"unacknowledged\"}"
+  ],
+  "restored_holds_held_update": true,
+  "restored_holds_held_message": true,
+  "checkpoint_path": "/home/atari2036/baton-measure-work/b31-incomplete/turn.jsonl.pending",
+  "checkpoint_removed_after_restore": true,
+  "peaks": {
+    "events.jsonl": 1008,
+    "task.txt": 26,
+    "state.db": 110592,
+    "fixture-harness": 324,
+    "repository/seed.txt": 5,
+    "repository/.git/config": 160,
+    "repository/.git/index": 137,
+    "repository/.git/HEAD": 21,
+    "repository/.git/description": 73,
+    "repository/.git/COMMIT_EDITMSG": 5,
+    "repository/.git/refs/heads/worker-branch": 41,
+    "repository/.git/refs/heads/main": 41,
+    "repository/.git/objects/0c/4ef53184f7e932e765e73dd02f4b81b002e862": 53,
+    "repository/.git/objects/2c/0ca2a7dbf3a56b5c87c9ab4212cc07216a5b9d": 131,
+    "repository/.git/objects/e3/1de1f3a235fd5e8f97207b8e43cd2aa06a6417": 20,
+    "repository/.git/info/exclude": 240,
+    "repository/.git/hooks/pre-merge-commit.sample": 416,
+    "repository/.git/hooks/commit-msg.sample": 896,
+    "repository/.git/hooks/pre-rebase.sample": 4898,
+    "repository/.git/hooks/pre-commit.sample": 1643,
+    "repository/.git/hooks/sendemail-validate.sample": 2308,
+    "repository/.git/hooks/pre-push.sample": 1374,
+    "repository/.git/hooks/update.sample": 3650,
+    "repository/.git/hooks/post-update.sample": 189,
+    "repository/.git/hooks/push-to-checkout.sample": 2783,
+    "repository/.git/hooks/fsmonitor-watchman.sample": 4726,
+    "repository/.git/hooks/pre-receive.sample": 544,
+    "repository/.git/hooks/pre-applypatch.sample": 424,
+    "repository/.git/hooks/prepare-commit-msg.sample": 1492,
+    "repository/.git/hooks/applypatch-msg.sample": 478,
+    "repository/.git/logs/HEAD": 168,
+    "repository/.git/logs/refs/heads/worker-branch": 207,
+    "repository/.git/logs/refs/heads/main": 168,
+    "repository/.git/worktrees/worker/ORIG_HEAD": 41,
+    "repository/.git/worktrees/worker/index": 137,
+    "repository/.git/worktrees/worker/HEAD": 30,
+    "repository/.git/worktrees/worker/gitdir": 72,
+    "repository/.git/worktrees/worker/commondir": 6,
+    "repository/.git/worktrees/worker/logs/HEAD": 312,
+    "checkouts/worker/seed.txt": 5,
+    "checkouts/worker/.git": 91,
+    "state.db.lock-776f726b6572": 0,
+    "state.db-journal": 12824,
+    "turn.jsonl.stderr": 30400,
+    "harness.pid": 5,
+    "turn.jsonl.pending": 335,
+    "turn.jsonl.pending.tmp.ZFcJwE": 152,
+    "turn.jsonl.pending.tmp.6djGUN": 335
+  },
+  "coordinates": [
+    {
+      "argv": [
+        "attach",
+        "root",
+        "native-fixture",
+        "root-session",
+        "root-endpoint"
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"root\",\"parent\":null,\"harness\":\"native-fixture\",\"model\":\"\",\"effort\":\"\",\"native\":\"root-session\",\"observedHarness\":\"\",\"observedModel\":\"\",\"observedEffort\":\"\",\"endpoint\":\"root-endpoint\",\"endpointArgv\":null,\"workspace\":\"\",\"branch\":\"\",\"base\":\"\",\"kind\":\"player\",\"role\":\"player\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "role",
+        "root",
+        "principal-conductor"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"root\",\"kind\":\"player\",\"role\":\"principal-conductor\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "recruit",
+        "worker",
+        "root",
+        "omp",
+        "model",
+        "low",
+        "/home/atari2036/baton-measure-work/b31-incomplete/repository",
+        "worker-branch",
+        "/home/atari2036/baton-measure-work/b31-incomplete/checkouts/worker",
+        "2c0ca2a7dbf3a56b5c87c9ab4212cc07216a5b9d"
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"worker\",\"parent\":\"root\",\"harness\":\"omp\",\"model\":\"model\",\"effort\":\"low\",\"native\":\"\",\"observedHarness\":\"\",\"observedModel\":\"\",\"observedEffort\":\"\",\"endpoint\":\"\",\"endpointArgv\":null,\"workspace\":\"/home/atari2036/baton-measure-work/b31-incomplete/checkouts/worker\",\"branch\":\"worker-branch\",\"base\":\"2c0ca2a7dbf3a56b5c87c9ab4212cc07216a5b9d\",\"kind\":\"player\",\"role\":\"player\"}\n",
+      "stderr": "/bin/ls: cannot access '/home/atari2036/baton-measure-work/b31-incomplete/checkouts/worker': No such file or directory\nPreparing worktree (new branch 'worker-branch')\n"
+    },
+    {
+      "argv": [
+        "logs",
+        "worker",
+        "default"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"worker\",\"level\":\"default\",\"registeredLogs\":0}",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "turn",
+        "worker",
+        "abrupt-turn",
+        "/home/atari2036/baton-measure-work/b31-incomplete/fixture-harness",
+        "model",
+        "low",
+        "/home/atari2036/baton-measure-work/b31-incomplete",
+        "/home/atari2036/baton-measure-work/b31-incomplete/task.txt",
+        "/home/atari2036/baton-measure-work/b31-incomplete/turn.jsonl",
+        ""
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"abrupt-turn\",\"sender\":\"worker\",\"recipient\":\"root\",\"kind\":\"report\",\"body\":\"restored answer\",\"receipt\":null,\"harness\":\"native-fixture\",\"native\":\"root-session\",\"endpoint\":\"root-endpoint\",\"endpointArgv\":null}\n",
+      "stderr": ""
+    }
+  ],
+  "files": [
+    {
+      "path": "state.db",
+      "bytes": 110592
+    },
+    {
+      "path": "turn.jsonl.stderr",
+      "bytes": 30400
+    },
+    {
+      "path": "repository/.git/hooks/pre-rebase.sample",
+      "bytes": 4898
+    },
+    {
+      "path": "repository/.git/hooks/fsmonitor-watchman.sample",
+      "bytes": 4726
+    },
+    {
+      "path": "repository/.git/hooks/update.sample",
+      "bytes": 3650
+    },
+    {
+      "path": "repository/.git/hooks/push-to-checkout.sample",
+      "bytes": 2783
+    },
+    {
+      "path": "repository/.git/hooks/sendemail-validate.sample",
+      "bytes": 2308
+    },
+    {
+      "path": "repository/.git/hooks/pre-commit.sample",
+      "bytes": 1643
+    },
+    {
+      "path": "repository/.git/hooks/prepare-commit-msg.sample",
+      "bytes": 1492
+    },
+    {
+      "path": "repository/.git/hooks/pre-push.sample",
+      "bytes": 1374
+    },
+    {
+      "path": "repository/.git/hooks/commit-msg.sample",
+      "bytes": 896
+    },
+    {
+      "path": "turn.jsonl",
+      "bytes": 744
+    },
+    {
+      "path": "repository/.git/hooks/pre-receive.sample",
+      "bytes": 544
+    },
+    {
+      "path": "repository/.git/hooks/applypatch-msg.sample",
+      "bytes": 478
+    },
+    {
+      "path": "repository/.git/hooks/pre-applypatch.sample",
+      "bytes": 424
+    },
+    {
+      "path": "repository/.git/hooks/pre-merge-commit.sample",
+      "bytes": 416
+    },
+    {
+      "path": "events.jsonl",
+      "bytes": 316
+    },
+    {
+      "path": "repository/.git/worktrees/worker/logs/HEAD",
+      "bytes": 312
+    },
+    {
+      "path": "repository/.git/info/exclude",
+      "bytes": 240
+    },
+    {
+      "path": "repository/.git/logs/refs/heads/worker-branch",
+      "bytes": 207
+    },
+    {
+      "path": "fixture-harness",
+      "bytes": 195
+    },
+    {
+      "path": "repository/.git/hooks/post-update.sample",
+      "bytes": 189
+    },
+    {
+      "path": "repository/.git/logs/HEAD",
+      "bytes": 168
+    },
+    {
+      "path": "repository/.git/logs/refs/heads/main",
+      "bytes": 168
+    },
+    {
+      "path": "repository/.git/config",
+      "bytes": 160
+    },
+    {
+      "path": "repository/.git/index",
+      "bytes": 137
+    },
+    {
+      "path": "repository/.git/worktrees/worker/index",
+      "bytes": 137
+    },
+    {
+      "path": "repository/.git/objects/2c/0ca2a7dbf3a56b5c87c9ab4212cc07216a5b9d",
+      "bytes": 131
+    },
+    {
+      "path": "checkouts/worker/.git",
+      "bytes": 91
+    },
+    {
+      "path": "repository/.git/description",
+      "bytes": 73
+    },
+    {
+      "path": "repository/.git/worktrees/worker/gitdir",
+      "bytes": 72
+    },
+    {
+      "path": "repository/.git/objects/0c/4ef53184f7e932e765e73dd02f4b81b002e862",
+      "bytes": 53
+    },
+    {
+      "path": "repository/.git/refs/heads/main",
+      "bytes": 41
+    },
+    {
+      "path": "repository/.git/refs/heads/worker-branch",
+      "bytes": 41
+    },
+    {
+      "path": "repository/.git/worktrees/worker/ORIG_HEAD",
+      "bytes": 41
+    },
+    {
+      "path": "repository/.git/worktrees/worker/HEAD",
+      "bytes": 30
+    },
+    {
+      "path": "task.txt",
+      "bytes": 26
+    },
+    {
+      "path": "repository/.git/HEAD",
+      "bytes": 21
+    },
+    {
+      "path": "repository/.git/objects/e3/1de1f3a235fd5e8f97207b8e43cd2aa06a6417",
+      "bytes": 20
+    },
+    {
+      "path": "repository/.git/worktrees/worker/commondir",
+      "bytes": 6
+    },
+    {
+      "path": "checkouts/worker/seed.txt",
+      "bytes": 5
+    },
+    {
+      "path": "harness.pid",
+      "bytes": 5
+    },
+    {
+      "path": "repository/.git/COMMIT_EDITMSG",
+      "bytes": 5
+    },
+    {
+      "path": "repository/seed.txt",
+      "bytes": 5
+    },
+    {
+      "path": "state.db.lock-776f726b6572",
+      "bytes": 0
+    }
+  ]
+}

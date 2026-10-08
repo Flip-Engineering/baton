@@ -1,0 +1,496 @@
+{
+  "mode": "replay",
+  "harness": "omp",
+  "level": "default",
+  "exe": "/home/atari2036/baton-measure-work/bin/baton2-after-31f261ff",
+  "exe_sha256": "9ce8b5b5ca8a8358d36c095a14d40e9b6da17242f685300d774efa27f003e988",
+  "source_revision_supplied": "31f261ff1dd9535ac0fda9cf60e9940d14ae3b52",
+  "frames_file": "/home/atari2036/baton-measure-work/inputs/frames-omp-window.jsonl",
+  "frames_file_sha256": "67dec8c12defc55d692091b9a62dc8a88ae824873c97a19d971a2346eee56047",
+  "appended_terminal_frames": [
+    "{\"type\": \"agent_end\", \"isTerminal\": true, \"messages\": [{\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"complete\"}]}]}"
+  ],
+  "emitted_bytes": 69131,
+  "emitted_lines": 141,
+  "retained_bytes_matched": 16881,
+  "retained_lines": 13,
+  "dropped_lines": 128,
+  "log_bytes": 16973,
+  "live_log_paths": [
+    "/home/atari2036/baton-measure-work/b31-replay-omp-window/turn.jsonl"
+  ],
+  "note_lines": [
+    "{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"unacknowledged\"}"
+  ],
+  "terminal_report": "complete",
+  "by_type": [
+    {
+      "type": "agent_end",
+      "emitted": 1,
+      "retained": 1,
+      "dropped": 0
+    },
+    {
+      "type": "message_end",
+      "emitted": 3,
+      "retained": 3,
+      "dropped": 0
+    },
+    {
+      "type": "message_start",
+      "emitted": 3,
+      "retained": 0,
+      "dropped": 3
+    },
+    {
+      "type": "tool_execution_end",
+      "emitted": 2,
+      "retained": 2,
+      "dropped": 0
+    },
+    {
+      "type": "tool_execution_start",
+      "emitted": 3,
+      "retained": 3,
+      "dropped": 0
+    },
+    {
+      "type": "tool_execution_update",
+      "emitted": 126,
+      "retained": 1,
+      "dropped": 125
+    },
+    {
+      "type": "tool_stream_update",
+      "emitted": 1,
+      "retained": 1,
+      "dropped": 0
+    },
+    {
+      "type": "turn_end",
+      "emitted": 1,
+      "retained": 1,
+      "dropped": 0
+    },
+    {
+      "type": "turn_start",
+      "emitted": 1,
+      "retained": 1,
+      "dropped": 0
+    }
+  ],
+  "retained_samples": [
+    "{\"type\":\"tool_execution_start\",\"toolCallId\":\"call_00_ET_PpV95D36AovgmXfnfS2n4622\",\"toolName\":\"edit\",\"args\":{\"new_string\"",
+    "{\"type\":\"tool_stream_update\",\"toolCallId\":\"call_00_ET_PpV95D36AovgmXfnfS2n4622\",\"toolName\":\"edit\",\"update\":{\"generation\"",
+    "{\"type\":\"tool_execution_end\",\"toolCallId\":\"call_00_ET_PpV95D36AovgmXfnfS2n4622\",\"toolName\":\"edit\",\"result\":{\"content\":[{"
+  ],
+  "dropped_samples": [
+    "{\"type\":\"message_start\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_00_ET_PpV95D36AovgmXfnfS2n4622\",\"toolName\":\"ed",
+    "{\"type\":\"message_start\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_01_ET_yvaiYdmox1mt3XfOK29I6788\",\"toolName\":\"ba",
+    "{\"type\":\"message_start\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"While\",\"thinkingSignatur"
+  ],
+  "policy": {
+    "session": "worker",
+    "level": "default",
+    "registeredLogs": 0
+  },
+  "coordinates": [
+    {
+      "argv": [
+        "attach",
+        "root",
+        "native-fixture",
+        "root-session",
+        "root-endpoint"
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"root\",\"parent\":null,\"harness\":\"native-fixture\",\"model\":\"\",\"effort\":\"\",\"native\":\"root-session\",\"observedHarness\":\"\",\"observedModel\":\"\",\"observedEffort\":\"\",\"endpoint\":\"root-endpoint\",\"endpointArgv\":null,\"workspace\":\"\",\"branch\":\"\",\"base\":\"\",\"kind\":\"player\",\"role\":\"player\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "role",
+        "root",
+        "principal-conductor"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"root\",\"kind\":\"player\",\"role\":\"principal-conductor\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "recruit",
+        "worker",
+        "root",
+        "omp",
+        "model",
+        "low",
+        "/home/atari2036/baton-measure-work/b31-replay-omp-window/repository",
+        "worker-branch",
+        "/home/atari2036/baton-measure-work/b31-replay-omp-window/checkouts/worker",
+        "6c3f999a8d5b1c20eee6b6917cef44648338327e"
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"worker\",\"parent\":\"root\",\"harness\":\"omp\",\"model\":\"model\",\"effort\":\"low\",\"native\":\"\",\"observedHarness\":\"\",\"observedModel\":\"\",\"observedEffort\":\"\",\"endpoint\":\"\",\"endpointArgv\":null,\"workspace\":\"/home/atari2036/baton-measure-work/b31-replay-omp-window/checkouts/worker\",\"branch\":\"worker-branch\",\"base\":\"6c3f999a8d5b1c20eee6b6917cef44648338327e\",\"kind\":\"player\",\"role\":\"player\"}\n",
+      "stderr": "/bin/ls: cannot access '/home/atari2036/baton-measure-work/b31-replay-omp-window/checkouts/worker': No such file or directory\nPreparing worktree (new branch 'worker-branch')\n"
+    },
+    {
+      "argv": [
+        "logs",
+        "worker",
+        "default"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"worker\",\"level\":\"default\",\"registeredLogs\":0}",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "logs",
+        "worker"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"worker\",\"level\":\"default\",\"registeredLogs\":0}",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "turn",
+        "worker",
+        "replay-turn",
+        "/home/atari2036/baton-measure-work/b31-replay-omp-window/fixture-harness",
+        "model",
+        "low",
+        "/home/atari2036/baton-measure-work/b31-replay-omp-window",
+        "/home/atari2036/baton-measure-work/b31-replay-omp-window/task.txt",
+        "/home/atari2036/baton-measure-work/b31-replay-omp-window/turn.jsonl",
+        ""
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"replay-turn\",\"sender\":\"worker\",\"recipient\":\"root\",\"kind\":\"report\",\"body\":\"complete\",\"receipt\":null,\"harness\":\"native-fixture\",\"native\":\"root-session\",\"endpoint\":\"root-endpoint\",\"endpointArgv\":null}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "delivery",
+        "replay-turn"
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"replay-turn\",\"sender\":\"worker\",\"recipient\":\"root\",\"kind\":\"report\",\"body\":\"complete\",\"receipt\":null,\"harness\":\"native-fixture\",\"native\":\"root-session\",\"endpoint\":\"root-endpoint\",\"endpointArgv\":null}\n",
+      "stderr": ""
+    }
+  ],
+  "wall_seconds": 4.0040641069999765,
+  "peaks": {
+    "events.jsonl": 69131,
+    "task.txt": 26,
+    "state.db": 110592,
+    "fixture-harness": 195,
+    "repository/seed.txt": 5,
+    "repository/.git/config": 160,
+    "repository/.git/index": 137,
+    "repository/.git/HEAD": 21,
+    "repository/.git/description": 73,
+    "repository/.git/COMMIT_EDITMSG": 5,
+    "repository/.git/refs/heads/worker-branch": 41,
+    "repository/.git/refs/heads/main": 41,
+    "repository/.git/objects/0c/4ef53184f7e932e765e73dd02f4b81b002e862": 53,
+    "repository/.git/objects/6c/3f999a8d5b1c20eee6b6917cef44648338327e": 131,
+    "repository/.git/objects/e3/1de1f3a235fd5e8f97207b8e43cd2aa06a6417": 20,
+    "repository/.git/info/exclude": 240,
+    "repository/.git/hooks/pre-merge-commit.sample": 416,
+    "repository/.git/hooks/commit-msg.sample": 896,
+    "repository/.git/hooks/pre-rebase.sample": 4898,
+    "repository/.git/hooks/pre-commit.sample": 1643,
+    "repository/.git/hooks/sendemail-validate.sample": 2308,
+    "repository/.git/hooks/pre-push.sample": 1374,
+    "repository/.git/hooks/update.sample": 3650,
+    "repository/.git/hooks/post-update.sample": 189,
+    "repository/.git/hooks/push-to-checkout.sample": 2783,
+    "repository/.git/hooks/fsmonitor-watchman.sample": 4726,
+    "repository/.git/hooks/pre-receive.sample": 544,
+    "repository/.git/hooks/pre-applypatch.sample": 424,
+    "repository/.git/hooks/prepare-commit-msg.sample": 1492,
+    "repository/.git/hooks/applypatch-msg.sample": 478,
+    "repository/.git/logs/HEAD": 168,
+    "repository/.git/logs/refs/heads/worker-branch": 207,
+    "repository/.git/logs/refs/heads/main": 168,
+    "repository/.git/worktrees/worker/ORIG_HEAD": 41,
+    "repository/.git/worktrees/worker/index": 137,
+    "repository/.git/worktrees/worker/HEAD": 30,
+    "repository/.git/worktrees/worker/gitdir": 79,
+    "repository/.git/worktrees/worker/commondir": 6,
+    "repository/.git/worktrees/worker/logs/HEAD": 312,
+    "checkouts/worker/seed.txt": 5,
+    "checkouts/worker/.git": 98,
+    "state.db-journal": 25136,
+    "state.db.lock-776f726b6572": 0,
+    "turn.jsonl.stderr": 0,
+    "turn.jsonl": 16973,
+    "turn.jsonl.pending.tmp.72aFXS": 1586,
+    "turn.jsonl.pending": 1586,
+    "turn.jsonl.pending.tmp.umMdHG": 668,
+    "turn.jsonl.pending.tmp.M2p8v1": 394,
+    "turn.jsonl.pending.tmp.OT0xbD": 394,
+    "turn.jsonl.pending.tmp.bKLEOi": 394,
+    "turn.jsonl.pending.tmp.L7Uwl2": 394,
+    "turn.jsonl.pending.tmp.7PVykR": 394,
+    "turn.jsonl.pending.tmp.nKWEZZ": 394,
+    "turn.jsonl.pending.tmp.rcq82K": 394,
+    "turn.jsonl.pending.tmp.11Lt1w": 395,
+    "turn.jsonl.pending.tmp.fJwa2B": 395,
+    "turn.jsonl.pending.tmp.lfWA4X": 395,
+    "turn.jsonl.pending.tmp.OQnJ0y": 395,
+    "turn.jsonl.pending.tmp.9OfIRV": 395,
+    "turn.jsonl.pending.tmp.Ajk4p0": 395,
+    "turn.jsonl.pending.tmp.s27B4g": 395,
+    "turn.jsonl.pending.tmp.tV3oFC": 395,
+    "turn.jsonl.pending.tmp.tlinSz": 395,
+    "turn.jsonl.pending.tmp.gTeAVQ": 395,
+    "turn.jsonl.pending.tmp.QpYuXP": 395,
+    "turn.jsonl.pending.tmp.jRSV63": 395,
+    "turn.jsonl.pending.tmp.hUAibU": 395,
+    "turn.jsonl.pending.tmp.ClkzLE": 395,
+    "turn.jsonl.pending.tmp.Is2z1q": 395,
+    "turn.jsonl.pending.tmp.aVKyvt": 395,
+    "turn.jsonl.pending.tmp.LPdOrB": 395,
+    "turn.jsonl.pending.tmp.CpfAz3": 395,
+    "turn.jsonl.pending.tmp.mxhxxv": 395,
+    "turn.jsonl.pending.tmp.3y9TPa": 395,
+    "turn.jsonl.pending.tmp.LmwPdP": 395,
+    "turn.jsonl.pending.tmp.kP2MfO": 395,
+    "turn.jsonl.pending.tmp.voOzIi": 395,
+    "turn.jsonl.pending.tmp.o1R1mP": 395,
+    "turn.jsonl.pending.tmp.t83GuE": 395,
+    "turn.jsonl.pending.tmp.32gzcy": 395,
+    "turn.jsonl.pending.tmp.wyGm7D": 395,
+    "turn.jsonl.pending.tmp.gV5f6Y": 395,
+    "turn.jsonl.pending.tmp.6wZo40": 395,
+    "turn.jsonl.pending.tmp.6PredX": 395,
+    "turn.jsonl.pending.tmp.8FT33x": 395,
+    "turn.jsonl.pending.tmp.8AbRlt": 395,
+    "turn.jsonl.pending.tmp.o6KhUR": 395,
+    "turn.jsonl.pending.tmp.XWX8Ym": 395,
+    "turn.jsonl.pending.tmp.folYbJ": 395,
+    "turn.jsonl.pending.tmp.hFptFC": 395,
+    "turn.jsonl.pending.tmp.MTxClB": 395,
+    "turn.jsonl.pending.tmp.eJBvhy": 395,
+    "turn.jsonl.pending.tmp.wwvvy9": 395,
+    "turn.jsonl.pending.tmp.IOK1nh": 395,
+    "turn.jsonl.pending.tmp.Mv7krq": 395,
+    "turn.jsonl.pending.tmp.1VTysK": 395,
+    "turn.jsonl.pending.tmp.gqupoI": 395,
+    "turn.jsonl.pending.tmp.j8jp29": 395,
+    "turn.jsonl.pending.tmp.ZaEP2O": 395,
+    "turn.jsonl.pending.tmp.OIxkYM": 395,
+    "turn.jsonl.pending.tmp.sPFfVC": 395,
+    "turn.jsonl.pending.tmp.S2RY8A": 395,
+    "turn.jsonl.pending.tmp.rvwNYH": 395,
+    "turn.jsonl.pending.tmp.5MVccL": 395,
+    "turn.jsonl.pending.tmp.Faoo3O": 395,
+    "turn.jsonl.pending.tmp.vHbu4g": 395,
+    "turn.jsonl.pending.tmp.0nOzYO": 395,
+    "turn.jsonl.pending.tmp.FOtzNz": 395,
+    "turn.jsonl.pending.tmp.k3fKEQ": 395,
+    "turn.jsonl.pending.tmp.onbIjT": 395,
+    "turn.jsonl.pending.tmp.v5tyMT": 395,
+    "turn.jsonl.pending.tmp.P8poRK": 395,
+    "turn.jsonl.pending.tmp.cGmcMk": 395,
+    "turn.jsonl.pending.tmp.KN6miz": 395,
+    "turn.jsonl.pending.tmp.a5TYJZ": 395,
+    "turn.jsonl.pending.tmp.t4cylx": 395,
+    "turn.jsonl.pending.tmp.1a7Tr1": 395,
+    "turn.jsonl.pending.tmp.KaMls5": 395,
+    "turn.jsonl.pending.tmp.hGWM7Z": 395,
+    "turn.jsonl.pending.tmp.dMSbU9": 395,
+    "turn.jsonl.pending.tmp.7Z1O5B": 395,
+    "turn.jsonl.pending.tmp.JqOkL5": 395,
+    "turn.jsonl.pending.tmp.Fvyv2d": 395,
+    "turn.jsonl.pending.tmp.tYEgVJ": 395,
+    "turn.jsonl.pending.tmp.sBMUwl": 395,
+    "turn.jsonl.pending.tmp.HV3D7E": 395,
+    "turn.jsonl.pending.tmp.iyTfKA": 395,
+    "turn.jsonl.pending.tmp.bgC9EV": 395,
+    "turn.jsonl.pending.tmp.H4cgDS": 395,
+    "turn.jsonl.pending.tmp.ECjhJN": 395,
+    "turn.jsonl.pending.tmp.kvveHt": 395
+  },
+  "files": [
+    {
+      "path": "state.db",
+      "bytes": 110592
+    },
+    {
+      "path": "events.jsonl",
+      "bytes": 69131
+    },
+    {
+      "path": "turn.jsonl",
+      "bytes": 16973
+    },
+    {
+      "path": "repository/.git/hooks/pre-rebase.sample",
+      "bytes": 4898
+    },
+    {
+      "path": "repository/.git/hooks/fsmonitor-watchman.sample",
+      "bytes": 4726
+    },
+    {
+      "path": "repository/.git/hooks/update.sample",
+      "bytes": 3650
+    },
+    {
+      "path": "repository/.git/hooks/push-to-checkout.sample",
+      "bytes": 2783
+    },
+    {
+      "path": "repository/.git/hooks/sendemail-validate.sample",
+      "bytes": 2308
+    },
+    {
+      "path": "repository/.git/hooks/pre-commit.sample",
+      "bytes": 1643
+    },
+    {
+      "path": "repository/.git/hooks/prepare-commit-msg.sample",
+      "bytes": 1492
+    },
+    {
+      "path": "repository/.git/hooks/pre-push.sample",
+      "bytes": 1374
+    },
+    {
+      "path": "repository/.git/hooks/commit-msg.sample",
+      "bytes": 896
+    },
+    {
+      "path": "repository/.git/hooks/pre-receive.sample",
+      "bytes": 544
+    },
+    {
+      "path": "repository/.git/hooks/applypatch-msg.sample",
+      "bytes": 478
+    },
+    {
+      "path": "repository/.git/hooks/pre-applypatch.sample",
+      "bytes": 424
+    },
+    {
+      "path": "repository/.git/hooks/pre-merge-commit.sample",
+      "bytes": 416
+    },
+    {
+      "path": "repository/.git/worktrees/worker/logs/HEAD",
+      "bytes": 312
+    },
+    {
+      "path": "repository/.git/info/exclude",
+      "bytes": 240
+    },
+    {
+      "path": "repository/.git/logs/refs/heads/worker-branch",
+      "bytes": 207
+    },
+    {
+      "path": "fixture-harness",
+      "bytes": 195
+    },
+    {
+      "path": "repository/.git/hooks/post-update.sample",
+      "bytes": 189
+    },
+    {
+      "path": "repository/.git/logs/HEAD",
+      "bytes": 168
+    },
+    {
+      "path": "repository/.git/logs/refs/heads/main",
+      "bytes": 168
+    },
+    {
+      "path": "repository/.git/config",
+      "bytes": 160
+    },
+    {
+      "path": "repository/.git/index",
+      "bytes": 137
+    },
+    {
+      "path": "repository/.git/worktrees/worker/index",
+      "bytes": 137
+    },
+    {
+      "path": "repository/.git/objects/6c/3f999a8d5b1c20eee6b6917cef44648338327e",
+      "bytes": 131
+    },
+    {
+      "path": "checkouts/worker/.git",
+      "bytes": 98
+    },
+    {
+      "path": "repository/.git/worktrees/worker/gitdir",
+      "bytes": 79
+    },
+    {
+      "path": "repository/.git/description",
+      "bytes": 73
+    },
+    {
+      "path": "repository/.git/objects/0c/4ef53184f7e932e765e73dd02f4b81b002e862",
+      "bytes": 53
+    },
+    {
+      "path": "repository/.git/refs/heads/main",
+      "bytes": 41
+    },
+    {
+      "path": "repository/.git/refs/heads/worker-branch",
+      "bytes": 41
+    },
+    {
+      "path": "repository/.git/worktrees/worker/ORIG_HEAD",
+      "bytes": 41
+    },
+    {
+      "path": "repository/.git/worktrees/worker/HEAD",
+      "bytes": 30
+    },
+    {
+      "path": "task.txt",
+      "bytes": 26
+    },
+    {
+      "path": "repository/.git/HEAD",
+      "bytes": 21
+    },
+    {
+      "path": "repository/.git/objects/e3/1de1f3a235fd5e8f97207b8e43cd2aa06a6417",
+      "bytes": 20
+    },
+    {
+      "path": "repository/.git/worktrees/worker/commondir",
+      "bytes": 6
+    },
+    {
+      "path": "checkouts/worker/seed.txt",
+      "bytes": 5
+    },
+    {
+      "path": "repository/.git/COMMIT_EDITMSG",
+      "bytes": 5
+    },
+    {
+      "path": "repository/seed.txt",
+      "bytes": 5
+    },
+    {
+      "path": "state.db.lock-776f726b6572",
+      "bytes": 0
+    },
+    {
+      "path": "turn.jsonl.stderr",
+      "bytes": 0
+    }
+  ]
+}

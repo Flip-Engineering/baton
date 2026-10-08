@@ -1,0 +1,274 @@
+{
+  "mode": "inventory",
+  "directory": "/home/atari2036/baton-measure-work/b31-accumulate",
+  "files": [
+    {
+      "path": "native.jsonl",
+      "bytes": 16055228
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/native.stderr",
+      "bytes": 262144
+    },
+    {
+      "path": "result.json",
+      "bytes": 185340
+    },
+    {
+      "path": "state.db",
+      "bytes": 131072
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/manifest",
+      "bytes": 7431
+    },
+    {
+      "path": "fixture",
+      "bytes": 2711
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/checkpoint",
+      "bytes": 390
+    },
+    {
+      "path": "stdout.log",
+      "bytes": 212
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/native.birth",
+      "bytes": 24
+    },
+    {
+      "path": "config.json",
+      "bytes": 15
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/acknowledged",
+      "bytes": 13
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/released",
+      "bytes": 9
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/launch",
+      "bytes": 7
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/native.pid",
+      "bytes": 6
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/status",
+      "bytes": 2
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/keeper.log",
+      "bytes": 0
+    },
+    {
+      "path": "state.db.lock-726f6f74",
+      "bytes": 0
+    },
+    {
+      "path": "stderr.log",
+      "bytes": 0
+    }
+  ],
+  "classification": {
+    "groups": {
+      "database": [
+        {
+          "path": "state.db",
+          "bytes": 131072
+        },
+        {
+          "path": "state.db.lock-726f6f74",
+          "bytes": 0
+        }
+      ],
+      "public_log": [
+        {
+          "path": "native.jsonl",
+          "bytes": 16055228
+        }
+      ],
+      "generation": [],
+      "segment": [],
+      "checkpoint": [],
+      "stderr": [
+        {
+          "path": "stderr.log",
+          "bytes": 0
+        }
+      ],
+      "attempt_evidence": [
+        {
+          "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/native.stderr",
+          "bytes": 262144
+        },
+        {
+          "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/manifest",
+          "bytes": 7431
+        },
+        {
+          "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/checkpoint",
+          "bytes": 390
+        },
+        {
+          "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/native.birth",
+          "bytes": 24
+        },
+        {
+          "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/acknowledged",
+          "bytes": 13
+        },
+        {
+          "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/released",
+          "bytes": 9
+        },
+        {
+          "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/launch",
+          "bytes": 7
+        },
+        {
+          "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/native.pid",
+          "bytes": 6
+        },
+        {
+          "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/status",
+          "bytes": 2
+        },
+        {
+          "path": "state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238/keeper.log",
+          "bytes": 0
+        }
+      ],
+      "payload_artifact": [],
+      "workload_input": [
+        {
+          "path": "fixture",
+          "bytes": 2711
+        },
+        {
+          "path": "config.json",
+          "bytes": 15
+        }
+      ],
+      "other": [
+        {
+          "path": "result.json",
+          "bytes": 185340
+        },
+        {
+          "path": "stdout.log",
+          "bytes": 212
+        }
+      ]
+    },
+    "totals": {
+      "database": 131072,
+      "public_log": 16055228,
+      "generation": 0,
+      "segment": 0,
+      "checkpoint": 0,
+      "stderr": 0,
+      "attempt_evidence": 270026,
+      "payload_artifact": 0,
+      "workload_input": 2726,
+      "other": 185552,
+      "all": 16644604
+    }
+  },
+  "tables": {
+    "dbstat": true,
+    "bytes": {
+      "ensemble_members": 4096,
+      "ensembles": 4096,
+      "executions": 4096,
+      "log_files": 4096,
+      "log_policies": 4096,
+      "messages": 4096,
+      "native_requests": 4096,
+      "section_members": 4096,
+      "sections": 4096,
+      "session_roles": 4096,
+      "session_stops": 4096,
+      "sessions": 4096,
+      "sqlite_autoindex_ensemble_members_1": 4096,
+      "sqlite_autoindex_ensembles_1": 4096,
+      "sqlite_autoindex_executions_1": 4096,
+      "sqlite_autoindex_log_files_1": 4096,
+      "sqlite_autoindex_log_policies_1": 4096,
+      "sqlite_autoindex_messages_1": 4096,
+      "sqlite_autoindex_native_requests_1": 4096,
+      "sqlite_autoindex_native_requests_2": 4096,
+      "sqlite_autoindex_section_members_1": 4096,
+      "sqlite_autoindex_sections_1": 4096,
+      "sqlite_autoindex_session_roles_1": 4096,
+      "sqlite_autoindex_session_stops_1": 4096,
+      "sqlite_autoindex_session_stops_2": 4096,
+      "sqlite_autoindex_sessions_1": 4096,
+      "sqlite_autoindex_turns_1": 4096,
+      "sqlite_schema": 12288,
+      "sqlite_sequence": 4096,
+      "turns": 4096
+    },
+    "rows": {
+      "sessions": 2,
+      "messages": 2,
+      "turns": 1,
+      "executions": 1,
+      "session_stops": 0,
+      "session_roles": 2,
+      "ensembles": 0,
+      "ensemble_members": 0,
+      "sections": 0,
+      "section_members": 0,
+      "log_policies": 1,
+      "log_files": 1,
+      "native_requests": 0
+    }
+  },
+  "storage": {
+    "database": "/home/atari2036/baton-measure-work/b31-accumulate/state.db",
+    "databaseBytes": 131072,
+    "rootLogBytes": 0,
+    "defaults": {
+      "level": "default"
+    },
+    "logs": [
+      {
+        "session": "root",
+        "path": "/home/atari2036/baton-measure-work/b31-accumulate/native.jsonl",
+        "level": "default",
+        "pendingInput": 0,
+        "bytes": 16055228,
+        "stderrBytes": 0,
+        "pendingBytes": 0,
+        "pendingPath": "/home/atari2036/baton-measure-work/b31-accumulate/native.jsonl.pending"
+      }
+    ],
+    "attempts": [
+      {
+        "session": "root",
+        "attempt": "receive:root:1:5833ad21c4f27f8239dbeadbc33d46b8",
+        "mode": "retained",
+        "phase": "exited",
+        "status": "exit 0",
+        "directory": "/home/atari2036/baton-measure-work/b31-accumulate/state.db.attempt-726563656976653a726f6f743a313a3538333361643231633466323766383233396462656164626333336434366238",
+        "bytes": 262144,
+        "stdoutBytes": 0,
+        "stderrBytes": 262144,
+        "observerBytes": 0,
+        "keeperBytes": 0,
+        "released": true,
+        "acknowledged": true,
+        "reported": true,
+        "pendingInput": 0,
+        "cleanupEligible": true,
+        "cleanupReason": "eligible"
+      }
+    ]
+  }
+}

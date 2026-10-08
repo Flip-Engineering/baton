@@ -1,0 +1,984 @@
+{
+  "mode": "batches",
+  "exe": "/home/atari2036/baton-logging-686/baseline/.scratch/bend2/baton2",
+  "exe_sha256": "93e7f20a271fe9834be3e8ca19469d34408b859f618ffd7475f5eeb5690ae46b",
+  "source_revision_supplied": "fca7af876c8260c32d17f95f3e19bc68ee1bf561",
+  "level": null,
+  "budget": null,
+  "segments": null,
+  "policy_before": null,
+  "policy_after": null,
+  "parameters": {
+    "count": 400,
+    "step": 51,
+    "task_frames": "/home/atari2036/baton-measure-work/inputs/frames-task.jsonl",
+    "omp_window": "/home/atari2036/baton-measure-work/inputs/frames-omp-window.jsonl"
+  },
+  "coordinates": [
+    {
+      "argv": [
+        "attach",
+        "root",
+        "omp",
+        "",
+        ""
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"root\",\"parent\":null,\"harness\":\"omp\",\"model\":\"\",\"effort\":\"\",\"native\":\"\",\"observedHarness\":\"\",\"observedModel\":\"\",\"observedEffort\":\"\",\"endpoint\":\"\",\"endpointArgv\":null,\"workspace\":\"\",\"branch\":\"\",\"base\":\"\",\"kind\":\"player\",\"role\":\"player\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "role",
+        "root",
+        "principal-conductor"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"root\",\"kind\":\"player\",\"role\":\"principal-conductor\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "attach",
+        "operator",
+        "terminal",
+        "",
+        ""
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"operator\",\"parent\":null,\"harness\":\"terminal\",\"model\":\"\",\"effort\":\"\",\"native\":\"\",\"observedHarness\":\"\",\"observedModel\":\"\",\"observedEffort\":\"\",\"endpoint\":\"\",\"endpointArgv\":null,\"workspace\":\"\",\"branch\":\"\",\"base\":\"\",\"kind\":\"player\",\"role\":\"player\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "role",
+        "operator",
+        "operator"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"operator\",\"kind\":\"operator\",\"role\":\"operator\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "message",
+        "initial",
+        "operator",
+        "root",
+        "task",
+        "Run the controlled probe."
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"initial\",\"sender\":\"operator\",\"recipient\":\"root\",\"kind\":\"task\",\"body\":\"Run the controlled probe.\",\"receipt\":null}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "ack",
+        "initial",
+        "root",
+        "probe input accepted"
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"initial\",\"receipt\":\"probe input accepted\"}\n",
+      "stderr": ""
+    }
+  ],
+  "measurements": [
+    {
+      "batch": "native-small",
+      "wall_seconds": 0.524738401999997,
+      "retained_bytes": 113,
+      "bytes": 123200,
+      "frames": 400
+    },
+    {
+      "batch": "native-cumulative",
+      "wall_seconds": 3.8608728540000072,
+      "retained_bytes": 118,
+      "bytes": 4243016,
+      "frames": 400
+    },
+    {
+      "batch": "native-tool-bash",
+      "wall_seconds": 4.615554219999993,
+      "retained_bytes": 4223533,
+      "bytes": 4223416,
+      "frames": 400
+    },
+    {
+      "batch": "native-tool-task",
+      "wall_seconds": 28.803646170999997,
+      "retained_bytes": 7206615,
+      "bytes": 7206498,
+      "frames": 300,
+      "emitted_lines": 300,
+      "retained_lines": 300,
+      "dropped_lines": 0,
+      "retained_bytes_matched": 7206498,
+      "dropped_bytes_matched": 0,
+      "note_lines": 0,
+      "retained_samples": [
+        "{\"type\":\"tool_execution_update\",\"toolCallId\":\"call_00_BF9yx8K9cfoORRLfR4mO2883\",\"toolName\":\"task\",\"args\":{\"context\":\"Rep",
+        "{\"type\":\"tool_execution_update\",\"toolCallId\":\"call_00_BF9yx8K9cfoORRLfR4mO2883\",\"toolName\":\"task\",\"args\":{\"context\":\"Rep",
+        "{\"type\":\"tool_execution_update\",\"toolCallId\":\"call_00_BF9yx8K9cfoORRLfR4mO2883\",\"toolName\":\"task\",\"args\":{\"context\":\"Rep"
+      ],
+      "dropped_samples": [],
+      "by_type": [
+        {
+          "type": "tool_execution_update",
+          "emitted": 300,
+          "retained": 300,
+          "dropped": 0
+        }
+      ]
+    },
+    {
+      "batch": "native-omp-window",
+      "wall_seconds": 0.7495498140000052,
+      "retained_bytes": 69119,
+      "bytes": 69001,
+      "frames": 140,
+      "emitted_lines": 140,
+      "retained_lines": 140,
+      "dropped_lines": 0,
+      "retained_bytes_matched": 69001,
+      "dropped_bytes_matched": 0,
+      "note_lines": 0,
+      "retained_samples": [
+        "{\"type\":\"tool_execution_start\",\"toolCallId\":\"call_00_ET_PpV95D36AovgmXfnfS2n4622\",\"toolName\":\"edit\",\"args\":{\"new_string\"",
+        "{\"type\":\"tool_stream_update\",\"toolCallId\":\"call_00_ET_PpV95D36AovgmXfnfS2n4622\",\"toolName\":\"edit\",\"update\":{\"generation\"",
+        "{\"type\":\"tool_execution_end\",\"toolCallId\":\"call_00_ET_PpV95D36AovgmXfnfS2n4622\",\"toolName\":\"edit\",\"result\":{\"content\":[{"
+      ],
+      "dropped_samples": [],
+      "by_type": [
+        {
+          "type": "message_end",
+          "emitted": 3,
+          "retained": 3,
+          "dropped": 0
+        },
+        {
+          "type": "message_start",
+          "emitted": 3,
+          "retained": 3,
+          "dropped": 0
+        },
+        {
+          "type": "tool_execution_end",
+          "emitted": 2,
+          "retained": 2,
+          "dropped": 0
+        },
+        {
+          "type": "tool_execution_start",
+          "emitted": 3,
+          "retained": 3,
+          "dropped": 0
+        },
+        {
+          "type": "tool_execution_update",
+          "emitted": 126,
+          "retained": 126,
+          "dropped": 0
+        },
+        {
+          "type": "tool_stream_update",
+          "emitted": 1,
+          "retained": 1,
+          "dropped": 0
+        },
+        {
+          "type": "turn_end",
+          "emitted": 1,
+          "retained": 1,
+          "dropped": 0
+        },
+        {
+          "type": "turn_start",
+          "emitted": 1,
+          "retained": 1,
+          "dropped": 0
+        }
+      ]
+    },
+    {
+      "batch": "native-semantic",
+      "wall_seconds": 0.05613069800000403,
+      "retained_bytes": 346,
+      "bytes": 351,
+      "frames": 8,
+      "emitted_lines": 8,
+      "retained_lines": 6,
+      "dropped_lines": 2,
+      "retained_bytes_matched": 230,
+      "dropped_bytes_matched": 121,
+      "note_lines": 0,
+      "retained_samples": [
+        "{\"type\":null,\"probe\":\"null\"}",
+        "{\"type\":123,\"probe\":\"number\"}",
+        "{\"type\":[\"message_update\"],\"probe\":\"array\"}"
+      ],
+      "dropped_samples": [
+        "  {\"message\":{\"content\":\"large prefix\"},\"type\":\"message_update\"}  ",
+        "{\"typ\\u0065\":\"message_\\u0075pdate\",\"probe\":\"escaped\"}"
+      ],
+      "by_type": [
+        {
+          "type": "<NoneType>",
+          "emitted": 2,
+          "retained": 2,
+          "dropped": 0
+        },
+        {
+          "type": "<int>",
+          "emitted": 1,
+          "retained": 1,
+          "dropped": 0
+        },
+        {
+          "type": "<list>",
+          "emitted": 1,
+          "retained": 1,
+          "dropped": 0
+        },
+        {
+          "type": "<unparsed>",
+          "emitted": 1,
+          "retained": 1,
+          "dropped": 0
+        },
+        {
+          "type": "message_update",
+          "emitted": 2,
+          "retained": 0,
+          "dropped": 2
+        },
+        {
+          "type": "message_update\u0000suffix",
+          "emitted": 1,
+          "retained": 1,
+          "dropped": 0
+        }
+      ]
+    }
+  ],
+  "retained_log_bytes": 11500168,
+  "live_log_paths": [
+    "/home/atari2036/baton-measure-work/run1-before-default/native.jsonl"
+  ],
+  "peaks": {
+    "config.json": 15,
+    "stdout.log": 212,
+    "fixture": 2678,
+    "state.db": 110592,
+    "stderr.log": 0,
+    "state.db.lock-726f6f74": 0,
+    "state.db-journal": 25136,
+    "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/manifest": 7714,
+    "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/launch": 7,
+    "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/keeper.log": 0,
+    "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/stdout": 15866413,
+    "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/native.stderr": 0,
+    "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/native.pid": 6,
+    "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/native.birth": 24,
+    "native.jsonl": 11500168,
+    "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/status": 2,
+    "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/released": 9,
+    "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/acknowledged": 13
+  },
+  "growth_series": [
+    [
+      0.001,
+      96901
+    ],
+    [
+      0.258,
+      104878
+    ],
+    [
+      0.515,
+      228191
+    ],
+    [
+      0.766,
+      228191
+    ],
+    [
+      1.024,
+      4471438
+    ],
+    [
+      1.276,
+      4471438
+    ],
+    [
+      1.532,
+      4471438
+    ],
+    [
+      1.791,
+      4471438
+    ],
+    [
+      2.047,
+      4471438
+    ],
+    [
+      2.303,
+      4471438
+    ],
+    [
+      2.556,
+      4471438
+    ],
+    [
+      2.808,
+      4471438
+    ],
+    [
+      3.077,
+      4471438
+    ],
+    [
+      3.331,
+      4471438
+    ],
+    [
+      3.582,
+      4471438
+    ],
+    [
+      3.836,
+      4471438
+    ],
+    [
+      4.089,
+      4471438
+    ],
+    [
+      4.341,
+      4471438
+    ],
+    [
+      4.599,
+      4471438
+    ],
+    [
+      4.849,
+      8711083
+    ],
+    [
+      5.1,
+      8861207
+    ],
+    [
+      5.357,
+      9069226
+    ],
+    [
+      5.61,
+      9287683
+    ],
+    [
+      5.864,
+      9527979
+    ],
+    [
+      6.121,
+      9766397
+    ],
+    [
+      6.373,
+      10011279
+    ],
+    [
+      6.63,
+      10281329
+    ],
+    [
+      6.881,
+      10534823
+    ],
+    [
+      7.133,
+      10777549
+    ],
+    [
+      7.389,
+      11035303
+    ],
+    [
+      7.643,
+      11291638
+    ],
+    [
+      7.901,
+      11544043
+    ],
+    [
+      8.152,
+      11790177
+    ],
+    [
+      8.404,
+      12027863
+    ],
+    [
+      8.654,
+      12255071
+    ],
+    [
+      8.908,
+      12489767
+    ],
+    [
+      9.165,
+      12731951
+    ],
+    [
+      9.434,
+      12918622
+    ],
+    [
+      9.686,
+      12918622
+    ],
+    [
+      9.94,
+      12918622
+    ],
+    [
+      10.195,
+      12918622
+    ],
+    [
+      10.453,
+      12918622
+    ],
+    [
+      10.707,
+      12918622
+    ],
+    [
+      10.958,
+      12918622
+    ],
+    [
+      11.213,
+      12918622
+    ],
+    [
+      11.468,
+      12918622
+    ],
+    [
+      11.723,
+      12918622
+    ],
+    [
+      11.978,
+      12918622
+    ],
+    [
+      12.23,
+      12918622
+    ],
+    [
+      12.485,
+      12918622
+    ],
+    [
+      12.735,
+      12918622
+    ],
+    [
+      12.991,
+      12918622
+    ],
+    [
+      13.247,
+      12918622
+    ],
+    [
+      13.498,
+      12918622
+    ],
+    [
+      13.75,
+      12918622
+    ],
+    [
+      14.006,
+      12918622
+    ],
+    [
+      14.261,
+      12918622
+    ],
+    [
+      14.518,
+      12918622
+    ],
+    [
+      14.776,
+      12918622
+    ],
+    [
+      15.031,
+      12918622
+    ],
+    [
+      15.286,
+      12918622
+    ],
+    [
+      15.539,
+      12918622
+    ],
+    [
+      15.794,
+      12918622
+    ],
+    [
+      16.046,
+      12918622
+    ],
+    [
+      16.301,
+      12918622
+    ],
+    [
+      16.552,
+      12918622
+    ],
+    [
+      16.807,
+      12918622
+    ],
+    [
+      17.063,
+      12918622
+    ],
+    [
+      17.316,
+      12918622
+    ],
+    [
+      17.568,
+      12918622
+    ],
+    [
+      17.82,
+      12918622
+    ],
+    [
+      18.073,
+      12918622
+    ],
+    [
+      18.326,
+      12918622
+    ],
+    [
+      18.577,
+      12918622
+    ],
+    [
+      18.827,
+      12918622
+    ],
+    [
+      19.084,
+      12918622
+    ],
+    [
+      19.339,
+      12918622
+    ],
+    [
+      19.593,
+      12918622
+    ],
+    [
+      19.849,
+      12918622
+    ],
+    [
+      20.105,
+      12918622
+    ],
+    [
+      20.361,
+      12918622
+    ],
+    [
+      20.617,
+      12918622
+    ],
+    [
+      20.868,
+      12918622
+    ],
+    [
+      21.123,
+      12918622
+    ],
+    [
+      21.377,
+      12918622
+    ],
+    [
+      21.633,
+      12918622
+    ],
+    [
+      21.887,
+      12918622
+    ],
+    [
+      22.146,
+      12918622
+    ],
+    [
+      22.398,
+      12918622
+    ],
+    [
+      22.652,
+      12918622
+    ],
+    [
+      22.904,
+      12918622
+    ],
+    [
+      23.16,
+      12918622
+    ],
+    [
+      23.411,
+      12918622
+    ],
+    [
+      23.669,
+      12918622
+    ],
+    [
+      23.924,
+      12918622
+    ],
+    [
+      24.174,
+      12918622
+    ],
+    [
+      24.428,
+      12918622
+    ],
+    [
+      24.686,
+      12918622
+    ],
+    [
+      24.938,
+      12918622
+    ],
+    [
+      25.195,
+      12918622
+    ],
+    [
+      25.452,
+      12918622
+    ],
+    [
+      25.707,
+      12918622
+    ],
+    [
+      25.961,
+      12918622
+    ],
+    [
+      26.216,
+      12918622
+    ],
+    [
+      26.47,
+      12918622
+    ],
+    [
+      26.724,
+      12918622
+    ],
+    [
+      26.979,
+      12918622
+    ],
+    [
+      27.233,
+      12918622
+    ],
+    [
+      27.487,
+      12918622
+    ],
+    [
+      27.743,
+      12918622
+    ],
+    [
+      28.001,
+      12918622
+    ],
+    [
+      28.258,
+      12918622
+    ],
+    [
+      28.512,
+      12918622
+    ],
+    [
+      28.769,
+      12918622
+    ],
+    [
+      29.023,
+      12918622
+    ],
+    [
+      29.278,
+      12918622
+    ],
+    [
+      29.531,
+      12918622
+    ],
+    [
+      29.784,
+      12918622
+    ],
+    [
+      30.037,
+      12918622
+    ],
+    [
+      30.289,
+      12918622
+    ],
+    [
+      30.544,
+      12918622
+    ],
+    [
+      30.8,
+      20189994
+    ],
+    [
+      31.057,
+      20431817
+    ],
+    [
+      31.315,
+      20697497
+    ],
+    [
+      31.57,
+      20945327
+    ],
+    [
+      31.822,
+      21198384
+    ],
+    [
+      32.073,
+      21455885
+    ],
+    [
+      32.324,
+      21713600
+    ],
+    [
+      32.582,
+      21974175
+    ],
+    [
+      32.836,
+      22242886
+    ],
+    [
+      33.086,
+      22511966
+    ],
+    [
+      33.337,
+      22781202
+    ],
+    [
+      33.594,
+      23027053
+    ],
+    [
+      33.851,
+      23246952
+    ],
+    [
+      34.106,
+      23517017
+    ],
+    [
+      34.358,
+      23736793
+    ],
+    [
+      34.61,
+      23957670
+    ],
+    [
+      34.866,
+      24177501
+    ],
+    [
+      35.12,
+      24421751
+    ],
+    [
+      35.375,
+      24640391
+    ],
+    [
+      35.63,
+      24859037
+    ],
+    [
+      35.882,
+      25077724
+    ],
+    [
+      36.134,
+      25346049
+    ],
+    [
+      36.386,
+      25615291
+    ],
+    [
+      36.638,
+      25836462
+    ],
+    [
+      36.892,
+      26081022
+    ],
+    [
+      37.148,
+      26300973
+    ],
+    [
+      37.401,
+      26545365
+    ],
+    [
+      37.655,
+      26814621
+    ],
+    [
+      37.91,
+      27060045
+    ],
+    [
+      38.165,
+      27282172
+    ],
+    [
+      38.418,
+      27331852
+    ],
+    [
+      38.669,
+      27402567
+    ],
+    [
+      38.926,
+      27421665
+    ],
+    [
+      39.259,
+      27470090
+    ],
+    [
+      39.515,
+      11621440
+    ]
+  ],
+  "files": [
+    {
+      "path": "native.jsonl",
+      "bytes": 11500168
+    },
+    {
+      "path": "state.db",
+      "bytes": 110592
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/manifest",
+      "bytes": 7714
+    },
+    {
+      "path": "fixture",
+      "bytes": 2678
+    },
+    {
+      "path": "stdout.log",
+      "bytes": 212
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/native.birth",
+      "bytes": 24
+    },
+    {
+      "path": "config.json",
+      "bytes": 15
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/acknowledged",
+      "bytes": 13
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/released",
+      "bytes": 9
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/launch",
+      "bytes": 7
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/native.pid",
+      "bytes": 6
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/status",
+      "bytes": 2
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/keeper.log",
+      "bytes": 0
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6439333764343362383263303534376535343037623738376462353839643865/native.stderr",
+      "bytes": 0
+    },
+    {
+      "path": "state.db.lock-726f6f74",
+      "bytes": 0
+    },
+    {
+      "path": "stderr.log",
+      "bytes": 0
+    }
+  ],
+  "storage": null,
+  "returncode": 0
+}

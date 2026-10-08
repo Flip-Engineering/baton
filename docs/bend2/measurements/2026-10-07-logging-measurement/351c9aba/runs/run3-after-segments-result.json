@@ -1,0 +1,513 @@
+{
+  "mode": "batches",
+  "exe": "/home/atari2036/baton-measure-work/bin/baton2-after-351c9aba",
+  "exe_sha256": "4a0cf22357c0f40c8ba405d7894218f32eccca81dd0b615b1d7ad6c8ebc84928",
+  "source_revision_supplied": "351c9aba85c69f4e4aab1f86cc31fb0f415fe327",
+  "level": "diagnostic",
+  "budget": "65536",
+  "segments": "2",
+  "policy_before": {
+    "session": "root",
+    "level": "diagnostic",
+    "budgetBytes": 65536,
+    "keepSegments": 2,
+    "registeredLogs": 0
+  },
+  "policy_after": {
+    "session": "root",
+    "level": "diagnostic",
+    "budgetBytes": 65536,
+    "keepSegments": 2,
+    "registeredLogs": 1
+  },
+  "parameters": {
+    "count": 60,
+    "step": 51,
+    "task_frames": "None",
+    "omp_window": "None"
+  },
+  "coordinates": [
+    {
+      "argv": [
+        "attach",
+        "root",
+        "omp",
+        "",
+        ""
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"root\",\"parent\":null,\"harness\":\"omp\",\"model\":\"\",\"effort\":\"\",\"native\":\"\",\"observedHarness\":\"\",\"observedModel\":\"\",\"observedEffort\":\"\",\"endpoint\":\"\",\"endpointArgv\":null,\"workspace\":\"\",\"branch\":\"\",\"base\":\"\",\"kind\":\"player\",\"role\":\"player\",\"blockedCause\":\"endpoint-absent\",\"wake\":{\"pending\":0,\"claim\":\"\"}}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "role",
+        "root",
+        "principal-conductor"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"root\",\"kind\":\"player\",\"role\":\"principal-conductor\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "attach",
+        "operator",
+        "terminal",
+        "",
+        ""
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"operator\",\"parent\":null,\"harness\":\"terminal\",\"model\":\"\",\"effort\":\"\",\"native\":\"\",\"observedHarness\":\"\",\"observedModel\":\"\",\"observedEffort\":\"\",\"endpoint\":\"\",\"endpointArgv\":null,\"workspace\":\"\",\"branch\":\"\",\"base\":\"\",\"kind\":\"player\",\"role\":\"player\",\"blockedCause\":\"endpoint-absent\",\"wake\":{\"pending\":0,\"claim\":\"\"}}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "role",
+        "operator",
+        "operator"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"operator\",\"kind\":\"operator\",\"role\":\"operator\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "message",
+        "initial",
+        "operator",
+        "root",
+        "task",
+        "Run the controlled probe."
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"initial\",\"sender\":\"operator\",\"recipient\":\"root\",\"kind\":\"task\",\"body\":\"Run the controlled probe.\",\"receipt\":null}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "logs",
+        "root",
+        "diagnostic",
+        "65536",
+        "2"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"root\",\"level\":\"diagnostic\",\"budgetBytes\":65536,\"keepSegments\":2,\"registeredLogs\":0}",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "logs",
+        "root"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"root\",\"level\":\"diagnostic\",\"budgetBytes\":65536,\"keepSegments\":2,\"registeredLogs\":0}",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "ack",
+        "initial",
+        "root",
+        "probe input accepted"
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"initial\",\"receipt\":\"probe input accepted\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "logs",
+        "root"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"root\",\"level\":\"diagnostic\",\"budgetBytes\":65536,\"keepSegments\":2,\"registeredLogs\":1}",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "logs-storage"
+      ],
+      "returncode": 0,
+      "stdout": "{\"database\":\"/home/atari2036/baton-measure-work/run3-after-segments/state.db\",\"databaseBytes\":188416,\"rootLogBytes\":0,\"defaults\":{\"level\":\"default\",\"budgetBytes\":33554432,\"keepSegments\":2},\"logs\":[{\"session\":\"root\",\"path\":\"/home/atari2036/baton-measure-work/run3-after-segments/native.jsonl.attempt-receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2\",\"attempt\":\"receive%3aroot%3a1%3adda7221ddbe39d",
+      "stderr": ""
+    }
+  ],
+  "measurements": [
+    {
+      "batch": "native-small",
+      "wall_seconds": 1.02979012600008,
+      "retained_bytes": 18593,
+      "bytes": 18480,
+      "frames": 60
+    },
+    {
+      "batch": "native-cumulative",
+      "wall_seconds": 2.423143024999945,
+      "retained_bytes": 106073,
+      "bytes": 105852,
+      "frames": 60
+    },
+    {
+      "batch": "native-tool-bash",
+      "wall_seconds": 2.463824736000106,
+      "retained_bytes": 37031,
+      "bytes": 102912,
+      "frames": 60
+    },
+    {
+      "batch": "native-semantic",
+      "wall_seconds": 0.15506598799993299,
+      "retained_bytes": 467,
+      "bytes": 351,
+      "frames": 8,
+      "emitted_lines": 8,
+      "retained_lines": 8,
+      "dropped_lines": 0,
+      "retained_bytes_matched": 351,
+      "dropped_bytes_matched": 0,
+      "note_lines": 3,
+      "retained_samples": [
+        "{\"type\":null,\"probe\":\"null\"}",
+        "{\"type\":123,\"probe\":\"number\"}",
+        "{\"type\":[\"message_update\"],\"probe\":\"array\"}"
+      ],
+      "dropped_samples": [],
+      "by_type": [
+        {
+          "type": "<NoneType>",
+          "emitted": 2,
+          "retained": 2,
+          "dropped": 0
+        },
+        {
+          "type": "<int>",
+          "emitted": 1,
+          "retained": 1,
+          "dropped": 0
+        },
+        {
+          "type": "<list>",
+          "emitted": 1,
+          "retained": 1,
+          "dropped": 0
+        },
+        {
+          "type": "<unparsed>",
+          "emitted": 1,
+          "retained": 1,
+          "dropped": 0
+        },
+        {
+          "type": "message_update",
+          "emitted": 2,
+          "retained": 2,
+          "dropped": 0
+        },
+        {
+          "type": "message_update\u0000suffix",
+          "emitted": 1,
+          "retained": 1,
+          "dropped": 0
+        }
+      ]
+    }
+  ],
+  "retained_log_bytes": 162488,
+  "live_log_paths": [
+    "/home/atari2036/baton-measure-work/run3-after-segments/native.jsonl.attempt-receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2.2",
+    "/home/atari2036/baton-measure-work/run3-after-segments/native.jsonl.attempt-receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2.1",
+    "/home/atari2036/baton-measure-work/run3-after-segments/native.jsonl.attempt-receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2"
+  ],
+  "peaks": {
+    "config.json": 15,
+    "state.db.dispatch-696e697469616c.stderr": 0,
+    "stdout.log": 212,
+    "fixture": 2678,
+    "state.db.dispatch-696e697469616c.stdout": 0,
+    "state.db": 176128,
+    "state.db.lock-726f6f74": 0,
+    "stderr.log": 0,
+    "state.db-journal": 29240,
+    "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/manifest": 7606,
+    "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/launch": 7,
+    "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/stdout": 228291,
+    "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/native.stderr": 0,
+    "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/native.pid": 6,
+    "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/native.birth": 24,
+    "native.jsonl.attempt-receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2": 66208,
+    "native.jsonl.attempt-receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2.1": 66208,
+    "native.jsonl.attempt-receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2.2": 66208,
+    "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/status": 2,
+    "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/checkpoint": 390,
+    "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/released": 9,
+    "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/acknowledged": 13
+  },
+  "growth_series": [
+    [
+      0.002,
+      150149
+    ],
+    [
+      0.253,
+      174289
+    ],
+    [
+      0.504,
+      195151
+    ],
+    [
+      0.755,
+      200387
+    ],
+    [
+      1.011,
+      205315
+    ],
+    [
+      1.264,
+      210551
+    ],
+    [
+      1.519,
+      320260
+    ],
+    [
+      1.774,
+      326468
+    ],
+    [
+      2.032,
+      332038
+    ],
+    [
+      2.29,
+      340438
+    ],
+    [
+      2.548,
+      350710
+    ],
+    [
+      2.798,
+      362854
+    ],
+    [
+      3.049,
+      376973
+    ],
+    [
+      3.304,
+      392863
+    ],
+    [
+      3.557,
+      410629
+    ],
+    [
+      3.811,
+      423631
+    ],
+    [
+      4.068,
+      531511
+    ],
+    [
+      4.325,
+      536913
+    ],
+    [
+      4.58,
+      544083
+    ],
+    [
+      4.83,
+      551488
+    ],
+    [
+      5.088,
+      564039
+    ],
+    [
+      5.345,
+      576825
+    ],
+    [
+      5.601,
+      591483
+    ],
+    [
+      5.861,
+      541916
+    ],
+    [
+      6.118,
+      557126
+    ],
+    [
+      6.406,
+      564455
+    ],
+    [
+      6.662,
+      577644
+    ]
+  ],
+  "files": [
+    {
+      "path": "state.db",
+      "bytes": 188416
+    },
+    {
+      "path": "native.jsonl.attempt-receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2.2",
+      "bytes": 65837
+    },
+    {
+      "path": "native.jsonl.attempt-receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2.1",
+      "bytes": 65590
+    },
+    {
+      "path": "native.jsonl.attempt-receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2",
+      "bytes": 31061
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/manifest",
+      "bytes": 7606
+    },
+    {
+      "path": "fixture",
+      "bytes": 2678
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/checkpoint",
+      "bytes": 390
+    },
+    {
+      "path": "stdout.log",
+      "bytes": 212
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/native.birth",
+      "bytes": 24
+    },
+    {
+      "path": "config.json",
+      "bytes": 15
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/acknowledged",
+      "bytes": 13
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/released",
+      "bytes": 9
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/launch",
+      "bytes": 7
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/native.pid",
+      "bytes": 6
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/status",
+      "bytes": 2
+    },
+    {
+      "path": "state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532/native.stderr",
+      "bytes": 0
+    },
+    {
+      "path": "state.db.dispatch-696e697469616c.stderr",
+      "bytes": 0
+    },
+    {
+      "path": "state.db.dispatch-696e697469616c.stdout",
+      "bytes": 0
+    },
+    {
+      "path": "state.db.lock-726f6f74",
+      "bytes": 0
+    },
+    {
+      "path": "stderr.log",
+      "bytes": 0
+    }
+  ],
+  "storage": {
+    "database": "/home/atari2036/baton-measure-work/run3-after-segments/state.db",
+    "databaseBytes": 188416,
+    "rootLogBytes": 0,
+    "defaults": {
+      "level": "default",
+      "budgetBytes": 33554432,
+      "keepSegments": 2
+    },
+    "logs": [
+      {
+        "session": "root",
+        "path": "/home/atari2036/baton-measure-work/run3-after-segments/native.jsonl.attempt-receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2",
+        "attempt": "receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2",
+        "level": "diagnostic",
+        "budgetBytes": 65536,
+        "keepSegments": 2,
+        "pendingInput": 0,
+        "bytes": 31061,
+        "stderrBytes": 0,
+        "stderrSpoolBytes": 0,
+        "stderrMetadataBytes": 0,
+        "stderrProcessingErrorBytes": 0,
+        "accountedBytes": 31061,
+        "pendingBytes": 0,
+        "pendingPath": "/home/atari2036/baton-measure-work/run3-after-segments/native.jsonl.attempt-receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2.pending",
+        "rotated": [
+          {
+            "path": "/home/atari2036/baton-measure-work/run3-after-segments/native.jsonl.attempt-receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2.1",
+            "index": 1,
+            "bytes": 65590,
+            "eligible": false
+          },
+          {
+            "path": "/home/atari2036/baton-measure-work/run3-after-segments/native.jsonl.attempt-receive%3aroot%3a1%3adda7221ddbe39dbe7f0d90c869aa86e2.2",
+            "index": 2,
+            "bytes": 65837,
+            "eligible": false
+          }
+        ]
+      }
+    ],
+    "attempts": [
+      {
+        "session": "root",
+        "attempt": "receive:root:1:dda7221ddbe39dbe7f0d90c869aa86e2",
+        "mode": "retained",
+        "phase": "exited",
+        "status": "exit 0",
+        "terminalType": "agent_end",
+        "eventChars": 118,
+        "eventCount": 1,
+        "directory": "/home/atari2036/baton-measure-work/run3-after-segments/state.db.attempt-726563656976653a726f6f743a313a6464613732323164646265333964626537663064393063383639616138366532",
+        "bytes": 0,
+        "stdoutBytes": 0,
+        "stderrBytes": 0,
+        "stderrSpoolBytes": 0,
+        "stderrMetadataBytes": 0,
+        "stderrProcessingErrorBytes": 0,
+        "stderrRetention": {},
+        "stderrHealth": "legacy",
+        "observerBytes": 0,
+        "keeperBytes": 0,
+        "released": true,
+        "acknowledged": true,
+        "reported": true,
+        "pendingInput": 0,
+        "cleanupEligible": false,
+        "cleanupReason": "diagnostic-policy"
+      }
+    ],
+    "stderrRuns": []
+  },
+  "returncode": 0
+}

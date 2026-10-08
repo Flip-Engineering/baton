@@ -1,0 +1,386 @@
+{
+  "mode": "replay",
+  "harness": "codex",
+  "level": "default",
+  "exe": "/home/atari2036/baton-measure-work/bin/baton2-after-351c9aba",
+  "exe_sha256": "4a0cf22357c0f40c8ba405d7894218f32eccca81dd0b615b1d7ad6c8ebc84928",
+  "source_revision_supplied": "351c9aba85c69f4e4aab1f86cc31fb0f415fe327",
+  "frames_file": "/home/atari2036/baton-measure-work/inputs/codex-trace-a.jsonl",
+  "frames_file_sha256": "24df212a02c49e11695949a03f257b42256d613bebac2b9fa189a2b3cf4f5d26",
+  "appended_terminal_frames": [],
+  "emitted_bytes": 12412768,
+  "emitted_lines": 1311,
+  "retained_bytes_matched": 12412768,
+  "retained_lines": 1311,
+  "dropped_lines": 0,
+  "log_bytes": 12412768,
+  "note_lines": [],
+  "terminal_report": "## WIP pushed\n\nBackend work is on `codex/ui682-codex-luna-backend-20261006` at **`bf00c4711d269a1690a8a9e66a07088d105052",
+  "by_type": [
+    {
+      "type": "item.completed",
+      "emitted": 676,
+      "retained": 676,
+      "dropped": 0
+    },
+    {
+      "type": "item.started",
+      "emitted": 632,
+      "retained": 632,
+      "dropped": 0
+    },
+    {
+      "type": "thread.started",
+      "emitted": 1,
+      "retained": 1,
+      "dropped": 0
+    },
+    {
+      "type": "turn.completed",
+      "emitted": 1,
+      "retained": 1,
+      "dropped": 0
+    },
+    {
+      "type": "turn.started",
+      "emitted": 1,
+      "retained": 1,
+      "dropped": 0
+    }
+  ],
+  "retained_samples": [
+    "{\"type\":\"thread.started\",\"thread_id\":\"01a11503-fa47-7310-841b-d6a4e589f1f4\"}",
+    "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"clamping SessionEnd hook timeout to 3s in /User",
+    "{\"type\":\"turn.started\"}"
+  ],
+  "dropped_samples": [],
+  "policy": {
+    "session": "worker",
+    "level": "default",
+    "budgetBytes": 33554432,
+    "keepSegments": 2,
+    "registeredLogs": 0
+  },
+  "coordinates": [
+    {
+      "argv": [
+        "attach",
+        "root",
+        "native-fixture",
+        "root-session",
+        "root-endpoint"
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"root\",\"parent\":null,\"harness\":\"native-fixture\",\"model\":\"\",\"effort\":\"\",\"native\":\"root-session\",\"observedHarness\":\"\",\"observedModel\":\"\",\"observedEffort\":\"\",\"endpoint\":\"root-endpoint\",\"endpointArgv\":null,\"workspace\":\"\",\"branch\":\"\",\"base\":\"\",\"kind\":\"player\",\"role\":\"player\",\"blockedCause\":\"harness-unsupported\",\"wake\":{\"pending\":0,\"claim\":\"\"}}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "role",
+        "root",
+        "principal-conductor"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"root\",\"kind\":\"player\",\"role\":\"principal-conductor\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "recruit",
+        "worker",
+        "root",
+        "codex",
+        "model",
+        "low",
+        "/home/atari2036/baton-measure-work/run6-replay-codex-a-default/repository",
+        "worker-branch",
+        "/home/atari2036/baton-measure-work/run6-replay-codex-a-default/checkouts/worker",
+        "627bb4ada01edb58ca6da9f17bcecc36f6d422cc"
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"worker\",\"parent\":\"root\",\"harness\":\"codex\",\"model\":\"model\",\"effort\":\"low\",\"native\":\"\",\"observedHarness\":\"\",\"observedModel\":\"\",\"observedEffort\":\"\",\"endpoint\":\"\",\"endpointArgv\":null,\"workspace\":\"/home/atari2036/baton-measure-work/run6-replay-codex-a-default/checkouts/worker\",\"branch\":\"worker-branch\",\"base\":\"627bb4ada01edb58ca6da9f17bcecc36f6d422cc\",\"kind\":\"player\",\"role\":\"player\",\"blockedCause",
+      "stderr": "/bin/ls: cannot access '/home/atari2036/baton-measure-work/run6-replay-codex-a-default/checkouts/worker': No such file or directory\nPreparing worktree (new branch 'worker-branch')\n"
+    },
+    {
+      "argv": [
+        "logs",
+        "worker",
+        "default"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"worker\",\"level\":\"default\",\"budgetBytes\":33554432,\"keepSegments\":2,\"registeredLogs\":0}",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "logs",
+        "worker"
+      ],
+      "returncode": 0,
+      "stdout": "{\"session\":\"worker\",\"level\":\"default\",\"budgetBytes\":33554432,\"keepSegments\":2,\"registeredLogs\":0}",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "turn",
+        "worker",
+        "replay-turn",
+        "/home/atari2036/baton-measure-work/run6-replay-codex-a-default/fixture-harness",
+        "model",
+        "low",
+        "/home/atari2036/baton-measure-work/run6-replay-codex-a-default",
+        "/home/atari2036/baton-measure-work/run6-replay-codex-a-default/task.txt",
+        "/home/atari2036/baton-measure-work/run6-replay-codex-a-default/turn.jsonl",
+        ""
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"replay-turn\",\"sender\":\"worker\",\"recipient\":\"root\",\"kind\":\"report\",\"body\":\"## WIP pushed\\n\\nBackend work is on `codex/ui682-codex-luna-backend-20261006` at **`bf00c4711d269a1690a8a9e66a07088d1050520c`**. `git ls-remote` matched that commit, and the worktree is clean.\\n\\nThe server reads snapshots and event batches in SQLite read transactions. It binds requests to the startup reader, uses dur",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "delivery",
+        "replay-turn"
+      ],
+      "returncode": 0,
+      "stdout": "{\"id\":\"replay-turn\",\"sender\":\"worker\",\"recipient\":\"root\",\"kind\":\"report\",\"body\":\"## WIP pushed\\n\\nBackend work is on `codex/ui682-codex-luna-backend-20261006` at **`bf00c4711d269a1690a8a9e66a07088d1050520c`**. `git ls-remote` matched that commit, and the worktree is clean.\\n\\nThe server reads snapshots and event batches in SQLite read transactions. It binds requests to the startup reader, uses dur",
+      "stderr": ""
+    }
+  ],
+  "wall_seconds": 243.23494492700002,
+  "peaks": {
+    "events.jsonl": 12412768,
+    "task.txt": 26,
+    "state.db": 176128,
+    "fixture-harness": 121,
+    "repository/seed.txt": 5,
+    "repository/.git/config": 160,
+    "repository/.git/index": 137,
+    "repository/.git/HEAD": 21,
+    "repository/.git/description": 73,
+    "repository/.git/COMMIT_EDITMSG": 5,
+    "repository/.git/refs/heads/worker-branch": 41,
+    "repository/.git/refs/heads/main": 41,
+    "repository/.git/objects/0c/4ef53184f7e932e765e73dd02f4b81b002e862": 53,
+    "repository/.git/objects/62/7bb4ada01edb58ca6da9f17bcecc36f6d422cc": 131,
+    "repository/.git/objects/e3/1de1f3a235fd5e8f97207b8e43cd2aa06a6417": 20,
+    "repository/.git/info/exclude": 240,
+    "repository/.git/hooks/pre-merge-commit.sample": 416,
+    "repository/.git/hooks/commit-msg.sample": 896,
+    "repository/.git/hooks/pre-rebase.sample": 4898,
+    "repository/.git/hooks/pre-commit.sample": 1643,
+    "repository/.git/hooks/sendemail-validate.sample": 2308,
+    "repository/.git/hooks/pre-push.sample": 1374,
+    "repository/.git/hooks/update.sample": 3650,
+    "repository/.git/hooks/post-update.sample": 189,
+    "repository/.git/hooks/push-to-checkout.sample": 2783,
+    "repository/.git/hooks/fsmonitor-watchman.sample": 4726,
+    "repository/.git/hooks/pre-receive.sample": 544,
+    "repository/.git/hooks/pre-applypatch.sample": 424,
+    "repository/.git/hooks/prepare-commit-msg.sample": 1492,
+    "repository/.git/hooks/applypatch-msg.sample": 478,
+    "repository/.git/logs/HEAD": 168,
+    "repository/.git/logs/refs/heads/worker-branch": 207,
+    "repository/.git/logs/refs/heads/main": 168,
+    "repository/.git/worktrees/worker/ORIG_HEAD": 41,
+    "repository/.git/worktrees/worker/index": 137,
+    "repository/.git/worktrees/worker/HEAD": 30,
+    "repository/.git/worktrees/worker/gitdir": 85,
+    "repository/.git/worktrees/worker/commondir": 6,
+    "repository/.git/worktrees/worker/logs/HEAD": 312,
+    "checkouts/worker/seed.txt": 5,
+    "checkouts/worker/.git": 104,
+    "state.db-journal": 29240,
+    "state.db.lock-776f726b6572": 0,
+    "turn.jsonl.attempt-replay-turn.stderr.run-1.full": 0,
+    "turn.jsonl.attempt-replay-turn": 12412768,
+    "turn.jsonl.attempt-replay-turn.stderr.run-1": 0,
+    "turn.jsonl.attempt-replay-turn.stderr.run-1.meta": 248
+  },
+  "files": [
+    {
+      "path": "events.jsonl",
+      "bytes": 12412768
+    },
+    {
+      "path": "turn.jsonl.attempt-replay-turn",
+      "bytes": 12412768
+    },
+    {
+      "path": "state.db",
+      "bytes": 176128
+    },
+    {
+      "path": "repository/.git/hooks/pre-rebase.sample",
+      "bytes": 4898
+    },
+    {
+      "path": "repository/.git/hooks/fsmonitor-watchman.sample",
+      "bytes": 4726
+    },
+    {
+      "path": "repository/.git/hooks/update.sample",
+      "bytes": 3650
+    },
+    {
+      "path": "repository/.git/hooks/push-to-checkout.sample",
+      "bytes": 2783
+    },
+    {
+      "path": "repository/.git/hooks/sendemail-validate.sample",
+      "bytes": 2308
+    },
+    {
+      "path": "repository/.git/hooks/pre-commit.sample",
+      "bytes": 1643
+    },
+    {
+      "path": "repository/.git/hooks/prepare-commit-msg.sample",
+      "bytes": 1492
+    },
+    {
+      "path": "repository/.git/hooks/pre-push.sample",
+      "bytes": 1374
+    },
+    {
+      "path": "repository/.git/hooks/commit-msg.sample",
+      "bytes": 896
+    },
+    {
+      "path": "repository/.git/hooks/pre-receive.sample",
+      "bytes": 544
+    },
+    {
+      "path": "repository/.git/hooks/applypatch-msg.sample",
+      "bytes": 478
+    },
+    {
+      "path": "repository/.git/hooks/pre-applypatch.sample",
+      "bytes": 424
+    },
+    {
+      "path": "repository/.git/hooks/pre-merge-commit.sample",
+      "bytes": 416
+    },
+    {
+      "path": "repository/.git/worktrees/worker/logs/HEAD",
+      "bytes": 312
+    },
+    {
+      "path": "turn.jsonl.attempt-replay-turn.stderr.run-1.meta",
+      "bytes": 248
+    },
+    {
+      "path": "repository/.git/info/exclude",
+      "bytes": 240
+    },
+    {
+      "path": "repository/.git/logs/refs/heads/worker-branch",
+      "bytes": 207
+    },
+    {
+      "path": "repository/.git/hooks/post-update.sample",
+      "bytes": 189
+    },
+    {
+      "path": "repository/.git/logs/HEAD",
+      "bytes": 168
+    },
+    {
+      "path": "repository/.git/logs/refs/heads/main",
+      "bytes": 168
+    },
+    {
+      "path": "repository/.git/config",
+      "bytes": 160
+    },
+    {
+      "path": "repository/.git/index",
+      "bytes": 137
+    },
+    {
+      "path": "repository/.git/worktrees/worker/index",
+      "bytes": 137
+    },
+    {
+      "path": "repository/.git/objects/62/7bb4ada01edb58ca6da9f17bcecc36f6d422cc",
+      "bytes": 131
+    },
+    {
+      "path": "fixture-harness",
+      "bytes": 121
+    },
+    {
+      "path": "checkouts/worker/.git",
+      "bytes": 104
+    },
+    {
+      "path": "repository/.git/worktrees/worker/gitdir",
+      "bytes": 85
+    },
+    {
+      "path": "repository/.git/description",
+      "bytes": 73
+    },
+    {
+      "path": "repository/.git/objects/0c/4ef53184f7e932e765e73dd02f4b81b002e862",
+      "bytes": 53
+    },
+    {
+      "path": "repository/.git/refs/heads/main",
+      "bytes": 41
+    },
+    {
+      "path": "repository/.git/refs/heads/worker-branch",
+      "bytes": 41
+    },
+    {
+      "path": "repository/.git/worktrees/worker/ORIG_HEAD",
+      "bytes": 41
+    },
+    {
+      "path": "repository/.git/worktrees/worker/HEAD",
+      "bytes": 30
+    },
+    {
+      "path": "task.txt",
+      "bytes": 26
+    },
+    {
+      "path": "repository/.git/HEAD",
+      "bytes": 21
+    },
+    {
+      "path": "repository/.git/objects/e3/1de1f3a235fd5e8f97207b8e43cd2aa06a6417",
+      "bytes": 20
+    },
+    {
+      "path": "repository/.git/worktrees/worker/commondir",
+      "bytes": 6
+    },
+    {
+      "path": "checkouts/worker/seed.txt",
+      "bytes": 5
+    },
+    {
+      "path": "repository/.git/COMMIT_EDITMSG",
+      "bytes": 5
+    },
+    {
+      "path": "repository/seed.txt",
+      "bytes": 5
+    },
+    {
+      "path": "state.db.lock-776f726b6572",
+      "bytes": 0
+    },
+    {
+      "path": "turn.jsonl.attempt-replay-turn.stderr.run-1",
+      "bytes": 0
+    },
+    {
+      "path": "turn.jsonl.attempt-replay-turn.stderr.run-1.full",
+      "bytes": 0
+    }
+  ]
+}
