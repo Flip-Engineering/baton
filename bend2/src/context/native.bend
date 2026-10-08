@@ -18,7 +18,6 @@ import ./identity.bend as ContextIdentity
 import ../json/canonical.bend as J
 import ./request.bend as Req
 import ../coordinator/commands.bend as ContextCommands
-import ../coordinator/logs.bend as CoordinatorLogs
 import ./store.bend as ContextStore
 import ../host/sqlite.bend as DB
 import ../host/process.bend as Process
@@ -1261,8 +1260,7 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
                           +result_schema: String, +artifact_sha256: String,
                           +plan: Sel.Plan, +guard_identity: String,
                           +physical_identity: String, +lock: U32,
-                          +owner_witness: String, +origin_attempt: String,
-                          +budget: U32) -> IO(Unit):
+                          +owner_witness: String, +origin_attempt: String) -> IO(Unit):
   do IO<Unit>:
     +guard_key : String <- IO.try(String, ContextIdentity.role_guard_key(guard_identity))
     physical_role_key : String <- IO.try(String,
@@ -1293,8 +1291,8 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
       keeper_path ++ "/invocation.json"])
     stderr_path : String = keeper_path ++ "/native.stderr"
     result : Result<&1,&1,U32 & String,U32 & String & String> <-
-      Custody.Instance.prepare_with_file_bounded_start(db, keeper_path, argv, cwd,
-        stderr_path, budget, "invocation.json", invocation_text, SNil{}, 0, lock,
+      Custody.Instance.prepare_with_file_start(db, keeper_path, argv, cwd,
+        stderr_path, "invocation.json", invocation_text, SNil{}, 0, lock,
         recovery_argv, bootstrap_text, owner_witness)
     managed_prepare_result(db, binding, launch, result)
 
@@ -1305,15 +1303,14 @@ def managed_prepare_owner(+db: String, +binding: String, +owner: String,
                           +executable: String, +runtime_path: String,
                           +result_schema: String, +artifact_sha256: String,
                           +plan: Sel.Plan, +guard_identity: String,
-                          +physical_identity: String, +lock: U32,
-                          +budget: U32) -> IO(Unit):
+                          +physical_identity: String, +lock: U32) -> IO(Unit):
   do IO<Unit>:
     owner_witness : String <- IO.try(String, Custody.Instance.ensure_owner_witness(db))
     origin_attempt : String <- owner_origin_attempt(db, binding, owner)
     managed_prepare_roles(db, binding, owner, query, request, cwd, worktree,
       source_identity, artifact_path, invocation_text, executable, runtime_path,
       result_schema, artifact_sha256, plan, guard_identity, physical_identity,
-      lock, owner_witness, origin_attempt, budget)
+      lock, owner_witness, origin_attempt)
 
 def managed_prepare_lock(+db: String, +binding: String, +owner: String,
                          +query: String, +request: String, +cwd: String,
@@ -1322,7 +1319,7 @@ def managed_prepare_lock(+db: String, +binding: String, +owner: String,
                          +executable: String, +runtime_path: String,
                          +result_schema: String, +artifact_sha256: String,
                          +plan: Sel.Plan, +guard_identity: String,
-                         +physical_identity: String, budget: U32,
+                         +physical_identity: String,
                          lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: IO.die(Unit, 3, "managedRoleLockHeld")
@@ -1330,27 +1327,7 @@ def managed_prepare_lock(+db: String, +binding: String, +owner: String,
       managed_prepare_owner(db, binding, owner, query, request, cwd,
         worktree, source_identity, artifact_path, invocation_text,
         executable, runtime_path, result_schema, artifact_sha256, plan,
-        guard_identity, physical_identity, lock_handle, budget)
-
-def managed_prepare_policy(+db: String, +binding: String, +owner: String,
-                           +query: String, +request: String, +cwd: String,
-                           +worktree: String, +source_identity: String,
-                           +artifact_path: String, +invocation_text: String,
-                           +executable: String, +runtime_path: String,
-                           +result_schema: String, +artifact_sha256: String,
-                           +plan: Sel.Plan, +guard_identity: String,
-                           +physical_identity: String, +physical_role_key: String,
-                           +anchor: String,
-                           policy: CoordinatorLogs.Policy) -> IO(Unit):
-  match policy:
-    case CoordinatorLogs.Policy{level, budget, segments, pending, db0, session}:
-      do IO<Unit>:
-        lock : Maybe<U32> <- IO.try(Maybe<U32>, Host.SessionLock.try_acquire(
-          anchor, ContextIdentity.guard_lock_name(physical_role_key)))
-        managed_prepare_lock(db, binding, owner, query, request, cwd,
-          worktree, source_identity, artifact_path, invocation_text,
-          executable, runtime_path, result_schema, artifact_sha256, plan,
-          guard_identity, physical_identity, budget, lock)
+        guard_identity, physical_identity, lock_handle)
 
 def managed_prepare_anchor(+db: String, +binding: String, +owner: String,
                            +query: String, +request: String, +cwd: String,
@@ -1369,11 +1346,12 @@ def managed_prepare_anchor(+db: String, +binding: String, +owner: String,
     canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
     anchor : String <- IO.try(String, ContextIdentity.prepare_guard_anchor(
       database_parent(canonical_database)))
-    policy : CoordinatorLogs.Policy <- CoordinatorLogs.policy(db, owner)
-    managed_prepare_policy(db, binding, owner, query, request, cwd, worktree,
+    lock : Maybe<U32> <- IO.try(Maybe<U32>, Host.SessionLock.try_acquire(
+      anchor, ContextIdentity.guard_lock_name(physical_role_key)))
+    managed_prepare_lock(db, binding, owner, query, request, cwd, worktree,
       source_identity, artifact_path, invocation_text, executable, runtime_path,
       result_schema, artifact_sha256, plan, guard_identity, physical_identity,
-      physical_role_key, anchor, policy)
+      lock)
 
 def managed_query_workspace(+plan: Sel.Plan, +result_schema: String,
                             +db: String, +binding: String, +owner: String,
