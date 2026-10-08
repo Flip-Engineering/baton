@@ -360,6 +360,34 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(len(self.owner_processes()), 1)
         print('evidence second-owner', result.stdout.strip())
 
+    def test_ensure_owner_witness_starts_or_joins_the_same_owner(self):
+        first = self.command('ensure-owner-witness', self.db)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertRegex(first.stdout.strip(), r'^[1-9][0-9]*:[1-9][0-9]*$')
+        first_witness = first.stdout.strip()
+        owners = self.owner_processes()
+        self.assertEqual(len(owners), 1, owners)
+
+        second = self.command('ensure-owner-witness', self.db)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(second.stdout.strip(), first_witness)
+        self.assertEqual(self.owner_processes(), owners)
+        print('evidence ensure-owner-witness no-owner/existing-owner', first_witness)
+
+    def test_owner_refuses_attempt_directory_outside_database_parent(self):
+        outside_parent = self.home / 'outside'
+        outside_parent.mkdir()
+        directory = outside_parent / 'attempt'
+        child = self.spawn('admit', self.db, 'outside-parent', directory, self.home,
+                           'must-not-start\n', sys.executable, self.fixture)
+        child.stdin.close()
+        child.wait(timeout=60)
+        stderr = child.stderr.read()
+        self.assertNotEqual(child.returncode, 0, stderr)
+        self.assertNotIn('tick:', ''.join(child.output))
+        self.assertNotIn('echo:must-not-start', ''.join(child.output))
+        print('evidence owner refused noncanonical attempt parent', stderr.strip())
+
     def test_owner_accept_keeps_ready_control_mapping_stable(self):
         directory, attempt = self.begin('owner-control-race', payload='exit\n')
         self.line(attempt, 'admitted')

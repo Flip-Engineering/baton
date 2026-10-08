@@ -58,6 +58,10 @@ type ManagedExit is Data:
   ManagedExit{code: U32, complete: Bool}
   ManagedExitRefused{}
 
+type ManagedExitCode is Data:
+  ManagedExitCode{code: U32}
+  ManagedExitCodeRefused{}
+
 def invocation_frame(+invocation: Sel.Invocation) -> InvocationFrame:
   match invocation:
     case Sel.Invocation{version, query, owner, binding, request,
@@ -94,6 +98,17 @@ def dirname_step(+rest: String, +current: String, +last: String) -> String:
 def executable_directory(path: String) -> String:
   dirname_step(path, SNil{}, SNil{})
 
+def database_parent_step(+rest: String, +current: String, +last: String) -> String:
+  match rest:
+    case SNil{}: Bool.pick(String, String.is_empty(last), "/", last)
+    case SCon{+head, +tail}:
+      Bool.pick(String, U32.is_eq(Char.to_u32(head), 47),
+        database_parent_step(tail, current ++ SCon{head, SNil{}}, current),
+        database_parent_step(tail, current ++ SCon{head, SNil{}}, last))
+
+def database_parent(+canonical_database: String) -> String:
+  database_parent_step(canonical_database, SNil{}, SNil{})
+
 def installed_provider_path(executable: String) -> String:
   executable_directory(executable) ++ "../libexec/baton2/context-provider.mjs"
 
@@ -118,10 +133,10 @@ def query_bootstrap_argv(+runtime_path: String, +executable: String) -> String:
     installed_provider_path(executable), "--persist-query-bootstrap"])
 
 def query_bootstrap_read_argv(+runtime_path: String, +executable: String,
-                              +owner: String, +worktree: String,
+                              +database: String, +owner: String, +worktree: String,
                               +query: String, +path: String) -> String:
   Process.argv([runtime_path, "--experimental-strip-types",
-    installed_provider_path(executable), "--read-query-bootstrap", owner,
+    installed_provider_path(executable), "--read-query-bootstrap", database, owner,
     worktree, query, path])
 
 def verify_invocation_file_argv(+runtime_path: String, +executable: String,
@@ -146,17 +161,19 @@ def query_artifact_request(+owner: String, +worktree: String, +query: String) ->
     J.Jpair{"worktree", J.Jstr{worktree},
       J.Jpair{"query", J.Jstr{query}, J.Jnil{}}}}})
 
-def query_bootstrap_request(+owner: String, +worktree: String, +query: String,
+def query_bootstrap_request(+database: String, +owner: String, +worktree: String, +query: String,
                             +bootstrap_text: String) -> String:
-  J.json_text(J.Jobj{J.Jpair{"owner", J.Jstr{owner},
+  J.json_text(J.Jobj{J.Jpair{"database", J.Jstr{database},
+    J.Jpair{"owner", J.Jstr{owner},
     J.Jpair{"worktree", J.Jstr{worktree},
       J.Jpair{"query", J.Jstr{query},
       J.Jpair{"bootstrapText", J.Jstr{bootstrap_text}, J.Jnil{}}}}}})
 
-def query_outcome_request(+owner: String, +worktree: String, +query: String,
+def query_outcome_request(+database: String, +owner: String, +worktree: String, +query: String,
                           +bootstrap_digest: String, +exit_status: U32,
                           +event_frame: String) -> String:
-  J.json_text(J.Jobj{J.Jpair{"owner", J.Jstr{owner},
+  J.json_text(J.Jobj{J.Jpair{"database", J.Jstr{database},
+    J.Jpair{"owner", J.Jstr{owner},
     J.Jpair{"worktree", J.Jstr{worktree},
       J.Jpair{"query", J.Jstr{query},
         J.Jpair{"bootstrapSha256", J.Jstr{bootstrap_digest},
@@ -507,21 +524,26 @@ def boundary_member(+object: J.Json, +key: String) -> J.Json:
 def boundary_text(+object: J.Json, +key: String) -> String:
   Req.text_of(boundary_member(object, key))
 
-def managed_exit_code(+kind: String, +parsed: Maybe<U32>) -> ManagedExit:
+def managed_exit_code(+parsed: Maybe<U32>) -> ManagedExitCode:
   match parsed:
-    case Some{+code}:
+    case Some{+code}: ManagedExitCode{code}
+    case None{}: ManagedExitCodeRefused{}
+
+def managed_exit_kind(+kind: String, +parsed: ManagedExitCode) -> ManagedExit:
+  match parsed:
+    case ManagedExitCode{+code}:
       Bool.pick(ManagedExit, String.eq(kind, "exit"),
         ManagedExit{code, U32.is_eq(code, 0)},
         Bool.pick(ManagedExit, String.eq(kind, "signal"),
           Bool.pick(ManagedExit, U32.is_lt(code, 128),
             ManagedExit{U32.add(code, 128), False{}},
             ManagedExit{255, False{}}), ManagedExitRefused{}))
-    case None{}: ManagedExitRefused{}
+    case ManagedExitCodeRefused{}: ManagedExitRefused{}
 
 def managed_exit_fields(fields: List<String>) -> ManagedExit:
   match fields:
     case +kind <> +code_text <> Nil{}:
-      managed_exit_code(kind, U32.read(code_text))
+      managed_exit_kind(kind, managed_exit_code(U32.read(code_text)))
     case other: ManagedExitRefused{}
 
 def managed_exit_status(+status: String) -> ManagedExit:
@@ -575,7 +597,7 @@ def managed_observe(+handle: U32) -> IO(ManagedOutput):
     first : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
     managed_read_first(handle, first)
 
-def managed_persist_output(+owner: String, +worktree: String, +query: String,
+def managed_persist_output(+database: String, +owner: String, +worktree: String, +query: String,
                            +bootstrap_digest: String,
                            output: ManagedOutput) -> String:
   match output:
@@ -611,7 +633,7 @@ def managed_persist_answer(+owner: String, +worktree: String, +query: String,
         IO.pure(ManagedOutput, output),
         IO.die(ManagedOutput, 3, "managedOutcomePersistenceRefused"))
 
-def persist_managed_output(+executable: String, +runtime_path: String,
+def persist_managed_output(+database: String, +executable: String, +runtime_path: String,
                            +cwd: String, +owner: String, +worktree: String,
                            +query: String, +bootstrap_digest: String,
                            +output: ManagedOutput) -> IO(ManagedOutput):
@@ -619,9 +641,9 @@ def persist_managed_output(+executable: String, +runtime_path: String,
     spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
       query_outcome_argv(runtime_path, executable), cwd, "/dev/null")
     answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
-      cwd, query_outcome_request(owner, worktree, query, bootstrap_digest,
+      cwd, query_outcome_request(database, owner, worktree, query, bootstrap_digest,
         managed_output_exit_status(output),
-        managed_persist_output(owner, worktree, query, bootstrap_digest, output)), spawned)
+        managed_persist_output(database, owner, worktree, query, bootstrap_digest, output)), spawned)
     managed_persist_answer(owner, worktree, query, bootstrap_digest, output, answer)
 
 def managed_store_publish_result(result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
@@ -698,8 +720,9 @@ def managed_observe_complete(+db: String, +binding: String,
     case ManagedLaunch{+bootstrap, invocation_text, executable, runtime_path,
         worktree, bootstrap_digest}:
       do IO<Unit>:
+        canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
         output : ManagedOutput <- managed_observe(handle)
-        persisted : ManagedOutput <- persist_managed_output(executable,
+        persisted : ManagedOutput <- persist_managed_output(canonical_database, executable,
           runtime_path, ManagedQuery.bootstrap_cwd(bootstrap),
           ManagedQuery.bootstrap_owner(bootstrap), worktree,
           ManagedQuery.bootstrap_query(bootstrap), bootstrap_digest, output)
@@ -998,8 +1021,7 @@ def managed_recovery_bootstrap_decoded(+db: String, +owner: String, +query: Stri
         String.eq(bootstrap_text, ManagedQuery.bootstrap_text(bootstrap)),
         Bool.and(String.eq(ManagedQuery.bootstrap_keeper_path(bootstrap), directory),
         Bool.and(String.eq(directory, ContextIdentity.role_directory(
-                  ManagedQuery.bootstrap_artifact_path(bootstrap),
-                  ManagedQuery.bootstrap_guard_key(bootstrap))),
+                  database_parent(db), ManagedQuery.bootstrap_guard_key(bootstrap))),
         Bool.and(String.eq(ManagedQuery.bootstrap_executable_path(bootstrap), executable),
         Bool.and(String.eq(ManagedQuery.bootstrap_runtime_path(bootstrap), runtime_path),
         Bool.and(String.eq(ManagedQuery.bootstrap_provider_path(bootstrap),
@@ -1058,7 +1080,7 @@ def managed_recovery_provider(+db: String, +owner: String, +query: String,
     case ProviderRuntime{+path, +version}:
       do IO<Unit>:
         spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
-          query_bootstrap_read_argv(path, executable, owner, worktree, query,
+          query_bootstrap_read_argv(path, executable, db, owner, worktree, query,
             bootstrap_file), worktree, "/dev/null")
         answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
           worktree, SNil{}, spawned)
@@ -1070,9 +1092,10 @@ def recover_managed_query(+db: String, +owner: String, +query: String,
                           +directory: String, +worktree: String,
                           +bootstrap_file: String) -> IO(Unit):
   do IO<Unit>:
+    canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
     executable : String <- IO.try(String, Host.SessionLock.executable())
     runtime : ProviderAnswer <- resolve_node_runtime(worktree)
-    managed_recovery_provider(db, owner, query, directory, worktree,
+    managed_recovery_provider(canonical_database, owner, query, directory, worktree,
       bootstrap_file, executable, runtime)
 
 def managed_readiness_json(+bootstrap: ManagedQuery.Bootstrap,
@@ -1149,7 +1172,7 @@ def managed_bootstrap_digest_result(+owner: String, +worktree: String,
     IO.try(String, ContextIdentity.role_guard_key(bootstrap_text ++ "\n")),
     IO.die(String, 3, "managedBootstrapPersistence"))
 
-def persist_managed_bootstrap(+executable: String, +runtime_path: String,
+def persist_managed_bootstrap(+database: String, +executable: String, +runtime_path: String,
                               +cwd: String, +owner: String,
                               +worktree: String, +query: String,
                               +path: String, +bootstrap: ManagedQuery.Bootstrap)
@@ -1158,7 +1181,7 @@ def persist_managed_bootstrap(+executable: String, +runtime_path: String,
     spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
       query_bootstrap_argv(runtime_path, executable), cwd, "/dev/null")
     answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
-      cwd, query_bootstrap_request(owner, worktree, query,
+      cwd, query_bootstrap_request(database, owner, worktree, query,
         ManagedQuery.bootstrap_text(bootstrap)), spawned)
     managed_bootstrap_digest_result(owner, worktree, query, path,
       ManagedQuery.bootstrap_text(bootstrap), answer)
@@ -1192,13 +1215,14 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
     guard_key : String <- IO.try(String, ContextIdentity.role_guard_key(guard_identity))
     physical_role_key : String <- IO.try(String,
       ContextIdentity.physical_role_key(physical_identity))
-    +keeper_path : String = ContextIdentity.role_directory(artifact_path, guard_key)
+    canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
+    log_directory : String = database_parent(canonical_database)
+    +keeper_path : String = ContextIdentity.role_directory(log_directory, guard_key)
     bootstrap_file : String = artifact_path ++ "/bootstrap.json"
     invocation_path : String = keeper_path ++ "/invocation.json"
     provider_path : String = installed_provider_path(executable)
     invocation_sha256 : String <- IO.try(String,
       ContextIdentity.role_guard_key(invocation_text))
-    canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
     +recovery_argv : String = Process.argv([executable, "--recover-context-query", canonical_database,
       owner, query, keeper_path, worktree, bootstrap_file])
     +bootstrap : ManagedQuery.Bootstrap = ManagedQuery.query_bootstrap(binding, query, owner, request, cwd,
@@ -1208,7 +1232,7 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
       recovery_argv, executable, runtime_path, provider_path, invocation_path,
       invocation_sha256)
     +bootstrap_text : String = ManagedQuery.bootstrap_text(bootstrap)
-    bootstrap_digest : String <- persist_managed_bootstrap(executable, runtime_path,
+    bootstrap_digest : String <- persist_managed_bootstrap(canonical_database, executable, runtime_path,
       cwd, owner, worktree, query, bootstrap_file, bootstrap)
     +launch : ManagedLaunch = ManagedLaunch{bootstrap, invocation_text, executable, runtime_path,
       worktree, bootstrap_digest}
@@ -1232,7 +1256,7 @@ def managed_prepare_owner(+db: String, +binding: String, +owner: String,
                           +physical_identity: String, +lock: U32,
                           +budget: U32) -> IO(Unit):
   do IO<Unit>:
-    owner_witness : String <- IO.try(String, Instance.owner_witness(db))
+    owner_witness : String <- IO.try(String, Instance.ensure_owner_witness(db))
     origin_attempt : String <- owner_origin_attempt(db, binding, owner)
     managed_prepare_roles(db, binding, owner, query, request, cwd, worktree,
       source_identity, artifact_path, invocation_text, executable, runtime_path,
@@ -1290,7 +1314,9 @@ def managed_prepare_anchor(+db: String, +binding: String, +owner: String,
       ContextIdentity.SubjectQuery{query}, ContextIdentity.RoleStarter{})
     physical_role_key : String <- IO.try(String,
       ContextIdentity.physical_role_key(physical_identity))
-    anchor : String <- IO.try(String, ContextIdentity.prepare_guard_anchor(artifact_path))
+    canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
+    anchor : String <- IO.try(String, ContextIdentity.prepare_guard_anchor(
+      database_parent(canonical_database)))
     policy : CoordinatorLogs.Policy <- CoordinatorLogs.policy(db, owner)
     managed_prepare_policy(db, binding, owner, query, request, cwd, worktree,
       source_identity, artifact_path, invocation_text, executable, runtime_path,

@@ -283,7 +283,7 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
     for await (const chunk of process.stdin) input += chunk;
     try {
       const authority = JSON.parse(input);
-      if (!exactObjectShape(authority, ['owner', 'worktree', 'query', 'bootstrapText'])) {
+      if (!exactObjectShape(authority, ['database', 'owner', 'worktree', 'query', 'bootstrapText'])) {
         throw new Error('query bootstrap authority has an unsupported shape');
       }
       const result = persistQueryBootstrap(authority);
@@ -296,9 +296,9 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
   } else if (process.argv[2] === '--read-query-bootstrap') {
     const { readQueryBootstrap } = await import('./context-query-artifact.mjs');
     try {
-      if (process.argv.length !== 7) throw new Error('query bootstrap owner, worktree, query and path are required');
-      const result = readQueryBootstrap({ owner: process.argv[3], worktree: process.argv[4],
-        query: process.argv[5], bootstrapPath: process.argv[6] });
+      if (process.argv.length !== 8) throw new Error('database, owner, worktree, query and path are required');
+      const result = readQueryBootstrap({ database: process.argv[3], owner: process.argv[4],
+        worktree: process.argv[5], query: process.argv[6], bootstrapPath: process.argv[7] });
       process.stdout.write(JSON.stringify(result) + '\n');
       if (result.status !== 'loaded') process.exitCode = 2;
     } catch (error) {
@@ -311,7 +311,7 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
     for await (const chunk of process.stdin) input += chunk;
     try {
       const authority = JSON.parse(input);
-      if (!exactObjectShape(authority, ['owner', 'worktree', 'query', 'bootstrapSha256', 'exitStatus', 'eventFrame'])) {
+      if (!exactObjectShape(authority, ['database', 'owner', 'worktree', 'query', 'bootstrapSha256', 'exitStatus', 'eventFrame'])) {
         throw new Error('query outcome authority has an unsupported shape');
       }
       const result = persistQueryOutcome(authority);

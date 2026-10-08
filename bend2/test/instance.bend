@@ -479,6 +479,13 @@ def owner_witness_cli(args: List<String>) -> IO(Unit):
       owner_witness_result(result)
     case _: IO.die(Unit,2,"owner-witness DATABASE")
 
+def ensure_owner_witness_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case +database <> Nil{}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,String> <- Custody.Instance.ensure_owner_witness(database)
+      owner_witness_result(result)
+    case _: IO.die(Unit,2,"ensure-owner-witness DATABASE")
+
 def stale_prepare_result(result: Result<&1,&1,U32 & String,U32 & String & String>) -> IO(Unit):
   match result:
     case Fail{(code,text)}: IO.print("prepare-refused:" ++ U32.show(code) ++ ":" ++ text)
@@ -589,7 +596,8 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"role-key"),28,
   Bool.pick(U32,String.eq(mode,"role-guard"),24,
   Bool.pick(U32,String.eq(mode,"owner-witness"),25,
-  Bool.pick(U32,String.eq(mode,"prepare-stale"),26,0)))))))))))))))))))))))))))
+  Bool.pick(U32,String.eq(mode,"prepare-stale"),26,
+  Bool.pick(U32,String.eq(mode,"ensure-owner-witness"),27,0))))))))))))))))))))))))))))
 
 # Admits under the shared owner while holding no session guard, so the record
 # states no guard binding.
@@ -640,6 +648,7 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 24: role_guard_cli(rest)
     case 25: owner_witness_cli(rest)
     case 26: stale_prepare_cli(rest)
+    case 27: ensure_owner_witness_cli(rest)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):

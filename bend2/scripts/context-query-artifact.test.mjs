@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, chmodSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import { examineQuerySource, persistQueryBootstrap, persistQueryOutcome, prepareQueryArtifact, readQueryBootstrap } from './context-query-artifact.mjs';
@@ -14,10 +14,22 @@ function worktree(t) {
   return path;
 }
 
+function databaseFor(worktreePath) {
+  const directory = join(worktreePath, '.baton');
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const path = join(directory, 'orchestra.db');
+  try { writeFileSync(path, '', { flag: 'wx', mode: 0o600 }); } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+  }
+  return path;
+}
+
 function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1', originAttempt = '0') {
   const guardIdentity = JSON.stringify(['context-role', 'binding-1', 'query', query, 'starter', '0']);
   const artifactPath = join(worktreePath, '.baton', 'context-artifacts', Buffer.from(query).toString('hex'));
+  const database = databaseFor(worktreePath);
   const guardKey = createHash('sha256').update(guardIdentity).digest('hex');
+  const keeperPath = join(dirname(database), guardKey);
   return JSON.stringify({
     artifactPath,
     artifactSha256: 'b'.repeat(64),
@@ -26,9 +38,9 @@ function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1', origi
     executablePath: '/opt/baton2/bin/baton2',
     guardIdentity,
     guardKey,
-    invocationPath: join(artifactPath, guardKey, 'invocation.json'),
+    invocationPath: join(keeperPath, 'invocation.json'),
     invocationSha256: 'd'.repeat(64),
-    keeperPath: join(artifactPath, guardKey),
+    keeperPath,
     originAttempt,
     owner,
     ownerWitness: 'owner-token:1',
@@ -38,12 +50,12 @@ function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1', origi
     providerPath: '/opt/baton2/libexec/baton2/context-provider.mjs',
     query,
     recoveryArgv: '/opt/baton2/bin/baton2\0--recover-context-query\0/database\0'
-      + owner + '\0' + query + '\0/logs/keeper-1\0' + worktreePath + '\0'
+      + owner + '\0' + query + '\0' + keeperPath + '\0' + worktreePath + '\0'
       + join(worktreePath, '.baton', 'context-artifacts', Buffer.from(query).toString('hex'), 'bootstrap.json'),
     request: '{}',
     resultSchema: 'result-v1',
     runtimePath: '/usr/bin/node',
-    schema: 'baton2-managed-context-bootstrap-v1',
+    schema: 'baton2-managed-context-bootstrap-v2',
     sourceIdentity: 'source-identity-1',
   });
 }
@@ -65,7 +77,7 @@ function eventFrame(query = 'query-1', owner = 'owner-1') {
 
 test('prepares a private owner-bound artifact directory and replays its exact identity', (t) => {
   const root = worktree(t);
-  const authority = { owner: 'owner-1', worktree: root, query: 'query/1' };
+  const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query/1' };
   const first = prepareQueryArtifact(authority);
   assert.equal(first.status, 'prepared');
   assert.equal(lstatSync(first.path).mode & 0o777, 0o700);
@@ -108,7 +120,7 @@ test('source examination refuses missing paths and paths that resolve outside th
 
 test('persists one immutable canonical bootstrap bound to owner, query and private artifact path', (t) => {
   const root = worktree(t);
-  const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
+  const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-1' };
   const first = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
   assert.equal(first.status, 'persisted');
   assert.equal(lstatSync(first.path).mode & 0o777, 0o600);
@@ -134,11 +146,16 @@ test('persists one immutable canonical bootstrap bound to owner, query and priva
   assert.equal(persistQueryBootstrap({ ...authority,
     bootstrapText: bootstrapText(root).replace('"query":"query-1"', '"query":"query-1","query":"query-1"') }).reason,
   'queryBootstrapCanonicalMismatch');
+  const wrongKeeper = JSON.parse(bootstrapText(root));
+  wrongKeeper.keeperPath = join(wrongKeeper.artifactPath, wrongKeeper.guardKey);
+  wrongKeeper.invocationPath = join(wrongKeeper.keeperPath, 'invocation.json');
+  assert.equal(persistQueryBootstrap({ ...authority,
+    bootstrapText: JSON.stringify(wrongKeeper) }).reason, 'queryBootstrapKeeperMismatch');
 });
 
 test('bootstrap binds the installed runtime and invocation file identity', (t) => {
   const root = worktree(t);
-  const authority = { owner: 'owner-1', worktree: root, query: 'query-tool-identity' };
+  const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-tool-identity' };
   const bootstrap = JSON.parse(bootstrapText(root, authority.query));
   for (const [key, value] of [
     ['runtimePath', 'node'],
@@ -156,7 +173,7 @@ test('bootstrap binds the installed runtime and invocation file identity', (t) =
 
 test('recovery reads only the bootstrap under the matching owner-worktree marker', (t) => {
   const root = worktree(t);
-  const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
+  const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-1' };
   const saved = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
   const loaded = readQueryBootstrap({ ...authority, bootstrapPath: saved.path });
   assert.equal(loaded.status, 'loaded');
@@ -169,7 +186,7 @@ test('recovery reads only the bootstrap under the matching owner-worktree marker
 
 test('preserves absent origin attempt as JSON null and rejects an empty-string substitute', (t) => {
   const root = worktree(t);
-  const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
+  const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-1' };
   const persisted = persistQueryBootstrap({ ...authority,
     bootstrapText: bootstrapText(root, 'query-1', 'owner-1', null) });
   assert.equal(persisted.status, 'persisted');
@@ -181,7 +198,7 @@ test('preserves absent origin attempt as JSON null and rejects an empty-string s
 
 test('persists a canonical v2 event and actual exit status with immutable SHA references', (t) => {
   const root = worktree(t);
-  const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
+  const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-1' };
   const bootstrap = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
   const outcome = persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
     exitStatus: 0, eventFrame: eventFrame() });
@@ -196,7 +213,7 @@ test('persists a canonical v2 event and actual exit status with immutable SHA re
 
 test('refuses altered event identity, duplicate members and a different completion replay', (t) => {
   const root = worktree(t);
-  const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
+  const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-1' };
   const bootstrap = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
   assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
     exitStatus: 0, eventFrame: eventFrame('query-2') }).reason,
@@ -212,7 +229,7 @@ test('refuses altered event identity, duplicate members and a different completi
 
 test('retains an observed nonzero child status without claiming an event result', (t) => {
   const root = worktree(t);
-  const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
+  const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-1' };
   const bootstrap = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
   const refusalFrame = JSON.stringify({ status: 'refused', reason: 'adapterUnavailable' });
   const outcome = persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
@@ -233,7 +250,7 @@ test('retains an observed nonzero child status without claiming an event result'
 
 test('refuses symlinked immutable completion artifacts', (t) => {
   const root = worktree(t);
-  const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
+  const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-1' };
   const bootstrap = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
   const directory = prepareQueryArtifact(authority).path;
   symlinkSync(join(root, 'target'), join(directory, 'event.json'));

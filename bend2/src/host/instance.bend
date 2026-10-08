@@ -7,10 +7,15 @@ import ./process.bend as P
 def Instance.owner(database: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
-# Ensures a database owner is listening and reads its token and epoch. Callers
-# pass this witness to owner work admissions so a restarted owner cannot accept
-# stale authority.
+# Reads the live owner's token and epoch without starting an owner. Callers pass
+# this witness to owner work admissions so a restarted owner cannot accept stale
+# authority.
 def Instance.owner_witness(database: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
+# Starts or joins the database owner and returns its token and epoch. Managed
+# preparation uses this before sealing the witness into its bootstrap.
+def Instance.ensure_owner_witness(database: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./process-spawn.c"
 
 # Starts a native attempt under the database owner and joins it as its observer.
