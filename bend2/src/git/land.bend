@@ -3236,71 +3236,93 @@ def incomplete_evidence_with_success_looking_stages_refuses_the_advance():
 
 law a_failed_publication_stops_the_chain_with_two_unperformed_stages:
   for reserved: String
+  for evidence: AttemptEvidence
   for code: U32
   for detail: String
-  {ld_attest_publication_seen(reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageFailed{code, detail}) == IO.pure(Attestation, Attestation{reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageFailed{code, detail}, StageUnperformed{}, StageUnperformed{}}) : IO(Attestation)}
+  {ld_attest_publication_seen(reserved, evidence, attest_stage(Fail{(code, detail)})) == IO.pure(Attestation, Attestation{reserved, evidence, StageFailed{code, detail}, StageUnperformed{}, StageUnperformed{}}) : IO(Attestation)}
 
-def a_failed_publication_stops_the_chain_with_two_unperformed_stages():
+def a_failed_publication_stops_the_chain_with_two_unperformed_stages(reserved,evidence,code,detail):
   {==}
-law a_wrong_path_publication_stops_the_chain:
+law a_malformed_publication_record_stops_the_chain:
   for reserved: String
+  for evidence: AttemptEvidence
   for raw: String
-  {ld_attest_publication_seen(reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageSucceeded{Tx.str_cat("wrong", raw)}) == IO.pure(Attestation, Attestation{reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageSucceeded{Tx.str_cat("wrong", raw)}, StageUnperformed{}, StageUnperformed{}}) : IO(Attestation)}
+  {ld_attest_publication_seen(reserved, evidence, attest_stage(Done{Tx.str_cat("wrong", raw)})) == IO.pure(Attestation, Attestation{reserved, evidence, StageSucceeded{Tx.str_cat("wrong", raw)}, StageUnperformed{}, StageUnperformed{}}) : IO(Attestation)}
 
-def a_wrong_path_publication_stops_the_chain():
+def a_malformed_publication_record_stops_the_chain(reserved,evidence,raw):
+  {==}
+law a_wrong_path_publication_record_stops_the_chain:
+  for evidence: AttemptEvidence
+  {ld_attest_publication_seen("r", evidence, attest_stage(Done{Pb.production_record("published", "/other/landing-record", "0")})) == IO.pure(Attestation, Attestation{"r", evidence, StageSucceeded{Pb.production_record("published", "/other/landing-record", "0")}, StageUnperformed{}, StageUnperformed{}}) : IO(Attestation)}
+
+def a_wrong_path_publication_record_stops_the_chain(evidence):
   {==}
 law a_failed_qualification_stops_before_the_readback:
   for reserved: String
+  for evidence: AttemptEvidence
   for code: U32
   for detail: String
-  {ld_attest_qualification_seen(reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, StageFailed{code, detail}) == IO.pure(Attestation, Attestation{reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, StageFailed{code, detail}, StageUnperformed{}}) : IO(Attestation)}
+  {ld_attest_qualification_seen(reserved, evidence, StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, attest_stage(Fail{(code, detail)})) == IO.pure(Attestation, Attestation{reserved, evidence, StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, StageFailed{code, detail}, StageUnperformed{}}) : IO(Attestation)}
 
-def a_failed_qualification_stops_before_the_readback():
+def a_failed_qualification_stops_before_the_readback(reserved,evidence,code,detail):
   {==}
-law a_wrong_path_qualification_stops_before_the_readback:
+law a_malformed_qualification_record_stops_before_the_readback:
   for reserved: String
+  for evidence: AttemptEvidence
   for raw: String
-  {ld_attest_qualification_seen(reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, StageSucceeded{Tx.str_cat("wrong", raw)}) == IO.pure(Attestation, Attestation{reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, StageSucceeded{Tx.str_cat("wrong", raw)}, StageUnperformed{}}) : IO(Attestation)}
+  {ld_attest_qualification_seen(reserved, evidence, StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, attest_stage(Done{Tx.str_cat("wrong", raw)})) == IO.pure(Attestation, Attestation{reserved, evidence, StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, StageSucceeded{Tx.str_cat("wrong", raw)}, StageUnperformed{}}) : IO(Attestation)}
 
-def a_wrong_path_qualification_stops_before_the_readback():
+def a_malformed_qualification_record_stops_before_the_readback(reserved,evidence,raw):
+  {==}
+law a_wrong_path_qualification_record_stops_before_the_readback:
+  for evidence: AttemptEvidence
+  {ld_attest_qualification_seen("r", evidence, StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, attest_stage(Done{StageSucceeded{Pb.production_record("qualified", "/other/landing-record", "0")}})) == IO.pure(Attestation, Attestation{"r", evidence, StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{Pb.production_record("qualified", "/other/landing-record", "0")}, StageUnperformed{}}) : IO(Attestation)}
+
+def a_wrong_path_qualification_record_stops_before_the_readback(evidence):
   {==}
 law a_failed_readback_is_retained_beside_the_unchanged_attestation:
   for reserved: String
+  for evidence: AttemptEvidence
+  for publication: StageResult
+  for qualification: StageResult
   for code: U32
   for detail: String
-  {ld_attest_readback_seen(reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path(reserved), "0")}, Fail{(code, detail)}) == IO.pure(Attestation, Attestation{reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path(reserved), "0")}, StageFailed{code, detail}}) : IO(Attestation)}
+  {ld_attest_readback_seen(reserved, evidence, publication, qualification, Fail{(code, detail)}) == IO.pure(Attestation, Attestation{reserved, evidence, publication, qualification, StageFailed{code, detail}}) : IO(Attestation)}
 
-def a_failed_readback_is_retained_beside_the_unchanged_attestation():
+def a_failed_readback_is_retained_beside_the_unchanged_attestation(reserved,evidence,publication,qualification,code,detail):
   {==}
 law a_successful_readback_is_retained_verbatim:
   for reserved: String
+  for evidence: AttemptEvidence
+  for publication: StageResult
+  for qualification: StageResult
   for raw: String
-  {ld_attest_readback_seen(reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path(reserved), "0")}, Done{raw}) == IO.pure(Attestation, Attestation{reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path(reserved), "0")}, StageSucceeded{raw}}) : IO(Attestation)}
+  {ld_attest_readback_seen(reserved, evidence, publication, qualification, Done{raw}) == IO.pure(Attestation, Attestation{reserved, evidence, publication, qualification, StageSucceeded{raw}}) : IO(Attestation)}
 
-def a_successful_readback_is_retained_verbatim():
+def a_successful_readback_is_retained_verbatim(reserved,evidence,publication,qualification,raw):
   {==}
-
 law the_attestation_publishes_the_attempt_record_once:
   for reserved: String
-  {ld_attest(reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base")) == (do IO<Attestation>:
-    published : Result<&1, &1, U32 & String, String> <- Rec.Receipt.publish(reserved, "landing-record", attempt_record(fixture_held_evidence(reserved, "/common", "tgt", "cand", "base")))
-    ld_attest_publication_seen(reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), attest_stage(published))) : IO(Attestation)}
+  for evidence: AttemptEvidence
+  {ld_attest(reserved, evidence) == (do IO<Attestation>:
+    published : Result<&1, &1, U32 & String, String> <- Rec.Receipt.publish(reserved, "landing-record", attempt_record(evidence))
+    ld_attest_publication_seen(reserved, evidence, attest_stage(published))) : IO(Attestation)}
 
-def the_attestation_publishes_the_attempt_record_once():
+def the_attestation_publishes_the_attempt_record_once(reserved,evidence):
   {==}
 law a_published_record_continues_to_the_real_qualification:
-  for reserved: String
-  {ld_attest_publication_seen(reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}) == (do IO<Attestation>:
-    qualified : Result<&1, &1, U32 & String, String> <- Rec.Receipt.qualify(landing_record_path(reserved))
-    ld_attest_qualification_seen(reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, attest_stage(qualified))) : IO(Attestation)}
+  for evidence: AttemptEvidence
+  {ld_attest_publication_seen("r", evidence, StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}) == (do IO<Attestation>:
+    qualified : Result<&1, &1, U32 & String, String> <- Rec.Receipt.qualify(landing_record_path("r"))
+    ld_attest_qualification_seen("r", evidence, StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, attest_stage(qualified))) : IO(Attestation)}
 
-def a_published_record_continues_to_the_real_qualification():
+def a_published_record_continues_to_the_real_qualification(evidence):
   {==}
 law a_qualified_record_continues_to_the_real_readback:
-  for reserved: String
-  {ld_attest_qualification_seen(reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path(reserved), "0")}) == (do IO<Attestation>:
-    seen : Result<&1, &1, U32 & String, String> <- Text.Text.read(landing_record_path(reserved))
-    ld_attest_readback_seen(reserved, fixture_held_evidence(reserved, "/common", "tgt", "cand", "base"), StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path(reserved), "0")}, seen)) : IO(Attestation)}
+  for evidence: AttemptEvidence
+  {ld_attest_qualification_seen("r", evidence, StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path("r"), "0")}) == (do IO<Attestation>:
+    seen : Result<&1, &1, U32 & String, String> <- Text.Text.read(landing_record_path("r"))
+    ld_attest_readback_seen("r", evidence, StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path("r"), "0")}, seen)) : IO(Attestation)}
 
-def a_qualified_record_continues_to_the_real_readback():
+def a_qualified_record_continues_to_the_real_readback(evidence):
   {==}
