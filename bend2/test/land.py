@@ -364,17 +364,31 @@ class Land(unittest.TestCase):
 
         thread = threading.Thread(target=land_under)
         thread.start()
-        connection, _ = self.check_socket.accept()
-        with connection:
-                with connection.makefile('rb') as incoming:
-                self.assertEqual(incoming.read(5), b'ready')
+        watch, done = self.completion_watch()
+
+        def notice_completion():
             try:
-                moved = self.call('land-checked', mover, self.repo, 'main',
-                                  'check-plain.sh', 'file.txt')
+                thread.join()
             finally:
-                connection.sendall(b'1')
-        thread.join(120)
-        self.assertFalse(thread.is_alive(), f'the landing of {under} did not finish')
+                done.close()
+
+        notifier = threading.Thread(target=notice_completion)
+        notifier.start()
+        connection = None
+        try:
+            connection = self.awaiting_completion(watch, self.check_socket, answer)
+            self.assertEqual(self.reading_exact(connection, 5, watch, answer), b'ready')
+            moved = self.call('land-checked', mover, self.repo, 'main',
+                              'check-plain.sh', 'file.txt')
+        finally:
+            try:
+                if connection is not None:
+                    connection.sendall(b'1')
+            finally:
+                if connection is not None:
+                    connection.close()
+                thread.join()
+                notifier.join()
         self.assertNotIn('error', answer, str(answer.get('error')))
         return moved, answer['result']
 
@@ -566,12 +580,52 @@ class Land(unittest.TestCase):
         self.git('checkout', '-q', '--detach')
         return listener
 
-    def accept_check(self, listener):
-        """Accept the held check; return its connection and its event."""
+    def watch_until_closed(self, endpoint):
+        """Close ENDPOINT when the watcher's owner finishes; the reader sees EOF then."""
+        endpoint.close()
+
+    def completion_watch(self):
+        """A pair whose read end becomes readable when its write end is closed."""
+        watch, done = socket.socketpair()
+        self.addCleanup(watch.close)
+        self.addCleanup(done.close)
+        return watch, done
+
+    def awaiting_completion(self, watch, listener, completion):
+        """Accept a check connection, or report the outcome COMPLETION already holds."""
+        readable, _, _ = select.select([watch, listener], [], [])
+        if watch in readable:
+            raise AssertionError(f'the landing finished before its check reported: {completion.get()}')
         connection = listener.accept()[0]
+        self.addCleanup(connection.close)
+        return connection
+
+    def reading_exact(self, connection, count, watch, completion):
+        """Read exactly COUNT bytes, reporting COMPLETION if it finishes first."""
+        data = b''
+        while len(data) < count:
+            readable, _, _ = select.select([watch, connection], [], [])
+            if watch in readable:
+                raise AssertionError(f'the landing finished while readiness was read: {completion.get()}')
+            part = connection.recv(count - len(data))
+            if not part:
+                self.fail(f'the check closed before {count} readiness bytes: {data!r}')
+            data += part
+        return data
+
+    def accept_check(self, listener, watch=None, completion=None):
+        """Accept the held check; return its connection and its event."""
+        if watch is None:
+            connection = listener.accept()[0]
+        else:
+            connection = self.awaiting_completion(watch, listener, completion)
         self.addCleanup(connection.close)
         data = b''
         while not data.endswith(b'\n'):
+            if watch is not None:
+                readable, _, _ = select.select([watch, connection], [], [])
+                if watch in readable:
+                    raise AssertionError(f'the landing finished before its event: {completion.get()}')
             part = connection.recv(65536)
             if not part:
                 self.fail('the check closed its connection before its event')
@@ -589,8 +643,7 @@ class Land(unittest.TestCase):
         """Stop a landing this test started and read whatever it produced."""
         if process.poll() is None:
             process.kill()
-        try:
-            process.communicate()
+        process.communicate()
 
     def test_a_held_attempts_scratch_trees_survive_a_later_same_worker_attempt(self):
         """A held attempt keeps its trees while a later same-worker attempt refuses."""
@@ -621,10 +674,7 @@ class Land(unittest.TestCase):
             except BaseException as error:
                 first['error'] = error
             finally:
-                try:
-                    notify[1].sendall(b'done')
-                except OSError:
-                    pass
+                notify[1].close()
 
         thread = threading.Thread(target=held_landing)
         thread.start()
@@ -684,8 +734,22 @@ class Land(unittest.TestCase):
         self.assertEqual(self.budget_status(self.repo / 'wta'), 0)
         self.assertEqual(self.budget_status(self.repo / 'wtb'), 0)
         under = self.start_landing('wb', 'check-held.sh', 'budget-selected.py')
+        watch, done = self.completion_watch()
+        completion = {}
+
+        def notice_process():
+            try:
+                completion['returncode'] = under.wait()
+            finally:
+                done.close()
+
+        notifier = threading.Thread(target=notice_process)
+        notifier.start()
+        # Cleanups run last-registered first: the process is stopped and reaped before the
+        # watcher is joined, so the join cannot wait on a check nobody will release.
+        self.addCleanup(notifier.join)
         self.addCleanup(self.stop_landing, under)
-        held, event = self.accept_check(listener)
+        held, event = self.accept_check(listener, watch, completion)
         self.assertTrue(event['passed'], event)
         self.assertEqual((event['left'], event['right']), (4, 6))
         moved = self.call('land-checked', 'wa', self.repo, 'main',
