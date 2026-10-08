@@ -2250,10 +2250,9 @@ done:
   return 0;
 }
 /* Writes the attempt manifest that custody and recovery both read. */
-/* A prepared artifact name is one safe path component: non-empty, no separator,
-   no traversal, bounded length. */
+/* A prepared artifact name is one non-empty path component with no traversal. */
 static int br_artifact_name_ok(const char *name,size_t length) {
-  if(!name || !length || length>255)return EINVAL;
+  if(!name || !length)return EINVAL;
   if(name[0]=='.' && (!name[1] || (name[1]=='.' && !name[2])))return EINVAL;
   if(strchr(name,'/') || strchr(name,'\\'))return EINVAL;
   if(strlen(name)!=length)return EINVAL;
@@ -2953,7 +2952,7 @@ static int br_recovery(BatonProcessCall *call) {
    quantity, so it crosses this boundary as text and a malformed or oversized
    value is refused here. */
 static int br_parse_u64(const char *text,size_t length,uint64_t *value) {
-  if(!text || !length || length>20)return EINVAL;
+  if(!text || !length)return EINVAL;
   uint64_t result=0;
   for(size_t i=0;i<length;i++) {
     if(text[i]<'0' || text[i]>'9')return EINVAL;

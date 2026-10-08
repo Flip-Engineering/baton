@@ -149,16 +149,14 @@ read (`snapshot-unavailable`).
 An endpoint refusal before the first `hello` retries only the
 events request with the current cursor and generation under
 bounded quadratic backoff (1s, 2s, 4s, up to 30s); it makes no
-repeated snapshot requests. Each retry tick first runs a bounded
-pre-open probe: one `fetch` of the events URL with a 5-second abort
-budget, decided from response headers alone. Only a 503 response
+repeated snapshot requests. Each retry fetches the events URL and reads
+its response headers. Only a 503 response
 reads its finite JSON body; the exact
 `native-owner-subscription-unavailable` error is terminal and stops
 all automatic retry until the operator reconnects. Any other
 response, including an open 200 event stream, cancels the probe
 body and resumes `connectEvents()` with no snapshot. An
-unreachable endpoint or an expired probe budget keeps the existing
-retry tick. The events notice clears on the
+unreachable endpoint keeps the existing retry path. The events notice clears on the
 first `hello`. After a `hello`, a `gap` event or stream loss
 re-reads the snapshot immediately with `since=<last cursor>`,
 renders it as authoritative current state, and reopens the
