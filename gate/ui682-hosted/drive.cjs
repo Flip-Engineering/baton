@@ -5,7 +5,7 @@
 
 const { spawn } = require("node:child_process");
 const { createHash } = require("node:crypto");
-const { mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } = require("node:fs");
 const http = require("node:http");
 const { resolve } = require("node:path");
 
@@ -169,7 +169,6 @@ async function main() {
   check("events-url-binding", a1.subject === fixture.subject && (a1.since || "").length > 0, JSON.stringify({ subject: a1.subject, since: a1.since }));
   check("zero-snapshot-recovery", phase1.snapshotCount === 1, `snapshotCount ${phase1.snapshotCount}`);
   const screenshots = [await shoot(page, "live")];
-  check("screenshot-live", true, screenshots[0].file);
 
   await httpJson("POST", port, "/harness/mode", { mode: "terminal" });
   const beforeTerminal = (await httpJson("GET", port, "/harness/log")).eventsAttempts.length;
@@ -193,7 +192,19 @@ async function main() {
     `events attempts stable at ${grew}`);
   check("terminal-one-snapshot", phase2.snapshotCount === snapshotsBefore + 1, `snapshotCount ${phase2.snapshotCount}`);
   screenshots.push(await shoot(page, "terminal"));
-  check("screenshot-terminal", true, screenshots[1].file);
+  for (const shot of screenshots) {
+    const path = resolve(OUT, shot.file);
+    let detail = "missing";
+    let pass = false;
+    if (existsSync(path)) {
+      const size = statSync(path).size;
+      const hash = sha256File(path);
+      shot.bytes = size;
+      detail = `${shot.file} bytes=${size} sha256=${hash}`;
+      pass = size > 0 && hash === shot.sha256;
+    }
+    check(`screenshot-file:${shot.pageState}`, pass, detail);
+  }
 
   await browser.close();
   child.kill("SIGTERM");

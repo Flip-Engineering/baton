@@ -31,8 +31,10 @@ Chrome through the driver scripts.
   subject/cursor/generation binding; zero snapshot requests
   during recovery; the served-bytes identity; the installed
   Playwright version; and the 5-second probe bindings in the
-  served source. Takes `--viewport` and `--tag` and records one
-  live-state and one terminal-state screenshot per run.
+  served source. Takes `--viewport` and `--tag`, records one
+  live-state and one terminal-state screenshot per run, and
+  requires each recorded PNG to exist with non-zero bytes
+  matching its recorded SHA-256.
 - `drive-abort.cjs`: headless-Chrome driver for the abort-expiry
   case. Checks the transient 503, the hung probe aborted by the
   client near the 5-second budget with no headers sent, the
