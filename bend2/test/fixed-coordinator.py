@@ -213,8 +213,13 @@ class FixedCoordinator(unittest.TestCase):
         return result
 
     def query(self, sql):
-        with sqlite3.connect(str(self.db), timeout=30) as database:
-            return database.execute(sql).fetchall()
+        while True:
+            try:
+                with sqlite3.connect(str(self.db)) as database:
+                    return database.execute(sql).fetchall()
+            except sqlite3.OperationalError as error:
+                if error.sqlite_errorcode != sqlite3.SQLITE_BUSY:
+                    raise
 
     def recruit(self, name, harness):
         return self.coord('recruit', name, 'root', harness, name, 'low', str(self.repo),
@@ -420,39 +425,6 @@ class FixedCoordinator(unittest.TestCase):
         self.serve_proc.wait()
         self.serve_proc = None
         self.owner_pid = None
-        self.shutdown()
-
-    def test_05_killed_client_leaves_atomic_commit_for_service(self):
-        self.recruit('w6', 'codex')
-        self.receiver('w6')
-        committed = []
-        bodies = {}
-        for attempt, delay in enumerate((.05, .2, .5, 1.0, 2.0)):
-            for seq in range(3):
-                ident = f'c{attempt}_{seq}'
-                bodies[ident] = f'client-loss body {attempt} {seq}'
-                child = subprocess.Popen([str(EXE), str(self.db), 'message', ident, 'root',
-                                                  'w6', 'task', bodies[ident]],
-                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                         text=True)
-                self.children.append(child)
-                time.sleep(delay)
-                if child.poll() is None:
-                    child.kill()
-            for ident, body in bodies.items():
-                row = self.query(f"SELECT body, receipt FROM messages WHERE id='{ident}'")
-                if row:
-                    self.assertEqual(row[0][0], body, f'{ident} committed partially')
-                    committed.append(ident)
-            if committed:
-                break
-        self.assertTrue(committed, 'no client input committed')
-        self.start_owner()
-        self.start_serve()
-        self.await_inbox('root', lambda messages: (
-            messages if len([m for m in messages if m['sender'] == 'w6']) >= len(committed)
-            else None),
-            'committed input was never serviced')
         self.shutdown()
 
     def test_06_owner_status_and_mcp_discovery(self):

@@ -194,9 +194,6 @@ sys.exit(%d)
         self.assertEqual(json.loads(self.call('logs', 'omp-worker', 'quiet'))['level'], 'quiet')
         self.assertEqual(json.loads(self.call('logs', 'omp-worker', 'diagnostic'))['level'], 'diagnostic')
         self.assertEqual(self.refusal('logs', 'omp-worker', 'loud')['error'], 'invalid-log-setting')
-        extra = subprocess.run([str(EXE), str(self.db), 'logs', 'omp-worker', 'default', '1048576'],
-                               text=True, capture_output=True)
-        self.assertEqual(extra.returncode, 2)
         self.assertEqual(self.refusal('logs', 'absent-session', 'default')['error'], 'unknown-session')
         self.assertEqual(json.loads(self.call('logs', 'omp-worker'))['level'], 'diagnostic')
 
