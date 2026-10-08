@@ -290,7 +290,7 @@ class NativeObservation(RECEIVE.Receive):
         self.assertIn('errorStatus', log)
         self.assertTrue(any(row['id'] == 'provider-error-task'
                             for row in self.coord('inbox', 'parent')))
-        self.assertFalse((pathlib.Path(directory) / 'acknowledged').exists())
+        self.assertTrue((pathlib.Path(directory) / 'acknowledged').exists())
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
     def test_omp_late_failure_keeps_the_sealed_result_and_reports_failure(self):

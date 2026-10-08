@@ -65,6 +65,10 @@ def outcome_failed(db: String, outcome: Turn.Outcome) -> IO(Bool):
       failure : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(event) ++ "='' THEN 1 WHEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.is_error'),0)=1 THEN 1 ELSE " ++ C.omp_terminal_error_sql(event) ++ " END;"))
       IO.pure(Bool,Bool.or(Turn.failed(status,event,error),String.eq(failure,"1\n")))
 
+def native_observation_failed(outcome: Turn.Outcome) -> Bool:
+  match outcome:
+    case Turn.Ended{status,event,error}: Turn.failed(status,event,error)
+
 def continue_if(again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), present: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match present:
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
@@ -310,10 +314,10 @@ def release_observer(lock: Maybe<U32>) -> IO(Unit):
 # The acknowledge callback returns its Result as a value. An acknowledge
 # failure returns through that Result; the queued continuation is joined and
 # the failure is part of the combined outcome.
-# A failed report, commit, or native outcome never acknowledges or retires
-# the attempt: the unacknowledged input stays owed and the retained attempt
-# stays recorded for same-attempt recovery. The failure itself is already
-# reported through the exit status below.
+# An incomplete native observation keeps custody available for same-attempt
+# recovery. A provider-reported failure in a fully observed terminal event still
+# fails the receive and leaves input owed, while its consumed native attempt can
+# be acknowledged and retired.
 def acknowledge_if_succeeded(failed: Bool, acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match failed:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
@@ -326,7 +330,7 @@ def finish_pending(+db: String, +session: String, id: String, log: String, curso
     continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,continue_pending(db,session,cursor,again))
     finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
-    ack : Result<&1,&1,U32 & String,Unit> <- acknowledge_if_succeeded(failed,acknowledge)
+    ack : Result<&1,&1,U32 & String,Unit> <- acknowledge_if_succeeded(native_observation_failed(outcome),acknowledge)
     status : Result<&1,&1,U32 & String,Unit> <- exit_status(failed)
     next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))

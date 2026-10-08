@@ -279,12 +279,12 @@ def dispatch_turn(+db: String, +player: String, +id: String, +cmd: String, log: 
 def status_pretty(+db: String) -> IO(String):
   do IO<String>:
     saved : String <- IO.try(String,Store.apply(db,C.Status{}))
-    IO.try(String,DB.Sql.query(db,"SELECT json_pretty(" ++ C.q(Tx.trim_nl(saved)) ++ ");"))
+    IO.try(String,DB.Sql.query(db,"SELECT baton_json_pretty(json(" ++ C.q(Tx.trim_nl(saved)) ++ "));"))
 
 def pretty_saved(db: String, saved: String, empty: Bool) -> IO(String):
   match empty:
     case True{}: IO.die(String,1,"No matching session or message; inspect status and the requested ID.")
-    case False{}: IO.try(String,DB.Sql.query(db,"SELECT json_pretty(" ++ C.q(Tx.trim_nl(saved)) ++ ");"))
+    case False{}: IO.try(String,DB.Sql.query(db,"SELECT baton_json_pretty(json(" ++ C.q(Tx.trim_nl(saved)) ++ "));"))
 
 def read_snapshot(db: String, command: C.Command) -> IO(String):
   match command:
@@ -296,15 +296,6 @@ def pretty(+db: String, command: C.Command) -> IO(String):
   do IO<String>:
     +saved : String <- read_snapshot(db,command)
     pretty_saved(db,saved,String.is_empty(saved))
-
-law readable_status_formats_the_full_stored_status:
-  for +db: String
-  {status_pretty(db) == (do IO<String>:
-    saved : String <- IO.try(String,Store.apply(db,C.Status{}))
-    IO.try(String,DB.Sql.query(db,"SELECT json_pretty(" ++ C.q(Tx.trim_nl(saved)) ++ ");"))) : IO(String)}
-
-def readable_status_formats_the_full_stored_status(db):
-  {==}
 
 law authorized_detached_delivery_launches_the_native_self_entry:
   for +db: String

@@ -88,6 +88,8 @@ static int baton_sql_busy(void *context, int tries) {
   return 1;
 }
 
+static void baton_sql_json_pretty(sqlite3_context *context, int argc, sqlite3_value **argv);
+
 static void baton_sql_call(IoWork *w) {
   BatonSql *call = (BatonSql *)w->data;
   sqlite3 *db = NULL;
@@ -97,7 +99,9 @@ static void baton_sql_call(IoWork *w) {
   } else {
     sqlite3_busy_handler(db, baton_sql_busy, NULL);
     char *error = NULL;
-    call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
+    call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
+    if (call->code == SQLITE_OK)
+      call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
     if (call->code == SQLITE_OK) {
       if (call->projection_only)
         call->code = baton_sql_install_projection(db, call->sql, &error);
@@ -302,6 +306,81 @@ static void baton_sql_ref_entry(sqlite3_context *context, int argc, sqlite3_valu
   }
   sqlite3_finalize(probe);
   sqlite3_result_null(context);
+}
+
+/* Formats a JSON document that SQLite's json() function has already validated.
+   Whitespace outside strings is the only transformation; member order, scalar
+   spelling, and string bytes are copied from SQLite's compact JSON result. */
+static void baton_sql_json_pretty(sqlite3_context *context, int argc, sqlite3_value **argv) {
+  (void)argc;
+  const unsigned char *json = sqlite3_value_text(argv[0]);
+  int length = sqlite3_value_bytes(argv[0]);
+  if (!json) {
+    if (sqlite3_value_type(argv[0]) == SQLITE_NULL) sqlite3_result_null(context);
+    else sqlite3_result_error_nomem(context);
+    return;
+  }
+
+  sqlite3 *db = sqlite3_context_db_handle(context);
+  sqlite3_str *out = sqlite3_str_new(db);
+  if (!out) { sqlite3_result_error_nomem(context); return; }
+  size_t depth = 0;
+  int quoted = 0, escaped = 0;
+  unsigned char previous = 0;
+  for (int i = 0; i < length; i++) {
+    unsigned char c = json[i];
+    if (quoted) {
+      sqlite3_str_appendchar(out, 1, (char)c);
+      if (escaped) escaped = 0;
+      else if (c == '\\') escaped = 1;
+      else if (c == '"') quoted = 0;
+      previous = c;
+      continue;
+    }
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') continue;
+    if (c == '"') {
+      quoted = 1;
+      sqlite3_str_appendchar(out, 1, (char)c);
+    } else if (c == '{' || c == '[') {
+      sqlite3_str_appendchar(out, 1, (char)c);
+      unsigned char close = c == '{' ? '}' : ']';
+      if (i + 1 < length && json[i + 1] != close) {
+        depth++;
+        sqlite3_str_appendchar(out, 1, '\n');
+        for (size_t level = 0; level < depth; level++)
+          sqlite3_str_appendchar(out, 2, ' ');
+      }
+    } else if (c == '}' || c == ']') {
+      unsigned char open = c == '}' ? '{' : '[';
+      if (previous != open) {
+        if (depth) depth--;
+        sqlite3_str_appendchar(out, 1, '\n');
+        for (size_t level = 0; level < depth; level++)
+          sqlite3_str_appendchar(out, 2, ' ');
+      }
+      sqlite3_str_appendchar(out, 1, (char)c);
+    } else if (c == ',') {
+      sqlite3_str_appendchar(out, 1, ',');
+      sqlite3_str_appendchar(out, 1, '\n');
+      for (size_t level = 0; level < depth; level++)
+        sqlite3_str_appendchar(out, 2, ' ');
+    } else if (c == ':') {
+      sqlite3_str_appendchar(out, 1, ':');
+      sqlite3_str_appendchar(out, 1, ' ');
+    } else {
+      sqlite3_str_appendchar(out, 1, (char)c);
+    }
+    previous = c;
+  }
+  int code = sqlite3_str_errcode(out);
+  int output_length = sqlite3_str_length(out);
+  char *formatted = sqlite3_str_finish(out);
+  if (code != SQLITE_OK || !formatted) {
+    sqlite3_free(formatted);
+    sqlite3_result_error_code(context, code == SQLITE_OK ? SQLITE_NOMEM : code);
+    return;
+  }
+  sqlite3_result_text64(context, formatted, (sqlite3_uint64)output_length, sqlite3_free, SQLITE_UTF8);
 }
 
 /* Copies the raw value text of one top-level member of a flat JSON object into
@@ -678,6 +757,8 @@ static void baton_sql_bound_call(IoWork *w) {
   sqlite3_busy_handler(db, baton_sql_busy, NULL);
   char *error = NULL;
   call->code = sqlite3_create_function_v2(db, "baton_ref_entry", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_ref_entry, NULL, NULL, NULL);
+  if (call->code == SQLITE_OK)
+    call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
   if (call->code == SQLITE_OK)
     call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
   if (call->code == SQLITE_OK)

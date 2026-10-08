@@ -28,6 +28,28 @@ def shutdown_fixture_owner(case):
     case.assertEqual(result.returncode, 0, result.stderr)
 
 
+def install_public_queue_codex(testcase, directory):
+    directory = pathlib.Path(directory)
+    calls = directory / 'public-queue-calls.jsonl'
+    executable = directory / 'codex'
+    executable.write_text(
+        '#!' + sys.executable + '\n'
+        + 'import json,pathlib,sys\n'
+        + f'args=sys.argv[1:]\nwith pathlib.Path({str(calls)!r}).open("a") as output:\n'
+        + '    output.write(json.dumps(args) + chr(10))\n'
+        + "thread=args[args.index('--thread')+1]\n"
+        + 'print("Queued message fixture-submission for thread " + thread, flush=True)\n')
+    executable.chmod(0o700)
+    previous = os.environ.get('PATH')
+    if previous is None:
+        testcase.addCleanup(os.environ.pop, 'PATH', None)
+        os.environ['PATH'] = str(directory)
+    else:
+        testcase.addCleanup(os.environ.__setitem__, 'PATH', previous)
+        os.environ['PATH'] = str(directory) + os.pathsep + previous
+    return calls
+
+
 FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys
 home=pathlib.Path(__file__).resolve().parent
 config=json.loads((home/'fixture.json').read_text())
@@ -133,6 +155,7 @@ class Control(unittest.TestCase):
         retained = ROOT / '.scratch/bend2/control-fixtures'
         retained.mkdir(parents=True, exist_ok=True)
         self.directory = pathlib.Path(tempfile.mkdtemp(prefix="control ' λ ", dir=retained))
+        self.public_queue_calls = install_public_queue_codex(self, self.directory)
         self.home = self.directory / 'isolated-home'
         self.home.mkdir()
         self.environment = dict(os.environ, HOME=str(self.home),
@@ -361,11 +384,8 @@ class Control(unittest.TestCase):
 
     def test_receiver_refuses_unsupported_stopped_and_missing_sessions(self):
         self.root()
-        # A Muse Conductor registers the same native receive endpoint; only the
-        # interactive Claude channel attachment has no receive endpoint.
-        harness = 'claude-code'
-        self.recruit(harness, harness)
-        self.call('connect', harness, 'saved-' + harness, '')
+        harness = 'unsupported-harness'
+        self.call('attach', harness, harness, 'saved-' + harness, '')
         before = self.call('player', harness)
         self.call('receiver', harness, self.fixture, self.directory / (harness + '.jsonl'), ok=False)
         self.assertEqual(self.call('player', harness), before)
@@ -506,6 +526,9 @@ class Control(unittest.TestCase):
         event.write_text(json.dumps({'type': 'result', 'session_id': 'native-pretty',
                                      'result': body, 'is_error': False}))
         self.call('observe-file', 'review-report', 'leaf', event)
+        queued = [json.loads(line) for line in self.public_queue_calls.read_text().splitlines()]
+        self.assertTrue(any(args[args.index('--thread') + 1] == 'saved-root'
+                            for args in queued if '--thread' in args))
         for args in (('status',), ('players',), ('orchestra',), ('pending',), ('player', 'leaf'),
                      ('session', 'leaf'), ('inbox', 'root'), ('delivery', 'review-report'), ('turns', 'leaf')):
             with self.subTest(args=args):
@@ -513,7 +536,9 @@ class Control(unittest.TestCase):
                 readable = self.call(*args, '--pretty', raw=True)
                 self.assertEqual(json.loads(readable['stdout']), json.loads(ordinary['stdout']))
                 self.assertIn('\n', readable['stdout'].strip())
-        self.assertEqual(self.call('delivery', 'review-report', '--pretty')['body'], body)
+        saved = self.call('delivery', 'review-report', '--pretty')
+        self.assertEqual(saved['body'], body)
+        self.assertIsNone(saved['receipt'])
         missing = self.call('player', 'missing-player', '--pretty', ok=False)
         self.assertEqual(missing['code'], 1)
         self.assertEqual(missing['stdout'], '')

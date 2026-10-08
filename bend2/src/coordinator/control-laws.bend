@@ -294,14 +294,6 @@ law readable_snapshot_formats_all_stored_fields:
 def readable_snapshot_formats_all_stored_fields(db,command):
   {==}
 
-law readable_existing_snapshot_keeps_every_stored_field:
-  for db: String
-  for saved: String
-  {Control.pretty_saved(db,saved,False{}) == IO.try(String,DB.Sql.query(db,"SELECT json_pretty(" ++ C.q(Tx.trim_nl(saved)) ++ ");")) : IO(String)}
-
-def readable_existing_snapshot_keeps_every_stored_field(db,saved):
-  {==}
-
 law absent_readable_snapshot_names_the_lookup_refusal:
   for db: String
   for saved: String
