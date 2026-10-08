@@ -800,7 +800,7 @@ type LdAdvObs is Data:
 # later step cannot re-resolve or substitute one for receipt convenience.
 type IdentityEvidence is Data:
   IdentityMissing{}
-  IdentityObserved{common: String, target: String}
+  IdentityObserved{common: String, observed: T.GitOut, target: String}
 
 type AssociationEvidence is Data:
   AssociationMissing{}
@@ -892,7 +892,7 @@ def capture_fields(capture: T.CapturedRaw, rest: List<String>) -> List<String>:
 def identity_fields(identity: IdentityEvidence, rest: List<String>) -> List<String>:
   match identity:
     case IdentityMissing{}: Con{"identity-missing", rest}
-    case IdentityObserved{common, target}: Con{"identity-observed", Con{common, Con{target, rest}}}
+    case IdentityObserved{common, observed, target}: Con{"identity-observed", Con{common, Con{target, observation_fields(observed, rest)}}}
 
 def association_fields(association: AssociationEvidence, rest: List<String>) -> List<String>:
   match association:
@@ -1463,7 +1463,7 @@ def capture_observed(capture: T.CapturedRaw) -> Bool:
 def identity_observed(identity: IdentityEvidence) -> Bool:
   match identity:
     case IdentityMissing{}: False{}
-    case IdentityObserved{common, target}: True{}
+    case IdentityObserved{common, T.GRun{0, common}, target}: True{}
 
 def association_observed(association: AssociationEvidence) -> Bool:
   match association:
@@ -1533,7 +1533,8 @@ def qualification_landed_of(qualification: LdQualified, candidate: String, targe
     case QualDecided{mode, target_ref, head_ref}: qualification_landed(mode, target_ref, head_ref, candidate, target)
 def identity_bound(identity: IdentityEvidence, expect: String) -> Bool:
   match identity:
-    case IdentityObserved{common, target}: Tx.str_eq(target, expect)
+    case IdentityObserved{common, observed, target}:
+      Bool.pick(Bool, Tx.str_eq(target, expect), Bool.pick(Bool, observation_succeeded(observed), Tx.str_eq(observation_value(observed), common), False{}), False{})
     case IdentityMissing{}: False{}
 
 def association_bound(association: AssociationEvidence, candidate: String, basis: String) -> Bool:
@@ -1599,23 +1600,25 @@ def ld_adv_of(obs: LdAdvObs) -> LAdv:
     case LdAdvCaptured{advance, capture, mode}: advance
     case LdAdvQualified{advance, capture, qualification}: advance
 
-def shared_reserved_attested(repo: String, target: String, cand: String, basis: String, +guard: String, +reserved: String, +obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>) -> IO(SharedLanding):
+def shared_reserved_attested(repo: String, target: String, cand: String, basis: String, +guard: String, +common: String, +common_observed: T.GitOut, +reserved: String, +obs: LdAdvObs, released: Result<&1, &1, U32 & String, Unit>) -> IO(SharedLanding):
   +rel = T.release_raw_of(released)
-  ld_attest_admit(AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), rel, IdentityMissing{}, AssociationMissing{}, IntentMissing{}})
+  ld_attest_admit(AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), rel, IdentityObserved{common, common_observed, target}, AssociationMissing{}, IntentMissing{}})
 
-def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, reserved: String) -> IO(SharedLanding):
+def shared_reserved_continue(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, common: String, common_observed: T.GitOut, reserved: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
   +c = cand
   +b = basis
   +gd = guard
+  +cm = common
+  +cobs = common_observed
   +rv = reserved
   +cx = LdAdvContext{h, gd, shared_parent_path(rv, "stderr")}
   do IO<SharedLanding>:
     o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
     released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(h)
-    shared_reserved_attested(rp, tg, c, b, gd, rv, o, released)
+    shared_reserved_attested(rp, tg, c, b, gd, cm, cobs, rv, o, released)
 
 # The attempt name: the bare base for the first attempt, then the base extended with the
 # counter rendered by U32.show. The only refusal past a collision is the U32 maximum, checked
@@ -1629,40 +1632,42 @@ def shared_attempt_name(base: String, attempt: U32) -> String:
 # One self-recursive reservation body: the returned Result, the exact created/existing records and
 # the retry branching. The retry's next read is inlined below, so this def is whole and no def is
 # used before it is defined; only nonrecursive helpers produce final outcomes.
-def shared_reserve_observed(+handle: U32, +repo: String, +target: String, +cand: String, +basis: String, +guard: String, +parent: String, +base: String, +attempt: U32, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
+def shared_reserve_observed(+handle: U32, +repo: String, +target: String, +cand: String, +basis: String, +guard: String, +common: String, +common_observed: T.GitOut, +parent: String, +base: String, +attempt: U32, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   match observed:
     case Fail{error}: shared_step_failed("reserve", error, handle)
     case Done{+record}:
       +created_ok = Tx.str_eq(record, Pb.production_record("created", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0"))
       +existing_ok = Tx.str_eq(record, Pb.production_record("existing", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0"))
       Bool.pick(IO(SharedLanding), created_ok,
-        shared_reserved_continue(handle, repo, target, cand, basis, guard, shared_parent_path(parent, shared_attempt_name(base, attempt))),
+        shared_reserved_continue(handle, repo, target, cand, basis, guard, common, common_observed, shared_parent_path(parent, shared_attempt_name(base, attempt))),
         Bool.pick(IO(SharedLanding), existing_ok,
           Bool.pick(IO(SharedLanding), U32.is_lt(attempt, 4294967295),
             do IO<SharedLanding>:
                 retry : Result<&1, &1, U32 & String, String> <- Rec.Receipt.reserve_attempt(parent, shared_attempt_name(base, U32.add(attempt, 1)))
-                shared_reserve_observed(handle, repo, target, cand, basis, guard, parent, base, U32.add(attempt, 1), retry),
+                shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, U32.add(attempt, 1), retry),
             shared_record_failed("reserve-counter-maximum", record, handle)),
           shared_record_failed("reserve", record, handle)))
 
 # The reservation's first read: the attempt name is bound here and the answer is classified by
 # shared_reserve_observed, which owns the created/existing records and the retry.
-def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, attempt: U32) -> IO(SharedLanding):
+def shared_reserve_loop(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, common: String, common_observed: T.GitOut, parent: String, base: String, attempt: U32) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
   +c = cand
   +b = basis
   +gd = guard
+  +cm = common
+  +cobs = common_observed
   +pa = parent
   +bs = base
   +n = attempt
   +name = shared_attempt_name(bs, n)
   do IO<SharedLanding>:
     observed : Result<&1, &1, U32 & String, String> <- Rec.Receipt.reserve_attempt(pa, name)
-    shared_reserve_observed(h, rp, tg, c, b, gd, pa, bs, n, observed)
+    shared_reserve_observed(h, rp, tg, c, b, gd, cm, cobs, pa, bs, n, observed)
 
-def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
+def shared_parent_present(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, common: String, common_observed: T.GitOut, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -1673,9 +1678,9 @@ def shared_parent_present(handle: U32, repo: String, target: String, cand: Strin
   +bs = base
   +r = record
   Bool.pick(IO(SharedLanding), Tx.str_eq(r, Pb.production_record("present", pa, "0")),
-    shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1),
+    shared_reserve_loop(h, rp, tg, c, b, gd, cm, obs, pa, bs, 1),
     shared_record_failed("ensure", r, h))
-def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, record: String) -> IO(SharedLanding):
+def shared_parent_classified(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, common: String, common_observed: T.GitOut, parent: String, base: String, record: String) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -1686,14 +1691,14 @@ def shared_parent_classified(handle: U32, repo: String, target: String, cand: St
   +bs = base
   +r = record
   Bool.pick(IO(SharedLanding), Tx.str_eq(r, Pb.production_record("created", pa, "0")),
-    shared_reserve_loop(h, rp, tg, c, b, gd, pa, bs, 1),
-    shared_parent_present(h, rp, tg, c, b, gd, pa, bs, r))
-def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, parent: String, base: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
+    shared_reserve_loop(h, rp, tg, c, b, gd, cm, obs, pa, bs, 1),
+    shared_parent_present(h, rp, tg, c, b, gd, cm, obs, pa, bs, r))
+def shared_parent_ensured(handle: U32, repo: String, target: String, cand: String, basis: String, guard: String, common: String, common_observed: T.GitOut, parent: String, base: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   match observed:
     case Fail{error}: shared_step_failed("ensure", error, handle)
-    case Done{+record}: shared_parent_classified(handle, repo, target, cand, basis, guard, parent, base, record)
+    case Done{+record}: shared_parent_classified(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, record)
 
-def shared_token_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, guard: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
+def shared_token_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, common_observed: T.GitOut, guard: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   match observed:
     case Fail{error}: shared_step_failed("token", error, handle)
     case Done{token}:
@@ -1701,17 +1706,17 @@ def shared_token_named(handle: U32, repo: String, target: String, cand: String, 
       +base = Tx.str_cat(token, Tx.str_cat("-", Tx.str_cat(cand, Tx.str_cat("-", basis))))
       do IO<SharedLanding>:
         ensured : Result<&1, &1, U32 & String, String> <- Rec.Receipt.ensure(parent)
-        shared_parent_ensured(handle, repo, target, cand, basis, guard, parent, base, ensured)
+        shared_parent_ensured(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, ensured)
 
-def shared_guard_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
+def shared_guard_named(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, common_observed: T.GitOut, observed: Result<&1, &1, U32 & String, String>) -> IO(SharedLanding):
   match observed:
     case Fail{error}: shared_step_failed("guard", error, handle)
     case Done{guard}:
       do IO<SharedLanding>:
         token : Result<&1, &1, U32 & String, String> <- Rec.Receipt.attempt_token(target)
-        shared_token_named(handle, repo, target, cand, basis, common, guard, token)
+        shared_token_named(handle, repo, target, cand, basis, common, common_observed, guard, token)
 
-def shared_guarded(handle: U32, repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
+def shared_guarded(handle: U32, repo: String, target: String, cand: String, basis: String, common: String, common_observed: T.GitOut) -> IO(SharedLanding):
   +h = handle
   +rp = repo
   +tg = target
@@ -1720,17 +1725,17 @@ def shared_guarded(handle: U32, repo: String, target: String, cand: String, basi
   +cm = common
   do IO<SharedLanding>:
     observed : Result<&1, &1, U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
-    shared_guard_named(h, rp, tg, c, b, cm, observed)
+    shared_guard_named(h, rp, tg, c, b, cm, common_observed, observed)
 
-def shared_claim_decided(repo: String, target: String, cand: String, basis: String, common: String, claim_outcome: Result<&1, &1, U32 & String, Maybe<U32>>) -> IO(SharedLanding):
+def shared_claim_decided(repo: String, target: String, cand: String, basis: String, common: String, common_observed: T.GitOut, claim_outcome: Result<&1, &1, U32 & String, Maybe<U32>>) -> IO(SharedLanding):
   match claim_outcome:
     case Fail{error}: IO.pure(SharedLanding, SharedClaimFailed{shared_error(error)})
     case Done{held}:
       match held:
         case None{}: IO.pure(SharedLanding, SharedGuardBusy{target})
-        case Some{handle}: shared_guarded(handle, repo, target, cand, basis, common)
+        case Some{handle}: shared_guarded(handle, repo, target, cand, basis, common, common_observed)
 
-def shared_claimed(repo: String, target: String, cand: String, basis: String, common: String) -> IO(SharedLanding):
+def shared_claimed(repo: String, target: String, cand: String, basis: String, common: String, common_observed: T.GitOut) -> IO(SharedLanding):
   +rp = repo
   +tg = target
   +c = cand
@@ -1738,14 +1743,14 @@ def shared_claimed(repo: String, target: String, cand: String, basis: String, co
   +cm = common
   do IO<SharedLanding>:
     claimed : Result<&1, &1, U32 & String, Maybe<U32>> <- Rec.Receipt.claim(cm, tg)
-    shared_claim_decided(rp, tg, c, b, cm, claimed)
+    shared_claim_decided(rp, tg, c, b, cm, observed, claimed)
 
 def shared_common_read(repo: String, target: String, cand: String, basis: String, +observed: T.GitOut) -> IO(SharedLanding):
   match observed:
     case T.GRun{code, out}:
       +c0 = code
       Bool.pick(IO(SharedLanding), U32.is_eq(c0, 0),
-        shared_claimed(repo, target, cand, basis, Tx.trim_nl(out)),
+        shared_claimed(repo, target, cand, basis, Tx.trim_nl(out), observed),
         IO.pure(SharedLanding, SharedCommonUnreadable{observed}))
     case T.GBroken{detail}: IO.pure(SharedLanding, SharedCommonUnreadable{observed})
 
@@ -2629,13 +2634,13 @@ def fixture_evidence_of(+reserved: String, +common: String, +target: String, +ca
   AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", "/art", AdvLanded{}, capture, qualification, T.ReleaseDone{}, identity, association, intent}
 
 def fixture_held_evidence(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String) -> AttemptEvidence:
-  fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), IdentityObserved{common, target}, AssociationObserved{"associate", candidate, basis, target, common, common}, IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"})
+  fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), IdentityObserved{common, T.GRun{0, common}, target}, AssociationObserved{"associate", candidate, basis, target, common, common}, IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"})
 
 def fixture_unheld_evidence(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String) -> AttemptEvidence:
-  fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_unheld_qualification(candidate), IdentityObserved{common, target}, AssociationObserved{"associate", candidate, basis, target, common, common}, IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"})
+  fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_unheld_qualification(candidate), IdentityObserved{common, T.GRun{0, common}, target}, AssociationObserved{"associate", candidate, basis, target, common, common}, IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"})
 
 def fixture_release_evidence(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String, release: T.ReleaseRaw) -> AttemptEvidence:
-  AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), release, IdentityObserved{common, target}, AssociationObserved{"associate", candidate, basis, target, common, common}, IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"}}
+  AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), release, IdentityObserved{common, T.GRun{0, common}, target}, AssociationObserved{"associate", candidate, basis, target, common, common}, IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"}}
 
 def fixture_stages(+reserved: String, evidence: AttemptEvidence, publication: StageResult, qualification: StageResult, readback: StageResult) -> Attestation:
   Attestation{reserved, evidence, publication, qualification, readback}
@@ -2983,7 +2988,7 @@ def a_complete_attempt_is_admitted():
   {==}
 
 law an_absent_capture_is_refused:
-  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
 
 def an_absent_capture_is_refused():
   {==}
@@ -2995,13 +3000,13 @@ def a_missing_identity_is_refused():
   {==}
 
 law a_missing_association_is_refused:
-  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", "tgt"}, AssociationMissing{}, IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationMissing{}, IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
 
 def a_missing_association_is_refused():
   {==}
 
 law a_missing_intent_is_refused:
-  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentMissing{})))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentMissing{})))) == False{} : Bool}
 
 def a_missing_intent_is_refused():
   {==}
@@ -3025,13 +3030,13 @@ def a_mismatched_readback_is_refused():
   {==}
 
 law a_rejected_attempt_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt evidence is incomplete"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt evidence is incomplete"}} : FFLD}
 
 def a_rejected_attempt_refuses_the_fast_forward():
   {==}
 
 law a_rejected_attempt_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt evidence is incomplete"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt evidence is incomplete"}} : Ld}
 
 def a_rejected_attempt_refuses_the_advance():
   {==}
@@ -3127,7 +3132,7 @@ law a_complete_unheld_attempt_is_admitted:
 def a_complete_unheld_attempt_is_admitted():
   {==}
 law a_failed_capture_is_refused:
-  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedFailed{13, "i/o error"}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
+  {ld_admitted(admission_of(fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedFailed{13, "i/o error"}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"})))) == False{} : Bool}
 
 def a_failed_capture_is_refused():
   {==}
@@ -3224,12 +3229,12 @@ law a_mismatched_readback_refuses_the_advance:
 def a_mismatched_readback_refuses_the_advance():
   {==}
 law incomplete_evidence_with_success_looking_stages_refuses_the_fast_forward:
-  {ff_stage5_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt evidence is incomplete"}} : FFLD}
+  {ff_stage5_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == FFDone{T.LBlocked{"the attempt record was not admitted: the attempt evidence is incomplete"}} : FFLD}
 
 def incomplete_evidence_with_success_looking_stages_refuses_the_fast_forward():
   {==}
 law incomplete_evidence_with_success_looking_stages_refuses_the_advance:
-  {ld_advance_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt evidence is incomplete"}} : Ld}
+  {ld_advance_shared_answer(SharedAdvanced{fixture_attestation_of("r", fixture_evidence_of("r", "/common", "tgt", "cand", "base", T.CapturedAbsent{}, fixture_held_qualification("cand", "tgt"), IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, AssociationObserved{"associate", "cand", "base", "tgt", "/common", "/common"}, IntentObserved{"r/intent", "intent bytes"}))}, "tgt", "cand") == LdFail{T.FCmd{"land", "the attempt record was not admitted: the attempt evidence is incomplete"}} : Ld}
 
 def incomplete_evidence_with_success_looking_stages_refuses_the_advance():
   {==}
