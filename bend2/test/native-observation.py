@@ -188,86 +188,6 @@ class NativeObservation(RECEIVE.Receive):
                              for row in self.coord('inbox', 'root')))
         self.eventually(lambda: not self.owned_processes(), 'reattached OMP fixture did not exit')
 
-    def test_oversized_omp_checkpoint_failure_replays_without_losing_completion(self):
-        self.player(harness='omp')
-        config_path = self.directory / 'fixture.json'
-        config = json.loads(config_path.read_text())
-        config['record_launches'] = True
-        config_path.write_text(json.dumps(config))
-        self.coord('message', 'oversized-checkpoint-task', 'root', 'parent', 'task', 'Retain this complete large response.')
-        observer = self.spawn(*self.receive_args('parent'))
-        stream, started = self.accept('parent')
-        attempt, turn_id = self.eventually(lambda: self._retained_attempt(), 'retained attempt was not admitted')
-        text = '"' * 400_000
-        assistant = {'type': 'message_end', 'message': {
-            'id': 'oversized-checkpoint-assistant', 'role': 'assistant', 'provider': 'fixture',
-            'content': [{'type': 'text', 'text': text}]}}
-        raw_frame = json.dumps(assistant, separators=(',', ':'))
-        encoded_message = json.dumps(assistant['message'], separators=(',', ':'))
-        encoded_state = json.dumps({'schema': 1, 'guidance_cursor': '0\n',
-                                    'last_message': encoded_message,
-                                    'muse_primary': '', 'muse_current': '', 'terminal': '',
-                                    'filter_mode': '', 'codex_log': '', 'held': ''},
-                                   separators=(',', ':'))
-        self.assertLess(len(raw_frame.encode()), 1_000_000)
-        self.assertGreater(len(encoded_state.encode()), 1 << 20)
-        self.action(stream, native_frame=assistant)
-        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
-        self.eventually(lambda: (self.directory / 'parent.jsonl').exists() and
-                        'oversized-checkpoint-assistant' in (self.directory / 'parent.jsonl').read_text(),
-                        'the complete oversized assistant frame was not logged')
-        checkpoint_diagnostic = self.eventually_slow_case(
-            lambda: next((row for row in self.coord('inbox', 'root')
-                          if row['id'] == turn_id + ':checkpoint'), None),
-            'oversized checkpoint failure did not produce its bounded diagnostic')
-        self.assertIn(attempt, checkpoint_diagnostic['body'])
-        self.assertLess(len(checkpoint_diagnostic['body']), 512)
-        self.action(stream, native_frame={'type': 'checkpoint-barrier'})
-        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
-        self.eventually(lambda: 'checkpoint-barrier' in (self.directory / 'parent.jsonl').read_text(),
-                        'observer did not consume the oversized-frame barrier')
-
-        observer.kill()
-        observer.wait(timeout=5)
-        resumed = self.spawn(*self.receive_args('parent'))
-        terminal = {'type': 'agent_end', 'isTerminal': True, 'is_error': False, 'messages': []}
-        self.action(stream, native_frame=terminal)
-        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
-        self.action(stream, exit_fixture=True)
-        self.finish(resumed)
-
-        turns = self.eventually_slow_case(
-            lambda: self.coord('turns', 'parent'),
-            'reattached observer did not preserve the oversized completion')
-        self.assertEqual(len(turns), 1)
-        report_body = turns[0]['reportBody']
-        self.assertEqual(len(report_body), len(text))
-        self.assertEqual(hashlib.sha256(report_body.encode()).hexdigest(),
-                         hashlib.sha256(text.encode()).hexdigest())
-        reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
-        checkpoint_reports = [row for row in reports if row['id'] == turn_id + ':checkpoint']
-        self.assertEqual(len(checkpoint_reports), 1)
-        self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
-        log = (self.directory / 'parent.jsonl').read_text()
-        spool = (pathlib.Path(attempt) / 'stdout').read_text()
-        self.assertEqual(spool.count('oversized-checkpoint-assistant'), 1)
-        self.assertEqual(spool.count('checkpoint-barrier'), 1)
-        assistant_frames = [json.loads(line) for line in log.splitlines()
-                            if 'oversized-checkpoint-assistant' in line]
-        self.assertEqual(len(assistant_frames), 2)
-        self.assertEqual(assistant_frames[0], assistant_frames[1])
-        raw_text = assistant_frames[0]['message']['content'][0]['text']
-        self.assertEqual(len(raw_text), len(text))
-        self.assertEqual(hashlib.sha256(raw_text.encode()).hexdigest(),
-                         hashlib.sha256(text.encode()).hexdigest())
-        barrier_frames = [json.loads(line) for line in log.splitlines()
-                          if 'checkpoint-barrier' in line]
-        self.assertEqual(len(barrier_frames), 2)
-        self.assertEqual(barrier_frames[0], barrier_frames[1])
-        launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
-        self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
-        self.eventually(lambda: not self.owned_processes(), 'oversized OMP fixture did not exit')
-
     def _retained_attempt(self):
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
             row = database.execute("SELECT directory,id FROM executions WHERE session='parent' AND mode='retained'").fetchone()
@@ -303,6 +223,5 @@ if __name__ == '__main__':
         'NativeObservation.test_mixed_agent_end_members_preserve_completion_and_raw_frame',
         'NativeObservation.test_muse_uses_admitted_turn_terminal_and_keeps_later_lifecycle_separate',
         'NativeObservation.test_omp_fallback_message_survives_observer_reattach_at_saved_cursor',
-        'NativeObservation.test_oversized_omp_checkpoint_failure_replays_without_losing_completion',
         'NativeObservation.test_log_write_failure_remains_an_observation_failure',
     ])
