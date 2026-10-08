@@ -2,6 +2,7 @@
 import json
 import os
 import pathlib
+import select
 import shlex
 import socket
 import subprocess
@@ -607,17 +608,31 @@ class Land(unittest.TestCase):
         target_before = self.git('rev-parse', 'main').strip()
         first = {}
 
+        # The worker's completion arrives on its own pair, so a landing that exits before
+        # its check stage connects is reported at once instead of leaving accept blocked.
+        notify = socket.socketpair()
+        self.addCleanup(notify[0].close)
+        self.addCleanup(notify[1].close)
+
         def held_landing():
             try:
                 first['result'] = self.call('land-checked', 'w1', self.repo, 'main',
                                             'check-wait.sh', 'file.txt')
             except BaseException as error:
                 first['error'] = error
+            finally:
+                try:
+                    notify[1].sendall(b'done')
+                except OSError:
+                    pass
 
         thread = threading.Thread(target=held_landing)
         thread.start()
         connection = None
         try:
+            readable, _, _ = select.select([notify[0], self.check_socket], [], [])
+            if notify[0] in readable:
+                self.fail(f'the landing finished before its check stage reported readiness: {first}')
             connection, _ = self.check_socket.accept()
             ready = b''
             while len(ready) < len(b'ready'):
@@ -638,6 +653,10 @@ class Land(unittest.TestCase):
                 self.assertIn(name, now['paths'], f'the held attempt tree {name} was removed')
                 self.assertEqual(now['heads'][name], state['heads'][name],
                                  f'the held attempt tree {name} changed its HEAD')
+                self.assertEqual(now['contents'][name], state['contents'][name],
+                                 f'the held attempt tree {name} changed its contents')
+                self.assertEqual(now['statuses'][name], state['statuses'][name],
+                                 f'the held attempt tree {name} changed its status')
                 self.assertIn(tree, now['registered'],
                               f'the held attempt tree {name} lost its worktree registration')
         finally:
@@ -719,7 +738,10 @@ class Land(unittest.TestCase):
         for tree in targets:
             self.assertEqual(((tree / 'left.txt').read_bytes(), (tree / 'right.txt').read_bytes()),
                              prior_bytes[tree.name], f'the earlier target tree {tree.name} changed')
-            self.assertIn(str(tree), self.git('worktree', 'list', '--porcelain'),
+            registered = {line.split(' ', 1)[1].strip()
+                          for line in self.git('worktree', 'list', '--porcelain').splitlines()
+                          if line.startswith('worktree ')}
+            self.assertIn(str(tree), registered,
                           f'the earlier target tree {tree.name} lost its registration')
         fresh = [tree for tree in retried if tree not in prior]
         self.assertEqual(len(fresh), 2)
