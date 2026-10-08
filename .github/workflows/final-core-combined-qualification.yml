@@ -30,8 +30,8 @@ jobs:
       matrix:
         include:
           - product: combined-context
-            source_sha: a3d022b689431b4dd5a48957b68774bbbd093f6a
-            source_tree: 3be9159f1b550c0c18ef31ee690973cb825e8783
+            source_sha: 2b5686d76e78aea6c10ae3c6a9856d958b1777ce
+            source_tree: f034826e2721a3b43c1e069383a347c89077a758
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
