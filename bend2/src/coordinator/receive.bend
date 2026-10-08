@@ -1,5 +1,7 @@
 import Base
 import ../coordinator/commands.bend as C
+import ./../coordinator/logs.bend as Logs
+import ../harness/omp-player.bend as Omp
 import ./store.bend as Store
 import ./stop.bend as Stop
 import ./turn.bend as Turn
@@ -403,11 +405,11 @@ def observed_output(db: String, session: String, id: String, log: String, cursor
   +current=outcome
   observed(db,session,id,log,reconciled_cursor(cursor,adopted,current),native,cwd,attempt,handle,lock,current,deliveries,again)
 
-def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, lock: U32, start: P.RetainedStart, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, level: String, lock: U32, start: P.RetainedStart, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match start:
     case P.Retained{+handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
       reconciled : Unit <- Stop.started(db,session,id,attempt)
-      observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,attempt,handle)
+      observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,attempt,handle,Omp.filter_events(level))
       observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,Some{lock},observation,again,False{})
     case P.Unstarted{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +outcome : Turn.Outcome <- IO.pure(Turn.Outcome,Turn.Ended{"start failed","","Player process could not start: " ++ error})
@@ -428,8 +430,10 @@ def start_admitted(+db: String, +session: String, +id: String, cmd: String, rout
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       head : String <- wake_found(db,session,"0")
       owned : Unit <- Store.claim(db,session,head)
-      start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained(db,session,attempt,cmd,route,thinking,workspace,native,harness,storage,prompt,lock,recovery))
-      started(db,session,id,log,cursor,native,workspace,attempt,harness,lock,start,again)
+      +policy : Logs.Policy <- Logs.policy(db,session)
+      +level : String <- IO.pure(String,Turn.policy_level(policy))
+      start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained(db,session,attempt,cmd,route,thinking,workspace,native,harness,storage,prompt,lock,recovery,level))
+      started(db,session,id,log,cursor,native,workspace,attempt,harness,level,lock,start,again)
 
 def selected(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +lock: U32, +cursor: String, present: Bool, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match present:
@@ -463,14 +467,14 @@ def acquired_pending(+db: String, +session: String, cmd: String, model: String, 
 def observe_guarded(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     reconciled : Unit <- Stop.reconcile(db,session,id,directory)
-    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,handle)
+    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,handle,"unknown")
     observed_output(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted)
 
 def recover_owned(+db: String, +session: String, +directory: String, +lock: U32, args: List<&2,String>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match args:
     case executable <> flag <> saved_db <> saved_session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> saved_directory <> native <> Nil{}:
       do IO<Result<&1,&1,U32 & String,Unit>>:
-        valid : Unit <- Stop.error_result("Recorded native recovery arguments differ from the current session; retain the attempt and inspect its manifest.",Bool.and(String.eq(flag,"--recover-receive"),Bool.and(String.eq(db,saved_db),Bool.and(String.eq(session,saved_session),String.eq(directory,saved_directory)))))
+        valid : Unit <- Stop.error_result("Recorded native recovery arguments differ from the current session; retain the attempt and inspect its manifest.",Bool.and(String.eq(flag,"--recover-receive"),Bool.and(String.eq(session,saved_session),String.eq(directory,saved_directory))))
         handle : U32 <- IO.try(U32,Custody.Instance.attach_owned(db,directory,lock))
         observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again,True{})
     case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Recorded native recovery arguments are invalid; retain the attempt and inspect its manifest.")})

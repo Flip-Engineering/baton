@@ -6,7 +6,9 @@ The coordinator writes a public JSONL log for each turn and a separate file for 
 
 `baton2 DATABASE logs SESSION` reads the configured level. `baton2 DATABASE logs SESSION LEVEL` sets it. The available levels are `default`, `quiet`, and `diagnostic`.
 
-At `default`, the coordinator retains completed frames and holds the newest `message_update`, `message_start`, and `tool_execution_update` frame for each open identity. A matching end frame either completes or replaces the held state. Turn completion writes any still-open frame. At `quiet`, the coordinator keeps terminal frames and frames whose type is not classified. At `diagnostic`, it keeps every frame. Unknown event types remain in the log at every level.
+At `default`, the coordinator retains completed frames and holds the newest `message_update`, `message_start`, and `tool_execution_update` frame for each open identity. A matching end frame either completes or replaces the held state. Turn completion writes any still-open frame. At `quiet`, the coordinator keeps terminal frames and frames whose type is not classified. At `diagnostic`, it keeps every received frame. Received frames with unknown event types remain in the log at every level.
+
+The OMP setup request carries the session level to the provider before `get_state`. At `diagnostic` it requests all event categories with full message updates. At other levels it requests the SessionEvent categories in the pinned schema except `tool_execution_update`, with delta message updates. The provider controls which frames it sends. The turn records frames it receives and records a correlated filter response when one arrives. A refused, mismatched, or missing response does not establish which selection the provider applied. The default request excludes categories added to later schemas. At default an interrupted tool retains its start frame and unfinished status but can lose its latest partial update; diagnostic requests that detail.
 
 The coordinator appends each retained frame to the generation log. It preserves complete frames, including large frames. The native process writes all stderr bytes to the unique path registered for that run.
 

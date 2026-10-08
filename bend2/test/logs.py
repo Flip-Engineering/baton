@@ -170,7 +170,7 @@ sys.exit(%d)
             self.terminal(),
         ]
         self.stream(frames)
-        note = '{"type":"baton_event_filter","requested":"delta","active":false,"outcome":"unacknowledged"}'
+        note = '{"type":"baton_event_filter","requested":"null+full","active":false,"outcome":"unacknowledged"}'
         self.assertEqual([json.loads(line).get('type') for line in self.lines()],
                          ['message_update', 'tool_execution_update', 'agent_end', 'baton_event_filter'])
         self.assertEqual(self.lines()[-1], note)
@@ -185,7 +185,7 @@ sys.exit(%d)
             '{"probe":"unknown type"}',
         ]
         self.stream(frames)
-        note = '{"type":"baton_event_filter","requested":"delta","active":false,"outcome":"unacknowledged"}'
+        note = '{"type":"baton_event_filter","requested":"array+delta","active":false,"outcome":"unacknowledged"}'
         self.assertEqual(self.lines(), [self.terminal(), '{"probe":"unknown type"}', note])
 
     def test_policy_reads_and_sets_only_the_concise_level(self):
@@ -407,7 +407,7 @@ assert sys.stdin.read()==''
                    for i in range(3)]
         self.stream(updates + [self.terminal()])
         saved = self.lines()
-        note = '{"type":"baton_event_filter","requested":"delta","active":false,"outcome":"unacknowledged"}'
+        note = '{"type":"baton_event_filter","requested":"array+delta","active":false,"outcome":"unacknowledged"}'
         self.assertEqual([json.loads(line)['type'] for line in saved], ['agent_end', 'tool_execution_update', 'baton_event_filter'])
         self.assertEqual(json.loads(saved[-2])['partialResult']['content'][0]['text'], 'partial 2')
 

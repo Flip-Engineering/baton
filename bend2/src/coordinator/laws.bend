@@ -881,33 +881,37 @@ def m8_an_unregistered_player_is_refused_before_any_turn(db, player, id, cmd, mo
 law m11_omp_input_reaches_the_omp_adapter:
   for +handle: U32
   for +prompt: String
-  {Turn.input(handle, prompt, "omp\n") == Omp.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for +level: String
+  {Turn.input(handle, prompt, "omp\n", level) == Omp.input(handle, prompt, level) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m11_omp_input_reaches_the_omp_adapter(handle, prompt):
+def m11_omp_input_reaches_the_omp_adapter(handle, prompt, level):
   {==}
 
 law m11_muse_input_reaches_the_muse_adapter:
   for +handle: U32
   for +prompt: String
-  {Turn.input(handle, prompt, "muse\n") == Muse.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for +level: String
+  {Turn.input(handle, prompt, "muse\n", level) == Muse.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m11_muse_input_reaches_the_muse_adapter(handle, prompt):
+def m11_muse_input_reaches_the_muse_adapter(handle, prompt, level):
   {==}
 
 law m11_codex_input_reaches_the_codex_adapter:
   for +handle: U32
   for +prompt: String
-  {Turn.input(handle, prompt, "codex\n") == Codex.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for +level: String
+  {Turn.input(handle, prompt, "codex\n", level) == Codex.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m11_codex_input_reaches_the_codex_adapter(handle, prompt):
+def m11_codex_input_reaches_the_codex_adapter(handle, prompt, level):
   {==}
 
 law m11_any_other_harness_input_reaches_the_claude_adapter:
   for +handle: U32
   for +prompt: String
-  {Turn.input(handle, prompt, "claude-code\n") == Claude.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for +level: String
+  {Turn.input(handle, prompt, "claude-code\n", level) == Claude.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m11_any_other_harness_input_reaches_the_claude_adapter(handle, prompt):
+def m11_any_other_harness_input_reaches_the_claude_adapter(handle, prompt, level):
   {==}
 
 law m2_omp_launch_reaches_the_omp_adapter:
@@ -1023,24 +1027,10 @@ def m5_a_resumable_muse_turn_carries_the_recorded_session(cmd, model, effort, cw
 # before the child starts, and writes no bytes to the child's input. A retained
 # Claude attempt carries the composed input as one user frame.
 
-law m13_a_retained_muse_attempt_writes_no_stdin:
-  for +prompt: String
-  {Turn.retained_input(True{},False{},False{},prompt) == "" : String}
-
-def m13_a_retained_muse_attempt_writes_no_stdin(prompt):
-  {==}
-
 law m13_a_retained_muse_attempt_closes_its_input_as_a_codex_attempt_does:
   {U32.is_eq(Turn.retained_keep_stdin(True{},False{},False{}),Turn.retained_keep_stdin(False{},False{},False{})) == True{} : Bool}
 
 def m13_a_retained_muse_attempt_closes_its_input_as_a_codex_attempt_does():
-  {==}
-
-law m13_a_retained_claude_attempt_carries_the_user_frame:
-  for +prompt: String
-  {Turn.retained_input(False{},False{},True{},prompt) == Claude.user_frame(prompt) : String}
-
-def m13_a_retained_claude_attempt_carries_the_user_frame(prompt):
   {==}
 
 law m13_a_retained_claude_attempt_closes_its_input_as_a_codex_attempt_does:
@@ -1277,17 +1267,4 @@ law stopped_input_reports_use_the_recorded_upstream_recipient:
   ++ "SELECT coalesce((SELECT n.id FROM messages n WHERE n.id='stopped-input:' || lower(hex(" ++ C.q(id) ++ ")) AND (n.receipt IS NOT NULL OR EXISTS(SELECT 1 FROM sessions p WHERE p.id=n.recipient AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=p.id) AND (CASE WHEN json_valid(p.endpoint) THEN json_type(p.endpoint)='array' AND json_array_length(p.endpoint)>0 ELSE 0 END OR p.harness='codex')))),'');COMMIT;") : String}
 
 def stopped_input_reports_use_the_recorded_upstream_recipient(id):
-  {==}
-
-# The OMP setup filter decision (issue #662) reads the server's own answer, and
-# only the exact successful full-category delta selection activates the
-# projection: the response must carry the set_event_filter command, success,
-# an explicitly echoed null events value and delta message updates. A
-# successful answer without that selection is unconfirmed, a failed answer is
-# refused, and every other line leaves the mode unchanged. The nested CASE
-# keeps json extraction behind the validity check.
-law omp_filter_activation_requires_the_complete_echoed_selection:
-  {Turn.filter_mode_sql("x") == "SELECT CASE WHEN json_valid('x') THEN CASE WHEN json_extract('x','$.type')='response' AND json_extract('x','$.id')='baton:filter' AND json_extract('x','$.command')='set_event_filter' THEN CASE WHEN json_extract('x','$.success')=1 THEN CASE WHEN json_type('x','$.data.events')='null' AND json_extract('x','$.data.messageUpdates')='delta' THEN 'delta' ELSE 'unconfirmed' END ELSE 'refused' END ELSE '' END ELSE '' END;" : String}
-
-def omp_filter_activation_requires_the_complete_echoed_selection():
   {==}

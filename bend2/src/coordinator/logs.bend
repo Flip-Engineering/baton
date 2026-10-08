@@ -13,7 +13,9 @@ import ../json/canonical.bend as J
 # Level `default` drops repeated cumulative snapshots while retaining completed
 # messages, final tool results, terminal frames and report evidence. Level
 # `diagnostic` retains every frame. Level `quiet` retains terminal and
-# unclassified frames. Unknown provider events remain visible at every level.
+# unclassified frames that the coordinator receives. The default OMP request
+# excludes categories added to later schemas; diagnostic requests all provider
+# event categories.
 # The registry records public log paths; native conversations and harness
 # histories have separate owners.
 

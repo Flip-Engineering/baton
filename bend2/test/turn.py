@@ -135,7 +135,7 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.register('omp-worker','root','omp','requested-model','high',str(self.cwd),'omp-branch','base')
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
 request=json.loads(sys.stdin.readline())
-assert request['type']=='set_event_filter' and request['events'] is None and request['messageUpdates']=='delta'
+assert request['type']=='set_event_filter' and request['id']=='baton:filter' and request['messageUpdates']=='delta' and 'tool_execution_update' not in request['events'] and 'message_end' in request['events'],request
 state=json.loads(sys.stdin.readline())
 assert state['type']=='get_state'
 prompt=json.loads(sys.stdin.readline())['message']
@@ -200,7 +200,7 @@ print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
 assert sys.stdin.read()==''
 ''')
         self.call('turn','omp-worker','retained-turn',str(self.player),'model','low',str(self.cwd),str(self.task),str(self.log),'')
-        note='{"type":"baton_event_filter","requested":"delta","active":false,"outcome":"unacknowledged"}'
+        note='{"type":"baton_event_filter","requested":"array+delta","active":false,"outcome":"unacknowledged"}'
         self.assertEqual(self.generation('retained-turn').read_text().splitlines(),retained+[terminal,omitted[1],note])
         self.assertEqual(json.loads(self.call('delivery','retained-turn'))['body'],final_text)
 
@@ -231,7 +231,7 @@ assert sys.stdin.read()==''
         self.call('turn','omp-worker','trial-report',str(self.player),'deepseek/deepseek-flash','low',str(self.cwd),str(self.task),str(self.log),'')
         self.assertEqual(json.loads(self.call('delivery','trial-report'))['body'], expected)
         self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'], expected)
-        note='{"type":"baton_event_filter","requested":"delta","active":false,"outcome":"unacknowledged"}'
+        note='{"type":"baton_event_filter","requested":"array+delta","active":false,"outcome":"unacknowledged"}'
         self.assertEqual(self.generation('trial-report').read_text().splitlines(),events.splitlines()+[note])
         self.assertEqual([json.loads(line) for line in received.read_text().splitlines()], [expected])
         self.player.unlink()
@@ -270,13 +270,14 @@ assert sys.stdin.read()==''
         self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
 request=json.loads(sys.stdin.readline())
-assert request=={'type':'set_event_filter','id':'baton:filter','events':None,'messageUpdates':'delta'},request
+events=request['events']
+assert request['type']=='set_event_filter' and request['id']=='baton:filter' and request['messageUpdates']=='delta' and 'tool_execution_update' not in events and 'message_end' in events,request
 emitted=[]
 def emit(frame):
     line=json.dumps(frame)
     emitted.append(line)
     print(line,flush=True)
-emit({'type':'response','id':'baton:filter','command':'set_event_filter','success':True,'data':{'events':None,'messageUpdates':'delta'}})
+print(json.dumps({'type':'response','id':'baton:filter','command':'set_event_filter','success':True,'data':{'events':events,'messageUpdates':'delta'}}),flush=True)
 state=json.loads(sys.stdin.readline())
 assert state['type']=='get_state'
 prompt=json.loads(sys.stdin.readline())['message']
@@ -289,15 +290,40 @@ pathlib.Path('emitted.jsonl').write_text(chr(10).join(emitted)+chr(10))
         self.call('turn','omp-worker','delta-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
         frames=[json.loads(line) for line in self.generation('delta-turn').read_text().splitlines()]
         self.assertEqual([f['type'] for f in frames],['response','response','message_end','agent_end','baton_event_filter'])
-        self.assertEqual(frames[0],{'type':'response','id':'baton:filter','command':'set_event_filter','success':True,'data':{'events':None,'messageUpdates':'delta'}})
-        self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'delta','active':True})
+        echoed=frames[0]
+        self.assertEqual((echoed['type'],echoed['id'],echoed['command'],echoed['success']),('response','baton:filter','set_event_filter',True))
+        self.assertEqual(echoed['data']['messageUpdates'],'delta')
+        self.assertNotIn('tool_execution_update',echoed['data']['events'])
+        self.assertEqual(frames[-1],{'type':'baton_event_filter','selection':'array+delta','active':True})
         wire=[json.loads(line) for line in (self.cwd/'emitted.jsonl').read_text().splitlines()]
         self.assertEqual([f for f in wire if f['type']=='message_update'],
                          [{'type':'message_update','messageId':'m1','assistantMessageEvent':{'type':'text_delta','delta':'partial λ'}}])
         self.assertEqual(json.loads(self.call('delivery','delta-turn'))['body'],'delta answer λ')
         self.assertEqual(json.loads(self.call('player','omp-worker'))['native'],'omp-delta')
 
-    def test_omp_filter_refusal_keeps_full_snapshots_and_completes(self):
+    def test_omp_diagnostic_level_requests_full_event_selection(self):
+        self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
+        self.call('logs','omp-worker','diagnostic')
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys
+request=json.loads(sys.stdin.readline())
+assert request=={'type':'set_event_filter','id':'baton:filter','events':None,'messageUpdates':'full'},request
+print(json.dumps({'type':'response','id':'baton:filter','command':'set_event_filter','success':True,'data':{'events':None,'messageUpdates':'full'}}),flush=True)
+state=json.loads(sys.stdin.readline())
+assert state['type']=='get_state'
+prompt=json.loads(sys.stdin.readline())['message']
+print(json.dumps({'type':'response','command':'get_state','success':True,'id':state['id'],'data':{'sessionId':'omp-full','model':{'provider':'provider','id':'actual-model'}}}),flush=True)
+print(json.dumps({'type':'tool_execution_update','toolCallId':'tool-1','partialResult':{'content':[{'type':'text','text':'partial λ'}]}}),flush=True)
+print(json.dumps({'type':'message_end','message':{'role':'assistant','provider':'provider','model':'actual-model','content':[{'type':'text','text':'full answer λ'}]}}),flush=True)
+print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','content':[{'type':'text','text':'full answer λ'}]}]}),flush=True)
+''')
+        self.call('turn','omp-worker','full-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
+        frames=[json.loads(line) for line in self.generation('full-turn').read_text().splitlines()]
+        progress=next(frame for frame in frames if frame.get('type')=='tool_execution_update')
+        self.assertEqual(progress['partialResult']['content'][0]['text'],'partial λ')
+        self.assertEqual(frames[-1],{'type':'baton_event_filter','selection':'null+full','active':True})
+        self.assertEqual(json.loads(self.call('delivery','full-turn'))['body'],'full answer λ')
+
+    def test_omp_filter_refusal_is_recorded_and_turn_completes(self):
         self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys
 request=json.loads(sys.stdin.readline())
@@ -315,8 +341,7 @@ print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assi
         frames=[json.loads(line) for line in self.generation('refused-turn').read_text().splitlines()]
         self.assertEqual([f['type'] for f in frames],['response','response','message_end','agent_end','baton_event_filter'])
         self.assertIs(frames[0]['success'],False)
-        self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'delta','active':False,'outcome':'refused'})
-        self.assertEqual([f for f in frames if f.get('type')=='message_update'],[])
+        self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'array+delta','active':False,'outcome':'refused'})
         self.assertEqual(json.loads(self.call('delivery','refused-turn'))['body'],'refused answer λ')
         self.assertEqual(json.loads(self.call('player','omp-worker'))['native'],'omp-refused')
 
@@ -333,7 +358,7 @@ print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assi
         expected = {'false-success':'refused','missing-events':'unconfirmed','restricted-events':'unconfirmed'}
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
 request=json.loads(sys.stdin.readline())
-assert request=={'type':'set_event_filter','id':'baton:filter','events':None,'messageUpdates':'delta'},request
+assert request['type']=='set_event_filter' and request['id']=='baton:filter' and request['messageUpdates']=='delta' and 'tool_execution_update' not in request['events'] and 'message_end' in request['events'],request
 print(json.dumps(json.loads(pathlib.Path('scenario.json').read_text())),flush=True)
 state=json.loads(sys.stdin.readline())
 assert state['type']=='get_state'
@@ -350,7 +375,7 @@ print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assi
             generated=pathlib.Path(str(turn_log)+'.attempt-'+name+'-turn')
             frames=[json.loads(line) for line in generated.read_text().splitlines()]
             self.assertEqual(frames[0],reply,name)
-            self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'delta','active':False,'outcome':expected[name]},name)
+            self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'array+delta','active':False,'outcome':expected[name]},name)
             self.assertEqual(json.loads(self.call('delivery',name + '-turn'))['body'],'partial answer λ',name)
         self.assertEqual(json.loads(self.call('player','omp-worker'))['native'],'omp-partial')
 

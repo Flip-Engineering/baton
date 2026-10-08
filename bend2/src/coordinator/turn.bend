@@ -152,9 +152,13 @@ def send_result(first: Result<&1,&1,U32 & String,Unit>, closed: Result<&1,&1,U32
     case Fail{error}: Fail{error}
     case Done{unit}: closed
 
-def input(+handle: U32, +prompt: String, +harness: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def policy_level(policy: Logs.Policy) -> String:
+  match policy:
+    case Logs.Policy{level}: level
+
+def input(+handle: U32, +prompt: String, +harness: String, level: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"omp\n"),
-    Omp.input(handle,prompt),
+    Omp.input(handle,prompt,level),
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"muse\n"),
     Muse.input(handle,prompt),
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"codex\n"),
@@ -166,9 +170,9 @@ def close_input(handle: U32, open: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case False{}: P.ProcessChild.close_stdin(handle)
 
-def send_prompt(+handle: U32,prompt: String,+harness: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def send_prompt(+handle: U32,prompt: String,+harness: String,level: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    sent : Result<&1,&1,U32 & String,Unit> <- input(handle,prompt,harness)
+    sent : Result<&1,&1,U32 & String,Unit> <- input(handle,prompt,harness,level)
     closed : Result<&1,&1,U32 & String,Unit> <- close_input(handle,String.eq(harness,"omp\n"))
     IO.pure(Result<&1,&1,U32 & String,Unit>,send_result(sent,closed))
 
@@ -390,26 +394,27 @@ def frame_kind(db: String, line: String, omp: Bool) -> IO(String):
     case False{}: IO.pure(String,"")
     case True{}: IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE json_extract(value,'$.type') WHEN 'message_update' THEN 'message_update' WHEN 'tool_execution_update' THEN 'tool_execution_update' WHEN 'message_start' THEN 'message_start' WHEN 'response' THEN 'response' WHEN 'message_end' THEN 'message_end' WHEN 'tool_execution_start' THEN 'tool_execution_start' WHEN 'tool_execution_end' THEN 'tool_execution_end' WHEN 'agent_end' THEN 'agent_end' WHEN 'extension_ui_request' THEN 'extension_ui_request' ELSE '' END ELSE '' END FROM frame;"))
 
-# The projection is active only when the server answered the set_event_filter
-# request successfully with the complete requested selection: an explicitly
-# echoed null events value forwards every category and a delta messageUpdates
-# value replaces accumulated snapshots. A successful answer without that
-# selection is unconfirmed, an unsuccessful answer is refused, and a response
-# for another command or any other line leaves the turn's mode unchanged. The
-# nested CASE keeps json extraction behind the validity check, so unrelated
-# non-JSON native output never becomes an observer error.
-def filter_mode_sql(+line: String) -> String:
-  "SELECT CASE WHEN json_valid(" ++ C.q(line) ++ ") THEN CASE WHEN json_extract(" ++ C.q(line) ++ ",'$.type')='response' AND json_extract(" ++ C.q(line) ++ ",'$.id')='baton:filter' AND json_extract(" ++ C.q(line) ++ ",'$.command')='set_event_filter' THEN CASE WHEN json_extract(" ++ C.q(line) ++ ",'$.success')=1 THEN CASE WHEN json_type(" ++ C.q(line) ++ ",'$.data.events')='null' AND json_extract(" ++ C.q(line) ++ ",'$.data.messageUpdates')='delta' THEN 'delta' ELSE 'unconfirmed' END ELSE 'refused' END ELSE '' END ELSE '' END;"
+# The requested selection is active only when the server answered the
+# set_event_filter request successfully with that exact selection: the echoed
+# events value must equal the requested events JSON and the echoed
+# messageUpdates value must match it, null with full and the array with delta.
+# A successful answer without that selection is unconfirmed, an unsuccessful
+# answer is refused, and a response for another command or any other line
+# leaves the turn's mode unchanged. The nested CASE keeps json extraction
+# behind the validity check, so unrelated non-JSON native output never becomes
+# an observer error. The requested selection is captured when the turn starts.
+def filter_mode_sql(+line: String, +requested: String) -> String:
+  "SELECT CASE WHEN json_valid(" ++ C.q(line) ++ ") THEN CASE WHEN json_extract(" ++ C.q(line) ++ ",'$.type')='response' AND json_extract(" ++ C.q(line) ++ ",'$.id')='baton:filter' AND json_extract(" ++ C.q(line) ++ ",'$.command')='set_event_filter' THEN CASE WHEN json_extract(" ++ C.q(line) ++ ",'$.success')=1 THEN CASE WHEN CASE WHEN " ++ C.q(requested) ++ "='unknown' THEN 0 WHEN " ++ C.q(requested) ++ "='null' THEN json_type(" ++ C.q(line) ++ ",'$.data.events')='null' AND json_extract(" ++ C.q(line) ++ ",'$.data.messageUpdates')='full' ELSE CASE WHEN json_type(" ++ C.q(line) ++ ",'$.data.events')='array' THEN json(json_extract(" ++ C.q(line) ++ ",'$.data.events'))=json(" ++ C.q(requested) ++ ") AND json_extract(" ++ C.q(line) ++ ",'$.data.messageUpdates')='delta' ELSE 0 END END THEN CASE WHEN " ++ C.q(requested) ++ "='null' THEN 'null+full' ELSE 'array+delta' END ELSE 'unconfirmed' END ELSE 'refused' END ELSE '' END ELSE '' END;"
 
-def filter_mode(db: String, +line: String, omp: Bool) -> IO(String):
+def filter_mode(db: String, +line: String, omp: Bool, +requested: String) -> IO(String):
   match omp:
     case False{}: IO.pure(String,"")
-    case True{}: IO.try(String,DB.Sql.query(db,filter_mode_sql(line)))
+    case True{}: IO.try(String,DB.Sql.query(db,filter_mode_sql(line,requested)))
 
-def record_filter(log: String, +state: String, omp: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def record_filter(log: String, +state: String, +requested: String, omp: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match omp:
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case True{}: append_frame(log,Omp.filter_note(state),True{})
+    case True{}: append_frame(log,Omp.filter_note(state,requested),True{})
 
 def terminal_event(db: String, +event: String, +previous: String, relevant: Bool) -> IO(String):
   match relevant:
@@ -466,7 +471,7 @@ def checkpoint_restore(+log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
     IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),checkpoint_restore_file(log))
 
 @unsafe
-def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, cursor: String, last_message: String, primary: String, current: String, +terminal: String, filter: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +checkpoint_blocked: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, cursor: String, last_message: String, primary: String, current: String, +terminal: String, filter: String, +requested: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +checkpoint_blocked: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   match result:
     case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
@@ -483,7 +488,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +flushed : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(log,Logs.flush(held),log_failed)
         event : String <- codex_finished(db,player,id,codex_log,terminal,String.eq(harness,"codex\n"),Logs.failed_now(log_failed,flushed))
         checkpoint_done : Result<&1,&1,U32 & String,Unit> <- checkpoint_written(flushed,Bool.and(String.is_empty(attempt),Bool.not(log_failed)),log,"")
-        noted : Result<&1,&1,U32 & String,Unit> <- record_filter(log,filter,String.eq(harness,"omp\n"))
+        noted : Result<&1,&1,U32 & String,Unit> <- record_filter(log,filter,requested,String.eq(harness,"omp\n"))
         closed : Result<&1,&1,U32 & String,String> <- NativeRequests.closed(db,attempt,Bool.not(String.is_empty(attempt)))
         IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(status),event,remember(remember_write(remember_write(remember_write(first_error,sent),flushed),noted),closed)},deliveries))
     case Done{Some{+line}}:
@@ -512,7 +517,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +closed_input : Result<&1,&1,U32 & String,Unit> <- close_input(handle,Bool.not(Bool.and(String.eq(harness,"omp\n"),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended))))))
         +codex_state : String <- codex_frames(db,codex_log,line,String.eq(harness,"codex\n"))
         questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String <- NativeRequests.observe(db,player,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
-        +mode : String <- filter_mode(db,line,String.eq(harness,"omp\n"))
+        +mode : String <- filter_mode(db,line,String.eq(harness,"omp\n"),requested)
         +next_filter : String <- IO.pure(String,Omp.filter_next(filter,Tx.trim_nl(mode)))
         +next_checkpoint : Observer.State <- IO.pure(Observer.State,Observer.make(next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_held))
         NativeRequests.with_observation(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,questions,wakes => question_error => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
@@ -523,7 +528,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
           +next_error : String <- IO.pure(String,remember_write(remember(remember_write(Bool.pick(String,String.is_empty(first_error),question_text,first_error),written),observed),closed_input))
           +checkpoint_failed : Bool <- IO.pure(Bool,Bool.or(checkpoint_blocked,Bool.or(Bool.not(String.is_empty(next_error)),checkpoint_write_failed(checkpointed))))
           next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-          consume(db,player,id,log,current_policy,next_held,failed,handle,harness,next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_error,sender,attempt,next_checkpoint,checkpoint_failed,wakes,next))
+          consume(db,player,id,log,current_policy,next_held,failed,handle,harness,next_cursor,message,next_primary,next_current,ended,next_filter,requested,codex_state,next_error,sender,attempt,next_checkpoint,checkpoint_failed,wakes,next))
 
 def direct_observed(observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Outcome):
   (outcome,deliveries)=observation
@@ -538,15 +543,17 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
       do IO<Outcome>:
         +generation : String <- IO.pure(String,generation_log(log,id))
         +policy : Logs.Policy <- Logs.open_attempt(db,player,log,id)
+        +level : String <- IO.pure(String,policy_level(policy))
+        +requested : String <- IO.pure(String,Omp.filter_events(level))
         restored : Result<&1,&1,U32 & String,Unit> <- checkpoint_restore(generation)
-        sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness))
+        sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness,level))
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,"",False{},handle,harness,"0\n","","","","","","",remember_write("",restored),sender,"",Observer.empty(),False{},Nil{},first)
+        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,"",False{},handle,harness,"0\n","","","","","",requested,"",remember_write("",restored),sender,"",Observer.empty(),False{},Nil{},first)
         direct_observed(observation)
 
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
-def retained_output(+db: String, +player: String, +id: String, +log: String, +harness: String, attempt: String, +handle: U32) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def retained_output(+db: String, +player: String, +id: String, +log: String, +harness: String, attempt: String, +handle: U32, +supplied_requested: String) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
     +generation : String <- IO.pure(String,generation_log(log,id))
     +policy : Logs.Policy <- Logs.open_attempt(db,player,log,id)
@@ -559,9 +566,10 @@ def retained_output(+db: String, +player: String, +id: String, +log: String, +ha
     current : String <- IO.pure(String,Observer.muse_current(checkpoint_state))
     terminal : String <- IO.pure(String,Observer.terminal(checkpoint_state))
     filter : String <- IO.pure(String,Observer.filter_mode(checkpoint_state))
+    +requested : String <- IO.pure(String,Bool.pick(String,String.eq(supplied_requested,"unknown"),Omp.filter_requested(Observer.filter_mode(checkpoint_state)),supplied_requested))
     codex_log : String <- IO.pure(String,Observer.codex_log(checkpoint_state))
     held : String <- IO.pure(String,Observer.held(checkpoint_state))
-    consume(db,player,id,generation,policy,held,False{},handle,harness,cursor,last_message,primary,current,terminal,filter,codex_log,"",sender,attempt,checkpoint_state,False{},Nil{},first)
+    consume(db,player,id,generation,policy,held,False{},handle,harness,cursor,last_message,primary,current,terminal,filter,requested,codex_log,"",sender,attempt,checkpoint_state,False{},Nil{},first)
 
 def muse_retained_arguments(cmd: String, model: String, effort: String, prompt_file: String, +session: String) -> List<String>:
   List.append(&1,String,Muse.arguments(cmd,model,effort,prompt_file),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session]))
@@ -572,15 +580,17 @@ def retained_arguments(omp: Bool, claude: Bool, +cmd: String, +model: String, +e
   Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
 
 # Claude reads one user frame from its input; OMP reads its prompt frames there.
-def retained_input(muse: Bool, omp: Bool, claude: Bool, +prompt: String) -> String:
-  Bool.pick(String,muse,"",Bool.pick(String,claude,Claude.user_frame(prompt),Bool.pick(String,omp,Omp.prompt(prompt),prompt)))
+# The OMP frames carry the filter request for the session log level read
+# before admission, so the provider receives the selection before get_state.
+def retained_input(muse: Bool, omp: Bool, claude: Bool, +prompt: String, level: String) -> String:
+  Bool.pick(String,muse,"",Bool.pick(String,claude,Claude.user_frame(prompt),Bool.pick(String,omp,Omp.prompt(prompt,level),prompt)))
 
 # The Muse task file, Claude's single frame and Codex's stdin all close the child's
 # input; OMP keeps it open for steer frames.
 def retained_keep_stdin(muse: Bool, omp: Bool, claude: Bool) -> U32:
   Bool.pick(U32,muse,0,Bool.pick(U32,claude,0,Bool.pick(U32,omp,1,0)))
 
-def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String, +level: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
     alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
@@ -589,8 +599,8 @@ def retained(+db: String, +player: String, +directory: String, +cmd: String, +mo
     +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
     +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
     args : String <- IO.pure(String,retained_arguments(omp,claude,cmd,model,effort,sessions,native))
-    input : String <- IO.pure(String,retained_input(False{},omp,claude,prompt))
-    Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),String.eq(harness,"muse\n"),Custody.Instance.admit_with_file(db,directory,muse_args,cwd,directory ++ "/native.stderr","prompt.txt",prompt,retained_input(True{},omp,claude,prompt),retained_keep_stdin(True{},omp,claude),Some{lock},recovery),Custody.Instance.admit(db,directory,args,cwd,directory ++ "/native.stderr",input,retained_keep_stdin(False{},omp,claude),Some{lock},recovery))
+    input : String <- IO.pure(String,retained_input(False{},omp,claude,prompt,level))
+    Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),String.eq(harness,"muse\n"),Custody.Instance.admit_with_file(db,directory,muse_args,cwd,directory ++ "/native.stderr","prompt.txt",prompt,retained_input(True{},omp,claude,prompt,level),retained_keep_stdin(True{},omp,claude),Some{lock},recovery),Custody.Instance.admit(db,directory,args,cwd,directory ++ "/native.stderr",input,retained_keep_stdin(False{},omp,claude),Some{lock},recovery))
 
 def claude_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:

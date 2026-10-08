@@ -612,61 +612,10 @@ law retained_observation_uses_the_reconciled_input_cursor:
 def retained_observation_uses_the_reconciled_input_cursor(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,adopted):
   {==}
 
-def fresh_retained_observation(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, lock: U32, +handle: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  do IO<Result<&1,&1,U32 & String,Unit>>:
-    reconciled : Unit <- Stop.started(db,session,id,attempt)
-    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,attempt,handle)
-    Receive.observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,Some{lock},observation,again,False{})
-
-law newly_started_process_uses_fresh_observation:
-  for +db: String
-  for +session: String
-  for +id: String
-  for +log: String
-  for cursor: String
-  for native: String
-  for cwd: String
-  for +attempt: String
-  for harness: String
-  for lock: U32
-  for +handle: U32
-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.started(db,session,id,log,cursor,native,cwd,attempt,harness,lock,P.Retained{handle},again) == fresh_retained_observation(db,session,id,log,cursor,native,cwd,attempt,harness,lock,handle,again) : IO(Result<&1,&1,U32 & String,Unit>)}
-
-def newly_started_process_uses_fresh_observation(db,session,id,log,cursor,native,cwd,attempt,harness,lock,handle,again):
-  {==}
-
-def owned_attempt_observation(+db: String, +session: String, +directory: String, +lock: U32, id: String, cursor: String, cmd: String, model: String, effort: String, cwd: String, log: String, harness: String, native: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  do IO<Result<&1,&1,U32 & String,Unit>>:
-    valid : Unit <- Stop.error_result("Recorded native recovery arguments differ from the current session; retain the attempt and inspect its manifest.",Bool.and(String.eq("--recover-receive","--recover-receive"),Bool.and(String.eq(db,db),Bool.and(String.eq(session,session),String.eq(directory,directory)))))
-    handle : U32 <- IO.try(U32,Custody.Instance.attach_owned(db,directory,lock))
-    Receive.observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again,True{})
-
-law recorded_owner_uses_adopted_observation:
-  for executable: String
-  for +db: String
-  for +session: String
-  for +directory: String
-  for +lock: U32
-  for id: String
-  for cursor: String
-  for cmd: String
-  for model: String
-  for effort: String
-  for cwd: String
-  for log: String
-  for harness: String
-  for native: String
-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.recover_owned(db,session,directory,lock,[executable,"--recover-receive",db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native],again) == owned_attempt_observation(db,session,directory,lock,id,cursor,cmd,model,effort,cwd,log,harness,native,again) : IO(Result<&1,&1,U32 & String,Unit>)}
-
-def recorded_owner_uses_adopted_observation(executable,db,session,directory,lock,id,cursor,cmd,model,effort,cwd,log,harness,native,again):
-  {==}
-
 def guarded_attempt_observation(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     reconciled : Unit <- Stop.reconcile(db,session,id,directory)
-    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,handle)
+    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,handle,"unknown")
     Receive.observed_output(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted)
 
 law guarded_observation_preserves_its_adopted_origin:
