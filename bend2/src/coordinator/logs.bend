@@ -498,7 +498,7 @@ def segment_json(log: String, +index: String, +size: U32) -> String:
 def segment_items(+log: String, indices: List<String>, acc: String) -> IO(String):
   match indices:
     case Nil{}: IO.pure(String,acc)
-    case head <> tail: do IO<String>:
+    case +head <> tail: do IO<String>:
       size : U32 <- IO.try(U32,F.Files.size(segment(log,head)))
       deeper : String <- segment_items(log,tail,items_join(acc,segment_json(log,head,size)))
       IO.pure(String,deeper)
