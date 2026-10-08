@@ -284,23 +284,19 @@ def failed_now(previous: Bool, written: Result<&1,&1,U32 & String,Unit>) -> Bool
     case Fail{error}: True{}
     case Done{unit}: previous
 
-def segment(+log: String, index: U32) -> String:
-  log ++ "." ++ U32.show(index)
+def segment(+log: String, index: String) -> String:
+  log ++ "." ++ index
 
 def items_join(+items: String, +item: String) -> String:
   Bool.pick(String,String.is_empty(item),items,Bool.pick(String,String.is_empty(items),item,items ++ "," ++ item))
 
 # The numbered segments beside one log come from the directory that holds it:
-# every entry named <log>.<number>. The report, the shift and the cleanup work
-# from that list, so no admitted count is unrolled and no index space is
-# searched on a guess.
+# every entry named <log>.<number>. Reports use the exact suffix returned by
+# the directory scan.
 def segment_indices(log: String) -> IO(List<String>):
   do IO<List<String>>:
     found : String <- IO.try(String,F.Files.segments(log))
     IO.pure(List<String>,Tx.split_lines(found))
-
-def segment_number(index: String) -> U32:
-  number_of(U32.read(index),0)
 
 def append_result(+log: String, written: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,Unit>:
   match written:
@@ -402,7 +398,27 @@ def generations_schema() -> String:
   "CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt));CREATE UNIQUE INDEX IF NOT EXISTS log_generations_log ON log_generations(log);"
 
 def stderr_runs_schema() -> String:
-  "CREATE TABLE IF NOT EXISTS log_stderr_runs(session TEXT NOT NULL,attempt TEXT NOT NULL,run INTEGER NOT NULL CHECK(run BETWEEN 1 AND 4294967295),generation TEXT NOT NULL,stderr TEXT NOT NULL,PRIMARY KEY(session,attempt,run),UNIQUE(stderr));"
+  "CREATE TABLE IF NOT EXISTS log_stderr_runs(session TEXT NOT NULL,attempt TEXT NOT NULL,run INTEGER NOT NULL,generation TEXT NOT NULL,stderr TEXT NOT NULL,PRIMARY KEY(session,attempt,run),UNIQUE(stderr));"
+
+def stderr_runs_migration() -> String:
+  "BEGIN IMMEDIATE;ALTER TABLE log_stderr_runs RENAME TO log_stderr_runs_legacy;"
+  ++ stderr_runs_schema()
+  ++ "INSERT INTO log_stderr_runs(session,attempt,run,generation,stderr) SELECT session,attempt,run,generation,stderr FROM log_stderr_runs_legacy;"
+  ++ "DROP TABLE log_stderr_runs_legacy;COMMIT;"
+
+def migrate_stderr_runs_if(ready: Bool, +db: String) -> IO(Unit):
+  match ready:
+    case True{}: IO.pure(Unit,Unit{})
+    case False{}:
+      do IO<Unit>:
+        migrated : String <- IO.try(String,DB.Sql.query(db,stderr_runs_migration()))
+        IO.pure(Unit,Unit{})
+
+def stderr_runs_ensure(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    ready : String <- IO.try(String,DB.Sql.query(db,stderr_runs_schema() ++ "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='log_stderr_runs' AND instr(sql,'4294967295')=0;"))
+    migrated : Unit <- migrate_stderr_runs_if(String.eq(Tx.trim_nl(ready),"1"),db)
+    IO.pure(Unit,Unit{})
 
 def stderr_run_sql(+session: String, +attempt: String, +generation: String) -> String:
   "BEGIN IMMEDIATE;" ++ stderr_runs_schema()
@@ -411,6 +427,7 @@ def stderr_run_sql(+session: String, +attempt: String, +generation: String) -> S
 
 def open_stderr_run(+db: String, +session: String, +attempt: String, +generation: String) -> IO(String):
   do IO<String>:
+    ensured : Unit <- stderr_runs_ensure(db)
     path : String <- IO.try(String,DB.Sql.query(db,stderr_run_sql(session,attempt,generation)))
     IO.pure(String,Tx.trim_nl(path))
 
@@ -474,17 +491,16 @@ def attempt_of_go(s: String) -> String:
 def attempt_of(+log: String) -> String:
   attempt_of_go(base_name(log))
 
-def segment_json(log: String, +index: U32, +size: U32) -> String:
+def segment_json(log: String, +index: String, +size: U32) -> String:
   Bool.pick(String,U32.is_eq(size,0),"",
-    "{\"path\":" ++ J.string_literal(segment(log,index)) ++ ",\"index\":" ++ U32.show(index) ++ ",\"bytes\":" ++ U32.show(size) ++ "}")
+    "{\"path\":" ++ J.string_literal(segment(log,index)) ++ ",\"index\":" ++ index ++ ",\"bytes\":" ++ U32.show(size) ++ "}")
 
 def segment_items(+log: String, indices: List<String>, acc: String) -> IO(String):
   match indices:
     case Nil{}: IO.pure(String,acc)
     case head <> tail: do IO<String>:
-      +number : U32 <- IO.pure(U32,segment_number(head))
-      size : U32 <- IO.try(U32,F.Files.size(segment(log,number)))
-      deeper : String <- segment_items(log,tail,items_join(acc,segment_json(log,number,size)))
+      size : U32 <- IO.try(U32,F.Files.size(segment(log,head)))
+      deeper : String <- segment_items(log,tail,items_join(acc,segment_json(log,head,size)))
       IO.pure(String,deeper)
 
 def listed_segments(+log: String) -> IO(String):
