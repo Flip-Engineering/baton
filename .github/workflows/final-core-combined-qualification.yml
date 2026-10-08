@@ -19,8 +19,8 @@ jobs:
       matrix:
         include:
           - product: combined-context
-            source_sha: 24351134e8a2bec3181576f4465ee9cffb935150
-            source_tree: b9410cf863366085e461a2a09fd8b453a0ba08cf
+            source_sha: b07b63dc9a83013887f088431038ab2c64389d63
+            source_tree: a5fd1643aec762312bd0b3052812142a17ce8a64
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
@@ -235,10 +235,10 @@ jobs:
         suite: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["control","receive","logs","fixed-coordinator"]' || '["land","mcp-command","mcp-root","mcp-contract","logs","turn","process","configure","native-observation","fixed-coordinator","control","retained-control","role-guard","root-wake","codex-root","muse-root","omp-root","control-identity","shared-instance","ui-orchestra-native","ui-orchestra-browser","node-provider-ui","selected-context-package","observed-usage","stop","receive","receive-output","receive-terminal-boundary"]') }}
     env:
       BEND_NO_TELEMETRY: '1'
-      PRODUCT_SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && 'cbb3a7422fd05c752fb81b46954845b3c143858b' || '24351134e8a2bec3181576f4465ee9cffb935150' }}
-      PRODUCT_SOURCE_TREE: ${{ github.event_name == 'workflow_dispatch' && '0b7cbb53e22bbc51e3ab3749977d28b9e959fd9b' || 'b9410cf863366085e461a2a09fd8b453a0ba08cf' }}
-      FIXTURE_SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && 'aa7d506c60ae9fabc0e6450db3eb8c0fe2b52730' || '24351134e8a2bec3181576f4465ee9cffb935150' }}
-      FIXTURE_SOURCE_TREE: ${{ github.event_name == 'workflow_dispatch' && '9e1c7c3d295c89a82e818cd06e79d6678b114b16' || 'b9410cf863366085e461a2a09fd8b453a0ba08cf' }}
+      PRODUCT_SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && 'cbb3a7422fd05c752fb81b46954845b3c143858b' || 'b07b63dc9a83013887f088431038ab2c64389d63' }}
+      PRODUCT_SOURCE_TREE: ${{ github.event_name == 'workflow_dispatch' && '0b7cbb53e22bbc51e3ab3749977d28b9e959fd9b' || 'a5fd1643aec762312bd0b3052812142a17ce8a64' }}
+      FIXTURE_SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && 'aa7d506c60ae9fabc0e6450db3eb8c0fe2b52730' || 'b07b63dc9a83013887f088431038ab2c64389d63' }}
+      FIXTURE_SOURCE_TREE: ${{ github.event_name == 'workflow_dispatch' && '9e1c7c3d295c89a82e818cd06e79d6678b114b16' || 'a5fd1643aec762312bd0b3052812142a17ce8a64' }}
       PRODUCT_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && '37756721230' || github.run_id }}
       PRODUCT_RUN_ATTEMPT: ${{ github.event_name == 'workflow_dispatch' && '1' || github.run_attempt }}
       PRODUCT_ARTIFACT_ID: ${{ github.event_name == 'workflow_dispatch' && '11540253297' || '' }}
