@@ -17,7 +17,7 @@ jobs:
       - name: Checkout the immutable product commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: db8d419665446128c6d67fb71b1ad489083f8c0a
+          ref: aeb0761fe2254ef51c5b204e78eba241890f9d6d
           persist-credentials: false
 
       - name: Select Node 22
@@ -84,21 +84,28 @@ jobs:
           for module in modules:
             name = module.replace("/", "_")
             argv = [bend, module, "--check-only"]
+            out_path = os.path.join(evidence, name + ".stdout")
+            err_path = os.path.join(evidence, name + ".stderr")
             started = time.time()
-            try:
-              done = subprocess.run(argv, cwd=workspace, capture_output=True, timeout=900)
-              out, err, code, kind = done.stdout, done.stderr, done.returncode, "completed"
-            except subprocess.TimeoutExpired as expired:
-              out, err, code, kind = expired.stdout or b"", expired.stderr or b"", None, "deadline-expired"
-            except OSError as error:
-              out, err, code, kind = b"", str(error).encode(), None, "launch-failed"
-            open(os.path.join(evidence, name + ".stdout"), "wb").write(out)
-            open(os.path.join(evidence, name + ".stderr"), "wb").write(err)
+            # The compiler writes straight to the evidence files, so its bytes survive a deadline
+            # without being buffered in this process, and a deadline still leaves what was written.
+            with open(out_path, "wb") as out_file, open(err_path, "wb") as err_file:
+              try:
+                done = subprocess.run(argv, cwd=workspace, stdout=out_file, stderr=err_file, timeout=900)
+                code, kind = done.returncode, "completed"
+              except subprocess.TimeoutExpired:
+                code, kind = None, "deadline-expired"
+              except OSError as error:
+                err_file.write(str(error).encode("utf-8"))
+                code, kind = None, "launch-failed"
+            seconds = time.time() - started
             open(os.path.join(evidence, name + ".meta"), "w").write(
               "argv %s\ncwd %s\nexit %s\nclassification %s\nseconds %.1f\n" %
-              (" ".join(argv), workspace, code, kind, time.time() - started))
-            print("== %s exit=%s classification=%s" % (module, code, kind))
-            print((err or b"").decode("utf-8", "replace")[:600])
+              (" ".join(argv), workspace, code, kind, seconds))
+            with open(err_path, "rb") as err_file:
+              head = err_file.read(2400)
+            print("== %s exit=%s classification=%s seconds=%.1f" % (module, code, kind, seconds))
+            print(head.decode("utf-8", "replace")[:600])
             if kind != "completed" or code != 0:
               failures.append(module)
           print("SUMMARY modules=%d failures=%s" % (len(modules), failures or "none"))
