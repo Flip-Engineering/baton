@@ -1,5 +1,6 @@
 """Native inbox delivery with controlled harness processes and real coordinator state."""
 import fcntl
+import glob
 import json
 import os
 import pathlib
@@ -455,7 +456,7 @@ class Receive(unittest.TestCase):
                  'method': 'input', 'title': 'No registered parent'}
         self.action(stream, native_request=event)
         self.assertEqual(json.loads(stream.readline()), {'request_written': event})
-        self.eventually(lambda: event['id'] in (self.directory / 'root.jsonl').read_text(),
+        self.eventually(lambda: (self.directory / 'root.jsonl').is_file() and event['id'] in (self.directory / 'root.jsonl').read_text(),
                         'unsupported root request was not retained')
         self.action(stream, body='The fixture ends its request without an answer.',
                     hold_exit=True, report_input=True)
@@ -1571,7 +1572,7 @@ class Receive(unittest.TestCase):
         self.player()
         report = self.directory / 'large report'
         report.write_text('retained report\n' * 30000)
-        self.coord('report', 'saved-turn', 'parent', report.read_text())
+        self.coord('report-file', 'saved-turn', 'parent', str(report))
         self.connect('parent')
         child = self.spawn('turn', 'parent', 'saved-turn', self.fixture, 'parent', 'low',
                            self.directory, self.directory / 'unused task',
@@ -1591,6 +1592,523 @@ class Receive(unittest.TestCase):
         self.finish(child)
         self.assertIn('retained report', output[0])
         self.assertEqual(self.coord('inbox', 'parent'), [])
+
+
+    # Canonical claim-table definition, kept identical to
+    # Store.claim_schema_sql in bend2/src/coordinator/store.bend. Staging a
+    # claim ensures the table exactly as the product does; reading claims
+    # from a database that never held any returns no rows.
+    CLAIM_SCHEMA = ("CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL "
+                    "REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', "
+                    "owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);")
+
+    def claims(self, session=None):
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            try:
+                rows = database.execute('SELECT session, state FROM wake_claims ORDER BY session').fetchall()
+            except sqlite3.OperationalError:
+                return []
+        return [row for row in rows if session is None or row[0] == session]
+
+    def claim_rows(self, session=None):
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            try:
+                rows = database.execute('SELECT session, state, owner, generation FROM wake_claims'
+                                        ' ORDER BY session').fetchall()
+            except sqlite3.OperationalError:
+                return []
+        return [row for row in rows if session is None or row[0] == session]
+
+    def execution(self, session):
+        """The session's recorded attempt row: phase, status and directory."""
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            row = database.execute('SELECT phase, status, directory FROM executions'
+                                   ' WHERE session=?', (session,)).fetchone()
+        return row
+
+    def set_phase(self, session, phase):
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute('UPDATE executions SET phase=? WHERE session=?',
+                             (phase, session))
+
+    def claim(self, session, state='claimed', owner='', generation=0):
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute(self.CLAIM_SCHEMA)
+            database.execute('INSERT OR REPLACE INTO wake_claims(session, state, owner, generation)'
+                             ' VALUES (?, ?, ?, ?)',
+                             (session, state, owner, generation))
+
+    def session_lock_path(self, session):
+        return os.path.realpath(str(self.db)) + '.lock-' + session.encode().hex()
+
+    def hold_session_lock(self, session):
+        held = os.open(self.session_lock_path(session), os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lambda: (fcntl.flock(held, fcntl.LOCK_UN), os.close(held)))
+        return held
+
+    def test_stop_clears_the_wake_claim(self):
+        """A terminal stop is the operator resolution: the session's claim goes with it
+        while the retained input stays in the inbox."""
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent')
+        self.assertEqual(self.claims('parent'), [('parent', 'claimed')])
+        stopped = self.coord('stop', 'parent', 'stop-claim', 'operator resolution')
+        self.assertEqual(stopped['status'], 'stopped')
+        self.assertEqual(self.claims('parent'), [])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_acknowledgement_clears_the_wake_claim(self):
+        """Acknowledgement clears the obligation, and the claim row is deleted with it."""
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent')
+        receipt = self.coord('ack', 'owed', 'parent', 'read-accepted')
+        self.assertEqual(receipt['receipt'], 'read-accepted')
+        self.assertEqual(self.claims('parent'), [])
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+
+    def test_an_unclaimed_session_with_owed_input_never_starts_a_turn_by_itself(self):
+        """The obligation is durable and passive: with no driver and no admission, an idle
+        session with owed input starts nothing, keeps its unclaimed row, and retains the
+        input in its inbox."""
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent', 'unclaimed')
+        self.assert_no_start()
+        self.assertEqual(self.claims('parent'), [('parent', 'unclaimed')])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+
+    def test_acknowledgement_with_a_missing_id_is_refused_and_preserves_the_claim(self):
+        """A refused acknowledgement writes nothing: the live claim row stays exactly
+        as it was, owner and generation included."""
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent', 'claimed', 'owed', 4)
+        refused = self.coord('ack', 'no-such-message', 'parent', 'read-accepted', ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 4)])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_acknowledgement_to_the_wrong_recipient_is_refused_and_preserves_the_claim(self):
+        self.player()
+        self.player('other')
+        self.message('owed', 'parent')
+        self.claim('parent', 'claimed', 'owed', 4)
+        refused = self.coord('ack', 'owed', 'other', 'read-accepted', ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 4)])
+        self.assertEqual(self.claim_rows('other'), [])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_acknowledgement_with_remaining_input_keeps_the_claim(self):
+        """The Ack guard clears the claim only when no unacknowledged input remains:
+        acknowledging one of two owed messages writes its receipt and keeps the row."""
+        self.player()
+        self.message('first', 'parent')
+        self.message('second', 'parent')
+        self.claim('parent', 'claimed', 'first', 2)
+        receipt = self.coord('ack', 'first', 'parent', 'read-accepted')
+        self.assertEqual(receipt['receipt'], 'read-accepted')
+        self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'first', 2)])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['second'])
+
+    def test_stop_with_an_unsupported_harness_is_refused_and_preserves_the_claim(self):
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent', 'claimed', 'owed', 4)
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute("UPDATE sessions SET harness='muse' WHERE id='parent'")
+        refused = self.coord('stop', 'parent', 'stop-unsupported', 'operator resolution', ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 4)])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_stop_with_an_active_direct_execution_is_refused_and_preserves_the_claim(self):
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent', 'claimed', 'owed', 4)
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute("INSERT INTO executions(session, id, mode, directory, phase, status)"
+                             " VALUES ('parent', 'direct-1', 'direct', '/tmp', 'running', '')")
+        refused = self.coord('stop', 'parent', 'stop-direct', 'operator resolution', ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 4)])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_stop_with_a_conflicting_identity_is_refused_and_preserves_the_claim(self):
+        self.player()
+        self.message('owed', 'parent')
+        stopped = self.coord('stop', 'parent', 'stop-first', 'operator resolution')
+        self.assertEqual(stopped['status'], 'stopped')
+        self.assertEqual(self.claim_rows('parent'), [])
+        self.claim('parent', 'claimed', 'owed', 9)
+        refused = self.coord('stop', 'parent', 'stop-second', 'changed reason', ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('identity', refused.stderr)
+        self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 9)])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_queued_non_owner_cannot_clear_a_live_claim(self):
+        """While another driver holds the session lock, the queued sweep returns
+        without touching the live claim row: owner and generation survive intact."""
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent', 'claimed', 'owed', 6)
+        self.hold_session_lock('parent')
+        queued = self.coord(*self.receive_args('parent'))
+        self.assertEqual(queued['status'], 'queued')
+        self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 6)])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_stale_claim_from_a_dead_driver_is_taken_over_with_a_fenced_generation(self):
+        """A claim row left by a driver that died before launch never suppresses the
+        wake: the next driver takes the obligation over under the lock, names the
+        head message as owner, and fences the takeover past the stale generation."""
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent', 'claimed', 'dead-attempt', 7)
+        child = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.assertIn('[id: owed]', started['prompt'])
+        self.action(control, ack=False)
+        self.finish(child)
+        taken = self.eventually(
+            lambda: next((row for row in self.claim_rows('parent')
+                          if row[2] == 'owed' and row[3] > 7), None),
+            'a live driver never took over the stale claim')
+        self.assertEqual(taken[2:], ('owed', taken[3]))
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_wake_behind_an_unreaped_attempt_stands_down_without_reclaiming(self):
+        """Two-driver launch handoff: with a claimed obligation whose recorded
+        attempt was never reaped, host custody stays ambiguous — launch
+        markers without terminal marks — so a second admission's wake stands
+        down even though the execution phase still reads running. The row
+        keeps its owner and generation and no second launch rewrites the
+        obligation. A bare phase value never proves custody."""
+        self.player()
+        self.message('first', 'parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.assertIn('[id: first]', started['prompt'])
+        before = self.claim_rows('parent')
+        self.assertEqual(len(before), 1)
+        self.assertEqual(before[0][2], 'first')
+        self.freeze_owned()
+        first.kill()
+        first.wait(timeout=15)
+        self.kill_fixture()
+        self.kill_keeper(first)
+        self.drain_owned()
+        directory = self.execution('parent')[2]
+        self.assertTrue(os.path.isfile(os.path.join(directory, 'manifest')))
+        self.assertTrue(os.path.isfile(os.path.join(directory, 'launch')))
+        self.assertFalse(os.path.exists(os.path.join(directory, 'acknowledged')),
+                         'keeper recovered the killed observer before it died')
+        self.assertFalse(os.path.exists(os.path.join(directory, 'status')),
+                         'keeper reaped the killed native before it died')
+        self.message('second', 'parent')
+        self.assert_no_start()
+        self.assertEqual(self.claim_rows('parent'), before)
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')],
+                         ['first', 'second'])
+
+    def kill_fixture(self):
+        """Kill the fixture native processes of this run, leaving keepers."""
+        result = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True,
+                                text=True, check=True)
+        for line in result.stdout.splitlines():
+            fields = line.strip().split(None, 1)
+            if len(fields) == 2 and 'native fixture' in fields[1]:
+                try:
+                    os.kill(int(fields[0]), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def freeze_owned(self, spare_fixture=False):
+        """SIGSTOP run processes so a killed observer cannot be recovered
+        before the keepers die. The keeper reaps a dead observer within
+        milliseconds, so killing without freezing lets keeper-side recovery
+        finish first and leaves receive-side adoption nothing to adopt.
+        With spare_fixture the live native keeps running so the test can
+        still drive it while the frozen observer cannot observe."""
+        for process in self.owned_processes():
+            if spare_fixture and 'native fixture' in process['command']:
+                continue
+            try:
+                os.kill(process['pid'], signal.SIGSTOP)
+            except ProcessLookupError:
+                pass
+
+    @staticmethod
+    def spared(command):
+        """The live fixture's own command. Receivers name the fixture path
+        as an argument, keepers and recoveries supervise it: only the bare
+        fixture process itself is spared."""
+        return ('native fixture' in command
+                and 'receive parent' not in command
+                and '--host-process-keeper' not in command
+                and '--recover-receive' not in command
+                and '--dispatch-message' not in command)
+
+    def drain_others(self):
+        """Kill every run process except the live fixture and wait until
+        only it remains. A keeper-side recover orphan inherits the session
+        lock; leaving it alive lets a second driver queue vacuously
+        instead of deciding on custody."""
+        for process in self.owned_processes():
+            if self.spared(process['command']):
+                continue
+            try:
+                os.kill(process['pid'], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        self.eventually(lambda: all(self.spared(process['command'])
+                                    for process in self.run_processes()),
+                        'run strays never drained')
+
+    def assert_native_alive(self, directory, message):
+        """The recorded native is a live non-zombie process. A test about a
+        live child proves nothing if the child died unnoticed."""
+        try:
+            pid = int(pathlib.Path(directory, 'native.pid').read_text().split()[0])
+            state = pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[0]
+        except (FileNotFoundError, ValueError, IndexError):
+            self.fail(message)
+        self.assertNotEqual(state, 'Z', message)
+
+    def drain_owned(self):
+        """Kill run stragglers and wait until none hold attempt pipes. A
+        half-reaped keeper keeps the native's stdout open, so an adopter
+        would block on read instead of reaching EOF; the status file alone
+        does not prove the pipes are free. Zombies count too: an unreaped
+        native still answers liveness probes, so adoption must wait for
+        init to reap it."""
+        for process in self.owned_processes():
+            try:
+                os.kill(process['pid'], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        self.eventually(lambda: not self.run_processes(),
+                        'run processes never drained')
+
+    def run_processes(self):
+        """Every process of this run, including unreaped zombies."""
+        result = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                capture_output=True, text=True, check=True)
+        found = []
+        for line in result.stdout.splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) == 4 and str(self.directory) in fields[3]:
+                found.append({'pid': int(fields[0]), 'ppid': int(fields[1]),
+                              'status': fields[2], 'command': fields[3]})
+        return found
+
+    def kill_keeper(self, leader):
+        """Kill the keeper processes of this run, freeing an inherited
+        session lock. The leader driver is already dead; fixtures stay."""
+        result = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True,
+                                text=True, check=True)
+        for line in result.stdout.splitlines():
+            fields = line.strip().split(None, 1)
+            if len(fields) != 2:
+                continue
+            pid, command = int(fields[0]), fields[1]
+            if pid == leader.pid or 'native fixture' in command:
+                continue
+            if str(self.directory) in command:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_wake_with_stale_running_phase_and_dead_native_takes_over_and_repairs_metadata(self):
+        """A running phase with a genuinely dead native never suppresses the
+        wake: the second admission's wake observes host death through the
+        reaped status, repairs the stale execution row, and takes the
+        obligation over with a fenced generation."""
+        self.player()
+        self.message('first', 'parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.assertIn('[id: first]', started['prompt'])
+        self.action(control, ack=False)
+        self.finish(first)
+        self.assertEqual(self.execution('parent')[0], 'exited')
+        before = self.claim_rows('parent')
+        self.assertEqual(len(before), 1)
+        self.set_phase('parent', 'running')
+        self.message('second', 'parent')
+        self.assert_no_start()
+        taken = self.claim_rows('parent')
+        self.assertEqual(len(taken), 1)
+        self.assertEqual(taken[0][2], 'first')
+        self.assertGreater(taken[0][3], before[0][3])
+        self.assertEqual(self.execution('parent')[:2], ('exited', 'owner-death'))
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')],
+                         ['first', 'second'])
+
+    def test_direct_receive_recovers_a_dead_attempt_behind_a_stale_running_phase(self):
+        """Crash recovery through adoption: the native completes while the
+        observer is frozen, then the observer and keepers die before the
+        observer records anything. A direct receive adopts the corpse,
+        records the completed turn from its retained output, and settles
+        the satisfied claim since the input was acknowledged. Nothing is
+        owed, so no second native starts; the single attempt carries the
+        adoption's release and acknowledgement markers. The host still
+        flags the keeperless observation unknown, so the run reports the
+        failure honestly instead of a false success."""
+        self.player()
+        self.message('first', 'parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.assertIn('[id: first]', started['prompt'])
+        before = self.claim_rows('parent')
+        self.assertEqual(len(before), 1)
+        directory = self.execution('parent')[2]
+        self.freeze_owned(spare_fixture=True)
+        self.action(control, body='Adopted result complete.')
+        self.eventually(lambda: 'Adopted result complete.' in
+                        pathlib.Path(directory, 'stdout').read_text(),
+                        'driven native never wrote its completion')
+        first.kill()
+        first.wait(timeout=15)
+        self.kill_keeper(first)
+        self.kill_fixture()
+        self.drain_owned()
+        self.assertTrue(os.path.isfile(os.path.join(directory, 'manifest')))
+        self.assertFalse(os.path.exists(os.path.join(directory, 'acknowledged')),
+                         'keeper recovered the killed observer before it died')
+        self.assertFalse(os.path.exists(os.path.join(directory, 'status')),
+                         'keeper reaped the killed native before it died')
+        second = self.spawn(*self.receive_args('parent'))
+        _, error = self.finish(second, ok=False)
+        self.assertIn('Native receive failed', error)
+        self.assertEqual(self.execution('parent')[0], 'exited')
+        self.assertEqual(self.claim_rows('parent'), [])
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
+                         ['Adopted result complete.'])
+        exits = [row for row in self.coord('inbox', 'root') if row['id'].endswith(':exit')]
+        self.assertEqual(len(exits), 1)
+        self.assertIn('unknown after keeper loss', exits[0]['body'])
+        attempts = glob.glob(str(self.directory / '*.attempt-*'))
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(self.execution('parent')[2], attempts[0])
+        self.assertTrue(os.path.isfile(os.path.join(directory, 'acknowledged')))
+        self.assertTrue(os.path.isfile(os.path.join(directory, 'released')))
+        self.assertFalse(os.path.exists(os.path.join(directory, 'status')))
+
+    def test_direct_receive_behind_a_live_child_starts_no_second_turn(self):
+        """A live retained child outlives its dead observer with the session
+        lock free: a direct receive adopts rather than duplicating, so no
+        second native conversation starts and the live claim row is intact."""
+        self.player()
+        self.message('first', 'parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.assertIn('[id: first]', started['prompt'])
+        before = self.claim_rows('parent')
+        self.assertEqual(len(before), 1)
+        first.kill()
+        first.wait(timeout=15)
+        self.drain_others()
+        directory = self.execution('parent')[2]
+        self.assert_native_alive(directory, 'retained child died; the live-child premise is void')
+        second = self.spawn(*self.receive_args('parent'))
+        self.assert_no_start()
+        time.sleep(1.5)
+        self.assertIsNone(second.poll(),
+                          'direct receive exited instead of adopting the live attempt')
+        self.assert_native_alive(directory, 'retained child died during adoption')
+        self.assertEqual(self.claim_rows('parent'), before)
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['first'])
+
+    def test_racing_wake_behind_a_live_child_launches_nothing_and_reclaims_nothing(self):
+        """Two-driver launch handoff with a real live child: the winner holds
+        a live native with the lock free, and the loser's admission wake
+        stands down, so exactly one native conversation exists and the
+        winner's claim row keeps its owner and generation."""
+        self.player()
+        self.message('first', 'parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.assertIn('[id: first]', started['prompt'])
+        before = self.claim_rows('parent')
+        self.assertEqual(len(before), 1)
+        first.kill()
+        first.wait(timeout=15)
+        self.drain_others()
+        directory = self.execution('parent')[2]
+        self.assert_native_alive(directory, 'retained child died; the live-child premise is void')
+        self.message('second', 'parent')
+        self.assert_no_start()
+        self.assert_native_alive(directory, 'retained child died during the racing wake')
+        self.assertEqual(self.claim_rows('parent'), before)
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')],
+                         ['first', 'second'])
+
+    def test_idle_arrival_starts_one_turn_and_leaves_no_duplicate(self):
+        """A message admitted to an idle session with a recorded receiver starts one turn
+        carrying that input, and the completed turn leaves no second turn behind."""
+        self.player()
+        self.connect('parent')
+        delivery = self.spawn('message', 'idle-input', 'root', 'parent', 'guidance', 'Idle arrival.')
+        control, started = self.accept('parent')
+        self.assertIn('[id: idle-input]', started['prompt'])
+        self.action(control)
+        self.finish(delivery)
+        self.assert_no_start()
+        self.assertEqual(len(self.coord('turns', 'parent')), 1)
+
+    def test_concurrent_sends_preserve_both_inputs_and_start_one_continuation(self):
+        """Two arrivals against one live session are both carried by a single continuation
+        turn, and no third turn or second native process appears."""
+        self.player()
+        self.message('first', 'parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.message('second', 'parent')
+        self.message('third', 'parent')
+        queued = self.coord(*self.receive_args('parent'))
+        self.assertEqual(queued['status'], 'queued')
+        self.assert_no_start()
+        self.action(control)
+        control2, next_turn = self.accept('parent')
+        self.assertIn('[id: second]', next_turn['prompt'])
+        self.assertIn('[id: third]', next_turn['prompt'])
+        self.action(control2)
+        self.finish(first)
+        self.assert_no_start()
+        self.assertEqual(len(self.coord('turns', 'parent')), 2)
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+
+
+    def inject(self, ident, recipient, kind='guidance', body='Injected input.'):
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute('INSERT INTO messages(id, sender, recipient, kind, body) VALUES (?, ?, ?, ?, ?)',
+                             (ident, 'root', recipient, kind, body))
+
+    def test_input_behind_the_live_owner_is_woken_when_the_owner_exits(self):
+        """A row inserted behind the live turn's cursor is never carried by that turn, and
+        the wake driver hands it to a subsequent turn once the owner exits, once."""
+        self.player()
+        self.connect('parent')
+        delivery = self.spawn('message', 'first', 'root', 'parent', 'guidance', 'Carried input.')
+        control, started = self.accept('parent')
+        self.assertIn('[id: first]', started['prompt'])
+        self.inject('late', 'parent')
+        self.action(control)
+        control2, next_turn = self.accept('parent')
+        self.assertIn('[id: late]', next_turn['prompt'])
+        self.action(control2)
+        self.finish(delivery)
+        self.assert_no_start()
+        self.assertEqual(len(self.coord('turns', 'parent')), 2)
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.assertEqual(self.claims('parent'), [])
 
 
 if __name__ == '__main__':

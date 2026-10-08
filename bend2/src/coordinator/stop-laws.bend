@@ -176,3 +176,12 @@ law stopped_completion_reports_to_the_recorded_upstream_recipient:
 
 def stopped_completion_reports_to_the_recorded_upstream_recipient(session,attempt,status,event,error,log):
   {==}
+
+law admitted_stop_clears_only_its_own_claim:
+  for session: String
+  for id: String
+  for reason: String
+  {Stop.stop_claim_sql(session,id,reason) == "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(id) ++ " AND reason=" ++ C.q(reason) ++ ");" : String}
+
+def admitted_stop_clears_only_its_own_claim(session,id,reason):
+  {==}
