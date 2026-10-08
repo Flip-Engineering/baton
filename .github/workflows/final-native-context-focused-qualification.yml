@@ -120,6 +120,24 @@ jobs:
           set -e
           printf '%s\n' "$status" > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/main-build.exit-status"
           test "$status" = 0
+      - name: Build process and instance host test fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          bend="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend"
+          for fixture in process instance; do
+            status=0
+            set +e
+            (cd owned && BEND="$bend" CC=clang sh bend2/scripts/build-native.sh \
+              "bend2/test/$fixture.bend" ".scratch/bend2/$fixture-test") \
+              > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/$fixture-fixture-build.stdout" \
+              2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/$fixture-fixture-build.stderr"
+            status=$?
+            set -e
+            printf '%s\n' "$status" \
+              > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/$fixture-fixture-build.exit-status"
+            test "$status" = 0
+          done
       - name: Run core behavior suites
         if: matrix.product == 'core'
         shell: bash
@@ -223,7 +241,7 @@ jobs:
           bend="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend"
           replay_status=0
           for name in basis cursor vocabulary mutation stop; do
-            module="bend2/src/replay/$name.bend"
+            module="$PWD/bend2/src/replay/$name.bend"
             label="replay-$name"
             status=0
             set +e
