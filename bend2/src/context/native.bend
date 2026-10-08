@@ -1264,10 +1264,10 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
                           +owner_witness: String, +origin_attempt: String,
                           +budget: U32) -> IO(Unit):
   do IO<Unit>:
-    guard_key : String <- IO.try(String, ContextIdentity.role_guard_key(guard_identity))
+    +guard_key : String <- IO.try(String, ContextIdentity.role_guard_key(guard_identity))
     physical_role_key : String <- IO.try(String,
       ContextIdentity.physical_role_key(physical_identity))
-    canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
+    +canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
     log_directory : String = database_parent(canonical_database)
     +keeper_path : String = ContextIdentity.role_directory(log_directory, guard_key)
     +bootstrap_file : String = artifact_path ++ "/bootstrap.json"
