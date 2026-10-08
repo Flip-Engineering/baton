@@ -159,12 +159,8 @@ def keeper(directory: String, lock: Maybe<&2,U32>) -> IO(Unit):
 
 def normal_cli(args: List<String>) -> IO(Unit):
   match args:
-    case verb <> Nil{}:
-      match verb:
-        case "help": execute("",C.Help{})
-        case "-h": execute("",C.Help{})
-        case "--help": execute("",C.Help{})
-        case other: execute(other,C.Invalid{})
+    case +verb <> Nil{}:
+      Bool.pick(IO(Unit),Bool.or(String.eq(verb,"help"),Bool.or(String.eq(verb,"-h"),String.eq(verb,"--help"))),execute("",C.Help{}),execute(verb,C.Invalid{}))
     case db <> rest: execute(db,C.parse(rest))
     case Nil{}: execute("",C.Invalid{})
 
