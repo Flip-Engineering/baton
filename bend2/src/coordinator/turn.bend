@@ -585,10 +585,10 @@ def retained_arguments(omp: Bool, claude: Bool, +cmd: String, +model: String, +e
     Claude.argv(cmd,model,effort,native,String.is_empty(native)),
   Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
 
-def retained_identity_arguments(args: String, model: String, identity: String & String) -> String:
+def retained_identity_prefix(model: String, identity: String & String) -> String:
   (registry,helper)=identity
   +configured=registry
-  P.argv(Bool.pick(List<String>,String.is_empty(configured),Nil{},["node",helper,"launch","--registry",configured,"--model-key",model,"--"])) ++ args
+  P.argv(Bool.pick(List<String>,String.is_empty(configured),Nil{},["node",helper,"launch","--registry",configured,"--model-key",model,"--"]))
 
 # Claude reads one user frame from its input; OMP reads its prompt frames there.
 # The OMP frames carry the filter request for the session log level read
@@ -607,11 +607,12 @@ def retained(+db: String, +player: String, +directory: String, +cmd: String, +mo
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
     +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
     +executable : String <- IO.try(String,Lock.SessionLock.executable())
-    +identity : String & String <- IO.try(String & String,HostControl.Control.identity(executable))
-    muse_args : String <- IO.pure(String,retained_identity_arguments(P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)),model,identity))
+    identity : String & String <- IO.try(String & String,HostControl.Control.identity(executable))
+    +prefix : String <- IO.pure(String,retained_identity_prefix(model,identity))
+    muse_args : String <- IO.pure(String,prefix ++ P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
     +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
     +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
-    args : String <- IO.pure(String,retained_identity_arguments(retained_arguments(omp,claude,cmd,model,effort,sessions,native),model,identity))
+    args : String <- IO.pure(String,prefix ++ retained_arguments(omp,claude,cmd,model,effort,sessions,native))
     input : String <- IO.pure(String,retained_input(False{},omp,claude,prompt,level))
     Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),String.eq(harness,"muse\n"),Custody.Instance.admit_with_file(db,directory,muse_args,cwd,directory ++ "/native.stderr","prompt.txt",prompt,retained_input(True{},omp,claude,prompt,level),retained_keep_stdin(True{},omp,claude),Some{lock},recovery),Custody.Instance.admit(db,directory,args,cwd,directory ++ "/native.stderr",input,retained_keep_stdin(False{},omp,claude),Some{lock},recovery))
 
