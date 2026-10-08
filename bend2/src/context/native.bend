@@ -35,10 +35,6 @@ type StepInvocationFrame is Data:
   NativeStepFrame{frame: InvocationFrame}
   NativeStepRefused{module_id: String, declaration_digest: String, operation: String}
 
-type InvocationVerification is Data:
-  InvocationVerified{artifact_sha256: String}
-  InvocationVerificationRefused{reason: String}
-
 type ManagedLaunch is Data:
   ManagedLaunch{bootstrap: ManagedQuery.Bootstrap, invocation_text: String,
     executable: String, runtime_path: String, worktree: String,
@@ -140,10 +136,6 @@ def query_outcome_argv(+runtime_path: String, +executable: String) -> String:
 def query_source_argv(+runtime_path: String, +executable: String) -> String:
   Process.argv([runtime_path, "--experimental-strip-types",
     installed_provider_path(executable), "--examine-query-source"])
-
-def verify_invocation_argv(+runtime_path: String, +executable: String) -> String:
-  Process.argv([runtime_path, "--experimental-strip-types",
-    installed_provider_path(executable), "--verify-invocation"])
 
 def query_artifact_request(+owner: String, +worktree: String, +query: String) -> String:
   J.json_text(J.Jobj{J.Jpair{"owner", J.Jstr{owner},
@@ -429,76 +421,6 @@ def provider_spawn(+path: String, +cwd: String, +frame: String, result: Result<&
       do IO<ProviderAnswer>:
         written : Result<&1,&1,U32 & String,Unit> <- Process.ProcessChild.write(handle, frame ++ "\n")
         provider_write(handle, written)
-
-def invocation_verify_sql(+output: String) -> String:
-  "SELECT coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.status'),''),"
-  ++ "coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.query'),''),"
-  ++ "coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.owner'),''),"
-  ++ "coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.moduleId'),''),"
-  ++ "coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.declarationDigest'),''),"
-  ++ "coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.artifactSha256'),'');"
-
-def invocation_verify_fields(fields: List<String>, +query: String, +owner: String,
-                             +module_id: String, +digest: String) -> InvocationVerification:
-  match fields:
-    case +status <> +seen_query <> +seen_owner <> +seen_module <> +seen_digest <> +artifact_sha <> Nil{}:
-      Bool.pick(InvocationVerification,
-        Bool.and(String.eq(status ++ "\t" ++ seen_query ++ "\t" ++ seen_owner
-          ++ "\t" ++ seen_module ++ "\t" ++ seen_digest,
-          "verified\t" ++ query ++ "\t" ++ owner ++ "\t" ++ module_id ++ "\t" ++ digest),
-          Nat.is_eq(String.length(artifact_sha), 64n)),
-        InvocationVerified{artifact_sha}, InvocationVerificationRefused{"invocationVerificationMismatch"})
-    case _: InvocationVerificationRefused{"invocationVerificationShape"}
-
-def invocation_verify_lines(lines: List<String>, +query: String, +owner: String,
-                             +module_id: String, +digest: String) -> InvocationVerification:
-  match lines:
-    case +line <> Nil{}:
-      invocation_verify_fields(Tx.split_tabs(line), query, owner, module_id, digest)
-    case _: InvocationVerificationRefused{"invocationVerificationRows"}
-
-def invocation_verify_rows(+rows: String, +query: String, +owner: String,
-                           +module_id: String, +digest: String) -> InvocationVerification:
-  invocation_verify_lines(Tx.split_lines(rows), query, owner, module_id, digest)
-
-def invocation_verify_result(result: Result<&1,&1,U32 & String,String>,
-                             +query: String, +owner: String,
-                             +module_id: String, +digest: String) -> IO(InvocationVerification):
-  match result:
-    case Fail{error}: IO.pure(InvocationVerification, InvocationVerificationRefused{"invocationVerificationDecode"})
-    case Done{+rows}: IO.pure(InvocationVerification,
-      invocation_verify_rows(rows, query, owner, module_id, digest))
-
-def invocation_verification_output(+db: String, +binding: String,
-                                   +query: String, +owner: String,
-                                   +module_id: String, +digest: String,
-                                   answer: ProviderAnswer) -> IO(InvocationVerification):
-  match answer:
-    case ProviderRefused{reason}: IO.pure(InvocationVerification, InvocationVerificationRefused{reason})
-    case ProviderRuntime{path, version}: IO.pure(InvocationVerification, InvocationVerificationRefused{"invocationVerifierMalformed"})
-    case ProviderOutput{+value, +status}:
-      Bool.pick(IO(InvocationVerification), String.eq(status, "exit 0"),
-        do IO<InvocationVerification>:
-          result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
-            invocation_verify_sql(value))
-          invocation_verify_result(result, query, owner, module_id, digest),
-        IO.pure(InvocationVerification, InvocationVerificationRefused{"invocationVerifierExit"}))
-
-def verify_invocation_frame(+db: String, +binding: String, +query: String,
-                            +owner: String, +cwd: String, +executable: String,
-                            +runtime_path: String, +module_id: String,
-                            +digest: String, frame: InvocationFrame) -> IO(InvocationVerification):
-  match frame:
-    case NativeFrameRefused{reason}:
-      IO.pure(InvocationVerification, InvocationVerificationRefused{reason})
-    case NativeFrameReady{+value}:
-      do IO<InvocationVerification>:
-        spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
-          verify_invocation_argv(runtime_path, executable), cwd, "/dev/null")
-        answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable), cwd,
-          value, spawned)
-        invocation_verification_output(db, binding, query, owner, module_id,
-          digest, answer)
 
 def boundary_member_value(found: Maybe<&2, J.Json>) -> J.Json:
   match found:
@@ -1166,58 +1088,21 @@ def decode_managed_readiness(+db: String, +binding: String,
       ManagedQuery.bootstrap_text(bootstrap))
     managed_readiness_digest(db, binding, bootstrap, host_json, digest)
 
-def managed_bootstrap_persisted(+owner: String, +worktree: String, +query: String,
-                               +path: String, decoded: ProjectPolicyJson) -> Bool:
-  match decoded:
-    case ProjectPolicyJsonRefused{reason}: False{}
-    case ProjectPolicyJsonReady{+value}:
-      Bool.and(String.eq(boundary_text(value, "status"), "persisted"),
-      Bool.and(String.eq(boundary_text(value, "owner"), owner),
-      Bool.and(String.eq(boundary_text(value, "worktree"), worktree),
-      Bool.and(String.eq(boundary_text(value, "query"), query),
-        String.eq(boundary_text(value, "path"), path)))))
-
-def managed_bootstrap_persisted_rows(+owner: String, +worktree: String,
-                                    +query: String, +path: String,
-                                    result: Result<&1,&1,U32 & String,String>) -> Bool:
-  match result:
-    case Fail{error}: False{}
-    case Done{+rows}: managed_bootstrap_persisted(owner, worktree, query,
-      path, project_policy_json_rows(rows))
-
-def managed_bootstrap_persist_answer(+db: String, +binding: String,
-                                    +owner: String, +worktree: String,
-                                    +query: String, +path: String,
-                                    answer: ProviderAnswer) -> IO(Bool):
-  match answer:
-    case ProviderRefused{reason}: IO.pure(Bool, False{})
-    case ProviderRuntime{path, version}: IO.pure(Bool, False{})
-    case ProviderOutput{+value, +status}:
-      Bool.pick(IO(Bool), String.eq(status, "exit 0"),
-        do IO<Bool>:
-          rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
-            Req.json_tree_sql(value))
-          IO.pure(Bool, managed_bootstrap_persisted_rows(owner, worktree,
-            query, path, rows)),
-        IO.pure(Bool, False{}))
-
-def managed_bootstrap_digest_result(+db: String, +binding: String,
-                                    +owner: String, +worktree: String,
-                                    +query: String, +path: String,
-                                    +bootstrap_text: String,
+def managed_bootstrap_digest_result(+bootstrap_text: String,
                                     answer: ProviderAnswer) -> IO(String):
-  do IO<String>:
-    persisted : Bool <- managed_bootstrap_persist_answer(db, binding, owner,
-      worktree, query, path, answer)
-    Bool.pick(IO(String), persisted,
-    IO.try(String, ContextIdentity.role_guard_key(bootstrap_text ++ "\n")),
-    IO.die(String, 3, "managedBootstrapPersistence"))
+  match answer:
+    case ProviderRefused{reason}: IO.die(String, 3, "managedBootstrapPersistence:" ++ reason)
+    case ProviderRuntime{path, version}: IO.die(String, 3, "managedBootstrapPersistenceMalformed")
+    case ProviderOutput{value, +status}:
+      Bool.pick(IO(String), String.eq(status, "exit 0"),
+        IO.try(String, ContextIdentity.role_guard_key(bootstrap_text ++ "\n")),
+        IO.die(String, 3, "managedBootstrapPersistence"))
 
-def persist_managed_bootstrap(+database: String, +binding: String,
+def persist_managed_bootstrap(+database: String,
                               +executable: String, +runtime_path: String,
                               +cwd: String, +owner: String,
                               +worktree: String, +query: String,
-                              +path: String, +bootstrap: ManagedQuery.Bootstrap)
+                              +bootstrap: ManagedQuery.Bootstrap)
                               -> IO(String):
   do IO<String>:
     spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
@@ -1225,8 +1110,7 @@ def persist_managed_bootstrap(+database: String, +binding: String,
     answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
       cwd, query_bootstrap_request(database, owner, worktree, query,
         ManagedQuery.bootstrap_text(bootstrap)), spawned)
-    managed_bootstrap_digest_result(database, binding, owner, worktree, query, path,
-      ManagedQuery.bootstrap_text(bootstrap), answer)
+    managed_bootstrap_digest_result(ManagedQuery.bootstrap_text(bootstrap), answer)
 
 def managed_prepare_result(+db: String, +binding: String, +launch: ManagedLaunch,
                            result: Result<&1,&1,U32 & String,U32 & String & String>) -> IO(Unit):
@@ -1246,7 +1130,7 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
                           +worktree: String, +source_identity: String,
                           +artifact_path: String, +invocation_text: String,
                           +executable: String, +runtime_path: String,
-                          +result_schema: String, +artifact_sha256: String,
+                          +result_schema: String,
                           +plan: Sel.Plan, +guard_identity: String,
                           +physical_identity: String, +lock: U32,
                           +owner_witness: String, +origin_attempt: String) -> IO(Unit):
@@ -1260,20 +1144,20 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
     +bootstrap_file : String = artifact_path ++ "/bootstrap.json"
     invocation_path : String = keeper_path ++ "/invocation.json"
     provider_path : String = installed_provider_path(executable)
-    invocation_sha256 : String <- IO.try(String,
+    +invocation_sha256 : String <- IO.try(String,
       ContextIdentity.role_guard_key(invocation_text))
     +recovery_argv : String = Process.argv([executable, "--recover-context-query", canonical_database,
       owner, query, keeper_path, worktree, bootstrap_file])
     +bootstrap : ManagedQuery.Bootstrap = ManagedQuery.query_bootstrap(binding, query, owner, request, cwd,
-      origin_attempt, ManagedQuery.ArtifactEvidence{source_identity, artifact_sha256},
+      origin_attempt, ManagedQuery.ArtifactEvidence{source_identity, invocation_sha256},
       EnginesWire.plan_value(plan), EnginesWire.plan_identity(plan), result_schema,
       artifact_path, keeper_path, guard_key, physical_role_key, owner_witness,
       recovery_argv, executable, runtime_path, provider_path, invocation_path,
       invocation_sha256)
     +bootstrap_text : String = ManagedQuery.bootstrap_text(bootstrap)
-    bootstrap_digest : String <- persist_managed_bootstrap(canonical_database, binding,
+    bootstrap_digest : String <- persist_managed_bootstrap(canonical_database,
       executable, runtime_path,
-      cwd, owner, worktree, query, bootstrap_file, bootstrap)
+      cwd, owner, worktree, query, bootstrap)
     +launch : ManagedLaunch = ManagedLaunch{bootstrap, invocation_text, executable, runtime_path,
       worktree, bootstrap_digest}
     argv : String = Process.argv([runtime_path, "--experimental-strip-types",
@@ -1291,7 +1175,7 @@ def managed_prepare_owner(+db: String, +binding: String, +owner: String,
                           +worktree: String, +source_identity: String,
                           +artifact_path: String, +invocation_text: String,
                           +executable: String, +runtime_path: String,
-                          +result_schema: String, +artifact_sha256: String,
+                          +result_schema: String,
                           +plan: Sel.Plan, +guard_identity: String,
                           +physical_identity: String, +lock: U32) -> IO(Unit):
   do IO<Unit>:
@@ -1299,7 +1183,7 @@ def managed_prepare_owner(+db: String, +binding: String, +owner: String,
     origin_attempt : String <- owner_origin_attempt(db, binding, owner)
     managed_prepare_roles(db, binding, owner, query, request, cwd, worktree,
       source_identity, artifact_path, invocation_text, executable, runtime_path,
-      result_schema, artifact_sha256, plan, guard_identity, physical_identity,
+      result_schema, plan, guard_identity, physical_identity,
       lock, owner_witness, origin_attempt)
 
 def managed_prepare_lock(+db: String, +binding: String, +owner: String,
@@ -1307,7 +1191,7 @@ def managed_prepare_lock(+db: String, +binding: String, +owner: String,
                          +worktree: String, +source_identity: String,
                          +artifact_path: String, +invocation_text: String,
                          +executable: String, +runtime_path: String,
-                         +result_schema: String, +artifact_sha256: String,
+                         +result_schema: String,
                          +plan: Sel.Plan, +guard_identity: String,
                          +physical_identity: String,
                          lock: Maybe<U32>) -> IO(Unit):
@@ -1316,7 +1200,7 @@ def managed_prepare_lock(+db: String, +binding: String, +owner: String,
     case Some{+lock_handle}:
       managed_prepare_owner(db, binding, owner, query, request, cwd,
         worktree, source_identity, artifact_path, invocation_text,
-        executable, runtime_path, result_schema, artifact_sha256, plan,
+        executable, runtime_path, result_schema, plan,
         guard_identity, physical_identity, lock_handle)
 
 def managed_prepare_anchor(+db: String, +binding: String, +owner: String,
@@ -1324,7 +1208,7 @@ def managed_prepare_anchor(+db: String, +binding: String, +owner: String,
                            +worktree: String, +source_identity: String,
                            +artifact_path: String, +invocation_text: String,
                            +executable: String, +runtime_path: String,
-                           +result_schema: String, +artifact_sha256: String,
+                           +result_schema: String,
                            +plan: Sel.Plan) -> IO(Unit):
   do IO<Unit>:
     guard_identity : String = ContextIdentity.guard_identity(binding,
@@ -1338,7 +1222,7 @@ def managed_prepare_anchor(+db: String, +binding: String, +owner: String,
       canonical_database, physical_role_key))
     managed_prepare_lock(db, binding, owner, query, request, cwd, worktree,
       source_identity, artifact_path, invocation_text, executable, runtime_path,
-      result_schema, artifact_sha256, plan, guard_identity, physical_identity,
+      result_schema, plan, guard_identity, physical_identity,
       lock)
 
 def managed_query_workspace(+plan: Sel.Plan, +result_schema: String,
@@ -1346,26 +1230,26 @@ def managed_query_workspace(+plan: Sel.Plan, +result_schema: String,
                             +query: String, +request: String, +cwd: String,
                             +source_identity: String, +artifact_path: String,
                             +invocation_text: String, +executable: String,
-                            +runtime_path: String, +artifact_sha256: String,
+                            +runtime_path: String,
                             workspace: OwnerWorkspace) -> IO(Unit):
   match workspace:
     case OwnerWorkspaceRefused{reason}: IO.die(Unit, 3, reason)
     case OwnerWorkspaceReady{+path}:
       managed_prepare_anchor(db, binding, owner, query, request, cwd, path,
         source_identity, artifact_path, invocation_text, executable,
-        runtime_path, result_schema, artifact_sha256, plan)
+        runtime_path, result_schema, plan)
 
-def managed_query_verified(+plan: Sel.Plan, +result_schema: String,
+def managed_query_selected(+plan: Sel.Plan, +result_schema: String,
                            +db: String, +binding: String, +owner: String,
                            +query: String, +request: String, +cwd: String,
                            +source_identity: String, +artifact_path: String,
                            +invocation_text: String, +executable: String,
-                           +runtime_path: String, +artifact_sha256: String) -> IO(Unit):
+                           +runtime_path: String) -> IO(Unit):
   do IO<Unit>:
     workspace : OwnerWorkspace <- read_owner_workspace(db, binding, owner)
     managed_query_workspace(plan, result_schema, db, binding, owner, query,
       request, cwd, source_identity, artifact_path, invocation_text,
-      executable, runtime_path, artifact_sha256, workspace)
+      executable, runtime_path, workspace)
 
 def project_policy_runtime_answer(+executable: String, +cwd: String,
                                   +owner: String, +worktree: String,
@@ -1657,22 +1541,7 @@ def selected_plan_frame(+plan: Sel.Plan, +query: String, +owner: String,
         Sel.bind_digest(primary), Sel.bind_operation(primary), query, owner,
         canonical, "starter", "0")
 
-def verification_result(+plan: Sel.Plan, +result_schema: String,
-                        +db: String, +binding: String, +owner: String,
-                        +query: String, +canonical: String, +cwd: String,
-                        +source_identity: String, +artifact_path: String,
-                        +invocation_text: String, +executable: String,
-                        +runtime_path: String,
-                        verification: InvocationVerification) -> IO(Unit):
-  match verification:
-    case InvocationVerificationRefused{reason}:
-      IO.die(Unit, 3, "invocationVerification:" ++ reason)
-    case InvocationVerified{artifact_sha256}:
-      managed_query_verified(plan, result_schema, db, binding, owner, query,
-        canonical, cwd, source_identity, artifact_path, invocation_text,
-        executable, runtime_path, artifact_sha256)
-
-def verify_selected_plan_frame(+plan: Sel.Plan, +result_schema: String,
+def launch_selected_plan_frame(+plan: Sel.Plan, +result_schema: String,
                                +db: String, +binding: String, +owner: String,
                                +query: String, +canonical: String, +cwd: String,
                                +source_identity: String, +artifact_path: String,
@@ -1688,15 +1557,11 @@ def verify_selected_plan_frame(+plan: Sel.Plan, +result_schema: String,
           match frame:
             case NativeFrameRefused{reason}: IO.die(Unit, 3, reason)
             case NativeFrameReady{+value}:
-              do IO<Unit>:
-                verification : InvocationVerification <- verify_invocation_frame(db,
-                  binding, query, owner, cwd, executable, runtime_path,
-                  Sel.bind_module(primary), Sel.bind_digest(primary), NativeFrameReady{value})
-                verification_result(plan, result_schema, db, binding, owner, query,
-                  canonical, cwd, source_identity, artifact_path, value,
-                  executable, runtime_path, verification)
+              managed_query_selected(plan, result_schema, db, binding, owner, query,
+                canonical, cwd, source_identity, artifact_path, value,
+                executable, runtime_path)
 
-def verify_selected_plan(+plan: Sel.Plan, +result_schema: String,
+def launch_selected_plan(+plan: Sel.Plan, +result_schema: String,
                          +db: String, +binding: String, +owner: String,
                          +query: String, +canonical: String, +cwd: String,
                          +source_identity: String, +artifact_path: String,
@@ -1704,7 +1569,7 @@ def verify_selected_plan(+plan: Sel.Plan, +result_schema: String,
   match plan:
     case Sel.Plan{primary, common, steps, effective_effects, inputs, available,
         policy_identity}:
-      verify_selected_plan_frame(plan, result_schema, db, binding, owner,
+      launch_selected_plan_frame(plan, result_schema, db, binding, owner,
         query, canonical, cwd, source_identity, artifact_path,
         executable, runtime_path,
         selected_plan_frame(plan, query, owner, canonical))
@@ -1720,7 +1585,7 @@ def query_selection_answer(+db: String, +binding: String, +owner: String,
       IO.die(Unit, 3, "selection:" ++ stage ++ ":" ++ Sel.rq_code(reason)
         ++ ":" ++ Sel.rq_detail(reason))
     case Sel.VerdictAdmitted{plan, result_schema}:
-      verify_selected_plan(plan, result_schema, db, binding, owner, query,
+      launch_selected_plan(plan, result_schema, db, binding, owner, query,
         canonical, cwd, source_identity, artifact_path, executable, runtime_path)
 
 def project_selection(+db: String, +binding: String, +owner: String, +query: String,

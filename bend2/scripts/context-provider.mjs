@@ -237,13 +237,6 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
       : refused('invocationArtifactPathMissing');
     process.stdout.write(`${JSON.stringify(result)}\n`);
     if (result.status !== 'verified') process.exitCode = 2;
-  } else if (process.argv[2] === '--verify-invocation') {
-    let input = '';
-    for await (const chunk of process.stdin) input += chunk;
-    const frame = input.endsWith('\n') ? input.slice(0, -1) : input;
-    const result = verifyInvocationText(frame);
-    process.stdout.write(`${JSON.stringify(result)}\n`);
-    if (result.status !== 'verified') process.exitCode = 2;
   } else {
     let input = '';
     for await (const chunk of process.stdin) input += chunk;
