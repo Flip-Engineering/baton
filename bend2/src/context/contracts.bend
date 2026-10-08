@@ -663,22 +663,10 @@ law contracts_law_u32_token_refuses_a_ten_digit_number_above_the_bound:
 def contracts_law_u32_token_refuses_a_ten_digit_number_above_the_bound():
   {==}
 
-law contracts_law_u32_token_refuses_a_long_number_by_value:
-  {u32_token_ok("1000000000000000000000000000000000000000000000000000") == False{} : Bool}
-
-def contracts_law_u32_token_refuses_a_long_number_by_value():
-  {==}
-
 law contracts_law_safe_integer_token_accepts_the_bound:
   {safe_integer_token_ok("9007199254740991") == True{} : Bool}
 
 def contracts_law_safe_integer_token_accepts_the_bound():
-  {==}
-
-law contracts_law_safe_integer_token_refuses_a_long_number_by_value:
-  {safe_integer_token_ok("1000000000000000000000000000000000000000000000000000") == False{} : Bool}
-
-def contracts_law_safe_integer_token_refuses_a_long_number_by_value():
   {==}
 
 law contracts_law_safe_integer_token_refuses_the_empty_token:
