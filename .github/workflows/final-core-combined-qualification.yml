@@ -239,8 +239,10 @@ jobs:
       PRODUCT_SOURCE_TREE: '0b7cbb53e22bbc51e3ab3749977d28b9e959fd9b'
       FIXTURE_SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && 'aa7d506c60ae9fabc0e6450db3eb8c0fe2b52730' || 'cbb3a7422fd05c752fb81b46954845b3c143858b' }}
       FIXTURE_SOURCE_TREE: ${{ github.event_name == 'workflow_dispatch' && '9e1c7c3d295c89a82e818cd06e79d6678b114b16' || '0b7cbb53e22bbc51e3ab3749977d28b9e959fd9b' }}
-      PRODUCT_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && '37753091536' || github.run_id }}
+      PRODUCT_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && '37756721230' || github.run_id }}
       PRODUCT_RUN_ATTEMPT: ${{ github.event_name == 'workflow_dispatch' && '1' || github.run_attempt }}
+      PRODUCT_ARTIFACT_ID: ${{ github.event_name == 'workflow_dispatch' && '11540253297' || '' }}
+      PRODUCT_ARTIFACT_DIGEST: ${{ github.event_name == 'workflow_dispatch' && 'sha256:e6ce58211acb018ce6c811bf5a4f06c399b7b9c2e5a27521d44ea1c78c93c9eb' || '' }}
     steps:
       - name: Check out qualification driver
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -263,6 +265,8 @@ jobs:
             printf 'product_source_tree=%s\n' "$PRODUCT_SOURCE_TREE"
             printf 'product_run_id=%s\n' "$PRODUCT_RUN_ID"
             printf 'product_run_attempt=%s\n' "$PRODUCT_RUN_ATTEMPT"
+            printf 'product_artifact_id=%s\n' "$PRODUCT_ARTIFACT_ID"
+            printf 'product_artifact_digest=%s\n' "$PRODUCT_ARTIFACT_DIGEST"
             printf 'fixture_source_sha=%s\n' "$(git -C source rev-parse HEAD)"
             printf 'fixture_source_tree=%s\n' "$(git -C source rev-parse 'HEAD^{tree}')"
             printf 'suite=%s\n' '${{ matrix.suite }}'
@@ -324,6 +328,8 @@ jobs:
             printf 'product_source_tree=%s\n' "$PRODUCT_SOURCE_TREE"
             printf 'product_run_id=%s\n' "$PRODUCT_RUN_ID"
             printf 'product_run_attempt=%s\n' "$PRODUCT_RUN_ATTEMPT"
+            printf 'product_artifact_id=%s\n' "$PRODUCT_ARTIFACT_ID"
+            printf 'product_artifact_digest=%s\n' "$PRODUCT_ARTIFACT_DIGEST"
             printf 'fixture_source_sha=%s\n' "$FIXTURE_SOURCE_SHA"
             printf 'fixture_source_tree=%s\n' "$FIXTURE_SOURCE_TREE"
             command -v chromium || command -v chromium-browser || command -v google-chrome || true
