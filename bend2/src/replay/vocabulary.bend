@@ -358,5 +358,5 @@ def corpus_path(args: List<&1, String>) -> String:
 def main() -> IO(Unit):
   do IO<Unit>:
     as : List<&1, String> <- IO.args()
-    text : String <- IO.try(String, Text.read(corpus_path(as)))
+    text : String <- IO.try(String, Text.Text.read(corpus_path(as)))
     emit_lines(String.lines(text))
