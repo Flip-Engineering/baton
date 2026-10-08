@@ -511,6 +511,9 @@ def listed_segments(+log: String) -> IO(String):
 def log_rows_sql() -> String:
   "SELECT lf.session,lf.log,coalesce((SELECT level FROM log_policies WHERE session=lf.session)," ++ C.q(default_level()) ++ ") FROM log_files lf ORDER BY lf.session,lf.log;"
 
+def session_log_rows_sql(+session: String) -> String:
+  "SELECT log FROM log_files WHERE session=" ++ C.q(session) ++ " ORDER BY log;"
+
 def log_json(session: String, +log: String, level: String, +size: U32, +legacy_stderr: U32, +checkpoint: U32, segments: String) -> String:
   "{\"session\":" ++ J.string_literal(session)
   ++ ",\"path\":" ++ J.string_literal(log)
@@ -948,7 +951,7 @@ def clean_attempt_log_rows(+db: String, +session: String, rows: List<String>, ac
 
 def clean_attempt_logs(+db: String, +session: String) -> IO(String):
   do IO<String>:
-    rows : String <- IO.try(String,DB.Sql.query(db,clean_sql(session)))
+    rows : String <- IO.try(String,DB.Sql.query(db,session_log_rows_sql(session)))
     listed : String <- clean_attempt_log_rows(db,session,Tx.split_lines(rows),"")
     IO.pure(String,listed)
 
