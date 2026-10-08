@@ -9,6 +9,7 @@ parentless principal root addressed through the operator-role rule, the three-ho
 report chain, and the case where input committed while a turn is live is consumed by
 a later turn exactly once.
 """
+import importlib.util
 import json
 import os
 import pathlib
@@ -22,6 +23,10 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
+
+spec = importlib.util.spec_from_file_location('receive_fixture', pathlib.Path(__file__).with_name('receive.py'))
+receive = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(receive)
 
 # The fixture serves whichever adapter started it: Codex, OMP and Muse each name the
 # harness with a distinct argv shape. Every turn records its own invocation, accepts
@@ -96,11 +101,16 @@ else:
 class RootWake(unittest.TestCase):
     """Delivery wake for a Codex principal root and for Muse and OMP sessions."""
 
+    close_children = receive.Receive.close_children
+    owned_processes = receive.Receive.owned_processes
+
     def setUp(self):
         if not EXE.exists():
             self.skipTest(f'Coordinator not built at {EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.directory = pathlib.Path(self.temp.name)
+        self.children = []
+        self.controls = []
         self.home = self.directory / 'isolated-home'
         self.home.mkdir()
         self.environment = dict(os.environ, HOME=str(self.home))
@@ -145,6 +155,7 @@ class RootWake(unittest.TestCase):
         self.leaf_followup = self.write('leaf-followup.txt', 'Follow-up for the Claude player.\n')
 
     def tearDown(self):
+        self.close_children()
         self.temp.cleanup()
 
     def write(self, name, text):
@@ -200,6 +211,12 @@ class RootWake(unittest.TestCase):
     def accepted(self, ident):
         return self.eventually(lambda: json.loads(self.coord('delivery', ident))['receipt'],
                                f'{ident} was never accepted by its recipient')
+
+    def completed(self, session, turn):
+        body = f'Fixture turn {turn} for {session} completed.'
+        return self.eventually(lambda: any(row['reportBody'] == body
+                                           for row in json.loads(self.coord('turns', session))),
+                               f'{session} did not retain its completed report')
 
     def assert_consumed_once_and_by_its_recipient(self, sessions):
         """Every delivered input appeared in exactly one prompt, in its own session."""
@@ -262,6 +279,7 @@ class RootWake(unittest.TestCase):
         self.assertEqual(json.loads(self.coord('player', 'root'))['native'], 'native-root')
 
         # Each principal terminal result reaches the operator row.
+        self.completed('root', 3)
         inbox = json.loads(self.coord('inbox', 'operator'))
         self.assertEqual({row['sender'] for row in inbox}, {'root'})
         self.assertEqual(len(inbox), len(json.loads(self.coord('turns', 'root'))))
@@ -317,6 +335,7 @@ class RootWake(unittest.TestCase):
         self.assertIn('Fixture turn 2 for lead completed.', root_drain[0]['prompt'])
         self.assertNotIn('Start the principal.', root_drain[0]['prompt'])
         self.release('root', 3)
+        self.completed('root', 3)
 
         self.eventually(lambda: len(self.calls('root')) == 3, 'the root started a fourth turn.')
         self.assertEqual([len(self.calls(session)) for session in ('root', 'lead', 'child')], [3, 2, 1])
@@ -385,7 +404,7 @@ class RootWake(unittest.TestCase):
         # as one user frame and resumes the conversation the first turn recorded.
         self.coord('attach', 'root', 'codex', 'native-root', '')
         self.coord('role', 'root', 'principal-conductor')
-        self.coord('attach', 'operator', 'operator', '')
+        self.coord('attach', 'operator', 'terminal', '', '')
         self.coord('role', 'operator', 'operator')
         self.recruit('leaf', 'root', 'claude-code')
         self.coord('receiver', 'leaf', str(self.fixture), str(self.directory / 'leaf.jsonl'))
@@ -405,6 +424,7 @@ class RootWake(unittest.TestCase):
         second = self.eventually(lambda: self.calls('leaf')[1:2], 'the follow-up never woke the leaf.')
         self.assertEqual(second[0]['args'][second[0]['args'].index('--resume') + 1], 'native-leaf')
         self.assertIn('Follow-up for the Claude player.', json.loads(second[0]['frame'])['message']['content'])
+        self.completed('leaf', 2)
         self.eventually(lambda: len(self.calls('leaf')) == 2, 'the leaf started a third turn.')
         self.assertEqual([len(self.calls('leaf')), len(json.loads(self.coord('turns', 'leaf')))], [2, 2])
         self.assertEqual(json.loads(self.coord('player', 'leaf'))['native'], 'native-leaf')
@@ -419,6 +439,7 @@ class RootWake(unittest.TestCase):
         self.dispatch('start', 'root', 'codex', str(self.fixture), 'root', 'low', str(self.repo),
                       str(self.root_log), 'start-task', str(self.task))
         self.assertEqual(self.accepted('start-task'), 'fixture reviewed')
+        self.completed('root', 1)
         before = (len(json.loads(self.coord('turns', 'root'))), len(json.loads(self.coord('inbox', 'operator'))))
         self.assertEqual(before, (1, 1))
         # Withdrawing the operator role from the parentless row removes the routing.

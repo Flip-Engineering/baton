@@ -7,6 +7,7 @@ turn reaches the session's recorded native conversation, that input committed
 while that turn is live is drained exactly once by a later turn, and that no
 other session's pending row is consumed.
 """
+import importlib.util
 import json
 import os
 import pathlib
@@ -18,6 +19,10 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
+
+spec = importlib.util.spec_from_file_location('receive_fixture', pathlib.Path(__file__).with_name('receive.py'))
+receive = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(receive)
 
 # The fixture speaks the Muse adapter's `exec --json` stream: a stream session
 # envelope carrying the native identity, the turn's input command, and the
@@ -52,11 +57,16 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
 class MuseConductorReceive(unittest.TestCase):
     """A Muse Conductor's registered receive endpoint wakes it for its input."""
 
+    close_children = receive.Receive.close_children
+    owned_processes = receive.Receive.owned_processes
+
     def setUp(self):
         if not EXE.exists():
             self.skipTest(f'Coordinator not built at {EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.directory = pathlib.Path(self.temp.name)
+        self.children = []
+        self.controls = []
         self.home = self.directory / 'isolated-home'
         self.home.mkdir()
         self.environment = dict(os.environ, HOME=str(self.home))
@@ -97,6 +107,7 @@ class MuseConductorReceive(unittest.TestCase):
         self.unrelated.write_text('This row belongs to another Player.\n')
 
     def tearDown(self):
+        self.close_children()
         self.temp.cleanup()
 
     def coord(self, *args, ok=True):
@@ -125,16 +136,15 @@ class MuseConductorReceive(unittest.TestCase):
         return result
 
     def test_a_muse_principal_is_woken_from_idle_and_drains_the_input_that_arrives_during_its_turn(self):
-        self.coord('recruit', 'child', 'root', 'omp', 'child-model', 'low', str(self.repo),
-                   'child-branch', str(self.checkouts / 'child'), self.base)
-        self.coord('recruit', 'other', 'root', 'omp', 'other-model', 'low', str(self.repo),
-                   'other-branch', str(self.checkouts / 'other'), self.base)
-
         # The operator starts the parentless Muse Conductor. The recorded
         # workspace and the receiver endpoint are the session's wake address.
         launched = self.dispatch('start', 'root', 'muse', str(self.native), 'muse-model', 'low',
                                  str(self.repo), str(self.log), 'start-task', str(self.task))
         self.assertGreater(launched['deliveryPid'], 0)
+        self.coord('recruit', 'child', 'root', 'omp', 'child-model', 'low', str(self.repo),
+                   'child-branch', str(self.checkouts / 'child'), self.base)
+        self.coord('recruit', 'other', 'root', 'omp', 'other-model', 'low', str(self.repo),
+                   'other-branch', str(self.checkouts / 'other'), self.base)
 
         started = self.eventually(lambda: self.calls_made()[:1], 'The Muse root did not start its task turn.')
         root = json.loads(self.coord('player', 'root'))
@@ -186,6 +196,8 @@ class MuseConductorReceive(unittest.TestCase):
                          'muse reviewed this input')
 
         # Both turns reported the parentless Conductor's result to the operator.
+        self.eventually(lambda: len(json.loads(self.coord('turns', 'root'))) == 2,
+                        'The completed Muse turns did not retain their reports.')
         self.assertEqual(len(json.loads(self.coord('turns', 'root'))), 2)
         inbox = json.loads(self.coord('inbox', 'operator'))
         self.assertEqual([row['recipient'] for row in inbox], ['operator', 'operator'])
