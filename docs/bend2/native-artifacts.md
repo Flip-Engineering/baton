@@ -26,10 +26,9 @@ python3 "$BATON2_SOURCE/bend2/scripts/package-native.py" \
   --compiler-archive "$BATON2_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
 ~~~
 
-The package command runs [build-native.sh](../../scripts/build-native.sh) once. It retains the complete build stdout and stderr, along with generated C when available. Laws and native test diagnostics remain available as standalone commands:
+The package command runs [build-native.sh](../../scripts/build-native.sh) once. It retains the complete build stdout and stderr, along with generated C when available. Native runtime checks are available through `check-native.sh`:
 
 ~~~sh
-node bend2/scripts/laws-check.mjs
 sh bend2/scripts/check-native.sh
 ~~~
 

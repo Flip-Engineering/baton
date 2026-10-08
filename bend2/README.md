@@ -27,19 +27,8 @@ runtime paths, dependencies and retained state. [Harness setup](../docs/bend2/ha
 describes the qualified routes. [Native artifacts](../docs/bend2/native-artifacts.md)
 describes native packaging and the extracted-artifact runtime smoke.
 
-`bend2/src/coordinator/laws.bend` states the sixteen operative entries of
-[the approved laws](../docs/bend2/laws-proposed.md) over the functions this
-tree implements them with, and proves each one beside its claim. The entry
-module imports that module, so a compile of the entry verifies every
-operative law, and the native build refuses the tree while a law is unproven
-or false.
-
-```sh
-node bend2/scripts/laws-check.mjs
-```
-
-The law check runs compile, mutation and proof-removal diagnostics in a copied
-source tree. Run it directly when reviewing the operative laws.
+Runtime fixtures are available in `bend2/test` and `bend2/tests`. Run checks for
+the affected commands and host behavior on remote validation runners.
 
 `python3 bend2/scripts/compare-coordinators.py --help` describes a repeatable
 comparison of retained coordination operations with a pinned old Baton checkout.
