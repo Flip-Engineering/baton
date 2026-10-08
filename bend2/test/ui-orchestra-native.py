@@ -65,8 +65,10 @@ class OrchestraProjection(unittest.TestCase):
 native = 'native-''' + player + ''''
 print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.model.configured',
   'payload':{'kind':'run_model_configured','model_id':'observed-fixture-model'}}), flush=True)
+print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'turn.input.user',
+  'payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}), flush=True)
 print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.terminal.''' + terminal + '''',
-  'payload':{'kind':'run_terminal','terminal':''' + repr(terminal) + ''','text':''' + repr(text) + '''}}), flush=True)
+  'payload':{'kind':'run_terminal','command_id':'fixture-primary','terminal':''' + repr(terminal) + ''','text':''' + repr(text) + '''}}), flush=True)
 ''' + failed + '\n')
         command.chmod(0o755)
         result = subprocess.run([str(EXE), str(self.db), 'turn', player, ident,

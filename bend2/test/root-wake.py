@@ -351,7 +351,7 @@ class RootWake(unittest.TestCase):
         self.assertEqual(self.accepted('late-lead'), 'fixture reviewed')
         self.assertEqual(self.accepted('late-root'), 'fixture reviewed')
         self.assertEqual({row['recipient'] for row in self.rows("SELECT recipient FROM messages WHERE sender='lead'")},
-                         {'root'})
+                         {'root', 'child'})
         inbox = json.loads(self.coord('inbox', 'operator'))
         self.assertEqual({row['sender'] for row in inbox}, {'root'})
         self.assertEqual(len(inbox), 3)

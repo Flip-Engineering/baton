@@ -26,7 +26,7 @@
     },
     {
       "packagePath": "frontend-hooks.mjs",
-      "sha256": "8040f3bf182a7d4b6aebcee21ba1909ade75bc85403ddf884e73f576db445f47",
+      "sha256": "218e2e5601d5acaf61f15e31576b82fbb184dee3f30256458f1730c79aa55bef",
       "role": "frontend-hooks"
     },
     {
@@ -46,7 +46,7 @@
     },
     {
       "packagePath": "upstream/bend.ts",
-      "sha256": "93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85",
+      "sha256": "249da82e99067b013e45e221e3b10e224eb615787efb9e86f65f5d169bbffe8f",
       "role": "frontend-kernel"
     },
     {
@@ -56,7 +56,7 @@
     },
     {
       "packagePath": "upstream/main.ts",
-      "sha256": "92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e",
+      "sha256": "158fda1fd44220d49ad514514dc51a6eaefb2929cbe5a366cdf5a1aa92e81a28",
       "role": "frontend-main"
     },
     {
@@ -78,8 +78,8 @@
     },
     {
       "path": "frontend-hooks.mjs",
-      "bytes": 39238,
-      "sha256": "8040f3bf182a7d4b6aebcee21ba1909ade75bc85403ddf884e73f576db445f47"
+      "bytes": 39063,
+      "sha256": "218e2e5601d5acaf61f15e31576b82fbb184dee3f30256458f1730c79aa55bef"
     },
     {
       "path": "frontend-invocation.mjs",
@@ -89,7 +89,7 @@
     {
       "path": "native-provider.declaration.json",
       "bytes": 5674,
-      "sha256": "8b1394ea07eabc9f19bec020d5c91c8933c1ef45eccb21faa10ad48cd62aae54"
+      "sha256": "d9f417a8a8b353c25124cfb61ac779f07a68c1bf0731ade9e1dc10bd9bcac9ab"
     },
     {
       "path": "native-provider.mjs",
@@ -113,8 +113,8 @@
     },
     {
       "path": "upstream/bend.ts",
-      "bytes": 135926,
-      "sha256": "93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85"
+      "bytes": 135532,
+      "sha256": "249da82e99067b013e45e221e3b10e224eb615787efb9e86f65f5d169bbffe8f"
     },
     {
       "path": "upstream/comp.ts",
@@ -123,8 +123,8 @@
     },
     {
       "path": "upstream/main.ts",
-      "bytes": 24396,
-      "sha256": "92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e"
+      "bytes": 24381,
+      "sha256": "158fda1fd44220d49ad514514dc51a6eaefb2929cbe5a366cdf5a1aa92e81a28"
     },
     {
       "path": "worktree-capture.mjs",

@@ -40,7 +40,6 @@ baton('attach', 'root', 'fixture', 'root-native', '');
 baton('role', 'root', 'principal-conductor');
 for (const [name, parent] of [['lead', 'root'], ['worker', 'lead'], ['aide', 'lead']]) {
   const ws = join(WORK, name);
-  mkdirSync(ws, { recursive: true });
   baton('recruit', name, parent, 'muse', 'configured-model', 'low', REPO, `${name}-branch`, ws, 'HEAD');
 }
 baton('role', 'lead', 'associate-conductor');

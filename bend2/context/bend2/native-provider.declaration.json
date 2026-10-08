@@ -3,7 +3,7 @@
   "moduleId": "bend2",
   "revision": "development",
   "protocolVersion": "2",
-  "packageIdentity": "sha256:069ea8280360ea62c9d6e9a95635765b4db50ae8195d93fbb61963a8d6835ceb",
+  "packageIdentity": "sha256:edaf2876288c11d8346d71d276bc277250edb4df7c1215fb239b5618736f5756",
   "entry": {
     "artifact": "native-provider.mjs",
     "argv": [
@@ -33,7 +33,7 @@
     },
     {
       "packagePath": "frontend-hooks.mjs",
-      "sha256": "8040f3bf182a7d4b6aebcee21ba1909ade75bc85403ddf884e73f576db445f47",
+      "sha256": "218e2e5601d5acaf61f15e31576b82fbb184dee3f30256458f1730c79aa55bef",
       "role": "frontend-hooks"
     },
     {
@@ -53,7 +53,7 @@
     },
     {
       "packagePath": "upstream/bend.ts",
-      "sha256": "93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85",
+      "sha256": "249da82e99067b013e45e221e3b10e224eb615787efb9e86f65f5d169bbffe8f",
       "role": "frontend-kernel"
     },
     {
@@ -63,7 +63,7 @@
     },
     {
       "packagePath": "upstream/main.ts",
-      "sha256": "92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e",
+      "sha256": "158fda1fd44220d49ad514514dc51a6eaefb2929cbe5a366cdf5a1aa92e81a28",
       "role": "frontend-main"
     },
     {
@@ -90,7 +90,7 @@
     },
     {
       "packagePath": "frontend-hooks.mjs",
-      "sha256": "8040f3bf182a7d4b6aebcee21ba1909ade75bc85403ddf884e73f576db445f47",
+      "sha256": "218e2e5601d5acaf61f15e31576b82fbb184dee3f30256458f1730c79aa55bef",
       "role": "frontend-hooks"
     },
     {
@@ -110,7 +110,7 @@
     },
     {
       "packagePath": "upstream/bend.ts",
-      "sha256": "93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85",
+      "sha256": "249da82e99067b013e45e221e3b10e224eb615787efb9e86f65f5d169bbffe8f",
       "role": "frontend-kernel"
     },
     {
@@ -120,7 +120,7 @@
     },
     {
       "packagePath": "upstream/main.ts",
-      "sha256": "92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e",
+      "sha256": "158fda1fd44220d49ad514514dc51a6eaefb2929cbe5a366cdf5a1aa92e81a28",
       "role": "frontend-main"
     },
     {

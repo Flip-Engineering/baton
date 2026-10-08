@@ -64,8 +64,8 @@ def resolve_server(+executable: String) -> IO(String):
   do IO<String>:
     installed_path : String <- IO.pure(String,installed_candidate(directory_of(executable)))
     source_path : String <- IO.pure(String,source_candidate(directory_of(executable)))
-    installed : Result<&1,&1,U32 & String,String> <- Host.Control.command(installed_path)
-    source : Result<&1,&1,U32 & String,String> <- Host.Control.command(source_path)
+    installed : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(installed_path)
+    source : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(source_path)
     resolve_choice(installed,source)
 
 def error_text(error: U32 & String) -> String:

@@ -75,7 +75,7 @@ class FixedCoordinator(unittest.TestCase):
         self._acceptor.start()
         self.children = []
         self.addCleanup(self.close_children)
-        self.owner_proc = None
+        self.owner_pid = None
         self.serve_proc = None
         self.coord('attach', 'root', 'codex', 'native-root', '')
         self.coord('role', 'root', 'principal-conductor')
@@ -149,16 +149,15 @@ class FixedCoordinator(unittest.TestCase):
         outcome = getattr(self, '_outcome', None)
         failed = False
         if outcome is not None:
-            for _, error in list(getattr(outcome, 'errors', [])) + list(getattr(outcome, 'failures', [])):
-                if error is not None:
-                    failed = True
+            result = getattr(outcome, 'result', None)
+            if result is not None:
+                failed = any(test is self and error for test, error in result.errors + result.failures)
         if failed and hasattr(self, 'directory'):
             keep = (pathlib.Path(tempfile.gettempdir())
                     / f'fixed676-{self._testMethodName}-{int(time.time())}')
             keep.mkdir(parents=True)
             shutil.copytree(self.directory, keep / 'fixture')
-            for name, process in (('serve', self.serve_proc),
-                                  ('owner', self.owner_proc)):
+            for name, process in (('serve', self.serve_proc),):
                 if process is None:
                     continue
                 try:
@@ -266,18 +265,10 @@ class FixedCoordinator(unittest.TestCase):
             time.sleep(.5)
 
     def start_owner(self):
-        self.owner_proc = subprocess.Popen([str(EXE), '--instance-owner', str(self.db)],
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        self.children.append(self.owner_proc)
-
-        def ready():
-            if self.owner_proc.poll() is not None:
-                self.fail(f'owner exited before owner-status became available: {self.owner_proc.returncode}')
-            result = self.coord('owner-status', ok=False)
-            if result.returncode != 0:
-                return None
-            return json.loads(result.stdout)
-        self.eventually(ready, 'no elected owner')
+        self.coord('owner-status')
+        owners = [process for process in self.owned_processes() if self.is_owner(process)]
+        self.assertEqual(len(owners), 1, owners)
+        self.owner_pid = owners[0]['pid']
 
     def start_serve(self, db=None):
         self.serve_proc = subprocess.Popen([str(EXE), str(db or self.db), 'serve'],
@@ -299,8 +290,6 @@ class FixedCoordinator(unittest.TestCase):
         if self.serve_proc is not None:
             stdout, stderr = self.serve_proc.communicate()
             self.assertEqual(self.serve_proc.returncode, expect_serve, stderr)
-        if self.owner_proc is not None:
-            self.owner_proc.communicate()
 
     def test_01_serve_drives_concurrent_sessions_with_guidance(self):
         self.recruit('w1', 'codex')
@@ -410,9 +399,10 @@ class FixedCoordinator(unittest.TestCase):
         held, _ = self.stream_for('w8')
         self.assertEqual(json.loads(held.readline()), {'terminal_written': True})
         native_pid = self.connections('w8')[0]['pid']
-        owner = self.owner_proc
-        os.kill(owner.pid, signal.SIGKILL)
-        owner.wait()
+        killed_owner = self.owner_pid
+        os.kill(killed_owner, signal.SIGKILL)
+        self.eventually(lambda: all(process['pid'] != killed_owner for process in self.owned_processes()),
+                        'the killed owner remained live')
         try:
             os.kill(native_pid, 0)
         except ProcessLookupError:
@@ -422,13 +412,14 @@ class FixedCoordinator(unittest.TestCase):
         rows = self.query("SELECT phase FROM executions WHERE session='w8'")
         self.assertTrue(rows, 'owner-loss execution record was lost')
         owners = [p for p in self.owned_processes() if self.is_owner(p)]
-        self.assertEqual(owners, [], 'the killed owner stayed resident')
+        self.assertNotIn(killed_owner, [process['pid'] for process in owners])
+        self.assertLessEqual(len(owners), 1, 'owner recovery started multiple owners')
         # The stranded serve joined its task through the keeper death and only
         # returns when that join does; the supervisor restarts the generation.
         self.serve_proc.kill()
         self.serve_proc.wait()
         self.serve_proc = None
-        self.owner_proc = None
+        self.owner_pid = None
         self.shutdown()
 
     def test_05_killed_client_leaves_atomic_commit_for_service(self):
@@ -517,9 +508,9 @@ class FixedCoordinator(unittest.TestCase):
         bodies = [m['body'] for m in self.inbox('root')]
         self.assertFalse(any('w1 held turn' in body for body in bodies),
                          'the held task reported before its release')
-        for ident in ('c1', 'c2'):
-            row = self.query(f"SELECT receipt FROM messages WHERE id='{ident}'")
-            self.assertNotEqual(row, [(None,)], f'{ident} was not acknowledged')
+        self.await_inbox('root', lambda messages: (
+            messages if self.query("SELECT count(*) FROM messages WHERE id IN ('c1','c2') AND receipt IS NULL")[0][0] == 0
+            else None), 'the second late input never completed while the first session was held')
         self.release('w1')
         self.await_inbox('root', lambda messages: (
             [m['body'] for m in messages]

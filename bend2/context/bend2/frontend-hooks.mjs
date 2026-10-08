@@ -8,11 +8,11 @@
 // Upstream files stay intact. The derived copy is an owned artifact under this task, carrying the
 // upstream identity below; nothing here writes to or modifies the upstream originals.
 //
-// Compatible upstream source set, retrieved read-only from the repository's documented pin
-// a49524265bdfa5753a4bf38e25f0574a705dd868 (bendlang/bend), license Apache-2.0,
-// HigherOrderCO 2026:
-//   bend2/bend.ts   SHA256 93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85
-//   bend2/main.ts   SHA256 92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e
+// Frontend sources based on bendlang/bend pin
+// a49524265bdfa5753a4bf38e25f0574a705dd868, with local runtime-control removals.
+// License Apache-2.0, HigherOrderCO 2026; current source identities:
+//   bend2/bend.ts   SHA256 249da82e99067b013e45e221e3b10e224eb615787efb9e86f65f5d169bbffe8f
+//   bend2/main.ts   SHA256 158fda1fd44220d49ad514514dc51a6eaefb2929cbe5a366cdf5a1aa92e81a28
 //   bend2/comp.ts   SHA256 ad8b82137e5decf588d507d008cb8ccf24bd0b94043de8bd6e048d0faedcf959
 //   bend2/base.bend SHA256 e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798
 //   LICENSE         SHA256 0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35
@@ -31,8 +31,8 @@ export const UPSTREAM_PIN = 'a49524265bdfa5753a4bf38e25f0574a705dd868';
 export const UPSTREAM_LICENSE = Object.freeze({ name: 'Apache-2.0', holder: 'HigherOrderCO 2026', sha256: '0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35' });
 
 export const UPSTREAM_INPUTS = Object.freeze({
-  bend: Object.freeze({ path: 'bend2/bend.ts', sha256: '93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85' }),
-  main: Object.freeze({ path: 'bend2/main.ts', sha256: '92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e' }),
+  bend: Object.freeze({ path: 'bend2/bend.ts', sha256: '249da82e99067b013e45e221e3b10e224eb615787efb9e86f65f5d169bbffe8f' }),
+  main: Object.freeze({ path: 'bend2/main.ts', sha256: '158fda1fd44220d49ad514514dc51a6eaefb2929cbe5a366cdf5a1aa92e81a28' }),
   comp: Object.freeze({ path: 'bend2/comp.ts', sha256: 'ad8b82137e5decf588d507d008cb8ccf24bd0b94043de8bd6e048d0faedcf959' }),
   base: Object.freeze({ path: 'bend2/base.bend', sha256: 'e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798' }),
 });

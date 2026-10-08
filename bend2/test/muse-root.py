@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -162,7 +163,9 @@ class MuseConductorReceive(unittest.TestCase):
         self.assertEqual(started[0]['cwd'], str(self.repo.resolve()))
         args = started[0]['args']
         task_path = pathlib.Path(args[args.index('--prompt-file') + 1])
-        self.assertEqual(task_path.parent, self.directory)
+        with sqlite3.connect(self.db) as database:
+            attempts = database.execute("SELECT directory FROM executions WHERE session='root'").fetchall()
+        self.assertEqual(attempts, [(str(task_path.parent),)])
         self.assertIn('Start the Muse Conductor.', task_path.read_text())
         self.assertNotIn('--session-id', args)
         self.assertEqual(args[args.index('--model') + 1], 'muse-model')

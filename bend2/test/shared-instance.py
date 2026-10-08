@@ -886,7 +886,7 @@ class SharedInstance(unittest.TestCase):
         refusal = self.command('recover-observation', self.db, misplaced,
                                bootstrap, old_witness, 'terminal')
         self.assertNotEqual(refusal.returncode, 0, refusal.stdout + refusal.stderr)
-        self.assertIn('recover-attach-failed:', refusal.stderr + refusal.stdout)
+        self.assertIn('recovery-attach-failed:', refusal.stderr + refusal.stdout)
         self.assertEqual((directory / 'native.birth').read_bytes(), old_birth)
         recovered = self.spawn('recover-observation', self.db, directory,
                                bootstrap, old_witness, 'owner-loss')
