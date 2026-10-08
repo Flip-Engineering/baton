@@ -58,10 +58,6 @@ type ManagedExit is Data:
   ManagedExit{code: U32, complete: Bool}
   ManagedExitRefused{}
 
-type ManagedExitCode is Data:
-  ManagedExitCode{code: U32}
-  ManagedExitCodeRefused{}
-
 def invocation_frame(+invocation: Sel.Invocation) -> InvocationFrame:
   match invocation:
     case Sel.Invocation{version, query, owner, binding, request,
@@ -524,26 +520,21 @@ def boundary_member(+object: J.Json, +key: String) -> J.Json:
 def boundary_text(+object: J.Json, +key: String) -> String:
   Req.text_of(boundary_member(object, key))
 
-def managed_exit_code(+parsed: Maybe<U32>) -> ManagedExitCode:
+def managed_exit_code(+kind: String, parsed: Maybe<&2, U32>) -> ManagedExit:
   match parsed:
-    case Some{+code}: ManagedExitCode{code}
-    case None{}: ManagedExitCodeRefused{}
-
-def managed_exit_kind(+kind: String, +parsed: ManagedExitCode) -> ManagedExit:
-  match parsed:
-    case ManagedExitCode{+code}:
+    case Some{code}:
       Bool.pick(ManagedExit, String.eq(kind, "exit"),
         ManagedExit{code, U32.is_eq(code, 0)},
         Bool.pick(ManagedExit, String.eq(kind, "signal"),
           Bool.pick(ManagedExit, U32.is_lt(code, 128),
             ManagedExit{U32.add(code, 128), False{}},
             ManagedExit{255, False{}}), ManagedExitRefused{}))
-    case ManagedExitCodeRefused{}: ManagedExitRefused{}
+    case None{}: ManagedExitRefused{}
 
 def managed_exit_fields(fields: List<String>) -> ManagedExit:
   match fields:
     case +kind <> +code_text <> Nil{}:
-      managed_exit_kind(kind, managed_exit_code(U32.read(code_text)))
+      managed_exit_code(kind, U32.read(code_text))
     case other: ManagedExitRefused{}
 
 def managed_exit_status(+status: String) -> ManagedExit:
