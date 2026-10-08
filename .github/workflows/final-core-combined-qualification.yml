@@ -16,8 +16,8 @@ jobs:
       matrix:
         include:
           - product: combined-context
-            source_sha: 6b9ddeb815571e879a9be8005c9ea83772870e51
-            source_tree: 8bdb8fbd5f5c05b699f3895249c2d2cc7962b381
+            source_sha: 3bcad4326076617fa59c5b01ce7e7bda3b10c1ad
+            source_tree: c5add646cdff1e98a92c957fea2bced64b4f9c33
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
@@ -265,7 +265,7 @@ jobs:
       - name: Check out pinned product source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: 6b9ddeb815571e879a9be8005c9ea83772870e51
+          ref: 3bcad4326076617fa59c5b01ce7e7bda3b10c1ad
           path: source
       - name: Verify source and prepare runtime evidence
         shell: bash
@@ -282,11 +282,11 @@ jobs:
             printf 'suite=%s\n' '${{ matrix.suite }}'
             uname -a
           } > "$evidence/logs/identity.txt" 2>&1
-          test "$(git -C source rev-parse HEAD)" = '6b9ddeb815571e879a9be8005c9ea83772870e51'
-          test "$(git -C source rev-parse 'HEAD^{tree}')" = '8bdb8fbd5f5c05b699f3895249c2d2cc7962b381'
+          test "$(git -C source rev-parse HEAD)" = '3bcad4326076617fa59c5b01ce7e7bda3b10c1ad'
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = 'c5add646cdff1e98a92c957fea2bced64b4f9c33'
           git clone --no-hardlinks --quiet source owned
-          git -C owned checkout --quiet --detach '6b9ddeb815571e879a9be8005c9ea83772870e51'
-          test "$(git -C owned rev-parse 'HEAD^{tree}')" = '8bdb8fbd5f5c05b699f3895249c2d2cc7962b381'
+          git -C owned checkout --quiet --detach '3bcad4326076617fa59c5b01ce7e7bda3b10c1ad'
+          test "$(git -C owned rev-parse 'HEAD^{tree}')" = 'c5add646cdff1e98a92c957fea2bced64b4f9c33'
       - name: Select Node 22
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
