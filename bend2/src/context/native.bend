@@ -22,7 +22,6 @@ import ../coordinator/logs.bend as CoordinatorLogs
 import ./store.bend as ContextStore
 import ../host/sqlite.bend as DB
 import ../host/process.bend as Process
-import ../host/instance.bend as Instance
 import ../host/instance.bend as Custody
 import ../host/session-lock.bend as Host
 import ../git/process.bend as Git
@@ -729,14 +728,14 @@ def managed_start_decision(+db: String, +binding: String, +launch: ManagedLaunch
     case ManagedQuery.StartGranted{query, owner, role, incarnation, request,
         keeper_path, artifact_path, plan_value, result_schema}:
       do IO<Unit>:
-        started : Unit <- IO.try(Unit, Instance.start(handle,
+        started : Unit <- IO.try(Unit, Custody.Instance.start(handle,
           ManagedQuery.bootstrap_text(launch_bootstrap(launch)),
           ManagedQuery.start_decision_text(decision),
           ManagedQuery.bootstrap_owner_witness(launch_bootstrap(launch))))
         managed_observe_complete(db, binding, launch, handle)
     case ManagedQuery.StartCancelled{query, owner, reason, keeper_path}:
       do IO<Unit>:
-        cancelled : Unit <- IO.try(Unit, Instance.cancel(handle,
+        cancelled : Unit <- IO.try(Unit, Custody.Instance.cancel(handle,
           ManagedQuery.bootstrap_text(launch_bootstrap(launch)),
           ManagedQuery.start_decision_text(decision),
           ManagedQuery.bootstrap_owner_witness(launch_bootstrap(launch))))
@@ -959,7 +958,7 @@ def managed_recovery_attached_result(+db: String, +binding: String,
     case Fail{error}: IO.die(Unit, 3, "managedRecoveryAttachUnavailable")
     case Done{+handle}:
       do IO<Unit>:
-        state : Result<&1,&1,U32 & String,String> <- Instance.state(handle)
+        state : Result<&1,&1,U32 & String,String> <- Custody.Instance.state(handle)
         managed_recovery_state_result(db, binding, bootstrap, worktree,
           bootstrap_digest, handle, state)
 
@@ -971,7 +970,7 @@ def managed_recovery_attach_binding(+db: String,
     binding_ok : Bool <- managed_recovery_binding(db, bootstrap, binding_result)
     Bool.pick(IO(Unit), binding_ok,
       do IO<Unit>:
-        attached : Result<&1,&1,U32 & String,U32> <- Instance.attach(db,
+        attached : Result<&1,&1,U32 & String,U32> <- Custody.Instance.attach(db,
           ManagedQuery.bootstrap_keeper_path(bootstrap))
         managed_recovery_attached_result(db,
           ManagedQuery.bootstrap_database_binding(bootstrap), bootstrap,
@@ -1233,7 +1232,7 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
       keeper_path ++ "/invocation.json"])
     stderr_path : String = keeper_path ++ "/native.stderr"
     result : Result<&1,&1,U32 & String,U32 & String & String> <-
-      Instance.prepare_with_file_bounded_start(db, keeper_path, argv, cwd,
+      Custody.Instance.prepare_with_file_bounded_start(db, keeper_path, argv, cwd,
         stderr_path, budget, "invocation.json", invocation_text, SNil{}, 0, lock,
         recovery_argv, bootstrap_text, owner_witness)
     managed_prepare_result(db, binding, launch, result)
@@ -1248,7 +1247,7 @@ def managed_prepare_owner(+db: String, +binding: String, +owner: String,
                           +physical_identity: String, +lock: U32,
                           +budget: U32) -> IO(Unit):
   do IO<Unit>:
-    owner_witness : String <- IO.try(String, Instance.ensure_owner_witness(db))
+    owner_witness : String <- IO.try(String, Custody.Instance.ensure_owner_witness(db))
     origin_attempt : String <- owner_origin_attempt(db, binding, owner)
     managed_prepare_roles(db, binding, owner, query, request, cwd, worktree,
       source_identity, artifact_path, invocation_text, executable, runtime_path,
