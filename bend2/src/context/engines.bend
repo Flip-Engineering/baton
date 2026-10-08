@@ -242,4 +242,3 @@ def admit_after_known(k: OpsKnown, +operations: SS, +granted: SS) -> Admission:
 # union as its evidence of what was authorized.
 def admit_operations(+operations: SS, +granted: SS) -> Admission:
   Bool.pick(Admission, ss_nonempty(operations), admit_after_known(operations_known(operations), operations, granted), AdNoOperation{})
-
