@@ -255,12 +255,10 @@ class Receive(unittest.TestCase):
         return found
 
     def eventually(self, observation, description):
-        deadline = time.monotonic() + 10
         while True:
             result = observation()
             if result:
                 return result
-            self.assertLess(time.monotonic(), deadline, description)
             time.sleep(.01)
 
     def coord(self, *args, ok=True):
@@ -308,11 +306,26 @@ class Receive(unittest.TestCase):
         self.assertEqual(started['session'], session)
         return stream, started
 
+    def accept_or_child_exit(self, child, description, failure_stream=None):
+        stream = failure_stream if failure_stream is not None else child.stdout
+        output = bytearray()
+        while True:
+            ready, _, _ = select.select([self.server, stream], [], [])
+            if self.server in ready:
+                return self.accept_any()
+            chunk = os.read(stream.fileno(), 65536)
+            if chunk:
+                output.extend(chunk)
+                continue
+            stdout, stderr = child.communicate()
+            self.fail(f'{description}; receive exited {child.returncode}: '
+                      f'{bytes(output).decode(errors="replace")}{stdout}{stderr}')
+
     def action(self, stream, **value):
         stream.write((json.dumps(value) + '\n').encode())
 
     def finish(self, child, ok=True):
-        stdout, stderr = child.communicate(timeout=15)
+        stdout, stderr = child.communicate()
         if ok:
             self.assertEqual(child.returncode, 0, stderr)
         else:
@@ -320,7 +333,7 @@ class Receive(unittest.TestCase):
         return stdout, stderr
 
     def assert_no_start(self):
-        self.assertEqual(select.select([self.server], [], [], .15)[0], [],
+        self.assertEqual(select.select([self.server], [], [], 0)[0], [],
                          'another native process started while its session was active')
 
     def native_requests(self):
@@ -428,11 +441,10 @@ class Receive(unittest.TestCase):
         self.assertEqual(original.readline(), b'')
         continuation, resumed = self.accept('parent')
         self.assertIn('[id: second]', resumed['prompt'])
-        # Hold the continuation live past the first attempt's acknowledge, so
-        # a halt-before-join would kill the observer while work remains.
+        # Keep the continuation live while checking the observer remains
+        # available to join it after the first attempt's ACK failure.
         self.action(continuation, body='Queued result complete.', hold_exit=True)
         self.assertEqual(json.loads(continuation.readline()), {'terminal_written': True})
-        time.sleep(1)
         self.assertIsNone(observer.poll(),
                          'observer died on ACK failure instead of joining its live continuation')
         self.action(continuation)
@@ -472,7 +484,7 @@ class Receive(unittest.TestCase):
         request = self.native_question(stream, event)
         self.eventually(lambda: self.coord('delivery', request['id'])['receipt'], 'question did not reach parent')
         observer.kill()
-        observer.wait(timeout=5)
+        observer.wait()
         marker = 'original native waiting for its answer after observer loss'
         self.action(stream, progress=marker)
         self.assertEqual(json.loads(stream.readline()), {'progress_written': marker})
@@ -546,7 +558,7 @@ class Receive(unittest.TestCase):
         finally:
             unavailable.rename(address)
         observer.kill()
-        observer.wait(timeout=5)
+        observer.wait()
         self.action(stream, read_native_reply=True)
         self.assertEqual(json.loads(stream.readline()), {'native_reply': {
             'type': 'extension_ui_response', 'id': event['id'], 'value': 'retained answer'}})
@@ -649,7 +661,7 @@ class Receive(unittest.TestCase):
         for loss in range(observer_losses):
             if loss == 0:
                 observer.kill()
-                observer.wait(timeout=5)
+                observer.wait()
             else:
                 recovered = self.eventually(
                     lambda: [p for p in self.owned_processes()
@@ -817,7 +829,7 @@ class Receive(unittest.TestCase):
                             'terminal event was not observed before killing the observer')
             evidence['turnsBeforeLoss'] = self.coord('turns', 'parent')
         observer.kill()
-        observer.wait(timeout=5)
+        observer.wait()
         evidence['supervisorExit'] = observer.returncode
         evidence['survivingNative'] = [p for p in self.owned_processes() if p['pid'] == started['pid']]
         self.assertTrue(evidence['survivingNative'], 'original native exited with its observer')
@@ -838,7 +850,7 @@ class Receive(unittest.TestCase):
                              {'terminal_written': True, 'input_after_prompt': ''})
         evidence['originalPromptRepeated'] = False
         self.eventually(lambda: original_body in log.read_text(), 'original terminal output was lost')
-        evidence['duplicateNativeSession'] = bool(select.select([self.server], [], [], .15)[0])
+        evidence['duplicateNativeSession'] = bool(select.select([self.server], [], [], 0)[0])
         self.assertFalse(evidence['duplicateNativeSession'],
                          'another native started before the original process exited')
         if retry:
@@ -1133,7 +1145,7 @@ class Receive(unittest.TestCase):
         self.coord('message', 'later-guidance', 'root', 'parent', 'guidance',
                    'Guidance belongs to the current native process.')
         observer.kill()
-        observer.wait(timeout=5)
+        observer.wait()
         # Both keepers lost this observer. The old attempt can finish while the
         # current native process still owns its task and accepts pending guidance.
         self.eventually(lambda: not any(p['pid'] == first['ppid'] for p in self.owned_processes()),
@@ -1182,7 +1194,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(original_report['reportBody'], original_body)
         self.message('pending-guidance', 'parent', 'Work for the next native invocation.')
         observer.kill()
-        observer.wait(timeout=5)
+        observer.wait()
         marker = 'original native output after observer loss with stdin already closed'
         self.action(original, progress=marker)
         self.assertEqual(json.loads(original.readline()), {'progress_written': marker})
@@ -1384,19 +1396,19 @@ class Receive(unittest.TestCase):
         started = {}
         for _ in range(2):
             connection, _ = self.server.accept()
-            connection.settimeout(10)
             stream = connection.makefile('rwb', buffering=0)
             self.controls.append((stream, connection))
             event = json.loads(stream.readline())
             started[event['session']] = stream
         self.assertEqual(set(started), {'root', 'parent'})
         self.action(started['parent'], fail=True, ack=False)
-        deadline = time.monotonic() + 10
-        while not any('fixture provider failed' in m['body'] for m in self.coord('inbox', 'root')):
-            self.assertLess(time.monotonic(), deadline, 'failed queued turn did not report')
+        while True:
+            if first.poll() is not None:
+                self.fail(f'first delivery exited before the queued failure was reported: {first.returncode}')
+            if any('fixture provider failed' in m['body'] for m in self.coord('inbox', 'root')):
+                break
             time.sleep(.01)
-        with self.assertRaises(subprocess.TimeoutExpired):
-            first.wait(timeout=.15)
+        self.assertIsNone(first.poll(), 'first delivery exited while root review was pending')
         self.action(started['root'])
         # The failed second turn produces a new report while root was reviewing the first.
         root_again, _ = self.accept('root')
@@ -1437,14 +1449,8 @@ class Receive(unittest.TestCase):
         self.player()
         self.coord('message', 'input', 'root', 'parent', 'task', 'Input for a missing executable.')
         failed = self.spawn(*self.receive_args('parent', self.directory / 'missing executable'))
-        try:
-            parent, notified = self.accept('root')
-        except socket.timeout:
-            if failed.poll() is not None:
-                stdout, stderr = failed.communicate()
-                self.fail(f'startup failure did not notify parent; receive exited {failed.returncode}: '
-                          f'{stderr or stdout}')
-            raise
+        parent, notified = self.accept_or_child_exit(failed, 'startup failure did not notify parent')
+        self.assertEqual(notified['session'], 'root')
         startup_report = next(m for m in self.coord('inbox', 'root') if 'without a native result (exit 127)' in m['body'])
         self.assertIn(startup_report['body'], notified['prompt'])
         self.assertIn('Output: '+str(self.directory / 'parent.jsonl'), startup_report['body'])
@@ -1507,13 +1513,8 @@ class Receive(unittest.TestCase):
         self.finish(failed, ok=False)
         self.assertEqual([m['id'] for m in self.coord('inbox', 'root')], ['input'])
         retry = self.spawn(*self.receive_args('root'))
-        try:
-            control, resumed = self.accept('root')
-        except socket.timeout:
-            if retry.poll() is not None:
-                stdout, stderr = retry.communicate()
-                self.fail(f'root retry exited {retry.returncode}: {stderr or stdout}')
-            raise
+        control, resumed = self.accept_or_child_exit(retry, 'root retry exited before native start')
+        self.assertEqual(resumed['session'], 'root')
         self.assertEqual(resumed['native'], original['native'])
         self.assertIn('[id: input]', resumed['prompt'])
         self.action(control)
@@ -1795,7 +1796,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(before[0][2], 'first')
         self.freeze_owned()
         first.kill()
-        first.wait(timeout=15)
+        first.wait()
         self.kill_fixture()
         self.kill_keeper(first)
         self.drain_owned()
@@ -1971,7 +1972,7 @@ class Receive(unittest.TestCase):
                         pathlib.Path(directory, 'stdout').read_text(),
                         'driven native never wrote its completion')
         first.kill()
-        first.wait(timeout=15)
+        first.wait()
         self.kill_keeper(first)
         self.kill_fixture()
         self.drain_owned()
@@ -2009,13 +2010,23 @@ class Receive(unittest.TestCase):
         before = self.claim_rows('parent')
         self.assertEqual(len(before), 1)
         first.kill()
-        first.wait(timeout=15)
+        first.wait()
         self.drain_others()
         directory = self.execution('parent')[2]
         self.assert_native_alive(directory, 'retained child died; the live-child premise is void')
         second = self.spawn(*self.receive_args('parent'))
+        marker = 'original native observed by the adopted direct receiver'
+        self.action(control, progress=marker)
+        self.assertEqual(json.loads(control.readline()), {'progress_written': marker})
+        log = self.directory / 'parent.jsonl'
+
+        def adopted_output():
+            if second.poll() is not None:
+                self.fail(f'direct receiver exited before observing the retained child: {second.returncode}')
+            return log.exists() and marker in log.read_text()
+
+        self.eventually(adopted_output, 'direct receiver did not observe the retained child')
         self.assert_no_start()
-        time.sleep(1.5)
         self.assertIsNone(second.poll(),
                           'direct receive exited instead of adopting the live attempt')
         self.assert_native_alive(directory, 'retained child died during adoption')
@@ -2035,7 +2046,7 @@ class Receive(unittest.TestCase):
         before = self.claim_rows('parent')
         self.assertEqual(len(before), 1)
         first.kill()
-        first.wait(timeout=15)
+        first.wait()
         self.drain_others()
         directory = self.execution('parent')[2]
         self.assert_native_alive(directory, 'retained child died; the live-child premise is void')

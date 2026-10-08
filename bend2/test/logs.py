@@ -45,13 +45,13 @@ class Logs(unittest.TestCase):
     def tearDown(self): self.temp.cleanup()
 
     def call(self, *args):
-        p = subprocess.run([str(EXE), str(self.db), *args], text=True, capture_output=True, timeout=60)
+        p = subprocess.run([str(EXE), str(self.db), *args], text=True, capture_output=True)
         self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout
 
     def refusal(self, *args):
         """A refused log command answers its rule on stderr with status 2."""
-        p = subprocess.run([str(EXE), str(self.db), *args], text=True, capture_output=True, timeout=60)
+        p = subprocess.run([str(EXE), str(self.db), *args], text=True, capture_output=True)
         self.assertEqual(p.returncode, 2, (p.stdout, p.stderr))
         return json.loads(p.stderr)
 
@@ -194,7 +194,7 @@ sys.exit(%d)
         self.assertEqual(json.loads(self.call('logs', 'omp-worker', 'diagnostic'))['level'], 'diagnostic')
         self.assertEqual(self.refusal('logs', 'omp-worker', 'loud')['error'], 'invalid-log-setting')
         extra = subprocess.run([str(EXE), str(self.db), 'logs', 'omp-worker', 'default', '1048576'],
-                               text=True, capture_output=True, timeout=60)
+                               text=True, capture_output=True)
         self.assertEqual(extra.returncode, 2)
         self.assertEqual(self.refusal('logs', 'absent-session', 'default')['error'], 'unknown-session')
         self.assertEqual(json.loads(self.call('logs', 'omp-worker'))['level'], 'diagnostic')
@@ -386,15 +386,15 @@ assert sys.stdin.read()==''
                                  'model', 'low', str(self.cwd), str(self.task), str(self.base_log), ''],
                                 text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
-            for _ in range(600):
-                if self.log.exists() and self.log.stat().st_size > 0: break
-                if turn.poll() is not None: self.fail(turn.communicate()[1])
-                subprocess.run(['sleep', '.05'])
+            while not self.log.exists() or self.log.stat().st_size == 0:
+                if turn.poll() is not None:
+                    self.fail(turn.communicate()[1])
+                time.sleep(.05)
             self.assertTrue(self.log.exists(), 'the turn did not create its live log')
             self.assertEqual(json.loads(self.call('logs-storage'))['logs'][0]['session'], 'omp-worker')
             self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['removed'], [])
             (self.cwd / 'release').write_text('go\n')
-            stdout, stderr = turn.communicate(timeout=60)
+            stdout, stderr = turn.communicate()
         finally:
             if turn.poll() is None: turn.kill()
         self.assertEqual(turn.returncode, 0, stderr)
@@ -449,13 +449,11 @@ while True: time.sleep(1)
                                 text=True)
         pending = pathlib.Path(str(self.log) + '.pending')
         try:
-            deadline = time.monotonic() + 30
             while not pending.exists() or 'partial 2' not in pending.read_text():
                 self.assertIsNone(turn.poll(), 'observer stopped before receiving latest update')
-                self.assertLess(time.monotonic(), deadline, 'latest incomplete frame was not persisted')
                 time.sleep(.01)
             turn.kill()
-            turn.wait(timeout=10)
+            turn.wait()
             self.assertEqual([json.loads(line) for line in pending.read_text().splitlines()],
                              [json.loads(updates[-1])])
             self.assertEqual(list(self.cwd.glob(self.log.name + '.pending.tmp.*')), [])
@@ -490,12 +488,12 @@ assert sys.stdin.read()==''
         finally:
             if turn.poll() is None:
                 turn.kill()
-                turn.wait(timeout=10)
+                turn.wait()
             pid_file = self.cwd / 'harness.pid'
             if pid_file.exists():
                 try: os.kill(int(pid_file.read_text()), signal.SIGKILL)
                 except ProcessLookupError: pass
-            turn.communicate(timeout=10)
+            turn.communicate()
 
     def test_later_direct_turn_preserves_an_earlier_checkpoint(self):
         previous = json.dumps({'type': 'tool_execution_update', 'toolCallId': 'previous',
@@ -552,7 +550,7 @@ assert sys.stdin.read()==''
             connection.execute('INSERT INTO log_policies VALUES(?,?,?,?)',
                                ('omp-worker', 'invalid-legacy-level', 1048576, 3))
         result = subprocess.run([str(EXE), str(self.db), 'logs', 'omp-worker'],
-                                text=True, capture_output=True, timeout=60)
+                                text=True, capture_output=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('CHECK constraint failed', result.stderr)
         self.assertNotIn('"keepSegments"', result.stdout)

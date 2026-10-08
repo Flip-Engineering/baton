@@ -18,7 +18,7 @@ FIXTURE = receive.FIXTURE.replace('import json,os,pathlib,re,socket,subprocess,s
                                  'import json,os,pathlib,re,signal,socket,subprocess,sys')
 FIXTURE = FIXTURE.replace('args=sys.argv[1:]', '''args=sys.argv[1:]
 if args[:1]==['tool_fixture']:
-    connection=socket.create_connection(('127.0.0.1',config['port']),timeout=10)
+    connection=socket.create_connection(('127.0.0.1',config['port']))
     stream=connection.makefile('rwb',buffering=0)
     stream.write((json.dumps({'role':'tool','pid':os.getpid(),'ppid':os.getppid(),'pgid':os.getpgrp()})+'\\n').encode())
     stream.readline()

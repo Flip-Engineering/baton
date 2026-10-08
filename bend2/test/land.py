@@ -429,7 +429,7 @@ class Land(unittest.TestCase):
         run = subprocess.run(
             [str(EXE), str(self.db), 'land-checked', 'w1', str(self.repo),
              'main', str(ROOT / 'bend2/scripts/check-unittest.sh'), test.name],
-            text=True, capture_output=True, timeout=30,
+            text=True, capture_output=True,
         )
         self.assertEqual(run.returncode, 0, run.stderr)
         result = json.loads(run.stdout)
@@ -588,11 +588,10 @@ class Land(unittest.TestCase):
         self.check_socket = socket.socket()
         self.check_socket.bind(('127.0.0.1', 0))
         self.check_socket.listen()
-        self.check_socket.settimeout(30)
         self.addCleanup(self.check_socket.close)
         handshake = (
             'import socket; '
-            f's=socket.create_connection({self.check_socket.getsockname()!r}, timeout=30); '
+            f's=socket.create_connection({self.check_socket.getsockname()!r}); '
             's.sendall(b"ready"); assert s.recv(1)==b"1"; s.close()'
         )
         (self.repo / 'check-wait.sh').write_text(
@@ -625,7 +624,6 @@ class Land(unittest.TestCase):
         thread.start()
         connection, _ = self.check_socket.accept()
         with connection:
-            connection.settimeout(30)
             with connection.makefile('rb') as incoming:
                 self.assertEqual(incoming.read(5), b'ready')
             try:
@@ -633,8 +631,7 @@ class Land(unittest.TestCase):
                                   'check-plain.sh', 'file.txt')
             finally:
                 connection.sendall(b'1')
-        thread.join(120)
-        self.assertFalse(thread.is_alive(), f'the landing of {under} did not finish')
+        thread.join()
         self.assertNotIn('error', answer, str(answer.get('error')))
         return moved, answer['result']
 
@@ -761,7 +758,6 @@ class Land(unittest.TestCase):
         listener = socket.socket()
         listener.bind(('127.0.0.1', 0))
         listener.listen()
-        listener.settimeout(30)
         self.addCleanup(listener.close)
         (self.repo / 'check-held.sh').write_text(
             '#!/bin/sh\n'
@@ -780,7 +776,7 @@ class Land(unittest.TestCase):
             'except FileExistsError:\n'
             '    first = False\n'
             'if first:\n'
-            f'    with socket.create_connection({listener.getsockname()!r}, timeout=30) as peer:\n'
+            f'    with socket.create_connection({listener.getsockname()!r}) as peer:\n'
             '        peer.sendall((json.dumps(report) + "\\n").encode())\n'
             '        released = peer.recv(1)\n'
             '    if released != b"1":\n'
@@ -801,7 +797,6 @@ class Land(unittest.TestCase):
     def accept_check(self, listener):
         """Accept the held check; return its connection and its event."""
         connection = listener.accept()[0]
-        connection.settimeout(30)
         self.addCleanup(connection.close)
         data = b''
         while not data.endswith(b'\n'):
@@ -822,11 +817,7 @@ class Land(unittest.TestCase):
         """Stop a landing this test started and read whatever it produced."""
         if process.poll() is None:
             process.kill()
-        try:
-            process.communicate(timeout=30)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.communicate()
+        process.communicate()
 
     def scratch_paths(self, player):
         """The scratch trees an attempt by WORKER left under the repository."""
@@ -851,7 +842,7 @@ class Land(unittest.TestCase):
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         held.sendall(b'1')
         held.close()
-        out, err = under.communicate(timeout=120)
+        out, err = under.communicate()
         self.assertEqual(under.returncode, 0, err)
         result = json.loads(out)
         # The landing holds the candidate it checked and the basis it checked

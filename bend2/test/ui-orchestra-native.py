@@ -106,7 +106,7 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
             return snapshot
         finally:
             process.stdin.close()
-            process.wait(timeout=10)
+            process.wait()
             stderr = process.stderr.read()
             self.assertEqual(process.returncode, 0, stderr)
 

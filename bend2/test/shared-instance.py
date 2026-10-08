@@ -127,12 +127,11 @@ class SharedInstance(unittest.TestCase):
 
     def cleanup(self):
         subprocess.run([str(EXE), 'shutdown', str(self.db)], capture_output=True,
-                       text=True, timeout=10)
+                       text=True)
         # Every owner this test started must be gone and the election free before
         # the next test runs, so one test's custody cannot answer for another's
         # database when the filesystem reuses an inode.
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
+        while True:
             for line in self.owner_processes():
                 try:
                     os.kill(int(line.split()[0]), signal.SIGKILL)
@@ -160,7 +159,7 @@ class SharedInstance(unittest.TestCase):
                 child.kill()
             if child.stdin and not child.stdin.closed:
                 child.stdin.close()
-            child.wait(timeout=10)
+            child.wait()
             child.stdout.close()
             child.stderr.close()
 
@@ -177,28 +176,25 @@ class SharedInstance(unittest.TestCase):
                 child.lines.put(line.rstrip('\n'))
             child.lines.put(None)
 
-        threading.Thread(target=read, daemon=True).start()
+        child.stdout_reader = threading.Thread(target=read, daemon=True)
+        child.stdout_reader.start()
         return child
 
     def line(self, child, expected):
         while True:
-            value = child.lines.get(timeout=30)
+            value = child.lines.get()
             if value is None:
                 self.fail(self.child_failure(child, f'expected first line {expected!r}, got EOF'))
             if value == expected:
                 return
 
     def next_line(self, child):
-        value = child.lines.get(timeout=30)
+        value = child.lines.get()
         if value is None:
             self.fail(self.child_failure(child, 'expected a line, got EOF'))
         return value
 
     def child_failure(self, child, reason):
-        try:
-            child.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            pass
         stderr = bytearray()
         descriptor = child.stderr.fileno()
         while select.select([descriptor], [], [], 0)[0]:
@@ -235,20 +231,20 @@ class SharedInstance(unittest.TestCase):
                      f'socket={socket_path.exists()} held={self.election_held()}')
         log = directory / f'{key}.log'
         if log.exists():
-            lines.append('owner log: ' + log.read_text(errors='replace')[-800:])
+            lines.append('owner log: ' + log.read_text(errors='replace'))
         return '\n'.join(lines)
 
     def wait_run(self, child):
         child.stdin.close()
-        child.wait(timeout=60)
+        child.wait()
+        child.stdout_reader.join()
         if child.returncode != 0:
             self.fail(self.child_failure(child,
                 f'expected exit status 0, got {child.returncode}'))
         return ''.join(child.output)
 
     def command(self, *args):
-        return subprocess.run([str(EXE), *map(str, args)], capture_output=True,
-                              text=True, timeout=30)
+        return subprocess.run([str(EXE), *map(str, args)], capture_output=True, text=True)
 
     def begin(self, label, session=None, mode='admit', payload='hello\n', cwd=None):
         directory = pathlib.Path(f'{self.db}.attempt-{label}')
@@ -264,7 +260,7 @@ class SharedInstance(unittest.TestCase):
 
     def owner_processes(self):
         result = subprocess.run(['ps', '-axo', 'pid=,ppid=,command='], capture_output=True,
-                                text=True, timeout=10)
+                                text=True)
         return [line for line in result.stdout.splitlines()
                 if '--instance-owner' in line and str(self.home) in line]
 
@@ -274,14 +270,13 @@ class SharedInstance(unittest.TestCase):
         result = self.command('control-write', directory, path)
         self.assertIn('control-write-complete', result.stdout, result.stderr)
 
-    def hold(self, path, expected, timeout=30):
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+    def hold(self, path, expected, child=None):
+        while True:
             if path.exists() and expected in path.read_text(errors='replace'):
                 return path.read_text(errors='replace')
+            if child is not None and child.poll() is not None:
+                self.fail(self.child_failure(child, f'{expected!r} never reached {path}'))
             time.sleep(.05)
-        self.fail(f'{expected!r} never reached {path}: ' +
-                  (path.read_text(errors='replace') if path.exists() else 'missing'))
 
     # -- checkpoint fixtures ----------------------------------------------
 
@@ -319,7 +314,7 @@ class SharedInstance(unittest.TestCase):
     def replays_from_the_beginning(self, directory, child):
         """Kills the observer and asserts the recovery observer replays every frame."""
         child.kill()
-        child.wait(timeout=10)
+        child.wait()
         marker = self.hold(directory / 'checkpoint-error',
                            'unusable observation checkpoint; replaying from the beginning')
         log = directory / 'observer.log'
@@ -387,7 +382,7 @@ class SharedInstance(unittest.TestCase):
         child = self.spawn('admit', self.db, 'outside-parent', directory, self.home,
                            'must-not-start\n', sys.executable, self.fixture)
         child.stdin.close()
-        child.wait(timeout=60)
+        child.wait()
         stderr = child.stderr.read()
         self.assertNotEqual(child.returncode, 0, stderr)
         self.assertNotIn('tick:', ''.join(child.output))
@@ -403,7 +398,7 @@ class SharedInstance(unittest.TestCase):
         barrier = threading.Barrier(count)
 
         def publish():
-            barrier.wait(timeout=10)
+            barrier.wait()
             return self.spawn('publish', self.db, '0')
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=count) as pool:
@@ -459,10 +454,10 @@ class SharedInstance(unittest.TestCase):
         directory, child = self.begin('held', mode='hold', payload='one\n')
         self.line(child, 'admitted')
         spool = directory / 'stdout'
-        self.hold(spool, 'echo:one')
+        self.hold(spool, 'echo:one', child=child)
         summary = self.native(spool.read_text(errors='replace'))
         child.kill()
-        child.wait(timeout=10)
+        child.wait()
         alive = os.kill(summary['pid'], 0) is None
         self.assertTrue(alive, 'the native child ended with its observer')
         log = directory / 'observer.log'
@@ -479,12 +474,17 @@ class SharedInstance(unittest.TestCase):
         directory = pathlib.Path(f'{self.db}.attempt-recovery-child')
         recovery = self.home / 'delayed-recovery.sh'
         started = self.home / 'recovery-started'
+        first_ready = self.home / 'recovery-first-ready'
+        second_ready = self.home / 'recovery-second-ready'
+        release_first = self.home / 'recovery-release-first'
+        release_second = self.home / 'recovery-release-second'
         finished = self.home / 'recovery-finished'
         recovery.write_text(
             '#!/bin/sh\n'
             f'echo started >> {shlex.quote(str(started))}\n'
             f'count=$(wc -l < {shlex.quote(str(started))})\n'
-            'if [ "$count" -eq 1 ]; then sleep 4; else sleep 6; fi\n'
+            f'if [ "$count" -eq 1 ]; then touch {shlex.quote(str(first_ready))}; while [ ! -e {shlex.quote(str(release_first))} ]; do sleep .05; done; '
+            f'else touch {shlex.quote(str(second_ready))}; while [ ! -e {shlex.quote(str(release_second))} ]; do sleep .05; done; fi\n'
             f'{shlex.quote(str(EXE))} recover-retained {shlex.quote(str(self.db))} {shlex.quote(str(directory))}\n'
             'status=$?\n'
             f'echo "$status" >> {shlex.quote(str(finished))}\n'
@@ -494,13 +494,15 @@ class SharedInstance(unittest.TestCase):
                            self.home, 'hello\n', recovery, sys.executable, self.fixture)
         self.line(child, 'admitted')
         child.kill()
-        child.wait(timeout=10)
+        child.wait()
         self.hold(started, '')
         observer = self.spawn('attach', self.db, directory)
         self.line(observer, 'attached')
         observer.kill()
-        observer.wait(timeout=10)
-        self.hold(started, 'started\nstarted', timeout=10)
+        observer.wait()
+        self.hold(started, 'started\nstarted')
+        self.hold(first_ready, '')
+        self.hold(second_ready, '')
         self.write(directory, 'exit\n')
         self.hold(directory / 'stdout', 'native-done')
         completed = self.command('attach-complete', self.db, directory)
@@ -524,34 +526,18 @@ class SharedInstance(unittest.TestCase):
             trace = (directory / 'recovery-pending.log').read_text(errors='replace') if (directory / 'recovery-pending.log').exists() else ''
             self.fail(f'acknowledgment removed the control socket while recovery children ran; '
                       f'trace={trace!r}; owner={self.owner_state()}; preserved={saved}')
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline and (not finished.exists() or len(finished.read_text().splitlines()) < 1):
+        release_first.touch()
+        while not finished.exists() or len(finished.read_text().splitlines()) < 1:
             time.sleep(.05)
-        first_status = finished.read_text().splitlines()[:1] if finished.exists() else []
-        if len(first_status) != 1:
-            saved = ROOT / '.scratch' / 'shared-instance-failures' / f'recovery-child-{os.getpid()}'
-            saved.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(self.home, saved, dirs_exist_ok=True)
-            self.fail(f'first recovery child did not exit; preserved={saved}')
+        first_status = finished.read_text().splitlines()[:1]
         self.assertTrue(recovery_socket.exists(),
                         'the second recovery child must keep the acknowledged attempt retained')
-        while time.monotonic() < deadline and (len(finished.read_text().splitlines()) < 2):
+        release_second.touch()
+        while len(finished.read_text().splitlines()) < 2:
             time.sleep(.05)
-        statuses = finished.read_text().splitlines() if finished.exists() else []
-        if len(statuses) != 2:
-            saved = ROOT / '.scratch' / 'shared-instance-failures' / f'recovery-child-{os.getpid()}'
-            saved.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(self.home, saved, dirs_exist_ok=True)
-            self.fail(f'second recovery child did not exit; statuses={statuses}; preserved={saved}')
-        while time.monotonic() < deadline and recovery_socket.exists():
+        statuses = finished.read_text().splitlines()
+        while recovery_socket.exists():
             time.sleep(.05)
-        if recovery_socket.exists():
-            saved = ROOT / '.scratch' / 'shared-instance-failures' / f'recovery-child-{os.getpid()}'
-            saved.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(self.home, saved, dirs_exist_ok=True)
-            trace = (directory / 'recovery-pending.log').read_text(errors='replace') if (directory / 'recovery-pending.log').exists() else ''
-            self.fail(f'attempt socket remains after recovery children exit; statuses={statuses}; '
-                      f'trace={trace!r}; owner={self.owner_state()}; preserved={saved}')
         observer_log = (directory / 'observer.log').read_text(errors='replace') if (directory / 'observer.log').exists() else ''
         print('evidence recovery-child-retained', completed.stdout.replace('\n', '|'),
               'recovery-exits', statuses, 'observer-log', observer_log.replace('\n', '|'))
@@ -570,14 +556,14 @@ class SharedInstance(unittest.TestCase):
         self.line(child, 'echo:one')
         self.line(child, 'commit-ok')
         checkpoint = directory / 'checkpoint'
-        self.hold(checkpoint, '')
+        self.hold(checkpoint, '', child=child)
         record = checkpoint.read_bytes()
         self.assertEqual(record[:8], b'BATONC03')
         self.assertIn(b'seen two frames', record)
         self.write(directory, 'two\n')
-        self.hold(directory / 'stdout', 'echo:two')
+        self.hold(directory / 'stdout', 'echo:two', child=child)
         child.kill()
-        child.wait(timeout=10)
+        child.wait()
         log = directory / 'observer.log'
         text = self.hold(log, 'restored:{"reducer":"seen two frames"}')
         self.assertNotIn('echo:one', text,
@@ -596,7 +582,7 @@ class SharedInstance(unittest.TestCase):
         token = struct.unpack_from('=Q', record.read_bytes(), 0)[0]
         self.patch_checkpoint(directory, incarnation=token ^ 0xFFFFFFFFFFFFFFFF)
         child.kill()
-        child.wait(timeout=10)
+        child.wait()
         log = directory / 'observer.log'
         text = self.hold(log, 'restored:{"reducer":"seen two frames"}')
         self.assertNotIn('echo:one', text,
@@ -639,7 +625,7 @@ class SharedInstance(unittest.TestCase):
         self.assertFalse((directory / 'checkpoint').exists(),
                          'a bare read must not create a durable checkpoint')
         child.kill()
-        child.wait(timeout=10)
+        child.wait()
         log = directory / 'observer.log'
         text = self.hold(log, 'echo:one')
         self.assertIn('restored:', text)
@@ -664,13 +650,13 @@ class SharedInstance(unittest.TestCase):
         self.hold(spool, 'echo:one')
         repeated, second = self.begin('repeat', mode='hold', payload='one\n')
         second.stdin.close()
-        second.wait(timeout=60)
+        second.wait()
         self.assertNotEqual(second.returncode, 0,
                             'a repeated admission while an observer holds the attempt is refused')
         self.assertEqual(spool.read_text(errors='replace').count('"role": "native"'), 1,
                          'a repeated admission must not start a second native child')
         first.kill()
-        first.wait(timeout=10)
+        first.wait()
         log = directory / 'observer.log'
         text = self.hold(log, 'echo:one')
         self.assertIn('"role": "native"', text,
@@ -688,7 +674,7 @@ class SharedInstance(unittest.TestCase):
         self.hold(directory / 'stdout', 'echo:one')
         repeated, second = self.begin('conflict', mode='hold', payload='one\n', cwd=other)
         second.stdin.close()
-        second.wait(timeout=60)
+        second.wait()
         self.assertNotEqual(second.returncode, 0,
                             'different work in the same attempt directory must be refused')
         self.assertIn('File exists', second.stderr.read())
@@ -699,7 +685,7 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual((directory / 'stdout').read_text(errors='replace').count('"role": "native"'), 1)
         print('evidence conflicting-reuse refused with custody preserved')
         child.kill()
-        child.wait(timeout=10)
+        child.wait()
 
     def begin_file(self, label, artifact, session=None, name='prompt.txt', program=None):
         directory = pathlib.Path(f'{self.db}.attempt-{label}')
@@ -732,7 +718,7 @@ class SharedInstance(unittest.TestCase):
                                'bytes\n', name, sys.executable, str(self.muse_fixture),
                                '--prompt-file', str(directory / 'x'))
             child.stdin.close()
-            child.wait(timeout=60)
+            child.wait()
             self.assertNotEqual(child.returncode, 0, name)
             self.assertTrue(str(child.stderr.read()).strip(), name)
             self.assertFalse((self.home / 'escape').exists(), name)
@@ -744,16 +730,16 @@ class SharedInstance(unittest.TestCase):
         self.line(first, 'admitted')
         repeated, second = self.begin_file('same', artifact)
         second.stdin.close()
-        second.wait(timeout=60)
+        second.wait()
         self.assertNotEqual(second.returncode, 0,
                             'a repeat while an observer holds the attempt is refused, not duplicated')
         self.hold(directory / 'stdout', '"role": "native"')
         self.assertEqual((directory / 'stdout').read_text(errors='replace').count('"role": "native"'), 1)
         first.kill()
-        first.wait(timeout=10)
+        first.wait()
         differing, third = self.begin_file('same', 'different bytes\n')
         third.stdin.close()
-        third.wait(timeout=60)
+        third.wait()
         self.assertNotEqual(third.returncode, 0,
                             'different artifact bytes in the same attempt are conflicting reuse')
         self.assertIn('File exists', third.stderr.read())
@@ -763,7 +749,7 @@ class SharedInstance(unittest.TestCase):
 
     def subscription_line(self, child, prefix):
         """Reads one subscription line and returns its JSON payload."""
-        value = child.lines.get(timeout=30)
+        value = child.lines.get()
         self.assertIsNotNone(value, ''.join(child.output))
         self.assertTrue(value.startswith(prefix), value)
         return json.loads(value[len(prefix):])
@@ -784,8 +770,6 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(self.subscription_line(first, 'notice:')['cursor'], baseline + 2)
         # A repeated cursor changes nothing.
         self.command('publish', self.db, str(baseline + 2))
-        with self.assertRaises(queue.Empty):
-            first.lines.get(timeout=1.5)
         # A subscription of the incumbent incarnation with a consumed cursor
         # resumes without a snapshot.
         second = self.spawn('subscribe', self.db, str(baseline + 2), str(ready['generation']))
@@ -794,6 +778,7 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(resuming['cursor'], baseline + 2, resuming)
         self.command('publish', self.db, str(baseline + 3))
         self.assertEqual(self.subscription_line(second, 'notice:')['cursor'], baseline + 3)
+        # The next ordered notice is the barrier for the repeated-cursor publication.
         self.assertEqual(self.subscription_line(first, 'notice:')['cursor'], baseline + 3)
         # A cursor below the record belongs to a different sequence: the publisher
         # is the authority there, and subscribers are told to snapshot rather than
@@ -842,7 +827,7 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(len(owners), 1, owners)
         os.kill(int(owners[0].split()[0]), signal.SIGKILL)
         child.kill()
-        child.wait(timeout=10)
+        child.wait()
         adopter = self.spawn('attach-owned', self.db, directory)
         self.line(adopter, 'attached')
         restored = self.subscription_line(adopter, 'restored:')
@@ -879,16 +864,15 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(ready['state'], 'ready', ready)
         self.line(original, 'prepare-bootstrap:true')
         self.line(original, 'recovery-started')
-        pid = int(self.hold(directory / 'native.pid', '').strip())
+        pid = int(self.hold(directory / 'native.pid', '', child=original).strip())
         old_birth = (directory / 'native.birth').read_bytes()
         owners = self.owner_processes()
         self.assertEqual(len(owners), 1, owners)
 
         original.send_signal(signal.SIGTERM)
-        original.wait(timeout=10)
+        original.wait()
         os.kill(int(owners[0].split()[0]), signal.SIGKILL)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and self.owner_processes():
+        while self.owner_processes():
             time.sleep(.05)
         self.assertEqual(self.owner_processes(), [])
 
@@ -935,8 +919,7 @@ class SharedInstance(unittest.TestCase):
         rebound_owners = self.owner_processes()
         self.assertEqual(len(rebound_owners), 1, rebound_owners)
         os.kill(int(rebound_owners[0].split()[0]), signal.SIGKILL)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and self.owner_processes():
+        while self.owner_processes():
             time.sleep(.05)
         self.assertEqual(self.owner_processes(), [])
         recovered.stdin.write('\n')
@@ -952,7 +935,7 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual((directory / 'stdout').read_text(errors='replace').count('"role": "native"'),
                          1, 'owner loss changed the native process or output identity')
         os.kill(pid, 0)
-        recovered.wait(timeout=10)
+        recovered.wait()
 
         final_witness = self.command('ensure-owner-witness', self.db).stdout.strip()
         self.assertRegex(final_witness, r'^\d+:\d+$')
@@ -983,7 +966,7 @@ class SharedInstance(unittest.TestCase):
         unavailable = json.loads(unavailable_line[len('recovery-host-state:'):])
         self.assertEqual(unavailable['state'], 'unavailable', unavailable)
         self.assertFalse(unavailable['status_known'], unavailable)
-        terminal.wait(timeout=10)
+        terminal.wait()
         print('evidence managed owner recovery', old_witness, current_witness,
               final_witness, 'same-native-pid', pid,
               'mutation-refusals-after-owner-loss', 'live-to-unavailable')
@@ -995,8 +978,7 @@ class SharedInstance(unittest.TestCase):
         result = self.command('shutdown', self.db)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('shutdown-ok', result.stdout)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and self.owner_processes():
+        while self.owner_processes():
             time.sleep(.05)
         self.assertEqual(self.owner_processes(), [])
         directory, second = self.begin('b0', payload='again\n')

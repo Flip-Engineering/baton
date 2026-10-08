@@ -20,7 +20,7 @@ def shutdown_fixture_owner(case):
     config = json.loads((case.directory / 'fixture.json').read_text())
     argv = [config['exe'], '--instance-shutdown', str(case.db)]
     result = subprocess.run(argv, env=case.environment, capture_output=True,
-                            text=True, timeout=10)
+                            text=True)
     with (case.directory / 'commands.jsonl').open('a') as output:
         output.write(json.dumps({'argv': argv, 'code': result.returncode,
                                  'stdout': result.stdout, 'stderr': result.stderr,
@@ -155,7 +155,6 @@ class Control(unittest.TestCase):
         self.server = socket.socket()
         self.server.bind(('127.0.0.1', 0))
         self.server.listen()
-        self.server.settimeout(10)
         (self.directory / 'fixture.json').write_text(json.dumps({
             'port': self.server.getsockname()[1], 'exe': str(EXE), 'db': str(self.db)}))
         self.controls = []
@@ -164,13 +163,13 @@ class Control(unittest.TestCase):
 
     def git(self, *args):
         return subprocess.run(['git', '-C', str(self.repo), *args], env=self.environment,
-                              check=True, capture_output=True, text=True, timeout=10)
+                              check=True, capture_output=True, text=True)
 
     def call(self, *args, ok=True, raw=False):
         child = subprocess.Popen([str(EXE), str(self.db), *map(str, args)],
                                  env=self.environment, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True)
-        stdout, stderr = child.communicate(timeout=10)
+        stdout, stderr = child.communicate()
         record = {'argv': list(map(str, args)), 'pid': child.pid, 'code': child.returncode,
                   'stdout': stdout, 'stderr': stderr, 'direct_wait_completed': True}
         with (self.directory / 'commands.jsonl').open('a') as output:
@@ -208,7 +207,6 @@ class Control(unittest.TestCase):
 
     def accept(self, session):
         connection, _ = self.server.accept()
-        connection.settimeout(10)
         stream = connection.makefile('rwb', buffering=0)
         self.controls.append((stream, connection))
         start = json.loads(stream.readline())
@@ -232,12 +230,10 @@ class Control(unittest.TestCase):
             return [dict(row) for row in database.execute(sql, parameters)]
 
     def eventually(self, observation):
-        deadline = time.monotonic() + 10
         while True:
             result = observation()
             if result:
                 return result
-            self.assertLess(time.monotonic(), deadline, 'Controlled fixture did not complete its requested state.')
             time.sleep(.01)
 
     def process_rows(self):

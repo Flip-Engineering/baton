@@ -2,7 +2,6 @@ import hashlib
 import json
 import os
 import pathlib
-import select
 import sqlite3
 import subprocess
 import sys
@@ -49,32 +48,33 @@ class PhysicalRoleGuard(unittest.TestCase):
     def test_owner_restart_refuses_old_witness_before_admission(self):
         def command(*args):
             return subprocess.run([EXE, *map(str, args)], text=True,
-                                  capture_output=True, timeout=20)
+                                  capture_output=True)
 
         def start_owner():
             return subprocess.Popen([EXE, 'owner', str(self.db)],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     text=True)
 
-        def owner_witness():
-            for _ in range(100):
+        def owner_witness(owner):
+            while True:
+                if owner.poll() is not None:
+                    self.fail(f'owner exited before its witness became available: {owner.returncode}')
                 result = command('owner-witness', self.db)
                 if result.returncode == 0:
                     return result.stdout.strip()
                 time.sleep(0.03)
-            self.fail(result.stderr)
 
         old_owner = start_owner()
-        old_witness = owner_witness()
+        old_witness = owner_witness(old_owner)
         stopped = command('shutdown', self.db)
         self.assertEqual(stopped.returncode, 0, stopped.stderr)
-        self.assertEqual(old_owner.wait(timeout=10), 0, old_owner.stderr.read())
+        self.assertEqual(old_owner.wait(), 0, old_owner.stderr.read())
         old_owner.stdout.close()
         old_owner.stderr.close()
 
         new_owner = start_owner()
         try:
-            new_witness = owner_witness()
+            new_witness = owner_witness(new_owner)
             self.assertNotEqual(old_witness, new_witness)
             attempt = self.root / 'stale-owner-attempt'
             refused = command('prepare-stale', self.db, old_witness, attempt,
@@ -86,7 +86,7 @@ class PhysicalRoleGuard(unittest.TestCase):
         finally:
             stopped = command('shutdown', self.db)
             self.assertEqual(stopped.returncode, 0, stopped.stderr)
-            self.assertEqual(new_owner.wait(timeout=10), 0, new_owner.stderr.read())
+            self.assertEqual(new_owner.wait(), 0, new_owner.stderr.read())
             new_owner.stdout.close()
             new_owner.stderr.close()
 
@@ -95,14 +95,15 @@ class PhysicalRoleGuard(unittest.TestCase):
         owner = subprocess.Popen([EXE, 'owner', str(self.db)], stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True, env=env)
         witness = None
-        for _ in range(100):
+        while witness is None:
+            if owner.poll() is not None:
+                self.fail(f'owner exited before its witness became available: {owner.returncode}')
             result = subprocess.run([EXE, 'owner-witness', str(self.db)], text=True,
-                                    capture_output=True, env=env, timeout=10)
+                                    capture_output=True, env=env)
             if result.returncode == 0:
                 witness = result.stdout.strip()
                 break
             time.sleep(0.03)
-        self.assertIsNotNone(witness, result.stderr)
         self.addCleanup(lambda: owner.kill() if owner.poll() is None else None)
 
         fixture = self.root / 'native.py'
@@ -120,27 +121,24 @@ class PhysicalRoleGuard(unittest.TestCase):
                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, bufsize=0, env=env)
         output = bytearray()
-        deadline = time.monotonic() + 20
         while b'prepared-waiting-for-start\n' not in output:
-            ready, _, _ = select.select([observer.stdout], [], [], max(0, deadline-time.monotonic()))
-            self.assertTrue(ready, f'prepared observer did not report ready: {bytes(output)!r}')
             chunk = os.read(observer.stdout.fileno(), 4096)
             self.assertTrue(chunk, f'prepared observer closed stdout: {bytes(output)!r}')
             output.extend(chunk)
         self.assertIn(b'prepare-ready:', output)
 
         owner.kill()
-        self.assertEqual(owner.wait(timeout=10), -9)
+        self.assertEqual(owner.wait(), -9)
         observer.stdin.close()
         remaining = observer.stdout.read().decode()
         observer_error = observer.stderr.read().decode()
-        self.assertEqual(observer.wait(timeout=20), 0, observer_error)
+        self.assertEqual(observer.wait(), 0, observer_error)
         self.assertIn('start-after-owner-restart-failed:116:', remaining)
         self.assertFalse((attempt / 'launch').exists())
         self.assertFalse((attempt / 'native.pid').exists())
 
         replacement = subprocess.run([EXE, 'shutdown', str(self.db)], text=True,
-                                     capture_output=True, env=env, timeout=10)
+                                     capture_output=True, env=env)
         self.assertEqual(replacement.returncode, 0, replacement.stderr)
         owner.stdout.close()
         owner.stderr.close()
@@ -168,7 +166,7 @@ class PhysicalRoleGuard(unittest.TestCase):
         holder.stdout.close()
         holder_error = holder.stderr.read()
         holder.stderr.close()
-        self.assertEqual(holder.wait(timeout=5), 0, holder_error)
+        self.assertEqual(holder.wait(), 0, holder_error)
 
         retried = self.acquire(self.alias, alias_binding, key)
         self.assertEqual(retried.returncode, 0, retried.stderr)

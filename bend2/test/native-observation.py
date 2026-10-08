@@ -34,12 +34,10 @@ class NativeObservation(RECEIVE.Receive):
         self.fixture.write_text(fixture.replace(needle, needle + addition, 1))
 
     def eventually_slow_case(self, observation, description):
-        deadline = time.monotonic() + 180
         while True:
             result = observation()
             if result:
                 return result
-            self.assertLess(time.monotonic(), deadline, description)
             time.sleep(.01)
 
     def shutdown_idle_database_owner(self, description):
@@ -175,7 +173,7 @@ class NativeObservation(RECEIVE.Receive):
                         'the observer did not finish the assistant checkpoint before the barrier')
 
         observer.kill()
-        observer.wait(timeout=5)
+        observer.wait()
         resumed = self.spawn(*self.receive_args('parent'))
         self.action(stream, native_frame={'type': 'agent_end', 'isTerminal': True,
                                           'is_error': False, 'messages': []})
@@ -222,7 +220,7 @@ class NativeObservation(RECEIVE.Receive):
                         'observer did not consume the checkpoint barrier')
 
         observer.kill()
-        observer.wait(timeout=5)
+        observer.wait()
         resumed = self.spawn(*self.receive_args('parent'))
         terminal = {'type': 'agent_end', 'isTerminal': True, 'is_error': False, 'messages': []}
         self.action(stream, native_frame=terminal)

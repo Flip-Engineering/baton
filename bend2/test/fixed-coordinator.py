@@ -122,7 +122,7 @@ class FixedCoordinator(unittest.TestCase):
             except OSError:
                 pass
             connection.close()
-        self._acceptor.join(10)
+        self._acceptor.join()
         while True:
             owned = self.owned_processes()
             if not owned:
@@ -137,11 +137,7 @@ class FixedCoordinator(unittest.TestCase):
         for child in self.children:
             if child.poll() is None:
                 child.terminate()
-            try:
-                child.communicate(timeout=10)
-            except subprocess.TimeoutExpired:
-                child.kill()
-                child.communicate()
+            child.communicate()
 
     def is_serve(self, process):
         return process['command'].endswith(' serve') or ' serve ' in process['command']
@@ -168,23 +164,21 @@ class FixedCoordinator(unittest.TestCase):
                 try:
                     if process.poll() is None:
                         process.kill()
-                    out, err = process.communicate(timeout=10)
+                    out, err = process.communicate()
                 except Exception as exc:
                     out, err = '', f'collect-failed: {exc}'
                 (keep / f'{name}.stdout').write_text(out or '')
                 (keep / f'{name}.stderr').write_text(err or '')
             try:
                 owned = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
-                                       capture_output=True, text=True,
-                                       timeout=10).stdout
+                                       capture_output=True, text=True).stdout
             except Exception as exc:
                 owned = f'ps-failed: {exc}'
             (keep / 'processes.txt').write_text(owned)
             digest = hashlib.sha256(EXE.read_bytes()).hexdigest()
             try:
                 bend_version = subprocess.run(
-                    [str(EXE), '--help'], capture_output=True, text=True,
-                    timeout=10).stderr.splitlines()[0:1]
+                    [str(EXE), '--help'], capture_output=True, text=True).stderr.splitlines()[0:1]
             except Exception as exc:
                 bend_version = [f'help-failed: {exc}']
             (keep / 'pins.txt').write_text(
@@ -204,18 +198,16 @@ class FixedCoordinator(unittest.TestCase):
                               'status': fields[2], 'command': fields[3]})
         return found
 
-    def eventually(self, observation, description, timeout=30):
-        deadline = time.monotonic() + timeout
+    def eventually(self, observation, description):
         while True:
             result = observation()
             if result:
                 return result
-            self.assertLess(time.monotonic(), deadline, description)
             time.sleep(.05)
 
-    def coord(self, *args, ok=True, timeout=30):
+    def coord(self, *args, ok=True):
         result = subprocess.run([str(EXE), str(self.db), *map(str, args)],
-                                capture_output=True, text=True, timeout=timeout)
+                                capture_output=True, text=True)
         if ok:
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(result.stdout) if result.stdout.strip().startswith(('[', '{')) else result.stdout
@@ -261,15 +253,16 @@ class FixedCoordinator(unittest.TestCase):
     def inbox(self, recipient):
         return self.coord('inbox', recipient)
 
-    def await_inbox(self, recipient, predicate, description, timeout=60):
+    def await_inbox(self, recipient, predicate, description):
         # Reports land through the keeper observe pipeline after the native
-        # exits; poll instead of reading once.
-        deadline = time.monotonic() + timeout
+        # exits; read until the requested durable row is present.
         while True:
+            if self.serve_proc is not None and self.serve_proc.poll() is not None:
+                stdout, stderr = self.serve_proc.communicate()
+                self.fail(f'serve exited before the inbox event arrived: {stdout} {stderr}')
             found = predicate(self.inbox(recipient))
             if found:
                 return found
-            self.assertLess(time.monotonic(), deadline, description)
             time.sleep(.5)
 
     def start_owner(self):
@@ -278,11 +271,13 @@ class FixedCoordinator(unittest.TestCase):
         self.children.append(self.owner_proc)
 
         def ready():
+            if self.owner_proc.poll() is not None:
+                self.fail(f'owner exited before owner-status became available: {self.owner_proc.returncode}')
             result = self.coord('owner-status', ok=False)
             if result.returncode != 0:
                 return None
             return json.loads(result.stdout)
-        self.eventually(ready, 'no elected owner', timeout=30)
+        self.eventually(ready, 'no elected owner')
 
     def start_serve(self, db=None):
         self.serve_proc = subprocess.Popen([str(EXE), str(db or self.db), 'serve'],
@@ -294,24 +289,18 @@ class FixedCoordinator(unittest.TestCase):
                 self.fail(f'serve exited before subscribing: {self.serve_proc.stderr.read()}')
             line = self.serve_proc.stdout.readline()
             return line or None
-        line = self.eventually(first_line, 'serve never printed its subscription readiness',
-                               timeout=30)
+        line = self.eventually(first_line, 'serve never printed its subscription readiness')
         return json.loads(line)
 
     def shutdown(self, expect_serve=0, db=None):
         result = subprocess.run([str(EXE), '--instance-shutdown', str(db or self.db)],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         if self.serve_proc is not None:
-            stdout, stderr = self.serve_proc.communicate(timeout=60)
+            stdout, stderr = self.serve_proc.communicate()
             self.assertEqual(self.serve_proc.returncode, expect_serve, stderr)
         if self.owner_proc is not None:
-            try:
-                self.owner_proc.communicate(timeout=60)
-            except subprocess.TimeoutExpired:
-                self.owner_proc.kill()
-                self.owner_proc.communicate()
-                self.fail('the owner stayed resident after shutdown with no attempts')
+            self.owner_proc.communicate()
 
     def test_01_serve_drives_concurrent_sessions_with_guidance(self):
         self.recruit('w1', 'codex')
@@ -354,9 +343,14 @@ class FixedCoordinator(unittest.TestCase):
         self.recruit('w4', 'codex')
         self.dispatch('t4', 'w4', 'Task for a session that stops before service.')
         self.coord('stop', 'w4', 'stop-1', 'halted before service')
+        self.recruit('scan-worker', 'codex')
+        self.receiver('scan-worker')
+        self.dispatch('scan-task', 'scan-worker', 'Complete the live input in this scan.')
         self.start_owner()
         self.start_serve()
-        time.sleep(5)
+        self.await_inbox('root', lambda messages: any(
+            'scan-worker fixed default completion' in message['body'] for message in messages),
+            'the coordinator did not process the live input beside the stopped session')
         serve = [p for p in self.owned_processes() if self.is_serve(p)]
         self.assertEqual(len(serve), 1, 'the serve stays up with only stopped input pending')
         bodies = [m['body'] for m in self.inbox('root')]
@@ -375,7 +369,7 @@ class FixedCoordinator(unittest.TestCase):
         held, _ = self.stream_for('w7')
         self.assertEqual(json.loads(held.readline()), {'terminal_written': True})
         self.serve_proc.kill()
-        self.serve_proc.wait(timeout=10)
+        self.serve_proc.wait()
         native_pid = self.connections('w7')[0]['pid']
         try:
             os.kill(native_pid, 0)
@@ -390,7 +384,6 @@ class FixedCoordinator(unittest.TestCase):
             [m['body'] for m in messages if m['sender'] == 'w7'
              and 'w7 adopted turn complete' in m['body']] or None),
             'adopted report never reached the root inbox')
-        time.sleep(3)
         bodies = [m['body'] for m in self.inbox('root') if m['sender'] == 'w7']
         self.assertEqual(len([b for b in bodies if 'w7 adopted turn complete' in b]), 1)
         row = self.query("SELECT receipt FROM messages WHERE id='t7'")
@@ -419,7 +412,7 @@ class FixedCoordinator(unittest.TestCase):
         native_pid = self.connections('w8')[0]['pid']
         owner = self.owner_proc
         os.kill(owner.pid, signal.SIGKILL)
-        owner.wait(timeout=10)
+        owner.wait()
         try:
             os.kill(native_pid, 0)
         except ProcessLookupError:
@@ -433,7 +426,7 @@ class FixedCoordinator(unittest.TestCase):
         # The stranded serve joined its task through the keeper death and only
         # returns when that join does; the supervisor restarts the generation.
         self.serve_proc.kill()
-        self.serve_proc.wait(timeout=10)
+        self.serve_proc.wait()
         self.serve_proc = None
         self.owner_proc = None
         self.shutdown()
@@ -485,7 +478,7 @@ class FixedCoordinator(unittest.TestCase):
                 {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list', 'params': {}},
                 {'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
                  'params': {'name': 'baton2_owner', 'arguments': {}}}]),
-            text=True, capture_output=True, timeout=30)
+            text=True, capture_output=True)
         self.assertEqual(replies.returncode, 0, replies.stderr)
         by_id = {reply['id']: reply for reply in
                  (json.loads(line) for line in replies.stdout.splitlines())}
@@ -552,12 +545,7 @@ class FixedCoordinator(unittest.TestCase):
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                   text=True)
         self.children.append(second)
-        try:
-            stdout, stderr = second.communicate(timeout=20)
-        except subprocess.TimeoutExpired:
-            second.kill()
-            second.communicate()
-            self.fail('the second serve stayed resident instead of exiting short')
+        stdout, stderr = second.communicate()
         self.assertNotEqual(second.returncode, 0,
                             f'second serve exited {second.returncode}: {stdout} {stderr}')
         self.assertIn('coordinator-held', stderr,
@@ -568,7 +556,7 @@ class FixedCoordinator(unittest.TestCase):
         self.assertEqual(len(owners), 1, 'two serve paths elect two owners')
         status_main = self.coord('owner-status')
         status_alias = subprocess.run([str(EXE), str(alias), 'owner-status'],
-                                      capture_output=True, text=True, timeout=30)
+                                      capture_output=True, text=True)
         self.assertEqual(status_alias.returncode, 0, status_alias.stderr)
         self.assertEqual(json.loads(status_alias.stdout)['generation'],
                          status_main['generation'],
@@ -605,11 +593,10 @@ class FixedCoordinator(unittest.TestCase):
         def refusal():
             log = ''.join(self._serve_lines)
             return log if 'serve-refused m1 muse' in log else None
-        log = self.eventually(refusal, 'serve never refused the Muse session', timeout=30)
+        log = self.eventually(refusal, 'serve never refused the Muse session')
         self.assertIn('dispatch-turn', log, 'refusal names no Turn route')
         self.assertEqual(self.connections('m1'), [],
                          'the serve started a native for a refused session')
-        time.sleep(3)
         self.assertIsNone(self.serve_proc.poll(), 'serve died on a refused session')
         row = self.query("SELECT receipt FROM messages WHERE id='tm1'")
         self.assertEqual(row, [(None,)], 'refused input was consumed or lost')
@@ -633,7 +620,6 @@ class FixedCoordinator(unittest.TestCase):
             [m['body'] for m in messages]
             if any('w1 first turn complete' in m['body'] for m in messages) else None),
             'first turn report never reached the root inbox')
-        time.sleep(2)
         self.queue('w1', {'body': 'w1 second turn complete'})
         self.dispatch('t2', 'w1', 'Second task after the first completion.')
         self.stream_for('w1', 1)

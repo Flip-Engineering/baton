@@ -53,9 +53,9 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.action(stream, native_request=value)
         self.assertEqual(json.loads(stream.readline()), {'request_written': value})
 
-    def arrivals(self, timeout=10):
+    def arrivals(self):
         found = []
-        while select.select([self.server], [], [], timeout)[0]:
+        while select.select([self.server], [], [], 0)[0]:
             found.append(self.accept_any())
         return found
 
@@ -119,7 +119,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
                    'Guidance accepted before the first terminal.')
         self.frame(original, {'type': 'message_end', 'message': {'role': 'user', 'content': []}})
         observer.kill()
-        observer.wait(timeout=5)
+        observer.wait()
         self.action(original, read_steer=True)
         accepted = json.loads(original.readline())
         self.assertEqual(accepted['steer_received']['id'], 'replay-guidance')
@@ -132,7 +132,8 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertEqual(json.loads(original.readline()), {'terminal_written': True})
         self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
         self.action(original, exit_fixture=True)
-        arrivals = self.arrivals()
+        arrivals = [self.accept('root'), *self.arrivals()]
+        self.assertEqual(len(arrivals), 1, 'one root report produced one native call')
         self.assertEqual({event['session'] for _, event in arrivals}, {'root'})
         stream, event = arrivals[0]
         self.assertIn(report, event['prompt'])

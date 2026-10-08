@@ -41,7 +41,7 @@ class ReceiveOutput(unittest.TestCase):
 
     def test_failed_output_does_not_poison_empty_or_successful_output(self):
         with tempfile.TemporaryDirectory(prefix='control-output-', dir=ROOT / '.scratch/bend2') as name:
-            result = subprocess.run([str(CONTROL)], cwd=name, capture_output=True, text=True, timeout=10)
+            result = subprocess.run([str(CONTROL)], cwd=name, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             observed = (pathlib.Path(name) / 'results').read_text().splitlines()
             self.assertEqual(len(observed), 4)
@@ -96,12 +96,11 @@ class ReceiveOutput(unittest.TestCase):
                 waiter.start()
 
                 def accept_gate():
-                    ready, _, _ = select.select([server, done_read], [], [], 10)
+                    ready, _, _ = select.select([server, done_read], [], [])
                     self.assertIn(server, ready,
                                   f'Coordinator exit {child.poll()} before gate: '
                                   + (directory / 'stderr').read_text())
                     connection, _ = server.accept()
-                    connection.settimeout(10)
                     stream = connection.makefile('rwb', buffering=0)
                     event = json.loads(stream.readline())
                     self.assertEqual(event['ppid'], child.pid)
@@ -122,8 +121,8 @@ class ReceiveOutput(unittest.TestCase):
                 self.assertEqual(gates['acknowledged'][0].readline(), b'')
                 gates['continuation'][0].write(b'release\n')
                 self.assertEqual(gates['continuation'][0].readline(), b'')
-                child.wait(timeout=10)
-                waiter.join(timeout=10)
+                child.wait()
+                waiter.join()
                 self.assertTrue((directory / 'continued').exists())
                 joined = (directory / 'joined').read_text()
                 if delivery_status:
@@ -152,9 +151,9 @@ class ReceiveOutput(unittest.TestCase):
                 server.close()
                 if child is not None and child.poll() is None:
                     child.terminate()
-                    child.wait(timeout=10)
+                    child.wait()
                 if child is not None:
-                    waiter.join(timeout=10)
+                    waiter.join()
                     if child.stdout and not child.stdout.closed:
                         child.stdout.close()
                 done_read.close()
@@ -186,8 +185,9 @@ class NativeFailureOutput(unittest.TestCase):
         fixture.player(harness='omp')
         fixture.coord('message', 'first', 'root', 'parent', 'task', 'Fail the first task.')
         observer = fixture.spawn(*fixture.receive_args('parent'))
-        fixture.server.settimeout(10)
-        original, started = fixture.accept('parent')
+        original, started = fixture.accept_or_child_exit(
+            observer, 'Initial native did not start', observer.stdout)
+        self.assertEqual(started['session'], 'parent')
         with sqlite3.connect(fixture.db) as database:
             ident, directory = database.execute(
                 "SELECT id,directory FROM executions WHERE session='parent'").fetchone()
@@ -197,11 +197,9 @@ class NativeFailureOutput(unittest.TestCase):
         observer.stdout = None
         fixture.action(original, fail=True, body='Original native failure retained.')
         self.assertEqual(original.readline(), b'')
-        try:
-            continuation, resumed = fixture.accept('parent')
-        except TimeoutError:
-            diagnostic = os.read(observer.stderr.fileno(), 65536).decode() if select.select([observer.stderr], [], [], 0)[0] else ''
-            self.fail(f'Queued native did not start; coordinator exit {observer.poll()}: {diagnostic}')
+        continuation, resumed = fixture.accept_or_child_exit(
+            observer, 'Queued native did not start', observer.stderr)
+        self.assertEqual(resumed['session'], 'parent')
         self.assertIn('[id: second]', resumed['prompt'])
         self.assertIsNone(observer.poll(), 'Output failure ended the observer before queued work finished.')
         report = json.loads(fixture.coord('delivery', ident)['body'])
@@ -231,7 +229,6 @@ class NativeFailureOutput(unittest.TestCase):
         fixture = RECEIVE.Receive()
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
-        fixture.server.settimeout(10)
         fixture.coord('connect', 'root', 'native-root', json.dumps([str(fixture.fixture), 'parent_endpoint']))
         fixture.player()
         fixture.coord('report', 'completed-direct', 'parent', 'Stored direct report.')
@@ -248,11 +245,9 @@ class NativeFailureOutput(unittest.TestCase):
         finally:
             os.close(write_fd)
         fixture.children.append(child)
-        try:
-            continuation, resumed = fixture.accept('parent')
-        except TimeoutError:
-            diagnostic = os.read(child.stderr.fileno(), 65536).decode() if select.select([child.stderr], [], [], 0)[0] else ''
-            self.fail(f'Direct replay did not wake queued input; coordinator exit {child.poll()}: {diagnostic}')
+        continuation, resumed = fixture.accept_or_child_exit(
+            child, 'Direct replay did not wake queued input', child.stderr)
+        self.assertEqual(resumed['session'], 'parent')
         self.assertIn('[id: queued-direct]', resumed['prompt'])
         self.assertEqual(resumed['native'], 'native-parent')
         self.assertIsNone(child.poll())

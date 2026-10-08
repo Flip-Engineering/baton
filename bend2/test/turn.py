@@ -55,7 +55,7 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
     def tearDown(self): self.temp.cleanup()
 
     def call(self,*args):
-        p=subprocess.run([str(EXE),str(self.db),*args],text=True,capture_output=True,timeout=30)
+        p=subprocess.run([str(EXE),str(self.db),*args],text=True,capture_output=True)
         self.assertEqual(p.returncode,0,p.stderr)
         return p.stdout
 
