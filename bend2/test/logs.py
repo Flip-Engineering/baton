@@ -5,6 +5,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -345,12 +346,14 @@ sys.exit(%d)
                 ('omp-worker', self.active_turn)).fetchone()
         stderr = pathlib.Path(stderr_name)
         stderr_meta = pathlib.Path(str(stderr) + '.meta')
+        stderr_full = pathlib.Path(str(stderr) + '.full')
+        stderr_full.write_bytes(b'Legacy diagnostic evidence.\n')
         stderr_meta.write_text('{')
         row = next(item for item in json.loads(self.call('logs-storage'))['stderrRuns']
                    if item['stderr'] == str(stderr))
         self.call('logs-clean', 'omp-worker')
         self.assertTrue(stderr.is_file())
-        self.assertTrue(pathlib.Path(str(stderr) + '.full').is_file())
+        self.assertEqual(stderr_full.read_bytes(), b'Legacy diagnostic evidence.\n')
         self.assertEqual(stderr_meta.read_text(), '{')
 
 
