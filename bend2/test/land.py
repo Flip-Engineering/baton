@@ -591,7 +591,7 @@ class Land(unittest.TestCase):
         """Accept a check connection, or report the outcome COMPLETION already holds."""
         readable, _, _ = select.select([watch, listener], [], [])
         if watch in readable:
-            raise AssertionError(f'the landing finished before its check reported: {completion.get()}')
+            raise AssertionError(f'the landing finished before its check reported: {completion!r}')
         connection = listener.accept()[0]
         self.addCleanup(connection.close)
         return connection
@@ -602,7 +602,7 @@ class Land(unittest.TestCase):
         while len(data) < count:
             readable, _, _ = select.select([watch, connection], [], [])
             if watch in readable:
-                raise AssertionError(f'the landing finished while readiness was read: {completion.get()}')
+                raise AssertionError(f'the landing finished while readiness was read: {completion!r}')
             part = connection.recv(count - len(data))
             if not part:
                 self.fail(f'the check closed before {count} readiness bytes: {data!r}')
@@ -621,7 +621,7 @@ class Land(unittest.TestCase):
             if watch is not None:
                 readable, _, _ = select.select([watch, connection], [], [])
                 if watch in readable:
-                    raise AssertionError(f'the landing finished before its event: {completion.get()}')
+                    raise AssertionError(f'the landing finished before its event: {completion!r}')
             part = connection.recv(65536)
             if not part:
                 self.fail('the check closed its connection before its event')
