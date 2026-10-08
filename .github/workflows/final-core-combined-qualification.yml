@@ -10,7 +10,6 @@ on:
         description: Existing product build run containing the selected native binaries
         required: true
         type: string
-        default: '37775725123'
       product_run_attempt:
         description: Attempt containing the selected native binaries
         required: true
@@ -23,12 +22,12 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: 2b5686d76e78aea6c10ae3c6a9856d958b1777ce
-  PRODUCT_SOURCE_TREE: f034826e2721a3b43c1e069383a347c89077a758
+  PRODUCT_SOURCE_SHA: f83459280ab5ac48e16ac70fc06050f04197b485
+  PRODUCT_SOURCE_TREE: bc1ebc4b2fbe6f2aa6a0136cd86a5ef125f6baf6
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
-  PRODUCT_ARTIFACT_ID: ${{ github.event_name == 'workflow_dispatch' && '11549099554' || '' }}
-  PRODUCT_ARTIFACT_DIGEST: ${{ github.event_name == 'workflow_dispatch' && 'sha256:f776f64731eaeff7bc8b054c32cb806d6a498830bb6c0fef7c205f7d08f33205' || '' }}
+  PRODUCT_ARTIFACT_ID: ''
+  PRODUCT_ARTIFACT_DIGEST: ''
 
 jobs:
   build:
