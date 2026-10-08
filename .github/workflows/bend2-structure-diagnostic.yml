@@ -17,7 +17,7 @@ jobs:
       - name: Checkout the immutable product commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: 0a409dda98bb4a0826fb9f9036a74f67ada23bf7
+          ref: b2bf68025594435885764d16f3679c3f6e87fc85
           persist-credentials: false
 
       - name: Select Node 22
@@ -160,7 +160,7 @@ jobs:
               t : Result<&1, &1, U32 & String, String> <- Rec.Receipt.attempt_token(target)
               IO.print(record(name, common, target, Tx.expected_guard_path(common, target), g, t))
 
-          def main() -> IO<Unit>:
+          def main() -> IO(Unit):
             do IO<Unit>:
               a : Unit <- report("plain-main", "$common", "main")
               b : Unit <- report("plain-other", "$common", "refs-heads-main")
@@ -234,6 +234,10 @@ jobs:
                                                        json.loads(fields[5]), json.loads(fields[7]), json.loads(fields[9]))
               except ValueError as error:
                   malformed.append("%s (%s)" % (line[:120], error))
+                  continue
+              if not (isinstance(name, str) and isinstance(encoded, str) and isinstance(guard, str)
+                      and isinstance(token, str) and (pure is None or isinstance(pure, str))):
+                  malformed.append("field types %s" % line[:120])
                   continue
               if name not in expected:
                   unexpected.append(name)
