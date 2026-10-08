@@ -1976,6 +1976,12 @@ law the_failed_holder_evidence_serializes_its_step_and_host_error:
 def the_failed_holder_evidence_serializes_its_step_and_host_error():
   {==}
 
+law the_pending_holder_evidence_serializes_its_record_and_pending_reason:
+  {intent_holder_fields(IntentHolderPending{fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), "record bytes", "the record waits"}, Nil{}) == Con{"holder-pending", Con{"record bytes", Con{"the record waits", Con{Con{"intent-request", Con{"attempt-1", Con{"/common", Con{"tgt", Con{"/repo", Con{fixture_oid_candidate(), Con{fixture_oid_basis(), Con{intent_expected_path(fixture_reserved()), Con{"/holder", Con{"", Nil{}}}}}}}}}}}, Nil{}}}}} : List<String>}
+
+def the_pending_holder_evidence_serializes_its_record_and_pending_reason():
+  {==}
+
 def ld_adv_held_compared(check: AssociationCheck, +request: A.AssociationRequest, candidate_oid: String, basis_oid: String, target_head: String, holder_common: String, destination_common: String, reads: A.AssocReads, +path: String, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match check:
     case AssociationDisagreed{step}: IO.pure(LdAdvObs, ld_adv_mismatched(step, request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads, MutationHeld{path}))
