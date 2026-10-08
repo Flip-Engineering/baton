@@ -2,7 +2,7 @@
 """Verify and exercise a native archive using an external controlled OMP fixture.
 
 The caller retains and relocates its owned build clone before this command. This
-command verifies the advertised archive digest and provenance, extracts a fresh
+command verifies the advertised archive digest and manifest, extracts a fresh
 prefix, and uses the installed public CLI from a separate working directory.
 All output, repository work, command results and process records remain in OUTPUT.
 """
@@ -120,8 +120,8 @@ def fixture(kind, config_path, arguments):
     save(output / 'native-complete.json', {'pid': os.getpid(), 'stdin_eof': True})
 
 
-def extract(archive, provenance, destination):
-    manifest_bytes = provenance.read_bytes()
+def extract(archive, manifest_path, destination):
+    manifest_bytes = manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes)
     require(manifest.get('schema') == 'baton2-native-artifact-v1', 'Unsupported artifact manifest schema')
     name = manifest['archive_root']
@@ -153,7 +153,7 @@ def extract(archive, provenance, destination):
     require(regular == set(expected) | {'manifest.json'}, 'Archive and manifest list different files')
     prefix = destination / name
     require((prefix / 'manifest.json').read_bytes() == manifest_bytes,
-            'Archive manifest differs from supplied provenance')
+            'Archive manifest differs from supplied manifest')
     for relative, entry in expected.items():
         path = prefix / relative
         require(path.stat().st_size == entry['bytes'] and digest(path) == entry['sha256'],
@@ -197,7 +197,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--archive', type=Path, required=True)
     parser.add_argument('--sha256', required=True)
-    parser.add_argument('--provenance', type=Path, required=True)
+    parser.add_argument('--manifest', type=Path, required=True)
     parser.add_argument('--unavailable-source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
@@ -209,10 +209,10 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     (output / 'commands').mkdir()
     result = {'archive': str(args.archive.resolve()), 'archive_sha256': args.sha256.lower(),
-              'provenance_sha256': digest(args.provenance), 'started_unix': time.time(),
+              'manifest_sha256': digest(args.manifest), 'started_unix': time.time(),
               'unavailable_source': str(unavailable), 'status': 'failed'}
     try:
-        prefix, manifest = extract(args.archive, args.provenance, output / 'extracted')
+        prefix, manifest = extract(args.archive, args.manifest, output / 'extracted')
         require(Path(manifest['source']['directory']).resolve() == unavailable,
                 'Unavailable source path differs from recorded build source')
         binary = prefix / 'bin/baton2'
