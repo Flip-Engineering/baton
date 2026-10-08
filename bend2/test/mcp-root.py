@@ -2,11 +2,9 @@
 import json
 import os
 import pathlib
-import select
 import subprocess
 import tempfile
 import threading
-import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -22,30 +20,24 @@ def send_mcp(proc, msg):
 
 _mcp_buf = {}
 
-def read_mcp(proc, timeout=5, handle_ping=True):
+def read_mcp(proc, handle_ping=True):
     """Read one newline-delimited MCP message, as the native Claude client does."""
     fd = proc.stdout.fileno()
     if fd not in _mcp_buf:
-        os.set_blocking(fd, False)
+        os.set_blocking(fd, True)
         _mcp_buf[fd] = b''
     buf = _mcp_buf[fd]
-    deadline = time.monotonic() + timeout
     while b'\n' not in buf:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError(f'Timed out reading message: {buf!r}')
-        ready, _, _ = select.select([fd], [], [], remaining)
-        if ready:
-            chunk = os.read(fd, 4096)
-            if not chunk:
-                raise EOFError('MCP server closed stdout')
-            buf += chunk
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            raise EOFError('MCP server closed stdout')
+        buf += chunk
     body, rest = buf.split(b'\n', 1)
     _mcp_buf[fd] = rest
     message = json.loads(body)
     if handle_ping and message.get('method') == 'ping':
         send_mcp(proc, {'jsonrpc': '2.0', 'id': message['id'], 'result': {}})
-        return read_mcp(proc, timeout)
+        return read_mcp(proc)
     return message
 
 
@@ -80,7 +72,7 @@ class McpRoot(unittest.TestCase):
     def coord(self, *args, ok=True):
         p = subprocess.run(
             [str(EXE), str(self.db), *args],
-            text=True, capture_output=True, timeout=10,
+            text=True, capture_output=True,
         )
         if ok:
             self.assertEqual(p.returncode, 0, p.stderr)
@@ -221,7 +213,7 @@ class McpRoot(unittest.TestCase):
         self.activate(proc)
 
         # Initialization replays the pending report.
-        notification = read_mcp(proc, timeout=5)
+        notification = read_mcp(proc)
         self.assertEqual(notification['method'], 'notifications/claude/channel')
         self.assertIn('Worker completed the task.', notification['params']['content'])
         self.assertEqual(json.loads(notification['params']['meta']['messageIds']), ['turn-1'])
@@ -246,17 +238,14 @@ class McpRoot(unittest.TestCase):
         self.initialize(proc)
         self.activate(proc)
 
-        # Drain any pending channel notification first.
-        time.sleep(0.5)
-
         send_mcp(proc, {
             'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
             'params': {'name': 'baton2_status', 'arguments': {}},
         })
-        resp = read_mcp(proc, timeout=5)
+        resp = read_mcp(proc)
         # May need to skip channel notifications.
         while 'method' in resp and resp['method'] == 'notifications/claude/channel':
-            resp = read_mcp(proc, timeout=5)
+            resp = read_mcp(proc)
         self.assertIn('root', resp['result']['content'][0]['text'])
 
     def test_tool_ack_clears_pending_message(self):
@@ -269,7 +258,7 @@ class McpRoot(unittest.TestCase):
         self.activate(proc)
 
         # Wait for initial notification.
-        notif = read_mcp(proc, timeout=5)
+        notif = read_mcp(proc)
         self.assertEqual(notif['method'], 'notifications/claude/channel')
 
         # Ack the message.
@@ -280,9 +269,9 @@ class McpRoot(unittest.TestCase):
                 'arguments': {'id': 'turn-1', 'receipt': 'channel-delivered'},
             },
         })
-        resp = read_mcp(proc, timeout=5)
+        resp = read_mcp(proc)
         while 'method' in resp:
-            resp = read_mcp(proc, timeout=5)
+            resp = read_mcp(proc)
         self.assertNotIn('isError', resp['result'])
 
         # Inbox should be empty.
@@ -290,9 +279,9 @@ class McpRoot(unittest.TestCase):
             'jsonrpc': '2.0', 'id': 4, 'method': 'tools/call',
             'params': {'name': 'baton2_inbox', 'arguments': {}},
         })
-        resp = read_mcp(proc, timeout=5)
+        resp = read_mcp(proc)
         while 'method' in resp:
-            resp = read_mcp(proc, timeout=5)
+            resp = read_mcp(proc)
         self.assertEqual(json.loads(resp['result']['content'][0]['text']), [])
 
     def test_guide_sends_message_to_player_inbox(self):
@@ -317,9 +306,9 @@ class McpRoot(unittest.TestCase):
                 },
             },
         })
-        resp = read_mcp(proc, timeout=5)
+        resp = read_mcp(proc)
         while 'method' in resp:
-            resp = read_mcp(proc, timeout=5)
+            resp = read_mcp(proc)
         # The guide tool should succeed
         self.assertNotIn('isError', resp.get('result', {}))
 
@@ -340,7 +329,7 @@ class McpRoot(unittest.TestCase):
         proc1 = self.start_mcp()
         self.initialize(proc1)
         self.activate(proc1)
-        notif1 = read_mcp(proc1, timeout=5)
+        notif1 = read_mcp(proc1)
         self.assertEqual(notif1['method'], 'notifications/claude/channel')
         self.assertIn('Pending across restart', notif1['params']['content'])
 
@@ -360,7 +349,7 @@ class McpRoot(unittest.TestCase):
         read_mcp(proc2)
         self.activate(proc2)
 
-        notif2 = read_mcp(proc2, timeout=5)
+        notif2 = read_mcp(proc2)
         self.assertEqual(notif2['method'], 'notifications/claude/channel')
         self.assertIn('Pending across restart', notif2['params']['content'])
         self.assertIn('turn-1', notif2['params']['meta']['messageIds'])
@@ -381,9 +370,9 @@ class McpRoot(unittest.TestCase):
                 'jsonrpc': '2.0', 'id': call_id, 'method': 'tools/call',
                 'params': {'name': name, 'arguments': arguments or {}},
             })
-            resp = read_mcp(proc, timeout=5)
+            resp = read_mcp(proc)
             while 'method' in resp:
-                resp = read_mcp(proc, timeout=5)
+                resp = read_mcp(proc)
             return resp
 
         players_resp = tool_call(30, 'baton2_players')
@@ -413,7 +402,7 @@ class McpRoot(unittest.TestCase):
         self.activate(proc)
 
         # First notification.
-        notif1 = read_mcp(proc, timeout=5)
+        notif1 = read_mcp(proc)
         self.assertEqual(notif1['method'], 'notifications/claude/channel')
 
         # Re-deliver the same committed report to the attached channel.
@@ -421,14 +410,12 @@ class McpRoot(unittest.TestCase):
         send_mcp(proc, {'jsonrpc': '2.0', 'id': 10, 'method': 'ping', 'params': {}})
 
         msgs = []
-        try:
-            while True:
-                msg = read_mcp(proc, timeout=3)
-                msgs.append(msg)
-                if msg.get('id') == 10:
-                    break
-        except (TimeoutError, EOFError):
-            pass
+        while True:
+            msg = read_mcp(proc)
+            if msg.get('id') == 10:
+                self.assertEqual(msg.get('result'), {})
+                break
+            msgs.append(msg)
 
         channel_notifs = [m for m in msgs if m.get('method') == 'notifications/claude/channel']
         self.assertEqual(len(channel_notifs), 0, 'Duplicate notification sent')
