@@ -86,12 +86,11 @@ def codex_queue(+db: String, +id: String, +condition: String, saved: String) -> 
   do IO<Result<&1,&1,U32 & String,String>>:
     native_row : String <- IO.try(String,DB.Sql.query(db,endpointless_native_sql(id,condition)))
     +native : String <- IO.pure(String,Tx.trim_nl(native_row))
-    match String.is_empty(native):
-      case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Message " ++ id ++ " is addressed to a Codex session that records no native session identity, so the public queue cannot address it. Connect an endpoint or record the session's native identity, then retry delivery from the pending inbox.")})
-      case False{}: do IO<Result<&1,&1,U32 & String,String>>:
-        recipient_row : String <- IO.try(String,DB.Sql.query(db,endpointless_recipient_sql(id,condition)))
-        +recipient : String <- IO.pure(String,Tx.trim_nl(recipient_row))
-        queue_launch(db,id,saved,native,recipient)
+    recipient_row : String <- IO.try(String,DB.Sql.query(db,endpointless_recipient_sql(id,condition)))
+    recipient : String <- IO.pure(String,Tx.trim_nl(recipient_row))
+    Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(native),
+      IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Message " ++ id ++ " is addressed to a Codex session that records no native session identity, so the public queue cannot address it. Connect an endpoint or record the session's native identity, then retry delivery from the pending inbox.")}),
+      queue_launch(db,id,saved,native,recipient))
 
 def endpointless(+db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
@@ -105,9 +104,8 @@ def normal_delivery(+db: String, +id: String, +condition: String, +saved: String
   do IO<Result<&1,&1,U32 & String,String>>:
     encoded : String <- IO.try(String,DB.Sql.query(db,endpoint_sql(id,condition)))
     +argv : String <- IO.pure(String,Tx.trim_nl(encoded))
-    match String.is_empty(argv):
-      case True{}: endpointless(db,id,condition,saved)
-      case False{}: launch(db,id,saved,argv)
+    Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(argv),
+      endpointless(db,id,condition,saved),launch(db,id,saved,argv))
 
 def routed(+db: String, +id: String, condition: String, +saved: String, +kind: String, ordinary: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match ordinary:
