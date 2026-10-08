@@ -17,8 +17,8 @@ jobs:
       matrix:
         include:
           - product: combined-context
-            source_sha: aec8ed2c92a6a5ad7e3ac94d2c71492fe76b2cc9
-            source_tree: 740dd60c3969b31566a6d3eec792cec54067f8b3
+            source_sha: 2c5c4354da2fce46ac79a7d2846c52d89a812921
+            source_tree: 184be9251b5d21032753ff481138ab5d0c908354
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
@@ -153,7 +153,7 @@ jobs:
             return "$status"
           }
           failures=0
-          for suite in logs turn process receive configure stop native-observation fixed-coordinator \
+          for suite in logs turn process receive configure stop native-observation fixed-coordinator land \
             ui-orchestra-native mcp-root mcp-contract mcp-command control-identity root-wake muse-root; do
             run_recorded "$suite" env BEND="$bend" python3 "bend2/test/$suite.py" \
               || failures=$((failures + 1))
