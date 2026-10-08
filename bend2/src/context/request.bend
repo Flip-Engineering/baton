@@ -278,11 +278,19 @@ def row_from_fields(+fs: Fields) -> Row:
 def line_rows(+line: String, +rows: Rows) -> Rows:
   Bool.pick(Rows, is_empty_s(line), rows, rows_add(rows, row_from_fields(fields_of(line))))
 
+def rows_after_char(newline: Bool, +cur: String, +rows: Rows) -> Rows:
+  match newline:
+    case True{}: line_rows(cur, rows)
+    case False{}: rows
+
 def rows_go(rest: String, +cur: String, +rows: Rows) -> Rows:
   match rest:
     case SNil{}: line_rows(cur, rows)
     case SCon{+head, +tail}:
-      Bool.pick(Rows, U32.is_eq(Char.to_u32(head), 10), rows_go(tail, SNil{}, line_rows(cur, rows)), rows_go(tail, cur ++ SCon{head, SNil{}}, rows))
+      +newline = U32.is_eq(Char.to_u32(head), 10)
+      rows_go(tail,
+        Bool.pick(String, newline, SNil{}, cur ++ SCon{head, SNil{}}),
+        rows_after_char(newline, cur, rows))
 
 def parse_rows(+text: String) -> Rows:
   rows_go(text, SNil{}, Rnone{})
