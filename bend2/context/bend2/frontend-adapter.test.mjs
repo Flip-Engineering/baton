@@ -7,6 +7,9 @@
 // rather than assumed. Nothing in this file imports a frontend, and no execution of a frontend is
 // claimed. The real derived-frontend run is frontend-invocation.harness.mjs.
 //
+// The adapter freezes its own surface, so the test helper returns a plain wrapper carrying the read
+// log alongside the adapter's members.
+//
 //   node --test bend2/context/bend2/frontend-adapter.test.mjs
 
 import { test } from 'node:test';
@@ -33,8 +36,8 @@ function adapterWith(files, options = {}) {
   };
   if (options.baseBend !== undefined) acquisition.baseBend = options.baseBend;
   const adapter = createFrontendAdapter({ acquisition, captureOnly: options.captureOnly ?? true });
-  adapter.reads = reads;
-  return adapter;
+  // The adapter freezes its own surface, so the read log travels on a plain wrapper around it.
+  return { ...adapter, reads };
 }
 
 function start(adapter, identity) {
