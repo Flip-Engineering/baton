@@ -3276,7 +3276,7 @@ def a_malformed_qualification_record_stops_before_the_readback(reserved,evidence
   {==}
 law a_wrong_path_qualification_record_stops_before_the_readback:
   for evidence: AttemptEvidence
-  {ld_attest_qualification_seen("r", evidence, StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, attest_stage(Done{StageSucceeded{Pb.production_record("qualified", "/other/landing-record", "0")}})) == IO.pure(Attestation, Attestation{"r", evidence, StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{Pb.production_record("qualified", "/other/landing-record", "0")}, StageUnperformed{}}) : IO(Attestation)}
+  {ld_attest_qualification_seen("r", evidence, StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, attest_stage(Done{Pb.production_record("qualified", "/other/landing-record", "0")})) == IO.pure(Attestation, Attestation{"r", evidence, StageSucceeded{Pb.production_record("published", landing_record_path("r"), "0")}, StageSucceeded{Pb.production_record("qualified", "/other/landing-record", "0")}, StageUnperformed{}}) : IO(Attestation)}
 
 def a_wrong_path_qualification_record_stops_before_the_readback(evidence):
   {==}
