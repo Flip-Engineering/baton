@@ -3643,6 +3643,12 @@ def a_wrong_head_holder_read_from_the_holder_helper_refuses_the_held_advance():
 
 
 
+law a_pending_record_stops_the_held_route_through_the_parser:
+  {ld_adv_intent_qualified(Done{Tx.str_cat("qualified\t", Tx.str_cat(shared_intent_path(fixture_consume_ctx()), "\t0\t\t1\t"))}, shared_intent_input(fixture_consume_ctx(), "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(fixture_consume_ctx()), fixture_intent_published(fixture_consume_ctx(), "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder"), fixture_matching_held_evidence(fixture_consume_ctx()), MutationHeld{"/holder"}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), fixture_consume_ctx(), "/holder") == IO.pure(LdAdvObs, LdAdvNoCapture{AdvIntentRefused{"qualification-pending"}, MutationHeld{"/holder"}, fixture_matching_held_evidence(fixture_consume_ctx()), IntentBound{shared_intent_input(fixture_consume_ctx(), "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), shared_intent_path(fixture_consume_ctx()), IntentPublished{fixture_intent_published(fixture_consume_ctx(), "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder")}, IntentQualificationRefused{Tx.str_cat("qualified\t", Tx.str_cat(shared_intent_path(fixture_consume_ctx()), "\t0\t\t1\t")), shared_intent_path(fixture_consume_ctx()), "1", ""}, IntentHolderUnperformed{}}}) : IO(LdAdvObs)}
+
+def a_pending_record_stops_the_held_route_through_the_parser():
+  {==}
+
 def fixture_held_evidence(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String) -> AttemptEvidence:
   fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), IdentityObserved{common, T.GRun{0, common}, target}, fixture_held_association(common, candidate, basis, target), fixture_held_intent(reserved, common, target, candidate, basis, "/repo", "attempt-1", "/holder"))
 
