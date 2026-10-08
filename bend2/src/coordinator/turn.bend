@@ -172,11 +172,11 @@ def send_prompt(+handle: U32,prompt: String,+harness: String) -> IO(Result<&1,&1
     closed : Result<&1,&1,U32 & String,Unit> <- close_input(handle,String.eq(harness,"omp\n"))
     IO.pure(Result<&1,&1,U32 & String,Unit>,send_result(sent,closed))
 
-def codex_report(db: String, player: String, id: String, event: String, empty: Bool) -> IO(Unit):
+def codex_report(db: String, player: String, id: String, event: String, empty: Bool, sealed: Bool) -> IO(Unit):
   match empty:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
-      saved : String <- IO.try(String,Store.commit(db,C.Observe{id,player,event,False{}}))
+      saved : String <- IO.try(String,Store.commit(db,C.Observe{id,player,event,sealed}))
       IO.pure(Unit,Unit{})
 
 def codex_result_sql(source: String) -> String:
@@ -184,13 +184,13 @@ def codex_result_sql(source: String) -> String:
   "SELECT json_object('type','result','is_error',json_extract(e.value,'$.type')='turn.failed','nativeEvent',json(e.value),'result',CASE WHEN json_extract(e.value,'$.type')='turn.failed' THEN json_extract(e.value,'$.error.message') ELSE (SELECT json_extract(m.value,'$.item.text') FROM json_each(" ++ events ++ ") m WHERE m.key<e.key AND json_extract(m.value,'$.type')='item.completed' AND json_extract(m.value,'$.item.type')='agent_message' ORDER BY m.key DESC LIMIT 1) END) FROM json_each(" ++ events ++ ") e WHERE json_extract(e.value,'$.type') IN ('turn.completed','turn.failed') ORDER BY e.key DESC LIMIT 1;"
 
 # Keep this invocation's latest Codex assistant message and terminal event.
-def codex_finished(+db: String, player: String, id: String, +source: String, previous: String, codex: Bool) -> IO(String):
+def codex_finished(+db: String, player: String, id: String, +source: String, previous: String, codex: Bool, sealed: Bool) -> IO(String):
   match codex:
     case False{}: IO.pure(String,previous)
     case True{}: do IO<String>:
       +bounded_source : String <- IO.pure(String,Bool.pick(String,String.is_empty(source),previous,source))
       +event : String <- IO.try(String,DB.Sql.query(db,codex_result_sql(bounded_source)))
-      saved : Unit <- codex_report(db,player,id,event,String.is_empty(event))
+      saved : Unit <- codex_report(db,player,id,event,String.is_empty(event),sealed)
       IO.pure(String,event)
 
 # The live issue-608-reclaim turn emitted its report in message_end, then an
@@ -480,8 +480,8 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
         sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
         status : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
-        event : String <- codex_finished(db,player,id,codex_log,terminal,String.eq(harness,"codex\n"))
         +flushed : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(log,Logs.flush(held),log_failed)
+        event : String <- codex_finished(db,player,id,codex_log,terminal,String.eq(harness,"codex\n"),Logs.failed_now(log_failed,flushed))
         checkpoint_done : Result<&1,&1,U32 & String,Unit> <- checkpoint_written(flushed,Bool.and(String.is_empty(attempt),Bool.not(log_failed)),log,"")
         noted : Result<&1,&1,U32 & String,Unit> <- record_filter(log,filter,String.eq(harness,"omp\n"))
         closed : Result<&1,&1,U32 & String,String> <- NativeRequests.closed(db,attempt,Bool.not(String.is_empty(attempt)))
@@ -507,7 +507,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +observation_sealed : Bool <- observe_sealed(db,id,player,event,next_primary,sealed,String.eq(harness,"muse\n"))
         conflict_note : Unit <- completion_conflict_note(db,player,id,event,String.eq(state,"conflict"))
         deferred : Unit <- deferred_note(db,player,id,event,terminal,next_primary,next_current,sealed,String.eq(harness,"muse\n"))
-        +observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant,observation_sealed)
+        +observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant,Bool.or(observation_sealed,failed))
         +ended : String <- Bool.pick(IO(String),String.eq(harness,"muse\n"),muse_terminal_event(db,event,terminal,next_primary,relevant),terminal_event(db,event,terminal,relevant))
         +closed_input : Result<&1,&1,U32 & String,Unit> <- close_input(handle,Bool.not(Bool.and(String.eq(harness,"omp\n"),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended))))))
         +codex_state : String <- codex_frames(db,codex_log,line,String.eq(harness,"codex\n"))

@@ -235,8 +235,7 @@ class NativeObservation(RECEIVE.Receive):
         log = self.output_log('parent').read_text()
         assistant_frames = [json.loads(line) for line in log.splitlines()
                             if 'reattach-checkpoint-assistant' in line]
-        self.assertEqual(len(assistant_frames), 2)
-        self.assertEqual(assistant_frames[0], assistant_frames[1])
+        self.assertEqual(len(assistant_frames), 1)
         raw_text = assistant_frames[0]['message']['content'][0]['text']
         self.assertEqual(len(raw_text), len(text))
         self.assertEqual(hashlib.sha256(raw_text.encode()).hexdigest(),
@@ -282,6 +281,11 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual(self.coord('turns', 'parent'), [])
         self.assertFalse(any(row['id'] == turn_id + ':checkpoint' for row in reports))
         self.assertFalse(pathlib.Path(args[-2]).exists())
+        directory, retained_turn = self._retained_attempt()
+        self.assertEqual(retained_turn, turn_id)
+        self.assertIn('log-failure-assistant', (pathlib.Path(directory) / 'stdout').read_text())
+        self.assertTrue(any(row['id'] == 'log-failure-task'
+                            for row in self.coord('inbox', 'parent')))
 
 def load_tests(loader, tests, pattern):
     declared = sorted(name for name in vars(NativeObservation) if name.startswith('test_'))
