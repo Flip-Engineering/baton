@@ -3557,12 +3557,11 @@ law an_existing_reservation_continues_to_the_next_reserve_attempt:
   for common_observed: T.GitOut
   for parent: String
   for base: String
-  for attempt: U32
-  {shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, attempt, Done{Pb.production_record("existing", shared_parent_path(parent, shared_attempt_name(base, attempt)), "0")}) == (do IO<SharedLanding>:
-    retry : Result<&1, &1, U32 & String, String> <- Rec.Receipt.reserve_attempt(parent, shared_attempt_name(base, U32.add(attempt, 1)))
-    shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, U32.add(attempt, 1), retry)) : IO(SharedLanding)}
+  {shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, 1, Done{Pb.production_record("existing", shared_parent_path(parent, shared_attempt_name(base, 1)), "0")}) == (do IO<SharedLanding>:
+    retry : Result<&1, &1, U32 & String, String> <- Rec.Receipt.reserve_attempt(parent, shared_attempt_name(base, 2))
+    shared_reserve_observed(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, 2, retry)) : IO(SharedLanding)}
 
-def an_existing_reservation_continues_to_the_next_reserve_attempt(handle,repo,target,cand,basis,guard,common,common_observed,parent,base,attempt):
+def an_existing_reservation_continues_to_the_next_reserve_attempt(handle,repo,target,cand,basis,guard,common,common_observed,parent,base):
   {==}
 law an_existing_reservation_at_the_maximum_retains_its_record:
   for handle: U32
