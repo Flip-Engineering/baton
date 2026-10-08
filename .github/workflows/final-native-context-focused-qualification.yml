@@ -17,14 +17,14 @@ jobs:
       matrix:
         include:
           - product: core
-            source_sha: 9d1038b302c538edbf6a04c5dde9f2a853b35a8b
-            source_tree: 3a6be79b4f0b9e737ff9ab8f4d498e3a9b1ec271
+            source_sha: 29180e8a2c90b27fb71741c89697fd0758773fb1
+            source_tree: f7902f63b15b6764ffc76fd8eb89d33eee18b064
           - product: combined-context
-            source_sha: a20b3f9a906bb4bc9f1b344739dfaef41cc704f9
-            source_tree: 7012f4947994d5fd1eb0f1e36d36ffc2b10e088b
+            source_sha: 5a72153a197ad08f74062071d1d1789d0ed39cab
+            source_tree: 40af816dbe188fdb1b8b79ee41ea8089dfe68ba2
           - product: primary-removal
-            source_sha: 31071dd12dfdacff8000cfd655b41271f15b7241
-            source_tree: 690a8a2c6fbfd90358c0dd5041e3257d9233f876
+            source_sha: 5fa92840a895596d0d9ba3eeaa5852269cca98f5
+            source_tree: dcd7b980715eec5832c58b0bd3b662597dbbd5fd
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
@@ -306,19 +306,19 @@ jobs:
       - name: Check out pinned primary source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: 31071dd12dfdacff8000cfd655b41271f15b7241
+          ref: 5fa92840a895596d0d9ba3eeaa5852269cca98f5
           path: source
-      - name: Install pinned Bend and build production Main
+      - name: Install pinned Bend and package production Main
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git -C source rev-parse HEAD)" = 31071dd12dfdacff8000cfd655b41271f15b7241
-          test "$(git -C source rev-parse 'HEAD^{tree}')" = 690a8a2c6fbfd90358c0dd5041e3257d9233f876
+          test "$(git -C source rev-parse HEAD)" = 5fa92840a895596d0d9ba3eeaa5852269cca98f5
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = dcd7b980715eec5832c58b0bd3b662597dbbd5fd
           test "$(uname -s)" = Darwin
           test "$(uname -m)" = arm64
           root="$RUNNER_TEMP/final-native-context-darwin-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           test ! -e "$root"
-          mkdir -p "$root/toolchain" "$root/runtime/bend2"
+          mkdir -p "$root/toolchain"
           printf 'DARWIN_EVIDENCE=%s\n' "$root" >> "$GITHUB_ENV"
           archive="$root/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
           curl --proto '=https' --tlsv1.2 -fsSL \
@@ -332,33 +332,51 @@ jobs:
           bend="$root/toolchain-home/bin/bend"
           "$bend" version > "$root/toolchain/version.txt"
           test "$(cat "$root/toolchain/version.txt")" = 'bend 2.0.25'
-          mkdir -p source/.scratch/bend2
           status=0
           set +e
-          (cd source && BEND="$bend" CC=clang sh bend2/scripts/build-native.sh \
-            bend2/src/coordinator/main.bend .scratch/bend2/baton2) \
-            > "$root/logs-main-build.stdout" 2> "$root/logs-main-build.stderr"
+          (cd source && python3 bend2/scripts/package-native.py \
+            --output "$root/package" --bend "$bend" --compiler-archive "$archive") \
+            > "$root/package.stdout" 2> "$root/package.stderr"
           status=$?
           set -e
-          printf '%s\n' "$status" > "$root/logs-main-build.exit-status"
+          printf '%s\n' "$status" > "$root/package.exit-status"
           test "$status" = 0
-          cp source/.scratch/bend2/baton2 "$root/runtime/bend2/baton2"
-          cp -R source/bend2/ui "$root/runtime/bend2/ui"
-          cp -R source/bend2/scripts "$root/runtime/bend2/scripts"
-          cp -R source/bend2/context/bend2 "$root/runtime/bend2/context-bend2"
-          {
-            printf 'source_sha=%s\nsource_tree=%s\n' \
-              "$(git -C source rev-parse HEAD)" "$(git -C source rev-parse 'HEAD^{tree}')"
-            shasum -a 256 "$root/runtime/bend2/baton2"
-          } > "$root/runtime/manifest.txt"
-      - name: Retain Darwin build logs and downloadable runtime
+      - name: Exercise the package with the build source path unavailable
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/final-native-context-darwin-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          retained="$root/source-retained"
+          test ! -e "$retained"
+          mv source "$retained"
+          trap 'mv "$retained" source' EXIT
+          archive="$root/package/baton2-development-darwin-arm64-5fa92840a895596d0d9ba3eeaa5852269cca98f5.tar.gz"
+          sha="$(awk '{print $1}' "$root/package/SHA256SUMS")"
+          mkdir -p "$root/smoke"
+          python3 "$retained/bend2/scripts/smoke-native-artifact.py" \
+            --archive "$archive" --sha256 "$sha" \
+            --manifest "$root/package/manifest.json" \
+            --unavailable-source "$GITHUB_WORKSPACE/source" --output "$root/smoke" \
+            > "$root/smoke.stdout" 2> "$root/smoke.stderr"
+      - name: Retain the downloadable runtime and smoke result
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: primary-darwin-main-runtime-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/runtime/
-            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/logs-main-build.*
+            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/package/*.tar.gz
+            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/package/manifest.json
+            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/package/SHA256SUMS
+            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/package/result.json
+            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/package/build/build.json
+            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/package/build/build.stdout
+            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/package/build/build.stderr
+            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/package.stdout
+            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/package.stderr
+            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/package.exit-status
+            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/smoke/
+            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/smoke.stdout
+            ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/smoke.stderr
             ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/toolchain/version.txt
             ${{ runner.temp }}/final-native-context-darwin-${{ github.run_id }}-${{ github.run_attempt }}/toolchain/archive-check.log
           if-no-files-found: warn
