@@ -354,11 +354,10 @@ def digits_le(+a: String, +b: String) -> Bool:
         Bool.pick(Bool, U32.is_lt(cp(head_ch(b)), cp(ha)), False{},
           digits_le(ta, tail_of(b))))
 
-# An unsigned decimal U32 token: at least one digit, no leading zero, at most ten
-# digits, and a ten-digit token at most the upper-bound token.
+# An unsigned decimal U32 token is admitted by its value domain, without a
+# separate token-length cutoff.
 def digits_bound_ok(+s: String) -> Bool:
-  Bool.pick(Bool, U32.is_lt(10, length(s)), False{},
-    Bool.pick(Bool, U32.is_lt(length(s), 10), True{}, digits_le(s, "4294967295")))
+  digits_le(s, "4294967295")
 
 def digits_shape_ok(+s: String) -> Bool:
   Bool.pick(Bool, is_zero(s), True{},
@@ -370,11 +369,10 @@ def u32_token_ok(+s: String) -> Bool:
   Bool.pick(Bool, String.is_empty(s), False{},
     Bool.pick(Bool, all_digits(s), digits_shape_ok(s), False{}))
 
-# An unsigned decimal safe-integer token: the same shape through 2^53-1. This is
-# the declaration-offset profile; it is not the frame-id profile.
+# An unsigned decimal safe-integer token is admitted by its value domain. This
+# is the declaration-offset profile; it is not the frame-id profile.
 def safe_bound_ok(+s: String) -> Bool:
-  Bool.pick(Bool, U32.is_lt(16, length(s)), False{},
-    Bool.pick(Bool, U32.is_lt(length(s), 16), True{}, digits_le(s, "9007199254740991")))
+  digits_le(s, "9007199254740991")
 
 def safe_shape_ok(+s: String) -> Bool:
   Bool.pick(Bool, is_zero(s), True{},
@@ -665,10 +663,22 @@ law contracts_law_u32_token_refuses_a_ten_digit_number_above_the_bound:
 def contracts_law_u32_token_refuses_a_ten_digit_number_above_the_bound():
   {==}
 
+law contracts_law_u32_token_refuses_a_long_number_by_value:
+  {u32_token_ok("1000000000000000000000000000000000000000000000000000") == False{} : Bool}
+
+def contracts_law_u32_token_refuses_a_long_number_by_value():
+  {==}
+
 law contracts_law_safe_integer_token_accepts_the_bound:
   {safe_integer_token_ok("9007199254740991") == True{} : Bool}
 
 def contracts_law_safe_integer_token_accepts_the_bound():
+  {==}
+
+law contracts_law_safe_integer_token_refuses_a_long_number_by_value:
+  {safe_integer_token_ok("1000000000000000000000000000000000000000000000000000") == False{} : Bool}
+
+def contracts_law_safe_integer_token_refuses_a_long_number_by_value():
   {==}
 
 law contracts_law_safe_integer_token_refuses_the_empty_token:
