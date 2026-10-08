@@ -411,7 +411,7 @@ DB="$STATE/state.db"
 `start` configures a native receiver and dispatches the task. It preserves a
 compatible existing Principal's saved conversation and pending input.
 `receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]` generates the endpoint for an
-existing Codex, OMP or Muse session and preserves its saved native ID. It resolves
+existing Codex, OMP, Muse or Claude Code session and preserves its saved native ID. It resolves
 executable and log paths and selects the recorded model, effort and workspace; the
 optional `CWD` records the working directory the session's turns run in. A session
 that records no model or no working directory is refused, because that endpoint
@@ -500,6 +500,15 @@ child's input immediately and reads the child's `--json` stream. A Muse
 Conductor with no recorded conversation starts one and records its identity from
 the session envelope; later messages resume it. The principal `start` command
 accepts `muse` as well as `codex` and `omp`.
+
+For Claude Code, register harness `claude-code` and use its executable, model and
+effort in the same endpoint. Claude reads one user frame from its input, so a
+Claude receive attempt writes the composed pending input as that frame, adds
+`--resume` for the session's recorded conversation and closes the child's input.
+An interactive Claude Code Conductor keeps the channel attachment described
+below; a Claude Player's endpoint is the native receive operation, and the
+principal `start` command accepts `claude-code` as well as `codex`, `omp` and
+`muse`.
 
 Retained OMP children send native input, selection, confirmation and editor
 questions to their registered parent. The question names its request ID and

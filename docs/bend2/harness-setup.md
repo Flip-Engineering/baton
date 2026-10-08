@@ -87,7 +87,7 @@ conversation, pending input and repository assignment. The result records a
 launched delivery PID. Inspect turns and reports to establish completion.
 
 Use `recruit` for subordinate sessions and retain the returned workspace and
-base. Configure a Codex, OMP or Muse session with
+base. Configure a Codex, OMP, Muse or Claude Code session with
 `receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]`; the command generates the
 receiver endpoint using its recorded model, effort and workspace, preserves
 its native identity and records the `CWD` argument as the directory its turns

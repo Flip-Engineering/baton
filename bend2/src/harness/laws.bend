@@ -120,6 +120,26 @@ law m5_omp_resume_carries_the_accepted_session:
 def m5_omp_resume_carries_the_accepted_session(cmd, model, effort, cwd, log, sessions, session):
   {==}
 
+law m5_claude_argv_carries_the_accepted_session:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +session: String
+  {Claude.argv(cmd, model, effort, session, False{}) == P.argv(List.append(&1,String,Claude.arguments(cmd,model,effort),["--resume",session])) : String}
+
+def m5_claude_argv_carries_the_accepted_session(cmd, model, effort, session):
+  {==}
+
+law m2_claude_argv_starts_a_fresh_conversation:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +session: String
+  {Claude.argv(cmd, model, effort, session, True{}) == P.argv(Claude.arguments(cmd,model,effort)) : String}
+
+def m2_claude_argv_starts_a_fresh_conversation(cmd, model, effort, session):
+  {==}
+
 law m5_claude_resume_carries_the_accepted_session:
   for +cmd: String
   for +model: String

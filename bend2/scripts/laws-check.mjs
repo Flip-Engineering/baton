@@ -195,7 +195,7 @@ const MUTATIONS = [
   {
     name: "native-receiver-admits-unsupported-harness",
     file: join("bend2", "src", "coordinator", "control.bend"),
-    find: " AND harness IN ('codex','omp','muse')",
+    find: " AND harness IN ('codex','omp','muse','claude-code')",
     replace: "",
     law: "native_receiver_checks_harness_stop_and_endpoint_admission",
   },
@@ -1100,6 +1100,11 @@ MUTATIONS.push(
 MUTATIONS.push(
   {"name": "retained-muse-keeps-its-input-open", "file": "bend2/src/coordinator/turn.bend", "find": "  Bool.pick(U32,muse,0,Bool.pick(U32,omp,1,0))", "replace": "  Bool.pick(U32,muse,1,Bool.pick(U32,omp,1,0))", "law": "m13_a_retained_muse_attempt_closes_its_input_as_a_codex_attempt_does"},
   {"name": "retained-muse-starts-a-fresh-conversation", "file": "bend2/src/coordinator/turn.bend", "find": "    Muse.argv(cmd,model,effort,task,native,String.is_empty(native)),", "replace": "    Muse.argv(cmd,model,effort,task,native,True{}),", "law": "m5_the_retained_muse_argv_resumes_the_recorded_conversation"}
+);
+
+MUTATIONS.push(
+  {"name": "retained-claude-input-loses-the-user-frame", "file": "bend2/src/coordinator/turn.bend", "find": "Bool.pick(String,claude,Claude.user_frame(prompt),", "replace": "Bool.pick(String,claude,prompt,", "law": "m13_a_retained_claude_attempt_carries_the_user_frame"},
+  {"name": "retained-claude-starts-a-fresh-conversation", "file": "bend2/src/coordinator/turn.bend", "find": "    Claude.argv(cmd,model,effort,native,String.is_empty(native)),", "replace": "    Claude.argv(cmd,model,effort,native,True{}),", "law": "m5_the_retained_claude_argv_resumes_the_recorded_conversation"}
 );
 
 for (const mutation of MUTATIONS) {

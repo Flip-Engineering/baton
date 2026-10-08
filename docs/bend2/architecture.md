@@ -43,7 +43,7 @@ write transactions.
 
 Bend 2.0.25 emits C; the build links it with clang, pthreads and SQLite. The
 Claude channel adapter uses Node's standard library, including `node:sqlite`.
-Native `receive` supplies Codex, OMP and Muse Conductor delivery. Their earlier Node
+Native `receive` supplies Codex, OMP, Muse and Claude Code Conductor delivery. Their earlier Node
 adapters remain available for existing configurations.
 Application decisions live in the Bend modules; C bindings perform host effects.
 Production modules are imported libraries. Earlier JSON and replay experiments
@@ -182,7 +182,7 @@ harness command and log, and records the `CWD` argument as the working directory
 its turns run in. A session that records no model or no working directory is
 refused at registration, because that endpoint would start no turn.
 
-### Codex, OMP and Muse
+### Codex, OMP, Muse and Claude Code
 
 The endpoint invokes `receive SESSION HARNESS_COMMAND MODEL EFFORT CWD
 OUTPUT_LOG MESSAGE_ID`. Empty model, effort and working-directory arguments
@@ -203,6 +203,10 @@ that path to `exec --json --prompt-file`, adding `--session-id` for the
 session's recorded conversation. The attempt closes the child's input
 immediately, and the adapter reads the child's stream. The host creates the
 attempt directory itself, so the task file takes the sibling name.
+
+A Claude Code attempt reads one user frame from its input: receive writes the
+composed input as that frame, adds `--resume NATIVE` for the session's recorded
+conversation and closes the child's input.
 
 Receive retains each attempt's launch arguments, initial input, recovery command,
 native stdout and stderr beside the database. A process owner holds the session lock,
@@ -251,10 +255,11 @@ message delivered to that session invokes the endpoint with the message ID.
 | Codex | `receive` launches `exec resume NATIVE` and writes the pending input to the child's stdin. | The recorded thread ID resumes the same conversation. The session row keeps the endpoint across a resident restart. |
 | OMP | `receive` launches RPC mode against the session directory and sends the pending input as a prompt frame. | The recorded conversation file and `--resume NATIVE` resume the same conversation. |
 | Muse | `receive` writes the pending input to the attempt's prompt file and launches `exec --json --prompt-file TASK --session-id NATIVE`. | The recorded Muse session ID resumes the same conversation. A resumed identity the harness refuses records a recovery input and starts a fresh conversation with the workspace's state. |
-| Claude Code | The interactive Conductor's channel adapter delivers the committed message as a channel notification. | The adapter re-registers its endpoint and replays pending messages after its own restart; it needs its own process. |
+| Claude Code Conductor | The interactive Conductor's channel adapter delivers the committed message as a channel notification. | The adapter re-registers its endpoint and replays pending messages after its own restart; it needs its own process. |
+| Claude Code Player | `receive` launches `--print --input-format stream-json` with the pending input as one user frame and `--resume NATIVE`. | The recorded session ID resumes the same conversation. |
 
-Session ownership is one active attempt per logical session for Codex, OMP and
-Muse. Input committed while an attempt is live remains pending. After the
+Session ownership is one active attempt per logical session for Codex, OMP, Muse
+and Claude Code. Input committed while an attempt is live remains pending. After the
 attempt releases the session, the drain reads the pending index and the next
 turn consumes the input that read observed, once. Input committed between that
 count read and the drain's reacquisition of the session lock stays pending until
@@ -337,7 +342,7 @@ explicit operation.
 
 Recovery retains SQLite, native conversation storage, output files and Git
 worktrees. The caller reads a Player's native ID and starts a new turn using it
-in the same workspace. A Codex, OMP or Muse Conductor reattaches and resumes its recorded
+in the same workspace. A Codex, OMP, Muse or Claude Code Conductor reattaches and resumes its recorded
 native session. Claude resumes its interactive session and reloads the channel;
 pending messages replay after discovery. A crash before acknowledgment can
 produce repeated input. Messages awaiting receipts are derived from SQLite.

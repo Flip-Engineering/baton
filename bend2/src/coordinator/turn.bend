@@ -564,17 +564,21 @@ def retained_output(+db: String, +player: String, id: String, +log: String, +har
 def retained_task(directory: String) -> String:
   directory ++ ".prompt.txt"
 
-def retained_arguments(muse: Bool, omp: Bool, cmd: String, model: String, effort: String, task: String, sessions: String, native: String) -> String:
+def retained_arguments(muse: Bool, omp: Bool, claude: Bool, cmd: String, model: String, effort: String, task: String, sessions: String, native: String) -> String:
   Bool.pick(String,muse,
     Muse.argv(cmd,model,effort,task,native,String.is_empty(native)),
-  Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
+  Bool.pick(String,claude,
+    Claude.argv(cmd,model,effort,native,String.is_empty(native)),
+  Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native)))))
 
-def retained_input(muse: Bool, omp: Bool, prompt: String) -> String:
-  Bool.pick(String,muse,"",Bool.pick(String,omp,Omp.prompt(prompt),prompt))
+# Claude reads one user frame from its input; OMP reads its prompt frames there.
+def retained_input(muse: Bool, omp: Bool, claude: Bool, prompt: String) -> String:
+  Bool.pick(String,muse,"",Bool.pick(String,claude,Claude.user_frame(prompt),Bool.pick(String,omp,Omp.prompt(prompt),prompt)))
 
-# The Muse task file closes the child's input; OMP keeps it open for steer frames.
-def retained_keep_stdin(muse: Bool, omp: Bool) -> U32:
-  Bool.pick(U32,muse,0,Bool.pick(U32,omp,1,0))
+# The Muse task file, Claude's single frame and Codex's stdin all close the child's
+# input; OMP keeps it open for steer frames.
+def retained_keep_stdin(muse: Bool, omp: Bool, claude: Bool) -> U32:
+  Bool.pick(U32,muse,0,Bool.pick(U32,claude,0,Bool.pick(U32,omp,1,0)))
 
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
@@ -582,14 +586,15 @@ def retained(+db: String, +player: String, +directory: String, +cmd: String, +mo
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
     +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
     +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
+    +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
     +task : String <- IO.pure(String,retained_task(directory))
     written : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),muse,T.Text.append(task,prompt),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     match written:
       case Fail{error}: IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Fail{error})
       case Done{unit}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
-        args : String <- IO.pure(String,retained_arguments(muse,omp,cmd,model,effort,task,sessions,native))
-        input : String <- IO.pure(String,retained_input(muse,omp,prompt))
-        P.ProcessChild.retain(directory,args,cwd,directory ++ "/native.stderr",input,retained_keep_stdin(muse,omp),lock,recovery)
+        args : String <- IO.pure(String,retained_arguments(muse,omp,claude,cmd,model,effort,task,sessions,native))
+        input : String <- IO.pure(String,retained_input(muse,omp,claude,prompt))
+        P.ProcessChild.retain(directory,args,cwd,directory ++ "/native.stderr",input,retained_keep_stdin(muse,omp,claude),lock,recovery)
 
 def claude_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:

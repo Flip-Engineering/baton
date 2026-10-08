@@ -38,24 +38,28 @@ args=sys.argv[1:]
 session=args[args.index('--model')+1]
 omp='--mode' in args
 muse='--prompt-file' in args
+claude='--input-format' in args
+frame=''
 if muse:
     prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
     resume=args[args.index('--session-id')+1] if '--session-id' in args else ''
-    native=resume or ('native-'+session)
+elif claude:
+    frame=sys.stdin.readline()
+    prompt=json.loads(frame)['message']['content']
+    resume=args[args.index('--resume')+1] if '--resume' in args else ''
 elif omp:
     json.loads(sys.stdin.readline())
     state=json.loads(sys.stdin.readline())
     prompt=json.loads(sys.stdin.readline())['message']
     resume=args[args.index('--resume')+1] if '--resume' in args else ''
-    native=resume or ('native-'+session)
 else:
     prompt=sys.stdin.read()
     resume=args[args.index('resume')+1] if 'resume' in args else ''
-    native=resume or ('native-'+session)
+native=resume or ('native-'+session)
 record=pathlib.Path(CALLS,session+'.jsonl')
 with record.open('a') as output:
     output.write(json.dumps({'pid':os.getpid(),'args':args,'cwd':os.getcwd(),'prompt':prompt,
-                             'native':native,'resume':resume})+chr(10))
+                             'native':native,'resume':resume,'frame':frame})+chr(10))
 turn=len([line for line in record.read_text().splitlines() if line.strip()])
 for ident in re.findall(r'\\[id: (.*?)\\]:',prompt):
     accepted=subprocess.run([EXE,DB,'ack',ident,session,'fixture reviewed'],capture_output=True,text=True)
@@ -66,6 +70,8 @@ if omp:
 elif muse:
     print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'turn.input.user',
                       'payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}),flush=True)
+elif claude:
+    print(json.dumps({'type':'system','subtype':'init','session_id':native,'model':session}),flush=True)
 else:
     print(json.dumps({'type':'thread.started','thread_id':native}),flush=True)
 while not pathlib.Path(RELEASES,session+'.'+str(turn)+'.release').exists():
@@ -79,6 +85,8 @@ elif muse:
     print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.terminal.completed',
                       'payload':{'kind':'run_terminal','terminal':'completed',
                                  'command_id':'fixture-primary','text':body}}),flush=True)
+elif claude:
+    print(json.dumps({'type':'result','session_id':native,'result':body,'is_error':False}),flush=True)
 else:
     print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':body}}),flush=True)
     print(json.dumps({'type':'turn.completed'}),flush=True)
@@ -133,6 +141,8 @@ class RootWake(unittest.TestCase):
         self.child_task = self.write('child-task.txt', 'Task for the OMP child.\n')
         self.late_lead = self.write('late-lead.txt', 'Late guidance for the Muse lead.\n')
         self.late_root = self.write('late-root.txt', 'Late report for the Codex root.\n')
+        self.leaf_task = self.write('leaf-task.txt', 'Task for the Claude player.\n')
+        self.leaf_followup = self.write('leaf-followup.txt', 'Follow-up for the Claude player.\n')
 
     def tearDown(self):
         self.temp.cleanup()
@@ -371,6 +381,39 @@ class RootWake(unittest.TestCase):
         self.assertEqual(self.accepted('child-report'), 'fixture reviewed')
         self.assertEqual(json.loads(self.coord('player', 'root'))['native'], 'native-attached')
         self.assert_consumed_once_and_by_its_recipient(['root', 'child'])
+
+    def test_a_claude_player_wakes_through_the_same_receive_endpoint(self):
+        # A Claude Player's recorded endpoint starts its turn with the pending input
+        # as one user frame and resumes the conversation the first turn recorded.
+        self.coord('attach', 'root', 'codex', 'native-root', '')
+        self.coord('role', 'root', 'principal-conductor')
+        self.coord('attach', 'operator', 'operator', '')
+        self.coord('role', 'operator', 'operator')
+        self.recruit('leaf', 'root', 'claude-code')
+        self.coord('receiver', 'leaf', str(self.fixture), str(self.directory / 'leaf.jsonl'))
+        self.release('leaf', 1)
+        self.release('leaf', 2)
+        self.dispatch('dispatch-file', 'leaf-task', 'root', 'leaf', 'task', str(self.leaf_task))
+        first = self.eventually(lambda: self.calls('leaf')[:1], 'the Claude player never started a turn.')
+        self.assertEqual(first[0]['cwd'], str(self.checkouts / 'leaf'))
+        self.assertEqual(first[0]['args'][first[0]['args'].index('--model') + 1], 'leaf')
+        self.assertNotIn('--resume', first[0]['args'])
+        frame = json.loads(first[0]['frame'])
+        self.assertEqual(frame['message']['role'], 'user')
+        self.assertIn('Task for the Claude player.', frame['message']['content'])
+        self.assertIn('[id: leaf-task]', frame['message']['content'])
+
+        self.dispatch('dispatch-file', 'leaf-followup', 'root', 'leaf', 'guidance', str(self.leaf_followup))
+        second = self.eventually(lambda: self.calls('leaf')[1:2], 'the follow-up never woke the leaf.')
+        self.assertEqual(second[0]['args'][second[0]['args'].index('--resume') + 1], 'native-leaf')
+        self.assertIn('Follow-up for the Claude player.', json.loads(second[0]['frame'])['message']['content'])
+        self.eventually(lambda: len(self.calls('leaf')) == 2, 'the leaf started a third turn.')
+        self.assertEqual([len(self.calls('leaf')), len(json.loads(self.coord('turns', 'leaf')))], [2, 2])
+        self.assertEqual(json.loads(self.coord('player', 'leaf'))['native'], 'native-leaf')
+        self.assertEqual({row['recipient'] for row in self.rows("SELECT recipient FROM messages WHERE sender='leaf'")},
+                         {'root'})
+        self.assertEqual(self.accepted('leaf-task'), 'fixture reviewed')
+        self.assert_consumed_once_and_by_its_recipient(['leaf'])
 
     def test_a_parentless_conductor_without_the_operator_role_reaches_no_inbox(self):
         self.release('root', 1)
