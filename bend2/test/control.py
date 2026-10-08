@@ -354,12 +354,14 @@ class Control(unittest.TestCase):
 
     def test_receiver_refuses_unsupported_stopped_and_missing_sessions(self):
         self.root()
-        for harness in ('muse', 'claude-code'):
-            self.recruit(harness, harness)
-            self.call('connect', harness, 'saved-' + harness, '')
-            before = self.call('player', harness)
-            self.call('receiver', harness, self.fixture, self.directory / (harness + '.jsonl'), ok=False)
-            self.assertEqual(self.call('player', harness), before)
+        # A Muse Conductor registers the same native receive endpoint; only the
+        # interactive Claude channel attachment has no receive endpoint.
+        harness = 'claude-code'
+        self.recruit(harness, harness)
+        self.call('connect', harness, 'saved-' + harness, '')
+        before = self.call('player', harness)
+        self.call('receiver', harness, self.fixture, self.directory / (harness + '.jsonl'), ok=False)
+        self.assertEqual(self.call('player', harness), before)
         self.recruit('stopped')
         self.call('message', 'retained', 'root', 'stopped', 'task', self.task.read_text())
         self.call('stop', 'stopped', 'idle-stop', 'Controlled idle stop.')

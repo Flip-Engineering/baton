@@ -203,14 +203,21 @@ const MUTATIONS = [
   {
     name: "native-receiver-admits-unsupported-harness",
     file: join("bend2", "src", "coordinator", "control.bend"),
-    find: " AND harness IN ('codex','omp')",
+    find: " AND harness IN ('codex','omp','muse','claude-code')",
     replace: "",
     law: "native_receiver_checks_harness_stop_and_endpoint_admission",
   },
   {
     name: "native-receiver-accepts-unchecked-endpoint",
     file: join("bend2", "src", "coordinator", "control.bend"),
-    find: " ++ \" AND \" ++ C.endpoint_admitted(endpoint) ++ \")\"",
+    find: " ++ \" AND \" ++ C.endpoint_admitted(endpoint) ++ \" AND \" ++ receiver_model(session)",
+    replace: " ++ \" AND \" ++ receiver_model(session)",
+    law: "native_receiver_checks_harness_stop_and_endpoint_admission",
+  },
+  {
+    name: "native-receiver-accepts-a-session-without-a-directory",
+    file: join("bend2", "src", "coordinator", "control.bend"),
+    find: " ++ \" AND \" ++ receiver_directory(session,cwd) ++ \")\"",
     replace: " ++ \")\"",
     law: "native_receiver_checks_harness_stop_and_endpoint_admission",
   },
@@ -1096,6 +1103,16 @@ MUTATIONS.push(
     replace: '+same = Bool.pick(Bool, True{}, True{}, True{})\n      ld_adv_wt_observed_target_same(same, path, target)',
     law: 'm3a_held_target_tip_mismatch_refuses',
   },
+);
+
+MUTATIONS.push(
+  {"name": "retained-muse-keeps-its-input-open", "file": "bend2/src/coordinator/turn.bend", "find": "  Bool.pick(U32,muse,0,Bool.pick(U32,claude,0,Bool.pick(U32,omp,1,0)))", "replace": "  Bool.pick(U32,muse,1,Bool.pick(U32,claude,0,Bool.pick(U32,omp,1,0)))", "law": "m13_a_retained_muse_attempt_closes_its_input_as_a_codex_attempt_does"},
+  {"name": "retained-muse-starts-a-fresh-conversation", "file": "bend2/src/coordinator/turn.bend", "find": "Bool.pick(List<String>,String.is_empty(session),Nil{},[\"--session-id\",session])", "replace": "Nil{}", "law": "m5_the_retained_muse_argv_resumes_the_recorded_conversation"}
+);
+
+MUTATIONS.push(
+  {"name": "retained-claude-input-loses-the-user-frame", "file": "bend2/src/coordinator/turn.bend", "find": "Bool.pick(String,claude,Claude.user_frame(prompt),", "replace": "Bool.pick(String,claude,prompt,", "law": "m13_a_retained_claude_attempt_carries_the_user_frame"},
+  {"name": "retained-claude-starts-a-fresh-conversation", "file": "bend2/src/coordinator/turn.bend", "find": "    Claude.argv(cmd,model,effort,native,String.is_empty(native)),", "replace": "    Claude.argv(cmd,model,effort,native,True{}),", "law": "m5_the_retained_claude_argv_resumes_the_recorded_conversation"}
 );
 
 for (const mutation of MUTATIONS) {
