@@ -710,8 +710,31 @@ def ff_stage5_named(candidate: String, old: String, repo: String, target: String
       do IO<FFLD>:
         outcome : Lg.Landing <- Lg.Landing.run(request)
         ff_stage5_outcome(target, candidate, art, repo, outcome)
+def ff_stage5_guarded_now(candidate: String, old: String, repo: String, target: String, common: String, guard: String) -> IO(FFLD):
+  +cand = candidate
+  +tb = old
+  +rp = repo
+  +tg = target
+  +cm = common
+  +gd = guard
+  do IO<FFLD>:
+    token : Result<&1, &1, U32 & String, String> <- Rec.Receipt.attempt_token(tg)
+    ff_stage5_named(cand, tb, rp, tg, cm, gd, token)
 
+def ff_stage5_guard_observed(cand: String, old: String, repo: String, target: String, common: String, observed: Result<&1, &1, U32 & String, String>) -> IO(FFLD):
+  match observed:
+    case Fail{error}: ff_stage5_blocked("cannot name the landing guard")
+    case Done{guard}: ff_stage5_guarded_now(cand, old, repo, target, common, guard)
 
+def ff_stage5_guardpath(cand: String, old: String, repo: String, target: String, common: String) -> IO(FFLD):
+  +candidate = cand
+  +tb = old
+  +rp = repo
+  +tg = target
+  +cm = common
+  do IO<FFLD>:
+    guard_g : Result<&1, &1, U32 & String, String> <- Rec.Receipt.guard_path(cm, tg)
+    ff_stage5_guard_observed(candidate, tb, rp, tg, cm, guard_g)
 
 def ff_stage5_common(cand: String, old: String, repo: String, target: String, observed: T.GitOut) -> IO(FFLD):
   match observed:
@@ -720,6 +743,124 @@ def ff_stage5_common(cand: String, old: String, repo: String, target: String, ob
       Bool.pick(IO(FFLD), U32.is_eq(code, 0),
         ff_stage5_guardpath(cand, old, repo, target, Tx.trim_nl(out)),
         ff_stage5_blocked("cannot read the common directory for the landing guard"))
+def ff_stage5_guarded(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
+  +cand = wc
+  +old = tb
+  +rp = repo
+  +tg = target
+  do IO<FFLD>:
+    common_g : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
+    ff_stage5_common(cand, old, rp, tg, common_g)
+
+type LAdv is Data:
+  AdvLanded{}
+  AdvMoved{}
+  AdvHeld{path: String}
+  AdvHolderChanged{path: String}
+  AdvUnassociated{step: String}
+  AdvIntentRefused{step: String}
+  AdvRefused{}
+  AdvBroken{detail: String}
+
+# The fast-forward now advances through the same holder-aware path the checked landing uses,
+# so both reach one effect. Only a landed answer reports LLanded; a moved target, a held
+# worktree, a changed holder, a refused update and a broken read each keep their own answer.
+def ff_stage5_adv_answer(+a: LAdv, target: String, cand: String) -> FFLD:
+  match a:
+    case AdvLanded{}: FFDone{T.LLanded{target, cand}}
+    case AdvMoved{}: FFDone{T.LBlocked{"target moved during landing; retry"}}
+    case AdvHeld{path}: FFDone{T.LBlocked{Tx.str_cat("the target is held by a worktree: ", path)}}
+    case AdvHolderChanged{path}: FFDone{T.LBlocked{Tx.str_cat("the holder changed: ", path)}}
+    case AdvUnassociated{step}: FFDone{T.LBlocked{Tx.str_cat("the association was refused at ", step)}}
+    case AdvIntentRefused{step}: FFDone{T.LBlocked{Tx.str_cat("the intent was refused at ", step)}}
+    case AdvRefused{}: FFDone{T.LBlocked{"git update-ref failed; inspect the target and retry"}}
+    case AdvBroken{detail}: FFDone{T.LBlocked{detail}}
+
+# One read of the qualification, kept as performed or explicitly not performed.
+type LdRead is Data:
+  ReadSkipped{}
+  ReadObserved{observation: T.GitOut}
+
+# The reads the held qualification actually performed, beside the advance decision it made.
+type MutationMode is Data:
+  MutationUnknown{}
+  MutationUnheld{}
+  MutationHeld{path: String}
+
+type LdQualified is Data:
+  QualDecided{mode: MutationMode, target_ref: LdRead, head_ref: LdRead}
+
+# The association the attempt read before any mutation: the request the attempt built, the
+# normalized values the association module returned from it, and the six read positions with the
+# observation each one produced or as skipped. A refusal keeps the earlier performed reads and its
+# own refusing observation, and the positions it never reached stay skipped.
+type AssociationEvidence is Data:
+  AssociationMissing{}
+  AssociationObserved{step: String, request: A.AssociationRequest, candidate_oid: String, basis_oid: String, target_head: String, holder_common: String, destination_common: String, reads: A.AssocReads}
+  AssociationRefused{request: A.AssociationRequest, step: String, observation: T.GitOut, reads: A.AssocReads}
+
+# The whole outcome the intent producer returned, or an explicit statement that no publication was
+# attempted. Keeping the outcome itself keeps its own tag, pending value, path and payload.
+type IntentPublication is Data:
+  IntentUnpublished{}
+  IntentPublished{outcome: Pb.IntentPublish}
+
+# The whole outcome the intent preparation returned, or an explicit statement that qualification was
+# not reached.
+type IntentPreparation is Data:
+  IntentUnprepared{}
+  IntentQualified{raw: String, path: String}
+  IntentQualificationRefused{raw: String, path: String, pending: String, reason: String}
+  IntentQualificationFailed{step: String, error: T.HostError}
+
+# The three raw results a held route's holder observation produced. An unheld route performs none of
+# them and says so, rather than performing repository reads and discarding them.
+type IntentHolderReads is Data:
+  IntentHolderUnperformed{}
+  IntentHolderRead{head: T.GitOut, index: T.GitOut, status: T.GitOut}
+  IntentHolderUnready{step: String, reason: String, raw: String}
+  IntentHolderPending{request: It.IntentInput, raw: String, pending: String}
+  IntentHolderFailed{step: String, request: It.IntentInput, error: T.HostError}
+
+# The intent evidence: the request the attempt fixed, the path that request was expected to name, the
+# publication outcome, the preparation outcome and the holder reads. The expected path is an operand,
+# not an observation, and the older two-field form remains for landing-era evidence.
+type IntentEvidence is Data:
+  IntentMissing{}
+  IntentObserved{path: String, raw: String}
+  IntentBound{request: It.IntentInput, expected_path: String, publication: IntentPublication,
+              preparation: IntentPreparation, holder: IntentHolderReads}
+
+# The reservation the attempt's path was created under: the parent directory and the name the
+# reserve call used. Retaining both lets admission evaluate the path the name implies and compare
+# it with the path the evidence carries, instead of trusting that path alone.
+type ReservationIdentity is Data:
+  ReservationMissing{}
+  ReservationObserved{parent: String, name: String}
+
+type LdAdvObs is Data:
+  LdAdvNoCapture{advance: LAdv, mode: MutationMode, association: AssociationEvidence, intent: IntentEvidence}
+  LdAdvCaptured{advance: LAdv, capture: T.CapturedRaw, mode: MutationMode, association: AssociationEvidence, intent: IntentEvidence}
+  LdAdvQualified{advance: LAdv, capture: T.CapturedRaw, qualification: LdQualified, association: AssociationEvidence, intent: IntentEvidence}
+
+# The public shared boundary. The canonical common directory is read once here, the target
+# claim is taken around the holder selection and the selected advance, and the release runs for
+# every returned advance outcome with its own Result preserved beside the advance observation.
+# A release failure is therefore visible to both adapters and can never read as a landing.
+
+# Receipt admission: the published record was freshly created, durable, and reads back byte for byte.
+# The complete attempt evidence. Every operand the attempt fixed at admission is carried here, so a
+# later step cannot re-resolve or substitute one for receipt convenience.
+type IdentityEvidence is Data:
+  IdentityMissing{}
+  IdentityObserved{common: String, observed: T.GitOut, target: String}
+
+# The fixed operands the intent request named, and the two producer outcomes, written whole so the
+# record carries the tags, paths, pending values and payloads the producers returned.
+def intent_request_fields(request: It.IntentInput, rest: List<String>) -> List<String>:
+  match request:
+    case It.IntentRequested{attempt, common, target, destination, candidate, basis, intent_path, holder, retry}:
+      Con{"intent-request", Con{attempt, Con{common, Con{target, Con{destination, Con{candidate, Con{basis, Con{intent_path, Con{holder, Con{retry, rest}}}}}}}}}}
 
 def host_error_fields(error: T.HostError, rest: List<String>) -> List<String>:
   match error:
