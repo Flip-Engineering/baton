@@ -373,7 +373,8 @@ class Land(unittest.TestCase):
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         self.assertEqual((self.repo / 'a.txt').read_text(), 'alpha\n')
         self.assertEqual(self.tracked_status(), '')
-        self.assertEqual(len(self.scratch_trees('w2')), 2)
+        kept = self.scratch_trees('w2')
+        self.assertEqual(len(kept), 2)
         retry = self.call('land-checked', 'w2', self.repo, 'main',
                           'check-plain.sh', 'file.txt')
         self.assertEqual(retry['status'], 'landed')
@@ -383,7 +384,7 @@ class Land(unittest.TestCase):
         self.assertEqual((self.repo / 'a.txt').read_text(), 'alpha\n')
         self.assertEqual((self.repo / 'b.txt').read_text(), 'beta\n')
         self.assertEqual(self.tracked_status(), '')
-        self.assertEqual(self.scratch_trees('w2'), [])
+        self.assertEqual(self.scratch_trees('w2'), kept)
 
     def test_checked_landing_advances(self):
         (self.repo / 'check-pass.sh').write_text('exit 0\n')
@@ -698,7 +699,8 @@ class Land(unittest.TestCase):
         self.assertEqual(self.git('rev-parse', 'wb').strip(), player)
         self.assertEqual((self.repo / 'wt2' / 'b.txt').read_text(), 'beta\n')
         self.assertNotIn('b.txt', self.git('ls-tree', '--name-only', 'main').splitlines())
-        self.assertEqual(len(self.scratch_trees('w2')), 2)
+        kept = self.scratch_trees('w2')
+        self.assertEqual(len(kept), 2)
         retry = self.call('land-checked', 'w2', self.repo, 'main',
                           'check-plain.sh', 'file.txt')
         self.assertEqual(retry['status'], 'landed')
@@ -706,7 +708,7 @@ class Land(unittest.TestCase):
         self.assertEqual(self.git('rev-parse', 'main^').strip(), moved['commit'])
         self.assertEqual(self.git('show', 'main:a.txt').strip(), 'alpha')
         self.assertEqual(self.git('show', 'main:b.txt').strip(), 'beta')
-        self.assertEqual(self.scratch_trees('w2'), [])
+        self.assertEqual(self.scratch_trees('w2'), kept)
 
     def test_target_moves_under_the_second_landing_and_retry_conflicts(self):
         self.waiting_checks()
@@ -720,7 +722,8 @@ class Land(unittest.TestCase):
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         self.assertEqual(self.git('rev-parse', 'wd').strip(), player)
         self.assertEqual((self.repo / 'wt4' / 'file.txt').read_text(), 'worker change for w4')
-        self.assertEqual(len(self.scratch_trees('w4')), 2)
+        kept = self.scratch_trees('w4')
+        self.assertEqual(len(kept), 2)
         retry = self.call('land-checked', 'w4', self.repo, 'main',
                           'check-plain.sh', 'file.txt')
         self.assertEqual(retry['status'], 'conflict')
@@ -728,7 +731,8 @@ class Land(unittest.TestCase):
         self.assertTrue(pathlib.Path(retry['dir']).is_dir())
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w3')
-        self.assertEqual(self.scratch_trees('w4'), [pathlib.Path(retry['dir']).name])
+        self.assertEqual(self.scratch_trees('w4'),
+                         sorted(kept + [pathlib.Path(retry['dir']).name]))
         unmerged = subprocess.run(
             ['git', '-C', retry['dir'], 'diff', '--name-only', '--diff-filter=U'],
             check=True, text=True, capture_output=True,
@@ -924,12 +928,16 @@ class Land(unittest.TestCase):
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         self.assertEqual(self.git('rev-parse', 'wb-branch').strip(), b_commit)
         retried = self.scratch_paths('wb')
-        self.assertEqual(len(retried), 2)
-        failed = [tree for tree in retried if self.fixture_status(tree)]
+        self.assertTrue(set(kept).issubset(retried))
+        self.assertEqual((candidates[0] / 'left.txt').read_text(), '4\n')
+        self.assertEqual((candidates[0] / 'right.txt').read_text(), '6\n')
+        new_attempt = [tree for tree in retried if tree not in kept]
+        self.assertEqual(len(new_attempt), 2)
+        failed = [tree for tree in new_attempt if self.fixture_status(tree)]
         self.assertEqual(len(failed), 1)
         self.assertEqual((failed[0] / 'left.txt').read_text(), '6\n')
         self.assertEqual((failed[0] / 'right.txt').read_text(), '6\n')
-        checked_target = [tree for tree in retried if tree.name.endswith('-target')]
+        checked_target = [tree for tree in new_attempt if tree.name.endswith('-target')]
         self.assertEqual(len(checked_target), 1)
         self.assertEqual(self.fixture_status(checked_target[0]), 0)
         self.assertEqual((checked_target[0] / 'left.txt').read_text(), '6\n')
