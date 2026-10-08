@@ -114,7 +114,7 @@ function bendTermTag(value: unknown): string {
     if (value === null) return "null";
     if (typeof value !== "object") return typeof value;
     const tag = (value as { $?: unknown }).$;
-    return typeof tag === "string" ? tag.slice(0, 48) : "object";
+    return typeof tag === "string" ? tag : "object";
   } catch {
     return "unreadable";
   }
@@ -128,21 +128,19 @@ function bendTermShow(value: unknown, observation: string, definition: string, l
   } catch (error) {
     bendHookState.failures += 1;
     bendHookState.unrendered += 1;
-    if (bendHookState.unrenderedSamples.length < 8) {
-      let errorKind = bendTermTag(error);
-      let message: string | null = null;
-      try {
-        if (error !== null && typeof error === "object") {
-          const name = (error as { name?: unknown }).name;
-          if (typeof name === "string" && name.length > 0) errorKind = name.slice(0, 48);
-          const text = (error as { message?: unknown }).message;
-          if (typeof text === "string") message = text.slice(0, 160);
-        }
-      } catch {
-        errorKind = "unreadable";
+    let errorKind = bendTermTag(error);
+    let message: string | null = null;
+    try {
+      if (error !== null && typeof error === "object") {
+        const name = (error as { name?: unknown }).name;
+        if (typeof name === "string" && name.length > 0) errorKind = name;
+        const text = (error as { message?: unknown }).message;
+        if (typeof text === "string") message = text;
       }
-      bendHookState.unrenderedSamples.push({ observation: observation.slice(0, 32), definition: definition.slice(0, 160), stage, valueKind: bendTermTag(value), errorKind, message });
+    } catch {
+      errorKind = "unreadable";
     }
+    bendHookState.unrenderedSamples.push({ observation, definition, stage, valueKind: bendTermTag(value), errorKind, message });
     return null;
   }
 }
