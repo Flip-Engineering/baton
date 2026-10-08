@@ -5,6 +5,17 @@ on:
     branches:
       - codex/final-native-context-core-combined-validation-20261008
   workflow_dispatch:
+    inputs:
+      product_run_id:
+        description: Existing product build run containing the selected native binaries
+        required: true
+        type: string
+        default: '37764922546'
+      product_run_attempt:
+        description: Attempt containing the selected native binaries
+        required: true
+        type: string
+        default: '3'
 
 permissions:
   actions: read
@@ -12,6 +23,7 @@ permissions:
 
 jobs:
   build:
+    if: ${{ github.event_name != 'workflow_dispatch' }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -225,23 +237,23 @@ jobs:
           retention-days: 14
 
   runtime:
-    if: ${{ always() && needs.build.result == 'success' }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') }}
     needs: build
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["control","receive","logs","fixed-coordinator"]' || '["land","mcp-command","mcp-root","mcp-contract","logs","turn","process","configure","native-observation","fixed-coordinator","control","retained-control","role-guard","root-wake","codex-root","muse-root","omp-root","control-identity","shared-instance","ui-orchestra-native","ui-orchestra-browser","node-provider-ui","selected-context-package","observed-usage","stop","receive","receive-output","receive-terminal-boundary"]') }}
+        suite: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["fixed-coordinator","stop","codex-root"]' || '["land","mcp-command","mcp-root","mcp-contract","logs","turn","process","configure","native-observation","fixed-coordinator","control","retained-control","role-guard","root-wake","codex-root","muse-root","omp-root","control-identity","shared-instance","ui-orchestra-native","ui-orchestra-browser","node-provider-ui","selected-context-package","observed-usage","stop","receive","receive-output","receive-terminal-boundary"]') }}
     env:
       BEND_NO_TELEMETRY: '1'
       PRODUCT_SOURCE_SHA: 645961c6406a95942024e29dab16dc3bbfffaed3
       PRODUCT_SOURCE_TREE: 2e908eafe751141e36fbd5104f0bf721622a23a4
-      FIXTURE_SOURCE_SHA: 645961c6406a95942024e29dab16dc3bbfffaed3
-      FIXTURE_SOURCE_TREE: 2e908eafe751141e36fbd5104f0bf721622a23a4
-      PRODUCT_RUN_ID: ${{ github.run_id }}
-      PRODUCT_RUN_ATTEMPT: ${{ github.run_attempt }}
-      PRODUCT_ARTIFACT_ID: ''
-      PRODUCT_ARTIFACT_DIGEST: ''
+      FIXTURE_SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && 'b87e724b051ed5f6db5e7b7a4310551586bd6e92' || '645961c6406a95942024e29dab16dc3bbfffaed3' }}
+      FIXTURE_SOURCE_TREE: ${{ github.event_name == 'workflow_dispatch' && '26049234d547be13d3a78c14c0c9597333a859e7' || '2e908eafe751141e36fbd5104f0bf721622a23a4' }}
+      PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
+      PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
+      PRODUCT_ARTIFACT_ID: ${{ github.event_name == 'workflow_dispatch' && '11543879824' || '' }}
+      PRODUCT_ARTIFACT_DIGEST: ${{ github.event_name == 'workflow_dispatch' && 'sha256:28c5113b7276fc983777f67966b61a3561010fc737131ee3dfe02f79a88c1ba1' || '' }}
     steps:
       - name: Check out qualification driver
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
