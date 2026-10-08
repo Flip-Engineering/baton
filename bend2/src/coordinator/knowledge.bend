@@ -14,10 +14,8 @@
 # promoted into. A promotion is admitted only for the destination scope's own
 # owner, and only of the exact finding the named source scope carries.
 #
-# Evidence: the evidence a finding carries is a reference to an existing
-# retained message the author is a party to. The read exposes that message's
-# identity, sender, recipient and body, so the cited evidence travels with the
-# finding and a promotion shares that cited evidence and nothing else.
+# Evidence is the author's reference text. A message: reference includes the
+# retained message's identity, sender, recipient and body in the read result.
 import Base
 import ../coordinator/commands.bend as C
 import ./delivery.bend as Delivery
@@ -41,7 +39,7 @@ def commit_sql(statements: String) -> String:
 # rule that refused it.
 def answer_when(empty: Bool, text: String) -> IO(Unit):
   match empty:
-    case True{}: IO.die(Unit,1,"No knowledge row was written: name a registered author, evidence naming an existing message the author is a party to, and an unused or identical row id.")
+    case True{}: IO.die(Unit,1,"No knowledge row was written: inspect the author, finding and promotion IDs.")
     case False{}: IO.write(text)
 
 def write_answer(+text: String) -> IO(Unit):
@@ -86,7 +84,7 @@ def knowledge_promotions(+reader: String) -> String:
 # The cited message, exposed whole so the evidence travels with the finding. The
 # argument is the SQL expression holding the reference, quoted by its caller.
 def evidence_message(+evidence: String) -> String:
-  "(SELECT json_object('id',id,'sender',sender,'recipient',recipient,'body',body) FROM messages WHERE id=substr(" ++ evidence ++ ",9))"
+  "(SELECT json_object('id',id,'sender',sender,'recipient',recipient,'body',body) FROM messages WHERE substr(" ++ evidence ++ ",1,8)='message:' AND id=substr(" ++ evidence ++ ",9))"
 
 def knowledge_item(+reader: String) -> String:
   "json_object('id',k.id,'author',k.author,'claim',k.claim,'evidence',k.evidence,'evidenceMessage'," ++ evidence_message("k.evidence") ++ ",'limits',k.limits,'destinations'," ++ knowledge_destinations(reader) ++ ",'promotions'," ++ knowledge_promotions(reader) ++ ")"
@@ -98,11 +96,6 @@ def read_sql(+reader: String) -> String:
 # the id, author, claim, evidence and limits must all match this invocation.
 def knowledge_answer(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
   "SELECT json_object('id',id,'author',author,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ";"
-
-# Evidence is a reference to an existing retained message the author is a party
-# to. Nothing else is an accepted reference in this slice.
-def evidence_ok(+author: String, +evidence: String) -> String:
-  "(substr(" ++ C.q(evidence) ++ ",1,8)='message:' AND EXISTS(SELECT 1 FROM messages WHERE id=substr(" ++ C.q(evidence) ++ ",9) AND (sender=" ++ C.q(author) ++ " OR recipient=" ++ C.q(author) ++ ")))"
 
 # The immediate parent of an author. A session with no recorded parent records
 # the finding and sends no notice.
@@ -121,7 +114,7 @@ def notice_statement(+id: String, +author: String, +claim: String, +evidence: St
   ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;"
 
 def finding_statement(+id: String, +author: String, claim: String, +evidence: String, limits: String) -> String:
-  "INSERT INTO knowledge(id,author,claim,evidence,limits) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(claim) ++ "," ++ C.q(evidence) ++ "," ++ C.q(limits) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ") AND " ++ evidence_ok(author,evidence)
+  "INSERT INTO knowledge(id,author,claim,evidence,limits) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(claim) ++ "," ++ C.q(evidence) ++ "," ++ C.q(limits) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")"
   ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN knowledge.author=excluded.author AND knowledge.claim=excluded.claim AND knowledge.evidence=excluded.evidence AND knowledge.limits=excluded.limits THEN knowledge.id ELSE NULL END;"
 
 def record_statements(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:

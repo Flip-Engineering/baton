@@ -29,18 +29,16 @@ class SelectedContextPackageTest(unittest.TestCase):
         PACKAGE.ROOT = self.previous_root
         self.temp.cleanup()
 
-    def test_stages_the_exact_manifested_provider_and_frontend_closure(self):
+    def test_stages_the_selected_provider_and_frontend_files(self):
         declaration = json.loads((self.root / 'bend2/context/bend2/selected-module.json').read_text())
-        manifest = PACKAGE.stage_selected_context_payload(self.payload)
+        selected = PACKAGE.stage_selected_context_payload(self.payload)
         module_root = self.payload / 'lib/context/modules/m-62656e6432'
-        self.assertEqual(manifest['moduleId'], 'bend2')
-        self.assertEqual({row['path'] for row in manifest['files']}, {
-            row['path'] for row in declaration['files']
-        })
+        self.assertEqual(selected, {'moduleId': 'bend2', 'protocolVersion': '2',
+                                   'path': 'lib/context/modules/m-62656e6432'})
         for row in declaration['files']:
             staged = module_root / row['path']
-            self.assertEqual(PACKAGE.file_info(staged), {key: row[key] for key in ('bytes', 'sha256')})
-        self.assertEqual((module_root / 'selected-module.source.json').is_file(), True)
+            source = self.root / 'bend2/context/bend2' / row['path']
+            self.assertEqual(staged.read_bytes(), source.read_bytes())
 
     def test_refuses_path_escape(self):
         manifest_path = self.root / 'bend2/context/bend2/selected-module.json'

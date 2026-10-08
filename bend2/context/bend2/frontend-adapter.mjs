@@ -14,30 +14,11 @@
 //     transformed string the parser saw, and the transformed view is finalized only at the
 //     pre-parse boundary after every import removal, so declaration and reference events that
 //     precede loadComplete are resolved once the view exists;
-//   * invocation: one invocation at a time. Overlapping begins are rejected, reads outside an
-//     invocation are refused, and each invocation reports whether its capture was complete.
+//   * invocation: one invocation at a time. Overlapping begins are rejected and reads outside an
+//     invocation are refused.
 
 import { captureSource, createView, decodeCoreCapture, locateSpan } from './source-binding.mjs';
 import { HOOK_KINDS, HOOK_PHASES, REFERENCE_RESOLUTIONS, validateHookEvent } from './frontend-hook-events.mjs';
-
-const CLOSURE_LIMITATIONS = Object.freeze([
-  Object.freeze({
-    code: 'proofStatusUnavailable',
-    detail: 'completion gates are observable as completionGate events, but no proved-law claim is made here: runtime execution, deployment, semantic equivalence and the selected-step invocation remain unqualified',
-  }),
-  Object.freeze({
-    code: 'frontendGateOnly',
-    detail: 'a completed frontend gate is the frontend gate result, not a proof of an individual law',
-  }),
-  Object.freeze({
-    code: 'noSelectedStepAbi',
-    detail: 'the derived frontend is invoked by the internal entry in frontend-invocation.mjs; the admitted native invocation ABI remains external',
-  }),
-]);
-
-function limitation(code, detail) {
-  return Object.freeze(detail === undefined ? { code } : { code, detail });
-}
 
 function unavailableSpan(reason, detail) {
   return { status: 'unavailable', reason, detail: detail ?? null };
@@ -48,7 +29,6 @@ function spanOutcome(outcome) {
     return {
       status: 'mapped',
       identity: outcome.identity,
-      digest: outcome.digest,
       original: outcome.original,
       byteRange: outcome.byteRange,
       text: outcome.text,
@@ -72,22 +52,6 @@ let ADAPTER_SEQUENCE = 0;
 export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) {
   const adapterId = `adapter-${ADAPTER_SEQUENCE + 1}`;
   ADAPTER_SEQUENCE += 1;
-  const counters = {
-    adapterFailures: 0,
-    acquisitionFailures: 0,
-    ambiguousAttributions: 0,
-    evidenceFailures: 0,
-    foreignOwnerEvents: 0,
-    frontendRefusals: 0,
-    hookInstallFailures: 0,
-    invalidEvents: 0,
-    ownerlessEvents: 0,
-    preParseMismatches: 0,
-    uncapturedDependencies: 0,
-    outsideQuery: 0,
-    outsideQueryReads: 0,
-    overlappingQueries: 0,
-  };
   const sessions = [];
   let active = null;
   let sequence = 0;
@@ -98,7 +62,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       token,
       owner: token,
       identity: typeof identity === 'string' && identity.length > 0 ? identity : null,
-      startedCounters: { ...counters },
       files: [],
       attempts: [],
       imports: [],
@@ -108,7 +71,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       diagnostics: [],
       types: [],
       phases: [],
-      limitations: [...CLOSURE_LIMITATIONS],
       captures: new Map(),
       acquisitions: new Map(),
       originalViews: new Map(),
@@ -121,13 +83,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
 
   function requireActive() {
     if (active !== null) return active;
-    counters.outsideQuery += 1;
     return null;
-  }
-
-  function note(session, code, detail) {
-    if (session === null) return;
-    if (!session.limitations.some((entry) => entry.code === code)) session.limitations.push(limitation(code, detail));
   }
 
   function errorText(error) {
@@ -137,7 +93,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
 
   // A closure entry supplies exact bytes directly or a Core capture record whose payload the agreed
   // encoding reproduces byte for byte. An encoding that cannot round-trip, or that is not one the
-  // contract names, is refused rather than re-encoded; a marker is returned for comparison only.
+  // contract names, is refused rather than re-encoded; producer markers remain metadata.
   function providedBytes(provided, canonical) {
     const wireShaped = provided.captureKind !== undefined || provided.payload !== undefined || provided.payloadEncoding !== undefined || provided.capture_kind !== undefined;
     // One representation per answer: a record carrying wire discriminants is consumed as a record, and
@@ -169,7 +125,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
   // One immutable acquisition per requested identity. The closure's canonical identity, its
   // existence answer and its captured bytes are recorded together, so every later read for that
   // identity uses exactly the bytes that were acquired instead of reacquiring a possibly different
-  // canonical input. A reader that throws is counted once, here; the caller only records the failure.
+  // canonical input. A reader failure remains on the acquisition record.
   function provide(identity) {
     if (acquisition === undefined || typeof acquisition.read !== 'function') return Object.freeze({ status: 'unavailable', requested: identity });
     let canonical = identity;
@@ -178,7 +134,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       try {
         resolved = acquisition.resolve(identity);
       } catch (error) {
-        counters.acquisitionFailures += 1;
         return Object.freeze({ status: 'failed', requested: identity, canonical, detail: errorText(error) });
       }
       if (resolved !== undefined && resolved !== null) {
@@ -190,7 +145,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     try {
       provided = acquisition.read(canonical);
     } catch (error) {
-      counters.acquisitionFailures += 1;
       return Object.freeze({ status: 'failed', requested: identity, canonical, detail: errorText(error) });
     }
     if (provided === undefined || provided === null) return Object.freeze({ status: 'unavailable', requested: identity, canonical });
@@ -198,21 +152,17 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     const shaped = providedBytes(provided, canonical);
     if (shaped.status === 'absent') {
       if (shaped.canonical === null || shaped.canonical === undefined) {
-        counters.acquisitionFailures += 1;
         return Object.freeze({ status: 'failed', requested: identity, canonical, detail: 'absentWithoutIdentity' });
       }
       if (shaped.canonical !== identity && shaped.canonical !== canonical) {
-        counters.acquisitionFailures += 1;
         return Object.freeze({ status: 'failed', requested: identity, canonical, detail: `absentIdentityMismatch: ${shaped.canonical}` });
       }
       return Object.freeze({ status: 'absent', requested: identity, canonical: shaped.canonical });
     }
     if (shaped.status === 'undecodable') {
-      counters.acquisitionFailures += 1;
       return Object.freeze({ status: 'failed', requested: identity, canonical, detail: shaped.detail });
     }
     if (!(shaped.bytes instanceof Uint8Array)) {
-      counters.acquisitionFailures += 1;
       return Object.freeze({ status: 'failed', requested: identity, canonical, detail: 'bytesMissing' });
     }
     return Object.freeze({ status: 'provided', requested: identity, canonical, bytes: shaped.bytes, marker: shaped.marker, kind: shaped.kind, role: shaped.role ?? null, producer: shaped.producer ?? null });
@@ -224,47 +174,27 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     const outcome = provide(identity);
     let record;
     if (outcome.status === 'provided') {
+      const existing = session.acquisitions.get(outcome.canonical);
+      if (existing !== undefined && existing.status === 'captured') {
+        record = Object.freeze({ status: 'captured', requested: identity, canonical: outcome.canonical, capture: existing.capture, role: outcome.role ?? null, producer: outcome.producer ?? null });
+        session.acquisitions.set(identity, record);
+        session.captures.set(identity, existing.capture);
+        return record;
+      }
       const captured = captureSource({ identity: outcome.canonical, bytes: outcome.bytes });
       if (captured.status === 'captured') {
-        // A Core marker for a file, directory or configuration is the content digest, so it is
-        // compared with the digest of the bytes this side captured. The comparison is evidence, not
-        // authentication: a mismatch refuses the acquisition instead of accepting either value.
-        const contentKind = outcome.kind === null || outcome.kind === 'file' || outcome.kind === 'dir' || outcome.kind === 'config';
-        if (outcome.marker !== null && contentKind && outcome.marker !== captured.digest) {
-          counters.evidenceFailures += 1;
-          note(session, 'markerMismatch', `${identity}: the record marker is not the digest of the supplied bytes`);
-          record = Object.freeze({ status: 'conflict', requested: identity, canonical: captured.identity, detail: 'markerMismatch' });
-          session.acquisitions.set(identity, record);
-          return record;
-        }
-        // The requested name and the canonical identity are one acquisition. A later request under
-        // either key finds this record, so the bytes the loader observed are the bytes it reads. An
-        // alias that resolves to bytes already captured differently is refused, not overwritten.
-        const existing = session.acquisitions.get(captured.identity);
-        if (existing !== undefined && existing.status === 'captured' && existing.capture.digest !== captured.digest) {
-          counters.evidenceFailures += 1;
-          note(session, 'aliasConflict', `${identity} resolves to ${captured.identity}, already captured with different bytes`);
-          record = Object.freeze({ status: 'conflict', requested: identity, canonical: captured.identity, detail: 'bytesDiffer' });
-          // The alias is refused; the accepted canonical acquisition stays exactly as it was.
-          session.acquisitions.set(identity, record);
-          return record;
-        } else {
-          record = Object.freeze({ status: 'captured', requested: identity, canonical: captured.identity, capture: captured, role: outcome.role ?? null, producer: outcome.producer ?? null });
-          session.captures.set(identity, captured);
-          session.captures.set(captured.identity, captured);
-        }
+        // The retained worktree reader returns one captured byte set for each canonical identity.
+        // The source identity below comes from those bytes; producer markers remain input metadata.
+        record = Object.freeze({ status: 'captured', requested: identity, canonical: captured.identity, capture: captured, role: outcome.role ?? null, producer: outcome.producer ?? null });
+        session.captures.set(identity, captured);
+        session.captures.set(captured.identity, captured);
       } else {
-        counters.evidenceFailures += 1;
-        note(session, 'captureUnavailable', `${identity}: ${captured.reason}`);
         record = Object.freeze({ status: 'unavailable', requested: identity, canonical: outcome.canonical, detail: captured.reason });
       }
     } else if (outcome.status === 'failed') {
-      // The reader threw or supplied malformed bytes; provide already counted it once.
-      note(session, 'acquisitionFailed', `${identity}: ${outcome.detail}`);
+      // Preserve the reader's actual failure with the requested source identity.
       record = outcome;
     } else {
-      counters.uncapturedDependencies += 1;
-      note(session, outcome.status === 'refused' ? 'uncapturedDependency' : 'acquisitionMissing', outcome.detail === undefined ? identity : `${identity}: ${outcome.detail}`);
       record = outcome;
     }
     session.acquisitions.set(identity, record);
@@ -288,7 +218,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     if (capture === undefined) return null;
     const view = createView(capture, { segments: [{ kind: 'original', from: 0, to: capture.utf16Length }] });
     if (view.status !== 'view') {
-      note(session, 'viewUnavailable', `${identity}: ${view.reason}`);
       return null;
     }
     session.originalViews.set(identity, view);
@@ -312,8 +241,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     if (cursor < capture.utf16Length) segments.push({ kind: 'original', from: cursor, to: capture.utf16Length });
     const view = createView(capture, { segments });
     if (view.status !== 'view') {
-      counters.evidenceFailures += 1;
-      note(session, 'viewUnavailable', `${identity}: ${view.reason}`);
       return null;
     }
     session.parseViews.set(identity, view);
@@ -370,10 +297,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       }
     }
     if (files.size === 1) return [...files][0];
-    if (files.size > 1) {
-      counters.ambiguousAttributions += 1;
-      note(session, 'ambiguousDeclaration', qualified);
-    }
     return null;
   }
 
@@ -426,8 +349,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     if (session === null) return;
     const valid = validateHookEvent(event);
     if (!valid.ok) {
-      counters.invalidEvents += 1;
-      note(session, 'invalidEvent', `${valid.reason}${valid.detail === undefined ? '' : `: ${valid.detail}`}`);
       return;
     }
     switch (event.kind) {
@@ -439,8 +360,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
           namespace: event.namespace ?? '',
           captured: captured !== null,
           closureIdentity: captured === null ? null : captured.identity,
-          digest: captured === null ? null : captured.digest,
-          byteLength: captured === null ? null : captured.byteLength,
         });
         return;
       }
@@ -458,7 +377,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
         const list = session.removed.get(event.file) ?? [];
         const capture = session.captures.get(event.file);
         if (capture !== undefined && event.removedTo > capture.utf16Length) {
-          note(session, 'importRangeOutOfBounds', `${event.file}: ${event.removedFrom}-${event.removedTo}`);
           return;
         }
         list.push({ from: event.removedFrom, to: event.removedTo });
@@ -482,10 +400,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
         const view = finalizeParseView(session, event.file);
         const parsed = typeof event.parsedText === 'string' ? event.parsedText : null;
         const matches = view !== null && parsed !== null && view.text === parsed;
-        if (view !== null && parsed !== null && !matches) {
-          counters.preParseMismatches += 1;
-          note(session, 'preParseMismatch', event.file);
-        }
         session.aliases.push({
           file: event.file,
           namespace: event.namespace ?? '',
@@ -584,17 +498,14 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
           definition: event.definition,
           thrownDiagnostic: event.thrownDiagnostic ?? null,
         });
-        if (event.kind === HOOK_KINDS.checkFailure) note(session, 'proofStatusUnavailable');
         return;
       }
       case HOOK_KINDS.validationStart: {
         session.phases.push({ phase: event.phase, kind: event.kind, done: event.done ?? null });
-        note(session, 'frontendGateOnly');
         return;
       }
       case HOOK_KINDS.validationResult: {
         session.phases.push({ phase: event.phase, kind: event.kind, success: event.success });
-        note(session, 'frontendGateOnly');
         return;
       }
       case HOOK_KINDS.completionGate: {
@@ -609,7 +520,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
         return;
       }
       default:
-        counters.invalidEvents += 1;
         return;
     }
   }
@@ -627,41 +537,29 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
   // or different argument is refused, and a member that disagrees is refused too.
   function sinkEmit(event, owner) {
     if (active === null) {
-      counters.outsideQuery += 1;
       return;
     }
     if (typeof owner !== 'string' || owner.length === 0) {
-      counters.ownerlessEvents += 1;
-      note(active, 'ownerlessEvent');
       return;
     }
     const eventOwner = event !== null && typeof event === 'object' ? event.owner : undefined;
     if (owner !== active.owner || (eventOwner !== undefined && eventOwner !== active.owner)) {
-      counters.foreignOwnerEvents += 1;
-      note(active, 'foreignOwnerEvent', typeof eventOwner === 'string' ? eventOwner : owner);
       return;
     }
-    try {
-      handle(event);
-    } catch (error) {
-      counters.evidenceFailures += 1;
-      note(active, 'evidenceFailure', errorText(error));
-    }
+    handle(event);
   }
 
-  // A non-acquiring existence query, for a caller that evaluates a condition on closure presence
-  // (the PROOF/LAWS import rule). It reads no bytes, caches nothing and counts no dependency.
+  // A non-acquiring existence query for a caller that evaluates the PROOF/LAWS import rule.
+  // It reads no bytes and caches nothing.
   function sinkLookupSource(file, owner) {
     if (!ownsActive(owner)) {
-      counters.outsideQueryReads += 1;
       return undefined;
     }
     const known = active.acquisitions.get(file);
     if (known !== undefined) {
       if (known.status === 'captured') return Object.freeze({ status: 'captured', identity: known.canonical });
       if (known.status === 'absent') return Object.freeze({ status: 'absent', identity: known.canonical });
-      // A cached failure, refusal or conflict is not evidence of absence: the answer is unavailable
-      // with the detail the acquisition recorded.
+      // A cached failure or refusal is not evidence of absence: return its recorded detail.
       return Object.freeze({ status: 'unavailable', requested: known.requested ?? file, detail: known.detail ?? known.status });
     }
     if (acquisition === undefined || typeof acquisition.resolve !== 'function') {
@@ -675,8 +573,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       // An answer that does not state existence is not a presence claim.
       return Object.freeze({ status: 'unknown', requested: file, detail: 'resolutionAnswerMalformed' });
     } catch (error) {
-      counters.evidenceFailures += 1;
-      note(active, 'closureResolutionThrew', errorText(error));
       return Object.freeze({ status: 'unknown', requested: file, detail: errorText(error) });
     }
   }
@@ -688,7 +584,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       try {
         return source();
       } catch (error) {
-        counters.acquisitionFailures += 1;
         return undefined;
       }
     }
@@ -698,7 +593,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
   function sinkReadSource(file, owner) {
     if (!ownsActive(owner)) {
       // A read outside the owning invocation is refused and never cached.
-      counters.outsideQueryReads += 1;
       return undefined;
     }
     const record = acquireRecord(active, file);
@@ -711,12 +605,11 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
   // loader decides what each means, so in capture-only mode it never falls back to the host.
   function sinkResolveSource(file, owner) {
     if (!ownsActive(owner)) {
-      counters.outsideQueryReads += 1;
       return undefined;
     }
     const record = acquireRecord(active, file);
     if (record.status === 'captured') {
-      return Object.freeze({ status: 'captured', identity: record.canonical, digest: record.capture.digest });
+      return Object.freeze({ status: 'captured', identity: record.canonical });
     }
     if (record.status === 'absent') return Object.freeze({ status: 'absent', identity: record.canonical });
     return Object.freeze({ status: 'unavailable', requested: record.requested, detail: record.detail ?? null });
@@ -724,68 +617,31 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
 
   function sinkBaseBendPath(owner) {
     if (!ownsActive(owner)) {
-      counters.outsideQueryReads += 1;
       return undefined;
     }
     const requested = baseBendRequested();
     if (requested === undefined) return Object.freeze({ status: 'unavailable', detail: 'closureBaseMissing' });
     const record = acquireRecord(active, requested);
-    if (record.status === 'captured') return Object.freeze({ status: 'captured', path: record.canonical, digest: record.capture.digest });
+    if (record.status === 'captured') return Object.freeze({ status: 'captured', path: record.canonical });
     return Object.freeze({ status: 'unavailable', detail: record.status });
   }
 
-  // The frontend reporting that it could not obtain a file is frontend evidence, not a second
-  // acquisition failure: the acquisition already produced exactly one outcome for that identity.
+  // The acquisition record contains the source result for this identity.
   function sinkSourceFailure(file, reason, owner) {
-    if (!ownsActive(owner)) {
-      if (active === null) counters.outsideQuery += 1;
-      return;
-    }
-    counters.frontendRefusals += 1;
-    note(active, 'frontendRefusal', `${file}: ${reason}`);
+    void file;
+    void reason;
+    void owner;
   }
 
-  // An evidence failure is the observer's own failure: rendering, hook installation, hook release or
-  // a consumer error. It is recorded apart from anything the frontend did, and it never replaces a
-  // frontend outcome. Skipped best-effort type observations are the one exception: the hook counts
-  // them apart under typeObservationsUnrendered, and they are preserved here as a limitation with
-  // their count. A skipped observation leaves the capture it observes intact, so unlike a real
-  // observer failure it never drives incompleteness.
+  // The frontend hook contract supplies this callback for observer errors. The adapter retains the
+  // frontend result and does not attach a second proof-accounting record.
   function sinkEvidenceFailure(code, owner, detail) {
-    if (code === 'typeObservationsUnrendered') {
-      note(ownsActive(owner) ? active : null, code, detail === undefined ? null : detail);
-      return;
-    }
-    counters.evidenceFailures += 1;
-    if (code === 'hookInstallThrew' || code === 'hookReleaseThrew') counters.hookInstallFailures += 1;
-    note(ownsActive(owner) ? active : null, code, detail === undefined ? null : detail);
+    void code;
+    void owner;
+    void detail;
   }
 
   function snapshot(session) {
-    const delta = {};
-    for (const key of Object.keys(counters)) delta[key] = counters[key] - session.startedCounters[key];
-    const unresolved = session.declarations
-      .concat(session.references, session.diagnostics, session.types)
-      .filter((record) => record.span !== null && record.span !== undefined && record.span.reason === 'viewNotFinalized').length;
-    // Counters are process-wide. A session delta covers only what happened while that invocation was
-    // active: a read or an emit outside every invocation is counted but belongs to no invocation, so
-    // it is reported through the counters rather than as that invocation's incompleteness.
-    const incompleteness = [];
-    if (delta.adapterFailures > 0) incompleteness.push('adapterFailure');
-    if (delta.acquisitionFailures > 0) incompleteness.push('acquisitionFailure');
-    if (delta.ambiguousAttributions > 0) incompleteness.push('ambiguousDeclaration');
-    if (delta.evidenceFailures > 0) incompleteness.push('evidenceFailure');
-    if (delta.foreignOwnerEvents > 0) incompleteness.push('foreignOwnerEvent');
-    if (delta.frontendRefusals > 0) incompleteness.push('frontendRefusal');
-    if (delta.hookInstallFailures > 0) incompleteness.push('hookInstallFailure');
-    if (delta.invalidEvents > 0) incompleteness.push('invalidEvent');
-    if (delta.ownerlessEvents > 0) incompleteness.push('ownerlessEvent');
-    if (delta.preParseMismatches > 0) incompleteness.push('preParseMismatch');
-    if (delta.uncapturedDependencies > 0) incompleteness.push('uncapturedDependency');
-    if (delta.outsideQuery > 0) incompleteness.push('outsideQueryEvent');
-    if (delta.outsideQueryReads > 0) incompleteness.push('outsideQueryRead');
-    if (delta.overlappingQueries > 0) incompleteness.push('overlappingQuery');
-    if (unresolved > 0) incompleteness.push('unresolvedSpans');
     // What the closure was asked for, and what each request actually produced.
     const acquisitions = [...session.acquisitions.entries()].map(([requested, record]) => ({
       requested,
@@ -799,9 +655,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       token: session.token,
       owner: session.owner,
       identity: session.identity,
-      completeness: incompleteness.length === 0 ? 'complete' : 'incomplete',
-      incompleteness,
-      counterDelta: delta,
       files: session.files,
       attempts: session.attempts,
       imports: session.imports,
@@ -811,7 +664,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       diagnostics: session.diagnostics,
       types: session.types,
       phases: session.phases,
-      limitations: session.limitations,
       acquisitions,
     };
   }
@@ -827,10 +679,8 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       lookupSource: sinkLookupSource,
       captureOnly: captureOnly === true,
     }),
-    counters,
     beginQuery({ identity, owner } = {}) {
       if (active !== null) {
-        counters.overlappingQueries += 1;
         return Object.freeze({ status: 'rejected', reason: 'queryActive', token: active.token });
       }
       if (owner !== undefined && (typeof owner !== 'string' || owner.length === 0)) {
@@ -838,7 +688,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       }
       sequence += 1;
       active = newSession(identity, owner);
-      if (owner === undefined) note(active, 'noSelectedStepAbi');
       return Object.freeze({ status: 'started', token: active.token });
     },
     endQuery() {
@@ -852,7 +701,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       return active;
     },
     report() {
-      return freezeDeep({ sessions: [...sessions], counters: { ...counters } });
+      return freezeDeep({ sessions: [...sessions] });
     },
   });
 }

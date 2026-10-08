@@ -123,16 +123,15 @@ def stage_selected_context_payload(payload):
     source_root = ROOT / 'bend2/context/bend2'
     declaration_path = source_root / 'selected-module.json'
     require(declaration_path.is_file() and not declaration_path.is_symlink(),
-            'The selected Bend2 module manifest is unavailable')
+            'The selected Bend2 module file list is unavailable')
     declaration = json.loads(declaration_path.read_text())
     require(isinstance(declaration, dict) and isinstance(declaration.get('moduleId'), str)
             and declaration['moduleId'] and isinstance(declaration.get('protocolVersion'), str)
-            and isinstance(declaration.get('files'), list) and declaration['files'],
-            'The selected Bend2 module manifest has no artifacts')
+            and isinstance(declaration.get('files'), list)
+            and declaration['files'], 'The selected Bend2 module has no files')
 
     module_root = payload / 'lib/context/modules' / module_directory_name(declaration['moduleId'])
     module_root.mkdir(parents=True)
-    staged_files = []
     seen = set()
     for entry in declaration['files']:
         require(isinstance(entry, dict) and isinstance(entry.get('path'), str),
@@ -152,22 +151,9 @@ def stage_selected_context_payload(payload):
         destination = module_root.joinpath(*relative.parts)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
-        staged_files.append({'path': name, **file_info(destination)})
-
-    module_manifest = {
-        'schema': 'baton2-selected-module-artifact-v1',
-        'moduleId': declaration['moduleId'],
-        'protocolVersion': declaration['protocolVersion'],
-        'sourceManifest': {'path': 'selected-module.source.json', **file_info(declaration_path)},
-        'files': staged_files,
-    }
-    shutil.copyfile(declaration_path, module_root / 'selected-module.source.json')
-    write_json(module_root / 'manifest.json', module_manifest)
-    module_manifest['manifest'] = {
-        'path': (module_root / 'manifest.json').relative_to(payload).as_posix(),
-        **file_info(module_root / 'manifest.json'),
-    }
-    return module_manifest
+    return {'moduleId': declaration['moduleId'],
+            'protocolVersion': declaration['protocolVersion'],
+            'path': module_root.relative_to(payload).as_posix()}
 
 
 def stage_notices(payload, compiler_notices, kind='development'):

@@ -1,6 +1,5 @@
 """Native inbox delivery with controlled harness processes and real coordinator state."""
 import fcntl
-import glob
 import json
 import os
 import pathlib
@@ -1071,24 +1070,26 @@ class Receive(unittest.TestCase):
         self.assertEqual(native_id, started['native'])
         self.coord('message', 'second', 'root', 'parent', 'report', 'The exact queued input.')
         self.assertFalse(self.session_guard_available('parent'))
+        owner_command = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        owners = [process for process in self.owned_processes()
+                  if process['command'] == owner_command]
+        self.assertEqual(len(owners), 1, f'Expected this fixture DB owner: {owners}')
+        selected = {name: self.selected_process(pid) for name, pid in
+                    [('observer', observer.pid), ('owner', owners[0]['pid']), ('native', started['pid'])]}
+        self.assertTrue(all(selected.values()))
+        self.assertEqual(selected['observer']['ppid'], os.getpid())
+        self.assertEqual(selected['owner']['command'], owner_command)
+        self.assertEqual(selected['native']['ppid'], selected['owner']['pid'])
+        self.assertIn(str(self.db), selected['observer']['command'])
+        self.assertIn(str(self.fixture), selected['native']['command'])
         with sqlite3.connect(self.db) as database:
             attempt = pathlib.Path(database.execute(
                 "SELECT directory FROM executions WHERE session='parent' AND mode='retained'"
             ).fetchone()[0])
-        selected = {name: self.selected_process(pid) for name, pid in
-                    [('observer', observer.pid), ('keeper', started['ppid']), ('native', started['pid'])]}
-        self.assertTrue(all(selected.values()))
-        self.assertEqual(selected['observer']['ppid'], os.getpid())
-        self.assertEqual(selected['keeper']['ppid'], observer.pid)
-        self.assertEqual(selected['native']['ppid'], selected['keeper']['pid'])
-        self.assertIn(str(self.db), selected['observer']['command'])
-        self.assertIn('--host-process-keeper', selected['keeper']['command'])
-        self.assertIn(str(attempt), selected['keeper']['command'])
-        self.assertIn(str(self.fixture), selected['native']['command'])
         self.assertEqual(int((attempt / 'native.pid').read_text()), started['pid'])
         if observer_loss:
             self.signal_selected(selected['observer'], signal.SIGSTOP)
-        self.signal_selected(selected['keeper'], signal.SIGKILL)
+        self.signal_selected(selected['owner'], signal.SIGKILL)
         producer = observer
         if observer_loss:
             self.signal_selected(selected['observer'], signal.SIGKILL)
@@ -2042,6 +2043,10 @@ class Receive(unittest.TestCase):
         the satisfied claim, and retains the unknown native exit status.
         """
         self.player()
+        fixture_config_path = self.directory / 'fixture.json'
+        fixture_config = json.loads(fixture_config_path.read_text())
+        fixture_config['record_launches'] = True
+        fixture_config_path.write_text(json.dumps(fixture_config))
         self.prepare_input('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
@@ -2076,9 +2081,23 @@ class Receive(unittest.TestCase):
         exits = [row for row in self.coord('inbox', 'root') if row['id'].endswith(':exit')]
         self.assertEqual(len(exits), 1)
         self.assertIn('unknown after keeper loss', exits[0]['body'])
-        attempts = glob.glob(str(self.directory / '*.attempt-*'))
-        self.assertEqual(len(attempts), 1)
-        self.assertEqual(self.execution('parent')[2], attempts[0])
+        attempts = sorted(self.directory.glob('*.attempt-*'))
+        launches_path = self.directory / 'native-launches.jsonl'
+        launches = launches_path.read_text().splitlines() if launches_path.exists() else []
+        attempt_evidence = [{
+            'path': str(path),
+            'files': sorted(item.name for item in path.iterdir()),
+            'manifest': (path / 'manifest').read_text(errors='replace')
+            if (path / 'manifest').is_file() else None,
+        } for path in attempts]
+        evidence = {
+            'attempts': attempt_evidence,
+            'execution': self.execution('parent'),
+            'session': self.coord('player', 'parent'),
+            'nativeLaunches': launches,
+        }
+        self.assertEqual(len(attempts), 1, json.dumps(evidence, sort_keys=True))
+        self.assertEqual(self.execution('parent')[2], str(attempts[0]))
         self.assertTrue(os.path.isfile(os.path.join(directory, 'acknowledged')))
         self.assertTrue(os.path.isfile(os.path.join(directory, 'released')))
         self.assertFalse(os.path.exists(os.path.join(directory, 'status')))

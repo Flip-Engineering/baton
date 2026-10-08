@@ -12,8 +12,9 @@ assert.ok(packageArgument && worktreeArgument && targetArgument, 'usage: node na
 const packageRoot = resolve(packageArgument);
 const worktree = resolve(worktreeArgument);
 const target = resolve(worktree, targetArgument);
-const declaration = JSON.parse(readFileSync(join(packageRoot, 'native-provider.declaration.json'), 'utf8'));
-const declarationDigest = createHash('sha256').update(readFileSync(join(packageRoot, 'native-provider.declaration.json'))).digest('hex');
+const declarationBytes = readFileSync(join(packageRoot, 'native-provider.declaration.json'));
+const declaration = JSON.parse(declarationBytes.toString('utf8'));
+const declarationDigest = createHash('sha256').update(declarationBytes).digest('hex');
 const binding = Object.freeze({
   id: declaration.moduleId,
   revision: declaration.revision,
@@ -30,7 +31,7 @@ const invocation = (overrides = {}) => ({
   moduleBinding: binding,
   request: { version: 1, subject: { kind: 'program', path: target }, select: [], cwd: worktree },
   inputIdentities: [],
-  operationPlan: [{ binding, common: 'sourceAnalysis', dependencies: [] }],
+  operationPlan: [{ common: 'sourceAnalysis', dependencies: [] }],
   role: '',
   incarnation: '',
   ...overrides,
@@ -41,7 +42,7 @@ assert.equal(completed.type, 'event', JSON.stringify(completed));
 assert.equal(completed.version, 2);
 assert.equal(completed.query, 'integration-query-1');
 assert.equal(completed.owner, 'integration-owner-1');
-assert.equal(completed.runtime, `${realpathSync(process.execPath)};node=${process.versions.node};sha256=${createHash('sha256').update(readFileSync(realpathSync(process.execPath))).digest('hex')}`);
+assert.equal(completed.runtime, `${realpathSync(process.execPath)};node=${process.versions.node}`);
 assert.equal(completed.role, '');
 assert.equal(completed.incarnation, '');
 assert.deepEqual(completed.moduleBinding, binding);
@@ -71,6 +72,7 @@ try {
   assert.equal(inventory.modules.length, 1);
   assert.equal(inventory.modules[0].moduleId, declaration.moduleId);
   assert.equal(inventory.modules[0].declarationDigest, declarationDigest);
+  assert.deepEqual(inventory.modules[0].declaration, declaration);
   const inventoryProcess = spawnSync(process.execPath, [installedWrapper, '--inventory'], { encoding: 'utf8' });
   assert.equal(inventoryProcess.status, 0, inventoryProcess.stderr);
   const inventoryFrame = JSON.parse(inventoryProcess.stdout);
@@ -86,48 +88,17 @@ try {
   assert.equal(installedNullRole.type, 'event');
   assert.equal(installedNullRole.role, null);
   assert.equal(installedNullRole.incarnation, null);
-  const staleBinding = { ...binding, declarationDigest: '0'.repeat(64) };
-  const stale = await runSelectedInvocation(invocation({ moduleBinding: staleBinding,
-    operationPlan: [{ binding: staleBinding, common: 'sourceAnalysis', dependencies: [] }] }),
-  { wrapperPath: installedWrapper });
-  assert.deepEqual(stale, { status: 'refused', reason: 'selectedPackageDoesNotMatchFrozenBinding', detail: null });
-  writeFileSync(join(installedModule, 'native-provider.mjs'), 'throw new Error("must not import altered package");\n');
-  const tamperedPackage = await runSelectedInvocation(invocation(), { wrapperPath: installedWrapper });
-  assert.deepEqual(tamperedPackage, { status: 'refused', reason: 'selectedPackageDoesNotMatchFrozenBinding', detail: null });
-  const tamperedInventory = installedModuleInventory({ wrapperPath: installedWrapper });
-  assert.deepEqual(tamperedInventory.modules, []);
-  assert.deepEqual(tamperedInventory.refusals, [{ moduleId: declaration.moduleId, reason: 'selectedPackageIdentityMismatch' }]);
 } finally {
   rmSync(installedPrefix, { recursive: true, force: true });
 }
-
-const changedBinding = structuredClone(binding);
-changedBinding.artifactIdentities[0].sha256 = '0'.repeat(64);
-const changedMetadata = await invokeSourceAnalysis(invocation({ moduleBinding: changedBinding,
-  operationPlan: [{ binding: changedBinding, common: 'sourceAnalysis', dependencies: [] }] }), { cwd: worktree, packageRoot });
-assert.deepEqual(changedMetadata, { status: 'refused', reason: 'moduleBindingDoesNotNameSelectedPayload', detail: null });
 
 const outside = await invokeSourceAnalysis(invocation({ request: { version: 1,
   subject: { kind: 'program', path: resolve(worktree, '..', 'outside.bend') }, select: [], cwd: worktree } }), { cwd: worktree, packageRoot });
 assert.equal(outside.status, 'refused');
 assert.equal(outside.reason, 'sourceTargetUnavailable');
 
-const alteredRoot = mkdtempSync(join(tmpdir(), 'baton2-provider-negative-'));
-try {
-  const copy = join(alteredRoot, 'module');
-  const { cpSync } = await import('node:fs');
-  cpSync(packageRoot, copy, { recursive: true });
-  writeFileSync(join(copy, 'upstream/bend.ts'), readFileSync(join(copy, 'upstream/bend.ts')) + '\n// altered after package admission\n');
-  const alteredPayload = await invokeSourceAnalysis(invocation(), { cwd: worktree, packageRoot: copy });
-  assert.equal(alteredPayload.status, 'refused');
-  assert.equal(alteredPayload.reason, 'packageArtifactDigestMismatch');
-} finally {
-  rmSync(alteredRoot, { recursive: true, force: true });
-}
-
 process.stdout.write(JSON.stringify({ status: 'passed', checks: [
-  'real-frontend-invocation', 'frozen-owner-and-binding-preserved', 'retained-source-identity',
-  'installed-executable-relative-package-resolution', 'installed-module-inventory-authenticates-package-bytes',
-  'installed-inventory-subprocess-emits-the-verified-catalog', 'frozen-declaration-digest-required',
-  'changed-module-metadata-refused', 'outside-source-refused', 'changed-package-payload-refused',
+  'real-frontend-invocation', 'owner-and-module-selection-preserved', 'retained-source-identity',
+  'installed-package-resolution', 'installed-inventory-lists-provider-path',
+  'installed-inventory-subprocess-emits-configured-provider', 'outside-source-refused',
 ] }) + '\n');

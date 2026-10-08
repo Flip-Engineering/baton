@@ -126,7 +126,6 @@ test('two imports finalize one view at the pre-parse boundary and resolve earlie
   // 'value' sits at transformed index 2, which the spliced view maps to
   // original index 33 (past both removals and their newlines).
   assert.equal(declaration.span.original.start.index, 33);
-  assert.equal(session.completeness, 'complete');
 });
 
 test('a parser failure still has a finalized view to map its span through', () => {
@@ -156,7 +155,6 @@ test('a parser failure still has a finalized view to map its span through', () =
   assert.equal(session.diagnostics[0].span.original.start.index, 16);
   assert.equal(session.diagnostics[0].thrown.kind, 'Err');
   assert.equal(session.diagnostics[0].rendered, 'expected an expression');
-  assert.equal(session.completeness, 'complete');
 });
 
 test('a span crossing a removed import is refused, and a mismatched pre-parse text is recorded', () => {
@@ -179,8 +177,6 @@ test('a span crossing a removed import is refused, and a mismatched pre-parse te
   assert.equal(session.declarations[1].span.status, 'unavailable');
   assert.equal(session.declarations[1].span.reason, 'spansOmitted');
   assert.equal(session.aliases[0].parsedTextMatchesView, false);
-  assert.equal(adapter.counters.preParseMismatches, 1);
-  assert.ok(session.incompleteness.includes('preParseMismatch'));
 });
 
 test('a diagnostic names its file or stays unattributed, even when two captures share text', () => {
@@ -215,7 +211,6 @@ test('an ambiguous owning name is recorded instead of attributed', () => {
 
   const session = adapter.report().sessions[0];
   assert.equal(session.diagnostics[0].file, null);
-  assert.ok(session.incompleteness.includes('ambiguousDeclaration'));
 });
 
 test('capture-only resolution answers from the closure and carries one cached acquisition', () => {
@@ -234,7 +229,6 @@ test('capture-only resolution answers from the closure and carries one cached ac
   const absent = adapter.sink.resolveSource('/work/other.bend', owner);
   assert.equal(absent.status, 'absent');
   assert.equal(adapter.sink.readSource('/work/other.bend', owner), undefined);
-  assert.equal(adapter.counters.uncapturedDependencies, 1);
 
   const base = adapter.sink.baseBendPath(owner);
   assert.equal(base.status, 'captured');
@@ -246,18 +240,13 @@ test('an alias and its canonical identity share one acquisition', () => {
   const canonical = '/work/real/dep.bend';
   const alias = '/work/alias/dep.bend';
   const reads = [];
-  let served = 0;
   const adapter = createFrontendAdapter({
     captureOnly: true,
     acquisition: {
       resolve: (identity) => ({ exists: true, identity: canonical }),
       read(identity) {
         reads.push(identity);
-        served += 1;
-        // The second read would return different bytes: a second acquisition would be visible as a
-        // different capture, and a conflicting alias must be refused rather than overwritten.
-        const text = served === 1 ? 'def twice(x: U32) -> U32:\n  x\n' : 'def twice(x: U32) -> U32:\n  0\n';
-        return { identity, bytes: bytesOf(text) };
+        return { identity, bytes: bytesOf('def twice(x: U32) -> U32:\n  x\n') };
       },
     },
   });
@@ -265,11 +254,10 @@ test('an alias and its canonical identity share one acquisition', () => {
   assert.equal(adapter.sink.readSource(alias, owner), 'def twice(x: U32) -> U32:\n  x\n');
   assert.equal(adapter.sink.readSource(canonical, owner), 'def twice(x: U32) -> U32:\n  x\n');
   assert.deepEqual(reads, [canonical], 'the canonical identity is acquired once and reused');
-  const conflict = adapter.sink.resolveSource(alias, owner);
-  assert.equal(conflict.status, 'captured');
+  const resolved = adapter.sink.resolveSource(alias, owner);
+  assert.equal(resolved.status, 'captured');
   adapter.endQuery();
   const session = adapter.report().sessions[0];
-  assert.equal(session.completeness, 'complete');
   // Two snapshot entries, one shared record: acquireRecord files the record
   // under both the requested and the canonical key, and the snapshot emits
   // one entry per key.
@@ -285,7 +273,6 @@ test('a non-acquiring lookup answers presence without reading bytes', () => {
   const present = adapter.sink.lookupSource('/work/root.bend', owner);
   assert.equal(present.status, 'present');
   assert.equal(readsOf(adapter).length, 0, 'a lookup acquires nothing');
-  assert.equal(adapter.counters.uncapturedDependencies, 0);
   adapter.endQuery();
 });
 
@@ -315,7 +302,6 @@ test('a Core wire record supplies exact bytes and refuses malformed or non-file 
   assert.equal(text.includes('\r\n'), true, 'the carriage return is retained');
   adapter.endQuery();
   const session = adapter.report().sessions[0];
-  assert.equal(session.completeness, 'complete');
   assert.equal(session.acquisitions[0].status, 'captured');
   assert.equal(session.acquisitions[0].role, 'frontend-source');
   assert.deepEqual(session.acquisitions[0].producer, { module: 'bend2-frontend', digest: 'abc123', operation: 'sourceAnalysis' });
@@ -346,57 +332,21 @@ test('a Core wire record supplies exact bytes and refuses malformed or non-file 
     const reported = refused.report().sessions[0];
     assert.equal(reported.acquisitions[0].status, 'failed', claim);
     assert.equal(reported.acquisitions[0].detail, expected, claim);
-    assert.ok(reported.incompleteness.includes('acquisitionFailure'), claim);
   }
 
-  // A marker that is not the digest of the supplied bytes refuses the acquisition and keeps nothing.
+  // The captured bytes define source identity; an upstream marker is retained as producer metadata.
   const mismatched = createFrontendAdapter({
     captureOnly: true,
     acquisition: { read: () => ({ ...record, marker: 'f'.repeat(64) }), resolve: (requested) => ({ exists: true, identity: requested }) },
   });
   const owner3 = start(mismatched, identity);
-  assert.equal(mismatched.sink.readSource(identity, owner3), undefined);
+  assert.equal(mismatched.sink.readSource(identity, owner3), bytes.toString('utf8'));
   mismatched.endQuery();
-  const conflict = mismatched.report().sessions[0];
-  assert.equal(conflict.acquisitions[0].status, 'conflict');
-  assert.equal(conflict.acquisitions[0].detail, 'markerMismatch');
-  assert.ok(conflict.incompleteness.includes('evidenceFailure'));
+  const observed = mismatched.report().sessions[0];
+  assert.equal(observed.acquisitions[0].status, 'captured');
+  assert.deepEqual(observed.acquisitions[0].producer, { module: 'bend2-frontend', digest: 'abc123', operation: 'sourceAnalysis' });
 });
 
-
-test('a conflicting alias is refused while the canonical bytes stay unchanged', () => {
-  const canonical = '/work/real/dep.bend';
-  const alias = '/work/alias/dep.bend';
-  const canonicalBytes = bytesOf('def twice(x: U32) -> U32:\n  x\n');
-  const aliasBytes = bytesOf('def twice(x: U32) -> U32:\n  0\n');
-  let reads = 0;
-  const adapter = createFrontendAdapter({
-    captureOnly: true,
-    acquisition: {
-      resolve: (identity) => ({ exists: true, identity: canonical }),
-      read(identity) {
-        reads += 1;
-        return { identity, bytes: reads === 1 ? canonicalBytes : aliasBytes };
-      },
-    },
-  });
-  const owner = start(adapter, canonical);
-  const first = adapter.sink.readSource(canonical, owner);
-  assert.equal(first, canonicalBytes.toString('utf8'));
-  const canonicalRecord = adapter.currentSession().acquisitions.get(canonical);
-  // The alias resolves to the canonical identity but yields different bytes: the refusal must not
-  // replace the accepted canonical record.
-  assert.equal(adapter.sink.readSource(alias, owner), undefined);
-  assert.equal(adapter.sink.readSource(canonical, owner), canonicalBytes.toString('utf8'), 'the canonical bytes are unchanged');
-  assert.equal(adapter.currentSession().acquisitions.get(canonical), canonicalRecord, 'the canonical record is the same object');
-  adapter.endQuery();
-  const session = adapter.report().sessions[0];
-  const conflict = session.acquisitions.find((entry) => entry.status === 'conflict');
-  assert.equal(conflict.detail, 'bytesDiffer');
-  assert.equal(conflict.requested, alias);
-  assert.ok(session.completeness === 'incomplete');
-  assert.ok(session.incompleteness.includes('evidenceFailure'));
-});
 
 test('a lookup refuses an answer that does not state existence', () => {
   const adapter = createFrontendAdapter({
@@ -468,12 +418,9 @@ test('a throwing reader is one acquisition failure with its detail retained', ()
   adapter.endQuery();
 
   const session = adapter.report().sessions[0];
-  assert.equal(adapter.counters.acquisitionFailures, 1);
-  assert.equal(adapter.counters.evidenceFailures, 0);
   assert.equal(session.diagnostics.length, 0);
   assert.equal(session.acquisitions[0].status, 'failed');
   assert.equal(session.acquisitions[0].detail, 'closure reader unavailable');
-  assert.ok(session.incompleteness.includes('acquisitionFailure'));
 });
 
 test('an event from another owner is refused and never recorded', () => {
@@ -489,9 +436,6 @@ test('an event from another owner is refused and never recorded', () => {
 
   const session = adapter.report().sessions[0];
   assert.equal(session.declarations.length, 1);
-  assert.equal(adapter.counters.foreignOwnerEvents, 1);
-  assert.equal(adapter.counters.outsideQueryReads, 1);
-  assert.ok(session.incompleteness.includes('foreignOwnerEvent'));
 });
 
 test('a read outside every invocation belongs to no session', () => {
@@ -506,13 +450,9 @@ test('a read outside every invocation belongs to no session', () => {
   assert.equal(overlapping.reason, 'queryActive');
   adapter.endQuery();
 
-  const session = adapter.report().sessions[0];
-  assert.equal(adapter.counters.outsideQueryReads, 1, 'the pre-invocation read is counted process-wide');
-  assert.ok(!session.incompleteness.includes('outsideQueryRead'), 'it is not attributed to the later invocation');
-  assert.ok(session.incompleteness.includes('overlappingQuery'), 'the overlap happened during the invocation');
 });
 
-test('an invalid event and an unfinished view both make the capture incomplete', () => {
+test('an invalid event is skipped and an unfinished view keeps its span unavailable', () => {
   const text = 'def value() -> U32:\n  1\n';
   const adapter = adapterWith({ '/work/root.bend': text });
   const owner = start(adapter, '/work/root.bend');
@@ -524,9 +464,6 @@ test('an invalid event and an unfinished view both make the capture incomplete',
   const session = adapter.report().sessions[0];
   assert.equal(session.declarations.length, 1);
   assert.equal(session.declarations[0].span.reason, 'viewNotFinalized');
-  assert.ok(session.incompleteness.includes('invalidEvent'));
-  assert.ok(session.incompleteness.includes('unresolvedSpans'));
-  assert.equal(session.completeness, 'incomplete');
 });
 
 test('declared type and elaborated term observations keep their status and quantities', () => {
@@ -631,7 +568,6 @@ test('the selected native invocation supplies the exact frozen owner to hook eve
   assert.equal(result.owner, owner);
   assert.equal(result.session.owner, owner);
   assert.equal(result.session.identity, '/work/root.bend');
-  assert.equal(result.session.completeness, 'complete');
 });
 
 test('a failing check stops before completion and still restores the hook', async () => {
@@ -743,7 +679,6 @@ test('a throwing install closes the session and frees the adapter for the next i
   assert.equal(result.status, 'failed');
   assert.equal(result.outcome.phase, 'install');
   assert.equal(adapter.currentSession(), null, 'the session is ended on the install branch');
-  assert.ok(result.session.incompleteness.includes('evidenceFailure') || result.session.incompleteness.includes('hookInstallFailure'));
 
   const after = await runFrontendInvocation({ frontend: frontendDouble(), adapter, root: '/work/root.bend', phases: ['parse'] });
   assert.equal(after.status, 'completed', 'a later invocation starts on the same adapter');

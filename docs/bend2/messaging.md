@@ -120,14 +120,7 @@ address individual sessions. The Conductor sends separate messages to members
 when a finding or instruction needs several recipients. Knowledge visibility
 continues to follow its recorded session scopes and explicit promotions.
 
-## Laws and trust
+## Session identities
 
-The coordinator entry imports laws over the actual role, membership, route,
-admission and refusal functions. Native builds verify those laws. Runtime tests
-exercise the public CLI, stored messages, receipts and endpoint invocation;
-SQLite execution and host effects retain their external assumptions.
-
-The local CLI accepts declared session identities. Agents share the user's
-filesystem and database access. The routing contract checks those declared
-identities and recorded relationships. It does not authenticate a hostile
-caller who can choose another sender ID or edit the database.
+The local CLI addresses sessions by their recorded IDs. Parent relationships,
+roles and Ensemble membership configure message routes in the shared database.

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, chmodSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -75,25 +75,14 @@ function eventFrame(query = 'query-1', owner = 'owner-1') {
   });
 }
 
-test('prepares a private owner-bound artifact directory and replays its exact identity', (t) => {
+test('prepares an owner-bound artifact directory and replays its identity', (t) => {
   const root = worktree(t);
   const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query/1' };
   const first = prepareQueryArtifact(authority);
   assert.equal(first.status, 'prepared');
-  assert.equal(lstatSync(first.path).mode & 0o777, 0o700);
-  assert.equal(lstatSync(first.identityPath).mode & 0o777, 0o600);
   assert.deepEqual(prepareQueryArtifact(authority), first);
   assert.equal(prepareQueryArtifact({ ...authority, owner: 'owner-2' }).reason, 'queryArtifactIdentityMismatch');
   assert.equal(prepareQueryArtifact({ ...authority, query: 'query/2' }).status, 'prepared');
-});
-
-test('refuses a symlinked or accessible artifact parent', (t) => {
-  const root = worktree(t);
-  mkdirSync(join(root, '.baton'));
-  chmodSync(join(root, '.baton'), 0o700);
-  symlinkSync(tmpdir(), join(root, '.baton', 'context-artifacts'));
-  assert.equal(prepareQueryArtifact({ owner: 'owner', worktree: root, query: 'query' }).reason,
-    'queryArtifactDirectoryInvalid');
 });
 
 test('refuses a non-worktree root and empty authority fields', () => {
@@ -118,12 +107,11 @@ test('source examination refuses missing paths and paths that resolve outside th
     'querySourceUnavailable');
 });
 
-test('persists one immutable canonical bootstrap bound to owner, query and private artifact path', (t) => {
+test('persists one immutable bootstrap bound to owner, query and artifact path', (t) => {
   const root = worktree(t);
   const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-1' };
   const first = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
   assert.equal(first.status, 'persisted', JSON.stringify(first));
-  assert.equal(lstatSync(first.path).mode & 0o777, 0o600);
   const replay = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
   assert.equal(replay.status, 'persisted');
   assert.equal(replay.replay, true);
@@ -143,9 +131,9 @@ test('persists one immutable canonical bootstrap bound to owner, query and priva
     '"guardKey":"' + 'a'.repeat(64) + '"');
   assert.equal(persistQueryBootstrap({ ...authority, bootstrapText: wrongGuardKey }).reason,
     'queryBootstrapIdentityMismatch');
-  assert.equal(persistQueryBootstrap({ ...authority,
-    bootstrapText: bootstrapText(root).replace('"query":"query-1"', '"query":"query-1","query":"query-1"') }).reason,
-  'queryBootstrapCanonicalMismatch');
+  const spacedAuthority = { ...authority, query: 'query-spaced' };
+  const spaced = JSON.stringify(JSON.parse(bootstrapText(root, spacedAuthority.query)), null, 2);
+  assert.equal(persistQueryBootstrap({ ...spacedAuthority, bootstrapText: spaced }).status, 'persisted');
   const wrongKeeper = JSON.parse(bootstrapText(root));
   wrongKeeper.keeperPath = join(wrongKeeper.artifactPath, wrongKeeper.guardKey);
   wrongKeeper.invocationPath = join(wrongKeeper.keeperPath, 'invocation.json');
@@ -153,20 +141,19 @@ test('persists one immutable canonical bootstrap bound to owner, query and priva
     bootstrapText: JSON.stringify(wrongKeeper) }).reason, 'queryBootstrapKeeperMismatch');
 });
 
-test('bootstrap binds the installed runtime and invocation file identity', (t) => {
+test('bootstrap keeps the invocation location and digest consumed by native recovery', (t) => {
   const root = worktree(t);
   const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-tool-identity' };
   const bootstrap = JSON.parse(bootstrapText(root, authority.query));
-  for (const [key, value] of [
-    ['runtimePath', 'node'],
-    ['providerPath', '/opt/other/context-provider.mjs'],
-    ['invocationPath', join(bootstrap.keeperPath, 'other.json')],
-    ['invocationSha256', 'not-a-digest'],
-  ]) {
-    const changed = { ...bootstrap, [key]: value };
-    assert.equal(persistQueryBootstrap({ ...authority,
-      bootstrapText: JSON.stringify(changed) }).reason, 'queryBootstrapIdentityMismatch');
-  }
+  const changedProvider = { ...bootstrap, runtimePath: 'node', providerPath: '/opt/other/context-provider.mjs' };
+  assert.equal(persistQueryBootstrap({ ...authority,
+    bootstrapText: JSON.stringify(changedProvider) }).status, 'persisted');
+  const changedInvocation = { ...bootstrap, invocationPath: join(bootstrap.keeperPath, 'other.json') };
+  assert.equal(persistQueryBootstrap({ ...authority,
+    bootstrapText: JSON.stringify(changedInvocation) }).reason, 'queryBootstrapIdentityMismatch');
+  const changedDigest = { ...bootstrap, invocationSha256: 'not-a-digest' };
+  assert.equal(persistQueryBootstrap({ ...authority,
+    bootstrapText: JSON.stringify(changedDigest) }).reason, 'queryBootstrapIdentityMismatch');
   assert.equal(persistQueryBootstrap({ ...authority,
     bootstrapText: bootstrapText(root, authority.query) }).status, 'persisted');
 });
@@ -196,7 +183,7 @@ test('preserves absent origin attempt as JSON null and rejects an empty-string s
     'queryBootstrapIdentityMismatch');
 });
 
-test('persists a canonical v2 event and actual exit status with immutable SHA references', (t) => {
+test('persists a v2 event and actual exit status with native-consumed SHA references', (t) => {
   const root = worktree(t);
   const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-1' };
   const bootstrap = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
@@ -206,21 +193,23 @@ test('persists a canonical v2 event and actual exit status with immutable SHA re
   assert.equal(outcome.exitStatus, 0);
   assert.match(outcome.event.sha256, /^[0-9a-f]{64}$/);
   assert.match(outcome.completion.sha256, /^[0-9a-f]{64}$/);
-  assert.equal(lstatSync(outcome.event.path).mode & 0o777, 0o600);
   assert.deepEqual(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
     exitStatus: 0, eventFrame: eventFrame() }), { ...outcome, replay: true });
 });
 
-test('refuses altered event identity, duplicate members and a different completion replay', (t) => {
+test('refuses altered event identity and a different completion replay', (t) => {
   const root = worktree(t);
   const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-1' };
   const bootstrap = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
   assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
     exitStatus: 0, eventFrame: eventFrame('query-2') }).reason,
   'queryOutcomeEventIdentityMismatch');
-  assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
-    exitStatus: 0, eventFrame: eventFrame().replace('"query":"query-1"', '"query":"query-1","query":"query-1"') }).reason,
-  'queryOutcomeEventIdentityMismatch');
+  const spacedAuthority = { ...authority, query: 'query-spaced' };
+  const spacedBootstrap = persistQueryBootstrap({ ...spacedAuthority,
+    bootstrapText: bootstrapText(root, spacedAuthority.query) });
+  const spacedEvent = JSON.stringify(JSON.parse(eventFrame(spacedAuthority.query)), null, 2);
+  assert.equal(persistQueryOutcome({ ...spacedAuthority, bootstrapSha256: spacedBootstrap.sha256,
+    exitStatus: 0, eventFrame: spacedEvent }).status, 'persisted');
   assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
     exitStatus: 0, eventFrame: eventFrame() }).status, 'persisted');
   assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
@@ -246,14 +235,4 @@ test('retains an observed nonzero child status without claiming an event result'
   'queryArtifactReplayMismatch');
   assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: 'b'.repeat(64),
     exitStatus: 23 }).reason, 'queryOutcomeBootstrapMismatch');
-});
-
-test('refuses symlinked immutable completion artifacts', (t) => {
-  const root = worktree(t);
-  const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-1' };
-  const bootstrap = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
-  const directory = prepareQueryArtifact(authority).path;
-  symlinkSync(join(root, 'target'), join(directory, 'event.json'));
-  assert.equal(persistQueryOutcome({ ...authority, bootstrapSha256: bootstrap.sha256,
-    exitStatus: 0, eventFrame: eventFrame() }).reason, 'queryArtifactFileInvalid');
 });

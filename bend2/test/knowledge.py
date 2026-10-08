@@ -146,23 +146,20 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(self.read('sibling'), [])
         self.assertEqual(self.ids(self.read('worker')), ['finding-4'])
 
-    def test_evidence_must_name_an_existing_message_the_author_is_party_to(self):
-        refused = self.call('record', 'finding-7', 'worker', 'claim', 'the run said so', 'limits',
-                            success=False)
-        self.assertIn('No knowledge row was written', refused.stderr)
-        self.call('record', 'finding-7', 'worker', 'claim', 'message:no-such-message', 'limits',
-                  success=False)
-        self.call('record', 'finding-7', 'sibling', 'claim', self.evidence('report-5', 'worker'),
-                  'limits', success=False)
-        self.call('record', 'finding-7', 'worker', 'claim', 'git:' + self.base, 'limits',
-                  success=False)
-        self.assertEqual(self.read('worker'), [])
-        recorded = self.call('record', 'finding-7', 'worker', 'claim',
-                             self.evidence('report-8', 'worker'), 'limits')
-        self.assertEqual(recorded['evidence'], 'message:report-8')
-        seen = self.read('worker')[0]
-        self.assertEqual(seen['evidenceMessage']['body'], 'evidence body')
-        self.assertEqual(seen['evidenceMessage']['recipient'], 'root')
+    def test_findings_accept_source_references_and_include_message_content(self):
+        shared = self.evidence('shared-report', 'sibling')
+        references = ['the run said so', 'git:' + self.base,
+                      str(self.repo / 'seed.txt'), 'message:no-such-message', shared]
+        for index, reference in enumerate(references):
+            ident = 'finding-reference-' + str(index)
+            recorded = self.call('record', ident, 'worker', 'claim', reference, 'limits')
+            self.assertEqual(recorded['evidence'], reference)
+        seen = {row['evidence']: row for row in self.read('worker')}
+        for reference in references[:-1]:
+            self.assertIsNone(seen[reference]['evidenceMessage'])
+        self.assertEqual(seen[shared]['evidenceMessage'], {
+            'id': 'shared-report', 'sender': 'sibling', 'recipient': 'root',
+            'body': 'evidence body'})
 
     def test_repeated_ids_answer_the_stored_row_and_changed_content_refuses(self):
         evidence = self.evidence('report-6', 'worker')
@@ -179,14 +176,11 @@ class Knowledge(unittest.TestCase):
         self.call('record', 'finding-8', 'worker', 'a', evidence, 'c')
         notices = [m['id'] for m in self.call('inbox', 'root') if m['kind'] == 'question']
         self.assertEqual(notices, ['finding-8:notice'])
-        # An existing id repeated with the same author, claim and limits but an
-        # evidence the author cannot cite is refused, not answered with the
-        # stored row and not redelivered.
+        # Reusing a finding ID with different content preserves the original row
+        # and does not deliver another notice.
         absent = self.call('record', 'finding-8', 'worker', 'a', 'message:absent', 'c', success=False)
-        self.assertIn('No knowledge row was written', absent.stderr)
         unrelated = self.call('record', 'finding-8', 'worker', 'a',
                               self.evidence('report-10', 'sibling'), 'c', success=False)
-        self.assertIn('No knowledge row was written', unrelated.stderr)
         after = [m['id'] for m in self.call('inbox', 'root') if m['kind'] == 'question']
         self.assertEqual(after, notices)
         stored = self.read('worker')

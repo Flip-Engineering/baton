@@ -8,7 +8,7 @@ import { test } from 'node:test';
 
 import { installedModuleInventory, moduleDirectoryName, resolveSelectedPackageRoot, verifyInvocationArtifact } from '../scripts/context-provider.mjs';
 
-test('installed provider resolves the module named by the frozen binding below its wrapper prefix', () => {
+test('installed provider resolves the module named by the invocation below its wrapper prefix', () => {
   const prefix = mkdtempSync(join(tmpdir(), 'baton2-installed-context-'));
   try {
     const wrapper = join(prefix, 'libexec/baton2/context-provider.mjs');
@@ -16,18 +16,12 @@ test('installed provider resolves the module named by the frozen binding below i
     mkdirSync(join(prefix, 'libexec/baton2'), { recursive: true });
     mkdirSync(root, { recursive: true });
     writeFileSync(wrapper, '// installed wrapper\n');
-    writeFileSync(join(root, 'manifest.json'), JSON.stringify({
-      schema: 'baton2-selected-module-artifact-v1', moduleId: 'bend2',
-    }));
     const resolved = resolveSelectedPackageRoot(wrapper, 'bend2');
     assert.equal(resolved.status, 'resolved');
     assert.equal(resolved.root, root);
     const slashId = 'a/../b';
     const slashRoot = join(prefix, 'lib/context/modules', moduleDirectoryName(slashId));
     mkdirSync(slashRoot, { recursive: true });
-    writeFileSync(join(slashRoot, 'manifest.json'), JSON.stringify({
-      schema: 'baton2-selected-module-artifact-v1', moduleId: slashId,
-    }));
     assert.equal(resolveSelectedPackageRoot(wrapper, slashId).root, slashRoot);
     assert.notEqual(moduleDirectoryName('a/b'), moduleDirectoryName('a\\b'));
     assert.equal(resolveSelectedPackageRoot(wrapper, 'other').status, 'refused');
@@ -36,7 +30,7 @@ test('installed provider resolves the module named by the frozen binding below i
   }
 });
 
-test('installed provider refuses a manifest identity that differs from the requested module', () => {
+test('installed provider resolves the selected package without a generated manifest', () => {
   const prefix = mkdtempSync(join(tmpdir(), 'baton2-installed-context-'));
   try {
     const wrapper = join(prefix, 'libexec/baton2/context-provider.mjs');
@@ -44,10 +38,9 @@ test('installed provider refuses a manifest identity that differs from the reque
     mkdirSync(join(prefix, 'libexec/baton2'), { recursive: true });
     mkdirSync(root, { recursive: true });
     writeFileSync(wrapper, '// installed wrapper\n');
-    writeFileSync(join(root, 'manifest.json'), JSON.stringify({
-      schema: 'baton2-selected-module-artifact-v1', moduleId: 'other',
-    }));
-    assert.equal(resolveSelectedPackageRoot(wrapper, 'bend2').reason, 'selectedModuleManifestMismatch');
+    const selected = resolveSelectedPackageRoot(wrapper, 'bend2');
+    assert.equal(selected.status, 'resolved');
+    assert.equal(selected.root, root);
   } finally {
     rmSync(prefix, { recursive: true, force: true });
   }
@@ -134,8 +127,7 @@ test('retained invocation file supplies the exact native provider request', () =
       version: 2,
       query: 'q-artifact',
       owner: 'owner-artifact',
-      moduleBinding: { id: 'uninstalled-provider', revision: '1', declarationDigest: 'a'.repeat(64),
-        protocolVersion: '2', operation: 'sourceAnalysis', artifactIdentities: [], schemaIdentities: [] },
+      moduleBinding: { id: 'uninstalled-provider' },
       request: {}, inputIdentities: [], operationPlan: [], role: 'starter', incarnation: '0',
     }), { mode: 0o400 });
     const result = spawnSync(process.execPath, [wrapper, '--invoke-file', artifact], {
@@ -148,16 +140,22 @@ test('retained invocation file supplies the exact native provider request', () =
   }
 });
 
-test('invocation artifact verification refuses writable files and malformed framing', () => {
+test('invocation artifact verification reads ordinary files and reports missing selected packages', () => {
   const directory = mkdtempSync(join(tmpdir(), 'baton2-verify-invocation-'));
   try {
-    const writable = join(directory, 'writable.json');
-    writeFileSync(writable, '{}', { mode: 0o600 });
-    assert.equal(verifyInvocationArtifact(writable).reason, 'invocationArtifactFileInvalid');
+    const ordinary = join(directory, 'ordinary.json');
+    writeFileSync(ordinary, JSON.stringify({
+      version: 2,
+      query: 'q-artifact',
+      owner: 'owner-artifact',
+      moduleBinding: { id: 'uninstalled-provider' },
+      request: {}, inputIdentities: [], operationPlan: [], role: null, incarnation: null,
+    }) + '\n', { mode: 0o600 });
+    assert.equal(verifyInvocationArtifact(ordinary).reason, 'selectedModulePackageUnavailable');
 
     const malformed = join(directory, 'malformed.json');
-    writeFileSync(malformed, '{\n}', { mode: 0o400 });
-    assert.equal(verifyInvocationArtifact(malformed).reason, 'invocationArtifactFramingInvalid');
+    writeFileSync(malformed, '{');
+    assert.equal(verifyInvocationArtifact(malformed).reason, 'invocationArtifactVerificationFailed');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

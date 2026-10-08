@@ -388,10 +388,10 @@ Conductor acceptance receipt are required for the live-slice result.
 
 ## Shared knowledge
 
-Agents record findings with a claim, a retained evidence message and stated
-limits. The evidence reference must name an existing message the author sent
-or received. An unpublished finding is visible to its author and immediate
-parent. `knowledge READER` returns the complete visible list, including the
+Agents record findings with a claim, a source reference and stated limits.
+A `message:MESSAGE_ID` reference includes the retained message body. References
+can also name source files, commits, runs or other evidence. An unpublished
+finding is visible to its author and immediate parent. `knowledge READER` returns the complete visible list, including the
 cited message body and promotion history.
 
 ```sh

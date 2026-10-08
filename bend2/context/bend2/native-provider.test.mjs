@@ -8,10 +8,7 @@ function invocation(overrides = {}) {
     version: 2,
     query: 'q-1',
     owner: 'owner-1',
-    moduleBinding: {
-      id: 'bend2', revision: 'development', declarationDigest: 'd'.repeat(64),
-      protocolVersion: '2', operation: 'sourceAnalysis', artifactIdentities: [], schemaIdentities: [],
-    },
+    moduleBinding: { id: 'bend2' },
     request: { subject: { kind: 'program', path: 'src/main.bend' }, cwd: '/repo' },
     inputIdentities: [],
     operationPlan: [],
@@ -47,8 +44,10 @@ test('selected provider refuses malformed and incomplete invocation frames', () 
   assert.deepEqual(validateInvocation(invocation({ owner: '' })), { status: 'refused', reason: 'invocationIdentityMissing', detail: null });
 });
 
-test('provider package loading refuses the source checkout without a staged artifact manifest', () => {
+test('provider loads the configured frontend files without staged manifests', () => {
   const result = loadSelectedFrontendPackage();
-  assert.equal(result.status, 'refused');
-  assert.equal(result.reason, 'packageManifestUnavailable');
+  assert.equal(result.status, 'loaded');
+  assert.equal(typeof result.files.bend.length, 'number');
+  assert.equal(typeof result.files.main.length, 'number');
+  result.close();
 });

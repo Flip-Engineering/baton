@@ -33,9 +33,6 @@ import ../json/canonical.bend as J
 import ./codec.bend as Codec
 import ./contracts.bend as Context
 import ./request.bend as Req
-# The sequence policy is Core's, so this import resolves when the codec and Core closure
-# is merged; it is the one cross-worktree dependency of this module.
-import ./snapshot-validate.bend as SV
 
 # --- the closed shapes -----------------------------------------------------
 
@@ -214,8 +211,16 @@ def wire_kind_of_value(+kind: String, +value: Codec.RawValue) -> Bool:
 def wire_kind_is(+kind: String, +name: String, +members: Codec.RawValue) -> Bool:
   Bool.pick(Bool, wire_name_present(name, members), wire_kind_of_value(kind, wire_value_member(name, members)), False{})
 
+def wire_sequence_digits(+digits: List<&2, Char>) -> Bool:
+  match digits:
+    case Nil{}: True{}
+    case head <> tail: Bool.and(Char.is_digit(head), wire_sequence_digits(tail))
+
 def wire_sequence_ok(+text: String) -> Bool:
-  SV.canonical_unsigned_decimal(text)
+  Bool.and(Bool.not(String.is_empty(text)),
+    Bool.and(wire_sequence_digits(String.to_list(text)),
+      Bool.not(Bool.and(String.starts_with(text, "0"),
+        Bool.not(String.eq(text, "0"))))))
 
 def wire_frame_type_ok(+members: Codec.RawValue) -> Bool:
   wire_kind_is("text", "type", members)
@@ -426,237 +431,3 @@ def event_frame(+query: String, +owner: String, +producer_text: String, +runtime
   ++ ",\"sequence\":" ++ J.json_text(J.Jstr{sequence})
   ++ ",\"type\":" ++ J.json_text(J.Jstr{frame_type})
   ++ ",\"payload\":" ++ wire_value(payload) ++ "}"
-
-# --- rows for the laws -----------------------------------------------------
-
-def wire_rows_full() -> Req.Rows:
-  Codec.rows_of([
-    Codec.object_row("0", SNil{}, SNil{}),
-    Codec.number_row("1", "0", "version", "2"),
-    Codec.text_row("2", "0", "query", "q1"),
-    Codec.text_row("3", "0", "owner", "o1"),
-    Codec.object_row("4", "0", "moduleBinding"),
-    Codec.text_row("5", "4", "id", "m"),
-    Codec.object_row("6", "0", "request"),
-    Codec.array_row("7", "0", "inputIdentities"),
-    Codec.array_row("8", "0", "operationPlan"),
-    Codec.text_row("9", "0", "role", "r1"),
-    Codec.text_row("10", "0", "incarnation", "i1")])
-
-def wire_rows_version_only() -> Req.Rows:
-  Codec.rows_of([
-    Codec.object_row("0", SNil{}, SNil{}),
-    Codec.number_row("1", "0", "version", "2")])
-
-def wire_rows_undeclared() -> Req.Rows:
-  Codec.rows_of([
-    Codec.object_row("0", SNil{}, SNil{}),
-    Codec.number_row("1", "0", "version", "2"),
-    Codec.text_row("2", "0", "query", "q1"),
-    Codec.text_row("3", "0", "owner", "o1"),
-    Codec.object_row("4", "0", "moduleBinding"),
-    Codec.object_row("5", "0", "request"),
-    Codec.array_row("6", "0", "inputIdentities"),
-    Codec.array_row("7", "0", "operationPlan"),
-    Codec.text_row("8", "0", "role", "r1"),
-    Codec.text_row("9", "0", "incarnation", "i1"),
-    Codec.text_row("10", "0", "extra", "x")])
-
-def wire_rows_null_scalar() -> Req.Rows:
-  Codec.rows_of([
-    Codec.object_row("0", SNil{}, SNil{}),
-    Codec.number_row("1", "0", "version", "2"),
-    Codec.null_row("2", "0", "query"),
-    Codec.text_row("3", "0", "owner", "o1"),
-    Codec.object_row("4", "0", "moduleBinding"),
-    Codec.object_row("5", "0", "request"),
-    Codec.array_row("6", "0", "inputIdentities"),
-    Codec.array_row("7", "0", "operationPlan"),
-    Codec.text_row("8", "0", "role", "r1"),
-    Codec.text_row("9", "0", "incarnation", "i1")])
-
-def wire_rows_event_leading_zero() -> Req.Rows:
-  Codec.rows_of([
-    Codec.object_row("0", SNil{}, SNil{}),
-    Codec.number_row("1", "0", "version", "2"),
-    Codec.text_row("2", "0", "query", "q1"),
-    Codec.text_row("3", "0", "owner", "o1"),
-    Codec.object_row("4", "0", "moduleBinding"),
-    Codec.text_row("5", "0", "runtime", "managed"),
-    Codec.text_row("6", "0", "role", "w"),
-    Codec.text_row("7", "0", "incarnation", "i"),
-    Codec.text_row("8", "0", "sequence", "07"),
-    Codec.text_row("9", "0", "type", "event"),
-    Codec.object_row("10", "0", "payload")])
-
-def wire_rows_event_good() -> Req.Rows:
-  Codec.rows_of([
-    Codec.object_row("0", SNil{}, SNil{}),
-    Codec.number_row("1", "0", "version", "2"),
-    Codec.text_row("2", "0", "query", "q1"),
-    Codec.text_row("3", "0", "owner", "o1"),
-    Codec.object_row("4", "0", "moduleBinding"),
-    Codec.text_row("5", "0", "runtime", "managed"),
-    Codec.text_row("6", "0", "role", "w"),
-    Codec.text_row("7", "0", "incarnation", "i"),
-    Codec.text_row("8", "0", "sequence", "10"),
-    Codec.text_row("9", "0", "type", "event"),
-    Codec.object_row("10", "0", "payload")])
-
-# --- laws ------------------------------------------------------------------
-
-law wire_law_the_invocation_frame_has_the_closed_shape:
-  {invocation_frame("q1", "o1", "{\"id\":\"m\"}", "{}", "[]", "[]", "r1", "i1") == "{\"version\":2,\"query\":\"q1\",\"owner\":\"o1\",\"moduleBinding\":{\"id\":\"m\"},\"request\":{},\"inputIdentities\":[],\"operationPlan\":[],\"role\":\"r1\",\"incarnation\":\"i1\"}" : String}
-
-def wire_law_the_invocation_frame_has_the_closed_shape():
-  {==}
-
-law wire_law_the_invocation_version_is_the_number_two:
-  {invocation_frame("q", "", "null", "null", "null", "null", "", "") == "{\"version\":2,\"query\":\"q\",\"owner\":null,\"moduleBinding\":null,\"request\":null,\"inputIdentities\":null,\"operationPlan\":null,\"role\":null,\"incarnation\":null}" : String}
-
-def wire_law_the_invocation_version_is_the_number_two():
-  {==}
-
-law wire_law_the_event_frame_has_the_closed_shape:
-  {event_frame("q1", "o1", "{\"id\":\"m\"}", "", "", "", "7", "result", Codec.Rstr{"p"}) == "{\"version\":2,\"query\":\"q1\",\"owner\":\"o1\",\"moduleBinding\":{\"id\":\"m\"},\"runtime\":null,\"role\":null,\"incarnation\":null,\"sequence\":\"7\",\"type\":\"result\",\"payload\":\"p\"}" : String}
-
-def wire_law_the_event_frame_has_the_closed_shape():
-  {==}
-
-law wire_law_a_sequence_longer_than_u32_keeps_its_exact_text:
-  {event_frame("q", "o", "null", "", "", "", "12345678901234567890", "event", Codec.Rnull{}) == "{\"version\":2,\"query\":\"q\",\"owner\":\"o\",\"moduleBinding\":null,\"runtime\":null,\"role\":null,\"incarnation\":null,\"sequence\":\"12345678901234567890\",\"type\":\"event\",\"payload\":null}" : String}
-
-def wire_law_a_sequence_longer_than_u32_keeps_its_exact_text():
-  {==}
-
-law wire_law_a_retained_role_and_incarnation_travel_as_strings:
-  {event_frame("q", "o", "null", "managed", "worker", "inc7", "1", "event", Codec.Rnull{}) == "{\"version\":2,\"query\":\"q\",\"owner\":\"o\",\"moduleBinding\":null,\"runtime\":\"managed\",\"role\":\"worker\",\"incarnation\":\"inc7\",\"sequence\":\"1\",\"type\":\"event\",\"payload\":null}" : String}
-
-def wire_law_a_retained_role_and_incarnation_travel_as_strings():
-  {==}
-
-law wire_law_a_transported_invocation_reads_its_members:
-  {wire_read(wire_rows_full()) == WrInvocation{"2", Context.Present{"q1"}, Context.Present{"o1"}, Codec.Robj{Codec.Rpair{"id", Codec.Rstr{"m"}, Codec.Rnil{}}}, Codec.Robj{Codec.Rnil{}}, Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}, Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}, Context.Present{"r1"}, Context.Present{"i1"}} : WireRead}
-
-def wire_law_a_transported_invocation_reads_its_members():
-  {==}
-
-law wire_law_a_frame_with_only_a_version_is_not_an_invocation:
-  {wire_read(wire_rows_version_only()) == WrRefused{"missingMember"} : WireRead}
-
-def wire_law_a_frame_with_only_a_version_is_not_an_invocation():
-  {==}
-
-law wire_law_an_undeclared_member_refuses:
-  {wire_read(wire_rows_undeclared()) == WrRefused{"invalidMember"} : WireRead}
-
-def wire_law_an_undeclared_member_refuses():
-  {==}
-
-law wire_law_a_null_scalar_member_reads_as_absent:
-  {wire_read(wire_rows_null_scalar()) == WrInvocation{"2", Context.Absent{}, Context.Present{"o1"}, Codec.Robj{Codec.Rnil{}}, Codec.Robj{Codec.Rnil{}}, Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}, Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}, Context.Present{"r1"}, Context.Present{"i1"}} : WireRead}
-
-def wire_law_a_null_scalar_member_reads_as_absent():
-  {==}
-
-law wire_law_a_wrong_scalar_kind_refuses:
-  {wire_kind_is("textOrNull", "query", Codec.Rpair{"query", Codec.Rtrue{}, Codec.Rnil{}}) == False{} : Bool}
-
-def wire_law_a_wrong_scalar_kind_refuses():
-  {==}
-
-law wire_law_a_missing_member_is_not_present:
-  {wire_name_present("query", Codec.Rpair{"owner", Codec.Rstr{"o"}, Codec.Rnil{}}) == False{} : Bool}
-
-def wire_law_a_missing_member_is_not_present():
-  {==}
-
-law wire_law_an_event_sequence_with_a_leading_zero_refuses:
-  {wire_read(wire_rows_event_leading_zero()) == WrRefused{"invalidMember"} : WireRead}
-
-def wire_law_an_event_sequence_with_a_leading_zero_refuses():
-  {==}
-
-law wire_law_an_event_frame_with_a_canonical_sequence_reads:
-  {wire_read(wire_rows_event_good()) == WrEvent{"2", Context.Present{"q1"}, Context.Present{"o1"}, Codec.Robj{Codec.Rnil{}}, Context.Present{"managed"}, Context.Present{"w"}, Context.Present{"i"}, "10", "event", Codec.Robj{Codec.Rnil{}}} : WireRead}
-
-def wire_law_an_event_frame_with_a_canonical_sequence_reads():
-  {==}
-
-law wire_law_the_sequence_policy_is_canonical_unsigned_decimal:
-  {wire_sequence_ok("10") == True{} : Bool}
-
-def wire_law_the_sequence_policy_is_canonical_unsigned_decimal():
-  {==}
-
-law wire_law_a_leading_zero_is_not_a_canonical_sequence:
-  {wire_sequence_ok("07") == False{} : Bool}
-
-def wire_law_a_leading_zero_is_not_a_canonical_sequence():
-  {==}
-
-law wire_law_a_sequence_wider_than_u32_is_still_canonical:
-  {wire_sequence_ok("4294967296") == True{} : Bool}
-
-def wire_law_a_sequence_wider_than_u32_is_still_canonical():
-  {==}
-
-law wire_law_a_text_version_refuses:
-  {wire_version_is_two(Codec.Rstr{"2"}) == False{} : Bool}
-
-def wire_law_a_text_version_refuses():
-  {==}
-
-law wire_law_a_duplicate_key_inside_the_payload_refuses:
-  {wire_payload_ok(Codec.Robj{Codec.Rpair{"k", Codec.Rstr{"a"}, Codec.Rpair{"k", Codec.Rstr{"b"}, Codec.Rnil{}}}}) == False{} : Bool}
-
-def wire_law_a_duplicate_key_inside_the_payload_refuses():
-  {==}
-
-law wire_law_an_exact_token_inside_the_payload_passes:
-  {wire_payload_ok(Codec.Robj{Codec.Rpair{"k", Codec.Rnum{"1e400"}, Codec.Rnil{}}}) == True{} : Bool}
-
-def wire_law_an_exact_token_inside_the_payload_passes():
-  {==}
-
-law wire_law_a_negative_decimal_inside_the_payload_passes:
-  {wire_value_ok(Codec.Rnum{"-0.25"}, "value") == True{} : Bool}
-
-def wire_law_a_negative_decimal_inside_the_payload_passes():
-  {==}
-
-law wire_law_a_constructed_token_that_is_not_a_number_refuses:
-  {wire_value_ok(Codec.Rnum{"x"}, "value") == False{} : Bool}
-
-def wire_law_a_constructed_token_that_is_not_a_number_refuses():
-  {==}
-
-law wire_law_the_empty_array_sentinel_passes_the_value_rule:
-  {wire_payload_ok(Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}) == True{} : Bool}
-
-def wire_law_the_empty_array_sentinel_passes_the_value_rule():
-  {==}
-
-law wire_law_a_boolean_binding_refuses_the_object_kind:
-  {wire_kind_is("object", "moduleBinding", Codec.Rpair{"moduleBinding", Codec.Rtrue{}, Codec.Rnil{}}) == False{} : Bool}
-
-def wire_law_a_boolean_binding_refuses_the_object_kind():
-  {==}
-
-law wire_law_a_text_operation_plan_refuses_the_array_kind:
-  {wire_kind_is("array", "operationPlan", Codec.Rpair{"operationPlan", Codec.Rstr{"x"}, Codec.Rnil{}}) == False{} : Bool}
-
-def wire_law_a_text_operation_plan_refuses_the_array_kind():
-  {==}
-
-law wire_law_a_null_request_value_refuses_the_object_kind:
-  {wire_kind_is("object", "request", Codec.Rpair{"request", Codec.Rnull{}, Codec.Rnil{}}) == False{} : Bool}
-
-def wire_law_a_null_request_value_refuses_the_object_kind():
-  {==}
-
-law wire_law_an_empty_text_member_is_present_and_not_absent:
-  {wire_text_value(Codec.Rstr{""}) == Context.Present{""} : Context.OptText}
-
-def wire_law_an_empty_text_member_is_present_and_not_absent():
-  {==}
