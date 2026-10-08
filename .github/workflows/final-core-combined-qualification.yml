@@ -4,12 +4,15 @@ on:
   push:
     branches:
       - codex/final-native-context-core-combined-validation-20261008
+  workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
   build:
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -223,49 +226,28 @@ jobs:
           retention-days: 14
 
   runtime:
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') }}
     needs: build
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        suite:
-          - land
-          - mcp-command
-          - mcp-root
-          - mcp-contract
-          - logs
-          - turn
-          - process
-          - configure
-          - native-observation
-          - fixed-coordinator
-          - control
-          - retained-control
-          - role-guard
-          - root-wake
-          - codex-root
-          - muse-root
-          - omp-root
-          - control-identity
-          - shared-instance
-          - ui-orchestra-native
-          - ui-orchestra-browser
-          - node-provider-ui
-          - selected-context-package
-          - observed-usage
-          - stop
-          - receive
-          - receive-output
-          - receive-terminal-boundary
+        suite: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["control","receive","logs","fixed-coordinator"]' || '["land","mcp-command","mcp-root","mcp-contract","logs","turn","process","configure","native-observation","fixed-coordinator","control","retained-control","role-guard","root-wake","codex-root","muse-root","omp-root","control-identity","shared-instance","ui-orchestra-native","ui-orchestra-browser","node-provider-ui","selected-context-package","observed-usage","stop","receive","receive-output","receive-terminal-boundary"]') }}
     env:
       BEND_NO_TELEMETRY: '1'
+      PRODUCT_SOURCE_SHA: 'cbb3a7422fd05c752fb81b46954845b3c143858b'
+      PRODUCT_SOURCE_TREE: '0b7cbb53e22bbc51e3ab3749977d28b9e959fd9b'
+      FIXTURE_SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && 'aa7d506c60ae9fabc0e6450db3eb8c0fe2b52730' || 'cbb3a7422fd05c752fb81b46954845b3c143858b' }}
+      FIXTURE_SOURCE_TREE: ${{ github.event_name == 'workflow_dispatch' && '9e1c7c3d295c89a82e818cd06e79d6678b114b16' || '0b7cbb53e22bbc51e3ab3749977d28b9e959fd9b' }}
+      PRODUCT_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && '37753091536' || github.run_id }}
+      PRODUCT_RUN_ATTEMPT: ${{ github.event_name == 'workflow_dispatch' && '1' || github.run_attempt }}
     steps:
       - name: Check out qualification driver
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Check out pinned product source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: cbb3a7422fd05c752fb81b46954845b3c143858b
+          ref: ${{ env.FIXTURE_SOURCE_SHA }}
           path: source
       - name: Verify source and prepare runtime evidence
         shell: bash
@@ -277,16 +259,20 @@ jobs:
           {
             printf 'driver_commit=%s\n' "$(git rev-parse HEAD)"
             printf 'driver_tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
-            printf 'source_sha=%s\n' "$(git -C source rev-parse HEAD)"
-            printf 'source_tree=%s\n' "$(git -C source rev-parse 'HEAD^{tree}')"
+            printf 'product_source_sha=%s\n' "$PRODUCT_SOURCE_SHA"
+            printf 'product_source_tree=%s\n' "$PRODUCT_SOURCE_TREE"
+            printf 'product_run_id=%s\n' "$PRODUCT_RUN_ID"
+            printf 'product_run_attempt=%s\n' "$PRODUCT_RUN_ATTEMPT"
+            printf 'fixture_source_sha=%s\n' "$(git -C source rev-parse HEAD)"
+            printf 'fixture_source_tree=%s\n' "$(git -C source rev-parse 'HEAD^{tree}')"
             printf 'suite=%s\n' '${{ matrix.suite }}'
             uname -a
           } > "$evidence/logs/identity.txt" 2>&1
-          test "$(git -C source rev-parse HEAD)" = 'cbb3a7422fd05c752fb81b46954845b3c143858b'
-          test "$(git -C source rev-parse 'HEAD^{tree}')" = '0b7cbb53e22bbc51e3ab3749977d28b9e959fd9b'
+          test "$(git -C source rev-parse HEAD)" = "$FIXTURE_SOURCE_SHA"
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = "$FIXTURE_SOURCE_TREE"
           git clone --no-hardlinks --quiet source owned
-          git -C owned checkout --quiet --detach 'cbb3a7422fd05c752fb81b46954845b3c143858b'
-          test "$(git -C owned rev-parse 'HEAD^{tree}')" = '0b7cbb53e22bbc51e3ab3749977d28b9e959fd9b'
+          git -C owned checkout --quiet --detach "$FIXTURE_SOURCE_SHA"
+          test "$(git -C owned rev-parse 'HEAD^{tree}')" = "$FIXTURE_SOURCE_TREE"
       - name: Select Node 22
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -294,7 +280,10 @@ jobs:
       - name: Download shared native binaries
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          name: final-native-context-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          name: final-native-context-binaries-${{ env.PRODUCT_RUN_ID }}-${{ env.PRODUCT_RUN_ATTEMPT }}
+          run-id: ${{ env.PRODUCT_RUN_ID }}
+          repository: Flip-Engineering/baton
+          github-token: ${{ github.token }}
           path: owned/.scratch/bend2
       - name: Prepare binaries and test output capture
         shell: bash
@@ -331,7 +320,15 @@ jobs:
           chmod 0755 owned/.scratch/bend2/baton2
           {
             printf 'node=%s\n' "$(node --version)"
+            printf 'product_source_sha=%s\n' "$PRODUCT_SOURCE_SHA"
+            printf 'product_source_tree=%s\n' "$PRODUCT_SOURCE_TREE"
+            printf 'product_run_id=%s\n' "$PRODUCT_RUN_ID"
+            printf 'product_run_attempt=%s\n' "$PRODUCT_RUN_ATTEMPT"
+            printf 'fixture_source_sha=%s\n' "$FIXTURE_SOURCE_SHA"
+            printf 'fixture_source_tree=%s\n' "$FIXTURE_SOURCE_TREE"
             command -v chromium || command -v chromium-browser || command -v google-chrome || true
+            sha256sum owned/.scratch/bend2/baton2 owned/.scratch/bend2/process-test \
+              owned/.scratch/bend2/instance-test owned/.scratch/bend2/bend
           } > "$evidence/logs/runtime.txt" 2>&1
       - name: Run selected suite
         id: suite
