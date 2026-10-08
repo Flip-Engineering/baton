@@ -67,7 +67,7 @@ jobs:
           mkdir -p owned/.scratch/bend2
           status=0
           set +e
-          (cd owned && BEND="$bend" CC=clang sh bend2/scripts/build-native.sh \
+          (cd owned && BEND="$bend" CC=clang-19 sh bend2/scripts/build-native.sh \
             bend2/src/coordinator/main.bend .scratch/bend2/baton2) \
             > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/main-build.stdout" \
             2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/main-build.stderr"
@@ -84,7 +84,7 @@ jobs:
           for fixture in process instance; do
             status=0
             set +e
-            (cd owned && BEND="$bend" CC=clang sh bend2/scripts/build-native.sh \
+            (cd owned && BEND="$bend" CC=clang-19 sh bend2/scripts/build-native.sh \
               "bend2/test/$fixture.bend" ".scratch/bend2/$fixture-test") \
               > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/$fixture-fixture-build.stdout" \
               2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/$fixture-fixture-build.stderr"
