@@ -17,8 +17,8 @@ jobs:
       matrix:
         include:
           - product: combined-context
-            source_sha: 427ed60b6b3f56db125724eeb4c9fcc631839545
-            source_tree: 34f9e76745e9cd7f1109b08058e94e075be79b61
+            source_sha: 44840831557db28d1371a6354669487e2d34d8b6
+            source_tree: e09a7dc059776c78cb79e1b247f7b8a5eb61ff9e
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
@@ -194,4 +194,3 @@ jobs:
           path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/
           if-no-files-found: warn
           retention-days: 14
-
