@@ -216,7 +216,7 @@ typedef struct BrControl {
 typedef struct { int32_t pid; uint64_t first,second; } BrBirth;
 typedef struct BatonRetained {
   int socket,spool,error,exited,status,input_closed;
-  int guard,watch,life,orphan,unknown,released,acknowledged;
+  int guard,watch,life,orphan,unknown,released,acknowledged,observer_only;
   char *directory,*database;
   uint64_t version,serial,reply_serial,owner_attempt,owner_incarnation,owner_epoch;
   int reply_error;
@@ -688,7 +688,7 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
   if(!error){spool=path?open(path,O_RDONLY|O_CLOEXEC):-1;if(spool<0)error=path?errno:ENOMEM;}
   free(path);
   int life=-1,ended=state.exited;
-  if(!error && hello.value==2 && !ended) {
+  if(!error && (hello.value==2 || hello.value==5) && !ended) {
     life=br_lifetime(directory,&ended);if(life<0 && !ended)error=errno;
   }
   BatonRetained *retained=error?NULL:calloc(1,sizeof(*retained));
@@ -697,6 +697,7 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
   retained->socket=socket;retained->spool=spool;retained->guard=guard;retained->life=life;retained->watch=-1;
   retained->directory=strdup(directory);retained->exited=state.exited;retained->status=state.status;
   retained->input_closed=state.input_closed;retained->released=state.released;
+  retained->observer_only=hello.value==4 || hello.value==5;
   if(hello.value==4)retained->unknown=1;
   pthread_mutex_init(&retained->state,NULL);pthread_mutex_init(&retained->command,NULL);
   pthread_mutex_init(&retained->reader,NULL);pthread_cond_init(&retained->changed,NULL);
@@ -705,7 +706,7 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
   /* The reader starts at the beginning. Resuming at a recorded offset is the
      caller's decision, taken through restore after it has restored the reducer
      state the checkpoint carries. */
-  if(!error && (hello.value==2 || hello.value==3 || hello.value==4)) {
+  if(!error && (hello.value==2 || hello.value==3 || hello.value==4 || hello.value==5)) {
     BrFrame ready={.op=BR_READY,.serial=1};error=br_write_all(socket,&ready,sizeof(ready));
     BrFrame reply={0};
     if(!error)error=br_read_all(socket,&reply,sizeof(reply));
@@ -809,6 +810,12 @@ static void br_read_line(BatonProcessCall *call) {
 }
 static void baton_retained_call(BatonProcessCall *call) {
   BatonRetained *retained=call->child->retained;
+  if(retained->observer_only &&
+     (call->kind==BP_WRITE || call->kind==BP_CLOSE || call->kind==BP_SIGNAL ||
+      call->kind==BP_RELEASE || call->kind==BP_ACK ||
+      call->kind==BP_INSTANCE_START || call->kind==BP_INSTANCE_CANCEL)) {
+    call->error=EPERM;return;
+  }
   if(call->kind==BP_INSTANCE_STATE) {
     br_instance_state_call(call);
     return;
@@ -885,7 +892,9 @@ static void baton_retained_call(BatonProcessCall *call) {
     pthread_mutex_unlock(&retained->state);
     if(call->error) return;
     char text[64];
-    if(retained->unknown) snprintf(text,sizeof(text),"unavailable: native exit status was not retained");
+    if(retained->observer_only && retained->unknown)
+      snprintf(text,sizeof(text),"unavailable: native exit status was not retained");
+    else if(retained->unknown) snprintf(text,sizeof(text),"unknown after keeper loss");
     else if(WIFEXITED(status)) snprintf(text,sizeof(text),"exit %d",WEXITSTATUS(status));
     else if(WIFSIGNALED(status)) snprintf(text,sizeof(text),"signal %d",WTERMSIG(status));
     else {call->error=ECHILD;return;}
@@ -1230,7 +1239,7 @@ static int br_control_command(BrKeeper *keeper,BrControl *control,BrFrame frame,
       keeper->client=control->socket;control->socket=-1;keeper->generation++;keeper->ready=0;
       BrState state={keeper->native_pid,keeper->exited,keeper->status,keeper->released,keeper->input_closed};
       return br_send(keeper,(BrFrame){.op=BR_HELLO,.length=sizeof(state),
-        .value=keeper->monitor_only && keeper->status_unavailable?4:keeper->native_pid?2:3},&state);
+        .value=keeper->monitor_only?(keeper->status_unavailable?4:5):keeper->native_pid?2:3},&state);
     }
   } else if(!frame.serial)br_control_reply(control,frame.serial,EPROTO);
   else if(frame.op==BR_CONTROL_WRITE) {
@@ -4078,7 +4087,7 @@ static void br_instance_state_call(BatonProcessCall *call) {
   const char *state=br_lifecycle_state(retained->directory,&record,&pid,&status_known,&status);
   pthread_mutex_lock(&retained->state);int status_unavailable=retained->unknown;
   pthread_mutex_unlock(&retained->state);
-  if(status_unavailable)state="unavailable";
+  if(retained->observer_only && status_unavailable)state="unavailable";
   uint64_t guard_device=0,guard_inode=0;
   struct stat info;
   if(retained->guard>=0 && !fstat(retained->guard,&info)) {
@@ -4182,6 +4191,8 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
 static void baton_process_call(IoWork *w) {
   BatonProcessCall *call=(BatonProcessCall *)w->data;
   BatonChild *child=call->child;
+  if(call->kind==BP_INSTANCE_RETIRE && child->retained &&
+     child->retained->observer_only) { call->error=EPERM;return; }
   if(call->kind==BP_SPAWN || call->kind==BP_SPAWN_WITH_FILE_BOUNDED) { baton_child_spawn(call);return; }
   if(call->kind==BP_INSTANCE_RECOVER) { call->error=br_instance_recover(call);return; }
   if(call->kind==BP_INSTANCE_OWNER_WITNESS) { br_instance_owner_witness(call,0);return; }

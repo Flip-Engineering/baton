@@ -921,12 +921,12 @@ class SharedInstance(unittest.TestCase):
         misplaced = nested / 'managed-owner-recovery'
         shutil.copytree(directory, misplaced)
         refusal = self.command('recover-observation', self.db, misplaced,
-                               bootstrap, old_witness)
+                               bootstrap, old_witness, 'terminal')
         self.assertNotEqual(refusal.returncode, 0, refusal.stdout + refusal.stderr)
         self.assertIn('recover-attach-failed:', refusal.stderr + refusal.stdout)
         self.assertEqual((directory / 'native.birth').read_bytes(), old_birth)
         recovered = self.spawn('recover-observation', self.db, directory,
-                               bootstrap, old_witness)
+                               bootstrap, old_witness, 'owner-loss')
         transition_line = self.next_line(recovered)
         self.assertTrue(transition_line.startswith('recovery-transition:'), transition_line)
         transition = json.loads(transition_line[len('recovery-transition:'):])
@@ -953,17 +953,61 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual((directory / 'stdout').read_text(errors='replace').count('"role": "native"'),
                          1, 'recovery launched a second native process')
 
-        os.kill(pid, signal.SIGTERM)
+        rebound_owners = self.owner_processes()
+        self.assertEqual(len(rebound_owners), 1, rebound_owners)
+        os.kill(int(rebound_owners[0].split()[0]), signal.SIGKILL)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and self.owner_processes():
+            time.sleep(.05)
+        self.assertEqual(self.owner_processes(), [])
         recovered.stdin.write('\n')
         recovered.stdin.flush()
-        unavailable_line = self.next_line(recovered)
+        for operation_name in ('write', 'close', 'signal', 'release', 'acknowledge'):
+            mutation_line = self.next_line(recovered)
+            self.assertRegex(mutation_line,
+                             rf'^recovery-{operation_name}-failed:1:', mutation_line)
+        self.assertFalse((directory / 'released').exists())
+        self.assertFalse((directory / 'acknowledged').exists())
+        self.assertFalse((directory / 'status').exists())
+        self.assertEqual((directory / 'native.birth').read_bytes(), old_birth)
+        self.assertEqual((directory / 'stdout').read_text(errors='replace').count('"role": "native"'),
+                         1, 'owner loss changed the native process or output identity')
+        os.kill(pid, 0)
+        recovered.wait(timeout=10)
+
+        final_witness = self.command('ensure-owner-witness', self.db).stdout.strip()
+        self.assertRegex(final_witness, r'^\d+:\d+$')
+        self.assertNotEqual(final_witness, current_witness)
+        terminal = self.spawn('recover-observation', self.db, directory,
+                              bootstrap, old_witness, 'terminal')
+        terminal_transition_line = self.next_line(terminal)
+        self.assertTrue(terminal_transition_line.startswith('recovery-transition:'),
+                        terminal_transition_line)
+        terminal_state_line = self.next_line(terminal)
+        self.assertTrue(terminal_state_line.startswith('recovery-host-state:'),
+                        terminal_state_line)
+        terminal_state = json.loads(terminal_state_line[len('recovery-host-state:'):])
+        self.assertEqual(terminal_state['state'], 'running', terminal_state)
+        self.assertEqual(terminal_state['native_pid'], pid, terminal_state)
+        self.assertRegex(self.next_line(terminal), r'^recovery-write-failed:1:')
+        terminal_native_line = self.next_line(terminal)
+        self.assertTrue(terminal_native_line.startswith('recovery-line:{'), terminal_native_line)
+        self.assertEqual(json.loads(terminal_native_line[len('recovery-line:'):])['pid'], pid)
+        os.kill(pid, signal.SIGTERM)
+        terminal.stdin.write('\n')
+        terminal.stdin.flush()
+        status_line = self.next_line(terminal)
+        self.assertEqual(status_line,
+                         'native-final-observation:unavailable: native exit status was not retained')
+        unavailable_line = self.next_line(terminal)
         self.assertTrue(unavailable_line.startswith('recovery-host-state:'), unavailable_line)
         unavailable = json.loads(unavailable_line[len('recovery-host-state:'):])
         self.assertEqual(unavailable['state'], 'unavailable', unavailable)
         self.assertFalse(unavailable['status_known'], unavailable)
-        recovered.wait(timeout=10)
+        terminal.wait(timeout=10)
         print('evidence managed owner recovery', old_witness, current_witness,
-              'same-native-pid', pid, 'live-to-unavailable')
+              final_witness, 'same-native-pid', pid,
+              'mutation-refusals-after-owner-loss', 'live-to-unavailable')
 
     def test_shutdown_releases_the_database_for_a_new_owner(self):
         directory, child = self.begin('a0')

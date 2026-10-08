@@ -521,7 +521,32 @@ def recovery_observation_line(line: Maybe<String>) -> IO(Unit):
     case Some{+value}: IO.print("recovery-line:" ++ value)
     case None{}: IO.print("recovery-line-unavailable")
 
-def recovery_observation_attached(handle: U32, +transition: String) -> IO(Unit):
+def recovery_owner_loss_mutations(+handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    write_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,"forbidden-after-recovery\n")
+    write_shown : Unit <- operation("recovery-write",write_result)
+    close_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
+    close_shown : Unit <- operation("recovery-close",close_result)
+    signal_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.signal(handle,15)
+    signal_shown : Unit <- operation("recovery-signal",signal_result)
+    release_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.release(handle)
+    release_shown : Unit <- operation("recovery-release",release_result)
+    acknowledge_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.acknowledge(handle)
+    operation("recovery-acknowledge",acknowledge_result)
+
+def recovery_terminal_observation(handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    status : String <- IO.try(String,P.ProcessChild.wait(handle))
+    printed : Unit <- IO.print("native-final-observation:" ++ status)
+    latest : Result<&1,&1,U32 & String,String> <- Custody.Instance.state(handle)
+    recovered_host_state(latest)
+
+def recovery_observation_after_gate(+handle: U32, +phase: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(phase,"owner-loss"),
+    recovery_owner_loss_mutations(handle),recovery_terminal_observation(handle))
+
+def recovery_observation_attached(handle: U32, +transition: String,
+                                  +phase: String) -> IO(Unit):
   do IO<Unit>:
     printed : Unit <- IO.print("recovery-transition:" ++ transition)
     state : Result<&1,&1,U32 & String,String> <- Custody.Instance.state(handle)
@@ -531,21 +556,21 @@ def recovery_observation_attached(handle: U32, +transition: String) -> IO(Unit):
     line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
     printed_line : Unit <- recovery_observation_line(line)
     gate : String <- IO.try(String,Text.Text.read("-"))
-    latest : Result<&1,&1,U32 & String,String> <- Custody.Instance.state(handle)
-    recovered_host_state(latest)
+    recovery_observation_after_gate(handle,phase)
 
-def recovery_observation_result(result: Result<&1,&1,U32 & String,U32 & String>) -> IO(Unit):
+def recovery_observation_result(result: Result<&1,&1,U32 & String,U32 & String>,
+                                +phase: String) -> IO(Unit):
   match result:
     case Fail{(code,text)}: IO.die(Unit,1,"recovery-attach-failed:" ++ U32.show(code) ++ ":" ++ text)
-    case Done{(handle,+transition)}: recovery_observation_attached(handle,transition)
+    case Done{(handle,+transition)}: recovery_observation_attached(handle,transition,phase)
 
 def recover_observation_cli(args: List<String>) -> IO(Unit):
   match args:
-    case +database <> +directory <> +bootstrap <> +old_witness <> Nil{}: do IO<Unit>:
+    case +database <> +directory <> +bootstrap <> +old_witness <> +phase <> Nil{}: do IO<Unit>:
       current_witness : String <- IO.try(String,Custody.Instance.ensure_owner_witness(database))
       result : Result<&1,&1,U32 & String,U32 & String> <- Custody.Instance.recover(database,directory,bootstrap,old_witness,current_witness)
-      recovery_observation_result(result)
-    case _: IO.die(Unit,2,"recover-observation DATABASE ATTEMPT BOOTSTRAP OLD-WITNESS")
+      recovery_observation_result(result,phase)
+    case _: IO.die(Unit,2,"recover-observation DATABASE ATTEMPT BOOTSTRAP OLD-WITNESS PHASE")
 
 def role_guard_result(result: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
   match result:
