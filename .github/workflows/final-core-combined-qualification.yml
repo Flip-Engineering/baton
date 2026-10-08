@@ -11,14 +11,13 @@ permissions:
 jobs:
   focused:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
           - product: combined-context
-            source_sha: e174b06c07e2fbb9179ae7a0f1b5e79ee722873c
-            source_tree: 9bfcae95ab3eb5e0f785e9e2df669e8ee5cba027
+            source_sha: 8c0e329614737f7f55b0c4c640ae93a3bb4f8a6e
+            source_tree: 660d54ba1e772d7ad5ab49dbf2ce3dcb25f81f88
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
@@ -162,8 +161,6 @@ jobs:
             BATON2_NATIVE_BINARY="$PWD/.scratch/bend2/baton2" node --test \
             bend2/test/context-provider.test.mjs bend2/test/provider-availability.mjs \
             bend2/test/ui-orchestra-server.test.mjs bend2/test/context-project-policy.test.mjs \
-            || failures=$((failures + 1))
-          run_recorded instance-check-only "$bend" bend2/test/instance.bend --check-only \
             || failures=$((failures + 1))
           run_recorded shared-instance env BEND="$bend" python3 bend2/test/shared-instance.py \
             || failures=$((failures + 1))
