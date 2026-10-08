@@ -48,11 +48,6 @@ type ManagedOutput is Data:
   ManagedOutput{event_frame: String, error_json: String, exit_status: U32,
     complete: Bool}
 
-type ManagedStoreDisposition is Data:
-  ManagedStatePublished{}
-  ManagedInterruptedRetained{}
-  ManagedStoreRefused{reason: String}
-
 type ManagedExit is Data:
   ManagedExit{code: U32, complete: Bool}
   ManagedExitRefused{}
@@ -597,9 +592,7 @@ def managed_observe(+handle: U32) -> IO(ManagedOutput):
     first : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
     managed_read_first(handle, first)
 
-def managed_persist_output(+database: String, +owner: String, +worktree: String, +query: String,
-                           +bootstrap_digest: String,
-                           output: ManagedOutput) -> String:
+def managed_event_frame(output: ManagedOutput) -> String:
   match output:
     case ManagedOutput{event_frame, error_json, exit_status, complete}:
       event_frame
@@ -608,28 +601,13 @@ def managed_output_exit_status(output: ManagedOutput) -> U32:
   match output:
     case ManagedOutput{event_frame, error_json, exit_status, complete}: exit_status
 
-def managed_outcome_persisted(+owner: String, +query: String,
-                              output: ManagedOutput,
-                              decoded: ProjectPolicyJson) -> Bool:
-  match decoded:
-    case ProjectPolicyJsonRefused{reason}: False{}
-    case ProjectPolicyJsonReady{+value}:
-      Bool.and(String.eq(boundary_text(value, "status"), "persisted"),
-      Bool.and(String.eq(boundary_text(value, "owner"), owner),
-      Bool.and(String.eq(boundary_text(value, "query"), query),
-      String.eq(boundary_text(value, "exitStatus"),
-        U32.show(managed_output_exit_status(output))))))
-
-def managed_persist_answer(+owner: String, +worktree: String, +query: String,
-                           +bootstrap_digest: String, +output: ManagedOutput,
+def managed_persist_answer(+output: ManagedOutput,
                            answer: ProviderAnswer) -> IO(ManagedOutput):
   match answer:
     case ProviderRefused{reason}: IO.die(ManagedOutput, 3, "managedOutcomePersistence:" ++ reason)
     case ProviderRuntime{path, version}: IO.die(ManagedOutput, 3, "managedOutcomePersistenceMalformed")
-    case ProviderOutput{+value, +status}:
-      Bool.pick(IO(ManagedOutput), Bool.and(String.eq(status, "exit 0"),
-        managed_outcome_persisted(owner, query, output,
-          project_policy_json_rows(value))),
+    case ProviderOutput{value, +status}:
+      Bool.pick(IO(ManagedOutput), String.eq(status, "exit 0"),
         IO.pure(ManagedOutput, output),
         IO.die(ManagedOutput, 3, "managedOutcomePersistenceRefused"))
 
@@ -643,8 +621,8 @@ def persist_managed_output(+database: String, +executable: String, +runtime_path
     answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
       cwd, query_outcome_request(database, owner, worktree, query, bootstrap_digest,
         managed_output_exit_status(output),
-        managed_persist_output(database, owner, worktree, query, bootstrap_digest, output)), spawned)
-    managed_persist_answer(owner, worktree, query, bootstrap_digest, output, answer)
+        managed_event_frame(output)), spawned)
+    managed_persist_answer(output, answer)
 
 def managed_store_publish_result(result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match result:
@@ -661,43 +639,18 @@ def managed_store_cursor(+db: String,
           Custody.Instance.publish_commit(db, Tx.trim_nl(rows))
         managed_store_publish_result(published)
 
-def managed_store_disposition(+requested_state: String,
-                              decoded: ProjectPolicyJson) -> ManagedStoreDisposition:
-  match decoded:
-    case ProjectPolicyJsonRefused{reason}: ManagedStoreRefused{"managedOutcomeReadback"}
-    case ProjectPolicyJsonReady{+value}:
-      Bool.pick(ManagedStoreDisposition,
-        String.eq(boundary_text(value, "state"), requested_state),
-        ManagedStatePublished{},
-        Bool.pick(ManagedStoreDisposition,
-          Bool.and(String.eq(boundary_text(value, "state"), "interrupted"),
-          Bool.or(String.eq(requested_state, "complete"),
-                  String.eq(requested_state, "failed"))),
-          ManagedInterruptedRetained{}, ManagedStoreRefused{"managedOutcomeConflict"}))
-
-def managed_store_disposition_result(disposition: ManagedStoreDisposition) -> IO(Unit):
-  match disposition:
-    case ManagedStatePublished{}: IO.pure(Unit, Unit{})
-    case ManagedInterruptedRetained{}: IO.pure(Unit, Unit{})
-    case ManagedStoreRefused{reason}: IO.die(Unit, 3, reason)
-
-def managed_store_rows(+db: String, +binding: String, +requested_state: String,
-                       +rows: String) -> IO(Unit):
+def managed_store_rows(+db: String, +binding: String, +rows: String) -> IO(Unit):
   do IO<Unit>:
-    disposition : ManagedStoreDisposition <- IO.pure(ManagedStoreDisposition,
-      managed_store_disposition(requested_state, project_policy_json_rows(rows)))
-    checked : Unit <- managed_store_disposition_result(disposition)
     written : Unit <- IO.write(rows)
     cursor : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db,
       binding, "SELECT CAST(coalesce(max(change_id),0) AS TEXT) FROM native_changes;")
     managed_store_cursor(db, cursor)
 
 def managed_store_result(+db: String, +binding: String,
-                         +requested_state: String,
                          result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Fail{error}: IO.die(Unit, 3, "managedOutcomeStore")
-    case Done{+rows}: managed_store_rows(db, binding, requested_state, rows)
+    case Done{+rows}: managed_store_rows(db, binding, rows)
 
 def store_managed_output(+db: String, +binding: String, +query: String, +owner: String,
                          output: ManagedOutput) -> IO(Unit):
@@ -709,8 +662,7 @@ def store_managed_output(+db: String, +binding: String, +query: String, +owner: 
             Bool.pick(String, complete, "complete", "failed"),
             Bool.pick(String, complete, event_frame, SNil{}),
             Bool.pick(String, complete, SNil{}, error_json)))
-        managed_store_result(db, binding,
-          Bool.pick(String, complete, "complete", "failed"), result)
+        managed_store_result(db, binding, result)
 
 def launch_bootstrap(launch: ManagedLaunch) -> ManagedQuery.Bootstrap:
   match launch:

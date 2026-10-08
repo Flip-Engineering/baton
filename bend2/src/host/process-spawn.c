@@ -986,7 +986,7 @@ static int br_recovery_reap_unwatched(BrKeeper *keeper) {
     *link=waiter->next;
     if(keeper->recovery_pending)keeper->recovery_pending--;
     if(result<0)br_note(keeper,"observer-error",ECHILD);
-    else if(keeper->client<0) {
+    else if(keeper->client<0 && !(WIFEXITED(status) && WEXITSTATUS(status)==0)) {
       char text[96];int n=snprintf(text,sizeof(text),"pid %d exited before attach: wait status %d\n",waiter->event.pid,status);
       br_file(keeper->directory,"observer-error",text,(size_t)n,0);
     }
@@ -1447,7 +1447,7 @@ static int br_attempt_ready(BrKeeper *keeper,struct pollfd *fds,BrControl **clie
       if(keeper->recovery_pending)keeper->recovery_pending--;
       if(event.status<0) {
         br_note(keeper,"observer-error",ECHILD);
-      } else if(keeper->client<0) {
+      } else if(keeper->client<0 && !(WIFEXITED(event.status) && WEXITSTATUS(event.status)==0)) {
         char text[96];int n=snprintf(text,sizeof(text),"pid %d exited before attach: wait status %d\n",event.pid,event.status);
         br_file(keeper->directory,"observer-error",text,(size_t)n,0);
       }

@@ -1806,7 +1806,7 @@ class Receive(unittest.TestCase):
         self.prepare_input('owed', 'parent')
         self.claim('parent', 'claimed', 'owed', 4)
         with sqlite3.connect(str(self.db)) as database:
-            database.execute("UPDATE sessions SET harness='muse' WHERE id='parent'")
+            database.execute("UPDATE sessions SET harness='unsupported-fixture-harness' WHERE id='parent'")
         refused = self.coord('stop', 'parent', 'stop-unsupported', 'operator resolution', ok=False)
         self.assertNotEqual(refused.returncode, 0)
         self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 4)])
