@@ -130,6 +130,13 @@ for (const { law, file } of rows) {
 // mutation that still compiles means the law it names does not bind the code
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
+  {
+    name: 'admitted-wake-skips-the-detached-native-launch',
+    file: join('bend2', 'src', 'coordinator', 'wake.bend'),
+    find: '  Receive.wake_launch(db,target)',
+    replace: '  IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})',
+    law: 'admitted_wake_launches_the_detached_native_entry',
+  },
   {"name": "adopted-dead-attempt-keeps-old-cutoff", "find": "        Bool.pick(String,Bool.and(String.eq(status,\"unknown after keeper loss\"),Bool.and(String.is_empty(event),String.is_empty(error))),\"0\",cursor)", "replace": "        cursor", "law": "adopted_unknown_attempt_replays_the_retained_inbox", "file": "bend2/src/coordinator/receive.bend"},
   {"name": "fresh-attempt-replays-old-input", "find": "    case False{}: cursor", "replace": "    case False{}: \"0\"", "law": "fresh_attempt_preserves_its_input_cursor", "file": "bend2/src/coordinator/receive.bend"},
   {"name": "adopted-known-failure-replays-old-input", "find": "      case Turn.Ended{status,event,error}:\n        Bool.pick(String,Bool.and(String.eq(status,\"unknown after keeper loss\"),Bool.and(String.is_empty(event),String.is_empty(error))),\"0\",cursor)", "replace": "      case Turn.Ended{+status,event,error}:\n        Bool.pick(String,Bool.and(Bool.or(String.eq(status,\"unknown after keeper loss\"),String.eq(status,\"exit 1\")),Bool.and(String.is_empty(event),String.is_empty(error))),\"0\",cursor)", "law": "adopted_known_native_failure_preserves_its_input_cursor", "file": "bend2/src/coordinator/receive.bend"},

@@ -2,8 +2,9 @@ import Base
 import ./commands.bend as C
 import ./store.bend as Store
 import ./receive.bend as Receive
-import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
+import ../host/session-lock.bend as Lock
+import ../host/control.bend as Host
 import ../git/text.bend as Tx
 
 # Admission driver for issue #685. Every committed message admission is
@@ -23,12 +24,21 @@ def admitted_message_id(command: C.Command) -> String:
 def wake_recipient_sql(+id: String) -> String:
   "SELECT coalesce((SELECT recipient FROM messages WHERE id=" ++ C.q(id) ++ " AND receipt IS NULL),'');"
 
-# The launch a wake hands to the continuation driver: exactly the admitted
-# message through the existing delivery path, converted to the wake result.
+# The admitted message starts through the detached native delivery entry.
 def launch_wake_target(db: String, target: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  do IO<Result<&1,&1,U32 & String,Unit>>:
-    delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,target,"1","")
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Delivery.wake_result(delivered))
+  Receive.wake_launch(db,target)
+
+law admitted_wake_launches_the_detached_native_entry:
+  for +db: String
+  for +target: String
+  {launch_wake_target(db,target) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+    +executable : String <- IO.try(String,Lock.SessionLock.executable())
+    +database : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    launched : String <- IO.try(String,Host.Control.launch(Tx.enc_argv([executable,"--dispatch-message",database,target]),database,target))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def admitted_wake_launches_the_detached_native_entry(db,target):
+  {==}
 
 def drive_session_empty(+db: String, session: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match empty:
