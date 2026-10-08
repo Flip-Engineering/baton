@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
@@ -506,4 +506,183 @@ test('native coordinator commit is replayed through an injected owner notificati
   assert.match(frames, /guidance from root/);
   assert.doesNotMatch(frames, /private message body/);
   await reader.cancel();
+});
+
+test('view CLI streams a committed native message through the owner subscription', {
+  timeout: 60000,
+  skip: process.env.BATON2_REQUIRE_NATIVE_VIEW !== '1'
+    && !existsSync(process.env.BATON2_NATIVE_BINARY
+      || join(process.cwd(), '.scratch/bend2/baton2')),
+}, async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'baton-orchestra-owner-view-'));
+  const databasePath = join(directory, 'orchestra.db');
+  const repository = join(directory, 'repository');
+  const workspace = join(directory, 'child-worktree');
+  const binary = process.env.BATON2_NATIVE_BINARY
+    || join(process.cwd(), '.scratch/bend2/baton2');
+  assert.ok(existsSync(binary), `native Baton2 binary is missing: ${binary}`);
+  const packageRoot = process.env.BATON2_PACKAGE_ROOT;
+  if (packageRoot) {
+    assert.equal(resolve(binary), resolve(packageRoot, 'bin/baton2'),
+      'package asset coverage must launch the packaged Baton2 executable');
+  }
+  const uiRoot = packageRoot
+    ? join(packageRoot, 'libexec/baton2/ui')
+    : fileURLToPath(new URL('../ui/orchestra', import.meta.url));
+  const serverPath = join(uiRoot, 'server.mjs');
+  const adapterPath = join(uiRoot, 'native-owner-subscription.mjs');
+  assert.ok(existsSync(serverPath), `view server is missing: ${serverPath}`);
+  assert.ok(existsSync(adapterPath), `native owner adapter is missing: ${adapterPath}`);
+  const binDirectory = join(directory, 'bin');
+  mkdirSync(binDirectory);
+  for (const command of ['open', 'xdg-open']) {
+    const opener = join(binDirectory, command);
+    writeFileSync(opener, '#!/bin/sh\nexit 0\n');
+    chmodSync(opener, 0o755);
+  }
+
+  mkdirSync(repository);
+  const native = (...args) => execFileSync(binary, [databasePath, ...args], {
+    encoding: 'utf8', timeout: 5000,
+  });
+  const git = (...args) => execFileSync('git', ['-C', repository, ...args], { timeout: 5000 });
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.name', 'Orchestra owner view fixture');
+  git('config', 'user.email', 'owner-view@example.invalid');
+  git('commit', '-q', '--allow-empty', '-m', 'fixture');
+  native('attach', 'root', 'codex', '', '');
+  native('role', 'root', 'principal-conductor');
+  native('recruit', 'child', 'root', 'muse', 'configured-model', 'low', repository,
+    'child-branch', workspace, 'HEAD');
+
+  const path = [binDirectory, dirname(process.execPath), process.env.PATH || ''].join(delimiter);
+  const view = spawn(binary, [databasePath, 'view', 'child', 'root', '0'], {
+    env: { ...process.env, PATH: path },
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const viewClosed = new Promise((resolve) => view.once('close', (code) => resolve(code)));
+  const viewErrors = [];
+  view.stderr.on('data', (chunk) => viewErrors.push(String(chunk)));
+  const viewLines = createInterface({ input: view.stdout, crlfDelay: Infinity })[Symbol.asyncIterator]();
+  let streamReader;
+  t.after(async () => {
+    if (streamReader) await streamReader.cancel().catch(() => {});
+    if (view.exitCode === null && view.signalCode === null) {
+      try { process.kill(-view.pid, 'SIGTERM'); } catch {}
+      const exited = await Promise.race([
+        viewClosed,
+        new Promise((resolve) => setTimeout(() => resolve(false), 3000)),
+      ]);
+      if (exited === false) {
+        try { process.kill(-view.pid, 'SIGKILL'); } catch {}
+        await Promise.race([viewClosed, new Promise((resolve) => setTimeout(resolve, 1000))]);
+      }
+    }
+    try { execFileSync(binary, ['--instance-shutdown', databasePath], { timeout: 5000 }); } catch {}
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  const readinessDeadline = Date.now() + 10000;
+  let ownerReadiness;
+  while (!ownerReadiness && Date.now() < readinessDeadline) {
+    const result = spawnSync(binary, [databasePath, 'owner-status'], {
+      encoding: 'utf8', timeout: 2000,
+    });
+    if (result.status === 0 && result.stdout.trim()) ownerReadiness = JSON.parse(result.stdout);
+    else if (view.exitCode !== null || view.signalCode !== null) {
+      assert.fail(`view command exited before owner readiness: ${viewErrors.join('')}`);
+    } else await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.ok(ownerReadiness, `native owner did not become ready: ${viewErrors.join('')}`);
+
+  let base;
+  let pendingViewLine;
+  const viewOutputDeadline = Date.now() + 10000;
+  while (!base && Date.now() < viewOutputDeadline) {
+    pendingViewLine ||= viewLines.next();
+    const line = await Promise.race([
+      pendingViewLine,
+      new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1000)),
+    ]);
+    if (line.done) assert.fail(`view command exited before printing its URL: ${viewErrors.join('')}`);
+    if (line.timeout) {
+      if (view.exitCode !== null || view.signalCode !== null) {
+        assert.fail(`view command exited before printing its URL: ${viewErrors.join('')}`);
+      }
+      continue;
+    }
+    pendingViewLine = undefined;
+    const match = /^Orchestra live view: (https?:\/\/\S+)$/.exec(line.value);
+    if (match) base = match[1];
+  }
+  assert.ok(base, `view command did not print its URL: ${viewErrors.join('')}`);
+  const snapshotResponse = await fetch(`${base}orchestra/snapshot?subject=child&since=0`, {
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(snapshotResponse.status, 200);
+  const initial = await snapshotResponse.json();
+  const response = await fetch(`${base}orchestra/events?subject=child&since=${initial.cursor}`
+    + `&generation=${ownerReadiness.generation}`, { signal: AbortSignal.timeout(30000) });
+  assert.equal(response.status, 200, viewErrors.join(''));
+  streamReader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = '';
+  async function readStreamChunk(timeoutMs = 5000) {
+    const chunk = await Promise.race([
+      streamReader.read(),
+      new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), timeoutMs)),
+    ]);
+    assert.notEqual(chunk.timedOut, true, 'native owner event stream did not produce a frame');
+    return chunk;
+  }
+  async function nextFrame() {
+    while (!pending.includes('\n\n')) {
+      const chunk = await readStreamChunk();
+      assert.equal(chunk.done, false, 'native owner event stream closed before the frame arrived');
+      pending += decoder.decode(chunk.value, { stream: true });
+    }
+    const end = pending.indexOf('\n\n');
+    const frame = pending.slice(0, end);
+    pending = pending.slice(end + 2);
+    return frame;
+  }
+  const hello = await nextFrame();
+  assert.match(hello, /event: hello/);
+  assert.match(hello, new RegExp(`"generation":"${ownerReadiness.generation}"`));
+
+  const messageId = 'native-owner-view-message';
+  native('message', messageId, 'root', 'child', 'guidance', 'private message body');
+  const stored = new DatabaseSync(databasePath, { readOnly: true });
+  assert.equal(stored.prepare('SELECT body FROM messages WHERE id=?').get(messageId)?.body,
+    'private message body');
+  stored.close();
+
+  let frames = '';
+  const deadline = Date.now() + 10000;
+  while (!frames.includes('guidance from root') && Date.now() < deadline) {
+    frames += await nextFrame();
+  }
+  assert.match(frames, /event: pending/);
+  assert.match(frames, /"pendingCount":1/);
+  assert.match(frames, /guidance from root/);
+  assert.doesNotMatch(frames, /private message body/);
+  execFileSync(binary, ['--instance-shutdown', databasePath], { timeout: 5000 });
+  let shutdownEvents = '';
+  let streamClosed = false;
+  const shutdownDeadline = Date.now() + 5000;
+  while (!streamClosed && Date.now() < shutdownDeadline) {
+    const chunk = await readStreamChunk(shutdownDeadline - Date.now());
+    streamClosed = chunk.done;
+    if (chunk.value) shutdownEvents += decoder.decode(chunk.value, { stream: true });
+  }
+  assert.match(shutdownEvents, /event: gap/);
+  assert.match(shutdownEvents, /owner-notification-lost/);
+  assert.equal(streamClosed, true, 'owner shutdown did not close the SSE response');
+  streamReader = undefined;
+  assert.equal(view.exitCode, null, 'view command exited when its owner stopped');
+  const afterShutdown = await fetch(`${base}orchestra/snapshot?subject=child&since=0`, {
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(afterShutdown.status, 200, 'read-only HTTP server stopped with the owner');
 });
