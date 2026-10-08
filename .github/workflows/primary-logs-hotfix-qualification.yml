@@ -20,8 +20,8 @@ jobs:
             source_tree: 797661732f302eee07c4847905b462c00fe8df2f
             migration: target
           - product: logs-hotfix
-            source_sha: 586739a0f4cb030990eaf9b8140dd9882773449d
-            source_tree: 503487c139e2df6cd323680ef2666930afc7b428
+            source_sha: 5e434c3968728a78f81cfc1719f5680a25917e73
+            source_tree: 745763833b721c905db1cdca0d7059cb9dbdf839
             migration: candidate
     env:
       BEND_NO_TELEMETRY: '1'
@@ -164,7 +164,7 @@ jobs:
           logs_status=0
           turn_status=0
           run_test logs-selected "${common_logs[@]}" || logs_status=$?
-          run_test turn-complete Turn || turn_status=$?
+          run_test turn-complete || turn_status=$?
           printf 'logs_status=%s\nturn_status=%s\n' "$logs_status" "$turn_status" \
             > "$PRIMARY_LOGS_EVIDENCE/logs/summary.txt"
           if [[ "$logs_status" != 0 || "$turn_status" != 0 ]]; then exit 1; fi
