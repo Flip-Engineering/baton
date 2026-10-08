@@ -107,8 +107,12 @@ function send(ws, method, params = {}) {
   });
 }
 async function openPage(url) {
-  const list = await (await fetch(wsUrl.replace('ws://', 'http://').replace(/\/devtools\/.*$/, '/json/list'))).json();
-  const page = list.find((t) => t.type === 'page');
+  const response = await fetch(
+    wsUrl.replace('ws://', 'http://').replace(/\/devtools\/.*$/, '/json/new?about:blank'),
+    { method: 'PUT' },
+  );
+  if (!response.ok) throw new Error(await response.text());
+  const page = await response.json();
   if (pageWs) pageWs.close();
   pageWs = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {

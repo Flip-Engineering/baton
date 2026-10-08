@@ -350,8 +350,23 @@ class Receive(unittest.TestCase):
         native = self.coord('player', session)['native']
         self.coord('connect', session, native, self.endpoint(session))
 
+    def prepare_input(self, ident, recipient, body='Review this input.', kind='guidance'):
+        sender = 'operator' if recipient == 'root' else 'root'
+        result = self.coord('message', ident, sender, recipient, kind, body, ok=False)
+        if result.returncode == 0:
+            return json.loads(result.stdout)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('records no native session identity', result.stderr)
+        delivery = self.coord('delivery', ident)
+        self.assertEqual((delivery['id'], delivery['sender'], delivery['recipient'],
+                          delivery['kind'], delivery['body'], delivery['receipt']),
+                         (ident, sender, recipient, kind, body, None))
+        self.assertIn(ident, [row['id'] for row in self.coord('inbox', recipient)])
+        return delivery
+
     def message(self, ident, recipient, body='Review this input.'):
-        return self.coord('message', ident, 'operator' if recipient == 'root' else 'root', recipient, 'guidance', body)
+        return self.coord('message', ident, 'operator' if recipient == 'root' else 'root',
+                          recipient, 'guidance', body)
 
     def accept_any(self):
         connection, _ = self.server.accept()
@@ -419,7 +434,8 @@ class Receive(unittest.TestCase):
         self.player(harness='omp')
         self.coord('attach', 'root', 'codex', 'native-root',
                    json.dumps([str(self.fixture), 'answering_parent' if answering else 'parent_endpoint']))
-        self.coord('message', 'question-task', 'root', 'parent', 'task', 'Ask for the required input and complete the task.')
+        self.prepare_input('question-task', 'parent',
+                           'Ask for the required input and complete the task.', kind='task')
         observer = self.spawn(*self.receive_args('parent'))
         stream, started = self.accept_child(observer, 'parent',
                                             'Question observer exited before native startup')
@@ -463,7 +479,7 @@ class Receive(unittest.TestCase):
 
     def test_completed_attempt_acknowledged_while_continuation_live(self):
         self.player()
-        self.coord('message', 'first', 'root', 'parent', 'task', 'Complete the original input.')
+        self.prepare_input('first', 'parent', 'Complete the original input.', kind='task')
         self.connect('parent')
         observer = self.spawn(*self.receive_args('parent'))
         original, _ = self.accept('parent')
@@ -491,7 +507,7 @@ class Receive(unittest.TestCase):
 
     def test_ack_failure_still_joins_queued_continuation(self):
         self.player()
-        self.coord('message', 'first', 'root', 'parent', 'task', 'Complete the original input.')
+        self.prepare_input('first', 'parent', 'Complete the original input.', kind='task')
         self.connect('parent')
         observer = self.spawn(*self.receive_args('parent'))
         original, _ = self.accept('parent')
@@ -524,7 +540,7 @@ class Receive(unittest.TestCase):
 
     def test_native_root_question_reports_unsupported_without_answering(self):
         self.coord('attach', 'root', 'omp', '', '')
-        self.coord('message', 'root-question-task', 'operator', 'root', 'task', 'Inspect the native request.')
+        self.prepare_input('root-question-task', 'root', 'Inspect the native request.', kind='task')
         observer = self.spawn(*self.receive_args('root'))
         stream, started = self.accept('root')
         event = {'type': 'extension_ui_request', 'id': 'root-needs-input',
@@ -696,7 +712,7 @@ class Receive(unittest.TestCase):
         self.coord('attach', 'root', 'codex', 'native-root',
                    json.dumps([str(self.fixture), 'parent_endpoint']))
         task = 'Keep seed.txt and append the final step after reading the existing work.'
-        self.coord('message', 'original-task', 'root', 'parent', 'task', task)
+        self.prepare_input('original-task', 'parent', task, kind='task')
         receive = self.receive_args('parent')
         receive[5] = str(workspace)
         observer = self.spawn(*receive)
@@ -792,7 +808,8 @@ class Receive(unittest.TestCase):
         partial = 'seed\nRoot work completed before conversation loss.\n'
         journal = self.repo / 'seed.txt'
         journal.write_text(partial)
-        self.coord('message', 'root-task', 'operator', 'root', 'task', 'Keep existing root work and finish seed.txt.')
+        self.prepare_input('root-task', 'root', 'Keep existing root work and finish seed.txt.',
+                           kind='task')
         receive = self.receive_args('root')
         receive[5] = str(self.repo)
         observer = self.spawn(*receive)
@@ -875,7 +892,7 @@ class Receive(unittest.TestCase):
                          'terminalBeforeObserverLoss': terminal_before_loss})
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
         self.player(harness=harness)
-        self.coord('message', 'first', 'root', 'parent', 'task', 'The original input must be sent once.')
+        self.prepare_input('first', 'parent', 'The original input must be sent once.', kind='task')
         observer = self.spawn(*self.receive_args('parent'))
         original, started = self.accept('parent')
         evidence.update({'firstSupervisor': observer.pid, 'firstNative': started['pid'],
@@ -1044,7 +1061,7 @@ class Receive(unittest.TestCase):
         config = json.loads(config_path.read_text())
         config.update(record_launches=True, inspect_session_guard=True)
         config_path.write_text(json.dumps(config))
-        self.coord('message', 'first', 'root', 'parent', 'task', 'Complete the original input.')
+        self.prepare_input('first', 'parent', 'Complete the original input.', kind='task')
         self.connect('parent')
         observer = self.spawn(*self.receive_args('parent'))
         original, started = self.accept('parent')
@@ -1187,9 +1204,13 @@ class Receive(unittest.TestCase):
     def test_completed_omp_attempt_replay_leaves_guidance_for_current_native(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
         self.player(harness='omp')
-        self.coord('message', 'first', 'root', 'parent', 'task', 'Original work.')
+        self.prepare_input('first', 'parent', 'Original work.', kind='task')
         observer = self.spawn(*self.receive_args('parent'))
         original, first = self.accept('parent')
+        with sqlite3.connect(self.db) as database:
+            attempt = pathlib.Path(database.execute(
+                "SELECT directory FROM executions WHERE session='parent' AND mode='retained'"
+            ).fetchone()[0])
         self.coord('message', 'second', 'root', 'parent', 'task', 'Work queued before original completion.')
         self.action(original, body='Original report survives completed-attempt replay.')
         self.assertEqual(original.readline(), b'')
@@ -1213,10 +1234,10 @@ class Receive(unittest.TestCase):
                    'Guidance belongs to the current native process.')
         observer.kill()
         observer.wait()
-        # Both keepers lost this observer. The old attempt can finish while the
-        # current native process still owns its task and accepts pending guidance.
-        self.eventually(lambda: not any(p['pid'] == first['ppid'] for p in self.owned_processes()),
-                        'completed OMP attempt could not finish replay while guidance was pending')
+        # The owner settles the old attempt while the current native process
+        # keeps its task and accepts pending guidance.
+        self.eventually(lambda: (attempt / 'acknowledged').exists(),
+                        'completed OMP attempt was not acknowledged while guidance was pending')
         self.assertTrue(any(p['pid'] == second['pid'] for p in self.owned_processes()))
         self.assertIn('later-guidance', [m['id'] for m in self.coord('inbox', 'parent')])
         self.action(current, read_steer=True)
@@ -1247,7 +1268,7 @@ class Receive(unittest.TestCase):
     def test_omp_recovery_after_input_closes_defers_guidance_until_native_exit(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
         self.player(harness='omp')
-        self.coord('message', 'original', 'root', 'parent', 'task', 'Original work.')
+        self.prepare_input('original', 'parent', 'Original work.', kind='task')
         observer = self.spawn(*self.receive_args('parent'))
         original, started = self.accept('parent')
         original_body = ('Original OMP result before observer loss.\n'
@@ -1316,7 +1337,7 @@ class Receive(unittest.TestCase):
         observed=[]
         for ident, body in [('subscription-initial','First Principal input.\n'),
                             ('subscription-followup','Review the saved Principal conversation.\n')]:
-            self.coord('message',ident,'operator','root','task',body)
+            self.prepare_input(ident, 'root', body, kind='task')
             with patch.dict(os.environ, {'OPENAI_API_KEY':'controlled-unused-key', 'CODEX_API_KEY':'controlled-unused-key'}):
                 observer=self.spawn(*self.receive_args('root'))
                 control, started=self.accept('root')
@@ -1344,7 +1365,7 @@ class Receive(unittest.TestCase):
 
     def test_busy_direct_receive_drains_new_input_and_preserves_native_session(self):
         self.player()
-        self.message('first', 'parent')
+        self.prepare_input('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
         self.message('second', 'parent')
@@ -1363,7 +1384,7 @@ class Receive(unittest.TestCase):
     def test_distinct_sessions_start_before_either_finishes(self):
         for name in ['left', 'right']:
             self.player(name)
-            self.message(name + '-input', name)
+            self.prepare_input(name + '-input', name)
         left = self.spawn(*self.receive_args('left'))
         left_control, _ = self.accept('left')
         right = self.spawn(*self.receive_args('right'))
@@ -1416,7 +1437,7 @@ class Receive(unittest.TestCase):
 
     def test_synchronous_self_turn_reports_busy_and_native_work_continues(self):
         self.player()
-        self.message('first', 'parent')
+        self.prepare_input('first', 'parent')
         child = self.spawn(*self.receive_args('parent'))
         control, _ = self.accept('parent')
         self.action(control, turn='self-turn')
@@ -1486,7 +1507,7 @@ class Receive(unittest.TestCase):
 
     def test_startup_and_terminal_failures_leave_input_available_for_retry(self):
         self.player()
-        self.message('input', 'parent')
+        self.prepare_input('input', 'parent')
         missing = self.coord(*self.receive_args('parent', self.directory / 'missing executable'), ok=False)
         self.assertNotEqual(missing.returncode, 0)
         self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['input'])
@@ -1514,7 +1535,7 @@ class Receive(unittest.TestCase):
     def test_receive_startup_failure_notifies_parent_and_retains_input(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
         self.player()
-        self.coord('message', 'input', 'root', 'parent', 'task', 'Input for a missing executable.')
+        self.prepare_input('input', 'parent', 'Input for a missing executable.', kind='task')
         failed = self.spawn(*self.receive_args('parent', self.directory / 'missing executable'))
         parent, notified = self.accept_or_child_exit(failed, 'startup failure did not notify parent')
         self.assertEqual(notified['session'], 'root')
@@ -1590,7 +1611,7 @@ class Receive(unittest.TestCase):
 
     def test_turn_and_receive_share_ownership_and_omp_session_file(self):
         self.player(harness='omp')
-        self.coord('message', 'preexisting', 'root', 'parent', 'report', 'Already pending before turn.')
+        self.prepare_input('preexisting', 'parent', 'Already pending before turn.', kind='report')
         self.connect('parent')
         task = self.directory / 'initial task'
         task.write_text('Initial work without an inbox batch.')
@@ -1715,7 +1736,7 @@ class Receive(unittest.TestCase):
         """A terminal stop is the operator resolution: the session's claim goes with it
         while the retained input stays in the inbox."""
         self.player()
-        self.message('owed', 'parent')
+        self.prepare_input('owed', 'parent')
         self.claim('parent')
         self.assertEqual(self.claims('parent'), [('parent', 'claimed')])
         stopped = self.coord('stop', 'parent', 'stop-claim', 'operator resolution')
@@ -1726,7 +1747,7 @@ class Receive(unittest.TestCase):
     def test_acknowledgement_clears_the_wake_claim(self):
         """Acknowledgement clears the obligation, and the claim row is deleted with it."""
         self.player()
-        self.message('owed', 'parent')
+        self.prepare_input('owed', 'parent')
         self.claim('parent')
         receipt = self.coord('ack', 'owed', 'parent', 'read-accepted')
         self.assertEqual(receipt['receipt'], 'read-accepted')
@@ -1738,7 +1759,7 @@ class Receive(unittest.TestCase):
         session with owed input starts nothing, keeps its unclaimed row, and retains the
         input in its inbox."""
         self.player()
-        self.message('owed', 'parent')
+        self.prepare_input('owed', 'parent')
         self.claim('parent', 'unclaimed')
         self.assert_no_start()
         self.assertEqual(self.claims('parent'), [('parent', 'unclaimed')])
@@ -1749,7 +1770,7 @@ class Receive(unittest.TestCase):
         """A refused acknowledgement writes nothing: the live claim row stays exactly
         as it was, owner and generation included."""
         self.player()
-        self.message('owed', 'parent')
+        self.prepare_input('owed', 'parent')
         self.claim('parent', 'claimed', 'owed', 4)
         refused = self.coord('ack', 'no-such-message', 'parent', 'read-accepted', ok=False)
         self.assertNotEqual(refused.returncode, 0)
@@ -1759,7 +1780,7 @@ class Receive(unittest.TestCase):
     def test_acknowledgement_to_the_wrong_recipient_is_refused_and_preserves_the_claim(self):
         self.player()
         self.player('other')
-        self.message('owed', 'parent')
+        self.prepare_input('owed', 'parent')
         self.claim('parent', 'claimed', 'owed', 4)
         refused = self.coord('ack', 'owed', 'other', 'read-accepted', ok=False)
         self.assertNotEqual(refused.returncode, 0)
@@ -1771,8 +1792,8 @@ class Receive(unittest.TestCase):
         """The Ack guard clears the claim only when no unacknowledged input remains:
         acknowledging one of two owed messages writes its receipt and keeps the row."""
         self.player()
-        self.message('first', 'parent')
-        self.message('second', 'parent')
+        self.prepare_input('first', 'parent')
+        self.prepare_input('second', 'parent')
         self.claim('parent', 'claimed', 'first', 2)
         receipt = self.coord('ack', 'first', 'parent', 'read-accepted')
         self.assertEqual(receipt['receipt'], 'read-accepted')
@@ -1781,7 +1802,7 @@ class Receive(unittest.TestCase):
 
     def test_stop_with_an_unsupported_harness_is_refused_and_preserves_the_claim(self):
         self.player()
-        self.message('owed', 'parent')
+        self.prepare_input('owed', 'parent')
         self.claim('parent', 'claimed', 'owed', 4)
         with sqlite3.connect(str(self.db)) as database:
             database.execute("UPDATE sessions SET harness='muse' WHERE id='parent'")
@@ -1792,7 +1813,7 @@ class Receive(unittest.TestCase):
 
     def test_stop_with_an_active_direct_execution_is_refused_and_preserves_the_claim(self):
         self.player()
-        self.message('owed', 'parent')
+        self.prepare_input('owed', 'parent')
         self.claim('parent', 'claimed', 'owed', 4)
         with sqlite3.connect(str(self.db)) as database:
             database.execute("INSERT INTO executions(session, id, mode, directory, phase, status)"
@@ -1804,7 +1825,7 @@ class Receive(unittest.TestCase):
 
     def test_stop_with_a_conflicting_identity_is_refused_and_preserves_the_claim(self):
         self.player()
-        self.message('owed', 'parent')
+        self.prepare_input('owed', 'parent')
         stopped = self.coord('stop', 'parent', 'stop-first', 'operator resolution')
         self.assertEqual(stopped['status'], 'stopped')
         self.assertEqual(self.claim_rows('parent'), [])
@@ -1819,7 +1840,7 @@ class Receive(unittest.TestCase):
         """While another driver holds the session lock, the queued sweep returns
         without touching the live claim row: owner and generation survive intact."""
         self.player()
-        self.message('owed', 'parent')
+        self.prepare_input('owed', 'parent')
         self.claim('parent', 'claimed', 'owed', 6)
         self.hold_session_lock('parent')
         queued = self.coord(*self.receive_args('parent'))
@@ -1832,7 +1853,7 @@ class Receive(unittest.TestCase):
         wake: the next driver takes the obligation over under the lock, names the
         head message as owner, and fences the takeover past the stale generation."""
         self.player()
-        self.message('owed', 'parent')
+        self.prepare_input('owed', 'parent')
         self.claim('parent', 'claimed', 'dead-attempt', 7)
         child = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
@@ -1854,7 +1875,7 @@ class Receive(unittest.TestCase):
         keeps its owner and generation and no second launch rewrites the
         obligation. A bare phase value never proves custody."""
         self.player()
-        self.message('first', 'parent')
+        self.prepare_input('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
         self.assertIn('[id: first]', started['prompt'])
@@ -1995,7 +2016,7 @@ class Receive(unittest.TestCase):
         reaped status, repairs the stale execution row, and takes the
         obligation over with a fenced generation."""
         self.player()
-        self.message('first', 'parent')
+        self.prepare_input('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
         self.assertIn('[id: first]', started['prompt'])
@@ -2026,7 +2047,7 @@ class Receive(unittest.TestCase):
         flags the keeperless observation unknown, so the run reports the
         failure honestly instead of a false success."""
         self.player()
-        self.message('first', 'parent')
+        self.prepare_input('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
         self.assertIn('[id: first]', started['prompt'])
@@ -2070,7 +2091,7 @@ class Receive(unittest.TestCase):
         lock free: a direct receive adopts rather than duplicating, so no
         second native conversation starts and the live claim row is intact."""
         self.player()
-        self.message('first', 'parent')
+        self.prepare_input('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
         self.assertIn('[id: first]', started['prompt'])
@@ -2106,7 +2127,7 @@ class Receive(unittest.TestCase):
         stands down, so exactly one native conversation exists and the
         winner's claim row keeps its owner and generation."""
         self.player()
-        self.message('first', 'parent')
+        self.prepare_input('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
         self.assertIn('[id: first]', started['prompt'])
@@ -2141,7 +2162,7 @@ class Receive(unittest.TestCase):
         """Two arrivals against one live session are both carried by a single continuation
         turn, and no third turn or second native process appears."""
         self.player()
-        self.message('first', 'parent')
+        self.prepare_input('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
         self.message('second', 'parent')

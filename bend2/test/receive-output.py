@@ -205,7 +205,11 @@ class NativeFailureOutput(unittest.TestCase):
             observer, 'Queued native did not start', observer.stderr)
         self.assertEqual(resumed['session'], 'parent')
         self.assertIn('[id: second]', resumed['prompt'])
-        self.assertIsNone(observer.poll(), 'Output failure ended the observer before queued work finished.')
+        observer_status = observer.poll()
+        if observer_status is not None:
+            observer_stderr = observer.stderr.read() if observer.stderr is not None else ''
+            self.fail('Output failure ended the observer before queued work finished; '
+                      f'exit={observer_status}; stderr={observer_stderr}')
         report = json.loads(fixture.coord('delivery', ident)['body'])
         self.assertTrue(report['is_error'])
         self.assertEqual(report['messages'][0]['content'][0]['text'], 'Original native failure retained.')
@@ -237,7 +241,8 @@ class NativeFailureOutput(unittest.TestCase):
         fixture.coord('connect', 'root', 'native-root', json.dumps([str(fixture.fixture), 'parent_endpoint']))
         fixture.player()
         fixture.coord('report', 'completed-direct', 'parent', 'Stored direct report.')
-        fixture.coord('message', 'queued-direct', 'root', 'parent', 'task', 'Queued after direct completion.')
+        fixture.prepare_input('queued-direct', 'parent', 'Queued after direct completion.',
+                              kind='task')
         fixture.coord('connect', 'parent', 'native-parent', fixture.endpoint('parent'))
         read_fd, write_fd = os.pipe()
         os.close(read_fd)
