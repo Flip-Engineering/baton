@@ -3390,19 +3390,70 @@ def fixture_evidence_of(+reserved: String, +common: String, +target: String, +ca
   AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", "/art", AdvLanded{}, capture, qualification, T.ReleaseDone{}, identity, association, intent, ReservationObserved{shared_attempts_parent(common), "attempt-1"}}
 
 def fixture_held_evidence(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String) -> AttemptEvidence:
-  fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), IdentityObserved{common, T.GRun{0, common}, target}, fixture_held_association(common, candidate, basis, target), IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"})
+  fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), IdentityObserved{common, T.GRun{0, common}, target}, fixture_held_association(common, candidate, basis, target), fixture_held_intent(reserved, common, target, candidate, basis, "/repo", "attempt-1", "/holder"))
 
 def fixture_unheld_evidence(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String) -> AttemptEvidence:
-  fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_unheld_qualification(candidate), IdentityObserved{common, T.GRun{0, common}, target}, fixture_unheld_association(common, candidate, basis, target), IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"})
+  fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_unheld_qualification(candidate), IdentityObserved{common, T.GRun{0, common}, target}, fixture_unheld_association(common, candidate, basis, target), fixture_unheld_intent(reserved, common, target, candidate, basis, "/repo", "attempt-1"))
+
+# The producer-shaped intent evidence: the request the attempt fixed, the path that request names, the
+# publication the producer wrote at that path with the content it derives, the qualification record the
+# producer admits for that path, and the holder reads the held route performed or the explicit statement
+# that an unheld route performed none. Rebuilding the three evidence fixtures on this shape is what
+# makes admission reconsider them.
+def fixture_intent_request(+reserved: String, +repo: String, +target: String, +candidate: String, +basis: String, holder: String, name: String, common: String) -> It.IntentInput:
+  It.IntentRequested{name, common, target, repo, candidate, basis, intent_expected_path(reserved), holder, ""}
+
+def fixture_bound_intent(request: It.IntentInput, +reserved: String, +target: String, +candidate: String, +basis: String, holder: IntentHolderReads) -> IntentEvidence:
+  +expected = intent_expected_path(reserved)
+  IntentBound{request, expected, IntentPublished{Pb.IntentBytesPublished{request, Pb.production_record("published", expected, "0"), expected, Lg.intent_content(candidate, basis, target)}}, IntentQualified{Pb.production_record("qualified", expected, "0"), expected}, holder}
+
+def fixture_held_intent(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String, +repo: String, name: String, +holder: String) -> IntentEvidence:
+  fixture_bound_intent(fixture_intent_request(reserved, repo, target, candidate, basis, holder, name, common), reserved, target, candidate, basis, IntentHolderRead{T.GRun{0, Tx.str_cat(basis, "\n")}, T.GRun{0, ""}, T.GRun{0, ""}})
+
+def fixture_unheld_intent(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String, +repo: String, name: String) -> IntentEvidence:
+  fixture_bound_intent(fixture_intent_request(reserved, repo, target, candidate, basis, repo, name, common), reserved, target, candidate, basis, IntentHolderUnperformed{})
 
 def fixture_release_evidence(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String, release: T.ReleaseRaw) -> AttemptEvidence:
-  AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), release, IdentityObserved{common, T.GRun{0, common}, target}, fixture_held_association(common, candidate, basis, target), IntentObserved{Tx.str_cat(reserved, "/intent"), "intent bytes"}, ReservationObserved{shared_attempts_parent(common), "attempt-1"}}
+  AttemptEvidence{reserved, "/repo", target, candidate, basis, "g", "/art", AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), release, IdentityObserved{common, T.GRun{0, common}, target}, fixture_held_association(common, candidate, basis, target), fixture_held_intent(reserved, common, target, candidate, basis, "/repo", "attempt-1", "/holder"), ReservationObserved{shared_attempts_parent(common), "attempt-1"}}
 
 def fixture_stages(+reserved: String, evidence: AttemptEvidence, publication: StageResult, qualification: StageResult, readback: StageResult) -> Attestation:
   Attestation{reserved, evidence, publication, qualification, readback}
 
 def fixture_attestation_of(+reserved: String, +evidence: AttemptEvidence) -> Attestation:
   fixture_stages(reserved, evidence, StageSucceeded{Pb.production_record("published", landing_record_path(reserved), "0")}, StageSucceeded{Pb.production_record("qualified", landing_record_path(reserved), "0")}, StageSucceeded{attempt_record(evidence)})
+
+# The producer-shaped intent evidence is admitted for its own reservation and mode, and refuses when one
+# fact changes: the holder reads an unheld route would not perform, and a returned qualification for
+# another path.
+law a_producer_shaped_held_intent_is_admitted:
+  {intent_bound(fixture_held_intent(fixture_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1", "/holder"), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == True{} : Bool}
+
+def a_producer_shaped_held_intent_is_admitted():
+  {==}
+
+law a_producer_shaped_unheld_intent_is_admitted:
+  {intent_bound(fixture_unheld_intent(fixture_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1"), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", MutationUnheld{}) == True{} : Bool}
+
+def a_producer_shaped_unheld_intent_is_admitted():
+  {==}
+
+law a_held_intent_without_holder_reads_is_not_admitted:
+  {intent_bound(fixture_bound_intent(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", "attempt-1", "/common"), fixture_reserved(), "tgt", fixture_oid_candidate(), fixture_oid_basis(), IntentHolderUnperformed{}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/holder", MutationHeld{"/holder"}) == False{} : Bool}
+
+def a_held_intent_without_holder_reads_is_not_admitted():
+  {==}
+
+law an_unheld_intent_with_holder_reads_is_not_admitted:
+  {intent_bound(fixture_bound_intent(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1", "/common"), fixture_reserved(), "tgt", fixture_oid_candidate(), fixture_oid_basis(), IntentHolderRead{T.GRun{0, Tx.str_cat(fixture_oid_basis(), "\n")}, T.GRun{0, ""}, T.GRun{0, ""}}), fixture_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", MutationUnheld{}) == False{} : Bool}
+
+def an_unheld_intent_with_holder_reads_is_not_admitted():
+  {==}
+
+law an_intent_qualified_for_another_path_is_not_admitted:
+  {intent_bound(fixture_bound_intent(fixture_intent_request(fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1", "/common"), fixture_reserved(), "tgt", fixture_oid_candidate(), fixture_oid_basis(), IntentHolderUnperformed{}), fixture_second_reserved(), "attempt-1", "/common", "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", MutationUnheld{}) == False{} : Bool}
+
+def an_intent_qualified_for_another_path_is_not_admitted():
+  {==}
 
 def fixture_held_obs(+candidate: String, +target: String) -> LdAdvObs:
   ld_adv_qualified_with(AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target))
