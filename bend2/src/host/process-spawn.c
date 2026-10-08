@@ -2951,7 +2951,6 @@ static int br_owner_recover(BrOwner *owner,const char *directory,const char *boo
   if(!error)error=br_admission_verify(canonical,owner->database,-1);
   BrManifest manifest={0};
   if(!error)error=br_manifest_read(canonical,&manifest);
-  if(!error && manifest.count!=8)error=EPERM;
   if(!error)error=br_attempt_manifest_verify(canonical);
   unsigned char expected[32];
   if(!error) {
