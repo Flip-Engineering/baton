@@ -186,5 +186,10 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.shutdown_idle_database_owner('boundary fixtures did not exit')
 
 
+def load_tests(loader, tests, pattern):
+    declared = sorted(name for name in vars(ReceiveTerminalBoundary) if name.startswith('test_'))
+    return loader.loadTestsFromNames(declared, ReceiveTerminalBoundary)
+
+
 if __name__ == '__main__':
     unittest.main()

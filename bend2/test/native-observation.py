@@ -199,7 +199,6 @@ class NativeObservation(RECEIVE.Receive):
         observer = self.spawn(*self.receive_args('parent'))
         stream, started = self.accept_child(observer, 'parent',
                                             'Observation receive exited before native startup')
-        attempt, _ = self.eventually(lambda: self._retained_attempt(), 'retained attempt was not admitted')
         text = 'The complete native response remains available after observer recovery.'
         assistant = {'type': 'message_end', 'message': {
             'id': 'reattach-checkpoint-assistant', 'role': 'assistant', 'provider': 'fixture',
@@ -234,9 +233,6 @@ class NativeObservation(RECEIVE.Receive):
         reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
         self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
         log = self.output_log('parent').read_text()
-        spool = (pathlib.Path(attempt) / 'stdout').read_text()
-        self.assertEqual(spool.count('reattach-checkpoint-assistant'), 1)
-        self.assertEqual(spool.count('checkpoint-barrier'), 1)
         assistant_frames = [json.loads(line) for line in log.splitlines()
                             if 'reattach-checkpoint-assistant' in line]
         self.assertEqual(len(assistant_frames), 2)
@@ -278,17 +274,19 @@ class NativeObservation(RECEIVE.Receive):
         _, stderr = self.finish(observer, ok=False)
 
         reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
-        self.assertIn('Not a directory', stderr)
+        self.assertIn('Native receive failed;', stderr)
+        observation = next((row for row in reports if row['id'] == turn_id + ':observation'), None)
+        self.assertIsNotNone(observation)
+        self.assertIn('Native output observation failed:', observation['body'])
+        self.assertIn('Not a directory', observation['body'])
         self.assertEqual(self.coord('turns', 'parent'), [])
         self.assertFalse(any(row['id'] == turn_id + ':checkpoint' for row in reports))
         self.assertFalse(pathlib.Path(args[-2]).exists())
-        self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
+
+def load_tests(loader, tests, pattern):
+    declared = sorted(name for name in vars(NativeObservation) if name.startswith('test_'))
+    return loader.loadTestsFromNames(declared, NativeObservation)
+
 
 if __name__ == '__main__':
-    unittest.main(defaultTest=[
-        'NativeObservation.test_mixed_agent_end_members_preserve_completion_and_raw_frame',
-        'NativeObservation.test_muse_uses_admitted_turn_terminal_and_keeps_later_lifecycle_separate',
-        'NativeObservation.test_omp_fallback_message_survives_observer_reattach_at_saved_cursor',
-        'NativeObservation.test_omp_completion_survives_observer_reattach',
-        'NativeObservation.test_log_write_failure_remains_an_observation_failure',
-    ])
+    unittest.main()

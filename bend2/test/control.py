@@ -58,6 +58,8 @@ elif muse:
     prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
     print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.model.configured',
                      'payload':{'kind':'run_model_configured','model_id':model}}),flush=True)
+    print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'turn.input.user',
+                     'payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}),flush=True)
 elif claude:
     prompt=json.loads(sys.stdin.readline())['message']['content']
     print(json.dumps({'type':'system','subtype':'init','session_id':native,'model':model}),flush=True)
@@ -111,7 +113,8 @@ while True:
         sys.stdin.read()
     elif muse:
         print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.terminal.completed',
-                         'payload':{'kind':'run_terminal','terminal':'completed','text':body}}),flush=True)
+                         'payload':{'kind':'run_terminal','terminal':'completed',
+                                    'command_id':'fixture-primary','text':body}}),flush=True)
     elif claude:
         print(json.dumps({'type':'result','session_id':native,'result':body,'is_error':False}),flush=True)
     else:
