@@ -382,9 +382,9 @@ def append_frame(log: String, line: String, keep: Bool) -> IO(Result<&1,&1,U32 &
     case True{}: T.Text.append(log,line ++ "\n")
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
-# Read the OMP frame type once for log retention and event observation. The
-# classification names the frame types the retention policy distinguishes; a
-# frame outside it keeps an empty kind and is retained at every level.
+# Read the OMP frame type once for level filtering and event observation. A
+# frame outside the classification keeps an empty kind and remains at every
+# level.
 def frame_kind(db: String, line: String, omp: Bool) -> IO(String):
   match omp:
     case False{}: IO.pure(String,"")
@@ -472,18 +472,16 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
       sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
       waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
-      +end_policy : Logs.Policy <- Logs.policy(db,player)
-      +flushed : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(end_policy,log,Logs.flush(held),log_failed)
+      +flushed : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(log,Logs.flush(held),log_failed)
       checkpoint_done : Result<&1,&1,U32 & String,Unit> <- checkpoint_written(flushed,Bool.and(String.is_empty(attempt),Bool.not(log_failed)),log,"")
-      named : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(end_policy,log,Logs.interrupted(held),log_failed)
+      named : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(log,Logs.interrupted(held),log_failed)
       IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(waited),terminal,"Native output read failed: " ++ error_text(error)},deliveries))
     case Done{None{}}:
       do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
         sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
-        +end_policy : Logs.Policy <- Logs.policy(db,player)
         status : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
         event : String <- codex_finished(db,player,id,codex_log,terminal,String.eq(harness,"codex\n"))
-        +flushed : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(end_policy,log,Logs.flush(held),log_failed)
+        +flushed : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(log,Logs.flush(held),log_failed)
         checkpoint_done : Result<&1,&1,U32 & String,Unit> <- checkpoint_written(flushed,Bool.and(String.is_empty(attempt),Bool.not(log_failed)),log,"")
         noted : Result<&1,&1,U32 & String,Unit> <- record_filter(log,filter,String.eq(harness,"omp\n"))
         closed : Result<&1,&1,U32 & String,String> <- NativeRequests.closed(db,attempt,Bool.not(String.is_empty(attempt)))
@@ -494,7 +492,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +kind : String <- frame_kind(db,line,String.eq(harness,"omp\n"))
         +frame_key : String <- Logs.frame_identity(db,line,Tx.trim_nl(kind),String.eq(harness,"omp\n"))
         +next_held : String <- IO.pure(String,Logs.step_held(Logs.frame_step(current_policy,Tx.trim_nl(kind),frame_key,line,held)))
-        +logged : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(current_policy,log,Logs.step_lines(Logs.frame_step(current_policy,Tx.trim_nl(kind),frame_key,line,held)),log_failed)
+        +logged : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(log,Logs.step_lines(Logs.frame_step(current_policy,Tx.trim_nl(kind),frame_key,line,held)),log_failed)
         +saved_checkpoint : Result<&1,&1,U32 & String,Unit> <- checkpoint_written(logged,Bool.and(String.is_empty(attempt),Bool.and(Bool.not(log_failed),Bool.not(String.eq(held,next_held)))),log,next_held)
         +written : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.first_failure(saved_checkpoint,logged))
         +failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,written))
