@@ -603,7 +603,7 @@ def parse_receive(+verb: String, +session: String, +cmd: String, +model: String,
 def parse_verb_nine_args(+verb: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> Command:
   match verb:
     case "configure": Configure{player,id,cmd,model,effort,cwd,task,log,session}
-    case "start": Start{player,id,cmd,model,effort,cwd,log,task,session}
+    case "start": Start{player,id,cmd,model,effort,cwd,task,log,session}
     case "turn": RunTurn{player,id,cmd,model,effort,cwd,task,log,session}
     case "recruit": Recruit{player,id,cmd,model,effort,cwd,task,log,session}
     case _: Invalid{}
