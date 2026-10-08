@@ -2,21 +2,8 @@
 # installed-module contract (docs/bend2/semantic-context-spec.md, "Installed
 # module contract" and "Detection, acquisition and resource ownership").
 #
-# Admission is a total pure function over supplied declaration data, a supplied
-# candidate catalog and a supplied inventory. It reads no file, imports no
-# entry, invokes no discovery command, probes no tool and starts no debuggee:
-# the inventory records what package admission already established. A digest
-# supplied by a request or carried by a description installs and authenticates
-# nothing here, and an admitted declaration is a decision with evidence, not a
-# publication or a custody claim.
-#
-# Every refusal is separate because every one is a different fact: an
-# unsupported declaration or protocol version, an empty id, an id conflicting
-# with the candidate set, a missing declaration digest, a missing or mismatched
-# artifact, schema or dependency identity, an operation naming a common
-# operation with no admitted meaning, and an effect name no admitted operation
-# requires. The last is the specification's unknown effect meaning, which goes
-# to common-contract review rather than to a second effect registry.
+# Admission checks supported versions, module identity, declaration digest,
+# entry requirements, operation meaning and effects, and dependency identity.
 #
 # The common vocabularies are derived, never restated: the admitted effect
 # vocabulary is the union of Eng.required_effects over the closed operation set,
@@ -45,9 +32,7 @@ def arts_to_list(xs: Arts) -> List<Art>:
     case ArtsNil{}: Nil{}
     case ArtsCons{h, r}: h <> arts_to_list(r)
 
-# The digest the inventory records at one path, or the empty string when the
-# inventory holds no artifact there. Absence and a different digest are
-# separate refusals, so only absence answers the empty string.
+# Look up the package inventory digest for a path while decoding a declaration.
 def artifact_digest(+arts: Arts, +want_path: String) -> String:
   match arts:
     case ArtsNil{}: ""
@@ -154,10 +139,7 @@ type DeclReject is Data:
   DrEmptyId{what: String}
   DrConflictingId{module_id: String, other: String}
   DrMissingDeclarationDigest{module_id: String}
-  DrMissingArtifact{module_id: String, path: String}
-  DrArtifactMismatch{module_id: String, path: String, want: String, saw: String}
   DrEmptyEntryVector{}
-  DrMissingSchema{module_id: String, operation: String, schema: String}
   DrDuplicateOperation{module_id: String, operation: String}
   DrUnknownCommonOperation{module_id: String, operation: String, common: String}
   DrEffectRequiresReview{module_id: String, operation: String, effect: String}
@@ -269,56 +251,14 @@ def check_declaration_digest(+module_id: String, +inv: Inv) -> Chk:
       bool_chk(Bool.not(String.is_empty(digest_of(digests, module_id))),
                DrMissingDeclarationDigest{module_id})
 
-# One artifact: absent from the inventory, or present at a different digest.
-def check_artifact_digest(+module_id: String, +path: String, +want: String,
-                          +saw: String) -> Chk:
-  Bool.pick(Chk, String.is_empty(saw),
-    ChkFail{DrMissingArtifact{module_id, path}},
-    Bool.pick(Chk, String.eq(want, saw), ChkOk{},
-              ChkFail{DrArtifactMismatch{module_id, path, want, saw}}))
-
-def check_artifact(+module_id: String, +art: Art, +inv: Inv) -> Chk:
-  match art:
-    case Art{+path, sha256, role}:
-      match inv:
-        case Inv{artifacts, schemas, digests}:
-          check_artifact_digest(module_id, path, sha256,
-                                artifact_digest(artifacts, path))
-
-def check_artifacts(+module_id: String, +arts: Arts, +inv: Inv) -> Chk:
-  match arts:
-    case ArtsNil{}: ChkOk{}
-    case ArtsCons{h, r}:
-      then_chk(check_artifact(module_id, h, inv),
-               check_artifacts(module_id, r, inv))
-
-# Stage four: the entry artifact and its export identity or argv vector.
-def check_entry(+module_id: String, +entry: Entry, +inv: Inv) -> Chk:
+# Stage four: the entry export identity or process argument vector.
+def check_entry(+entry: Entry) -> Chk:
   match entry:
     case ENative{artifact, export_identity}:
-      then_chk(check_artifact(module_id, artifact, inv),
-               bool_chk(Bool.not(String.is_empty(export_identity)),
-                        DrEmptyId{"entry export identity"}))
+      bool_chk(Bool.not(String.is_empty(export_identity)),
+               DrEmptyId{"entry export identity"})
     case EProcess{artifact, argv}:
-      then_chk(check_artifact(module_id, artifact, inv),
-               bool_chk(Eng.ss_nonempty(argv), DrEmptyEntryVector{}))
-
-# One declared schema identity must be admitted by the inventory.
-def check_schema(+module_id: String, +operation: String, +schema: String,
-                 +schemas: Eng.SS) -> Chk:
-  Bool.pick(Chk, Eng.ss_member(schemas, schema), ChkOk{},
-            ChkFail{DrMissingSchema{module_id, operation, schema}})
-
-def check_schemas(+module_id: String, +operation: String, +subject: String,
-                  +options: String, +result: String, +reference: String,
-                  +event: String, +inv: Inv) -> Chk:
-  match inv:
-    case Inv{artifacts, +schemas, digests}:
-      then_chk(check_schema(module_id, operation, subject, schemas),
-      then_chk(check_schema(module_id, operation, options, schemas),
-      then_chk(check_schema(module_id, operation, result, schemas),
-      then_chk(check_schema(module_id, operation, reference, schemas),
-               check_schema(module_id, operation, event, schemas)))))
+      bool_chk(Eng.ss_nonempty(argv), DrEmptyEntryVector{})
 
 # Every declared effect must have an admitted meaning.
 def check_effects(+module_id: String, +operation: String, +effects: Eng.SS) -> Chk:
@@ -351,8 +291,7 @@ def operations_have(+ops: Ops, +want: String) -> Bool:
           Bool.pick(Bool, String.eq(operation, want), True{},
                     operations_have(r, want))
 
-def check_one_operation(+module_id: String, +op: Op, +remaining: Ops,
-                        +inv: Inv) -> Chk:
+def check_one_operation(+module_id: String, +op: Op, +remaining: Ops) -> Chk:
   match op:
     case Op{operation, implements_operation, subject_schema, options_schema,
             projections, effects, execution, result_schema, reference_schema,
@@ -363,20 +302,17 @@ def check_one_operation(+module_id: String, +op: Op, +remaining: Ops,
                         DrDuplicateOperation{module_id, operation}),
       then_chk(bool_chk(Eng.operation_known(implements_operation),
                         DrUnknownCommonOperation{module_id, operation, implements_operation}),
-      then_chk(check_schemas(module_id, operation, subject_schema,
-                             options_schema, result_schema, reference_schema,
-                             event_schema, inv),
       then_chk(check_effects(module_id, operation, effects),
                check_lifetime(module_id, operation, execution,
-                              lifetime_profile))))))
+                              lifetime_profile)))))
 
 # Stage five: every declared operation, in declaration order.
-def check_operations(+module_id: String, +ops: Ops, +inv: Inv) -> Chk:
+def check_operations(+module_id: String, +ops: Ops) -> Chk:
   match ops:
     case OpsNil{}: ChkOk{}
     case OpsCons{head, +rest}:
-      then_chk(check_one_operation(module_id, head, rest, inv),
-               check_operations(module_id, rest, inv))
+      then_chk(check_one_operation(module_id, head, rest),
+               check_operations(module_id, rest))
 
 def check_edge_compare(+module_id: String, +operation: String,
                        +dependency: String, +want: String, +saw: String) -> Chk:
@@ -434,10 +370,9 @@ def check_declaration(+decl: Decl, +cat: Cat, +inv: Inv) -> Chk:
       then_chk(check_version(decl_version, protocol_version),
       then_chk(check_identifiers(module_id, package_identity, revision, cat),
       then_chk(check_declaration_digest(module_id, inv),
-      then_chk(check_entry(module_id, entry, inv),
-      then_chk(check_artifacts(module_id, dependencies, inv),
-      then_chk(check_operations(module_id, operations, inv),
-               check_dependency_edges(module_id, operations, inv)))))))
+      then_chk(check_entry(entry),
+      then_chk(check_operations(module_id, operations),
+               check_dependency_edges(module_id, operations, inv))))))
 
 def admitted_digest(+decl: Decl, +inv: Inv) -> String:
   match decl:

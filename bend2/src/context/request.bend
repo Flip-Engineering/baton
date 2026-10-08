@@ -225,11 +225,11 @@ def fields_add(fs: Fields, +s: String) -> Fields:
 
 def fields_go(rest: String, +cur: String, +fs: Fields) -> Fields:
   match rest:
-    case SNil{}: fields_add(fs, cur)
+    case SNil{}: fields_add(fs, reverse(cur))
     case SCon{+head, +tail}:
       Bool.pick(Unit -> Fields, U32.is_eq(Char.to_u32(head), 9),
-        u => fields_go(tail, SNil{}, fields_add(fs, cur)),
-        u => fields_go(tail, cur ++ SCon{head, SNil{}}, fs))(Unit{})
+        u => fields_go(tail, SNil{}, fields_add(fs, reverse(cur))),
+        u => fields_go(tail, SCon{head, cur}, fs))(Unit{})
 
 def fields_of(line: String) -> Fields:
   fields_go(line, SNil{}, Fnone{})
@@ -251,10 +251,10 @@ type Rows is Data:
   Rnone{}
   Rcons{head: Row, tail: Rows}
 
-def rows_add(rows: Rows, +r: Row) -> Rows:
+def reverse_rows(rows: Rows, +acc: Rows) -> Rows:
   match rows:
-    case Rnone{}: Rcons{r, Rnone{}}
-    case Rcons{+head, +tail}: Rcons{head, rows_add(tail, r)}
+    case Rnone{}: acc
+    case Rcons{head, tail}: reverse_rows(tail, Rcons{head, acc})
 
 def hex_digit_ok(+c: Char) -> Bool:
   Bool.or(Bool.and(Bool.not(U32.is_lt(Char.to_u32(c), 48)), U32.is_lt(Char.to_u32(c), 58)),
@@ -276,24 +276,24 @@ def row_from_fields(+fs: Fields) -> Row:
   Bool.pick(Row, U32.is_eq(fields_len(fs), 5), row_exact(fs), Row{"", "", "malformed", "", ""})
 
 def line_rows(+line: String, +rows: Rows) -> Rows:
-  Bool.pick(Rows, is_empty_s(line), rows, rows_add(rows, row_from_fields(fields_of(line))))
+  Bool.pick(Rows, is_empty_s(line), rows, Rcons{row_from_fields(fields_of(line)), rows})
 
 def rows_after_char(newline: Bool, +cur: String, +rows: Rows) -> Rows:
   match newline:
-    case True{}: line_rows(cur, rows)
+    case True{}: line_rows(reverse(cur), rows)
     case False{}: rows
 
 def rows_go(rest: String, +cur: String, +rows: Rows) -> Rows:
   match rest:
-    case SNil{}: line_rows(cur, rows)
+    case SNil{}: line_rows(reverse(cur), rows)
     case SCon{+head, +tail}:
       +newline = U32.is_eq(Char.to_u32(head), 10)
       rows_go(tail,
-        Bool.pick(String, newline, SNil{}, cur ++ SCon{head, SNil{}}),
+        Bool.pick(String, newline, SNil{}, SCon{head, cur}),
         rows_after_char(newline, cur, rows))
 
 def parse_rows(+text: String) -> Rows:
-  rows_go(text, SNil{}, Rnone{})
+  reverse_rows(rows_go(text, SNil{}, Rnone{}), Rnone{})
 
 # ---------------------------------------------------------------------------
 # Canonical identity is the shared encoder's text; no second encoder exists.
@@ -336,7 +336,8 @@ def validate_json_text_sql(text: String) -> String:
 def json_tree_sql(text: String) -> String:
   "WITH raw(t) AS (SELECT " ++ sql_quote(text) ++ ") "
   ++ "SELECT hex(CAST(r.id AS TEXT)), hex(CAST(r.parent AS TEXT)), hex(CAST(r.type AS TEXT)), "
-  ++ "hex(CAST(r.key AS TEXT)), hex(CAST(CASE WHEN r.type IN ('integer','real') "
+  ++ "hex(CAST(r.key AS TEXT)), hex(CAST(CASE WHEN r.type IN ('object','array') THEN NULL "
+  ++ "WHEN r.type IN ('integer','real') "
   ++ "THEN CAST(t -> r.fullkey AS TEXT) ELSE CAST(r.value AS TEXT) END AS TEXT)) "
   ++ "FROM raw, json_tree(raw.t) r;"
 

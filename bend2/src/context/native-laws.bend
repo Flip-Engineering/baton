@@ -143,6 +143,34 @@ def expected_declaration() -> Decl.Decl:
       Eng.ss_one("definition"), Eng.ss_empty(), Decl.ExManaged{}, "res", "ref", "evt", "", Decl.ModRefsNil{}},
       Decl.OpsNil{}}, Decl.RulesNil{}}
 
+def relative_path_collision_declaration() -> Decl.Decl:
+  Decl.Decl{"1", "m2", "r2", "2", "pkg-m2",
+    Decl.EProcess{Decl.Art{"native-provider.mjs", "bb", "entry"}, Eng.ss_one("--invoke")},
+    Decl.ArtsNil{},
+    Decl.OpsCons{Decl.Op{"sourceAnalysis", "sourceAnalysis", "sub2", "opt2",
+      Eng.ss_one("definition"), Eng.ss_empty(), Decl.ExManaged{}, "res2", "ref2", "evt2", "", Decl.ModRefsNil{}},
+      Decl.OpsNil{}}, Decl.RulesNil{}}
+
+def relative_path_collision_catalog() -> Decl.Cat:
+  Decl.CatCons{expected_declaration(),
+    Decl.CatCons{relative_path_collision_declaration(), Decl.CatNil{}}}
+
+def relative_path_collision_inventory() -> Decl.Inv:
+  Decl.Inv{
+    Decl.ArtsCons{Decl.Art{"native-provider.mjs", "aa", "provider"},
+      Decl.ArtsCons{Decl.Art{"native-provider.mjs", "bb", "provider"}, Decl.ArtsNil{}}},
+    Eng.ss_of_list(["sub", "opt", "res", "ref", "evt",
+                    "sub2", "opt2", "res2", "ref2", "evt2"]),
+    Decl.DigsCons{Decl.Dg{"m1", "d1"}, Decl.DigsCons{Decl.Dg{"m2", "d2"}, Decl.DigsNil{}}}}
+
+law declarations_with_the_same_relative_entry_path_admit_their_own_digest:
+  {Decl.admit_declaration(relative_path_collision_declaration(),
+      relative_path_collision_catalog(), relative_path_collision_inventory()) ==
+    Decl.DeclAdmitted{relative_path_collision_declaration(), "d2"} : Decl.DeclOutcome}
+
+def declarations_with_the_same_relative_entry_path_admit_their_own_digest():
+  {==}
+
 law installed_declaration_adapter_preserves_typed_module_contract_fields:
   {NativeDeclaration.decode(declaration_object(), "d1") == NativeDeclaration.DeclarationDecoded{
     expected_declaration(), Decl.Inv{Decl.ArtsCons{Decl.Art{"native-provider.mjs", "aa", "provider"}, Decl.ArtsNil{}},

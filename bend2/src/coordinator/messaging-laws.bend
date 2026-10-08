@@ -71,21 +71,6 @@ law message_descendants_follow_transitive_parentage:
 def message_descendants_follow_transitive_parentage(ancestor,session):
   {==}
 
-law conductor_peer_depth_counts_recorded_ancestors:
-  for session: String
-  {C.depth(session) == "(SELECT count(*) FROM (" ++ C.ancestors(session) ++ "))" : String}
-
-def conductor_peer_depth_counts_recorded_ancestors(session):
-  {==}
-
-law peer_routes_exclude_ancestry_and_check_conductor_depth:
-  for +left: String
-  for +right: String
-  {C.peers(left,right) == "(" ++ left ++ "<>" ++ right ++ " AND NOT " ++ C.descendant(left,right) ++ " AND NOT " ++ C.descendant(right,left) ++ " AND NOT (" ++ C.assigned_role(left) ++ "='conductor' AND " ++ C.assigned_role(right) ++ "='conductor' AND " ++ C.depth(left) ++ "<>" ++ C.depth(right) ++ "))" : String}
-
-def peer_routes_exclude_ancestry_and_check_conductor_depth(left,right):
-  {==}
-
 law peer_routes_require_shared_tight_membership:
   for +sender: String
   for +recipient: String

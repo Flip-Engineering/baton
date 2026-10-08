@@ -306,11 +306,8 @@ def ancestors(+session: String) -> String:
 def descendant(+ancestor: String, session: String) -> String:
   "EXISTS(SELECT 1 FROM (" ++ ancestors(session) ++ ") WHERE id=" ++ ancestor ++ ")"
 
-def depth(session: String) -> String:
-  "(SELECT count(*) FROM (" ++ ancestors(session) ++ "))"
-
 def peers(+left: String, +right: String) -> String:
-  "(" ++ left ++ "<>" ++ right ++ " AND NOT " ++ descendant(left,right) ++ " AND NOT " ++ descendant(right,left) ++ " AND NOT (" ++ assigned_role(left) ++ "='conductor' AND " ++ assigned_role(right) ++ "='conductor' AND " ++ depth(left) ++ "<>" ++ depth(right) ++ "))"
+  "(" ++ left ++ "<>" ++ right ++ " AND NOT " ++ descendant(left,right) ++ " AND NOT " ++ descendant(right,left) ++ ")"
 
 def tight_peers(+sender: String, +recipient: String) -> String:
   "(" ++ peers(sender,recipient) ++ " AND " ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND EXISTS(SELECT 1 FROM ensemble_members a JOIN ensemble_members b ON b.ensemble=a.ensemble JOIN ensembles e ON e.id=a.ensemble WHERE a.session=" ++ sender ++ " AND b.session=" ++ recipient ++ " AND e.coupling='tight' AND " ++ assigned_role("e.owner") ++ "='conductor'))"

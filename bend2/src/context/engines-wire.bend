@@ -281,23 +281,8 @@ def dr_reason_json(+r: Decl.DeclReject) -> J.Json:
     case Decl.DrMissingDeclarationDigest{module_id}:
       J.Jobj{wire_obj("kind", J.Jstr{"missingDeclarationDigest"},
              wire_obj("moduleId", J.Jstr{module_id}, J.Jnil{}))}
-    case Decl.DrMissingArtifact{module_id, +path}:
-      J.Jobj{wire_obj("kind", J.Jstr{"missingArtifact"},
-             wire_obj("moduleId", J.Jstr{module_id},
-             wire_obj("path", J.Jstr{path}, J.Jnil{})))}
-    case Decl.DrArtifactMismatch{module_id, +path, +want, +saw}:
-      J.Jobj{wire_obj("kind", J.Jstr{"artifactMismatch"},
-             wire_obj("moduleId", J.Jstr{module_id},
-             wire_obj("path", J.Jstr{path},
-             wire_obj("want", J.Jstr{want},
-             wire_obj("saw", J.Jstr{saw}, J.Jnil{})))))}
     case Decl.DrEmptyEntryVector{}:
       J.Jobj{wire_obj("kind", J.Jstr{"emptyEntryVector"}, J.Jnil{})}
-    case Decl.DrMissingSchema{module_id, +operation, +schema}:
-      J.Jobj{wire_obj("kind", J.Jstr{"missingSchema"},
-             wire_obj("moduleId", J.Jstr{module_id},
-             wire_obj("operation", J.Jstr{operation},
-             wire_obj("schema", J.Jstr{schema}, J.Jnil{}))))}
     case Decl.DrDuplicateOperation{module_id, +operation}:
       J.Jobj{wire_obj("kind", J.Jstr{"duplicateOperation"},
              wire_obj("moduleId", J.Jstr{module_id},

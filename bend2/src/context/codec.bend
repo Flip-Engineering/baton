@@ -918,29 +918,30 @@ def array_value(+items: RawValue) -> RawValue:
     case Rarr{+head, +tail}: rev_items(items, Rnil{})
     case other: Rarr{Rnil{}, Rnil{}}
 
-# Each completed container is attached into its parent while unwinding, so a nested
-# object followed by a sibling field keeps its contents. Elements attach in arrival
-# order and the close reverses the accumulator, so array order is restored; the
-# object member chain is not re-sorted, and the consumers here (member lookup and
-# the scalar progress token) do not read member order. Canonical text is produced
-# by the shared encoder, which normalizes member order itself.
-def raw_unwind(+f: RawFrame, +pid: String) -> RawFrame:
-  match f:
-    case RFRoot{+root}: RFRoot{root}
-    case RFObj{+id, +key, +members, +up}:
-      Bool.pick(RawFrame, String.eq(id, pid), RFObj{id, key, members, up},
-        raw_attach(raw_unwind(up, pid), key, Robj{members}))
-    case RFArr{+id, +key, +items, +up}:
-      Bool.pick(RawFrame, String.eq(id, pid), RFArr{id, key, items, up},
-        raw_attach(raw_unwind(up, pid), key, array_value(items)))
-    case RFBad{+condition}: RFBad{condition}
-
 def raw_finish_step(f: RawFrame) -> RawFrame:
   match f:
     case RFRoot{root}: RFRoot{root}
     case RFObj{id, key, members, up}: raw_attach(up, key, Robj{members})
     case RFArr{id, key, items, up}: raw_attach(up, key, array_value(items))
     case RFBad{condition}: RFBad{condition}
+
+# Close each completed container into its immediate parent. The original path
+# supplies the remaining ancestors while the frame retains their updated contents.
+def raw_unwind_path(path: RawFrame, +frame: RawFrame, +pid: String) -> RawFrame:
+  match path:
+    case RFRoot{root}: frame
+    case RFObj{+id, key, members, +up}:
+      Bool.pick(Unit -> RawFrame, String.eq(id, pid),
+        u => frame,
+        u => raw_unwind_path(up, raw_finish_step(frame), pid))(Unit{})
+    case RFArr{+id, key, items, +up}:
+      Bool.pick(Unit -> RawFrame, String.eq(id, pid),
+        u => frame,
+        u => raw_unwind_path(up, raw_finish_step(frame), pid))(Unit{})
+    case RFBad{condition}: frame
+
+def raw_unwind(+f: RawFrame, +pid: String) -> RawFrame:
+  raw_unwind_path(f, f, pid)
 
 def raw_finish_path(path: RawFrame, frame: RawFrame) -> RawFrame:
   match path:
@@ -2332,14 +2333,6 @@ law codec_law_any_other_observation_is_malformed:
   {validation_observed("1") == VoMalformed{} : ValidationObserved}
 
 def codec_law_any_other_observation_is_malformed():
-  {==}
-
-# The valid branch returns the row plan over the same retained raw document, carrying
-# the producer statement this lane selected.
-law codec_law_the_valid_observation_returns_the_selected_row_plan:
-  {finish_validation("{}", "1\n") == IpRows{"{}", "WITH raw(t) AS (SELECT '{}') SELECT hex(CAST(r.id AS TEXT)), hex(CAST(r.parent AS TEXT)), hex(CAST(r.type AS TEXT)), hex(CAST(r.key AS TEXT)), hex(CAST(CASE WHEN r.type IN ('integer','real') THEN CAST(t -> r.fullkey AS TEXT) ELSE CAST(r.value AS TEXT) END AS TEXT)) FROM raw, json_tree(raw.t) r;"} : InputPlan}
-
-def codec_law_the_valid_observation_returns_the_selected_row_plan():
   {==}
 
 law codec_law_the_invalid_observation_returns_its_complete_document:

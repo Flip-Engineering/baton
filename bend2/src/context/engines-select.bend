@@ -1237,10 +1237,7 @@ def decl_reject_code(+r: Decl.DeclReject) -> String:
     case Decl.DrEmptyId{what}: "emptyId"
     case Decl.DrConflictingId{module_id, package_identity}: "conflictingId"
     case Decl.DrMissingDeclarationDigest{module_id}: "missingDeclarationDigest"
-    case Decl.DrMissingArtifact{module_id, path}: "missingArtifact"
-    case Decl.DrArtifactMismatch{module_id, path, want, saw}: "artifactMismatch"
     case Decl.DrEmptyEntryVector{}: "emptyEntryVector"
-    case Decl.DrMissingSchema{module_id, operation, schema}: "missingSchema"
     case Decl.DrDuplicateOperation{module_id, operation}: "duplicateOperation"
     case Decl.DrUnknownCommonOperation{module_id, operation, common}:
       "unknownCommonOperation"

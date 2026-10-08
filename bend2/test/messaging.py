@@ -107,7 +107,7 @@ class Messaging(unittest.TestCase):
         self.call('ensemble-member', 'players', 'root', 'leaf-b', 'remove')
         self.refused('removed', 'leaf-a', 'leaf-b')
 
-    def test_tight_same_level_conductors_include_top_level_and_cross_parent_sets(self):
+    def test_tight_conductors_can_message_across_hierarchy_depths(self):
         self.ensemble('top', 'root', 'other-root')
         self.send('top-a', 'root', 'other-root')
         self.send('top-b', 'other-root', 'root')
@@ -118,8 +118,10 @@ class Messaging(unittest.TestCase):
         self.call('role', 'other-lead', 'associate-conductor')
         self.call('ensemble-member', 'leads', 'root', 'other-lead', 'add')
         self.send('cross-parent-conductors', 'lead-a', 'other-lead')
+        self.refused('outside-tight-ensemble', 'deep-lead', 'lead-b')
         self.call('ensemble-member', 'leads', 'root', 'deep-lead', 'add')
-        self.refused('different-conductor-level', 'deep-lead', 'lead-b')
+        self.send('different-depth-conductors', 'deep-lead', 'lead-b')
+        self.send('different-depth-conductors-reply', 'lead-b', 'deep-lead')
         self.call('ensemble', 'top', 'root', 'loose')
         self.refused('top-loose', 'root', 'other-root')
 
