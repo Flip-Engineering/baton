@@ -549,13 +549,17 @@ def managed_output_value(+event_frame: String, exit: ManagedExit) -> ManagedOutp
     case ManagedExitRefused{}:
       ManagedOutput{SNil{}, "{\"reason\":\"managedExitStatusMalformed\"}", 255, False{}}
 
-def managed_wait_status_value(+event_frame: String, +status: String) -> IO(ManagedOutput):
-  match managed_exit_status(status):
+def managed_wait_status_exit(+event_frame: String, +status: String,
+                            exit: ManagedExit) -> IO(ManagedOutput):
+  match exit:
     case ManagedExit{code, complete}:
       IO.pure(ManagedOutput,
         managed_output_value(event_frame, ManagedExit{code, complete}))
     case ManagedExitRefused{}:
       IO.die(ManagedOutput, 3, "managedChildStatusUnavailable:" ++ status)
+
+def managed_wait_status_value(+event_frame: String, +status: String) -> IO(ManagedOutput):
+  managed_wait_status_exit(event_frame, status, managed_exit_status(status))
 
 def managed_wait_output(+handle: U32, +event_frame: String,
                         waited: Result<&1,&1,U32 & String,String>) -> IO(ManagedOutput):
