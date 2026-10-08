@@ -290,7 +290,7 @@ def ref_hex_digit(+n: U32) -> Char:
   Bool.pick(Char, U32.is_lt(n, 10), Char.from_u32(U32.add(48, n)), Char.from_u32(U32.add(87, n)))
 
 def ref_byte_piece(+u: U32) -> String:
-  +hi = U32.shrn(u, 4)
+  +hi = U32.shrn(u, 4n)
   +lo = U32.and(u, 15)
   str_cat("%", str_cat(one_char(ref_hex_digit(hi)), one_char(ref_hex_digit(lo))))
 
@@ -311,10 +311,10 @@ def ref_cont(b: U32) -> U32:
 
 def ref_pieces_of(+code: U32, +width: U32) -> List<String>:
   Bool.pick(List<String>, U32.is_eq(width, 1), ref_pieces_1(code),
-    Bool.pick(List<String>, U32.is_eq(width, 2), ref_pieces_2(U32.or(192, U32.and(U32.shrn(code, 6), 31)), ref_cont(code)),
+    Bool.pick(List<String>, U32.is_eq(width, 2), ref_pieces_2(U32.or(192, U32.and(U32.shrn(code, 6n), 31)), ref_cont(code)),
       Bool.pick(List<String>, U32.is_eq(width, 3),
-        ref_pieces_3(U32.or(224, U32.and(U32.shrn(code, 12), 15)), ref_cont(U32.shrn(code, 6)), ref_cont(code)),
-        ref_pieces_4(U32.or(240, U32.and(U32.shrn(code, 18), 7)), ref_cont(U32.shrn(code, 12)), ref_cont(U32.shrn(code, 6)), ref_cont(code)))))
+        ref_pieces_3(U32.or(224, U32.and(U32.shrn(code, 12n), 15)), ref_cont(U32.shrn(code, 6n)), ref_cont(code)),
+        ref_pieces_4(U32.or(240, U32.and(U32.shrn(code, 18n), 7)), ref_cont(U32.shrn(code, 12n)), ref_cont(U32.shrn(code, 6n)), ref_cont(code)))))
 
 def ref_char_pieces(+c: Char) -> List<String>:
   +code = Char.to_u32(c)
