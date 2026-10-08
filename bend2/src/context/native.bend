@@ -599,7 +599,7 @@ def managed_outcome_persisted(+owner: String, +query: String,
         U32.show(managed_output_exit_status(output))))))
 
 def managed_persist_answer(+owner: String, +worktree: String, +query: String,
-                           +bootstrap_digest: String, output: ManagedOutput,
+                           +bootstrap_digest: String, +output: ManagedOutput,
                            answer: ProviderAnswer) -> IO(ManagedOutput):
   match answer:
     case ProviderRefused{reason}: IO.die(ManagedOutput, 3, "managedOutcomePersistence:" ++ reason)
@@ -614,7 +614,7 @@ def managed_persist_answer(+owner: String, +worktree: String, +query: String,
 def persist_managed_output(+executable: String, +runtime_path: String,
                            +cwd: String, +owner: String, +worktree: String,
                            +query: String, +bootstrap_digest: String,
-                           output: ManagedOutput) -> IO(ManagedOutput):
+                           +output: ManagedOutput) -> IO(ManagedOutput):
   do IO<ManagedOutput>:
     spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
       query_outcome_argv(runtime_path, executable), cwd, "/dev/null")
@@ -708,8 +708,8 @@ def managed_observe_complete(+db: String, +binding: String,
           ManagedQuery.bootstrap_owner(bootstrap), persisted)
 
 def managed_start_decision(+db: String, +binding: String, +launch: ManagedLaunch,
-                           handle: U32,
-                           decision: ManagedQuery.StartDecision) -> IO(Unit):
+                           +handle: U32,
+                           +decision: ManagedQuery.StartDecision) -> IO(Unit):
   match decision:
     case ManagedQuery.StartGranted{query, owner, role, incarnation, request,
         keeper_path, artifact_path, plan_value, result_schema}:
@@ -1735,7 +1735,7 @@ def query_catalog_admitted(+db: String, +binding: String, +owner: String, +query
 
 def query_catalog_decoded(+db: String, +binding: String, +owner: String, +query: String,
                           catalog: NativeCatalog.CatalogDecode,
-                          request: NativeRequest.RequestDecode,
+                          +request: NativeRequest.RequestDecode,
                           policy: ProjectPolicyAnswer,
                           source: BoundaryPath, artifact: BoundaryPath,
                           +executable: String, +runtime_path: String) -> IO(Unit):
@@ -1820,7 +1820,7 @@ def query_environment_runtime(+db: String, +binding: String, +owner: String,
 
 def query_request_environment(db: String, binding: String, owner: String, query: String,
                               cwd: String, worktree: String,
-                              request: NativeRequest.RequestDecode) -> IO(Unit):
+                              +request: NativeRequest.RequestDecode) -> IO(Unit):
   match request:
     case NativeRequest.RequestDecodeRefused{condition}:
       IO.die(Unit, 3, "request:" ++ condition)
@@ -1884,7 +1884,7 @@ def owner_workspace_read(+db: String, +binding: String, +owner: String, +query: 
     owner_workspace_loaded(db, binding, owner, query, cwd, request, workspace)
 
 def query_request_result(db: String, binding: String, owner: String, query: String,
-                         result: NativeRequest.RequestDecode) -> IO(Unit):
+                         +result: NativeRequest.RequestDecode) -> IO(Unit):
   match result:
     case NativeRequest.RequestDecodeRefused{condition}:
       IO.die(Unit, 3, "request:" ++ condition)
