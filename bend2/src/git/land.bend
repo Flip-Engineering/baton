@@ -797,6 +797,40 @@ type AssociationEvidence is Data:
   AssociationObserved{step: String, request: A.AssociationRequest, candidate_oid: String, basis_oid: String, target_head: String, holder_common: String, destination_common: String, reads: A.AssocReads}
   AssociationRefused{request: A.AssociationRequest, step: String, observation: T.GitOut, reads: A.AssocReads}
 
+# The whole outcome the intent producer returned, or an explicit statement that no publication was
+# attempted. Keeping the outcome itself keeps its own tag, pending value, path and payload.
+type IntentPublication is Data:
+  IntentUnpublished{}
+  IntentPublished{outcome: Pb.IntentPublish}
+
+# The whole outcome the intent preparation returned, or an explicit statement that qualification was
+# not reached.
+type IntentPreparation is Data:
+  IntentUnprepared{}
+  IntentPrepared{outcome: It.IntentPrepared}
+
+# The three raw results a held route's holder observation produced. An unheld route performs none of
+# them and says so, rather than performing repository reads and discarding them.
+type IntentHolderReads is Data:
+  IntentHolderUnperformed{}
+  IntentHolderRead{head: T.GitOut, index: T.GitOut, status: T.GitOut}
+
+# The intent evidence: the request the attempt fixed, the path that request was expected to name, the
+# publication outcome, the preparation outcome and the holder reads. The expected path is an operand,
+# not an observation, and the older two-field form remains for landing-era evidence.
+type IntentEvidence is Data:
+  IntentMissing{}
+  IntentObserved{path: String, raw: String}
+  IntentBound{request: It.IntentInput, expected_path: String, publication: IntentPublication,
+              preparation: IntentPreparation, holder: IntentHolderReads}
+
+# The reservation the attempt's path was created under: the parent directory and the name the
+# reserve call used. Retaining both lets admission evaluate the path the name implies and compare
+# it with the path the evidence carries, instead of trusting that path alone.
+type ReservationIdentity is Data:
+  ReservationMissing{}
+  ReservationObserved{parent: String, name: String}
+
 type LdAdvObs is Data:
   LdAdvNoCapture{advance: LAdv, mode: MutationMode, association: AssociationEvidence}
   LdAdvCaptured{advance: LAdv, capture: T.CapturedRaw, mode: MutationMode, association: AssociationEvidence}
@@ -850,40 +884,6 @@ def prepared_fields(outcome: It.IntentPrepared, rest: List<String>) -> List<Stri
       Con{"intent-pending", Con{raw, Con{pending, intent_request_fields(request, rest)}}}
     case It.IntentHostFailed{step, request, error}:
       Con{"intent-host-failed", Con{step, host_error_fields(error, intent_request_fields(request, rest))}}
-
-# The whole outcome the intent producer returned, or an explicit statement that no publication was
-# attempted. Keeping the outcome itself keeps its own tag, pending value, path and payload.
-type IntentPublication is Data:
-  IntentUnpublished{}
-  IntentPublished{outcome: Pb.IntentPublish}
-
-# The whole outcome the intent preparation returned, or an explicit statement that qualification was
-# not reached.
-type IntentPreparation is Data:
-  IntentUnprepared{}
-  IntentPrepared{outcome: It.IntentPrepared}
-
-# The three raw results a held route's holder observation produced. An unheld route performs none of
-# them and says so, rather than performing repository reads and discarding them.
-type IntentHolderReads is Data:
-  IntentHolderUnperformed{}
-  IntentHolderRead{head: T.GitOut, index: T.GitOut, status: T.GitOut}
-
-# The intent evidence: the request the attempt fixed, the path that request was expected to name, the
-# publication outcome, the preparation outcome and the holder reads. The expected path is an operand,
-# not an observation, and the older two-field form remains for landing-era evidence.
-type IntentEvidence is Data:
-  IntentMissing{}
-  IntentObserved{path: String, raw: String}
-  IntentBound{request: It.IntentInput, expected_path: String, publication: IntentPublication,
-              preparation: IntentPreparation, holder: IntentHolderReads}
-
-# The reservation the attempt's path was created under: the parent directory and the name the
-# reserve call used. Retaining both lets admission evaluate the path the name implies and compare
-# it with the path the evidence carries, instead of trusting that path alone.
-type ReservationIdentity is Data:
-  ReservationMissing{}
-  ReservationObserved{parent: String, name: String}
 
 def reservation_name(reservation: ReservationIdentity) -> String:
   match reservation:
@@ -1099,28 +1099,34 @@ def shared_record_failed(step: String, record: String, handle: U32) -> IO(Shared
     IO.pure(SharedLanding, SharedStepRecordFailed{s, r, T.release_raw_of(released)})
 
 type LdAdvCtx is Data:
-  LdAdvContext{claim: U32, guard: String, artifact: String, attempt: String, common: String}
+  LdAdvContext{claim: U32, guard: String, artifact: String, attempt: String, common: String, reserved: String}
 def ladvctx_claim(context: LdAdvCtx) -> U32:
   match context:
-    case LdAdvContext{claim, guard, artifact, attempt, common}: claim
+    case LdAdvContext{claim, guard, artifact, attempt, common, reserved}: claim
 
 def ladvctx_guard(context: LdAdvCtx) -> String:
   match context:
-    case LdAdvContext{claim, guard, artifact, attempt, common}: guard
+    case LdAdvContext{claim, guard, artifact, attempt, common, reserved}: guard
 
 def ladvctx_artifact(context: LdAdvCtx) -> String:
   match context:
-    case LdAdvContext{claim, guard, artifact, attempt, common}: artifact
+    case LdAdvContext{claim, guard, artifact, attempt, common, reserved}: artifact
 
 # The reserved attempt's own name, as the reservation recorded it.
 def ladvctx_attempt(context: LdAdvCtx) -> String:
   match context:
-    case LdAdvContext{claim, guard, artifact, attempt, common}: attempt
+    case LdAdvContext{claim, guard, artifact, attempt, common, reserved}: attempt
 
 # The canonical common directory the claim answered.
 def ladvctx_common(context: LdAdvCtx) -> String:
   match context:
-    case LdAdvContext{claim, guard, artifact, attempt, common}: common
+    case LdAdvContext{claim, guard, artifact, attempt, common, reserved}: common
+
+# The resolved reserved path the attempt was created at, kept beside its name so the intent file is
+# named from the path the reservation actually produced.
+def ladvctx_reserved(context: LdAdvCtx) -> String:
+  match context:
+    case LdAdvContext{claim, guard, artifact, attempt, common, reserved}: reserved
 
 # The target commit lookup used by the existing unheld compare-and-swap path.
 def ld_tip_argv(target: String) -> List<String>:
@@ -2078,7 +2084,7 @@ def shared_reserved_continue(handle: U32, repo: String, target: String, cand: St
   +rv = reserved
   +an = attempt_name
   +ap = attempt_parent
-  +cx = LdAdvContext{h, gd, shared_parent_path(rv, "stderr"), an, cm}
+  +cx = LdAdvContext{h, gd, shared_parent_path(rv, "stderr"), an, cm, rv}
   +idn = ReservationObserved{ap, an}
   do IO<SharedLanding>:
     o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
@@ -3673,7 +3679,7 @@ law a_malformed_mutation_framing_is_not_landed_evidence:
 def a_malformed_mutation_framing_is_not_landed_evidence():
   {==}
 law a_held_refusal_retains_the_selected_path:
-  {ld_adv_wt_head_same(False{}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), LdAdvContext{1, "g", "/art", "attempt", "/common"}) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvHolderChanged{"/holder"}, MutationHeld{"/holder"}, AssociationMissing{}}) : IO(LdAdvObs)}
+  {ld_adv_wt_head_same(False{}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), LdAdvContext{1, "g", "/art", "attempt", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt")}) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvHolderChanged{"/holder"}, MutationHeld{"/holder"}, AssociationMissing{}}) : IO(LdAdvObs)}
 
 def a_held_refusal_retains_the_selected_path():
   {==}
@@ -4171,14 +4177,14 @@ def an_observed_association_rides_on_the_qualified_observation():
 
 law the_held_decision_handler_stops_on_a_refused_association:
   for ctx: LdAdvCtx
-  {ld_adv_held_decided(A.AssociationRefused{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other"}, fixture_reads()}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"holder-common"}, MutationHeld{"/holder"}, AssociationRefused{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other"}, fixture_reads()}}) : IO(LdAdvObs)}
+  {ld_adv_held_decided(A.AssociationRefused{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other"}, fixture_reads()}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"holder-common"}, MutationHeld{"/holder"}, AssociationRefused{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other"}, fixture_reads()}}) : IO(LdAdvObs)}
 
 def the_held_decision_handler_stops_on_a_refused_association(ctx):
   {==}
 
 law the_unheld_decision_handler_stops_on_a_refused_association:
   for ctx: LdAdvCtx
-  {ld_adv_unheld_decided(A.AssociationRefused{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "common", T.GBroken{"holder answers /other"}, fixture_reads()}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"common"}, MutationUnheld{}, AssociationRefused{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "common", T.GBroken{"holder answers /other"}, fixture_reads()}}) : IO(LdAdvObs)}
+  {ld_adv_unheld_decided(A.AssociationRefused{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "common", T.GBroken{"holder answers /other"}, fixture_reads()}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"common"}, MutationUnheld{}, AssociationRefused{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "common", T.GBroken{"holder answers /other"}, fixture_reads()}}) : IO(LdAdvObs)}
 
 def the_unheld_decision_handler_stops_on_a_refused_association(ctx):
   {==}
@@ -4234,19 +4240,19 @@ def the_unheld_route_reads_the_association_for_the_destination_repository(ctx):
   {==}
 
 law a_refused_association_stops_the_attempt_before_the_mutation:
-  {ld_adv_unassociated(ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other for the requested /common"}, fixture_reads(), MutationHeld{"/holder"}) == LdAdvNoCapture{AdvUnassociated{"holder-common"}, MutationHeld{"/holder"}, AssociationRefused{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other for the requested /common"}, fixture_reads()}} : LdAdvObs}
+  {ld_adv_unassociated(ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other for the requested /common"}, fixture_reads(), MutationHeld{"/holder"}) == LdAdvNoCapture{AdvUnassociated{"holder-common"}, MutationHeld{"/holder"}, AssociationRefused{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other for the requested /common"}, fixture_reads()}} : LdAdvObs}
 
 def a_refused_association_stops_the_attempt_before_the_mutation():
   {==}
 
 law a_refused_association_leaves_the_post_mutation_reads_unperformed:
-  {ld_adv_qualification(ld_adv_unassociated(ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other for the requested /common"}, fixture_reads(), MutationHeld{"/h"})) == QualDecided{MutationHeld{"/h"}, ReadSkipped{}, ReadSkipped{}} : LdQualified}
+  {ld_adv_qualification(ld_adv_unassociated(ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other for the requested /common"}, fixture_reads(), MutationHeld{"/h"})) == QualDecided{MutationHeld{"/h"}, ReadSkipped{}, ReadSkipped{}} : LdQualified}
 
 def a_refused_association_leaves_the_post_mutation_reads_unperformed():
   {==}
 
 law a_refused_association_captures_nothing:
-  {ld_adv_capture(ld_adv_unassociated(ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other"}, fixture_reads(), MutationUnheld{})) == T.CapturedAbsent{} : T.CapturedRaw}
+  {ld_adv_capture(ld_adv_unassociated(ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other"}, fixture_reads(), MutationUnheld{})) == T.CapturedAbsent{} : T.CapturedRaw}
 
 def a_refused_association_captures_nothing():
   {==}
@@ -4312,37 +4318,37 @@ def a_missing_association_is_never_bound():
   {==}
 
 law a_refused_association_is_never_bound:
-  {association_bound(AssociationRefused{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "common", T.GBroken{"holder answers /other"}, fixture_reads()}, fixture_oid_candidate(), fixture_oid_basis(), "/common", "/repo", "tgt", fixture_held_qualification(fixture_oid_candidate(), "tgt"), fixture_reserved(), fixture_reservation()) == False{} : Bool}
+  {association_bound(AssociationRefused{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "common", T.GBroken{"holder answers /other"}, fixture_reads()}, fixture_oid_candidate(), fixture_oid_basis(), "/common", "/repo", "tgt", fixture_held_qualification(fixture_oid_candidate(), "tgt"), fixture_reserved(), fixture_reservation()) == False{} : Bool}
 
 def a_refused_association_is_never_bound():
   {==}
 
 law a_mismatched_requested_destination_stops_the_held_route_before_the_mutation:
-  {ld_adv_held_decided(A.AssociationHeld{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/holder", "/other", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), LdAdvContext{1, "g", "/art", "attempt-1", "/common"}) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"destination"}, MutationHeld{"/holder"}, AssociationObserved{"destination", ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/holder", "/other", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}}) : IO(LdAdvObs)}
+  {ld_adv_held_decided(A.AssociationHeld{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/holder", "/other", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"destination"}, MutationHeld{"/holder"}, AssociationObserved{"destination", ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/holder", "/other", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}}) : IO(LdAdvObs)}
 
 def a_mismatched_requested_destination_stops_the_held_route_before_the_mutation():
   {==}
 
 law a_mismatched_requested_holder_stops_the_held_route_before_the_mutation:
-  {ld_adv_held_decided(A.AssociationHeld{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/other", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), LdAdvContext{1, "g", "/art", "attempt-1", "/common"}) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"holder"}, MutationHeld{"/holder"}, AssociationObserved{"holder", ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/other", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}}) : IO(LdAdvObs)}
+  {ld_adv_held_decided(A.AssociationHeld{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/other", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"holder"}, MutationHeld{"/holder"}, AssociationObserved{"holder", ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/other", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}}) : IO(LdAdvObs)}
 
 def a_mismatched_requested_holder_stops_the_held_route_before_the_mutation():
   {==}
 
 law a_mismatched_requested_attempt_stops_the_unheld_route_before_the_mutation:
-  {ld_adv_unheld_decided(A.AssociationHeld{A.AssociationRequested{"other", "/common", "tgt", "/r", fixture_oid_candidate(), fixture_oid_basis(), "/r", ""}, fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), LdAdvContext{1, "g", "/art", "attempt-1", "/common"}) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"attempt"}, MutationUnheld{}, AssociationObserved{"attempt", A.AssociationRequested{"other", "/common", "tgt", "/r", fixture_oid_candidate(), fixture_oid_basis(), "/r", ""}, fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}}) : IO(LdAdvObs)}
+  {ld_adv_unheld_decided(A.AssociationHeld{A.AssociationRequested{"other", "/common", "tgt", "/r", fixture_oid_candidate(), fixture_oid_basis(), "/r", ""}, fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}, "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"attempt"}, MutationUnheld{}, AssociationObserved{"attempt", A.AssociationRequested{"other", "/common", "tgt", "/r", fixture_oid_candidate(), fixture_oid_basis(), "/r", ""}, fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}}) : IO(LdAdvObs)}
 
 def a_mismatched_requested_attempt_stops_the_unheld_route_before_the_mutation():
   {==}
 
 law a_mismatched_requested_common_stops_the_held_route_before_the_mutation:
-  {ld_adv_held_decided(A.AssociationHeld{A.AssociationRequested{"attempt-1", "/other", "tgt", "/r", fixture_oid_candidate(), fixture_oid_basis(), "/holder", ""}, fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), LdAdvContext{1, "g", "/art", "attempt-1", "/common"}) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"common"}, MutationHeld{"/holder"}, AssociationObserved{"common", A.AssociationRequested{"attempt-1", "/other", "tgt", "/r", fixture_oid_candidate(), fixture_oid_basis(), "/holder", ""}, fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}}) : IO(LdAdvObs)}
+  {ld_adv_held_decided(A.AssociationHeld{A.AssociationRequested{"attempt-1", "/other", "tgt", "/r", fixture_oid_candidate(), fixture_oid_basis(), "/holder", ""}, fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"common"}, MutationHeld{"/holder"}, AssociationObserved{"common", A.AssociationRequested{"attempt-1", "/other", "tgt", "/r", fixture_oid_candidate(), fixture_oid_basis(), "/holder", ""}, fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), "/common", "/common", fixture_reads()}}) : IO(LdAdvObs)}
 
 def a_mismatched_requested_common_stops_the_held_route_before_the_mutation():
   {==}
 
 law a_mismatched_returned_basis_stops_the_held_route_before_the_mutation:
-  {ld_adv_held_decided(A.AssociationHeld{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), "other", fixture_oid_basis(), "/common", "/common", fixture_reads()}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), LdAdvContext{1, "g", "/art", "attempt-1", "/common"}) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"returned-basis"}, MutationHeld{"/holder"}, AssociationObserved{"returned-basis", ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), "other", fixture_oid_basis(), "/common", "/common", fixture_reads()}}) : IO(LdAdvObs)}
+  {ld_adv_held_decided(A.AssociationHeld{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), "other", fixture_oid_basis(), "/common", "/common", fixture_reads()}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}) == IO.pure(LdAdvObs, LdAdvNoCapture{AdvUnassociated{"returned-basis"}, MutationHeld{"/holder"}, AssociationObserved{"returned-basis", ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), "other", fixture_oid_basis(), "/common", "/common", fixture_reads()}}) : IO(LdAdvObs)}
 
 def a_mismatched_returned_basis_stops_the_held_route_before_the_mutation():
   {==}
@@ -4510,7 +4516,7 @@ def an_association_whose_holder_read_is_skipped_is_not_bound():
   {==}
 
 law a_refused_shared_association_keeps_the_reads_it_reached:
-  {ld_adv_association(ld_adv_unassociated(ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other"}, fixture_reads(), MutationHeld{"/holder"})) == AssociationRefused{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common"}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other"}, fixture_reads()} : AssociationEvidence}
+  {ld_adv_association(ld_adv_unassociated(ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other"}, fixture_reads(), MutationHeld{"/holder"})) == AssociationRefused{ld_assoc_request(LdAdvContext{1, "g", "/art", "attempt-1", "/common", shared_parent_path(shared_attempts_parent("/common"), "attempt-1")}, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), "holder-common", T.GBroken{"holder answers /other"}, fixture_reads()} : AssociationEvidence}
 
 def a_refused_shared_association_keeps_the_reads_it_reached():
   {==}
