@@ -924,6 +924,7 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(self.owner_processes(), [])
         recovered.stdin.write('\n')
         recovered.stdin.flush()
+        recovered.stdin.close()
         for operation_name in ('write', 'close', 'signal', 'release', 'acknowledge'):
             mutation_line = self.next_line(recovered)
             self.assertRegex(mutation_line,
@@ -958,6 +959,7 @@ class SharedInstance(unittest.TestCase):
         os.kill(pid, signal.SIGTERM)
         terminal.stdin.write('\n')
         terminal.stdin.flush()
+        terminal.stdin.close()
         status_line = self.next_line(terminal)
         self.assertEqual(status_line,
                          'native-final-observation:unavailable: native exit status was not retained')
