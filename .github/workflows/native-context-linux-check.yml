@@ -17,8 +17,8 @@ jobs:
       matrix:
         include:
           - product: managed-context
-            source_sha: 4be5fadf34ffc3cd5f8e4467067bd177d8f77146
-            source_tree: 1472faf9e02c2a3baa1f5d4146742e6cc3e723c4
+            source_sha: f638e050ba700505ea5c13979936aabb3db6227d
+            source_tree: 6ebd83f22d5411fe30e4ace2ab4f9f12d1a450d9
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
@@ -107,40 +107,54 @@ jobs:
             printf 'bend_sha256=%s\n' "$(sha256sum "$bend" | cut -d ' ' -f 1)"
             printf 'archive_sha256=%s\n' "$(sha256sum "$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain/bend-2.0.25-linux-x64.tar.gz" | cut -d ' ' -f 1)"
           } > "$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain/manifest.txt"
-      - name: Run file-backed check-only with a deadline
+      - name: Run production Main and instance fixture checks with deadlines
         shell: bash
         run: |
           set -euo pipefail
           bend="$NATIVE_DIAGNOSTIC_EVIDENCE/toolchain-home/bin/bend"
-          set +e
-          (cd owned && timeout --signal=TERM --kill-after=5s 180s \
-            "$bend" bend2/src/coordinator/main.bend --check-only) \
-            > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.stdout" \
-            2> "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.stderr"
-          status=$?
-          set -e
-          printf '%s\n' "$status" > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.exit-status"
-          if [[ "$status" == 124 || "$status" == 137 ]]; then
-            printf 'deadline_exceeded_after_seconds=180\ntermination_status=%s\n' "$status" \
-              > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.deadline"
-          else
-            printf 'deadline_exceeded_after_seconds=none\n' \
-              > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.deadline"
-          fi
-          sha256sum "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.stdout" \
-            "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.stderr" \
-            "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.exit-status" \
-            > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.sha256"
-          if [[ "$status" != 0 ]]; then exit "$status"; fi
+          run_check() {
+            local entry="$1"
+            local label="$2"
+            local status=0
+            set +e
+            (cd owned && timeout --signal=TERM --kill-after=5s 180s \
+              "$bend" "$entry" --check-only) \
+              > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/$label.stdout" \
+              2> "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/$label.stderr"
+            status=$?
+            set -e
+            printf '%s\n' "$status" > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/$label.exit-status"
+            if [[ "$status" == 124 || "$status" == 137 ]]; then
+              printf 'deadline_exceeded_after_seconds=180\ntermination_status=%s\n' "$status" \
+                > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/$label.deadline"
+            else
+              printf 'deadline_exceeded_after_seconds=none\n' \
+                > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/$label.deadline"
+            fi
+            sha256sum "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/$label.stdout" \
+              "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/$label.stderr" \
+              "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/$label.exit-status" \
+              > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/$label.sha256"
+            return "$status"
+          }
+          main_status=0
+          fixture_status=0
+          run_check bend2/src/coordinator/main.bend main-check-only || main_status=$?
+          run_check bend2/test/instance.bend instance-check-only || fixture_status=$?
+          printf 'main_status=%s\ninstance_fixture_status=%s\n' "$main_status" "$fixture_status" \
+            > "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/summary.txt"
+          if [[ "$main_status" != 0 || "$fixture_status" != 0 ]]; then exit 1; fi
       - name: Print check-only diagnostic output
         if: failure()
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' '--- check-only stdout ---'
-          cat "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.stdout"
-          printf '%s\n' '--- check-only stderr ---'
-          cat "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/check-only.stderr"
+          for label in main-check-only instance-check-only; do
+            printf '%s\n' "--- $label stdout ---"
+            cat "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/$label.stdout"
+            printf '%s\n' "--- $label stderr ---"
+            cat "$NATIVE_DIAGNOSTIC_EVIDENCE/logs/$label.stderr"
+          done
       - name: Retain diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
