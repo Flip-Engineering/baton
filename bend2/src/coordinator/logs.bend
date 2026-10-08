@@ -29,18 +29,18 @@ def schema() -> String:
   Schema.tables()
 
 type Policy is Data:
-  Policy{level: String, db: String, session: String}
+  Policy{level: String}
 
 def fallback_level(+value: String) -> String:
   Bool.pick(String,String.is_empty(value),default_level(),value)
 
-def policy_fields(db: String, session: String, fields: List<String>) -> Policy:
+def policy_fields(fields: List<String>) -> Policy:
   match fields:
-    case level <> rest: Policy{fallback_level(level),db,session}
-    case other: Policy{default_level(),db,session}
+    case level <> rest: Policy{fallback_level(level)}
+    case other: Policy{default_level()}
 
-def policy_row(db: String, session: String, row: String) -> Policy:
-  policy_fields(db,session,Tx.split_tabs(row))
+def policy_row(row: String) -> Policy:
+  policy_fields(Tx.split_tabs(row))
 
 def pending_sql(+session: String) -> String:
   "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL;"
@@ -57,7 +57,7 @@ def policy(+db: String, +session: String) -> IO(Policy):
   do IO<Policy>:
     ensured : Unit <- Schema.ensure(db)
     row : String <- IO.try(String,DB.Sql.query(db,schema() ++ policy_sql(session)))
-    IO.pure(Policy,policy_row(db,session,Tx.trim_nl(row)))
+    IO.pure(Policy,policy_row(Tx.trim_nl(row)))
 
 def known(+session: String) -> String:
   "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ")"
@@ -254,7 +254,7 @@ def step_choose_step(diagnostic: Bool, +level: String, +kind: String, +id: Strin
 # still holds.
 def frame_step(policy: Policy, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
   match policy:
-    case Policy{+level,db,session}: step_choose_step(String.eq(level,"diagnostic"),level,kind,id,line,held)
+    case Policy{+level}: step_choose_step(String.eq(level,"diagnostic"),level,kind,id,line,held)
 
 def step_lines(step: List<String> & String) -> List<String>:
   (lines,held)=step
