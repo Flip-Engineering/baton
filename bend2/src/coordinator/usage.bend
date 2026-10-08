@@ -353,7 +353,7 @@ def models_print(db: String, answer: String) -> IO(Unit):
 def models_query(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String) -> IO(Unit):
   do IO<Unit>:
     +argv : String <- IO.pure(String,models_argv(harness,model))
-    +args : List<String> <- IO.pure(List<String>,models_args(harness,command,model))
+    args : List<String> <- IO.pure(List<String>,models_args(harness,command,model))
     run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(args),Bool.pick(String,String.is_empty(cwd),".",cwd))
     answer : String <- models_result(db,session,harness,command,model,cwd,argv,run)
     models_print(db,answer)
