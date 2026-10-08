@@ -3397,3 +3397,121 @@ law an_identity_with_a_broken_read_is_not_bound:
 
 def an_identity_with_a_broken_read_is_not_bound():
   {==}
+
+law the_attested_attempt_retains_the_identity_observation:
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  for guard: String
+  for common: String
+  for common_observed: T.GitOut
+  for reserved: String
+  for obs: LdAdvObs
+  for raw: String
+  {shared_reserved_attested(repo, target, cand, basis, guard, common, common_observed, reserved, obs, Done{raw}) == (do IO<SharedLanding>:
+    attestation : Attestation <- ld_attest(reserved, AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), T.release_raw_of(Done{raw}), IdentityObserved{common, common_observed, target}, AssociationMissing{}, IntentMissing{}})
+    IO.pure(SharedLanding, SharedAdvanced{attestation})) : IO(SharedLanding)}
+
+def the_attested_attempt_retains_the_identity_observation(repo,target,cand,basis,guard,common,common_observed,reserved,obs,raw):
+  {==}
+law a_failed_release_still_retains_the_identity_observation:
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  for guard: String
+  for common: String
+  for common_observed: T.GitOut
+  for reserved: String
+  for obs: LdAdvObs
+  for code: U32
+  for detail: String
+  {shared_reserved_attested(repo, target, cand, basis, guard, common, common_observed, reserved, obs, Fail{(code, detail)}) == (do IO<SharedLanding>:
+    attestation : Attestation <- ld_attest(reserved, AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), T.release_raw_of(Fail{(code, detail)}), IdentityObserved{common, common_observed, target}, AssociationMissing{}, IntentMissing{}})
+    IO.pure(SharedLanding, SharedAdvanced{attestation})) : IO(SharedLanding)}
+
+def a_failed_release_still_retains_the_identity_observation(repo,target,cand,basis,guard,common,common_observed,reserved,obs,code,detail):
+  {==}
+law the_guard_answer_continues_to_the_real_token_call:
+  for handle: U32
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  for common: String
+  for common_observed: T.GitOut
+  for guard: String
+  {shared_guard_named(handle, repo, target, cand, basis, common, common_observed, Done{guard}) == (do IO<SharedLanding>:
+    token : Result<&1, &1, U32 & String, String> <- Rec.Receipt.attempt_token(target)
+    shared_token_named(handle, repo, target, cand, basis, common, common_observed, guard, token)) : IO(SharedLanding)}
+
+def the_guard_answer_continues_to_the_real_token_call(handle,repo,target,cand,basis,common,common_observed,guard):
+  {==}
+law the_token_answer_continues_to_the_real_ensure_call:
+  for handle: U32
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  for common: String
+  for common_observed: T.GitOut
+  for guard: String
+  for token: String
+  {shared_token_named(handle, repo, target, cand, basis, common, common_observed, guard, Done{token}) == (do IO<SharedLanding>:
+    ensured : Result<&1, &1, U32 & String, String> <- Rec.Receipt.ensure(shared_attempts_parent(common))
+    shared_parent_ensured(handle, repo, target, cand, basis, guard, common, common_observed, shared_attempts_parent(common), Tx.str_cat(token, Tx.str_cat("-", Tx.str_cat(cand, Tx.str_cat("-", basis)))), ensured)) : IO(SharedLanding)}
+
+def the_token_answer_continues_to_the_real_ensure_call(handle,repo,target,cand,basis,common,common_observed,guard,token):
+  {==}
+law a_created_parent_continues_to_the_reservation_loop:
+  for handle: U32
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  for guard: String
+  for common: String
+  for common_observed: T.GitOut
+  for parent: String
+  for base: String
+  {shared_parent_classified(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, Pb.production_record("created", parent, "0")) == shared_reserve_loop(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, 1) : IO(SharedLanding)}
+
+def a_created_parent_continues_to_the_reservation_loop(handle,repo,target,cand,basis,guard,common,common_observed,parent,base):
+  {==}
+law a_present_parent_continues_to_the_present_handler:
+  for handle: U32
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  for guard: String
+  for common: String
+  for common_observed: T.GitOut
+  for parent: String
+  for base: String
+  {shared_parent_present(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, Pb.production_record("present", parent, "0")) == shared_reserve_loop(handle, repo, target, cand, basis, guard, common, common_observed, parent, base, 1) : IO(SharedLanding)}
+
+def a_present_parent_continues_to_the_present_handler(handle,repo,target,cand,basis,guard,common,common_observed,parent,base):
+  {==}
+
+law a_successful_common_read_retains_its_raw_bytes_and_normalizes_its_value:
+  {shared_common_read("/repo", "tgt", "cand", "base", T.GRun{0, "common/path\n"}) == Bool.pick(IO(SharedLanding), U32.is_eq(0, 0), shared_claimed("/repo", "tgt", "cand", "base", "common/path", T.GRun{0, "common/path\n"}), IO.pure(SharedLanding, SharedCommonUnreadable{T.GRun{0, "common/path\n"}})) : IO(SharedLanding)}
+
+def a_successful_common_read_retains_its_raw_bytes_and_normalizes_its_value():
+  {==}
+law an_identity_whose_observation_carries_the_newline_is_bound:
+  {identity_bound(IdentityObserved{"common/path", T.GRun{0, "common/path\n"}, "tgt"}, "tgt") == True{} : Bool}
+
+def an_identity_whose_observation_carries_the_newline_is_bound():
+  {==}
+law a_nonzero_common_read_keeps_its_observation_and_refuses:
+  {shared_common_read("/repo", "tgt", "cand", "base", T.GRun{7, "unreadable\n"}) == Bool.pick(IO(SharedLanding), U32.is_eq(7, 0), shared_claimed("/repo", "tgt", "cand", "base", "unreadable", T.GRun{7, "unreadable\n"}), IO.pure(SharedLanding, SharedCommonUnreadable{T.GRun{7, "unreadable\n"}})) : IO(SharedLanding)}
+
+def a_nonzero_common_read_keeps_its_observation_and_refuses():
+  {==}
+law a_broken_common_read_keeps_its_detail_and_refuses:
+  {shared_common_read("/repo", "tgt", "cand", "base", T.GBroken{"no such repository"}) == IO.pure(SharedLanding, SharedCommonUnreadable{T.GBroken{"no such repository"}}) : IO(SharedLanding)}
+
+def a_broken_common_read_keeps_its_detail_and_refuses():
+  {==}
