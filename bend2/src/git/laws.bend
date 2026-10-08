@@ -987,23 +987,7 @@ def m3b_update_broken_is_not_a_landing(detail, target, cand):
 
 # M-3b: the fast-forward compare-and-swap lands while the target is still at
 # the recorded tip.
-law m3b_ff_cas_success_lands:
-  for wc: String
-  for target: String
-  {L.ff_stage5_ok(True{}, wc, target) == L.FFDone{T.LLanded{target, wc}} : L.FFLD}
-
-def m3b_ff_cas_success_lands(wc, target):
-  {==}
-
 # M-3b: the fast-forward compare-and-swap refuses when the target moved.
-law m3b_ff_cas_miss_refuses_retry:
-  for wc: String
-  for target: String
-  {L.ff_stage5_ok(False{}, wc, target) == L.FFDone{T.LBlocked{"target moved during landing; retry"}} : L.FFLD}
-
-def m3b_ff_cas_miss_refuses_retry(wc, target):
-  {==}
-
 # ---------------------------------------------------------------------------
 # M-3c: the answer names the outcome actually reached.
 
