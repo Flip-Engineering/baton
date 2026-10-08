@@ -685,7 +685,7 @@ def ff_stage5_captured_observation(target: String, candidate: String, artifact: 
     case T.CapturedDone{framing, diagnostics}: ff_stage5_framing(target, candidate, artifact, repo, framing, diagnostics)
 def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo: String, +outcome: Lg.Landing) -> IO(FFLD):
   match outcome:
-    case Lg.LandingHeld{request, candidate, basis, published, mutation, reads, prior, released}:
+    case Lg.LandingHeld{request, candidate, basis, publication, mutation, association, prior, released}:
       Bool.pick(IO(FFLD), T.release_done(released),
         ff_stage5_captured_observation(target, candidate, artifact, repo, mutation),
         Bool.pick(IO(FFLD), T.release_unperformed(released),
@@ -693,9 +693,9 @@ def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo:
           ff_stage5_blocked(Tx.str_cat("release failed: ", Tx.str_cat(T.release_detail(released), Tx.str_cat("; artifact ", artifact))))))
     case Lg.LandingClaimFailed{error}: ff_stage5_blocked(Tx.str_cat("claim failed: ", T.host_detail(error)))
     case Lg.LandingGuardBusy{target}: ff_stage5_blocked("guard busy")
-    case Lg.LandingAssociationRefused{request, step, observation, reads, prior, released}: ff_stage5_blocked(Tx.str_cat("association refused at ", step))
-    case Lg.LandingOldValueMismatch{expected, found, reads, prior, released}: ff_stage5_blocked("old target moved during landing; retry")
-    case Lg.LandingPublishRefused{outcome, reads, released}: ff_stage5_blocked("intent publication refused")
+    case Lg.LandingAssociationRefused{association, prior, publication, released}: ff_stage5_blocked(Tx.str_cat("association refused at ", step))
+    case Lg.LandingOldValueMismatch{expected, found, association, prior, publication, released}: ff_stage5_blocked("old target moved during landing; retry")
+    case Lg.LandingPublishRefused{outcome, prior, released}: ff_stage5_blocked("intent publication refused")
 
 def ff_stage5_named(candidate: String, old: String, repo: String, target: String, common: String, guard: String, observed: Result<&1, &1, U32 & String, String>) -> IO(FFLD):
   match observed:
@@ -939,7 +939,7 @@ def reads_fields(+reads: A.AssocReads, rest: List<String>) -> List<String>:
       association_read_fields(A.reads_target_of(reads),
         association_read_fields(A.reads_ancestor_of(reads),
           association_read_fields(A.reads_holder_of(reads),
-            association_read_fields(A.reads_destination_of(reads), rest))))))}}
+            association_read_fields(A.reads_destination_of(reads), rest))))))}
 
 def request_fields(request: A.AssociationRequest, rest: List<String>) -> List<String>:
   match request:
@@ -1783,7 +1783,7 @@ def association_ancestor_bound(target: A.AssocRead, +ancestor: A.AssocRead) -> B
   match target:
     case A.AssocReadPerformed{observation}:
       match observation:
-        case T.GRun{code, out}: Bool.pick(Bool, U32.is_eq(code, 0), association_read_ok(ancestor), Bool.pick(Bool, U32.is_eq(code, 1), A.read_skipped(ancestor), False{}))
+        case T.GRun{+code, out}: Bool.pick(Bool, U32.is_eq(code, 0), association_read_ok(ancestor), Bool.pick(Bool, U32.is_eq(code, 1), A.read_skipped(ancestor), False{}))
         case T.GBroken{detail}: False{}
     case A.AssocReadSkipped{}: False{}
 
@@ -4035,7 +4035,7 @@ law a_matching_association_continues_the_held_route_into_its_mutation:
   for ctx: LdAdvCtx
   {ld_adv_held_decided(fixture_matching_held(ctx), "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == (do IO<LdAdvObs>:
     obs : LdAdvObs <- ld_adv_wt("/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx)
-    IO.pure(LdAdvObs, ld_adv_keep_association(obs, AssociationObserved{"associate", ld_assoc_request(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads()}))) : IO(LdAdvObs)}
+    IO.pure(LdAdvObs, ld_adv_keep_association(obs, AssociationObserved{"associate", ld_assoc_request(ctx, "/holder", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}))) : IO(LdAdvObs)}
 
 def a_matching_association_continues_the_held_route_into_its_mutation(ctx):
   {==}
@@ -4044,7 +4044,7 @@ law a_matching_association_continues_the_unheld_route_into_its_mutation:
   for ctx: LdAdvCtx
   {ld_adv_unheld_decided(fixture_matching_unheld(ctx), "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx) == (do IO<LdAdvObs>:
     obs : LdAdvObs <- ld_adv_cas_run("/r", "tgt", fixture_oid_candidate(), fixture_oid_basis(), ctx)
-    IO.pure(LdAdvObs, ld_adv_keep_association(obs, AssociationObserved{"associate", ld_assoc_request(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads()}))) : IO(LdAdvObs)}
+    IO.pure(LdAdvObs, ld_adv_keep_association(obs, AssociationObserved{"associate", ld_assoc_request(ctx, "/r", "/r", "tgt", fixture_oid_candidate(), fixture_oid_basis()), fixture_oid_candidate(), fixture_oid_basis(), fixture_oid_basis(), ladvctx_common(ctx), ladvctx_common(ctx), fixture_reads_of(fixture_oid_candidate(), fixture_oid_basis(), ladvctx_common(ctx))}))) : IO(LdAdvObs)}
 
 def a_matching_association_continues_the_unheld_route_into_its_mutation(ctx):
   {==}
