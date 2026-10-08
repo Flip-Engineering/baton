@@ -37,18 +37,13 @@ type AssociationKept is Data:
                       holder_common: String, destination_common: String, reads: A.AssocReads}
   AssociationRefusedKept{request: A.AssociationRequest, step: String, observation: T.GitOut, reads: A.AssocReads}
 
-def association_kept(decision: A.Association) -> AssociationKept:
-  match decision:
-    case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads}:
-      AssociationHeldKept{request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads}
-    case A.AssociationRefused{request, step, observation, reads}:
-      AssociationRefusedKept{request, step, observation, reads}
-
-def association_kept_reads(kept: AssociationKept) -> A.AssocReads:
+# The step a retained association refused at, or the empty step for one that held or never ran, so
+# a consumer that no longer binds the decision can still report the real refusal step.
+def association_kept_step(kept: AssociationKept) -> String:
   match kept:
-    case AssociationHeldKept{request, candidate, basis, target_head, holder_common, destination_common, reads}: reads
-    case AssociationRefusedKept{request, step, observation, reads}: reads
-    case AssociationUnperformed{}: A.reads_none()
+    case AssociationRefusedKept{request, step, observation, reads}: step
+    case AssociationHeldKept{request, candidate, basis, target_head, holder_common, destination_common, reads}: ""
+    case AssociationUnperformed{}: ""
 
 # The publication result the landing already made, or an explicit statement that none was made.
 type PublicationKept is Data:
@@ -65,6 +60,14 @@ def fixture_kept_held() -> AssociationKept:
 
 def fixture_kept_none() -> AssociationKept:
   AssociationUnperformed{}
+
+# Two distinct performed decisions: the pre-publication one, and a later one that refused at the
+# holder read, whose recorded observation is the observation of the slot it refused at.
+def fixture_kept_prior() -> AssociationKept:
+  AssociationHeldKept{A.AssociationRequested{"attempt-0", "/cm", "tgt", "/repo", "c0", "b0", "/holder", ""}, "c0", "b0", "b0", "/cm", "/cm", A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "/cm\n"}})}
+
+def fixture_kept_refused() -> AssociationKept:
+  AssociationRefusedKept{A.AssociationRequested{"attempt-1", "/cm", "tgt", "/repo", "c1", "b1", "/holder", ""}, "holder-common", T.GRun{128, "fatal\n"}, A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{128, "fatal\n"}})}
 
 type Landing is Data:
   LandingClaimFailed{error: T.HostError}
@@ -188,12 +191,12 @@ def Landing.stopped(request: LandingRequest, handle: U32, outcome: Landing) -> I
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(h)
     Landing.released(req, h, prior, T.release_raw_of(released))
 
-def Landing.associations(landing_request: LandingRequest, handle: U32, publication: PublicationKept, observation: A.Association, prior: AssociationKept) -> IO(Landing):
-  match observation:
+def Landing.associations(landing_request: LandingRequest, handle: U32, publication: PublicationKept, decision: A.Association, prior: AssociationKept) -> IO(Landing):
+  match decision:
     case A.AssociationRefused{request, step, observation, reads}:
-      Landing.stopped(landing_request, handle, LandingAssociationRefused{association_kept(observation), prior, publication, T.ReleaseUnperformed{}})
+      Landing.stopped(landing_request, handle, LandingAssociationRefused{AssociationRefusedKept{request, step, observation, reads}, prior, publication, T.ReleaseUnperformed{}})
     case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads}:
-      Landing.old_value_checked(handle, landing_request, publication, candidate_oid, basis_oid, target_head, association_kept(observation), prior)
+      Landing.old_value_checked(handle, landing_request, publication, candidate_oid, basis_oid, target_head, AssociationHeldKept{request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads}, prior)
 
 def Landing.old_value_checked(handle: U32, request: LandingRequest, publication: PublicationKept, candidate: String, basis: String, head: String, association: AssociationKept, prior: AssociationKept) -> IO(Landing):
   +h = handle
@@ -267,12 +270,12 @@ def Landing.claimed_associated(handle: U32, request: LandingRequest) -> IO(Landi
     decision : A.Association <- A.Association.decide(A.AssociationRequested{I.requested_attempt(intent), I.requested_common(intent), I.requested_target(intent), I.requested_destination(intent), I.requested_candidate(intent), I.requested_basis(intent), I.requested_holder(intent), I.requested_retry(intent)})
     Landing.association_before_publish(h, req, decision)
 
-def Landing.association_before_publish(handle: U32, landing_request: LandingRequest, observation: A.Association) -> IO(Landing):
-  match observation:
+def Landing.association_before_publish(handle: U32, landing_request: LandingRequest, decision: A.Association) -> IO(Landing):
+  match decision:
     case A.AssociationRefused{request, step, observation, reads}:
-      Landing.stopped(landing_request, handle, LandingAssociationRefused{association_kept(observation), AssociationUnperformed{}, PublicationUnperformed{}, T.ReleaseUnperformed{}})
+      Landing.stopped(landing_request, handle, LandingAssociationRefused{AssociationRefusedKept{request, step, observation, reads}, AssociationUnperformed{}, PublicationUnperformed{}, T.ReleaseUnperformed{}})
     case A.AssociationHeld{request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads}:
-      Landing.publish_now(handle, landing_request, candidate_oid, basis_oid, association_kept(observation))
+      Landing.publish_now(handle, landing_request, candidate_oid, basis_oid, AssociationHeldKept{request, candidate_oid, basis_oid, target_head, holder_common, destination_common, reads})
 
 def Landing.publish_now(handle: U32, request: LandingRequest, candidate: String, basis: String, association: AssociationKept) -> IO(Landing):
   +h = handle
@@ -420,24 +423,77 @@ law a_release_failure_keeps_both_association_records_and_the_publication:
   for candidate: String
   for basis: String
   for mutation: T.CapturedRaw
-  {replace_release(LandingHeld{request, candidate, basis, publication_kept(published), mutation, fixture_kept_held(), fixture_kept_none(), T.ReleaseUnperformed{}}, T.ReleaseFailed{13, "release failed"}) == LandingHeld{request, candidate, basis, publication_kept(published), mutation, fixture_kept_held(), fixture_kept_none(), T.ReleaseFailed{13, "release failed"}} : Landing}
+  {replace_release(LandingHeld{request, candidate, basis, publication_kept(published), mutation, fixture_kept_refused(), fixture_kept_prior(), T.ReleaseUnperformed{}}, T.ReleaseFailed{13, "release failed"}) == LandingHeld{request, candidate, basis, publication_kept(published), mutation, fixture_kept_refused(), fixture_kept_prior(), T.ReleaseFailed{13, "release failed"}} : Landing}
 
 def a_release_failure_keeps_both_association_records_and_the_publication(request,published,candidate,basis,mutation):
   {==}
 
-law a_release_failure_keeps_the_refused_association_and_both_records:
-  {replace_release(LandingAssociationRefused{A.AssociationRefusedKept{A.AssociationRequested{"a1", "/cm", "tgt", "/repo", "c1", "b1", "/holder", "r1"}, "holder-common", T.GRun{128, ""}, A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "post\n"}})}, A.AssociationHeldKept{A.AssociationRequested{"a1", "/cm", "tgt", "/repo", "c1", "b1", "/holder", "r1"}, "c1", "b1", "b1", "/cm", "/cm", A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "pre\n"}})}, PublicationUnperformed{}, T.ReleaseUnperformed{}}, T.ReleaseFailed{13, "release failed"}) == LandingAssociationRefused{A.AssociationRefusedKept{A.AssociationRequested{"a1", "/cm", "tgt", "/repo", "c1", "b1", "/holder", "r1"}, "holder-common", T.GRun{128, ""}, A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "post\n"}})}, A.AssociationHeldKept{A.AssociationRequested{"a1", "/cm", "tgt", "/repo", "c1", "b1", "/holder", "r1"}, "c1", "b1", "b1", "/cm", "/cm", A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "pre\n"}})}, PublicationUnperformed{}, T.ReleaseFailed{13, "release failed"}} : Landing}
+law a_release_failure_keeps_the_refused_decision_and_the_prior_decision:
+  {replace_release(LandingAssociationRefused{fixture_kept_refused(), fixture_kept_prior(), PublicationUnperformed{}, T.ReleaseUnperformed{}}, T.ReleaseFailed{13, "release failed"}) == LandingAssociationRefused{fixture_kept_refused(), fixture_kept_prior(), PublicationUnperformed{}, T.ReleaseFailed{13, "release failed"}} : Landing}
 
-def a_release_failure_keeps_the_refused_association_and_both_records():
+def a_release_failure_keeps_the_refused_decision_and_the_prior_decision():
   {==}
 
-law a_post_publication_refusal_keeps_the_publication_and_both_records:
+law a_post_publication_refusal_keeps_the_publication_and_both_decisions:
+  for request: LandingRequest
+  for published: P.IntentPublish
+  {Landing.associations(request, 1, publication_kept(published), A.AssociationRefused{A.AssociationRequested{"attempt-1", "/cm", "tgt", "/repo", "c1", "b1", "/holder", ""}, "holder-common", T.GRun{128, "fatal\n"}, A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{128, "fatal\n"}})}, fixture_kept_prior()) == (do IO<Landing>:
+    released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(1)
+    IO.pure(Landing, LandingAssociationRefused{fixture_kept_refused(), fixture_kept_prior(), publication_kept(published), T.release_raw_of(released)})) : IO(Landing)}
+
+def a_post_publication_refusal_keeps_the_publication_and_both_decisions(request,published):
+  {==}
+
+law an_old_value_mismatch_keeps_the_publication_and_both_decisions:
+  for intent: I.IntentInput
+  for name: String
+  for content: String
+  for guard: String
+  for artifact: String
+  for attempt_directory: String
+  for repository: String
+  for published: P.IntentPublish
+  {Landing.old_value_checked(1, LandingRequested{intent, name, "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, publication_kept(published), "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "3333333333333333333333333333333333333333", fixture_kept_refused(), fixture_kept_prior()) == (do IO<Landing>:
+    released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(1)
+    IO.pure(Landing, LandingOldValueMismatch{"2222222222222222222222222222222222222222", "3333333333333333333333333333333333333333", fixture_kept_refused(), fixture_kept_prior(), publication_kept(published), T.release_raw_of(released)})) : IO(Landing)}
+
+def an_old_value_mismatch_keeps_the_publication_and_both_decisions(intent,name,content,guard,artifact,attempt_directory,repository,published):
+  {==}
+
+law the_pre_publication_decision_continues_into_the_publication_call:
+  for handle: U32
+  for request: LandingRequest
+  for candidate: String
+  for basis: String
+  {Landing.publish_now(handle, request, candidate, basis, fixture_kept_prior()) == (do IO<Landing>:
+    written : P.IntentPublish <- P.Intent.publish_intent(landingreq_intent(request), attempt_directory_for(intent_common(landingreq_intent(request)), intent_name(landingreq_intent(request))), landingreq_name(request), intent_content(candidate, basis, intent_target(landingreq_intent(request))))
+    Landing.published(handle, request, written, fixture_kept_prior())) : IO(Landing)}
+
+def the_pre_publication_decision_continues_into_the_publication_call(handle,request,candidate,basis):
+  {==}
+
+law a_publication_success_continues_into_the_revalidation:
+  for handle: U32
   for request: LandingRequest
   for intent: I.IntentInput
-  for published: P.IntentPublish
-  {Landing.associations(request, 1, publication_kept(published), A.AssociationRefused{A.AssociationRequested{"a1", "/cm", "tgt", "/repo", "c1", "b1", "/holder", "r1"}, "holder-common", T.GRun{128, "fatal\n"}, A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "post\n"}})}, fixture_kept_none()) == (do IO<Landing>:
-    released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(1)
-    IO.pure(Landing, LandingAssociationRefused{A.AssociationRefusedKept{A.AssociationRequested{"a1", "/cm", "tgt", "/repo", "c1", "b1", "/holder", "r1"}, "holder-common", T.GRun{128, "fatal\n"}, A.reads_holder(A.reads_none(), A.AssocReadPerformed{T.GRun{0, "post\n"}})}, fixture_kept_none(), publication_kept(published), T.release_raw_of(released)})) : IO(Landing)}
+  for raw: String
+  for path: String
+  for content: String
+  {Landing.published(handle, request, P.IntentBytesPublished{intent, raw, path, content}, fixture_kept_prior()) == Landing.associate_now(handle, request, PublicationPublished{P.IntentBytesPublished{intent, raw, path, content}}, fixture_kept_prior()) : IO(Landing)}
 
-def a_post_publication_refusal_keeps_the_publication_and_both_records(request,intent,published):
+def a_publication_success_continues_into_the_revalidation(handle,request,intent,raw,path,content):
+  {==}
+
+law a_publication_failure_keeps_the_prior_decision:
+  for handle: U32
+  for request: LandingRequest
+  for intent: I.IntentInput
+  for step: String
+  for name: String
+  for raw: String
+  {Landing.published(handle, request, P.PublishRefused{intent, step, name, raw}, fixture_kept_prior()) == (do IO<Landing>:
+    released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(handle)
+    Landing.released(request, handle, LandingPublishRefused{P.PublishRefused{intent, step, name, raw}, fixture_kept_prior(), T.ReleaseUnperformed{}}, T.release_raw_of(released))) : IO(Landing)}
+
+def a_publication_failure_keeps_the_prior_decision(handle,request,intent,step,name,raw):
   {==}

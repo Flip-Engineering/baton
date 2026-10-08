@@ -693,7 +693,7 @@ def ff_stage5_outcome(target: String, candidate: String, artifact: String, repo:
           ff_stage5_blocked(Tx.str_cat("release failed: ", Tx.str_cat(T.release_detail(released), Tx.str_cat("; artifact ", artifact))))))
     case Lg.LandingClaimFailed{error}: ff_stage5_blocked(Tx.str_cat("claim failed: ", T.host_detail(error)))
     case Lg.LandingGuardBusy{target}: ff_stage5_blocked("guard busy")
-    case Lg.LandingAssociationRefused{association, prior, publication, released}: ff_stage5_blocked(Tx.str_cat("association refused at ", step))
+    case Lg.LandingAssociationRefused{association, prior, publication, released}: ff_stage5_blocked(Tx.str_cat("association refused at ", Lg.association_kept_step(association)))
     case Lg.LandingOldValueMismatch{expected, found, association, prior, publication, released}: ff_stage5_blocked("old target moved during landing; retry")
     case Lg.LandingPublishRefused{outcome, prior, released}: ff_stage5_blocked("intent publication refused")
 
