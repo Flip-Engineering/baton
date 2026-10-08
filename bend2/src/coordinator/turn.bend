@@ -565,7 +565,7 @@ def retained_output(+db: String, +player: String, +id: String, +log: String, +ha
 def muse_retained_arguments(cmd: String, model: String, effort: String, prompt_file: String, +session: String) -> List<String>:
   List.append(&1,String,Muse.arguments(cmd,model,effort,prompt_file),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session]))
 
-def retained_arguments(omp: Bool, claude: Bool, cmd: String, model: String, effort: String, sessions: String, +native: String) -> String:
+def retained_arguments(omp: Bool, claude: Bool, +cmd: String, +model: String, +effort: String, sessions: String, +native: String) -> String:
   Bool.pick(String,claude,
     Claude.argv(cmd,model,effort,native,String.is_empty(native)),
   Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
