@@ -1,0 +1,234 @@
+name: Final core and combined context qualification
+
+on:
+  push:
+    branches:
+      - codex/final-native-context-core-combined-validation-20261008
+
+permissions:
+  contents: read
+
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - product: core
+            source_sha: 66dfe10ce964dadee59cdfe47d199887b9dac887
+            source_tree: 68690f966de8bda8e5892c607cee36d6da9d3185
+          - product: combined-context
+            source_sha: 41895e7e7cda459ca49fce430bd05642576908f9
+            source_tree: a6ddf61e4f2d76e0382e0ab7810f1a5b0c50c334
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - name: Check out qualification driver
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Check out pinned product source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ matrix.source_sha }}
+          path: source
+      - name: Verify product pins and create owned source clone
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/final-native-context-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${{ matrix.product }}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence/logs" "$evidence/toolchain"
+          printf 'FINAL_NATIVE_CONTEXT_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+          {
+            printf 'driver_commit=%s\n' "$(git rev-parse HEAD)"
+            printf 'driver_tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            printf 'product=%s\n' '${{ matrix.product }}'
+            printf 'expected_source_sha=%s\n' '${{ matrix.source_sha }}'
+            printf 'expected_source_tree=%s\n' '${{ matrix.source_tree }}'
+            uname -a
+            uname -m
+            lsb_release -a
+            git --version
+          } > "$evidence/logs/identity.txt" 2>&1
+          actual_sha="$(git -C source rev-parse HEAD)"
+          actual_tree="$(git -C source rev-parse 'HEAD^{tree}')"
+          printf 'actual_source_sha=%s\nactual_source_tree=%s\n' "$actual_sha" "$actual_tree" \
+            > "$evidence/logs/source-pin.txt"
+          test "$actual_sha" = '${{ matrix.source_sha }}'
+          test "$actual_tree" = '${{ matrix.source_tree }}'
+          git -C source status --short --branch > "$evidence/logs/source-status.txt"
+          git clone --no-hardlinks --quiet source owned
+          git -C owned checkout --quiet --detach '${{ matrix.source_sha }}'
+          test "$(git -C owned rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test "$(git -C owned rev-parse 'HEAD^{tree}')" = '${{ matrix.source_tree }}'
+          git -C owned status --short --branch > "$evidence/logs/owned-status.txt"
+      - name: Select Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Install pinned Bend 2.0.25
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$FINAL_NATIVE_CONTEXT_EVIDENCE/curl-shim" "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home"
+          cat > "$FINAL_NATIVE_CONTEXT_EVIDENCE/curl-shim/curl" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          output=''
+          args=("$@")
+          for ((index = 0; index < ${#args[@]}; index++)); do
+            if [[ "${args[index]}" == '-o' && $((index + 1)) -lt ${#args[@]} ]]; then
+              output="${args[index + 1]}"
+            fi
+          done
+          /usr/bin/curl "${args[@]}"
+          if [[ "$output" == */bend-2.0.25-linux-x64.tar.gz ]]; then
+            cp "$output" "$BEND_ARCHIVE_CAPTURE"
+          fi
+          SH
+          chmod 0755 "$FINAL_NATIVE_CONTEXT_EVIDENCE/curl-shim/curl"
+          export BEND_ARCHIVE_CAPTURE="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/bend-2.0.25-linux-x64.tar.gz"
+          PATH="$FINAL_NATIVE_CONTEXT_EVIDENCE/curl-shim:$PATH" \
+            BEND_HOME="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home" \
+            sh owned/docs/bend2/reference/toolchain/install-2.0.25.sh \
+            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/install.log" 2>&1
+          bend="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend"
+          "$bend" version > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/version.txt"
+          test "$(cat "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/version.txt")" = 'bend 2.0.25'
+          sha256sum "$bend" > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/bend-binary.sha256"
+          printf '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4  %s\n' \
+            "$BEND_ARCHIVE_CAPTURE" | sha256sum -c - > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/archive-check.log"
+          sha256sum "$BEND_ARCHIVE_CAPTURE" > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/archive.sha256"
+          tar -tzf "$BEND_ARCHIVE_CAPTURE" > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/archive-members.txt"
+      - name: Build production Main
+        shell: bash
+        run: |
+          set -euo pipefail
+          bend="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend"
+          mkdir -p owned/.scratch/bend2
+          status=0
+          set +e
+          (cd owned && BEND="$bend" CC=clang sh bend2/scripts/build-native.sh \
+            bend2/src/coordinator/main.bend .scratch/bend2/baton2) \
+            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/main-build.stdout" \
+            2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/main-build.stderr"
+          status=$?
+          set -e
+          printf '%s\n' "$status" > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/main-build.exit-status"
+          test "$status" = 0
+      - name: Build process and instance host test fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          bend="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend"
+          for fixture in process instance; do
+            status=0
+            set +e
+            (cd owned && BEND="$bend" CC=clang sh bend2/scripts/build-native.sh \
+              "bend2/test/$fixture.bend" ".scratch/bend2/$fixture-test") \
+              > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/$fixture-fixture-build.stdout" \
+              2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/$fixture-fixture-build.stderr"
+            status=$?
+            set -e
+            printf '%s\n' "$status" \
+              > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/$fixture-fixture-build.exit-status"
+            test "$status" = 0
+          done
+      - name: Run core behavior suites
+        if: matrix.product == 'core'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd owned
+          evidence="$FINAL_NATIVE_CONTEXT_EVIDENCE/logs"
+          run_py() {
+            local label="$1"; shift
+            local status=0
+            set +e
+            python3 "$@" > "$evidence/$label.stdout" 2> "$evidence/$label.stderr"
+            status=$?
+            set -e
+            printf '%s\n' "$status" > "$evidence/$label.exit-status"
+            sha256sum "$evidence/$label.stdout" "$evidence/$label.stderr" \
+              "$evidence/$label.exit-status" > "$evidence/$label.sha256"
+            return "$status"
+          }
+          failures=0
+          for suite in logs turn process receive configure stop native-observation fixed-coordinator \
+            ui-orchestra-native mcp-root mcp-contract mcp-command control-identity shared-instance \
+            root-wake muse-root; do
+            run_py "$suite" "bend2/test/$suite.py" || failures=$((failures + 1))
+          done
+          node_status=0
+          set +e
+          BATON2_REQUIRE_NATIVE_VIEW=1 BATON2_NATIVE_BINARY="$PWD/.scratch/bend2/baton2" \
+            node --test bend2/test/context-provider.test.mjs bend2/test/provider-availability.mjs \
+              bend2/test/ui-orchestra-server.test.mjs \
+            > "$evidence/node-provider-ui.stdout" 2> "$evidence/node-provider-ui.stderr"
+          node_status=$?
+          set -e
+          printf '%s\n' "$node_status" > "$evidence/node-provider-ui.exit-status"
+          sha256sum "$evidence/node-provider-ui.stdout" "$evidence/node-provider-ui.stderr" \
+            "$evidence/node-provider-ui.exit-status" > "$evidence/node-provider-ui.sha256"
+          printf 'suite_failure_count=%s\nnode_status=%s\n' "$failures" "$node_status" \
+            > "$evidence/core-summary.txt"
+          test "$failures" = 0
+          test "$node_status" = 0
+      - name: Run combined context checks and fixtures
+        if: matrix.product == 'combined-context'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd owned
+          evidence="$FINAL_NATIVE_CONTEXT_EVIDENCE/logs"
+          bend="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend"
+          run_recorded() {
+            local label="$1"; shift
+            local status=0
+            set +e
+            "$@" > "$evidence/$label.stdout" 2> "$evidence/$label.stderr"
+            status=$?
+            set -e
+            printf '%s\n' "$status" > "$evidence/$label.exit-status"
+            sha256sum "$evidence/$label.stdout" "$evidence/$label.stderr" \
+              "$evidence/$label.exit-status" > "$evidence/$label.sha256"
+            return "$status"
+          }
+          failures=0
+          run_recorded instance-check-only "$bend" bend2/test/instance.bend --check-only \
+            || failures=$((failures + 1))
+          run_recorded context-lifecycle env BEND="$bend" python3 bend2/test/context-lifecycle.py \
+            || failures=$((failures + 1))
+          run_recorded shared-instance env BEND="$bend" python3 bend2/test/shared-instance.py \
+            || failures=$((failures + 1))
+          run_recorded selected-context-package python3 bend2/test/package-selected-context.py \
+            || failures=$((failures + 1))
+          run_recorded context-project-policy node --test bend2/test/context-project-policy.test.mjs \
+            || failures=$((failures + 1))
+          run_recorded context-provider node --test bend2/test/context-provider.test.mjs \
+            || failures=$((failures + 1))
+          printf 'suite_failure_count=%s\n' "$failures" > "$evidence/context-summary.txt"
+          test "$failures" = 0
+      - name: Print failure logs
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in "$FINAL_NATIVE_CONTEXT_EVIDENCE"/logs/*.stderr; do
+            printf '%s\n' "--- $file ---"
+            cat "$file"
+          done
+          for file in "$FINAL_NATIVE_CONTEXT_EVIDENCE"/logs/*.stdout; do
+            printf '%s\n' "--- $file ---"
+            cat "$file"
+          done
+      - name: Retain complete qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-${{ matrix.product }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/
+          if-no-files-found: warn
+          retention-days: 14
+
