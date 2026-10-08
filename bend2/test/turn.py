@@ -159,9 +159,9 @@ assert sys.stdin.read()==''
         self.assertEqual(session['model'],'requested-model')
         event_lines=self.generation('omp-turn').read_text().splitlines()
         frames=[json.loads(line) for line in event_lines]
-        self.assertEqual([f for f in frames if f.get('type')=='message_update'], [])
+        self.assertEqual([f['assistantMessageEvent']['delta'] for f in frames
+                          if f.get('type')=='message_update'], [self.task.read_text()])
         self.assertEqual([f['partialResult']['content'][0]['text'] for f in frames if f.get('type')=='tool_execution_update'], [self.task.read_text()])
-        self.assertEqual([f['type'] for f in frames], ['response','message_end','agent_end','agent_end','tool_execution_update','baton_event_filter'])
         with sqlite3.connect(self.db) as connection:
             stored_event=connection.execute('SELECT event FROM turns WHERE id=?',('omp-turn',)).fetchone()[0]
         self.assertEqual(json.loads(stored_event), next(frame for frame in frames
@@ -184,14 +184,14 @@ assert sys.stdin.read()==''
             r'{"type":"message_update\u0000suffix","probe":"nul suffix"}',
             '{invalid JSON containing message_update}',
         ]
-        omitted = [
+        prefixes = [
             '  {"message":{"content":"prefix"},"type":"message_update"}  ',
             r'{"typ\u0065":"message_\u0075pdate","probe":"escaped"}',
         ]
         final_text = "Final answer with apostrophe ' and unicode λ🙂."
         terminal = json.dumps({'type':'agent_end','isTerminal':True,'messages':[
             {'role':'assistant','content':[{'type':'text','text':final_text}]}]})
-        (self.cwd/'events.jsonl').write_text('\n'.join(retained+omitted+[terminal])+'\n')
+        (self.cwd/'events.jsonl').write_text('\n'.join(retained+prefixes+[terminal])+'\n')
         self.player.write_text('#!'+sys.executable+'\n'+'''import pathlib,sys
 sys.stdin.readline()
 sys.stdin.readline()
@@ -201,7 +201,8 @@ assert sys.stdin.read()==''
 ''')
         self.call('turn','omp-worker','retained-turn',str(self.player),'model','low',str(self.cwd),str(self.task),str(self.log),'')
         note='{"type":"baton_event_filter","requested":"array+delta","active":false,"outcome":"unacknowledged"}'
-        self.assertEqual(self.generation('retained-turn').read_text().splitlines(),retained+[terminal,omitted[1],note])
+        self.assertEqual(self.generation('retained-turn').read_text().splitlines(),
+                         retained+prefixes+[terminal,note])
         self.assertEqual(json.loads(self.call('delivery','retained-turn'))['body'],final_text)
 
     def test_omp_empty_terminal_envelope_delivers_streamed_trial_report(self):
@@ -339,7 +340,8 @@ print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assi
 ''')
         self.call('turn','omp-worker','refused-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
         frames=[json.loads(line) for line in self.generation('refused-turn').read_text().splitlines()]
-        self.assertEqual([f['type'] for f in frames],['response','response','message_end','agent_end','baton_event_filter'])
+        self.assertEqual([f['assistantMessageEvent']['delta'] for f in frames
+                          if f.get('type')=='message_update'], ['partial λ'])
         self.assertIs(frames[0]['success'],False)
         self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'array+delta','active':False,'outcome':'refused'})
         self.assertEqual(json.loads(self.call('delivery','refused-turn'))['body'],'refused answer λ')
