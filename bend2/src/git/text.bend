@@ -262,66 +262,73 @@ def hex_cat_go(xs: List<String>, acc: String) -> String:
 def hex_decode(s: String) -> String:
   hex_cat_go(hex_pairs_go(s, SNil{}, Nil{}), SNil{})
 
-# The argv encoding of the process effect: each element as its UTF-8 byte
 # The expected guard path for a common directory and a target ref, spelled by the same rule receipt.c
 # implements: the common, then /baton2-landing, then / plus the encoded target plus .lock. The encoding
 # leaves ASCII letters, digits, dot, underscore and hyphen unchanged and writes every other unsigned UTF-8
 # byte as a percent sign and two lowercase hexadecimal digits, percent itself included. Each byte of a
 # multi-byte character is written, so a code point is not one byte here. Receipt.guard_path is the producer
 # of the observed path; this function is the expected naming and states no observation.
-def ref_hyphen_dot_underscore(code: U32) -> Bool:
+def ref_punctuation(code: U32) -> Bool:
   Bool.pick(Bool, U32.is_eq(code, 45), True{},
     Bool.pick(Bool, U32.is_eq(code, 46), True{}, U32.is_eq(code, 95)))
-def ref_is_literal(code: U32) -> Bool:
-  Bool.pick(Bool, U32.is_lt(code, 48), False{},
-    Bool.pick(Bool, U32.is_lt(code, 58), True{},
-      Bool.pick(Bool, U32.is_lt(code, 65), False{},
-        Bool.pick(Bool, U32.is_lt(code, 91), True{},
-          Bool.pick(Bool, U32.is_lt(code, 97), ref_hyphen_dot_underscore(code),
-            Bool.pick(Bool, U32.is_lt(code, 123), True{}, False{}))))))
 
+def ref_digit(code: U32) -> Bool:
+  Bool.pick(Bool, U32.is_lt(code, 48), False{}, U32.is_lt(code, 58))
+
+def ref_upper(code: U32) -> Bool:
+  Bool.pick(Bool, U32.is_lt(code, 65), False{}, U32.is_lt(code, 91))
+
+def ref_lower(code: U32) -> Bool:
+  Bool.pick(Bool, U32.is_lt(code, 97), False{}, U32.is_lt(code, 123))
+
+def ref_is_literal(code: U32) -> Bool:
+  Bool.pick(Bool, ref_punctuation(code), True{},
+    Bool.pick(Bool, ref_digit(code), True{},
+      Bool.pick(Bool, ref_upper(code), True{}, ref_lower(code))))
 
 def ref_hex_digit(n: U32) -> Char:
   Bool.pick(Char, U32.is_lt(n, 10), Char.from_u32(U32.add(48, n)), Char.from_u32(U32.add(87, n)))
 
-def ref_byte(u: U32, rest: String) -> String:
+def ref_byte_piece(u: U32) -> String:
   +hi = U32.shrn(u, 4)
   +lo = U32.and(u, 15)
-  str_cat("%", str_cat(one_char(ref_hex_digit(hi)), str_cat(one_char(ref_hex_digit(lo)), rest)))
+  str_cat("%", str_cat(one_char(ref_hex_digit(hi)), one_char(ref_hex_digit(lo))))
 
-def ref_bytes2(b1: U32, b2: U32, rest: String) -> String:
-  ref_byte(b1, ref_byte(b2, rest))
+def ref_pieces_1(code: U32) -> List<String>:
+  Con{ref_byte_piece(code), Nil{}}
 
-def ref_bytes3(b1: U32, b2: U32, b3: U32, rest: String) -> String:
-  ref_byte(b1, ref_byte(b2, ref_byte(b3, rest)))
+def ref_pieces_2(b1: U32, b2: U32) -> List<String>:
+  Con{ref_byte_piece(b1), Con{ref_byte_piece(b2), Nil{}}}
 
-def ref_bytes4(b1: U32, b2: U32, b3: U32, b4: U32, rest: String) -> String:
-  ref_byte(b1, ref_byte(b2, ref_byte(b3, ref_byte(b4, rest))))
+def ref_pieces_3(b1: U32, b2: U32, b3: U32) -> List<String>:
+  Con{ref_byte_piece(b1), Con{ref_byte_piece(b2), Con{ref_byte_piece(b3), Nil{}}}}
+
+def ref_pieces_4(b1: U32, b2: U32, b3: U32, b4: U32) -> List<String>:
+  Con{ref_byte_piece(b1), Con{ref_byte_piece(b2), Con{ref_byte_piece(b3), Con{ref_byte_piece(b4), Nil{}}}}}
 
 def ref_cont(b: U32) -> U32:
   U32.or(128, U32.and(b, 63))
 
-def ref_char_code(code: U32, width: U32, rest: String) -> String:
-  Bool.pick(String, U32.is_eq(width, 1), ref_byte(code, rest),
-    Bool.pick(String, U32.is_eq(width, 2), ref_bytes2(U32.or(192, U32.and(U32.shrn(code, 6), 31)), ref_cont(code), rest),
-      Bool.pick(String, U32.is_eq(width, 3),
-        ref_bytes3(U32.or(224, U32.and(U32.shrn(code, 12), 15)), ref_cont(U32.shrn(code, 6)), ref_cont(code), rest),
-        ref_bytes4(U32.or(240, U32.and(U32.shrn(code, 18), 7)), ref_cont(U32.shrn(code, 12)), ref_cont(U32.shrn(code, 6)), ref_cont(code), rest))))
+def ref_pieces_of(code: U32, width: U32) -> List<String>:
+  Bool.pick(List<String>, U32.is_eq(width, 1), ref_pieces_1(code),
+    Bool.pick(List<String>, U32.is_eq(width, 2), ref_pieces_2(U32.or(192, U32.and(U32.shrn(code, 6), 31)), ref_cont(code)),
+      Bool.pick(List<String>, U32.is_eq(width, 3),
+        ref_pieces_3(U32.or(224, U32.and(U32.shrn(code, 12), 15)), ref_cont(U32.shrn(code, 6)), ref_cont(code)),
+        ref_pieces_4(U32.or(240, U32.and(U32.shrn(code, 18), 7)), ref_cont(U32.shrn(code, 12)), ref_cont(U32.shrn(code, 6)), ref_cont(code)))))
 
-def ref_char(c: Char, rest: String) -> String:
+def ref_char_pieces(+c: Char) -> List<String>:
   +code = Char.to_u32(c)
-  Bool.pick(String, ref_is_literal(code), str_cat(one_char(c), rest),
-    ref_char_code(code, char_bytes(c), rest))
+  Bool.pick(List<String>, ref_is_literal(code), Con{one_char(c), Nil{}}, ref_pieces_of(code, char_bytes(c)))
 
-def ref_encode_go(s: String, acc: String) -> String:
+def ref_encoded_go(s: String, out: List<String>) -> List<String>:
   match s:
-    case SNil{}: acc
+    case SNil{}: out
     case SCon{c, rest}:
-      +acc2 = acc
-      ref_encode_go(rest, ref_char(c, acc2))
+      +out2 = out
+      ref_encoded_go(rest, List.append(&1, String, out2, ref_char_pieces(c)))
 
 def ref_encode(s: String) -> String:
-  ref_encode_go(s, "")
+  join("", ref_encoded_go(s, Nil{}))
 
 def carries_nul_go(s: String) -> Bool:
   match s:
@@ -334,11 +341,22 @@ def carries_nul(s: String) -> Bool:
 
 # An empty target and an embedded NUL in either operand are refused by the producer, so the expected rule
 # answers None for them rather than naming a path.
-def expected_guard_path(common: String, target: String) -> Maybe<String>:
-  Bool.pick(Maybe<String>, Bool.pick(Bool, String.is_empty(target), False{}, Bool.pick(Bool, carries_nul(common), False{}, Bool.pick(Bool, carries_nul(target), False{}, True{}))),
-    Some{str_cat(common, str_cat("/baton2-landing", str_cat("/", str_cat(ref_encode(target), ".lock"))))},
-    None{})
+def guard_naming_refused(common: String, target: String) -> Bool:
+  Bool.pick(Bool, String.is_empty(target), True{},
+    Bool.pick(Bool, carries_nul(common), True{}, carries_nul(target)))
 
+def expected_guard_path(common: String, target: String) -> Maybe<String>:
+  Bool.pick(Maybe<String>, guard_naming_refused(common, target),
+    None{},
+    Some{str_cat(common, str_cat("/baton2-landing", str_cat("/", str_cat(ref_encode(target), ".lock"))))})
+
+def guard_matches(expected: Maybe<String>, guard: String) -> Bool:
+  match expected:
+    case None{}: False{}
+    case Some{path}: str_eq(guard, path)
+
+
+# The argv encoding of the process effect: each element as its UTF-8 byte
 def enc_argv_go(xs: List<String>, acc: String) -> String:
   match xs:
     case Nil{}: acc

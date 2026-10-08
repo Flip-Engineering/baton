@@ -2215,10 +2215,7 @@ def association_bound(association: AssociationEvidence, +candidate: String, +bas
 # The guard the producer names for this canonical common and target, from the pure rule Tx.expected_guard_path
 # spells after receipt.c. A naming the rule refuses leaves the guard unbound.
 def guard_bound(guard: String, common: String, target: String) -> Bool:
-  +expected = Tx.expected_guard_path(common, target)
-  match expected:
-    case None{}: False{}
-    case Some{path}: Tx.str_eq(guard, path)
+  Tx.guard_matches(Tx.expected_guard_path(common, target), guard)
 
 def artifact_bound(artifact: String, +reserved: String) -> Bool:
   Tx.str_eq(artifact, shared_parent_path(reserved, "stderr"))
@@ -3882,6 +3879,54 @@ law a_guard_named_for_another_common_is_not_bound:
 def a_guard_named_for_another_common_is_not_bound():
   {==}
 
+law a_plain_name_is_named_in_order:
+  {Tx.expected_guard_path("/common", "main") == Some{"/common/baton2-landing/main.lock"} : Maybe<String>}
+
+def a_plain_name_is_named_in_order():
+  {==}
+
+law a_mixed_name_keeps_its_order:
+  {Tx.expected_guard_path("/common", "a/b%c") == Some{"/common/baton2-landing/a%2fb%25c.lock"} : Maybe<String>}
+
+def a_mixed_name_keeps_its_order():
+  {==}
+
+law the_punctuation_characters_stay_literal:
+  {Tx.expected_guard_path("/common", "a-b.c_d") == Some{"/common/baton2-landing/a-b.c_d.lock"} : Maybe<String>}
+
+def the_punctuation_characters_stay_literal():
+  {==}
+
+law the_character_above_the_punctuation_is_encoded:
+  {Tx.expected_guard_path("/common", Tx.str_cat(Tx.one_char(Char.from_u32(47)), Tx.one_char(Char.from_u32(58)))) == Some{"/common/baton2-landing/%2f%3a.lock"} : Maybe<String>}
+
+def the_character_above_the_punctuation_is_encoded():
+  {==}
+
+law adjacent_two_byte_characters_are_encoded_in_order:
+  {Tx.expected_guard_path("/common", Tx.str_cat(Tx.one_char(Char.from_u32(233)), Tx.one_char(Char.from_u32(232)))) == Some{"/common/baton2-landing/%c3%a9%c3%a8.lock"} : Maybe<String>}
+
+def adjacent_two_byte_characters_are_encoded_in_order():
+  {==}
+
+law a_three_byte_character_is_encoded_byte_by_byte:
+  {Tx.expected_guard_path("/common", Tx.one_char(Char.from_u32(8364))) == Some{"/common/baton2-landing/%e2%82%ac.lock"} : Maybe<String>}
+
+def a_three_byte_character_is_encoded_byte_by_byte():
+  {==}
+
+law a_four_byte_character_is_encoded_byte_by_byte:
+  {Tx.expected_guard_path("/common", Tx.one_char(Char.from_u32(128512))) == Some{"/common/baton2-landing/%f0%9f%98%80.lock"} : Maybe<String>}
+
+def a_four_byte_character_is_encoded_byte_by_byte():
+  {==}
+
+law a_nul_in_the_common_is_not_named:
+  {Tx.expected_guard_path(Tx.one_char(Char.from_u32(0)), "tgt") == None{} : Maybe<String>}
+
+def a_nul_in_the_common_is_not_named():
+  {==}
+
 def fixture_held_evidence(+reserved: String, +common: String, +target: String, +candidate: String, +basis: String) -> AttemptEvidence:
   fixture_evidence_of(reserved, common, target, candidate, basis, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(candidate, target), IdentityObserved{common, T.GRun{0, common}, target}, fixture_held_association(common, candidate, basis, target), fixture_held_intent(reserved, common, target, candidate, basis, "/repo", "attempt-1", "/holder"))
 
@@ -3889,6 +3934,12 @@ law an_attempt_whose_guard_names_another_target_is_not_admitted:
   {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), AttemptEvidence{fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), fixture_guard_of("/common", "other"), shared_parent_path(fixture_reserved(), "stderr"), AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1", "/holder"), fixture_reservation()}))) == False{} : Bool}
 
 def an_attempt_whose_guard_names_another_target_is_not_admitted():
+  {==}
+
+law an_attempt_whose_guard_names_another_common_is_not_admitted:
+  {ld_admitted(admission_of(fixture_attestation_of(fixture_reserved(), AttemptEvidence{fixture_reserved(), "/repo", "tgt", fixture_oid_candidate(), fixture_oid_basis(), fixture_guard_of("/other", "tgt"), shared_parent_path(fixture_reserved(), "stderr"), AdvLanded{}, T.CapturedDone{"exit 0\nrest", "diagnostics"}, fixture_held_qualification(fixture_oid_candidate(), "tgt"), T.ReleaseDone{}, IdentityObserved{"/common", T.GRun{0, "/common"}, "tgt"}, fixture_held_association("/common", fixture_oid_candidate(), fixture_oid_basis(), "tgt"), fixture_held_intent(fixture_reserved(), "/common", "tgt", fixture_oid_candidate(), fixture_oid_basis(), "/repo", "attempt-1", "/holder"), fixture_reservation()}))) == False{} : Bool}
+
+def an_attempt_whose_guard_names_another_common_is_not_admitted():
   {==}
 
 def fixture_held_obs(+candidate: String, +target: String) -> LdAdvObs:
