@@ -579,7 +579,7 @@ def managed_persist_output(+owner: String, +worktree: String, +query: String,
                            +bootstrap_digest: String,
                            output: ManagedOutput) -> String:
   match output:
-    case ManagedOutput{event_frame, error_json, exit_status, +complete}:
+    case ManagedOutput{event_frame, error_json, exit_status, complete}:
       event_frame
 
 def managed_output_exit_status(output: ManagedOutput) -> U32:
@@ -677,7 +677,7 @@ def managed_store_result(+db: String, +binding: String,
 def store_managed_output(+db: String, +binding: String, +query: String, +owner: String,
                          output: ManagedOutput) -> IO(Unit):
   match output:
-    case ManagedOutput{event_frame, error_json, exit_status, complete}:
+    case ManagedOutput{event_frame, error_json, exit_status, +complete}:
       do IO<Unit>:
         result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
           ContextStore.state_publish_managed_sql(query, owner,
