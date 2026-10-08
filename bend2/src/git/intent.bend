@@ -92,8 +92,7 @@ def carries_tab_go(text: String, found: Bool) -> Bool:
       carries_tab_go(rest, next)
 
 def carries_tab(text: String) -> Bool:
-  +start = False{}
-  carries_tab_go(text, start)
+  carries_tab_go(text, False{})
 
 # Leaves first. Every supported shape is compared whole, so a missing or extra separator
 # and a malformed pending field each reach their own refusal instead of being flattened.

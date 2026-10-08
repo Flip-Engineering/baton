@@ -42,7 +42,7 @@ def Attempt.claimed(claimed: Result<&1, &1, U32 & String, Maybe<U32>>, target: S
     case Fail{error}: Attempt.claim_failed(error)
     case Done{held}: Attempt.held(held, target, guard, artifact, argv, cwd)
 
-def Attempt.capture_guarded(common: String, target: String, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
+def Attempt.capture_guarded(common: String, +target: String, guard: String, artifact: String, argv: String, cwd: String) -> IO(AttemptCapture):
   do IO<AttemptCapture>:
     claimed : Result<&1, &1, U32 & String, Maybe<U32>> <- R.Receipt.claim(common, target)
     Attempt.claimed(claimed, target, guard, artifact, argv, cwd)
