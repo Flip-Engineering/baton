@@ -50,6 +50,12 @@ jobs:
           printf '%s\n' "$status" > "$evidence/$label.exit-status"
           sha256sum "$evidence/$label.stdout" "$evidence/$label.stderr" \
             "$evidence/$label.exit-status" > "$evidence/$label.sha256"
+          if [[ "$status" != 0 ]]; then
+            printf '%s\n' "--- $label stdout ---"
+            cat "$evidence/$label.stdout"
+            printf '%s\n' "--- $label stderr ---"
+            cat "$evidence/$label.stderr"
+          fi
           exit "$status"
           SH
           chmod 0755 "$evidence/run-recorded.sh"
@@ -179,11 +185,21 @@ jobs:
             test "$status" = 0
           done
       - name: Run landing test
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_land
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" land env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/land.py
+      - name: Retain landing test failure output
+        if: ${{ always() && steps.suite_land.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-land-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/land.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run MCP command test
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_mcp_command
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -191,96 +207,303 @@ jobs:
           bend="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend"
           "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" mcp-command \
             env BEND="$bend" python3 bend2/test/mcp-command.py
+      - name: Retain MCP command test failure output
+        if: ${{ always() && steps.suite_mcp_command.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-mcp-command-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/mcp-command.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run MCP root tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_mcp_root
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" mcp-root env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/mcp-root.py
+      - name: Retain MCP root tests failure output
+        if: ${{ always() && steps.suite_mcp_root.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-mcp-root-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/mcp-root.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run MCP contract tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_mcp_contract
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" mcp-contract env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/mcp-contract.py
+      - name: Retain MCP contract tests failure output
+        if: ${{ always() && steps.suite_mcp_contract.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-mcp-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/mcp-contract.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Logs tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_logs
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" logs env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/logs.py
+      - name: Retain Logs tests failure output
+        if: ${{ always() && steps.suite_logs.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/logs.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Turn tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_turn
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" turn env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/turn.py
+      - name: Retain Turn tests failure output
+        if: ${{ always() && steps.suite_turn.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-turn-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/turn.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Process tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_process
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" process env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/process.py
+      - name: Retain Process tests failure output
+        if: ${{ always() && steps.suite_process.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-process-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/process.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Receive tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_receive
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/receive.py
+      - name: Retain Receive tests failure output
+        if: ${{ always() && steps.suite_receive.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-receive-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/receive.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Receive output tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_receive_output
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-output env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/receive-output.py
+      - name: Retain Receive output tests failure output
+        if: ${{ always() && steps.suite_receive_output.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-receive-output-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/receive-output.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Receive terminal boundary tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_receive_terminal_boundary
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-terminal-boundary env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/receive-terminal-boundary.py
+      - name: Retain Receive terminal boundary tests failure output
+        if: ${{ always() && steps.suite_receive_terminal_boundary.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-receive-terminal-boundary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/receive-terminal-boundary.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Configure tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_configure
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" configure env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/configure.py
+      - name: Retain Configure tests failure output
+        if: ${{ always() && steps.suite_configure.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-configure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/configure.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Stop tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_stop
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" stop env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/stop.py
+      - name: Retain Stop tests failure output
+        if: ${{ always() && steps.suite_stop.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-stop-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/stop.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Native observation tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_native_observation
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" native-observation env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/native-observation.py
+      - name: Retain Native observation tests failure output
+        if: ${{ always() && steps.suite_native_observation.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-native-observation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/native-observation.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Fixed coordinator tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_fixed_coordinator
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" fixed-coordinator env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/fixed-coordinator.py
+      - name: Retain Fixed coordinator tests failure output
+        if: ${{ always() && steps.suite_fixed_coordinator.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-fixed-coordinator-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/fixed-coordinator.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Control tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_control
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" control env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/control.py
+      - name: Retain Control tests failure output
+        if: ${{ always() && steps.suite_control.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-control-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/control.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Retained control tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_retained_control
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" retained-control env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/retained-control.py
+      - name: Retain Retained control tests failure output
+        if: ${{ always() && steps.suite_retained_control.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-retained-control-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/retained-control.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Role guard tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_role_guard
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" role-guard env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/role-guard.py
+      - name: Retain Role guard tests failure output
+        if: ${{ always() && steps.suite_role_guard.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-role-guard-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/role-guard.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Root wake tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_root_wake
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" root-wake env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/root-wake.py
+      - name: Retain Root wake tests failure output
+        if: ${{ always() && steps.suite_root_wake.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-root-wake-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/root-wake.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Codex root tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_codex_root
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" codex-root env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/codex-root.py
+      - name: Retain Codex root tests failure output
+        if: ${{ always() && steps.suite_codex_root.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-codex-root-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/codex-root.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Muse root tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_muse_root
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" muse-root env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/muse-root.py
+      - name: Retain Muse root tests failure output
+        if: ${{ always() && steps.suite_muse_root.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-muse-root-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/muse-root.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run OMP root tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_omp_root
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" omp-root env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/omp-root.py
+      - name: Retain OMP root tests failure output
+        if: ${{ always() && steps.suite_omp_root.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-omp-root-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/omp-root.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Control identity tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_control_identity
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" control-identity env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/control-identity.py
+      - name: Retain Control identity tests failure output
+        if: ${{ always() && steps.suite_control_identity.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-control-identity-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/control-identity.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Shared instance tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_shared_instance
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" shared-instance env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/shared-instance.py
+      - name: Retain Shared instance tests failure output
+        if: ${{ always() && steps.suite_shared_instance.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-shared-instance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/shared-instance.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run UI native tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_ui_orchestra_native
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" ui-orchestra-native env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/ui-orchestra-native.py
+      - name: Retain UI native tests failure output
+        if: ${{ always() && steps.suite_ui_orchestra_native.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-ui-orchestra-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/ui-orchestra-native.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run UI browser tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_ui_orchestra_browser
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -290,8 +513,17 @@ jobs:
           "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" ui-orchestra-browser \
             env BATON2_REQUIRE_NATIVE_VIEW=1 BATON2_NATIVE_BINARY="$PWD/.scratch/bend2/baton2" \
             python3 bend2/test/ui-orchestra-browser.py
+      - name: Retain UI browser tests failure output
+        if: ${{ always() && steps.suite_ui_orchestra_browser.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-ui-orchestra-browser-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/ui-orchestra-browser.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run MCP and provider UI tests
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_node_provider_ui
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -300,10 +532,27 @@ jobs:
             env BATON2_REQUIRE_NATIVE_VIEW=1 BATON2_NATIVE_BINARY="$PWD/.scratch/bend2/baton2" \
             node --test bend2/test/context-provider.test.mjs bend2/test/provider-availability.mjs \
               bend2/test/ui-orchestra-server.test.mjs bend2/test/context-project-policy.test.mjs
+      - name: Retain MCP and provider UI tests failure output
+        if: ${{ always() && steps.suite_node_provider_ui.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-node-provider-ui-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/node-provider-ui.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run selected context package test
-        if: always() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success'
+        id: suite_selected_context_package
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
         shell: bash
         run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" selected-context-package python3 bend2/test/package-selected-context.py
+      - name: Retain selected context package test failure output
+        if: ${{ always() && steps.suite_selected_context_package.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-selected-context-package-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/selected-context-package.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Print failure logs
         if: failure()
         shell: bash
