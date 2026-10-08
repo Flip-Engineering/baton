@@ -702,7 +702,7 @@ const MUTATIONS = [
     file: join('bend2', 'src', 'git', 'land.bend'),
     find: '        merged : T.GitOut <- Git.runGit(p2, ["merge", "--ff-only", c2])',
     replace: '        merged : T.GitOut <- Git.runGit(p2, ["merge", c2])',
-    law: 'm3a_held_advance_is_the_worktree_fast_forward',
+    law: 'm3a_held_ready_branch_runs_the_fast_forward_command',
   },
   {
     name: 'm3a-a-held-target-advances-without-its-worktree',
