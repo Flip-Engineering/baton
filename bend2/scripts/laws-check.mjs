@@ -173,7 +173,7 @@ const MUTATIONS = [
   {"name": "deferred-guidance-hint-falls-back-to-a-cursor", "file": "bend2/src/coordinator/guidance.bend", "find": "ORDER BY seq)),'')", "replace": "ORDER BY seq)),CAST(0 AS INTEGER))", "law": "the_outstanding_guidance_reader_names_stored_guidance"},
   {"name": "deferred-state-ignores-the-stored-note", "file": "bend2/src/coordinator/turn.bend", "find": "messages WHERE id=\" ++ C.q(id ++ \":deferred\") ++ \") THEN 1 ELSE 0 END;", "replace": "messages WHERE id=\" ++ C.q(id ++ \":deferred\") ++ \") THEN 0 ELSE 0 END;", "law": "the_deferred_note_presence_reads_the_note_identity"},
   {"name": "deferred-note-is-written-again-when-recorded", "file": "bend2/src/coordinator/turn.bend", "find": "  match recorded:\n    case True{}: IO.pure(Unit,Unit{})", "replace": "  match recorded:\n    case True{}: do IO<Unit>:\n      +kept : String <- IO.try(String,DB.Sql.query(db,deferred_pending_sql(player)))\n      noted : Unit <- report(db,player,kept ++ \":deferred\",deferred_text(kept,Tx.trim_nl(kept)))\n      IO.pure(Unit,Unit{})", "law": "a_recorded_deferred_note_is_not_written_again"},
-  {"name": "principal-completion-preparation-uses-parent-only", "file": "bend2/src/coordinator/turn.bend", "find": "def prepare(+db: String, +player: String, id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):\n  do IO<Unit>:\n    recipient : String <- IO.try(String,DB.Sql.query(db,\"SELECT \" ++ C.report_recipient(C.q(player)) ++ \" IS NOT NULL;\"))", "replace": "def prepare(+db: String, +player: String, id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):\n  do IO<Unit>:\n    recipient : String <- IO.try(String,DB.Sql.query(db,\"SELECT parent IS NOT NULL FROM sessions WHERE id=\" ++ C.q(player) ++ \";\"))", "law": "completion_preparation_checks_the_upstream_recipient"},
+  {"name": "principal-completion-preparation-uses-parent-only", "file": "bend2/src/coordinator/turn.bend", "find": "def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):\n  do IO<Unit>:\n    +generation : String <- IO.pure(String,generation_log(log,id))\n    recipient : String <- IO.try(String,DB.Sql.query(db,\"SELECT \" ++ C.report_recipient(C.q(player)) ++ \" IS NOT NULL;\"))", "replace": "def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):\n  do IO<Unit>:\n    +generation : String <- IO.pure(String,generation_log(log,id))\n    recipient : String <- IO.try(String,DB.Sql.query(db,\"SELECT parent IS NOT NULL FROM sessions WHERE id=\" ++ C.q(player) ++ \";\"))", "law": "completion_preparation_checks_the_upstream_recipient"},
   {"name": "principal-completion-delivery-uses-parent-only", "file": "bend2/src/coordinator/turn.bend", "find": "def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):\n  do IO<Result<&1,&1,U32 & String,Unit>>:\n    recipient : String <- IO.try(String,DB.Sql.query(db,\"SELECT \" ++ C.report_recipient(C.q(player)) ++ \" IS NOT NULL;\"))", "replace": "def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):\n  do IO<Result<&1,&1,U32 & String,Unit>>:\n    recipient : String <- IO.try(String,DB.Sql.query(db,\"SELECT parent IS NOT NULL FROM sessions WHERE id=\" ++ C.q(player) ++ \";\"))", "law": "completion_delivery_checks_the_upstream_recipient"},
   {"name": "stopped-principal-completion-uses-parent-only", "file": "bend2/src/coordinator/stop.bend", "find": "SELECT st.report_id,s.id,\" ++ C.report_recipient(\"s.id\") ++ \",'report',", "replace": "SELECT st.report_id,s.id,s.parent,'report',", "law": "stopped_completion_reports_to_the_recorded_upstream_recipient"},
   { name: "native-detached-launch-skipped", file: join("bend2","src","coordinator","control.bend"), find: "Host.Control.launch(Tx.enc_argv([executable,\"--dispatch-message\",database,id]),database,id)", replace: "IO.pure(Result<&1,&1,U32 & String,String>,Done{\"{}\"})", law: "authorized_detached_delivery_launches_the_native_self_entry" },
@@ -301,8 +301,8 @@ const MUTATIONS = [
   {
     name: "naming-entry-skips-the-store",
     file: join('bend2', 'src', 'coordinator', "main.bend"),
-    find: "    result : String <- IO.try(String, Store.apply(db,command))",
-    replace: "    result : String <- IO.pure(String,\"[]\")",
+    find: "    +result : String <- IO.try(String, Store.apply(db,command))",
+    replace: "    +result : String <- IO.pure(String,\"[]\")",
     law: "stored_command_entry_uses_the_actual_store",
   },
   {
@@ -644,7 +644,7 @@ const MUTATIONS = [
   {
     name: 'm17-refused-conversation-completes-instead',
     file: join('bend2', 'src', 'coordinator', 'receive.bend'),
-    find: 'case True{}: restart_pending(db,session,id,native,cwd,handle,lock,deliveries,again)',
+    find: 'case True{}: restart_pending(db,session,id,cursor,native,cwd,handle,lock,deliveries,again)',
     replace: 'case True{}: completed(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again)',
     law: 'm17_refused_conversation_restarts_the_attempt',
   },
@@ -693,8 +693,8 @@ const MUTATIONS = [
   {
     name: 'm3a-held-advance-drops-the-fast-forward-requirement',
     file: join('bend2', 'src', 'git', 'land.bend'),
-    find: '    g : T.GitOut <- Git.runGit(p2, ["merge", "--ff-only", c2])',
-    replace: '    g : T.GitOut <- Git.runGit(p2, ["merge", c2])',
+    find: '        merged : T.GitOut <- Git.runGit(p2, ["merge", "--ff-only", c2])',
+    replace: '        merged : T.GitOut <- Git.runGit(p2, ["merge", c2])',
     law: 'm3a_held_advance_is_the_worktree_fast_forward',
   },
   {
