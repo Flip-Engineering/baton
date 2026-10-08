@@ -86,9 +86,9 @@ def dirname_step(+rest: String, +current: String, +last: String) -> String:
   match rest:
     case SNil{}: last
     case SCon{+head, +tail}:
-      Bool.pick(String, U32.is_eq(Char.to_u32(head), 47),
-        dirname_step(tail, current ++ SCon{head, SNil{}}, current ++ SCon{head, SNil{}}),
-        dirname_step(tail, current ++ SCon{head, SNil{}}, last))
+      +next = current ++ SCon{head, SNil{}}
+      dirname_step(tail, next,
+        Bool.pick(String, U32.is_eq(Char.to_u32(head), 47), next, last))
 
 def executable_directory(path: String) -> String:
   dirname_step(path, SNil{}, SNil{})
@@ -97,9 +97,8 @@ def database_parent_step(+rest: String, +current: String, +last: String) -> Stri
   match rest:
     case SNil{}: Bool.pick(String, String.is_empty(last), "/", last)
     case SCon{+head, +tail}:
-      Bool.pick(String, U32.is_eq(Char.to_u32(head), 47),
-        database_parent_step(tail, current ++ SCon{head, SNil{}}, current),
-        database_parent_step(tail, current ++ SCon{head, SNil{}}, last))
+      database_parent_step(tail, current ++ SCon{head, SNil{}},
+        Bool.pick(String, U32.is_eq(Char.to_u32(head), 47), current, last))
 
 def database_parent(+canonical_database: String) -> String:
   database_parent_step(canonical_database, SNil{}, SNil{})
