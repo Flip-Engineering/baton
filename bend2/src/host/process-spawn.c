@@ -3576,6 +3576,7 @@ static int br_instance_recover(BatonProcessCall *call) {
       .length=payload_length},payload,-1,&reply);
   free(payload);
   if(!error && (reply.owner!=current.token || reply.epoch!=current.epoch))error=ESTALE;
+  if(!error && reply.op==BI_REPLY && reply.error)error=reply.error;
   if(!error && (reply.op!=BI_HELLO || reply.length!=sizeof(state) ||
       reply.state!=2))error=EPROTO;
   if(!error)error=br_read_all(socket_fd,&state,sizeof(state));

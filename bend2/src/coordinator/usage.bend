@@ -331,7 +331,7 @@ def models_text_answer(+session: String, +harness: String, +command: String, +mo
 def models_outcome(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, outcome: T.RunRes) -> IO(String):
   match outcome:
     case T.RSpawn{detail}: IO.pure(String,models_unknown(session,harness,command,model,cwd,argv,"processStatusUnavailable: " ++ detail))
-    case T.RRun{T.SExit{0},out}:
+    case T.RRun{T.SExit{0},+out}:
       Bool.pick(IO(String),String.eq(harness,"muse"),IO.pure(String,models_text_answer(session,harness,command,model,cwd,argv,out)),IO.try(String,DB.Sql.query(db,models_json_answer(session,harness,command,model,cwd,argv,out))))
     case T.RRun{T.SExit{code},out}: IO.pure(String,models_raw_failure(session,harness,command,model,cwd,argv,"exit",code,out))
     case T.RRun{T.SSignal{num},out}: IO.pure(String,models_raw_failure(session,harness,command,model,cwd,argv,"signal",num,out))
