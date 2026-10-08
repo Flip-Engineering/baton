@@ -697,6 +697,8 @@ law m7_the_store_validates_the_sender_it_records:
 def m7_the_store_validates_the_sender_it_records():
   {==}
 
+# UI projection DDL is admitted through the same schema functions used by native
+# writes. Each law checks a bounded part of the projection schema.
 # M-8: an acknowledgement is bound to the message and to the recipient it
 # names, and it keeps the first receipt. A caller cannot acknowledge a message
 # addressed to another session. Acknowledgement discharges the recipient's

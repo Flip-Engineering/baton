@@ -1,0 +1,46 @@
+{
+ "capturedAt": "2026-10-07 21:00:00 UTC",
+ "contractVersion": 1,
+ "cursor": "fixture-events-3-recovered",
+ "ensembles": [],
+ "fixture": true,
+ "fixtureNote": "Harness-driven SSE recovery fixture, not a ?fixture= render document. Scripts a transient pre-open 503 followed by a healthy long-lived SSE response. The browser harness serves this script on /orchestra/events and checks the assertions below. Not live coordinator state.",
+ "players": [],
+ "script": [
+  {
+   "respond": { "body": { "error": "owner-election-in-progress" }, "status": 503 },
+   "step": 1,
+   "when": "first pre-open events probe (transient: not the exact terminal error, so the client falls through to connectEvents instead of stopping)"
+  },
+  {
+   "respond": {
+    "frames": [
+     { "data": { "contractVersion": 1, "cursor": "fixture-events-1-hello", "generation": "fixture-events-gen-1" }, "event": "hello", "id": "fixture-events-1-hello" },
+     { "data": { "pendingCount": 1, "session": "fixture-player-1", "unacknowledgedCount": 0 }, "event": "pending", "id": "fixture-events-2-pending" },
+     { "data": { "id": "fixture-transition-1", "kind": "report", "session": "fixture-player-1" }, "event": "transition", "id": "fixture-events-3-transition" }
+    ],
+    "headers": { "content-type": "text/event-stream" },
+    "holdOpen": true,
+    "status": 200
+   },
+   "step": 2,
+   "when": "second pre-open events probe onward"
+  }
+ ],
+ "assertions": [
+  "bounded probe resolves on response headers; connectEvents runs after step 2 without manual Reconnect",
+  "zero snapshot requests occur during events-only recovery (snapshot count unchanged after the initial load)",
+  "events request URL carries subject=fixture-player-1, since=fixture-events-0-boot, generation=fixture-events-gen-0",
+  "subject, cursor, and generation stay bound after hello: since advances to fixture-events-3-transition and generation becomes fixture-events-gen-1",
+  "permanent 503 with error native-owner-subscription-unavailable still stops: status unavailable, no further events fetch, no polling loop",
+  "transient notice clears after hello; no redundant snapshot follows committed events"
+ ],
+ "expectTerminal503": {
+  "furtherEventsFetches": 0,
+  "notice": "Live stream unavailable: the shared owner subscription is not installed yet (#676). The snapshot still updates on Reconnect.",
+  "status": "unavailable"
+ },
+ "initialQuery": "?subject=fixture-player-1&since=fixture-events-0-boot&generation=fixture-events-gen-0",
+ "subject": "fixture-player-1",
+ "version": 1
+}

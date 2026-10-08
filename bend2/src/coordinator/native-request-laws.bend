@@ -78,6 +78,7 @@ def native_reply_failed_write_has_no_success_marker(db,id,code,text):
 
 def admitted_reply(+db: String, +parent: String, +id: String, +response: String) -> IO(Unit):
   do IO<Unit>:
+    ready : String <- IO.try(String,Requests.prepare_projection(db))
     accepted : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ Requests.schema() ++ Requests.response_sql(parent,id,response) ++ "SELECT changes();COMMIT;"))
     written : String <- IO.try(String,DB.Sql.query(db,"SELECT written FROM native_requests WHERE id=" ++ C.q(id) ++ ";"))
     result : String <- IO.try(String,Requests.reply_result(db,id,String.eq(accepted,"1\n"),String.eq(written,"1\n")))
