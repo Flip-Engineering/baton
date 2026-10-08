@@ -74,14 +74,12 @@ def name_char_ok(c: Char) -> Bool:
 # uses, so the character step is inlined here rather than split into a helper that would call this
 # function before it is defined.
 def name_go(text: String, ok: Bool) -> Bool:
-  +t = text
-  +sofar = ok
-  match t:
-    case SNil{}: sofar
+  match text:
+    case SNil{}: ok
     case SCon{c, rest}:
       +here = c
       Bool.pick(Bool, name_char_ok(here),
-        name_go(rest, sofar),
+        name_go(rest, ok),
         False{})
 
 def name_has_nul_go(text: String) -> Bool:
