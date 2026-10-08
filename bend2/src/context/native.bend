@@ -509,7 +509,7 @@ def boundary_text(+object: J.Json, +key: String) -> String:
 
 def managed_exit_code(+kind: String, parsed: Maybe<U32>) -> ManagedExit:
   match parsed:
-    case Some{code}:
+    case Some{+code}:
       Bool.pick(ManagedExit, String.eq(kind, "exit"),
         ManagedExit{code, U32.is_eq(code, 0)},
         Bool.pick(ManagedExit, String.eq(kind, "signal"),
@@ -529,7 +529,7 @@ def managed_exit_status(+status: String) -> ManagedExit:
 
 def managed_output_value(+event_frame: String, exit: ManagedExit) -> ManagedOutput:
   match exit:
-    case ManagedExit{code, complete}:
+    case ManagedExit{+code, complete}:
       Bool.pick(ManagedOutput, complete,
         ManagedOutput{event_frame, SNil{}, code, True{}},
         ManagedOutput{event_frame, event_frame, code, False{}})
@@ -579,7 +579,7 @@ def managed_persist_output(+owner: String, +worktree: String, +query: String,
                            +bootstrap_digest: String,
                            output: ManagedOutput) -> String:
   match output:
-    case ManagedOutput{event_frame, error_json, exit_status, complete}:
+    case ManagedOutput{event_frame, error_json, exit_status, +complete}:
       event_frame
 
 def managed_output_exit_status(output: ManagedOutput) -> U32:
