@@ -21,7 +21,6 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
-const ENTRY = join('bend2', 'src', 'coordinator', 'main.bend');
 const SCRATCH = join(tmpdir(), `bend2-wake-laws-check-${process.pid}`);
 const ENV = { ...process.env, BEND_NO_TELEMETRY: '1' };
 
@@ -41,9 +40,9 @@ function resolveBend() {
 
 const BEND = resolveBend();
 
-function compile(cwd) {
+function compile(cwd, module) {
   try {
-    execFileSync(BEND, [ENTRY, '--check-only'], { env: ENV, cwd, encoding: 'utf8', maxBuffer: Infinity });
+    execFileSync(BEND, [module, '--check-only'], { env: ENV, cwd, encoding: 'utf8', maxBuffer: Infinity });
     return { ok: true, output: '' };
   } catch (err) {
     return { ok: false, output: `${err.stdout ?? ''}${err.stderr ?? ''}` };
@@ -51,9 +50,12 @@ function compile(cwd) {
 }
 
 // The operative calls of the positive path. `file` is relative to the tree
-// root, `find` must occur exactly `times` times, and the mutation replaces the
-// first occurrence, which is the definition site; the law that pins it follows
-// the definition in each file.
+// root, `find` must occur at least once, and the mutation replaces the first
+// occurrence, which is the definition site; the law that pins it follows the
+// definition in each file. `entry` is the module whose compile must fail: the
+// module that states the law where the law lives beside its function, and the
+// application entry where the law lives in a separate law module.
+const ENTRY_MODULE = 'bend2/src/coordinator/main.bend';
 const mutations = [
   {
     law: 'committed_identity_reads_the_committed_row',
@@ -110,6 +112,7 @@ const mutations = [
     description: 'the control-side admission drives the committed answer',
     find: '    woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_answer(db,saved)',
     replace: '    woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_id(db,id)',
+    entry: ENTRY_MODULE,
   },
   {
     law: 'the_wake_driver_reads_the_count_before_it_locks',
@@ -117,6 +120,7 @@ const mutations = [
     description: 'the wake driver reads the pending count before it locks',
     find: '    owed : Bool <- wake_owed(db,session,cursor)\n    wake_locked(db,session,cursor,launch,owed)',
     replace: '    owed : Bool <- wake_owed(db,session,cursor)\n    wake_locked(db,session,cursor,launch,False{})',
+    entry: ENTRY_MODULE,
   },
   {
     law: 'a_handed_invocation_settles_the_claim_only_while_holding_the_lock',
@@ -124,6 +128,7 @@ const mutations = [
     description: 'a handed invocation settles the claim from its own count read',
     find: 'def claim_left(+db: String, +session: String) -> IO(Unit):\n  do IO<Unit>:\n    pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,"0")))\n    left : Unit <- release_if_owed(db,session,Bool.not(String.eq(pending,"0\\n")))\n    IO.pure(Unit,Unit{})',
     replace: 'def claim_left(+db: String, +session: String) -> IO(Unit):\n  do IO<Unit>:\n    pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,"0")))\n    left : Unit <- release_if_owed(db,session,False{})\n    IO.pure(Unit,Unit{})',
+    entry: ENTRY_MODULE,
   },
 ];
 
@@ -135,6 +140,18 @@ function count(text, needle) {
     index = text.indexOf(needle, index + needle.length);
   }
   return total;
+}
+
+function report(row) {
+  console.log(JSON.stringify({
+    law: row.law,
+    file: row.file,
+    compiles: row.entry ?? row.file,
+    mutation: row.description,
+    mutated: row.mutated,
+    gated: row.gated,
+    detail: row.detail,
+  }));
 }
 
 function rows() {
@@ -151,29 +168,22 @@ function rows() {
     const text = readFileSync(path, 'utf8');
     const found = count(text, mutation.find);
     if (found < 1) {
-      reports.push({ ...mutation, mutated: false, gated: false, detail: 'mutation site not found' });
+      const row = { ...mutation, mutated: false, gated: false, detail: 'mutation site not found' };
+      reports.push(row); report(row);
+      rmSync(tree, { recursive: true, force: true });
       continue;
     }
     writeFileSync(path, text.replace(mutation.find, mutation.replace));
-    const result = compile(tree);
+    const result = compile(tree, mutation.entry ?? mutation.file);
     const firstLine = result.output.split('\n').find((line) => line.startsWith('Location:')) ?? '';
-    reports.push({ ...mutation, mutated: true, gated: !result.ok, detail: result.ok ? 'compile succeeded' : firstLine || 'compile failed' });
+    const row = { ...mutation, mutated: true, gated: !result.ok, detail: result.ok ? 'compile succeeded' : firstLine || 'compile failed' };
+    reports.push(row); report(row);
     rmSync(tree, { recursive: true, force: true });
   }
   return reports;
 }
 
 const results = rows();
-for (const row of results) {
-  console.log(JSON.stringify({
-    law: row.law,
-    file: row.file,
-    mutation: row.description,
-    mutated: row.mutated,
-    gated: row.gated,
-    detail: row.detail,
-  }));
-}
 const ungated = results.filter((row) => !row.gated);
 console.log(JSON.stringify({ mutations: results.length, gated: results.length - ungated.length, ungated: ungated.length }));
 process.exit(ungated.length ? 1 : 0);
