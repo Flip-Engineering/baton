@@ -107,10 +107,20 @@ function send(ws, method, params = {}) {
   });
 }
 async function openPage(url) {
-  const response = await fetch(
-    wsUrl.replace('ws://', 'http://').replace(/\/devtools\/.*$/, '/json/new?about:blank'),
-    { method: 'PUT' },
-  );
+  let response;
+  try {
+    response = await fetch(
+      wsUrl.replace('ws://', 'http://').replace(/\/devtools\/.*$/, '/json/new?about:blank'),
+      { method: 'PUT' },
+    );
+  } catch (error) {
+    const failure = new Error(
+      `Chromium target request failed; exit=${chrome.exitCode}; signal=${chrome.signalCode}; stderr=${chromeErr}`,
+      { cause: error },
+    );
+    teardown();
+    throw failure;
+  }
   if (!response.ok) throw new Error(await response.text());
   const page = await response.json();
   if (pageWs) pageWs.close();
