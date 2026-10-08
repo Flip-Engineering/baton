@@ -3037,7 +3037,7 @@ static int br_owner_recover(BrOwner *owner,const char *directory,const char *boo
         .wake={-1,-1},.spool=-1,.native_life=life,.generation=1,
         .id=++owner->next_id,.native_pid=saved.pid,.exited=terminal,
         .status=terminal_status,.input_closed=1,.ready=1,.prepared=1,
-        .monitor_only=1,.status_unavailable=!terminal};
+        .monitor_only=1,.status_unavailable=0};
       life=-1;
       keeper->directory=canonical;canonical=NULL;
       keeper->manifest=manifest;memset(&manifest,0,sizeof(manifest));

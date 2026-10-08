@@ -429,7 +429,7 @@ def keeper_recovery_readiness_from_host(+bootstrap: Bootstrap,
     Bool.and(String.eq(readiness_text(value, "expectedBinding"), expected_binding),
     Bool.and(String.eq(readiness_json_text(value, "ownerIncarnation") ++ ":"
       ++ readiness_json_text(value, "ownerEpoch"), owner_witness),
-      readiness_false(value, "cancelled")))))))))))),
+      readiness_false(value, "cancelled"))))))))))),
     KeeperObserverReady{bootstrap_query(bootstrap), bootstrap_owner(bootstrap),
       bootstrap_keeper_path(bootstrap), "starter", "0"},
     KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"})
