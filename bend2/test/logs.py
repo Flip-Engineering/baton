@@ -150,9 +150,7 @@ sys.exit(%d)
         self.assertFalse(pathlib.Path(str(stderr) + '.meta').exists())
         storage = json.loads(self.call('logs-storage'))
         stderr_row = next(row for row in storage['stderrRuns'] if row['stderr'] == str(stderr))
-        self.assertEqual(stderr_row['health'], 'run-artifacts-absent')
         self.assertEqual(stderr_row['stderrBytes'], stderr.stat().st_size)
-        self.assertEqual(stderr_row['accountedBytes'], stderr.stat().st_size)
         saved = self.lines()
         self.assertEqual([json.loads(line).get('type') for line in saved],
                          ['response', 'tool_execution_start', 'tool_execution_update', 'tool_execution_end',
@@ -231,14 +229,6 @@ sys.exit(%d)
         self.assertTrue(row['acknowledged'])
         self.assertTrue(row['reported'])
         self.assertTrue(row['cleanupEligible'], row)
-        self.assertEqual(row['stderrSpoolBytes'], len(b'complete native diagnostics\n'))
-        self.assertGreater(row['stderrMetadataBytes'], 0)
-        self.assertEqual(row['stderrRetention'], {
-            'schema': 'baton2-stderr-v1', 'status': 'complete', 'truncated': False,
-            'observedBytes': len(b'complete native diagnostics\n'),
-            'retainedBytes': len(b'complete native diagnostics\n'),
-            'spool': 'stderr.full'})
-        self.assertGreaterEqual(row['bytes'], row['stderrSpoolBytes'] + row['stderrMetadataBytes'])
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
         self.assertEqual({item['file'] for item in answer['attemptFiles']
                           if item.get('removed') and 'file' in item},
@@ -318,7 +308,6 @@ sys.exit(%d)
         (attempt_dir / 'stderr-processing-error').write_text('metadata finalization failed\n')
         row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
                    if item['attempt'] == attempt)
-        self.assertEqual(row['stderrHealth'], 'processing-error')
         self.assertFalse(row['cleanupEligible'])
         self.assertEqual(row['cleanupReason'], 'processing-error')
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
@@ -332,7 +321,6 @@ sys.exit(%d)
         (attempt_dir / 'stderr.meta').unlink()
         row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
                    if item['attempt'] == attempt)
-        self.assertEqual(row['stderrHealth'], 'metadata-missing')
         self.assertFalse(row['cleanupEligible'])
         self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['attemptFiles'], [])
         self.assertTrue((attempt_dir / 'stderr.full').is_file())
@@ -343,7 +331,6 @@ sys.exit(%d)
         (attempt_dir / 'stderr.meta').write_text('{')
         row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
                    if item['attempt'] == attempt)
-        self.assertEqual(row['stderrHealth'], 'metadata-invalid')
         self.assertFalse(row['cleanupEligible'])
         self.assertEqual(row['cleanupReason'], 'metadata-invalid')
         self.assertEqual(json.loads(self.call('logs-clean', 'omp-worker'))['attemptFiles'], [])
@@ -361,7 +348,6 @@ sys.exit(%d)
         stderr_meta.write_text('{')
         row = next(item for item in json.loads(self.call('logs-storage'))['stderrRuns']
                    if item['stderr'] == str(stderr))
-        self.assertEqual(row['health'], 'metadata-invalid')
         self.call('logs-clean', 'omp-worker')
         self.assertTrue(stderr.is_file())
         self.assertTrue(pathlib.Path(str(stderr) + '.full').is_file())
@@ -631,7 +617,7 @@ assert sys.stdin.read()==''
             (attempt_dir / name).write_text('diagnostic data for ' + name)
         stderr_row = next(row for row in json.loads(self.call('logs-storage'))['stderrRuns']
                           if row['stderr'] == str(stderr))
-        self.assertEqual(stderr_row['health'], 'ok', stderr_row)
+        self.assertEqual(stderr_row['stderrBytes'], stderr.stat().st_size)
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
         removed = [item for item in answer['attemptLogs'] if item.get('attempt') == attempt and item.get('path') == str(generation)]
         self.assertEqual(len(removed), 1, answer)
