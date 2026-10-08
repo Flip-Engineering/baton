@@ -1742,6 +1742,9 @@ def shared_intent_input(+ctx: LdAdvCtx, holder: String, repo: String, target: St
 # The selected route is matched explicitly at each effect, so an unknown route never selects a
 # mutation and a held observer never runs on an unheld input.
 
+# A route the caller states as unknown keeps the publication and qualification it was given and runs no
+# holder read and no mutation; the association is the operand the caller passed, as it is for every entry
+# point here.
 # A stage the attempt could not reach is stated as unperformed, and the stage it did reach keeps its own
 # record, error or performed reads. The attempt stops before the mutation and keeps the selected route.
 def ld_adv_intent_stopped(intent: It.IntentInput, expected_path: String, step: String, mode: MutationMode, ev: AssociationEvidence, published: IntentPublication, preparation: IntentPreparation, holder_reads: IntentHolderReads) -> LdAdvObs:
@@ -1779,7 +1782,10 @@ def ld_adv_intent_decided(check: Bool, intent: It.IntentInput, expected_path: St
 
 # The holder helper's own returned request, record and qualified path continue; the outer operands are
 # expectations, not observations. A producer fallback other than an observation keeps its own step,
-# record, request and error in the holder field, beside the qualification the verdict admitted.
+# record, request and error in the holder field, beside the qualification the verdict admitted. The
+# current Intent.observe_holder in intent.bend returns IntentObserved with three GitOut values on every
+# path, so the unready, pending and host-failed arms below are total-handler retention for a producer
+# that returned them; no law in this module claims they arise from observe_holder.
 def ld_adv_intent_observed(observed: It.IntentPrepared, +intent: It.IntentInput, +expected_path: String, +admitted: String, +admitted_path: String, +published: Pb.IntentPublish, +holder: String, +assoc: AssociationEvidence, +mode: MutationMode, +repo: String, +target: String, +cand: String, +basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match observed:
     case It.IntentObserved{+request, raw: +record, +qualified_path, head, index, status}:
