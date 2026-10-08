@@ -807,7 +807,8 @@ type IntentPublication is Data:
 # not reached.
 type IntentPreparation is Data:
   IntentUnprepared{}
-  IntentPrepared{outcome: It.IntentPrepared}
+  IntentQualified{raw: String, path: String, verdict: It.ReceiptVerdict}
+  IntentQualificationFailed{step: String, error: T.HostError}
 
 # The three raw results a held route's holder observation produced. An unheld route performs none of
 # them and says so, rather than performing repository reads and discarding them.
@@ -873,6 +874,17 @@ def publish_fields(outcome: Pb.IntentPublish, rest: List<String>) -> List<String
       Con{"publish-readback-failed", Con{publication, Con{path, host_error_fields(error, intent_request_fields(request, rest))}}}
     case Pb.PublishHostFailed{step, request, error}:
       Con{"publish-host-failed", Con{step, host_error_fields(error, intent_request_fields(request, rest))}}
+
+def observation_fields(observation: T.GitOut, rest: List<String>) -> List<String>:
+  match observation:
+    case T.GRun{code, out}: Con{"run", Con{U32.show(code), Con{out, rest}}}
+    case T.GBroken{detail}: Con{"broken", Con{detail, rest}}
+
+def verdict_fields(verdict: It.ReceiptVerdict, rest: List<String>) -> List<String>:
+  match verdict:
+    case It.VerdictAdmitted{raw, path}: Con{"verdict-admitted", Con{raw, Con{path, rest}}}
+    case It.VerdictPending{raw, path, pending}: Con{"verdict-pending", Con{raw, Con{path, Con{pending, rest}}}}
+    case It.VerdictRefused{raw, reason}: Con{"verdict-refused", Con{raw, Con{reason, rest}}}
 
 def prepared_fields(outcome: It.IntentPrepared, rest: List<String>) -> List<String>:
   match outcome:
@@ -954,11 +966,6 @@ def release_fields(release: T.ReleaseRaw, rest: List<String>) -> List<String>:
     case T.ReleaseFailed{code, detail}: Con{"release-failed", Con{U32.show(code), Con{detail, rest}}}
     case T.ReleaseDone{}: Con{"released", rest}
 
-def observation_fields(observation: T.GitOut, rest: List<String>) -> List<String>:
-  match observation:
-    case T.GRun{code, out}: Con{"run", Con{U32.show(code), Con{out, rest}}}
-    case T.GBroken{detail}: Con{"broken", Con{detail, rest}}
-
 def mode_fields(mode: MutationMode, rest: List<String>) -> List<String>:
   match mode:
     case MutationUnknown{}: Con{"mode-unknown", rest}
@@ -1022,7 +1029,8 @@ def intent_publication_fields(publication: IntentPublication, rest: List<String>
 def intent_preparation_fields(preparation: IntentPreparation, rest: List<String>) -> List<String>:
   match preparation:
     case IntentUnprepared{}: Con{"preparation-unperformed", rest}
-    case IntentPrepared{outcome}: Con{"preparation-outcome", prepared_fields(outcome, rest)}
+    case IntentQualified{raw, path, verdict}: Con{"preparation-qualified", Con{raw, Con{path, verdict_fields(verdict, rest)}}}
+    case IntentQualificationFailed{step, error}: Con{"preparation-failed", Con{step, host_error_fields(error, rest)}}
 
 def intent_holder_fields(holder: IntentHolderReads, rest: List<String>) -> List<String>:
   match holder:
@@ -1944,7 +1952,7 @@ def intent_expected_path(reserved: String) -> String:
 
 # The request must name the attempt's reservation and every fixed operand, and the path the producer
 # admitted must be that path.
-def intent_request_bound(request: It.IntentInput, reserved: String, name: String, common: String, repo: String, target: String, candidate: String, basis: String, holder: String) -> Bool:
+def intent_request_bound(+request: It.IntentInput, reserved: String, name: String, common: String, repo: String, target: String, candidate: String, basis: String, holder: String) -> Bool:
   Bool.pick(Bool, Tx.str_eq(It.requested_attempt(request), name),
     Bool.pick(Bool, Tx.str_eq(It.requested_common(request), common),
       Bool.pick(Bool, Tx.str_eq(It.requested_target(request), target),
@@ -1955,14 +1963,22 @@ def intent_request_bound(request: It.IntentInput, reserved: String, name: String
                 Tx.str_eq(It.requested_path(request), intent_expected_path(reserved)),
                 False{}), False{}), False{}), False{}), False{}), False{}), False{})
 
-# Only the producer's own fresh publication at the expected path is a success. Every refusal outcome
-# and an unperformed publication are refused here and keep their evidence in the record.
-def intent_publication_bound(publication: IntentPublication, expected_path: String) -> Bool:
+# The publication is admitted only when it is the producer's own successful publication of this very
+# attempt's intent: the same request, the expected path, a record the producer wrote, and the exact
+# content read back for the fixed candidate, basis and target. The outcome constructor is reached both
+# for a fresh publication and for an accepted existing one, so this must not demand a fresh-only record.
+def intent_publication_bound(publication: IntentPublication, expected_path: String, reserved: String, name: String, common: String, repo: String, target: String, candidate: String, basis: String, holder: String) -> Bool:
   match publication:
     case IntentPublished{outcome}:
       match outcome:
         case Pb.IntentBytesPublished{request, raw, path, content}:
-          Bool.pick(Bool, Tx.non_empty(raw), Bool.pick(Bool, Tx.str_eq(path, expected_path), Tx.non_empty(content), False{}), False{})
+          Bool.pick(Bool, Tx.non_empty(raw),
+            Bool.pick(Bool, Tx.str_eq(path, expected_path),
+              Bool.pick(Bool, Tx.str_eq(content, shared_intent_content(candidate, basis, target)),
+                intent_request_bound(request, reserved, name, common, repo, target, candidate, basis, holder),
+                False{}),
+              False{}),
+            False{})
         case Pb.PublishRefused{request, step, name, raw}: False{}
         case Pb.PublishExistingPending{request, raw, path}: False{}
         case Pb.PublishContentMismatch{request, raw, expected, found}: False{}
@@ -1970,30 +1986,41 @@ def intent_publication_bound(publication: IntentPublication, expected_path: Stri
         case Pb.PublishHostFailed{step, request, error}: False{}
     case IntentUnpublished{}: False{}
 
-# The qualification must be the observed intent of that same path with its producer record.
+# The qualification must be the receipt's own admitted verdict for the expected path. It carries no
+# holder reads: those are a separate, later observation of the selected route.
+def verdict_admitted(verdict: It.ReceiptVerdict, expected_path: String) -> Bool:
+  match verdict:
+    case It.VerdictAdmitted{raw, path}: Bool.pick(Bool, Tx.non_empty(raw), Tx.str_eq(path, expected_path), False{})
+    case It.VerdictPending{raw, path, pending}: False{}
+    case It.VerdictRefused{raw, reason}: False{}
+
 def intent_preparation_bound(preparation: IntentPreparation, expected_path: String) -> Bool:
   match preparation:
-    case IntentPrepared{outcome}:
-      match outcome:
-        case It.IntentObserved{request, raw, qualified_path, head, index, status}:
-          Bool.pick(Bool, Tx.non_empty(raw), Tx.str_eq(qualified_path, expected_path), False{})
-        case It.IntentUnready{step, reason, raw}: False{}
-        case It.IntentPending{request, raw, pending}: False{}
-        case It.IntentHostFailed{step, request, error}: False{}
+    case IntentQualified{raw, path, verdict}:
+      Bool.pick(Bool, Tx.str_eq(path, expected_path), verdict_admitted(verdict, expected_path), False{})
+    case IntentQualificationFailed{step, error}: False{}
     case IntentUnprepared{}: False{}
 
 # A held route must have performed all three holder reads successfully; an unheld route performs none of
 # them and says so. An unknown route asserts nothing.
-def intent_holder_bound(reads: IntentHolderReads, mode: MutationMode) -> Bool:
+# A held route's three reads must be the selected worktree's own: the head must answer the basis the
+# target ref was checked against, and the cached index and the worktree must be clean. A failed read
+# keeps its own codes in the record and refuses here.
+def intent_holder_bound(reads: IntentHolderReads, mode: MutationMode, basis: String) -> Bool:
   match mode:
     case MutationHeld{path}:
       match reads:
-        case IntentHolderRead{head, index, status}:
+        case IntentHolderRead{+head, +index, +status}:
           Bool.pick(Bool, observation_succeeded(head),
-            Bool.pick(Bool, Tx.non_empty(observation_value(head)),
-              Bool.pick(Bool, observation_succeeded(index), observation_succeeded(status), False{}),
+            Bool.pick(Bool, Tx.str_eq(observation_value(head), basis),
+              Bool.pick(Bool, observation_succeeded(index),
+                Bool.pick(Bool, Tx.str_eq(observation_value(index), ""),
+                  Bool.pick(Bool, observation_succeeded(status), Tx.str_eq(observation_value(status), ""), False{}),
+                  False{}),
+                False{}),
               False{}),
             False{})
+        case IntentHolderUnperformed{}: False{}
         case IntentHolderUnperformed{}: False{}
     case MutationUnheld{}:
       match reads:
@@ -2001,14 +2028,15 @@ def intent_holder_bound(reads: IntentHolderReads, mode: MutationMode) -> Bool:
         case IntentHolderRead{head, index, status}: False{}
     case MutationUnknown{}: False{}
 
-def intent_bound(intent: IntentEvidence, reserved: String, name: String, common: String, repo: String, target: String, candidate: String, basis: String, holder: String, mode: MutationMode) -> Bool:
+
+def intent_bound(intent: IntentEvidence, +reserved: String, name: String, common: String, repo: String, target: String, candidate: String, basis: String, holder: String, mode: MutationMode) -> Bool:
   match intent:
     case IntentBound{request, expected_path, publication, preparation, holder_reads}:
       Bool.pick(Bool, Tx.str_eq(expected_path, intent_expected_path(reserved)),
         Bool.pick(Bool, intent_request_bound(request, reserved, name, common, repo, target, candidate, basis, holder),
-          Bool.pick(Bool, intent_publication_bound(publication, expected_path),
+          Bool.pick(Bool, intent_publication_bound(publication, expected_path, reserved, name, common, repo, target, candidate, basis, holder),
             Bool.pick(Bool, intent_preparation_bound(preparation, expected_path),
-              intent_holder_bound(holder_reads, mode),
+              intent_holder_bound(holder_reads, mode, basis),
               False{}),
             False{}),
           False{}),
@@ -2018,7 +2046,7 @@ def intent_bound(intent: IntentEvidence, reserved: String, name: String, common:
 
 def evidence_complete(evidence: AttemptEvidence) -> Bool:
   match evidence:
-    case AttemptEvidence{+reserved, repo, +target, +candidate, +basis, guard, artifact, decision, capture, +qualification, release, +identity, association, intent, +reservation}:
+    case AttemptEvidence{+reserved, +repo, +target, +candidate, +basis, guard, artifact, decision, capture, +qualification, release, +identity, association, intent, +reservation}:
       Bool.pick(Bool, decision_landed(decision),
         Bool.pick(Bool, capture_landed(capture),
           Bool.pick(Bool, qualification_landed_of(qualification, candidate, target),
