@@ -154,28 +154,6 @@ law m5_claude_resume_carries_the_accepted_session:
 def m5_claude_resume_carries_the_accepted_session(cmd, model, effort, cwd, stderr, session):
   {==}
 
-law m5_muse_argv_carries_the_accepted_session:
-  for +cmd: String
-  for +model: String
-  for +effort: String
-  for +task: String
-  for +session: String
-  {Muse.argv(cmd, model, effort, task, session, False{}) == P.argv(List.append(&1,String,Muse.arguments(cmd,model,effort,task),["--session-id",session])) : String}
-
-def m5_muse_argv_carries_the_accepted_session(cmd, model, effort, task, session):
-  {==}
-
-law m2_muse_argv_starts_a_fresh_conversation:
-  for +cmd: String
-  for +model: String
-  for +effort: String
-  for +task: String
-  for +session: String
-  {Muse.argv(cmd, model, effort, task, session, True{}) == P.argv(Muse.arguments(cmd,model,effort,task)) : String}
-
-def m2_muse_argv_starts_a_fresh_conversation(cmd, model, effort, task, session):
-  {==}
-
 law m5_muse_resume_carries_the_accepted_session:
   for +cmd: String
   for +model: String
