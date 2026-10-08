@@ -36,7 +36,7 @@ def result_sql(+session: String) -> String:
 
 # A direct owner is unsupported. Refusal leaves the session and inbox unchanged.
 def supported_sql(+session: String) -> String:
-  "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('omp','codex')) AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='direct' AND phase<>'exited')"
+  "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('omp','codex','muse','claude-code')) AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='direct' AND phase<>'exited')"
 
 # The operator resolution of a stopped session's wake obligation: the admitted
 # stop clears the claim, so no driver hands the retained input on, and the input
@@ -50,7 +50,7 @@ def request_sql(+session: String, +id: String, +reason: String) -> String:
   "BEGIN IMMEDIATE;" ++ C.schema()
   ++ "INSERT INTO session_stops(session,id,reason,attempt,directory,outcome,report_id) SELECT s.id," ++ C.q(id) ++ "," ++ C.q(reason) ++ ",CASE WHEN e.phase<>'exited' THEN e.id ELSE '' END,CASE WHEN e.phase<>'exited' THEN e.directory ELSE '' END,CASE WHEN e.phase<>'exited' THEN 'requested' ELSE 'stopped' END,CASE WHEN e.phase<>'exited' THEN 'stop-result:' || lower(hex(" ++ C.q(id) ++ ")) ELSE '' END FROM sessions s LEFT JOIN executions e ON e.session=s.id WHERE s.id=" ++ C.q(session) ++ " AND " ++ supported_sql(session) ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id OR id=" ++ C.q(id) ++ ");"
   ++ stop_claim_sql(session,id,reason)
-  ++ "SELECT CASE WHEN EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(id) ++ " AND reason=" ++ C.q(reason) ++ ") THEN '' WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ") THEN 'Session is not registered; inspect status.' WHEN NOT (" ++ supported_sql(session) ++ ") THEN 'Stop supports retained OMP and Codex sessions; an active direct turn is unsupported and was left unchanged.' WHEN NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(id) ++ " AND reason=" ++ C.q(reason) ++ ") THEN 'Stop identity differs from the recorded operation; read the session and retry its exact stop ID and reason.' ELSE '' END;COMMIT;"
+  ++ "SELECT CASE WHEN EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(id) ++ " AND reason=" ++ C.q(reason) ++ ") THEN '' WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ") THEN 'Session is not registered; inspect status.' WHEN NOT (" ++ supported_sql(session) ++ ") THEN 'Stop supports retained OMP, Codex, Muse and Claude Code sessions; an active direct turn is unsupported and was left unchanged.' WHEN NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(id) ++ " AND reason=" ++ C.q(reason) ++ ") THEN 'Stop identity differs from the recorded operation; read the session and retry its exact stop ID and reason.' ELSE '' END;COMMIT;"
 
 def force_sql(+session: String, +id: String) -> String:
   "BEGIN IMMEDIATE;" ++ C.schema()

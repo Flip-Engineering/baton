@@ -585,15 +585,33 @@ def retained_output(+db: String, +player: String, +id: String, +log: String, +ha
 def muse_retained_arguments(cmd: String, model: String, effort: String, prompt_file: String, +session: String) -> List<String>:
   List.append(&1,String,Muse.arguments(cmd,model,effort,prompt_file),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session]))
 
+def retained_arguments(muse: Bool, omp: Bool, claude: Bool, cmd: String, model: String, effort: String, task: String, sessions: String, native: String) -> String:
+  Bool.pick(String,muse,
+    Muse.argv(cmd,model,effort,task,native,String.is_empty(native)),
+  Bool.pick(String,claude,
+    Claude.argv(cmd,model,effort,native,String.is_empty(native)),
+  Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native)))))
+
+# Claude reads one user frame from its input; OMP reads its prompt frames there.
+def retained_input(muse: Bool, omp: Bool, claude: Bool, prompt: String) -> String:
+  Bool.pick(String,muse,"",Bool.pick(String,claude,Claude.user_frame(prompt),Bool.pick(String,omp,Omp.prompt(prompt),prompt)))
+
+# The Muse task file, Claude's single frame and Codex's stdin all close the child's
+# input; OMP keeps it open for steer frames.
+def retained_keep_stdin(muse: Bool, omp: Bool, claude: Bool) -> U32:
+  Bool.pick(U32,muse,0,Bool.pick(U32,claude,0,Bool.pick(U32,omp,1,0)))
+
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
     alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
     +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
     muse_args : String <- IO.pure(String,P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
-    args : String <- IO.pure(String,Bool.pick(String,String.eq(harness,"omp\n"),Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
-    input : String <- IO.pure(String,Bool.pick(String,String.eq(harness,"omp\n"),Omp.prompt(prompt),prompt))
-    Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),String.eq(harness,"muse\n"),Custody.Instance.admit_with_file(db,directory,muse_args,cwd,directory ++ "/native.stderr","prompt.txt",prompt,"",0,Some{lock},recovery),Custody.Instance.admit(db,directory,args,cwd,directory ++ "/native.stderr",input,Bool.pick(U32,String.eq(harness,"omp\n"),1,0),Some{lock},recovery))
+    +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
+    +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
+    args : String <- IO.pure(String,retained_arguments(False{},omp,claude,cmd,model,effort,prompt_file,sessions,native))
+    input : String <- IO.pure(String,retained_input(False{},omp,claude,prompt))
+    Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),String.eq(harness,"muse\n"),Custody.Instance.admit_with_file(db,directory,muse_args,cwd,directory ++ "/native.stderr","prompt.txt",prompt,"",0,Some{lock},recovery),Custody.Instance.admit(db,directory,args,cwd,directory ++ "/native.stderr",input,retained_keep_stdin(False{},omp,claude),Some{lock},recovery))
 
 def claude_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:

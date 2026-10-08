@@ -120,6 +120,26 @@ law m5_omp_resume_carries_the_accepted_session:
 def m5_omp_resume_carries_the_accepted_session(cmd, model, effort, cwd, log, sessions, session):
   {==}
 
+law m5_claude_argv_carries_the_accepted_session:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +session: String
+  {Claude.argv(cmd, model, effort, session, False{}) == P.argv(List.append(&1,String,Claude.arguments(cmd,model,effort),["--resume",session])) : String}
+
+def m5_claude_argv_carries_the_accepted_session(cmd, model, effort, session):
+  {==}
+
+law m2_claude_argv_starts_a_fresh_conversation:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +session: String
+  {Claude.argv(cmd, model, effort, session, True{}) == P.argv(Claude.arguments(cmd,model,effort)) : String}
+
+def m2_claude_argv_starts_a_fresh_conversation(cmd, model, effort, session):
+  {==}
+
 law m5_claude_resume_carries_the_accepted_session:
   for +cmd: String
   for +model: String
@@ -130,6 +150,28 @@ law m5_claude_resume_carries_the_accepted_session:
   {Claude.resume_player(cmd, model, effort, cwd, stderr, session) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Claude.arguments(cmd,model,effort),["--resume",session])),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m5_claude_resume_carries_the_accepted_session(cmd, model, effort, cwd, stderr, session):
+  {==}
+
+law m5_muse_argv_carries_the_accepted_session:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +task: String
+  for +session: String
+  {Muse.argv(cmd, model, effort, task, session, False{}) == P.argv(List.append(&1,String,Muse.arguments(cmd,model,effort,task),["--session-id",session])) : String}
+
+def m5_muse_argv_carries_the_accepted_session(cmd, model, effort, task, session):
+  {==}
+
+law m2_muse_argv_starts_a_fresh_conversation:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +task: String
+  for +session: String
+  {Muse.argv(cmd, model, effort, task, session, True{}) == P.argv(Muse.arguments(cmd,model,effort,task)) : String}
+
+def m2_muse_argv_starts_a_fresh_conversation(cmd, model, effort, task, session):
   {==}
 
 law m5_muse_resume_carries_the_accepted_session:
