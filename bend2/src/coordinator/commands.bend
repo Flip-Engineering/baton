@@ -498,7 +498,7 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},
       Bool.pick(Command, String.eq(verb,"push"),Push{id,one,two},
       Bool.pick(Command, String.eq(verb,"ask"),Ask{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Bool.pick(Command, String.eq(verb,"remote-tip"),RemoteTip{id,one,two},Bool.pick(Command, String.eq(verb,"view"),View{id,one,two},Invalid{}))))))))))))))))
+      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Bool.pick(Command, String.eq(verb,"remote-tip"),RemoteTip{id,one,two},Bool.pick(Command, String.eq(verb,"view"),View{id,one,two},Invalid{})))))))))))))))
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
       Bool.pick(Command,String.eq(verb,"section"),Section{id,one,two,three},Bool.pick(Command, String.eq(verb,"ensemble-member"),EnsembleMember{id,one,two,three},Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{})))
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
