@@ -82,6 +82,11 @@ class McpCommand(unittest.TestCase):
                 recruitment['workspace'], 'main']),
             'baton2_receiver': ({'player': player, 'command': command, 'log': log},
                 ['receiver', player, command, log]),
+            'baton2_configure': ({'player': player, 'harness': 'omp', 'model': 'deepseek/deepseek-flash',
+                'effort': 'high', 'command': command, 'log': log, 'expectedHarness': 'codex',
+                'expectedModel': 'gpt-6-astra', 'expectedEffort': 'low'},
+                ['configure', player, 'omp', 'deepseek/deepseek-flash', 'high', command, log,
+                 'codex', 'gpt-6-astra', 'low']),
             'baton2_dispatch_file': ({'id': 'task-λ', 'recipient': player,
                 'kind': 'task', 'path': task},
                 ['dispatch-file', 'task-λ', 'root', player, 'task', task]),
@@ -96,6 +101,8 @@ class McpCommand(unittest.TestCase):
             'baton2_recruit': ({'player', 'harness', 'model', 'effort', 'repo',
                 'branch', 'workspace', 'base'}, {'parent'}),
             'baton2_receiver': ({'player', 'command', 'log'}, set()),
+            'baton2_configure': ({'player', 'harness', 'model', 'effort', 'command', 'log',
+                'expectedHarness', 'expectedModel', 'expectedEffort'}, set()),
             'baton2_dispatch_file': ({'id', 'recipient', 'kind', 'path'}, {'sender'}),
             'baton2_dispatch_turn': ({'player', 'id', 'command', 'log', 'task'}, set()),
         }
@@ -130,6 +137,11 @@ class McpCommand(unittest.TestCase):
     def test_receiver_forwards_explicit_player_and_native_paths(self):
         arguments, argv = self.native_controls()['baton2_receiver']
         self.command(tool='baton2_receiver', arguments=arguments,
+                     session='associate', expected_args=argv)
+
+    def test_configure_forwards_the_requested_and_expected_route(self):
+        arguments, argv = self.native_controls()['baton2_configure']
+        self.command(tool='baton2_configure', arguments=arguments,
                      session='associate', expected_args=argv)
 
     def test_dispatch_file_defaults_sender_to_selected_conductor(self):
