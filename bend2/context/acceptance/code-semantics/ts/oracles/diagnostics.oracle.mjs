@@ -2,9 +2,11 @@
  * Diagnostic-family oracles. The provider must retain the diagnostic family:
  * TS2454 is a semantic diagnostic; TS7027 appears in the suggestion family under
  * default options and in the semantic family under allowUnreachableCode:false.
- * A missing family cannot establish absence of a diagnostic, so each case pins
- * the family that can report the code. Expected spans are located from the
- * fixture bytes, never hand-counted line numbers.
+ * Under pinned 5.9.3 the 7027 statements are the post-return and
+ * post-declared-never statements only; the const-arrow never call leaves its
+ * follower reachable. A missing family cannot establish absence of a
+ * diagnostic, so each case pins the family that can report the code. Expected
+ * spans are located from the fixture bytes, never hand-counted line numbers.
  */
 import { Checker, locate } from "../../lib/util.mjs";
 
@@ -44,10 +46,21 @@ export const cases = [
       const defaultsAfterNever = (defaults.suggestion ?? []).filter(
         (d) => d.code === 7027 && d.start?.line === afterNeverLine,
       );
+      const defaultsAfterDeclaredNever = (defaults.suggestion ?? []).filter(
+        (d) => d.code === 7027 && d.start?.line === deadNeverLine,
+      );
       checker.check(
-        "7027 suggestion after never-call under defaults",
-        defaultsAfterNever.length,
+        "7027 suggestion after declared-never call under defaults",
+        defaultsAfterDeclaredNever.length,
         1,
+      );
+      // Observed pinned-provider behavior (bounded run code-semantics-d5384042):
+      // 5.9.3 reports 7027 after the function-declaration never call but not
+      // after the const-arrow never call, so no suggestion lands here.
+      checker.check(
+        "7027 absent after const-arrow never call under defaults",
+        defaultsAfterNever.length,
+        0,
       );
       checker.check(
         "7027 absent from semantic family under defaults",
@@ -67,10 +80,12 @@ export const cases = [
       ];
       const strictCodes = strict.filter((d) => d.code === 7027);
       const strictLines = strictCodes.map((d) => d.start?.line).sort((a, b) => a - b);
+      // The const-arrow never call leaves its follower reachable under 5.9.3,
+      // so only the post-return and post-declared-never statements report.
       checker.check(
         "7027 lines under allowUnreachableCode:false",
         strictLines,
-        [afterNeverLine, deadReturnLine, deadNeverLine].sort((a, b) => a - b),
+        [deadReturnLine, deadNeverLine].sort((a, b) => a - b),
       );
       checker.check(
         "all strict-mode 7027 entries are semantic family",

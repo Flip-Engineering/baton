@@ -11,7 +11,10 @@ export const suite = "ts-invalidation";
 
 function overlayWithLib(probe, libContent) {
   const overlay = probe.initialOverlay();
+  // app.ts is outside the tsconfig include set, so it joins the program as
+  // an overlay root beside the lib variant under test.
   overlay.set("invalidation/lib.ts", libContent);
+  overlay.set("invalidation/app.ts", probe.readFixtureText("invalidation/app.ts"));
   return overlay;
 }
 

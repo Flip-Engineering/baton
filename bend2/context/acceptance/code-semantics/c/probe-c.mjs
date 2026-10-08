@@ -201,8 +201,8 @@ function collectCalls(tu, fn, text) {
       }
     }
     const argumentRefs = [];
-    const arguments = Array.isArray(node.inner) ? node.inner.slice(1) : [];
-    for (const argument of arguments) {
+    const argNodes = Array.isArray(node.inner) ? node.inner.slice(1) : [];
+    for (const argument of argNodes) {
       walkAst(argument, (sub) => {
         if (sub.kind === "DeclRefExpr" && sub.referencedDecl !== undefined) {
           argumentRefs.push({

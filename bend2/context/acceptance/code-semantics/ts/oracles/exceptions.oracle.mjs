@@ -50,11 +50,11 @@ export const cases = [
     async run(probe, checker) {
       const documented = probe.extractors.jsDocThrows({
         file: "src/exceptions.ts",
-        locate: "documentedThrow\\(n\\)",
+        locate: "documentedThrow\\(n: number\\)",
       });
       const undocumented = probe.extractors.jsDocThrows({
         file: "src/exceptions.ts",
-        locate: "undocumentedThrow\\(n\\)",
+        locate: "undocumentedThrow\\(n: number\\)",
       });
       checker.checkTruthy("documented subject found", documented.error === undefined, documented);
       checker.check("documented tag present", documented.tags?.length >= 1, documented.tags);

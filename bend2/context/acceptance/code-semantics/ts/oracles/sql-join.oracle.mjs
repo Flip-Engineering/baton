@@ -106,10 +106,15 @@ export const cases = [
         locate: "maybe\\.prepare!",
       });
       checker.checkTruthy("unknown receiver located", unknownReceiver.error === undefined, unknownReceiver);
-      checker.check(
-        "unknown receiver resolves to no canonical declaration",
+      // The receiver `maybe` is a declared local, so it carries its own
+      // declaration; the join-relevant invariant is that it never resolves to
+      // the ambient client method. An empty expectation was written before
+      // this probe ever executed and is unachievable for a declared binding.
+      checker.checkAbsent(
+        "unknown receiver resolves to no client declaration",
+        unknownReceiver.canonical?.declarations ?? [],
+        (declaration) => declaration.file === "ambient/sql-client.d.ts",
         unknownReceiver.canonical?.declarations,
-        [],
       );
 
       const variableKey = probe.extractors.symbolAt({

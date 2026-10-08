@@ -68,9 +68,32 @@ function sourceLineCol(text, offset) {
   return { line, column: offset - (lastNewline + 1) };
 }
 
+/**
+ * Fixture-root-relative path for a source-file name. Root names served from
+ * the overlay map stay relative while resolved inputs arrive absolute; both
+ * forms convert to the same relative path.
+ */
+function relativeFixturePath(fixtureRoot, fileName) {
+  const absolute = path.isAbsolute(fileName) ? fileName : path.join(fixtureRoot, fileName);
+  return path.relative(fixtureRoot, absolute).split(path.sep).join("/");
+}
+
 /** Overlay LanguageServiceHost over a map of relativePath -> string content. */
 function createOverlayHost(ts, fixtureRoot, files, compilerOptions, currentDirectory) {
   const versions = new Map();
+  // The overlay map is keyed by fixture-root-relative paths, but module
+  // resolution probes absolute paths. Resolve absolute probes back to their
+  // relative overlay key so overlay-only files participate in resolution.
+  const overlayKeyFor = (fileName) => {
+    if (files.has(fileName)) {
+      return fileName;
+    }
+    const absolute = path.isAbsolute(fileName)
+      ? fileName
+      : path.resolve(currentDirectory ?? fixtureRoot, fileName);
+    const relative = path.relative(fixtureRoot, absolute).split(path.sep).join("/");
+    return relative.startsWith("..") || path.isAbsolute(relative) ? undefined : relative;
+  };
   return {
     getScriptFileNames() {
       return [...files.keys()];
@@ -79,7 +102,8 @@ function createOverlayHost(ts, fixtureRoot, files, compilerOptions, currentDirec
       return versions.get(fileName) ?? "0";
     },
     getScriptSnapshot(fileName) {
-      const content = files.get(fileName);
+      const key = overlayKeyFor(fileName);
+      const content = key !== undefined ? files.get(key) : undefined;
       if (content !== undefined) {
         return ts.ScriptSnapshot.fromString(content);
       }
@@ -90,13 +114,14 @@ function createOverlayHost(ts, fixtureRoot, files, compilerOptions, currentDirec
       return undefined;
     },
     fileExists(fileName) {
-      if (files.has(fileName)) {
+      if (overlayKeyFor(fileName) !== undefined) {
         return true;
       }
       return fs.existsSync(path.resolve(currentDirectory ?? fixtureRoot, fileName));
     },
     readFile(fileName) {
-      const content = files.get(fileName);
+      const key = overlayKeyFor(fileName);
+      const content = key !== undefined ? files.get(key) : undefined;
       if (content !== undefined) {
         return content;
       }
@@ -215,14 +240,33 @@ export async function createTsProbe(options = {}) {
     const checker = program.getTypeChecker();
     const position = positionOf(sourceFile, located);
     const node = nodeAtPosition(sourceFile, position, ts);
-    const symbol = checker.getSymbolAtLocation(ts.isIdentifier(node) ? node : node);
-    const aliased = symbol !== undefined ? checker.getAliasedSymbol(symbol) : undefined;
+    // Element access resolves through the access itself: a string-literal key
+    // resolves to the accessed member, any other key resolves to the key
+    // expression's own symbol. Anything else resolves at the located node.
+    const access = ts.isElementAccessExpression(node)
+      ? node
+      : node.parent !== undefined && ts.isElementAccessExpression(node.parent)
+        ? node.parent
+        : undefined;
+    let symbol;
+    if (access !== undefined) {
+      const key = access.argumentExpression;
+      symbol = ts.isStringLiteralLike(key)
+        ? checker.getPropertyOfType(checker.getTypeAtLocation(access.expression), key.text)
+        : checker.getSymbolAtLocation(key);
+    } else {
+      symbol = checker.getSymbolAtLocation(node);
+    }
+    // getAliasedSymbol throws for non-alias symbols; only hop alias symbols.
+    const aliased = symbol !== undefined && (symbol.flags & ts.SymbolFlags.Alias) !== 0
+      ? checker.getAliasedSymbol(symbol)
+      : undefined;
     const canonical = aliased !== undefined && aliased !== symbol ? aliased : symbol;
     const declarationInfo = (sym) =>
       sym === undefined || sym === null
         ? null
         : (sym.declarations ?? []).map((decl) => ({
-            file: path.relative(fixtureRoot, decl.getSourceFile().fileName).split(path.sep).join("/"),
+            file: relativeFixturePath(fixtureRoot, decl.getSourceFile().fileName),
             start: sourceLineCol(decl.getSourceFile().text, decl.getStart(decl.getSourceFile())),
             kind: ts.SyntaxKind[decl.kind],
           }));
@@ -256,23 +300,29 @@ export async function createTsProbe(options = {}) {
     const node = nodeAtPosition(sourceFile, position, ts);
     const symbol = checker.getSymbolAtLocation(node);
     const referenced = service.languageService.findReferences(caseSpec.file, position);
+    const canonicalNameOf = (definitionSymbol) => {
+      if (definitionSymbol === undefined) {
+        return null;
+      }
+      const target = (definitionSymbol.flags & ts.SymbolFlags.Alias) !== 0
+        ? checker.getAliasedSymbol(definitionSymbol)
+        : definitionSymbol;
+      return target?.name ?? definitionSymbol?.name ?? null;
+    };
     const groups = (referenced ?? []).map((group) => ({
-      canonicalName: checker.getAliasedSymbol(group.definition.symbol)?.name ?? group.definition.symbol?.name ?? null,
+      canonicalName: canonicalNameOf(group.definition.symbol),
       definition: {
-        file: path
-          .relative(fixtureRoot, group.definition.node.getSourceFile().fileName)
-          .split(path.sep)
-          .join("/"),
+        file: relativeFixturePath(fixtureRoot, group.definition.node.getSourceFile().fileName),
         start: sourceLineCol(
           group.definition.node.getSourceFile().text,
           group.definition.node.getStart(group.definition.node.getSourceFile()),
         ),
       },
       references: group.references.map((entry) => ({
-        file: path.relative(fixtureRoot, entry.fileName).split(path.sep).join("/"),
-        start: sourceLineCol(sourceAt(service, path.relative(fixtureRoot, entry.fileName).split(path.sep).join("/")).text, entry.textSpan.start),
+        file: relativeFixturePath(fixtureRoot, entry.fileName),
+        start: sourceLineCol(sourceAt(service, relativeFixturePath(fixtureRoot, entry.fileName)).text, entry.textSpan.start),
         end: sourceLineCol(
-          sourceAt(service, path.relative(fixtureRoot, entry.fileName).split(path.sep).join("/")).text,
+          sourceAt(service, relativeFixturePath(fixtureRoot, entry.fileName)).text,
           entry.textSpan.start + entry.textSpan.length,
         ),
         isWriteAccess: entry.isWriteAccess,
@@ -403,8 +453,17 @@ export async function createTsProbe(options = {}) {
     const checker = program.getTypeChecker();
     const node = nodeAtPosition(sourceFile, positionOf(sourceFile, located), ts);
     const call = node.parent !== undefined && ts.isCallExpression(node.parent) ? node.parent : node;
-    const signature = checker.getResolvedSignature(call);
-    const tags = signature !== undefined ? signature.getJsDocTags() : [];
+    const signature = ts.isCallLikeExpression(call) ? checker.getResolvedSignature(call) : undefined;
+    let tags = signature !== undefined ? signature.getJsDocTags() : [];
+    if (tags.length === 0) {
+      // A located declaration carries its own author text; read the JSDoc
+      // from the declared function when there is no call signature.
+      const symbol = checker.getSymbolAtLocation(node);
+      const declaration = symbol?.declarations?.find((decl) => ts.isFunctionLike(decl));
+      if (declaration !== undefined) {
+        tags = ts.getJSDocTags(declaration);
+      }
+    }
     return {
       provider: { typescriptVersion: ts.version },
       fixture: caseSpec.file,
@@ -443,11 +502,11 @@ export async function createTsProbe(options = {}) {
             localName: element.name.text,
             resolvedFile:
               resolvedFile !== null
-                ? path.relative(fixtureRoot, resolvedFile).split(path.sep).join("/")
+                ? relativeFixturePath(fixtureRoot, resolvedFile)
                 : null,
             moduleSymbolResolved: bindings !== undefined,
             canonicalDeclarations: (aliasTarget?.declarations ?? []).map((decl) => ({
-              file: path.relative(fixtureRoot, decl.getSourceFile().fileName).split(path.sep).join("/"),
+              file: relativeFixturePath(fixtureRoot, decl.getSourceFile().fileName),
               start: sourceLineCol(decl.getSourceFile().text, decl.getStart(decl.getSourceFile())),
               kind: ts.SyntaxKind[decl.kind],
             })),
@@ -468,7 +527,7 @@ export async function createTsProbe(options = {}) {
     const service = buildService(overlayOverride ?? initialOverlay(), optionsOverride);
     const program = service.program();
     const roots = program.getRootFileNames().map((name) =>
-      path.relative(fixtureRoot, name).split(path.sep).join("/"),
+      relativeFixturePath(fixtureRoot, name),
     );
     return {
       provider: { typescriptVersion: ts.version },
@@ -483,7 +542,7 @@ export async function createTsProbe(options = {}) {
     const program = service.program();
     const identity = new Map();
     for (const fileName of program.getSourceFiles().map((f) => f.fileName)) {
-      const relative = path.relative(fixtureRoot, fileName);
+      const relative = relativeFixturePath(fixtureRoot, fileName);
       if (relative.startsWith("..")) {
         continue;
       }
