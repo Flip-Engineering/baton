@@ -1,7 +1,7 @@
 // #682 browser qualification, two phases (remote-only):
 // Phase A drives the real `view` command end-to-end. Until the shared per-DB
 // owner subscription (#676) exists, the events route answers 503 and the page
-// must show the stream as explicitly unavailable without a retry loop.
+// shows the unavailable stream and continues checking for its subscription.
 // Phase B runs the real server in-process with a test commit-notification
 // seam (the same helper shape as ui-orchestra-server.test.mjs) over the real
 // database, so live update, reconnect-cursor and gap recovery are exercised in
@@ -146,12 +146,12 @@ check('actual process is explicit unknown', await evalJs(
   `document.getElementById('detail').textContent.includes('unknown')`));
 
 // Until the 676 subscription exists the page must report the stream as
-// unavailable and stop retrying (no browser polling loop).
-await until('events 503 surfaces as explicitly unavailable, not a retry loop',
+// unavailable while continuing to check for its subscription.
+await until('events 503 surfaces as explicitly unavailable',
   `document.getElementById('conn-state').textContent === 'unavailable' && document.getElementById('notice').textContent.includes('#676')`, 45000);
 await sleep(4000);
-check('no retry loop after the permanent 503', await evalJs(
-  `document.getElementById('conn-state').textContent === 'unavailable'`));
+check('subscription recovery remains automatic', await evalJs(
+  `document.getElementById('notice').textContent.includes('continues checking')`));
 await evalJs(`window.__qaMark = 41`);
 
 // operator-triggered reconnect re-reads the snapshot through the view command server

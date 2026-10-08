@@ -2666,8 +2666,9 @@ static int br_admission_verify(const char *directory,const char *database,int gu
   if(error||fstat(fd,&info)) {error=EPERM;reason="truncated admission record\n";}
   if(!error && (memcmp(record.magic,BR_ADMISSION_MAGIC,8) || record.schema!=1))
     {error=EPERM;reason="the admission record is not this schema\n";}
+  if(!error && record.directory_length>SIZE_MAX-sizeof(record)) {error=EOVERFLOW;reason=NULL;}
   size_t length=error?0:(size_t)record.directory_length;
-  if(!error && (length==0 || length>4096)) {error=EPERM;reason="the recorded path is not a path\n";}
+  if(!error && length==0) {error=EPERM;reason="the recorded path is not a path\n";}
   if(!error && (size_t)info.st_size!=sizeof(record)+length)
     {error=EPERM;reason="the admission record and its path are not one record\n";}
   char *recorded=NULL;
@@ -3192,32 +3193,6 @@ static int br_instance_spawn(const char *canonical,pid_t *pid,const char *log_pa
   }
   return error;
 }
-/* True when another process holds the election lock for this database. A held
-   lock with no answering socket means the elected owner is wedged or its
-   published record is stale; a caller must see that as a refusal rather than as
-   a connect timeout. */
-static int br_instance_election_held(const char *canonical) {
-  struct stat info;
-  if(stat(canonical,&info))return 0;
-  char ipc[512];
-  if(br_ipc_directory(ipc,sizeof(ipc)))return 0;
-  char *key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
-  if(!key)return 0;
-  char *lock_path=br_ipc_path(ipc,key,".lock");
-  int held=0;
-  if(lock_path) {
-    int fd=open(lock_path,O_CREAT|O_RDWR|O_CLOEXEC,0600);
-    if(fd>=0) {
-      int result;do {result=flock(fd,LOCK_EX|LOCK_NB);}while(result<0 && errno==EINTR);
-      held=result<0;
-      if(!held)flock(fd,LOCK_UN);
-      close(fd);
-    }
-    free(lock_path);
-  }
-  free(key);
-  return held;
-}
 /* The socket pathname a client would use for this database. A failure detail
    carries it so a caller can tell a missing owner from an unreachable one. */
 static int br_instance_socket_for(const char *database,char *buffer,size_t size) {
@@ -3257,8 +3232,7 @@ static int br_instance_connect(const char *database,int spawn,BrOwnerRecord *rec
   if(!canonical)return errno;
   int socket_fd=-1,started=0,error=0;
   char *owner_log=NULL;
-  for(int attempt=0;!error && attempt<600;attempt++) {
-    if(attempt){struct timespec pause={0,20000000};nanosleep(&pause,NULL);}
+  for(;;) {
     char *ipc=NULL,*key=NULL,*record_path=NULL;
     int record_error=br_instance_record(canonical,&ipc,&key,&record_path,record);
     if(record_error) {
@@ -3289,13 +3263,10 @@ static int br_instance_connect(const char *database,int spawn,BrOwnerRecord *rec
       pid_t pid;
       if((error=br_instance_spawn(canonical,&pid,owner_log)))break;
       started=1;
-    } else if(attempt>50 && br_instance_election_held(canonical)) {
-      /* Another owner holds the election lock and no socket answers it. */
-      error=EBUSY;
-      break;
     }
     error=0;
-    if(attempt==599)error=ETIMEDOUT;
+    struct timespec pause={0,20000000};
+    nanosleep(&pause,NULL);
   }
   free(canonical);
   free(owner_log);
@@ -3348,10 +3319,12 @@ static int br_owner_witness_parse(const char *text,uint64_t *token,uint64_t *epo
 }
 static int br_instance_request_witness(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply,uint64_t expected_token,uint64_t expected_epoch) {
   if((expected_token==0)!=(expected_epoch==0))return EINVAL;
-  for(int attempt=0;;attempt++) {
+  int first=1;
+  for(;;) {
     BrOwnerRecord record={0};
     int socket_fd=-1;
-    int error=br_instance_connect(database,attempt?0:1,&record,&socket_fd);
+    int error=br_instance_connect(database,first,&record,&socket_fd);
+    first=0;
     if(error)return error;
     if(expected_token && (record.token!=expected_token || record.epoch!=expected_epoch)) {
       close(socket_fd);return ESTALE;
@@ -3363,7 +3336,6 @@ static int br_instance_request_witness(const char *database,BrInstanceFrame fram
     if(reply->owner && (reply->owner!=record.token || reply->epoch!=record.epoch))error=ESTALE;
     if(!error && !reply->error)return 0;
     if(error!=ESTALE && reply->error!=ESTALE)return error?error:reply->error;
-    if(attempt>=100)return ESTALE;
     struct timespec pause={0,20000000};
     nanosleep(&pause,NULL);
   }
@@ -3806,11 +3778,13 @@ static int br_parse_u64(const char *text,size_t length,uint64_t *value) {
 static int br_instance_subscription(const char *database,uint64_t generation,uint64_t after_cursor,
                                     BrInstanceReady *ready,int *socket_out) {
   BrInstanceSubscribe request={.generation=generation,.after_cursor=after_cursor};
-  for(int attempt=0;;attempt++) {
+  int first=1;
+  for(;;) {
     BrOwnerRecord record={0};
     int socket_fd=-1;
     BrInstanceFrame reply={0};
-    int error=br_instance_connect(database,attempt?0:1,&record,&socket_fd);
+    int error=br_instance_connect(database,first,&record,&socket_fd);
+    first=0;
     if(error)return error;
     BrInstanceFrame frame={.op=BI_SUBSCRIBE,.owner=record.token,.epoch=record.epoch,
       .length=sizeof(request)};
@@ -3818,7 +3792,7 @@ static int br_instance_subscription(const char *database,uint64_t generation,uin
     if(!error && (reply.owner!=record.token || reply.epoch!=record.epoch))error=ESTALE;
     if(!error && reply.error)error=reply.error;
     if(!error && (reply.op!=BI_READY || reply.length!=sizeof(*ready)))error=EPROTO;
-    if(error==ESTALE && attempt<100) {
+    if(error==ESTALE) {
       /* The owner publishes its record after it binds its listener; read the
          record again while that window is open. */
       close(socket_fd);
