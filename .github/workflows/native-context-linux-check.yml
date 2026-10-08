@@ -17,8 +17,8 @@ jobs:
       matrix:
         include:
           - product: managed-context
-            source_sha: a8aaf7fb28c85376ff2eb3f91ec98d1e7d0b4a94
-            source_tree: d98628625c13b789cbd81592c92767939dd2c5d2
+            source_sha: fd99d124071e7e4174cf1d8909d1168b807c5408
+            source_tree: 28ec7830a09e78b8a5f47384e11f7b0143608ada
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
