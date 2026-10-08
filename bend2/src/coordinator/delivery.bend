@@ -25,9 +25,17 @@ def logged(saved: String, log: String, output: String, written: Result<&1,&1,U32
     case Fail{(code,text)}: Fail{(1,"Message delivered; the delivery log " ++ log ++ " could not be written: " ++ U32.show(code) ++ ": " ++ text ++ ". Read the recipient's inbox and the retained native log.")}
     case Done{unit}: result(saved,log,Tx.run_res(Done{output}))
 
+def failed_record(log: String, +code: U32, +detail: String, written: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,String>:
+  match written:
+    case Done{unit}: Fail{(code,"Message committed; session delivery failed: " ++ U32.show(code) ++ ": " ++ detail ++ ". Read " ++ log ++ " and retry delivery from the pending inbox.")}
+    case Fail{(log_code,log_error)}: Fail{(code,"Message committed; session delivery failed: " ++ U32.show(code) ++ ": " ++ detail ++ ". Delivery log " ++ log ++ " could not be written: " ++ U32.show(log_code) ++ ": " ++ log_error)}
+
 def completed(db: String, saved: String, run: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match run:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Fail{(+code,+detail)}: do IO<Result<&1,&1,U32 & String,String>>:
+      +log : String <- IO.pure(String,db ++ ".root.log")
+      written : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(log,"delivery error " ++ U32.show(code) ++ ": " ++ detail ++ "\n")
+      IO.pure(Result<&1,&1,U32 & String,String>,failed_record(log,code,detail,written))
     case Done{+output}: do IO<Result<&1,&1,U32 & String,String>>:
       +log : String <- IO.pure(String,db ++ ".root.log")
       written : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(log,output ++ "\n")

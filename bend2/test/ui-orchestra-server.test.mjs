@@ -440,12 +440,44 @@ test('native coordinator commit is replayed through an injected owner notificati
   const repository = join(directory, 'repository');
   const workspace = join(directory, 'child-worktree');
   const binary = join(process.cwd(), '.scratch/bend2/baton2');
+  const database = new DatabaseSync(databasePath);
+  database.close();
+  const owner = spawn(binary, ['--instance-owner', databasePath], {
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  const ownerErrors = [];
+  owner.on('error', (error) => ownerErrors.push(String(error)));
+  owner.stderr.on('data', (chunk) => ownerErrors.push(String(chunk)));
+  const ownerClosed = new Promise((resolve) => {
+    owner.once('close', (code, signal) => resolve({ code, signal }));
+  });
   const notifications = commitNotifications();
   const native = (...args) => {
     const value = execFileSync(binary, [databasePath, ...args], { encoding: 'utf8' });
     notifications.committed();
     return value;
   };
+  let reader;
+  let server;
+  t.after(async () => {
+    if (reader) await reader.cancel().catch(() => {});
+    if (server) await close(server);
+    execFileSync(binary, ['--instance-shutdown', databasePath], { encoding: 'utf8' });
+    const stopped = await ownerClosed;
+    assert.deepEqual(stopped, { code: 0, signal: null }, ownerErrors.join(''));
+    rmSync(directory, { recursive: true, force: true });
+  });
+  let ownerReadiness;
+  while (!ownerReadiness) {
+    const result = spawnSync(binary, [databasePath, 'owner-status'], {
+      encoding: 'utf8',
+    });
+    if (result.error) throw result.error;
+    if (result.status === 0 && result.stdout.trim()) ownerReadiness = JSON.parse(result.stdout);
+    else if (owner.exitCode !== null || owner.signalCode !== null) {
+      assert.fail(`native database owner exited before readiness: ${ownerErrors.join('')}`);
+    } else await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   mkdirSync(repository);
   execFileSync('git', ['-C', repository, 'init', '-q', '-b', 'main']);
   execFileSync('git', ['-C', repository, 'config', 'user.name', 'Orchestra UI native fixture']);
@@ -456,15 +488,14 @@ test('native coordinator commit is replayed through an injected owner notificati
   native('recruit', 'child', 'root', 'muse', 'configured-model', 'low', repository,
     'child-branch', workspace, 'HEAD');
 
-  const server = createOrchestraServer({ databasePath, reader: 'root',
+  server = createOrchestraServer({ databasePath, reader: 'root',
     subscribeCommittedChanges: notifications.subscribeCommittedChanges });
-  t.after(async () => { await close(server); rmSync(directory, { recursive: true, force: true }); });
   const base = await listen(server);
   const initial = await fetch(`${base}/orchestra/snapshot?subject=child&since=0`);
   const cursor = (await initial.json()).cursor;
   const response = await fetch(`${base}/orchestra/events?subject=child&since=${cursor}`);
   assert.equal(response.status, 200);
-  const reader = response.body.getReader();
+  reader = response.body.getReader();
   const decoder = new TextDecoder();
   await reader.read();
 

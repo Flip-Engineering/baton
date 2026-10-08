@@ -1,6 +1,6 @@
 """Exercise default report delivery and input committed during a live turn.
 
-The coordinator launches detached delivery for an admitted message. Registered CLI
+The coordinator returns the delivery result for an admitted message. Registered CLI
 sessions receive through their endpoint; an endpointless Codex thread uses the public
 daemon queue. Fixtures cover receipt ownership, parent reports and continued input.
 """
@@ -258,6 +258,29 @@ class RootWake(unittest.TestCase):
         self.assertEqual(json.loads(self.coord('turns', 'root')), [])
         root = json.loads(self.coord('session', 'root'))
         self.assertEqual((root['native'], root['endpoint']), ('native-app-root', ''))
+
+    def test_refused_codex_queue_preserves_pending_input_and_failure(self):
+        command = self.directory / 'codex'
+        command.write_text('#!' + sys.executable + '\n'
+                           + 'import sys\n'
+                           + 'print("Public queue refused this input.", flush=True)\n'
+                           + 'sys.exit(23)\n')
+        command.chmod(0o700)
+        self.environment['PATH'] = str(self.directory) + os.pathsep + self.environment.get('PATH', '')
+        self.coord('attach', 'root', 'codex', 'native-app-root', '')
+        self.recruit('child', 'root', 'omp')
+        refused = subprocess.run([str(EXE), str(self.db), 'report', 'refused-app-input',
+                                  'child', 'This report remains owed.'],
+                                 env=self.environment, text=True, capture_output=True)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('Message committed; session delivery failed', refused.stderr)
+        retained = json.loads(self.coord('delivery', 'refused-app-input'))
+        self.assertEqual(retained['body'], 'This report remains owed.')
+        self.assertIsNone(retained['receipt'])
+        self.assertEqual(json.loads(self.coord('turns', 'root')), [])
+        log = pathlib.Path(str(self.db) + '.root.log').read_text()
+        self.assertIn('exit 23', log)
+        self.assertIn('Public queue refused this input.', log)
 
     def test_codex_root_endpoint_wakes_the_root_and_routes_to_the_operator(self):
         self.release('root', 1)
