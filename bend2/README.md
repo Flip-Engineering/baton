@@ -410,9 +410,12 @@ DB="$STATE/state.db"
 
 `start` configures a native receiver and dispatches the task. It preserves a
 compatible existing Principal's saved conversation and pending input.
-`receiver SESSION HARNESS_COMMAND OUTPUT_LOG` generates the endpoint for an
+`receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]` generates the endpoint for an
 existing Codex, OMP or Muse session and preserves its saved native ID. It resolves
-executable and log paths and selects the recorded model, effort and workspace.
+executable and log paths and selects the recorded model, effort and workspace; the
+optional `CWD` records the working directory the session's turns run in. A session
+that records no model or no working directory is refused, because that endpoint
+would start no turn.
 The configured model Git registry applies to each launched session through the
 installed Node helper; see [series Git identities](../docs/bend2/git-series-identities.md).
 

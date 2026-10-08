@@ -160,7 +160,7 @@ The native terminal result is recorded in `turns PRINCIPAL --pretty` and sent
 to the operator inbox. Acknowledge each reviewed report with `ack`.
 
 Recruit subordinate Players with `recruit`. Configure Codex, OMP and Muse receivers
-with `receiver SESSION HARNESS_COMMAND OUTPUT_LOG`, then use
+with `receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]`, then use
 `dispatch-file ID SENDER RECIPIENT task TASK_FILE` for independent work.
 `dispatch-turn PLAYER TURN_ID HARNESS_COMMAND OUTPUT_LOG TASK_FILE` starts a
 Claude Player using its recorded model, effort, workspace and native ID.

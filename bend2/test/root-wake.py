@@ -149,6 +149,10 @@ class RootWake(unittest.TestCase):
             self.assertEqual(child.returncode, 0, child.stderr)
         return child.stdout.strip()
 
+    def coord_raw(self, *args):
+        return subprocess.run([str(EXE), str(self.db), *map(str, args)], env=self.environment,
+                              text=True, capture_output=True, timeout=60)
+
     def rows(self, sql):
         with sqlite3.connect(f'file:{self.db}?mode=ro', uri=True) as database:
             database.row_factory = sqlite3.Row
@@ -325,6 +329,48 @@ class RootWake(unittest.TestCase):
         self.assertEqual({row['sender'] for row in inbox}, {'root'})
         self.assertEqual(len(inbox), 3)
         self.assert_consumed_once_and_by_its_recipient(['root', 'lead', 'child'])
+
+    def test_receiver_requires_a_model_and_directory_and_records_the_supplied_directory(self):
+        # An existing Codex session is registered for wake by recording the model,
+        # effort and working directory its turns need, or by passing the directory.
+        self.coord('attach', 'root', 'codex', 'native-attached', '')
+        self.coord('role', 'root', 'principal-conductor')
+        self.recruit('child', 'root', 'omp')
+        refused = self.coord_raw('receiver', 'root', str(self.fixture), str(self.root_log))
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn('receiver-refused', refused.stderr)
+        self.assertIn('recorded model', refused.stderr)
+        self.assertIn('start SESSION HARNESS', refused.stderr)
+        self.assertIsNone(json.loads(self.coord('session', 'root'))['endpointArgv'])
+
+        # start records the model, effort, working directory and endpoint for the
+        # existing session, preserves its native conversation and starts a turn.
+        self.release('root', 1)
+        self.dispatch('start', 'root', 'codex', str(self.fixture), 'root', 'low', str(self.repo),
+                      str(self.root_log), 'start-task', str(self.task))
+        first = self.eventually(lambda: self.calls('root')[:1], 'the registered root never started a turn.')
+        self.assertEqual(self.accepted('start-task'), 'fixture reviewed')
+        binding = first[0]['args']
+        self.assertEqual(binding[binding.index('resume') + 1], 'native-attached')
+        self.assertEqual(first[0]['cwd'], str(self.repo.resolve()))
+        self.assertEqual(json.loads(self.coord('session', 'root'))['endpointArgv'],
+                         [str(EXE.resolve()), str(self.db.resolve()), 'receive', 'root',
+                          str(self.fixture.resolve()), '', '', '', str(self.root_log.resolve())])
+
+        # A supplied working directory is recorded by receiver, and the next wake
+        # starts the turn in it.
+        directory = self.checkouts / 'child'
+        configured = json.loads(self.coord('receiver', 'root', str(self.fixture), str(self.root_log),
+                                          str(directory)))
+        self.assertEqual(configured['workspace'], str(directory.resolve()))
+        self.release('root', 2)
+        self.dispatch('dispatch-file', 'child-report', 'child', 'root', 'report', str(self.report_body))
+        second = self.eventually(lambda: self.calls('root')[1:2], 'the report never woke the registered root.')
+        self.assertEqual(second[0]['cwd'], str(directory.resolve()))
+        self.assertIn('Report body for the root.', second[0]['prompt'])
+        self.assertEqual(self.accepted('child-report'), 'fixture reviewed')
+        self.assertEqual(json.loads(self.coord('player', 'root'))['native'], 'native-attached')
+        self.assert_consumed_once_and_by_its_recipient(['root', 'child'])
 
     def test_a_parentless_conductor_without_the_operator_role_reaches_no_inbox(self):
         self.release('root', 1)

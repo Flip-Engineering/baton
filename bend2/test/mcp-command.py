@@ -95,7 +95,7 @@ class McpCommand(unittest.TestCase):
         contracts = {
             'baton2_recruit': ({'player', 'harness', 'model', 'effort', 'repo',
                 'branch', 'workspace', 'base'}, {'parent'}),
-            'baton2_receiver': ({'player', 'command', 'log'}, set()),
+            'baton2_receiver': ({'player', 'command', 'log'}, {'cwd'}),
             'baton2_dispatch_file': ({'id', 'recipient', 'kind', 'path'}, {'sender'}),
             'baton2_dispatch_turn': ({'player', 'id', 'command', 'log', 'task'}, set()),
         }

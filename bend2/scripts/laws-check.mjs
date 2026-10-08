@@ -202,7 +202,14 @@ const MUTATIONS = [
   {
     name: "native-receiver-accepts-unchecked-endpoint",
     file: join("bend2", "src", "coordinator", "control.bend"),
-    find: " ++ \" AND \" ++ C.endpoint_admitted(endpoint) ++ \")\"",
+    find: " ++ \" AND \" ++ C.endpoint_admitted(endpoint) ++ \" AND \" ++ receiver_model(session)",
+    replace: " ++ \" AND \" ++ receiver_model(session)",
+    law: "native_receiver_checks_harness_stop_and_endpoint_admission",
+  },
+  {
+    name: "native-receiver-accepts-a-session-without-a-directory",
+    file: join("bend2", "src", "coordinator", "control.bend"),
+    find: " ++ \" AND \" ++ Control.receiver_directory(session,cwd) ++ \")\"",
     replace: " ++ \")\"",
     law: "native_receiver_checks_harness_stop_and_endpoint_admission",
   },

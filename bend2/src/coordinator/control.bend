@@ -98,29 +98,39 @@ def configured_endpoint(+db: String, session: String, +cmd: String, log: String,
     checked : String & String <- identity_checked(identity,model)
     IO.pure(String,identity_endpoint(executable,database,session,native,output,model,checked))
 
-def receiver_admitted(+session: String, endpoint: String) -> String:
-  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")"
+# A receiver starts a turn, so the session must be able to run one: a recorded
+# model for the adapter argv and a working directory for the child. A supplied
+# directory is recorded by the update below; otherwise the recorded one is read.
+def receiver_directory(+session: String, +cwd: String) -> String:
+  "(CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN 1 ELSE (SELECT length(coalesce(workspace,''))>0 FROM sessions WHERE id=" ++ C.q(session) ++ ") END)"
 
-def receiver_update_sql(+session: String, +endpoint: String, +admitted: String) -> String:
-  "UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
-  ++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered, active Codex, OMP or Muse session and valid text argv.','next','Inspect the session and retained inbox. Attach an interactive Claude Conductor through its channel adapter; recruit a new session after a terminal stop.') WHERE NOT " ++ admitted ++ ";"
-  ++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ ")) WHERE " ++ admitted ++ ";"
+def receiver_model(+session: String) -> String:
+  "(SELECT length(coalesce(model,''))>0 FROM sessions WHERE id=" ++ C.q(session) ++ ")"
 
-def receiver_sql(+session: String, +endpoint: String) -> String:
-  receiver_update_sql(session,endpoint,receiver_admitted(session,endpoint))
+def receiver_admitted(+session: String, +endpoint: String, +cwd: String) -> String:
+  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ receiver_model(session) ++ " AND " ++ receiver_directory(session,cwd) ++ ")"
+
+def receiver_update_sql(+session: String, +endpoint: String, +cwd: String, +admitted: String) -> String:
+  "UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
+  ++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered, active Codex, OMP or Muse session with a recorded model, a working directory and valid text argv.','next','Record the model and working directory with start SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE when the session records none, or pass the CWD argument when only the directory is missing. Then inspect the session and retained inbox and retry. Attach an interactive Claude Conductor through its channel adapter; recruit a new session after a terminal stop.') WHERE NOT " ++ admitted ++ ";"
+  ++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ "),'workspace',(SELECT workspace FROM sessions WHERE id=" ++ C.q(session) ++ ")) WHERE " ++ admitted ++ ";"
+
+def receiver_sql(+session: String, +endpoint: String, +cwd: String) -> String:
+  receiver_update_sql(session,endpoint,cwd,receiver_admitted(session,endpoint,cwd))
 
 def receiver_result(saved: String, denied: Bool) -> IO(String):
   match denied:
     case True{}: IO.die(String,2,saved)
     case False{}: IO.pure(String,saved)
 
-def receiver(+db: String, +session: String, cmd: String, log: String) -> IO(String):
+def receiver(+db: String, +session: String, cmd: String, log: String, cwd: String) -> IO(String):
   do IO<String>:
     found : String <- IO.try(String,Store.apply(db,C.Session{session}))
     accepted : String <- registered(found)
     model : String <- IO.try(String,DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +workspace : String <- Bool.pick(IO(String),String.is_empty(cwd),IO.pure(String,""),IO.try(String,Host.Control.workspace(cwd)))
     endpoint : String <- configured_endpoint(db,session,cmd,log,Tx.trim_nl(model))
-    +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_sql(session,endpoint) ++ "COMMIT;"))
+    +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_sql(session,endpoint,workspace) ++ "COMMIT;"))
     receiver_result(saved,Tx.starts_with(saved,"{\"error\":\"receiver-refused\""))
 
 def principal_matches(+session: String, +harness: String, +model: String, +effort: String, +cwd: String) -> String:

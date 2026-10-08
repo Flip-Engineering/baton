@@ -149,6 +149,7 @@ const TOOLS = [
       player: { type: 'string', description: 'Registered Player session ID' },
       command: { type: 'string', description: 'Native harness executable path or command name' },
       log: { type: 'string', description: 'Native output log path' },
+      cwd: { type: 'string', description: 'Working directory the session turns run in; recorded when supplied' },
     }, required: ['player', 'command', 'log'], additionalProperties: false },
   },
   {
@@ -495,7 +496,8 @@ function handleToolCall(msg) {
           args.effort, args.repo, args.branch, args.workspace, args.base);
         break;
       case 'baton2_receiver':
-        result = coord('receiver', player, args.command, args.log);
+        result = coord('receiver', player, args.command, args.log,
+                       ...(args.cwd === undefined ? [] : [args.cwd]));
         break;
       case 'baton2_dispatch_file':
         result = coord('dispatch-file', args.id, args.sender ?? sessionId,

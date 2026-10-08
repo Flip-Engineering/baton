@@ -176,7 +176,11 @@ The recipient endpoint is an executable argv array stored in its session row. Th
 process that commits a report, question or message invokes that
 endpoint with the message ID. The writer waits for delivery to return and keeps
 receiver output at `DATABASE.root.log`. `attach` or `connect` registers the
-explicit endpoint.
+explicit endpoint. `receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]` builds the
+native receive endpoint for a registered Codex, OMP or Muse session, resolves the
+harness command and log, and records the `CWD` argument as the working directory
+its turns run in. A session that records no model or no working directory is
+refused at registration, because that endpoint would start no turn.
 
 ### Codex, OMP and Muse
 

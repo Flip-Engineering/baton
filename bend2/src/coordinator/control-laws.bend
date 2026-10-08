@@ -40,9 +40,25 @@ def principal_startup_checks_assignment_and_operator_scope(session,harness,model
 law native_receiver_checks_harness_stop_and_endpoint_admission:
   for +session: String
   for +endpoint: String
-  {Control.receiver_admitted(session,endpoint) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")") : String}
+  for +cwd: String
+  {Control.receiver_admitted(session,endpoint,cwd) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ Control.receiver_model(session) ++ " AND " ++ Control.receiver_directory(session,cwd) ++ ")") : String}
 
-def native_receiver_checks_harness_stop_and_endpoint_admission(session,endpoint):
+def native_receiver_checks_harness_stop_and_endpoint_admission(session,endpoint,cwd):
+  {==}
+
+law receiver_directory_reads_the_supplied_or_recorded_path:
+  for +session: String
+  for +cwd: String
+  {Control.receiver_directory(session,cwd) == ("(CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN 1 ELSE (SELECT length(coalesce(workspace,''))>0 FROM sessions WHERE id=" ++ C.q(session) ++ ") END)") : String}
+
+def receiver_directory_reads_the_supplied_or_recorded_path(session,cwd):
+  {==}
+
+law receiver_model_requires_a_recorded_model:
+  for +session: String
+  {Control.receiver_model(session) == ("(SELECT length(coalesce(model,''))>0 FROM sessions WHERE id=" ++ C.q(session) ++ ")") : String}
+
+def receiver_model_requires_a_recorded_model(session):
   {==}
 
 law detached_delivery_commits_before_launch_and_checks_refusals:
@@ -138,9 +154,19 @@ law receiver_command_parses_its_native_arguments:
   for session: String
   for cmd: String
   for log: String
-  {C.parse(["receiver",session,cmd,log]) == C.Receiver{session,cmd,log} : C.Command}
+  {C.parse(["receiver",session,cmd,log]) == C.Receiver{session,cmd,log,""} : C.Command}
 
 def receiver_command_parses_its_native_arguments(session,cmd,log):
+  {==}
+
+law receiver_command_parses_its_working_directory:
+  for session: String
+  for cmd: String
+  for log: String
+  for cwd: String
+  {C.parse(["receiver",session,cmd,log,cwd]) == C.Receiver{session,cmd,log,cwd} : C.Command}
+
+def receiver_command_parses_its_working_directory(session,cmd,log,cwd):
   {==}
 
 law dispatch_file_command_parses_its_native_arguments:
@@ -205,20 +231,22 @@ def principal_assignment_uses_compatible_scope_and_valid_endpoint(session,harnes
 law receiver_update_changes_only_an_admitted_endpoint:
   for +session: String
   for +endpoint: String
+  for +cwd: String
   for +admitted: String
-  {Control.receiver_update_sql(session,endpoint,admitted) == ("UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
-++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered, active Codex, OMP or Muse session and valid text argv.','next','Inspect the session and retained inbox. Attach an interactive Claude Conductor through its channel adapter; recruit a new session after a terminal stop.') WHERE NOT " ++ admitted ++ ";"
-++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ ")) WHERE " ++ admitted ++ ";") : String}
+  {Control.receiver_update_sql(session,endpoint,cwd,admitted) == ("UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
+++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered, active Codex, OMP or Muse session with a recorded model, a working directory and valid text argv.','next','Record the model and working directory with start SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE when the session records none, or pass the CWD argument when only the directory is missing. Then inspect the session and retained inbox and retry. Attach an interactive Claude Conductor through its channel adapter; recruit a new session after a terminal stop.') WHERE NOT " ++ admitted ++ ";"
+++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ "),'workspace',(SELECT workspace FROM sessions WHERE id=" ++ C.q(session) ++ ")) WHERE " ++ admitted ++ ";") : String}
 
-def receiver_update_changes_only_an_admitted_endpoint(session,endpoint,admitted):
+def receiver_update_changes_only_an_admitted_endpoint(session,endpoint,cwd,admitted):
   {==}
 
 law receiver_update_enforces_actual_receiver_admission:
   for +session: String
   for +endpoint: String
-  {Control.receiver_sql(session,endpoint) == (Control.receiver_update_sql(session,endpoint,Control.receiver_admitted(session,endpoint))) : String}
+  for +cwd: String
+  {Control.receiver_sql(session,endpoint,cwd) == (Control.receiver_update_sql(session,endpoint,cwd,Control.receiver_admitted(session,endpoint,cwd))) : String}
 
-def receiver_update_enforces_actual_receiver_admission(session,endpoint):
+def receiver_update_enforces_actual_receiver_admission(session,endpoint,cwd):
   {==}
 
 law configured_identity_wraps_the_actual_receiver_arguments:
