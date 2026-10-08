@@ -315,30 +315,110 @@ def keeper_readiness_from_host(+bootstrap: Bootstrap, +expected_binding: String,
     KeeperObserverUnavailable{"hostReadinessMismatch"})
 
 def recovery_state_supported(+state: String) -> Bool:
-  Bool.or(String.eq(state, "ready"), Bool.or(String.eq(state, "running"),
-  Bool.or(String.eq(state, "exited"), Bool.or(String.eq(state, "uncertain"),
-    String.eq(state, "failed")))))
+  Bool.or(String.eq(state, "running"), String.eq(state, "exited"))
 
 def recovery_state_latch_matches(+state: String, +value: J.Json) -> Bool:
-  Bool.pick(Bool, String.eq(state, "ready"),
-    readiness_false(value, "spawn_latched"),
-    Bool.and(recovery_state_supported(state), readiness_true(value, "spawn_latched")))
+  Bool.and(recovery_state_supported(state), readiness_true(value, "spawn_latched"))
 
 def recovery_state_status_matches(+state: String, +value: J.Json) -> Bool:
   Bool.pick(Bool, String.eq(state, "exited"), readiness_true(value, "status_known"),
-    Bool.pick(Bool, Bool.or(String.eq(state, "ready"), String.eq(state, "running")),
+    Bool.pick(Bool, String.eq(state, "running"),
       readiness_false(value, "status_known"),
-      Bool.pick(Bool, String.eq(state, "failed"), readiness_false(value, "status_known"),
-        recovery_state_supported(state))))
+      recovery_state_supported(state)))
+
+def custody_transition_key_allowed(+key: String) -> Bool:
+  Bool.or(String.eq(key, "schema"), Bool.or(String.eq(key, "directory"),
+  Bool.or(String.eq(key, "oldOwnerWitness"), Bool.or(String.eq(key, "currentOwnerWitness"),
+  Bool.or(String.eq(key, "attemptManifest"), Bool.or(String.eq(key, "ownerAttempt"),
+  Bool.or(String.eq(key, "nativePid"), Bool.or(String.eq(key, "nativeBirth"),
+  Bool.or(String.eq(key, "custodyMode"), Bool.or(String.eq(key, "observation"),
+  Bool.or(String.eq(key, "historicalGuard"), String.eq(key, "terminalStatus"))))))))))))
+
+def custody_transition_members_allowed(+members: J.Json) -> Bool:
+  match members:
+    case J.Jpair{key, value, +rest}:
+      Bool.and(custody_transition_key_allowed(key), custody_transition_members_allowed(rest))
+    case J.Jnil{}: True{}
+    case other: False{}
+
+def custody_transition_required(+members: J.Json) -> Bool:
+  Bool.and(readiness_has(members, "schema"),
+  Bool.and(readiness_has(members, "directory"),
+  Bool.and(readiness_has(members, "oldOwnerWitness"),
+  Bool.and(readiness_has(members, "currentOwnerWitness"),
+  Bool.and(readiness_has(members, "attemptManifest"),
+  Bool.and(readiness_has(members, "ownerAttempt"),
+  Bool.and(readiness_has(members, "nativePid"),
+  Bool.and(readiness_has(members, "nativeBirth"),
+  Bool.and(readiness_has(members, "custodyMode"),
+  Bool.and(readiness_has(members, "observation"),
+  Bool.and(readiness_has(members, "historicalGuard"),
+    readiness_has(members, "terminalStatus"))))))))))))
+
+def custody_transition_identity_matches(+bootstrap: Bootstrap, +current_witness: String,
+                                        +value: J.Json) -> Bool:
+  Bool.and(String.eq(readiness_text(value, "schema"), "baton2-custody-transition-v1"),
+  Bool.and(String.eq(readiness_text(value, "directory"), bootstrap_keeper_path(bootstrap)),
+  Bool.and(String.eq(readiness_text(value, "oldOwnerWitness"), bootstrap_owner_witness(bootstrap)),
+  String.eq(readiness_text(value, "currentOwnerWitness"), current_witness))))
+
+def custody_transition_facts_match(+value: J.Json) -> Bool:
+  Bool.and(Nat.is_eq(String.length(readiness_text(value, "attemptManifest")), 16n),
+  Bool.and(Bool.not(String.is_empty(readiness_json_text(value, "ownerAttempt"))),
+  Bool.and(Bool.not(String.is_empty(readiness_json_text(value, "nativePid"))),
+  Bool.not(String.is_empty(readiness_text(value, "nativeBirth"))))))
+
+def custody_transition_pid_matches(+transition: J.Json, +host: J.Json) -> Bool:
+  String.eq(readiness_json_text(transition, "nativePid"),
+    readiness_json_text(host, "native_pid"))
+
+def custody_transition_mode_matches(+bootstrap: Bootstrap, +current_witness: String,
+                                    +value: J.Json) -> Bool:
+  Bool.and(String.eq(readiness_text(value, "historicalGuard"), "not-carried"),
+    Bool.pick(Bool, String.eq(readiness_text(value, "custodyMode"), "same-owner-observer"),
+      String.eq(current_witness, bootstrap_owner_witness(bootstrap)),
+      Bool.and(String.eq(readiness_text(value, "custodyMode"), "owner-rebound-monitor"),
+        Bool.not(String.eq(current_witness, bootstrap_owner_witness(bootstrap))))))
+
+def custody_transition_status_matches(+value: J.Json) -> Bool:
+  Bool.pick(Bool, String.eq(readiness_text(value, "observation"), "live"),
+    String.eq(readiness_text(value, "terminalStatus"), "unavailable"),
+    Bool.and(String.eq(readiness_text(value, "observation"), "exited"),
+      String.eq(readiness_text(value, "terminalStatus"), "known")))
+
+def custody_transition_host_status_matches(+transition: J.Json, +host: J.Json) -> Bool:
+  Bool.pick(Bool, String.eq(readiness_text(transition, "observation"), "live"),
+    Bool.and(String.eq(readiness_text(host, "state"), "running"),
+      readiness_false(host, "status_known")),
+    Bool.and(String.eq(readiness_text(host, "state"), "exited"),
+      readiness_true(host, "status_known")))
+
+def custody_transition_matches(+bootstrap: Bootstrap, +current_witness: String,
+                               +value: J.Json) -> Bool:
+  match value:
+    case J.Jobj{+members}:
+      Bool.and(custody_transition_required(members),
+      Bool.and(custody_transition_members_allowed(members),
+      Bool.and(custody_transition_identity_matches(bootstrap, current_witness, value),
+      Bool.and(Bool.not(String.is_empty(current_witness)),
+      Bool.and(custody_transition_facts_match(value),
+      Bool.and(custody_transition_status_matches(value),
+        custody_transition_mode_matches(bootstrap, current_witness, value)))))))
+    case other: False{}
 
 # Recovery readiness is derived from the attached keeper's closed host record.
-# It accepts each recorded process phase because recovery may attach before or
-# after the original child exits, while keeping the original owner witness.
+# It accepts only a live process with unknown terminal status or an exited
+# process with a durable terminal status, and requires the typed witness
+# transition returned by the elected owner.
 def keeper_recovery_readiness_from_host(+bootstrap: Bootstrap,
                                        +expected_binding: String,
                                        +owner_witness: String,
+                                       +transition: J.Json,
                                        +value: J.Json) -> KeeperReadiness:
   Bool.pick(KeeperReadiness,
+    Bool.and(custody_transition_matches(bootstrap, owner_witness, transition),
+    Bool.and(custody_transition_pid_matches(transition, value),
+    Bool.and(custody_transition_host_status_matches(transition, value),
     Bool.and(readiness_closed(value),
     Bool.and(String.eq(readiness_text(value, "schema"), "baton2-host-ready-v1"),
     Bool.and(recovery_state_latch_matches(readiness_text(value, "state"), value),
@@ -349,7 +429,7 @@ def keeper_recovery_readiness_from_host(+bootstrap: Bootstrap,
     Bool.and(String.eq(readiness_text(value, "expectedBinding"), expected_binding),
     Bool.and(String.eq(readiness_json_text(value, "ownerIncarnation") ++ ":"
       ++ readiness_json_text(value, "ownerEpoch"), owner_witness),
-    readiness_false(value, "cancelled")))))))))),
+      readiness_false(value, "cancelled"))))))))))),
     KeeperObserverReady{bootstrap_query(bootstrap), bootstrap_owner(bootstrap),
       bootstrap_keeper_path(bootstrap), "starter", "0"},
     KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"})

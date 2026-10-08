@@ -330,7 +330,8 @@ def prepared_action_code(+action: String) -> U32:
   Bool.pick(U32,String.eq(action,"double-start"),2,
   Bool.pick(U32,String.eq(action,"changed-grant"),3,
   Bool.pick(U32,String.eq(action,"cancel"),4,
-  Bool.pick(U32,String.eq(action,"restart-start"),5,6))))))
+  Bool.pick(U32,String.eq(action,"restart-start"),5,
+  Bool.pick(U32,String.eq(action,"hold-recovery"),7,6)))))))
 
 def prepared_start_completion(+handle: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match result:
@@ -341,6 +342,14 @@ def prepared_start_completion(+handle: U32, result: Result<&1,&1,U32 & String,Un
       closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
       line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       read_all_lines(handle,line)
+
+def prepared_recovery_hold(result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match result:
+    case Fail{(code,text)}: IO.die(Unit,1,"recovery-start-failed:" ++ U32.show(code) ++ ":" ++ text)
+    case Done{unit}: do IO<Unit>:
+      printed : Unit <- IO.print("recovery-started")
+      gate : String <- IO.try(String,Text.Text.read("-"))
+      IO.print("recovery-observer-released")
 
 def prepared_after_owner_restart(+handle: U32, +bootstrap: String, +decision: String, +owner_witness: String) -> IO(Unit):
   do IO<Unit>:
@@ -369,6 +378,9 @@ def prepared_action(+handle: U32, +bootstrap: String, +decision: String, action:
       printed : Unit <- IO.print("prepared-waiting-for-start")
       gate : String <- IO.try(String,Text.Text.read("-"))
       prepared_after_owner_restart(handle,bootstrap,decision,owner_witness)
+    case 7: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision,owner_witness)
+      prepared_recovery_hold(result)
     case _: do IO<Unit>:
       result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.start(handle,bootstrap,decision,owner_witness)
       prepared_finished(handle,result)
@@ -499,6 +511,67 @@ def stale_prepare_cli(args: List<String>) -> IO(Unit):
       stale_prepare_result(result)
     case _: IO.die(Unit,2,"prepare-stale DATABASE WITNESS ATTEMPT CWD EXECUTABLE SCRIPT BOOTSTRAP")
 
+def recovered_host_state(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Done{+value}: IO.print("recovery-host-state:" ++ value)
+    case Fail{(code,text)}: IO.die(Unit,1,"recovery-state-failed:" ++ U32.show(code) ++ ":" ++ text)
+
+def recovery_observation_line(line: Maybe<String>) -> IO(Unit):
+  match line:
+    case Some{+value}: IO.print("recovery-line:" ++ value)
+    case None{}: IO.print("recovery-line-unavailable")
+
+def recovery_owner_loss_mutations(+handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    write_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,"forbidden-after-recovery\n")
+    write_shown : Unit <- operation("recovery-write",write_result)
+    close_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
+    close_shown : Unit <- operation("recovery-close",close_result)
+    signal_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.signal(handle,15)
+    signal_shown : Unit <- operation("recovery-signal",signal_result)
+    release_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.release(handle)
+    release_shown : Unit <- operation("recovery-release",release_result)
+    acknowledge_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.acknowledge(handle)
+    operation("recovery-acknowledge",acknowledge_result)
+
+def recovery_terminal_observation(handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    status : String <- IO.try(String,P.ProcessChild.wait(handle))
+    printed : Unit <- IO.print("native-final-observation:" ++ status)
+    latest : Result<&1,&1,U32 & String,String> <- Custody.Instance.state(handle)
+    recovered_host_state(latest)
+
+def recovery_observation_after_gate(+handle: U32, +phase: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(phase,"owner-loss"),
+    recovery_owner_loss_mutations(handle),recovery_terminal_observation(handle))
+
+def recovery_observation_attached(handle: U32, +transition: String,
+                                  +phase: String) -> IO(Unit):
+  do IO<Unit>:
+    printed : Unit <- IO.print("recovery-transition:" ++ transition)
+    state : Result<&1,&1,U32 & String,String> <- Custody.Instance.state(handle)
+    shown : Unit <- recovered_host_state(state)
+    write_result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,"forbidden-after-recovery\n")
+    write_shown : Unit <- operation("recovery-write",write_result)
+    line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+    printed_line : Unit <- recovery_observation_line(line)
+    gate : String <- IO.try(String,Text.Text.read("-"))
+    recovery_observation_after_gate(handle,phase)
+
+def recovery_observation_result(result: Result<&1,&1,U32 & String,U32 & String>,
+                                +phase: String) -> IO(Unit):
+  match result:
+    case Fail{(code,text)}: IO.die(Unit,1,"recovery-attach-failed:" ++ U32.show(code) ++ ":" ++ text)
+    case Done{(handle,+transition)}: recovery_observation_attached(handle,transition,phase)
+
+def recover_observation_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case +database <> +directory <> +bootstrap <> +old_witness <> +phase <> Nil{}: do IO<Unit>:
+      current_witness : String <- IO.try(String,Custody.Instance.ensure_owner_witness(database))
+      result : Result<&1,&1,U32 & String,U32 & String> <- Custody.Instance.recover(database,directory,bootstrap,old_witness,current_witness)
+      recovery_observation_result(result,phase)
+    case _: IO.die(Unit,2,"recover-observation DATABASE ATTEMPT BOOTSTRAP OLD-WITNESS PHASE")
+
 def role_guard_result(result: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
   match result:
     case Fail{(code,text)}: IO.die(Unit,code,text)
@@ -597,7 +670,8 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"role-guard"),24,
   Bool.pick(U32,String.eq(mode,"owner-witness"),25,
   Bool.pick(U32,String.eq(mode,"prepare-stale"),26,
-  Bool.pick(U32,String.eq(mode,"ensure-owner-witness"),27,0))))))))))))))))))))))))))))
+  Bool.pick(U32,String.eq(mode,"ensure-owner-witness"),27,
+  Bool.pick(U32,String.eq(mode,"recover-observation"),29,0)))))))))))))))))))))))))))))
 
 # Admits under the shared owner while holding no session guard, so the record
 # states no guard binding.
@@ -649,6 +723,7 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 25: owner_witness_cli(rest)
     case 26: stale_prepare_cli(rest)
     case 27: ensure_owner_witness_cli(rest)
+    case 29: recover_observation_cli(rest)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):

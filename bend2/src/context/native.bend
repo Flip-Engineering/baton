@@ -549,6 +549,14 @@ def managed_output_value(+event_frame: String, exit: ManagedExit) -> ManagedOutp
     case ManagedExitRefused{}:
       ManagedOutput{SNil{}, "{\"reason\":\"managedExitStatusMalformed\"}", 255, False{}}
 
+def managed_wait_status_value(+event_frame: String, +status: String) -> IO(ManagedOutput):
+  match managed_exit_status(status):
+    case ManagedExit{code, complete}:
+      IO.pure(ManagedOutput,
+        managed_output_value(event_frame, ManagedExit{code, complete}))
+    case ManagedExitRefused{}:
+      IO.die(ManagedOutput, 3, "managedChildStatusUnavailable:" ++ status)
+
 def managed_wait_output(+handle: U32, +event_frame: String,
                         waited: Result<&1,&1,U32 & String,String>) -> IO(ManagedOutput):
   match waited:
@@ -556,8 +564,7 @@ def managed_wait_output(+handle: U32, +event_frame: String,
     case Done{+status}:
       Bool.pick(IO(ManagedOutput), String.is_empty(status),
         IO.die(ManagedOutput, 3, "managedChildStatusMissing"),
-        IO.pure(ManagedOutput, managed_output_value(event_frame,
-          managed_exit_status(status))))
+        managed_wait_status_value(event_frame, status))
 
 def managed_read_second(+handle: U32, +event_frame: String,
                         second: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(ManagedOutput):
@@ -843,36 +850,64 @@ def managed_recovery_association(+db: String, +binding: String,
     case Done{+association}: IO.pure(Bool,
       managed_recovery_association_ok(bootstrap, admission, association))
 
-def managed_recovery_readiness_json(+bootstrap: ManagedQuery.Bootstrap,
+def managed_recovery_readiness_join(+bootstrap: ManagedQuery.Bootstrap,
                                     +expected_binding: String,
-                                    decoded: ProjectPolicyJson) -> IO(ManagedQuery.KeeperReadiness):
-  match decoded:
+                                    host: ProjectPolicyJson,
+                                    transition: ProjectPolicyJson) -> IO(ManagedQuery.KeeperReadiness):
+  match host:
     case ProjectPolicyJsonRefused{reason}:
       IO.pure(ManagedQuery.KeeperReadiness,
         ManagedQuery.KeeperObserverUnavailable{"recoveryStateJson:" ++ reason})
     case ProjectPolicyJsonReady{+value}:
-      IO.pure(ManagedQuery.KeeperReadiness,
-        ManagedQuery.keeper_recovery_readiness_from_host(bootstrap,
-          expected_binding, ManagedQuery.bootstrap_owner_witness(bootstrap), value))
+      match transition:
+        case ProjectPolicyJsonRefused{reason}:
+          IO.pure(ManagedQuery.KeeperReadiness,
+            ManagedQuery.KeeperObserverUnavailable{"custodyTransitionJson:" ++ reason})
+        case ProjectPolicyJsonReady{+receipt}:
+          current_witness = boundary_text(receipt, "currentOwnerWitness")
+          IO.pure(ManagedQuery.KeeperReadiness,
+            ManagedQuery.keeper_recovery_readiness_from_host(bootstrap,
+              expected_binding, current_witness, receipt, value))
+
+def managed_recovery_readiness_transition_rows(+bootstrap: ManagedQuery.Bootstrap,
+    +expected_binding: String, host: ProjectPolicyJson,
+    result: Result<&1,&1,U32 & String,String>) -> IO(ManagedQuery.KeeperReadiness):
+  match result:
+    case Fail{error}: IO.pure(ManagedQuery.KeeperReadiness,
+      ManagedQuery.KeeperObserverUnavailable{"custodyTransitionDecode"})
+    case Done{+rows}: managed_recovery_readiness_join(bootstrap, expected_binding,
+      host, project_policy_json_rows(rows))
+
+def managed_recovery_readiness_json(+db: String, +binding: String,
+                                    +bootstrap: ManagedQuery.Bootstrap,
+                                    +expected_binding: String, +transition: String,
+                                    host: ProjectPolicyJson) -> IO(ManagedQuery.KeeperReadiness):
+  do IO<ManagedQuery.KeeperReadiness>:
+    rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+      Req.json_tree_sql(transition))
+    managed_recovery_readiness_transition_rows(bootstrap, expected_binding, host, rows)
 
 def managed_recovery_readiness_rows(+bootstrap: ManagedQuery.Bootstrap,
-                                    +expected_binding: String,
+                                    +db: String, +binding: String,
+                                    +expected_binding: String, +transition: String,
                                     result: Result<&1,&1,U32 & String,String>) -> IO(ManagedQuery.KeeperReadiness):
   match result:
     case Fail{error}: IO.pure(ManagedQuery.KeeperReadiness,
       ManagedQuery.KeeperObserverUnavailable{"recoveryStateDecode"})
-    case Done{+rows}: managed_recovery_readiness_json(bootstrap,
-      expected_binding, project_policy_json_rows(rows))
+    case Done{+rows}: managed_recovery_readiness_json(db, binding, bootstrap,
+      expected_binding, transition, project_policy_json_rows(rows))
 
 def decode_managed_recovery_readiness(+db: String, +binding: String,
                                       +bootstrap: ManagedQuery.Bootstrap,
+                                      +transition: String,
                                       +host_json: String) -> IO(ManagedQuery.KeeperReadiness):
   do IO<ManagedQuery.KeeperReadiness>:
     expected_binding : String <- IO.try(String,
       ContextIdentity.role_guard_key(ManagedQuery.bootstrap_text(bootstrap)))
     rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
       Req.json_tree_sql(host_json))
-    managed_recovery_readiness_rows(bootstrap, expected_binding, rows)
+    managed_recovery_readiness_rows(bootstrap, db, binding, expected_binding,
+      transition, rows)
 
 def managed_recovery_admission(+db: String, +binding: String,
                                +bootstrap: ManagedQuery.Bootstrap,
@@ -908,6 +943,22 @@ def managed_recovery_binding(+db: String, +bootstrap: ManagedQuery.Bootstrap,
           managed_recovery_admission(db, binding, bootstrap, admission),
         IO.pure(Bool, False{}))
 
+def managed_recovery_resume_decision(+db: String, +binding: String,
+                                     +bootstrap: ManagedQuery.Bootstrap,
+                                     +worktree: String, +bootstrap_digest: String,
+                                     handle: U32,
+                                     decision: ManagedQuery.StartDecision) -> IO(Unit):
+  match decision:
+    case ManagedQuery.StartGranted{query, owner, role, incarnation, request,
+        keeper_path, artifact_path, plan_value, result_schema}:
+      managed_observe_complete(db, binding, ManagedLaunch{bootstrap, SNil{},
+        ManagedQuery.bootstrap_executable_path(bootstrap),
+        ManagedQuery.bootstrap_runtime_path(bootstrap), worktree, bootstrap_digest}, handle)
+    case ManagedQuery.StartCancelled{query, owner, reason, keeper_path}:
+      IO.die(Unit, 3, "managedRecoveryAdmissionContradiction:" ++ reason)
+    case ManagedQuery.StartHeld{reason}:
+      IO.die(Unit, 3, "managedRecoveryAdmissionUnresolved:" ++ reason)
+
 def managed_recovery_start_decision(+db: String, +binding: String,
                                     +bootstrap: ManagedQuery.Bootstrap,
                                     +worktree: String, +bootstrap_digest: String,
@@ -915,10 +966,8 @@ def managed_recovery_start_decision(+db: String, +binding: String,
                                     decision: IO(ManagedQuery.StartDecision)) -> IO(Unit):
   do IO<Unit>:
     committed : ManagedQuery.StartDecision <- decision
-    managed_start_decision(db, binding, ManagedLaunch{bootstrap, SNil{},
-      ManagedQuery.bootstrap_executable_path(bootstrap),
-      ManagedQuery.bootstrap_runtime_path(bootstrap), worktree, bootstrap_digest},
-      handle, committed)
+    managed_recovery_resume_decision(db, binding, bootstrap, worktree,
+      bootstrap_digest, handle, committed)
 
 def managed_recovery_readiness_decision(+db: String, +binding: String,
                                         +bootstrap: ManagedQuery.Bootstrap,
@@ -936,34 +985,35 @@ def managed_recovery_readiness_decision(+db: String, +binding: String,
 def managed_recovery_readiness_loaded(+db: String, +binding: String,
                                       +bootstrap: ManagedQuery.Bootstrap,
                                       +worktree: String, +bootstrap_digest: String,
-                                      handle: U32, +host_json: String) -> IO(Unit):
+                                      handle: U32, +transition: String,
+                                      +host_json: String) -> IO(Unit):
   do IO<Unit>:
     readiness : ManagedQuery.KeeperReadiness <- decode_managed_recovery_readiness(
-      db, binding, bootstrap, host_json)
+      db, binding, bootstrap, transition, host_json)
     managed_recovery_readiness_decision(db, binding, bootstrap, worktree,
       bootstrap_digest, handle, readiness)
 
 def managed_recovery_state_result(+db: String, +binding: String,
                                   +bootstrap: ManagedQuery.Bootstrap,
                                   +worktree: String, +bootstrap_digest: String,
-                                  handle: U32,
+                                  handle: U32, +transition: String,
                                   result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Fail{error}: IO.die(Unit, 3, "managedRecoveryStateUnavailable")
     case Done{+host_json}: managed_recovery_readiness_loaded(db, binding,
-      bootstrap, worktree, bootstrap_digest, handle, host_json)
+      bootstrap, worktree, bootstrap_digest, handle, transition, host_json)
 
 def managed_recovery_attached_result(+db: String, +binding: String,
                                      +bootstrap: ManagedQuery.Bootstrap,
                                      +worktree: String, +bootstrap_digest: String,
-                                     attached: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+                                     attached: Result<&1,&1,U32 & String,U32 & String>) -> IO(Unit):
   match attached:
     case Fail{error}: IO.die(Unit, 3, "managedRecoveryAttachUnavailable")
-    case Done{+handle}:
+    case Done{(handle, +transition)}:
       do IO<Unit>:
         state : Result<&1,&1,U32 & String,String> <- Custody.Instance.state(handle)
         managed_recovery_state_result(db, binding, bootstrap, worktree,
-          bootstrap_digest, handle, state)
+          bootstrap_digest, handle, transition, state)
 
 def managed_recovery_attach_binding(+db: String,
                                     +worktree: String, +bootstrap_digest: String,
@@ -973,8 +1023,12 @@ def managed_recovery_attach_binding(+db: String,
     binding_ok : Bool <- managed_recovery_binding(db, bootstrap, binding_result)
     Bool.pick(IO(Unit), binding_ok,
       do IO<Unit>:
-        attached : Result<&1,&1,U32 & String,U32> <- Custody.Instance.attach(db,
-          ManagedQuery.bootstrap_keeper_path(bootstrap))
+        expected_owner_witness : String <- IO.try(String,
+          Custody.Instance.ensure_owner_witness(db))
+        attached : Result<&1,&1,U32 & String,U32 & String> <- Custody.Instance.recover(db,
+          ManagedQuery.bootstrap_keeper_path(bootstrap),
+          ManagedQuery.bootstrap_text(bootstrap),
+          ManagedQuery.bootstrap_owner_witness(bootstrap), expected_owner_witness)
         managed_recovery_attached_result(db,
           ManagedQuery.bootstrap_database_binding(bootstrap), bootstrap,
           worktree, bootstrap_digest, attached),
@@ -1063,7 +1117,7 @@ def managed_recovery_provider_answer(+db: String, +owner: String, +query: String
   match answer:
     case ProviderOutput{+value, +status}:
       Bool.pick(IO(Unit), String.eq(status, "exit 0"),
-        managed_recovery_bootstrap(db, owner, query, directory, worktree,
+        managed_recovery_bootstrap_json(db, owner, query, directory, worktree,
           bootstrap_file, executable, runtime_path, project_policy_json_rows(value)),
         IO.die(Unit, 3, "managedRecoveryBootstrapRead"))
     case other: IO.die(Unit, 3, "managedRecoveryBootstrapRead")
