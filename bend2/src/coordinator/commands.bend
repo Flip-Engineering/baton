@@ -63,6 +63,8 @@ type Command is Data:
   ContextEngines{}
   ContextQueryFile{owner: String, query: String, path: String}
   ContextResult{query: String}
+  Serve{}
+  OwnerStatus{}
   Help{}
   Invalid{}
 
@@ -458,6 +460,8 @@ def sql(command: Command) -> String:
     case ContextEngines{}: ""
     case ContextQueryFile{owner,query,path}: ""
     case ContextResult{query}: ""
+    case Serve{}: ""
+    case OwnerStatus{}: ""
     case Help{}: ""
     case Invalid{}: ""
 
@@ -474,7 +478,7 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"players"),Players{},
       Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},
       Bool.pick(Command, String.eq(verb,"pending"),Pending{},
-      Bool.pick(Command,String.eq(verb,"context-engines"),ContextEngines{},Invalid{}))))))))
+      Bool.pick(Command,String.eq(verb,"context-engines"),ContextEngines{},Bool.pick(Command,String.eq(verb,"serve"),Serve{},Bool.pick(Command,String.eq(verb,"owner-status"),OwnerStatus{},Invalid{}))))))))))
     case +verb <> +id <> Nil{}:
       Bool.pick(Command,String.eq(verb,"context-result"),ContextResult{id},
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,"","",""},
@@ -644,4 +648,30 @@ law view_parser_keeps_the_declared_port:
   {parse(["view",subject,reader,port]) == View{subject,reader,port} : Command}
 
 def view_parser_keeps_the_declared_port(subject,reader,port):
+  {==}
+
+law serve_parser_selects_the_fixed_coordinator:
+  {parse(["serve"]) == Serve{} : Command}
+
+def serve_parser_selects_the_fixed_coordinator():
+  {==}
+
+law serve_parser_rejects_extra_arguments:
+  for +extra: String
+  {parse(["serve",extra]) == Invalid{} : Command}
+
+def serve_parser_rejects_extra_arguments(extra):
+  {==}
+
+law owner_status_parser_selects_the_readiness_check:
+  {parse(["owner-status"]) == OwnerStatus{} : Command}
+
+def owner_status_parser_selects_the_readiness_check():
+  {==}
+
+law owner_status_parser_rejects_extra_arguments:
+  for +extra: String
+  {parse(["owner-status",extra]) == Invalid{} : Command}
+
+def owner_status_parser_rejects_extra_arguments(extra):
   {==}
