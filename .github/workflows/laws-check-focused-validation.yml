@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       BEND_NO_TELEMETRY: '1'
-      BATON2_SOURCE_SHA: 1efba19415bfbf868a9da4ccfadd2d31455f6812
+      BATON2_SOURCE_SHA: 351c9aba85c69f4e4aab1f86cc31fb0f415fe327
     steps:
       - name: Checkout validation driver
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: Flip-Engineering/baton
-          ref: 1efba19415bfbf868a9da4ccfadd2d31455f6812
+          ref: 351c9aba85c69f4e4aab1f86cc31fb0f415fe327
           path: source
           persist-credentials: false
 
@@ -46,7 +46,7 @@ jobs:
           printf '%s\n' "$driver_tree" > "$RUNNER_TEMP/laws-check-focused/evidence/driver.tree"
           source_sha=$(git -C source rev-parse HEAD)
           test "$source_sha" = "$BATON2_SOURCE_SHA"
-          test "$(git -C source rev-parse 'HEAD^{tree}')" = 095c9bda972066ec0fccbb032b6991a57ca76ea0
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = 9afffc172eec7b77eb5d3df1a15aaa6cc2e334c5
           printf '%s\n' "$source_sha" > "$RUNNER_TEMP/laws-check-focused/evidence/source.sha"
           printf '%s\n' "$(git -C source rev-parse 'HEAD^{tree}')" > "$RUNNER_TEMP/laws-check-focused/evidence/source.tree"
           uname -a > "$RUNNER_TEMP/laws-check-focused/toolchain/runner-uname.log"

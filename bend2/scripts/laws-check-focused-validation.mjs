@@ -13,11 +13,11 @@ if (!SOURCE || !BEND || !OUTPUT || !existsSync(join(SOURCE, 'bend2', 'scripts', 
   process.exit(2);
 }
 
-const PIN = '1efba19415bfbf868a9da4ccfadd2d31455f6812';
+const PIN = '351c9aba85c69f4e4aab1f86cc31fb0f415fe327';
 const SOURCE_SHA = execFileSync('git', ['-C', SOURCE, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 if (SOURCE_SHA !== PIN) throw new Error(`source pin mismatch: ${SOURCE_SHA}`);
 const SOURCE_TREE = execFileSync('git', ['-C', SOURCE, 'rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
-if (SOURCE_TREE !== '095c9bda972066ec0fccbb032b6991a57ca76ea0') throw new Error(`source tree mismatch: ${SOURCE_TREE}`);
+if (SOURCE_TREE !== '9afffc172eec7b77eb5d3df1a15aaa6cc2e334c5') throw new Error(`source tree mismatch: ${SOURCE_TREE}`);
 const DRIVER_SHA = process.env.BATON2_DRIVER_SHA ?? null;
 const DRIVER_TREE = process.env.BATON2_DRIVER_TREE ?? null;
 mkdirSync(OUTPUT, { recursive: true });
