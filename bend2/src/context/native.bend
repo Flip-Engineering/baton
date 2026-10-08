@@ -430,16 +430,16 @@ def invocation_verify_fields(fields: List<String>, +query: String, +owner: Strin
         InvocationVerified{artifact_sha}, InvocationVerificationRefused{"invocationVerificationMismatch"})
     case _: InvocationVerificationRefused{"invocationVerificationShape"}
 
-def invocation_verify_rows(+rows: String, +query: String, +owner: String,
-                           +module_id: String, +digest: String) -> InvocationVerification:
-  invocation_verify_lines(Tx.split_lines(rows), query, owner, module_id, digest)
-
 def invocation_verify_lines(lines: List<String>, +query: String, +owner: String,
                              +module_id: String, +digest: String) -> InvocationVerification:
   match lines:
     case +line <> Nil{}:
       invocation_verify_fields(Tx.split_tabs(line), query, owner, module_id, digest)
     case _: InvocationVerificationRefused{"invocationVerificationRows"}
+
+def invocation_verify_rows(+rows: String, +query: String, +owner: String,
+                           +module_id: String, +digest: String) -> InvocationVerification:
+  invocation_verify_lines(Tx.split_lines(rows), query, owner, module_id, digest)
 
 def invocation_verify_result(result: Result<&1,&1,U32 & String,String>,
                              +query: String, +owner: String,
