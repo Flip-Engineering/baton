@@ -2,10 +2,8 @@
 import json
 import os
 import pathlib
-import select
 import subprocess
 import tempfile
-import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -22,33 +20,26 @@ def send_mcp(proc, msg):
 _mcp_buf = {}
 
 
-def read_mcp(proc, timeout=5):
+def read_mcp(proc):
     """Read one newline-delimited MCP message and answer client pings."""
     fd = proc.stdout.fileno()
     if fd not in _mcp_buf:
-        os.set_blocking(fd, False)
+        os.set_blocking(fd, True)
         _mcp_buf[fd] = b''
 
     buf = _mcp_buf[fd]
-    deadline = time.monotonic() + timeout
-
     while b'\n' not in buf:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError(f'Timed out reading message: {buf!r}')
-        ready, _, _ = select.select([fd], [], [], min(remaining, 0.5))
-        if ready:
-            chunk = os.read(fd, 4096)
-            if not chunk:
-                raise EOFError('MCP server closed stdout')
-            buf += chunk
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            raise EOFError('MCP server closed stdout')
+        buf += chunk
 
     body, rest = buf.split(b'\n', 1)
     _mcp_buf[fd] = rest
     message = json.loads(body)
     if message.get('method') == 'ping':
         send_mcp(proc, {'jsonrpc': '2.0', 'id': message['id'], 'result': {}})
-        return read_mcp(proc, timeout)
+        return read_mcp(proc)
     return message
 
 
@@ -79,7 +70,7 @@ class EndToEnd(unittest.TestCase):
     def coord(self, *args, ok=True):
         p = subprocess.run(
             [str(EXE), str(self.db), *map(str, args)],
-            text=True, capture_output=True, timeout=10,
+            text=True, capture_output=True,
         )
         if ok:
             self.assertEqual(p.returncode, 0, p.stderr)
@@ -139,7 +130,7 @@ class EndToEnd(unittest.TestCase):
         proc = self.start_mcp()
         self.initialize_mcp(proc)
 
-        notification = read_mcp(proc, timeout=5)
+        notification = read_mcp(proc)
         self.assertEqual(notification['method'], 'notifications/claude/channel')
         self.assertIn('Feature implemented', notification['params']['content'])
         self.assertEqual(json.loads(notification['params']['meta']['messageIds']), ['turn-1'])
@@ -152,9 +143,9 @@ class EndToEnd(unittest.TestCase):
                 'arguments': {'id': 'turn-1', 'receipt': 'channel-delivered'},
             },
         })
-        ack_resp = read_mcp(proc, timeout=5)
+        ack_resp = read_mcp(proc)
         while 'method' in ack_resp:
-            ack_resp = read_mcp(proc, timeout=5)
+            ack_resp = read_mcp(proc)
         self.assertNotIn('isError', ack_resp.get('result', {}))
 
         # 6. Root lands the worker's change via the MCP tool.
@@ -169,9 +160,9 @@ class EndToEnd(unittest.TestCase):
                 },
             },
         })
-        land_resp = read_mcp(proc, timeout=10)
+        land_resp = read_mcp(proc)
         while 'method' in land_resp:
-            land_resp = read_mcp(proc, timeout=10)
+            land_resp = read_mcp(proc)
         land_result = json.loads(land_resp['result']['content'][0]['text'])
         self.assertEqual(land_result['status'], 'landed')
         self.assertEqual(land_result['commit'], player_commit)

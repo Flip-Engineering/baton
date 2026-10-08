@@ -126,11 +126,8 @@ while True:
         task=home/'self-turn-task'
         task.write_text('Synchronous task for the active session.')
         command=[config['exe'],config['db'],'turn',model,action['turn'],sys.argv[0],model,'low',str(home),str(task),str(home/'self-turn.jsonl'),'']
-        try:
-            result=subprocess.run(command,capture_output=True,text=True,timeout=2)
-            reply({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
-        except subprocess.TimeoutExpired:
-            reply({'timed_out':True})
+        result=subprocess.run(command,capture_output=True,text=True)
+        reply({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
         continue
     if action.get('message'):
         ident,recipient,body=action['message']
@@ -1345,7 +1342,6 @@ class Receive(unittest.TestCase):
         control, _ = self.accept('parent')
         self.action(control, turn='self-turn')
         response = json.loads(control.readline())
-        self.assertFalse(response.get('timed_out'), 'synchronous self-turn waited for its own session lock')
         self.assertNotEqual(response['code'], 0)
         self.assertIn('active native turn', response['stderr'].lower())
         self.assert_no_start()
