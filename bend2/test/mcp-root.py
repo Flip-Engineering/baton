@@ -2,6 +2,7 @@
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -45,11 +46,13 @@ class McpRoot(unittest.TestCase):
     def setUp(self):
         if not EXE.exists():
             self.skipTest(f'Coordinator not built at {EXE}')
-        self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
-        self.addCleanup(self.temp.cleanup)
-        self.repo = pathlib.Path(self.temp.name) / 'repository'
+        self.temp = pathlib.Path(tempfile.mkdtemp(dir=ROOT / '.scratch/bend2'))
+        self.keep_temp = False
+        self.mcp_output = []
+        self.addCleanup(self.cleanup_temp)
+        self.repo = self.temp / 'repository'
         self.repo.mkdir()
-        self.checkouts = pathlib.Path(self.temp.name) / 'checkouts'
+        self.checkouts = self.temp / 'checkouts'
         self.checkouts.mkdir()
         for argv in (['init', '-q', '-b', 'main'], ['config', 'user.email', 'fixture@example.invalid'],
                      ['config', 'user.name', 'MCP root fixture']):
@@ -60,7 +63,25 @@ class McpRoot(unittest.TestCase):
                        check=True, capture_output=True)
         self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
                                    check=True, capture_output=True, text=True).stdout.strip()
-        self.db = pathlib.Path(self.temp.name) / 'state.db'
+        self.db = self.temp / 'state.db'
+        self.addCleanup(self.shutdown_instance)
+
+    def cleanup_temp(self):
+        if self.keep_temp:
+            print(f'MCP fixture state preserved at {self.temp}')
+            return
+        shutil.rmtree(self.temp)
+
+    def shutdown_instance(self):
+        result = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                                capture_output=True, text=True)
+        if result.returncode:
+            self.keep_temp = True
+            raise AssertionError(
+                f'instance shutdown failed for {self.db}: exit {result.returncode}; '
+                f'stdout={result.stdout!r}; stderr={result.stderr!r}; '
+                f'MCP output={self.mcp_output!r}; '
+                f'fixture state preserved at {self.temp}')
 
     def register(self, name, parent, harness, model, effort, workspace=None, branch=None, base=None):
         """Recruit the session into this suite's fixture repository."""
@@ -83,12 +104,15 @@ class McpRoot(unittest.TestCase):
             stderr=subprocess.PIPE,
         )
         def cleanup():
-            proc.terminate()
-            proc.wait()
-            _mcp_buf.pop(proc.stdout.fileno(), None)
-            proc.stdin.close()
-            proc.stdout.close()
-            proc.stderr.close()
+            stdout_fd = proc.stdout.fileno()
+            _mcp_buf.pop(stdout_fd, None)
+            if proc.poll() is None:
+                proc.terminate()
+            stdout, stderr = proc.communicate()
+            self.mcp_output.append({
+                'stdout': stdout.decode(errors='replace'),
+                'stderr': stderr.decode(errors='replace'),
+            })
         self.addCleanup(cleanup)
         return proc
 
@@ -359,7 +383,7 @@ class McpRoot(unittest.TestCase):
     def test_players_and_turns_tools_return_coordinator_data(self):
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
         self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
-        event = pathlib.Path(self.temp.name) / 'event.json'
+        event = self.temp / 'event.json'
         event.write_text(json.dumps({'type': 'result', 'result': 'done'}))
         self.coord('observe-file', 'turn-1', 'w1', str(event))
 
