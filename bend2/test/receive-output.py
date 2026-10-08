@@ -33,9 +33,6 @@ class ReceiveOutput(unittest.TestCase):
         if not EXE.exists():
             raise unittest.SkipTest(f'Coordinator not built at {EXE}')
         env = os.environ.copy()
-        # The runner's binary artifact is stored in .scratch/bend2, while the
-        # compiler's standard library is the checked-in matching upstream tree.
-        env['BEND_DIR'] = str(ROOT / 'bend2/context/bend2/upstream')
         for source, output in [('receive-output', FIXTURE), ('control-output', CONTROL)]:
             result = subprocess.run(['sh', 'bend2/scripts/build-native.sh',
                                      f'bend2/test/{source}.bend', str(output)],
