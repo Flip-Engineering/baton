@@ -1,0 +1,8 @@
+{
+  "name": "ui682-hosted-gate",
+  "private": true,
+  "description": "Dependency manifest for the UI682 hosted events-recovery fixture gate driver.",
+  "dependencies": {
+    "playwright-core": "1.64.0"
+  }
+}
