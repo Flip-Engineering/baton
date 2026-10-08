@@ -1,10 +1,9 @@
 """Exercise the shared knowledge workflow with separate native processes.
 
 A producer records an evidence-backed finding and its parent is notified with an
-ordinary message; the findings a reader may see follow the declared scope; a
-promotion names the scope it is drawn from and only the destination scope's
-owner may perform it. Every call below is its own process, so a consumer that
-reads after the producer exited is the same read a restarted consumer makes.
+ordinary message. Every registered session reads the shared finding and its
+provenance; only a registered destination owner may promote from the author or
+a destination recorded for that finding. Every call below is its own process.
 """
 import json
 import pathlib
@@ -68,7 +67,7 @@ class Knowledge(unittest.TestCase):
     def ids(self, rows):
         return sorted(row['id'] for row in rows)
 
-    def test_a_finding_reaches_its_author_and_parent_and_no_further(self):
+    def test_a_finding_is_readable_by_every_registered_session(self):
         recorded = self.call('record', 'finding-1', 'worker', 'the cache is warm',
                              self.evidence('report-1', 'worker'), 'one host, one load')
         self.assertEqual(recorded['author'], 'worker')
@@ -77,8 +76,8 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(recorded['limits'], 'one host, one load')
         self.assertEqual(self.ids(self.read('worker')), ['finding-1'])
         self.assertEqual(self.ids(self.read('root')), ['finding-1'])
-        self.assertEqual(self.read('grand'), [])
-        self.assertEqual(self.read('sibling'), [])
+        self.assertEqual(self.ids(self.read('grand')), ['finding-1'])
+        self.assertEqual(self.ids(self.read('sibling')), ['finding-1'])
         notices = [m for m in self.call('inbox', 'root') if m['kind'] == 'question']
         self.assertEqual([m['id'] for m in notices], ['finding-1:notice'])
         body = json.loads(notices[0]['body'])
@@ -106,8 +105,8 @@ class Knowledge(unittest.TestCase):
         self.call('record', 'finding-3', 'grand', 'the retry doubles the work',
                   self.evidence('report-2', 'grand'), 'one worker')
         self.assertEqual(self.ids(self.read('worker')), ['finding-3'])
-        self.assertEqual(self.read('root'), [])
-        refused = self.call('promote', 'promotion-1', 'root', 'grand', 'root', 'finding-3', success=False)
+        self.assertEqual(self.ids(self.read('root')), ['finding-3'])
+        refused = self.call('promote', 'promotion-1', 'root', 'grand', 'worker', 'finding-3', success=False)
         self.assertIn('No knowledge row was written', refused.stderr)
         promoted = self.call('promote', 'promotion-1', 'worker', 'grand', 'worker', 'finding-3')
         self.assertEqual(promoted, {'id': 'promotion-1', 'finding': 'finding-3', 'author': 'grand',
@@ -118,9 +117,9 @@ class Knowledge(unittest.TestCase):
                          [{'finding': 'finding-3', 'author': 'grand', 'source': 'grand',
                            'destination': 'worker', 'promotedBy': 'worker'}])
         self.assertEqual(self.ids(self.read('root')), ['finding-3'])
-        self.assertEqual(self.read('sibling'), [])
+        self.assertEqual(self.ids(self.read('sibling')), ['finding-3'])
 
-    def test_a_higher_parent_reshapes_a_finding_from_its_childs_shared_scope(self):
+    def test_another_destination_owner_promotes_from_a_recorded_destination(self):
         self.call('record', 'finding-6', 'grand', 'the lock is held for a second',
                   self.evidence('report-3', 'grand'), 'one host')
         self.call('promote', 'promotion-4', 'worker', 'grand', 'worker', 'finding-6')
@@ -132,19 +131,22 @@ class Knowledge(unittest.TestCase):
         self.assertEqual([p['source'] for p in seen[0]['promotions']], ['grand', 'worker'])
         self.assertEqual([p['author'] for p in seen[0]['promotions']], ['grand', 'grand'])
         self.assertEqual([p['promotedBy'] for p in seen[0]['promotions']], ['worker', 'root'])
-        wrong_source = self.call('promote', 'promotion-6', 'root', 'grand', 'root', 'finding-6',
+        wrong_source = self.call('promote', 'promotion-6', 'root', 'sibling', 'root', 'finding-6',
                                  success=False)
         self.assertIn('No knowledge row was written', wrong_source.stderr)
 
-    def test_a_reader_outside_the_scope_sees_nothing_and_promotes_nothing(self):
+    def test_any_registered_destination_owner_can_promote_from_actual_provenance(self):
         self.call('record', 'finding-4', 'worker', 'the lock is held',
                   self.evidence('report-4', 'worker'), 'one host')
-        self.assertEqual(self.read('sibling'), [])
-        refused = self.call('promote', 'promotion-2', 'sibling', 'worker', 'sibling', 'finding-4',
-                            success=False)
-        self.assertIn('No knowledge row was written', refused.stderr)
-        self.assertEqual(self.read('sibling'), [])
-        self.assertEqual(self.ids(self.read('worker')), ['finding-4'])
+        self.assertEqual(self.ids(self.read('sibling')), ['finding-4'])
+        promoted = self.call('promote', 'promotion-2', 'sibling', 'worker', 'sibling', 'finding-4')
+        self.assertEqual(promoted['source'], 'worker')
+        self.assertEqual(promoted['destination'], 'sibling')
+        self.assertEqual(self.ids(self.read('grand')), ['finding-4'])
+        self.assertEqual(self.read('missing-reader'), [])
+        fabricated = self.call('promote', 'promotion-7', 'sibling', 'root', 'sibling', 'finding-4',
+                               success=False)
+        self.assertIn('No knowledge row was written', fabricated.stderr)
 
     def test_findings_accept_source_references_and_include_message_content(self):
         shared = self.evidence('shared-report', 'sibling')
@@ -227,7 +229,7 @@ class Knowledge(unittest.TestCase):
         recorded = self.call(*finding)
         self.assertEqual(self.call(*finding), recorded)
         self.assertEqual(self.ids(self.read('reviewer')), ['handoff-finding'])
-        self.assertEqual(self.read('root'), [])
+        self.assertEqual(self.ids(self.read('root')), ['handoff-finding'])
         notice = self.call('delivery', 'handoff-finding:notice')
         self.assertEqual(notice['recipient'], 'reviewer')
         self.assertIsNone(notice['receipt'])
@@ -305,7 +307,8 @@ class Knowledge(unittest.TestCase):
         self.call('promote', 'conflict-share', 'root', 'worker', 'root',
                   'rollback-finding', success=False)
         self.assertEqual(self.read('worker')[0]['promotions'], [])
-        self.assertEqual(self.read('sibling'), [])
+        self.assertEqual(self.ids(self.read('sibling')), ['rollback-finding'])
+        self.assertEqual(self.read('sibling')[0]['promotions'], [])
         self.assertEqual(self.call('delivery', 'conflict-share:promotion-notice')['body'],
                          'Existing unrelated input.')
 
@@ -345,7 +348,7 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(handoff['originalKind'], 'question')
         self.assertEqual(json.loads(handoff['originalBody'])['promotion'], promotion['id'])
         self.assertEqual(self.read('root')[0]['destinations'], ['reviewer'])
-        self.assertEqual(self.read('sibling'), [])
+        self.assertEqual(self.ids(self.read('sibling')), ['stopped-share-finding'])
 
 
 if __name__ == '__main__':

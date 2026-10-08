@@ -543,6 +543,7 @@ def proj_of(+j: J.Json) -> Proj:
     case J.Jtrue{}: Pnone{}
     case J.Jfalse{}: Pnone{}
     case J.Jint{+value}: Pnone{}
+    case J.Jnum{+token}: Pnone{}
     case J.Jstr{+value}: Pnone{}
     case J.Jobj{+members}: Pnone{}
 
@@ -578,6 +579,7 @@ def strings_only(+j: J.Json) -> Bool:
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
     case J.Jint{+value}: False{}
+    case J.Jnum{+token}: False{}
     case J.Jstr{+value}: False{}
     case J.Jobj{+members}: False{}
 
@@ -619,6 +621,7 @@ def key_absent(+key: String, rest: J.Json) -> Bool:
     case J.Jtrue{}: True{}
     case J.Jfalse{}: True{}
     case J.Jint{+value}: True{}
+    case J.Jnum{+token}: True{}
     case J.Jstr{+value}: True{}
     case J.Jarr{+head, +tail}: True{}
     case J.Jobj{+members}: True{}
@@ -631,6 +634,7 @@ def distinct_keys(+members: J.Json) -> Bool:
     case J.Jtrue{}: True{}
     case J.Jfalse{}: True{}
     case J.Jint{+value}: True{}
+    case J.Jnum{+token}: True{}
     case J.Jstr{+value}: True{}
     case J.Jarr{+head, +tail}: True{}
     case J.Jobj{+members}: True{}
@@ -647,6 +651,7 @@ def kind_value_ok(+v: J.Json) -> Bool:
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
     case J.Jint{+value}: False{}
+    case J.Jnum{+token}: False{}
     case J.Jarr{+head, +tail}: False{}
     case J.Jobj{+members}: False{}
     case J.Jpair{key, value, rest}: False{}
@@ -669,6 +674,7 @@ def subject_value_ok(+v: J.Json) -> Bool:
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
     case J.Jint{+value}: False{}
+    case J.Jnum{+token}: False{}
     case J.Jarr{+head, +tail}: False{}
     case J.Jpair{key, value, rest}: False{}
     case J.Jnil{}: False{}
@@ -692,6 +698,7 @@ def subject_kind_value(+v: J.Json) -> String:
     case J.Jtrue{}: SNil{}
     case J.Jfalse{}: SNil{}
     case J.Jint{+value}: SNil{}
+    case J.Jnum{+token}: SNil{}
     case J.Jarr{+head, +tail}: SNil{}
     case J.Jpair{key, value, rest}: SNil{}
     case J.Jnil{}: SNil{}
@@ -1134,13 +1141,13 @@ def cv_bad(c: JsonConv) -> String:
     case JcJson{+value}: SNil{}
     case JcRefused{condition}: condition
 
-def uint_conv(r: Uint.UintResult) -> JsonConv:
-  match r:
+def number_conv_result(+token: String, result: Uint.UintResult) -> JsonConv:
+  match result:
     case Uint.UintAccepted{value}: JcJson{J.Jint{value}}
-    case Uint.UintRefused{+reason}: JcRefused{"nonU32NumberInRequest"}
+    case Uint.UintRefused{reason}: JcJson{J.Jnum{token}}
 
 def number_conv(+token: String) -> JsonConv:
-  uint_conv(Uint.finish(Uint.feed(token, Uint.UintStart{})))
+  number_conv_result(token, Uint.finish(Uint.feed(token, Uint.UintStart{})))
 
 # The internal domain of the conversion. `Rnil` terminates both chains and is the only
 # admitted terminator; a member cell is admitted only while reading a member chain, an
@@ -1235,9 +1242,8 @@ def meta_input(m: Maybe<&2, RawValue>) -> MetaInput:
 def meta_of(+frame: RawValue) -> MetaInput:
   meta_input(raw_field(params_of(frame), "_meta"))
 
-# The canonical text of a request object, or the condition that refused it. A
-# non-object refuses, and a number that is not an exact U32 token refuses through the
-# converter rather than being coerced. The request is always a JSON object here.
+# The canonical text of a request object, or the condition that refused it. Numeric
+# literals retain their tokens; request validation checks fields that require integers.
 def request_conv_ok(c: JsonConv) -> RequestText:
   match c:
     case JcJson{value}: RtText{J.json_text(value)}
@@ -2792,8 +2798,8 @@ law codec_law_a_non_object_request_refuses:
 def codec_law_a_non_object_request_refuses():
   {==}
 
-law codec_law_a_non_u32_request_number_refuses:
-  {frame_text(frame_decision(frame_envelope(big_number_request_rows()))) == "validationRefusal:nonU32NumberInRequest" : String}
+law codec_law_a_non_u32_request_number_is_preserved:
+  {frame_text(frame_decision(frame_envelope(big_number_request_rows()))) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{\\\"version\\\":4294967296}\",\"scope\":null,\"tool\":\"context-query\",\"version\":1}" : String}
 
-def codec_law_a_non_u32_request_number_refuses():
+def codec_law_a_non_u32_request_number_is_preserved():
   {==}

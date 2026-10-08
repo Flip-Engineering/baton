@@ -32,6 +32,7 @@ def obj_members(+j: J.Json) -> J.Json:
     case J.Jtrue{}: J.Jnil{}
     case J.Jfalse{}: J.Jnil{}
     case J.Jint{+value}: J.Jnil{}
+    case J.Jnum{+token}: J.Jnil{}
     case J.Jstr{+value}: J.Jnil{}
     case J.Jarr{+head, +tail}: J.Jnil{}
     case J.Jpair{key, value, rest}: J.Jnil{}
@@ -99,6 +100,7 @@ def join_projections(+j: J.Json, first: Bool, +acc: String) -> String:
     case J.Jtrue{}: acc
     case J.Jfalse{}: acc
     case J.Jint{+value}: acc
+    case J.Jnum{+token}: acc
     case J.Jstr{+value}: acc
     case J.Jobj{+members}: acc
 
@@ -116,6 +118,7 @@ def selected_name(+j: J.Json, +name: String) -> Bool:
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
     case J.Jint{+value}: False{}
+    case J.Jnum{+token}: False{}
     case J.Jstr{+value}: False{}
     case J.Jobj{+members}: False{}
 

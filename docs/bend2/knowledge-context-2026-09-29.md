@@ -3,10 +3,10 @@
 ## Decision and implementation status
 
 Following the operator question about shared knowledge, the root assigned three
-coordinator operations on 2026-09-29 under #642: record a finding, read visible
-context, and explicitly promote an exact finding. Agents generate findings and
-review their evidence. The coordinator stores the records and applies visibility
-and promotion rules.
+coordinator operations under #642: record a finding, read findings from the
+shared database, and explicitly promote an exact finding. Agents generate
+findings and review their evidence. The coordinator stores the records and
+checks promotion ownership and provenance.
 This tree includes the three operations, destination-owner notification and their
 operative laws. [The real acceptance run](knowledge-context-2026-10-01.md)
 records producer investigation, reviewed promotion, sibling use, fresh-conversation
@@ -21,12 +21,12 @@ omissions were explained further at `6ad0920e`. The present addition serves a
 newly requested workflow within that simpler design.
 
 The earlier [F4 condition](architecture-review.md#f4-merge-plan-workflow-wave-and-swarm-scheduling)
-records explicit promotion, attribution and reader-relative views.
+records explicit promotion and attribution. Registered sessions read from the shared database.
 [ARCH-CLOSE-08](arch-close-status.md) retains its historical open evidence
 statement. This addition does not restore the old graph design or migration
 phase gates. Its acceptance is the concrete workflow below.
 
-## Records and visibility
+## Records and shared reads
 
 The root froze the first-slice command contract as v3 on 2026-09-29.
 The command contract is stable. The acceptance report identifies the measured
@@ -40,10 +40,9 @@ baton2 DATABASE promote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING
 ```
 
 `AUTHOR`, `READER`, `PROMOTER`, `SOURCE` and `DESTINATION` name coordinator
-sessions. `FINDING` names an existing finding. Promotion explicitly names its
-source and destination scopes and retains the finding's stored provenance.
-These argument names describe declared actors under the trusted-local boundary
-below.
+sessions. `FINDING` names an existing finding. Every registered session can read
+every finding in the shared database. Promotion explicitly names a source and
+destination session and retains the finding's stored provenance.
 
 A finding preserves its immutable claim, original declared author, source scope,
 evidence references and stated limitations. A correction creates a new finding
@@ -52,22 +51,13 @@ destination scopes, and declared promoting actor. It preserves the finding's
 evidence and original attribution. A retry with the same operation identity and
 meaning returns the recorded result; conflicting reuse states the conflict.
 
-Scopes use the existing coordinator session parentage:
-
-| Record | Visible to |
-| --- | --- |
-| Candidate finding | Its author and the author's immediate reviewing parent. |
-| Finding promoted to a shared scope | The owning session, its immediate parent, and its subtree. |
-
-The destination owner promotes a source it can read. Promotion checks membership
-in the named source scope. For an unpublished candidate, the promoter must be
-the author or the author's immediate parent. Wider sharing requires another
-explicit promotion. Recording, reading, reporting, acknowledging a
-message and completing a turn do not promote a finding. `knowledge READER`
-returns the complete visible list, including each finding's evidence message body
-and full promotion provenance. A fresh or restarted worker can retrieve records
-independently of its native conversation memory and whether review messages were
-acknowledged.
+Every registered session can read each finding and all recorded promotion
+provenance in the shared database. The reader must have a registered session.
+A promotion is admitted only when the promoter owns the registered destination.
+Its source must be the finding's original author or a destination recorded for
+that exact finding. A promotion cannot introduce an unrecorded source. Recording,
+reading, reporting, acknowledging a message and completing a turn do not create
+promotion records.
 
 Read rows carry `id`, `author`, `claim`, `evidence`, `evidenceMessage`, `limits`,
 `destinations` and `promotions`. `evidenceMessage` exposes the referenced message's
@@ -81,7 +71,7 @@ in the same transaction as the promotion. Its identity is
 `PROMOTION_ID:promotion-notice`, and its body names `promotion`, `finding`,
 `author`, `source`, `destination` and `promotedBy`. The owner retrieves the finding,
 reviews its evidence and decides which ensembles or workers need a message about
-it. Promotion makes the finding readable within its destination scope. Each
+it. All registered sessions already read the shared finding and provenance. Each
 worker notification is a separate orchestrator action.
 
 The notice uses the registered destination endpoint. A notice created during
@@ -94,11 +84,10 @@ earlier notice with the same promotion identity.
 ## Trusted-local boundary
 
 The CLI and database remain trusted local interfaces. Commands check declared
-actors and scopes against recorded sessions and parentage. Those checks identify
-inconsistent requests; they do not authenticate the process making the declaration.
-An agent with direct access to the shared database can bypass a scoped command.
-Reader-relative views provide context selection for trusted agents and make no
-claim of adversarial confidentiality or forged-identity protection.
+session identities against recorded sessions. Those checks identify inconsistent
+requests; they do not authenticate the process making the declaration. Every
+registered session reads the same findings from the shared database, so these
+checks provide no confidentiality between registered sessions.
 
 This slice adds no credentials, tokens, daemon or per-worker access-control layer.
 Existing broad reads and evidence paths must be described honestly. Review
@@ -115,10 +104,10 @@ and relevant observation context. Agents resolve and review that evidence.
 An agent's assertion does not establish an executed check or verified result;
 review reports missing or unreadable underlying evidence accurately.
 
-Promotion preserves the evidence reference and shares its message body with
-the finding's destination scope. Every reader who can read the finding receives
-that body through `knowledge`, including readers who were not parties to the
-original message. Evidence retention uses existing stores; this slice adds no
+Promotion preserves the evidence reference and records the source and
+destination for the finding. Every registered reader receives the cited message
+body through `knowledge`, including readers who were not parties to the original
+message. Evidence retention uses existing stores; this slice adds no
 generic artifact registry or capture subsystem.
 
 The parent receives review requests through ordinary committed messages and
@@ -131,18 +120,19 @@ remain agent work. There is no automatic promotion.
 
 A real worker investigates repository behavior and records a finding referencing
 an actual message whose body carries the report and immutable Git evidence.
-Its parent reviews and explicitly promotes that exact finding. A sibling retrieves
-the promoted record with original author, promoting actor, evidence message body
-and both scopes; a local-only candidate remains absent from that sibling's
-supported scoped reads.
+A registered session reviews and explicitly promotes that exact finding from its
+author session into its own destination. Every registered session can retrieve
+the finding with its original author, promoting actor, evidence message body and
+full promotion provenance.
 
 A newly recruited worker retrieves and uses the finding without receiving a
 copied claim in its task. A restarted worker retrieves the same record after
 review messages have been acknowledged. Retained command results, native output
 and database records establish what each worker received and used.
 
-Executable checks cover declared actor/scope mismatches, missing evidence messages,
-authors who are not evidence-message parties, complete visible reads, exact retries,
+Executable checks cover unregistered actors, invalid source provenance, missing
+evidence messages, authors who are not evidence-message parties, shared reads,
+exact retries,
 conflicting identities, and fresh-process reads. Agent acceptance checks resolution
 of the underlying Git and check evidence. Laws bind the actual storage, query,
 promotion dispatch and notification functions.
@@ -156,7 +146,7 @@ route in an isolated clone. Preparation starts no model sessions. Its `produce`,
 native output, coordinator calls, message deliveries and database snapshots.
 The parent reviews the producer's evidence, explicitly promotes one finding and
 acknowledges pending messages before consumption. The second finding remains a
-local visibility control. The fresh consumer conversation reuses the logical
+separate record. The fresh consumer conversation reuses the logical
 session and workspace with a new native identity; it checks retrieval after
 earlier receipts. This stage establishes fresh-conversation retrieval.
 

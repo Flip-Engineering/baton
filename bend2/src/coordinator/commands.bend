@@ -310,7 +310,7 @@ def peers(+left: String, +right: String) -> String:
   "(" ++ left ++ "<>" ++ right ++ " AND NOT " ++ descendant(left,right) ++ " AND NOT " ++ descendant(right,left) ++ ")"
 
 def tight_peers(+sender: String, +recipient: String) -> String:
-  "(" ++ peers(sender,recipient) ++ " AND " ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND EXISTS(SELECT 1 FROM ensemble_members a JOIN ensemble_members b ON b.ensemble=a.ensemble JOIN ensembles e ON e.id=a.ensemble WHERE a.session=" ++ sender ++ " AND b.session=" ++ recipient ++ " AND e.coupling='tight' AND " ++ assigned_role("e.owner") ++ "='conductor'))"
+  "(" ++ peers(sender,recipient) ++ " AND " ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND EXISTS(SELECT 1 FROM ensemble_members a JOIN ensemble_members b ON b.ensemble=a.ensemble JOIN ensembles e ON e.id=a.ensemble WHERE a.session=" ++ sender ++ " AND b.session=" ++ recipient ++ " AND e.coupling='tight'))"
 
 def operator_route(+sender: String, +recipient: String) -> String:
   "((" ++ assigned_role(sender) ++ "='operator' AND " ++ assigned_role(recipient) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND parent IS NULL)) OR (" ++ assigned_role(recipient) ++ "='operator' AND " ++ assigned_role(sender) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND parent IS NULL)))"
@@ -344,22 +344,22 @@ def ensemble_row(+row: String) -> String:
   "json_object('id'," ++ row ++ ".id,'owner'," ++ row ++ ".owner,'coupling'," ++ row ++ ".coupling,'members',(SELECT json_group_array(session) FROM (SELECT session FROM ensemble_members WHERE ensemble=" ++ row ++ ".id AND " ++ member_present("ensemble_members.session") ++ " ORDER BY session)),'sections',(SELECT json_group_array(json(item)) FROM (SELECT " ++ section_row("sc") ++ " AS item FROM sections sc WHERE sc.ensemble=" ++ row ++ ".id ORDER BY sc.id)))"
 
 def ensemble_sql(+id: String, +owner: String, +coupling: String) -> String:
-  "INSERT INTO ensembles(id,owner,coupling) SELECT " ++ q(id) ++ "," ++ q(owner) ++ "," ++ q(coupling) ++ " WHERE " ++ assigned_role(q(owner)) ++ "='conductor' AND " ++ q(coupling) ++ " IN ('loose','tight') ON CONFLICT(id) DO UPDATE SET id=CASE WHEN ensembles.owner=excluded.owner THEN ensembles.id ELSE NULL END,coupling=excluded.coupling;SELECT " ++ ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ " AND coupling=" ++ q(coupling) ++ ";"
+  "INSERT INTO ensembles(id,owner,coupling) SELECT " ++ q(id) ++ "," ++ q(owner) ++ "," ++ q(coupling) ++ " WHERE " ++ q(coupling) ++ " IN ('loose','tight') ON CONFLICT(id) DO UPDATE SET id=CASE WHEN ensembles.owner=excluded.owner THEN ensembles.id ELSE NULL END,coupling=excluded.coupling;SELECT " ++ ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ " AND coupling=" ++ q(coupling) ++ ";"
 
 def ensemble_member_sql(+id: String, +owner: String, +session: String, +action: String) -> String:
   "DELETE FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ " AND " ++ q(action) ++ "='remove' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ");"
-  ++ "INSERT OR IGNORE INTO ensemble_members(ensemble,session) SELECT " ++ q(id) ++ "," ++ q(session) ++ " WHERE " ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND " ++ assigned_role(q(owner)) ++ "='conductor' AND " ++ assigned_role(q(session)) ++ "<>'operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ ");"
+  ++ "INSERT OR IGNORE INTO ensemble_members(ensemble,session) SELECT " ++ q(id) ++ "," ++ q(session) ++ " WHERE " ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND " ++ assigned_role(q(session)) ++ "<>'operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ ");"
   ++ "SELECT json_object('ensemble'," ++ q(id) ++ ",'owner'," ++ q(owner) ++ ",'session'," ++ q(session) ++ ",'membership'," ++ q(action) ++ ") WHERE EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND ((" ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ ")) OR (" ++ q(action) ++ "='remove' AND NOT EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ ")));"
 
 
 def section_owner(+ensemble: String, +owner: String) -> String:
-  "(EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(ensemble) ++ " AND owner=" ++ q(owner) ++ ") AND " ++ assigned_role(q(owner)) ++ "='conductor')"
+  "EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(ensemble) ++ " AND owner=" ++ q(owner) ++ ")"
 
 def section_admitted(ensemble: String, owner: String, capability: String) -> String:
   "(" ++ section_owner(ensemble,owner) ++ " AND " ++ q(capability) ++ "<>'')"
 
 def section_refusal(ensemble: String, id: String, owner: String, admitted: String) -> String:
-  "SELECT json_object('error','section-refused','ensemble'," ++ q(ensemble) ++ ",'section'," ++ q(id) ++ ",'owner'," ++ q(owner) ++ ",'condition','Use the named Ensemble conductor owner, a nonempty capability, and an existing Ensemble Player for membership.','next','Read ensemble ID and section ENSEMBLE SECTION. Add the Player to that Ensemble before assigning its Section; use add or remove for membership.') WHERE NOT " ++ admitted ++ ";"
+  "SELECT json_object('error','section-refused','ensemble'," ++ q(ensemble) ++ ",'section'," ++ q(id) ++ ",'owner'," ++ q(owner) ++ ",'condition','Use the named Ensemble owner, a nonempty capability, and an existing Ensemble Player for membership.','next','Read ensemble ID and section ENSEMBLE SECTION. Add the Player to that Ensemble before assigning its Section; use add or remove for membership.') WHERE NOT " ++ admitted ++ ";"
 
 def section_sql(+ensemble: String, +id: String, +owner: String, +capability: String) -> String:
   "INSERT INTO sections(ensemble,id,capability) SELECT " ++ q(ensemble) ++ "," ++ q(id) ++ "," ++ q(capability) ++ " WHERE " ++ section_admitted(ensemble,owner,capability) ++ " ON CONFLICT(ensemble,id) DO UPDATE SET capability=excluded.capability;"

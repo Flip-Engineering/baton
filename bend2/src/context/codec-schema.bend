@@ -276,55 +276,37 @@ def scan_found(+defs: SchemaDefs, +name: String) -> Bool:
       match head:
         case SchemaDef{bound, form}: Bool.pick(Bool, String.eq(bound, name), True{}, scan_found(tail, name))
 
-# A fuel spine with two cells per definition for the reachability walk below.
-# The walk burns one cell per reference descent, while sibling branches reuse
-# the same remaining cells and definition scans cost nothing. A reachable
-# target is then found along a simple path within twice a definition count of
-# expansions, and an exhausted spine reports the target unreachable.
-def defs_fuel(+defs: SchemaDefs) -> SchemaDefs:
-  match defs:
-    case DefsNil{}: DefsNil{}
-    case DefsCons{+head, +tail}: DefsCons{head, DefsCons{head, defs_fuel(tail)}}
-
-# Reachability over the definition graph in one self-recursive walk. A form is
-# explored directly: a reference that names the target decides at once, any
-# other reference descends into the bound body on one fuel cell, and an unbound
-# reference substitutes the empty json form, which carries no refs. Containers
-# split into independent sibling branches that reuse the same fuel, while
-# structural wrappers pass it through unchanged. Guarded containers and leaves
-# carry no unguarded refs. Fuel runs out on exhausted paths. Matches follow
-# parameter order (fuel, then form), and every self-call passes unchanged
-# values until one argument shrinks.
-def refs_reach(+fuel: SchemaDefs, +form: SchemaForm, +defs: SchemaDefs, +target: String) -> Bool:
-  match fuel:
-    case DefsNil{}: False{}
-    case DefsCons{reach_head, reach_tail}:
-      match form:
-        case SfRef{name}:
-          Bool.pick(Bool, String.eq(name, target), True{},
-            refs_reach(reach_tail, def_body_or(defs, name), defs, target))
-        case SfDiscriminated{tag, cases}:
-          refs_reach(fuel, cases, defs, target)
-        case SfFieldsCons{head, tail}:
-          Bool.pick(Bool, refs_reach(fuel, head, defs, target), True{},
-            refs_reach(fuel, tail, defs, target))
-        case SfCasesCons{head, tail}:
-          Bool.pick(Bool, refs_reach(fuel, head, defs, target), True{},
-            refs_reach(fuel, tail, defs, target))
-        case SfRequired{name, fform}:
-          refs_reach(fuel, fform, defs, target)
-        case SfOptionalField{name, fform}:
-          refs_reach(fuel, fform, defs, target)
-        case SchemaCase{tag, fform}:
-          refs_reach(fuel, fform, defs, target)
-        case SfOptional{inner}:
-          refs_reach(fuel, inner, defs, target)
-        case other: False{}
+# Reference paths stop when a name repeats. The checker cannot derive this
+# termination condition from the visited-name lookup.
+@unsafe
+def refs_reach(+visited: NameList, +form: SchemaForm, +defs: SchemaDefs, +target: String) -> Bool:
+  match form:
+    case SfRef{+name}:
+      Bool.pick(Bool, String.eq(name, target), True{},
+        Bool.pick(Bool, name_member(visited, name), False{},
+          refs_reach(NlCons{name, visited}, def_body_or(defs, name), defs, target)))
+    case SfDiscriminated{tag, cases}:
+      refs_reach(visited, cases, defs, target)
+    case SfFieldsCons{head, tail}:
+      Bool.pick(Bool, refs_reach(visited, head, defs, target), True{},
+        refs_reach(visited, tail, defs, target))
+    case SfCasesCons{head, tail}:
+      Bool.pick(Bool, refs_reach(visited, head, defs, target), True{},
+        refs_reach(visited, tail, defs, target))
+    case SfRequired{name, fform}:
+      refs_reach(visited, fform, defs, target)
+    case SfOptionalField{name, fform}:
+      refs_reach(visited, fform, defs, target)
+    case SchemaCase{tag, fform}:
+      refs_reach(visited, fform, defs, target)
+    case SfOptional{inner}:
+      refs_reach(visited, inner, defs, target)
+    case other: False{}
 
 def cycle_step(+defs: SchemaDefs, found: Maybe<&2, SchemaForm>, +name: String) -> Bool:
   match found:
     case None{}: False{}
-    case Some{form}: refs_reach(defs_fuel(defs), form, defs, name)
+    case Some{form}: refs_reach(NlNil{}, form, defs, name)
 
 def unguarded_cycle(+defs: SchemaDefs, +name: String) -> Bool:
   cycle_step(defs, def_body(defs, name), name)

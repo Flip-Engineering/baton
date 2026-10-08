@@ -566,7 +566,7 @@ class Control(unittest.TestCase):
         pending = {row['id']: row for row in self.call('pending')}
         self.assertEqual(pending['leaf-guide']['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
 
-    def test_pretty_knowledge_preserves_visibility_and_complete_finding(self):
+    def test_pretty_knowledge_preserves_shared_finding_for_registered_readers(self):
         self.root()
         self.recruit('researcher', 'muse')
         self.recruit('sibling', 'muse')
@@ -582,7 +582,8 @@ class Control(unittest.TestCase):
                 value = json.loads(readable['stdout'])
                 self.assertEqual(value, json.loads(ordinary['stdout']))
                 self.assertEqual(before, (self.rows('SELECT * FROM knowledge'), self.rows('SELECT * FROM knowledge_promotions'), self.rows('SELECT * FROM messages')))
-                if reader in ('researcher', 'root'):
+                if reader != 'missing-reader':
+                    self.assertEqual(value[0]['author'], 'researcher')
                     self.assertEqual(value[0]['evidenceMessage']['body'], body)
                     self.assertEqual(value[0]['limits'], 'One controlled fixture.')
                     self.assertIn('\n', readable['stdout'].strip())

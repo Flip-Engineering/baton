@@ -16,9 +16,15 @@ let view = null;
 let view2 = null;
 let chrome = null;
 
+function spawnTracked(...args) {
+  const child = spawn(...args);
+  child.closed = new Promise((resolve) => child.once('close', resolve));
+  return child;
+}
+
 function check(name, ok, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`);
-  if (!ok) { teardown(); process.exit(1); }
+  if (!ok) throw new Error(name + ': ' + detail);
 }
 
 function baton(...args) {
@@ -27,6 +33,7 @@ function baton(...args) {
   return r.stdout.trim();
 }
 
+try {
 // --- fixture: root conductor -> lead associate conductor -> worker/aide, ensemble+section
 mkdirSync(WORK, { recursive: true });
 const REPO = join(WORK, 'repo');
@@ -59,11 +66,11 @@ writeFileSync(join(WORK, 'worker-task.txt'), 'Task for worker');
 {
   const turn = spawnSync(EXE, [DB, 'turn', 'worker', 'worker-finished', workerCmd, 'configured-model', 'low',
     join(WORK, 'worker'), join(WORK, 'worker-task.txt'), join(WORK, 'worker.jsonl'), ''], { encoding: 'utf8' });
-  if (turn.status !== 0) { console.log('FAIL fixture turn — ' + turn.stdout + turn.stderr); process.exit(1); }
+  if (turn.status !== 0) throw new Error('fixture turn: ' + turn.stdout + turn.stderr);
 }
 
 // --- chromium over CDP
-chrome = spawn(CHROMIUM, ['--headless=new', '--no-sandbox', '--remote-debugging-port=0',
+chrome = spawnTracked(CHROMIUM, ['--headless=new', '--no-sandbox', '--remote-debugging-port=0',
   `--user-data-dir=${join(WORK, 'chrome')}`, 'about:blank'], { stdio: ['ignore', 'pipe', 'pipe'] });
 let chromeErr = '';
 const wsUrl = await new Promise((resolve, reject) => {
@@ -74,7 +81,7 @@ const wsUrl = await new Promise((resolve, reject) => {
   });
   chrome.once('error', reject);
   chrome.once('exit', (c) => reject(new Error(`chromium exited ${c}: ${chromeErr}`)));
-}).catch((e) => { console.log('FAIL chromium startup — ' + e.message); teardown(); process.exit(1); });
+}).catch((e) => { console.log('FAIL chromium startup — ' + e.message); throw e; });
 
 let msgId = 0;
 const pendingCalls = new Map();
@@ -118,7 +125,6 @@ async function openPage(url) {
       `Chromium target request failed; exit=${chrome.exitCode}; signal=${chrome.signalCode}; stderr=${chromeErr}`,
       { cause: error },
     );
-    teardown();
     throw failure;
   }
   if (!response.ok) throw new Error(await response.text());
@@ -162,7 +168,7 @@ check('native owner reports a ready generation and cursor',
   /^\d+$/.test(String(ownerReady.generation))
     && /^\d+$/.test(String(ownerReady.cursor))
     && typeof ownerReady.gap === 'boolean', JSON.stringify(ownerReady));
-view = spawn(EXE, [DB, 'view', 'root', 'root', '0'], { stdio: ['pipe', 'pipe', 'pipe'] });
+view = spawnTracked(EXE, [DB, 'view', 'root', 'root', '0'], { stdio: ['pipe', 'pipe', 'pipe'] });
 const viewLines = createInterface({ input: view.stdout })[Symbol.asyncIterator]();
 const viewExit = new Promise((_, reject) => {
   view.once('error', reject);
@@ -270,11 +276,17 @@ await until('page recovers to live after the gap resnapshot',
   `document.getElementById('conn-state').textContent === 'live'`);
 
 console.log('BROWSER_QA_OK');
-teardown();
+} finally {
+  await teardown();
+}
 process.exit(0);
 
-function teardown() {
-  try { chrome && chrome.kill('SIGTERM'); } catch {}
-  try { view && view.kill('SIGTERM'); } catch {}
-  try { view2 && view2.kill('SIGTERM'); } catch {}
+async function stopChild(child) {
+  if (!child) return;
+  if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+  await child.closed;
+}
+
+async function teardown() {
+  await Promise.all([chrome, view, view2].map(stopChild));
 }

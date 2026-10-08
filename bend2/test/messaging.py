@@ -152,7 +152,9 @@ class Messaging(unittest.TestCase):
         self.call('role', 'root', 'unknown', success=False)
         self.call('role', 'missing', 'principal-conductor', success=False)
         self.assertEqual(self.call('role', 'root')['role'], 'principal-conductor')
-        self.call('ensemble', 'bad', 'leaf-a', 'tight', success=False)
+        self.assertEqual(self.call('ensemble', 'player-owned', 'leaf-a', 'tight')['owner'],
+                         'leaf-a')
+        self.call('ensemble', 'bad', 'missing', 'tight', success=False)
         self.call('ensemble', 'bad', 'root', 'unknown', success=False)
         self.ensemble('owned', 'leaf-a', 'leaf-b')
         before = self.call('ensemble', 'owned')

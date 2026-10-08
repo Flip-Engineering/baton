@@ -149,9 +149,7 @@ def report_field(+name: String, +raw: CoreCodec.RawValue) -> String:
 
 def validation_report_condition(+raw: CoreCodec.RawValue) -> String:
   Bool.pick(String, String.eq(report_field("valid", raw), "1"),
-    Bool.pick(String, String.eq(report_field("duplicates", raw), "0"),
-      Bool.pick(String, String.eq(report_field("tokens", raw), "0"), "", "nonU32NumberInRequest"),
-      "duplicateKey"),
+    Bool.pick(String, String.eq(report_field("duplicates", raw), "0"), "", "duplicateKey"),
     "invalidJson")
 
 def request_rows_after_validation(+db: String, +binding: String, +text: String) -> IO(RequestDecode):

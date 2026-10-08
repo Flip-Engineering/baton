@@ -523,7 +523,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +noted : Result<&1,&1,U32 & String,Unit> <- record_filter(log,filter,requested,String.eq(harness,"omp\n"))
         +closed : Result<&1,&1,U32 & String,String> <- NativeRequests.closed(db,attempt,Bool.not(String.is_empty(attempt)))
         +error : String <- IO.pure(String,append_store_error(append_write_error(append_write_error(append_write_error(append_write_error(first_error,sent),flushed),checkpoint_done),noted),closed))
-        +incomplete : Bool <- IO.pure(Bool,Bool.or(incomplete_observation,Bool.or(String.is_empty(event),Bool.or(wait_failed(status),Bool.or(checkpoint_write_failed(sent),Bool.or(checkpoint_write_failed(flushed),Bool.or(checkpoint_write_failed(checkpoint_done),Bool.or(checkpoint_write_failed(noted),observation_store_failed(closed)))))))))
+        +incomplete : Bool <- IO.pure(Bool,Bool.or(incomplete_observation,Bool.or(wait_failed(status),Bool.or(checkpoint_write_failed(sent),Bool.or(checkpoint_write_failed(flushed),Bool.or(checkpoint_write_failed(checkpoint_done),Bool.or(checkpoint_write_failed(noted),observation_store_failed(closed))))))))
         IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(status),event,error,incomplete},deliveries))
     case Done{Some{+line}}:
       do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:

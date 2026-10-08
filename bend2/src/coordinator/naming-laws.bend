@@ -70,12 +70,12 @@ law member_presence_requires_a_stored_player_record:
 def member_presence_requires_a_stored_player_record(session):
   {==}
 
-law sections_use_the_existing_ensemble_conductor_owner:
+law sections_use_the_existing_ensemble_owner:
   for +ensemble: String
   for +owner: String
-  {C.section_owner(ensemble,owner) == "(EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ C.q(ensemble) ++ " AND owner=" ++ C.q(owner) ++ ") AND " ++ C.assigned_role(C.q(owner)) ++ "='conductor')" : String}
+  {C.section_owner(ensemble,owner) == "EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ C.q(ensemble) ++ " AND owner=" ++ C.q(owner) ++ ")" : String}
 
-def sections_use_the_existing_ensemble_conductor_owner(ensemble,owner):
+def sections_use_the_existing_ensemble_owner(ensemble,owner):
   {==}
 
 law section_capability_requires_owner_and_nonempty_text:
@@ -92,7 +92,7 @@ law section_refusal_names_the_requested_group_and_next_action:
   for id: String
   for owner: String
   for admitted: String
-  {C.section_refusal(ensemble,id,owner,admitted) == "SELECT json_object('error','section-refused','ensemble'," ++ C.q(ensemble) ++ ",'section'," ++ C.q(id) ++ ",'owner'," ++ C.q(owner) ++ ",'condition','Use the named Ensemble conductor owner, a nonempty capability, and an existing Ensemble Player for membership.','next','Read ensemble ID and section ENSEMBLE SECTION. Add the Player to that Ensemble before assigning its Section; use add or remove for membership.') WHERE NOT " ++ admitted ++ ";" : String}
+  {C.section_refusal(ensemble,id,owner,admitted) == "SELECT json_object('error','section-refused','ensemble'," ++ C.q(ensemble) ++ ",'section'," ++ C.q(id) ++ ",'owner'," ++ C.q(owner) ++ ",'condition','Use the named Ensemble owner, a nonempty capability, and an existing Ensemble Player for membership.','next','Read ensemble ID and section ENSEMBLE SECTION. Add the Player to that Ensemble before assigning its Section; use add or remove for membership.') WHERE NOT " ++ admitted ++ ";" : String}
 
 def section_refusal_names_the_requested_group_and_next_action(ensemble,id,owner,admitted):
   {==}

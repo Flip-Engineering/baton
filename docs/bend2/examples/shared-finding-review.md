@@ -16,8 +16,8 @@ parentage inside the trusted local database. Those checks identify
 inconsistent requests. They do not authenticate the process making the
 declaration.
 
-The canonical contract for the three operations, visibility rules, read
-fields, and the destination-owner notice is
+The canonical contract for the three operations, shared reads, promotion
+provenance, read fields, and the destination-owner notice is
 [Findings and shared context](../knowledge-context-2026-09-29.md). The
 behavior is implemented in
 [knowledge.bend](../../../bend2/src/coordinator/knowledge.bend), with the
@@ -63,13 +63,14 @@ Each read row carries `id`, `author`, `claim`, `evidence`,
 `evidenceMessage`, `limits`, `destinations`, and `promotions`.
 `evidenceMessage` exposes the cited message's `id`, `sender`,
 `recipient`, and `body`. Each promotion names `finding`, `author`,
-`source`, `destination`, and `promotedBy`. The lead resolves the source
-scope that currently carries the finding (the worker scope for a
-candidate) and the evidence paths named in the message body.
+`source`, `destination`, and `promotedBy`. The lead uses the author session as
+the source for this candidate and reviews the evidence paths named in the message
+body.
 
 Promotion names the exact finding, the source scope, the destination
-scope, and the promoting actor. The promoter must be the destination
-scope's owner, and the source must carry the finding. Original
+scope, and the promoting actor. The promoter must own a registered
+destination, and the source must be the finding's author or a destination
+already recorded for that finding. Original
 authorship is preserved: the stored promotion keeps the finding's
 `author` alongside `promotedBy`.
 
@@ -97,16 +98,16 @@ baton2 state.db knowledge lead
 
 The `ack` receipt on `PROMOTION_ID:promotion-notice` records that the
 destination owner accepted that particular retained message. The
-follow-up `knowledge` read confirms the finding is now readable in the
-destination scope with its evidence message body and full promotion
-provenance. Readers obtain the claim, the cited retained message, the
-limits, and the promotion history through `knowledge`; review notices
+follow-up `knowledge` read confirms the stored destination and full promotion
+provenance. Every registered session reads the same shared finding. Readers
+obtain the claim, the cited retained message, the limits, and the promotion
+history through `knowledge`; review notices
 identify a finding for retrieval and carry no copied claim body.
 
 ## 4. Destination owner chooses the retrieving worker
 
-Promotion makes the finding readable within the destination scope. The
-destination owner decides which workers receive a message about it. Each
+Every registered session can read the finding and its promotion provenance.
+The destination owner decides which workers receive a message about it. Each
 worker notification is a separate orchestrator action.
 
 ```sh
@@ -115,7 +116,7 @@ baton2 state.db knowledge muse
 ```
 
 The worker retrieves the finding with its own `knowledge` read, which
-returns the complete visible list including the evidence message body
+returns the shared findings including the evidence message body
 and promotion provenance. The worker's subsequent report and its
 task-specific file changes establish what it retrieved and how it used
 the finding.

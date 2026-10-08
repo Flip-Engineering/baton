@@ -322,13 +322,7 @@ def validate_json_text_sql(text: String) -> String:
   ++ " EXISTS (SELECT 1 FROM json_tree(t) p WHERE p.id=c.parent AND"
   ++ " p.type='object') AND EXISTS (SELECT 1 FROM json_tree(t) s WHERE"
   ++ " s.parent=c.parent AND s.key=c.key AND"
-  ++ " s.rowid<>c.rowid)),'tokens',(SELECT count(*) FROM json_tree(t) r"
-  ++ " WHERE r.type IN ('integer','real') AND NOT (r.type='integer' AND"
-  ++ " (CAST(t -> r.fullkey AS TEXT)='0' OR (CAST(t -> r.fullkey AS"
-  ++ " TEXT) GLOB '[1-9]*' AND CAST(t -> r.fullkey AS TEXT) NOT GLOB"
-  ++ " '*[^0-9]*' AND (length(CAST(t -> r.fullkey AS TEXT))<10 OR"
-  ++ " (length(CAST(t -> r.fullkey AS TEXT))=10 AND CAST(t -> r.fullkey"
-  ++ " AS TEXT)<='4294967295'))))))) FROM raw;"
+  ++ " s.rowid<>c.rowid))) FROM raw;"
 
 
 # The strict hex row query: json_tree node id, parent, type, member key and scalar
@@ -345,8 +339,7 @@ def json_tree_sql(text: String) -> String:
 # token lookup or duplicate traversal can run before the verdict. The host executes this
 # single statement and answers with one row: `1` plus LF for valid, `0` plus LF for
 # invalid, and anything else is malformed transport that this lane refuses as its own
-# condition. The request-profile token clause of the combined statement stays separate
-# and is not a whole-frame numeric guard.
+# condition. Numeric tokens are interpreted by the request fields that consume them.
 def validity_sql(text: String) -> String:
   "WITH raw(t) AS (SELECT " ++ sql_quote(text) ++ ") SELECT json_valid(t) FROM raw;"
 
@@ -433,6 +426,7 @@ def member_lookup(+k: String, +members: J.Json) -> Maybe<&2, J.Json>:
     case J.Jtrue{}: None{}
     case J.Jfalse{}: None{}
     case J.Jint{+value}: None{}
+    case J.Jnum{+token}: None{}
     case J.Jstr{+value}: None{}
     case J.Jarr{+head, +tail}: None{}
     case J.Jobj{+members}: None{}
@@ -452,6 +446,7 @@ def is_jstr(j: J.Json) -> Bool:
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
     case J.Jint{+value}: False{}
+    case J.Jnum{+token}: False{}
     case J.Jarr{+head, +tail}: False{}
     case J.Jobj{+members}: False{}
     case J.Jpair{key, value, rest}: False{}
@@ -460,6 +455,7 @@ def is_jstr(j: J.Json) -> Bool:
 def is_jint(j: J.Json) -> Bool:
   match j:
     case J.Jint{+value}: True{}
+    case J.Jnum{+token}: False{}
     case J.Jnull{}: False{}
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
@@ -476,6 +472,7 @@ def is_jobj(j: J.Json) -> Bool:
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
     case J.Jint{+value}: False{}
+    case J.Jnum{+token}: False{}
     case J.Jstr{+value}: False{}
     case J.Jarr{+head, +tail}: False{}
     case J.Jpair{key, value, rest}: False{}
@@ -488,6 +485,7 @@ def text_of(j: J.Json) -> String:
     case J.Jtrue{}: SNil{}
     case J.Jfalse{}: SNil{}
     case J.Jint{+value}: SNil{}
+    case J.Jnum{+token}: SNil{}
     case J.Jarr{+head, +tail}: SNil{}
     case J.Jobj{+members}: SNil{}
     case J.Jpair{key, value, rest}: SNil{}
@@ -496,6 +494,7 @@ def text_of(j: J.Json) -> String:
 def is_one(j: J.Json) -> Bool:
   match j:
     case J.Jint{value}: U32.is_eq(value, 1)
+    case J.Jnum{+token}: False{}
     case J.Jnull{}: False{}
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
@@ -534,6 +533,7 @@ def keys_allowed(+allowed: Words, +members: J.Json) -> Bool:
     case J.Jtrue{}: True{}
     case J.Jfalse{}: True{}
     case J.Jint{+value}: True{}
+    case J.Jnum{+token}: True{}
     case J.Jstr{+value}: True{}
     case J.Jarr{+head, +tail}: True{}
     case J.Jobj{+members}: True{}
@@ -546,6 +546,7 @@ def root_keys_ok(+members: J.Json) -> Bool:
     case J.Jtrue{}: True{}
     case J.Jfalse{}: True{}
     case J.Jint{+value}: True{}
+    case J.Jnum{+token}: True{}
     case J.Jstr{+value}: True{}
     case J.Jarr{+head, +tail}: True{}
     case J.Jobj{+members}: True{}
@@ -620,6 +621,7 @@ def subject_kind_ok(subject: J.Json) -> Bool:
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
     case J.Jint{+value}: False{}
+    case J.Jnum{+token}: False{}
     case J.Jstr{+value}: False{}
     case J.Jarr{+head, +tail}: False{}
     case J.Jpair{key, value, rest}: False{}
@@ -645,6 +647,7 @@ def distinct_from(+name: String, +rest: J.Json) -> Bool:
     case J.Jtrue{}: True{}
     case J.Jfalse{}: True{}
     case J.Jint{+value}: True{}
+    case J.Jnum{+token}: True{}
     case J.Jstr{+value}: True{}
     case J.Jobj{+members}: True{}
 
@@ -657,6 +660,7 @@ def projections_rest(+rest: J.Json) -> Bool:
     case J.Jtrue{}: True{}
     case J.Jfalse{}: True{}
     case J.Jint{+value}: True{}
+    case J.Jnum{+token}: True{}
     case J.Jstr{+value}: True{}
     case J.Jobj{+members}: True{}
 
@@ -667,6 +671,7 @@ def projections_ok(select: J.Json) -> Bool:
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
     case J.Jint{+value}: False{}
+    case J.Jnum{+token}: False{}
     case J.Jstr{+value}: False{}
     case J.Jobj{+members}: False{}
     case J.Jpair{key, value, rest}: False{}
@@ -681,6 +686,7 @@ def effects_rest(+rest: J.Json) -> Bool:
     case J.Jtrue{}: True{}
     case J.Jfalse{}: True{}
     case J.Jint{+value}: True{}
+    case J.Jnum{+token}: True{}
     case J.Jstr{+value}: True{}
     case J.Jobj{+members}: True{}
 
@@ -694,6 +700,7 @@ def effects_ok(effects: J.Json) -> Bool:
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
     case J.Jint{+value}: False{}
+    case J.Jnum{+token}: False{}
     case J.Jstr{+value}: False{}
     case J.Jobj{+members}: False{}
 
@@ -725,6 +732,7 @@ def options_shape(options: J.Json) -> Bool:
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
     case J.Jint{+value}: False{}
+    case J.Jnum{+token}: False{}
     case J.Jstr{+value}: False{}
     case J.Jarr{+head, +tail}: False{}
     case J.Jpair{key, value, rest}: False{}
@@ -785,20 +793,11 @@ def request_validate(req: J.Json) -> Verdict:
     case J.Jtrue{}: VRefused{"requestNotObject"}
     case J.Jfalse{}: VRefused{"requestNotObject"}
     case J.Jint{+value}: VRefused{"requestNotObject"}
+    case J.Jnum{+token}: VRefused{"requestNotObject"}
     case J.Jstr{+value}: VRefused{"requestNotObject"}
     case J.Jarr{+head, +tail}: VRefused{"requestNotObject"}
     case J.Jpair{key, value, rest}: VRefused{"requestNotObject"}
     case J.Jnil{}: VRefused{"requestNotObject"}
-
-# The operative numeric check states the unsigned decimal U32 domain exactly: no
-# leading zero, at most ten digits, and a ten-digit token at most the upper-bound
-# token. The whole assembled statement is pinned, so a bound dropped from the
-# statement fails here rather than passing as a helper.
-law request_law_the_u32_check_states_the_upper_bound:
-  {validate_json_text_sql("{}") == "WITH raw(t) AS (SELECT '{}') SELECT json_object('valid',json_valid(t),'duplicates',(SELECT count(*) FROM json_tree(t) c WHERE c.parent IS NOT NULL AND EXISTS (SELECT 1 FROM json_tree(t) p WHERE p.id=c.parent AND p.type='object') AND EXISTS (SELECT 1 FROM json_tree(t) s WHERE s.parent=c.parent AND s.key=c.key AND s.rowid<>c.rowid)),'tokens',(SELECT count(*) FROM json_tree(t) r WHERE r.type IN ('integer','real') AND NOT (r.type='integer' AND (CAST(t -> r.fullkey AS TEXT)='0' OR (CAST(t -> r.fullkey AS TEXT) GLOB '[1-9]*' AND CAST(t -> r.fullkey AS TEXT) NOT GLOB '*[^0-9]*' AND (length(CAST(t -> r.fullkey AS TEXT))<10 OR (length(CAST(t -> r.fullkey AS TEXT))=10 AND CAST(t -> r.fullkey AS TEXT)<='4294967295'))))))) FROM raw;" : String}
-
-def request_law_the_u32_check_states_the_upper_bound():
-  {==}
 
 # A duplicated member is the same defect whatever the member value kind is, so the
 # subquery restricts the counted node to a member of an object and compares siblings by
@@ -806,7 +805,7 @@ def request_law_the_u32_check_states_the_upper_bound():
 # emitted statement for a document carrying duplicates of several kinds; the counted
 # duplicates themselves remain unexecuted source semantics.
 law request_law_the_duplicate_subquery_covers_every_member_kind:
-  {validate_json_text_sql("{\"a\":1,\"a\":2,\"b\":true,\"b\":false,\"c\":null,\"c\":null,\"e\":{},\"e\":{}}") == "WITH raw(t) AS (SELECT '{\"a\":1,\"a\":2,\"b\":true,\"b\":false,\"c\":null,\"c\":null,\"e\":{},\"e\":{}}') SELECT json_object('valid',json_valid(t),'duplicates',(SELECT count(*) FROM json_tree(t) c WHERE c.parent IS NOT NULL AND EXISTS (SELECT 1 FROM json_tree(t) p WHERE p.id=c.parent AND p.type='object') AND EXISTS (SELECT 1 FROM json_tree(t) s WHERE s.parent=c.parent AND s.key=c.key AND s.rowid<>c.rowid)),'tokens',(SELECT count(*) FROM json_tree(t) r WHERE r.type IN ('integer','real') AND NOT (r.type='integer' AND (CAST(t -> r.fullkey AS TEXT)='0' OR (CAST(t -> r.fullkey AS TEXT) GLOB '[1-9]*' AND CAST(t -> r.fullkey AS TEXT) NOT GLOB '*[^0-9]*' AND (length(CAST(t -> r.fullkey AS TEXT))<10 OR (length(CAST(t -> r.fullkey AS TEXT))=10 AND CAST(t -> r.fullkey AS TEXT)<='4294967295'))))))) FROM raw;" : String}
+  {validate_json_text_sql("{\"a\":1,\"a\":2,\"b\":true,\"b\":false,\"c\":null,\"c\":null,\"e\":{},\"e\":{}}") == "WITH raw(t) AS (SELECT '{\"a\":1,\"a\":2,\"b\":true,\"b\":false,\"c\":null,\"c\":null,\"e\":{},\"e\":{}}') SELECT json_object('valid',json_valid(t),'duplicates',(SELECT count(*) FROM json_tree(t) c WHERE c.parent IS NOT NULL AND EXISTS (SELECT 1 FROM json_tree(t) p WHERE p.id=c.parent AND p.type='object') AND EXISTS (SELECT 1 FROM json_tree(t) s WHERE s.parent=c.parent AND s.key=c.key AND s.rowid<>c.rowid))) FROM raw;" : String}
 
 def request_law_the_duplicate_subquery_covers_every_member_kind():
   {==}
