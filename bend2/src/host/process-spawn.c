@@ -3639,7 +3639,7 @@ static int br_instance_recover(BatonProcessCall *call) {
   free(payload);
   if(!error && (reply.owner!=current.token || reply.epoch!=current.epoch))error=ESTALE;
   if(!error && (reply.op!=BI_HELLO || reply.length!=sizeof(state) ||
-      (reply.state!=1 && reply.state!=2)))error=EPROTO;
+      reply.state!=2))error=EPROTO;
   if(!error)error=br_read_all(socket_fd,&state,sizeof(state));
   if(socket_fd>=0)close(socket_fd);
   if(!error) {
@@ -3654,10 +3654,11 @@ static int br_instance_recover(BatonProcessCall *call) {
     char *escaped=!error?br_json_escape(directory):NULL;
     if(!error && !escaped)error=ENOMEM;
     uint64_t new_token=reply.owner,new_epoch=reply.epoch;
-    char transition[2048];
+    const char *custody_mode=old_token==new_token && old_epoch==new_epoch?
+      "same-owner-observer":"owner-rebound-monitor";
     const char *observation=state.status_known?"exited":"live";
     const char *terminal_status=state.status_known?"known":"unavailable";
-    int written=error?-1:snprintf(transition,sizeof(transition),
+    int needed=error?-1:snprintf(NULL,0,
       "{\"schema\":\"baton2-custody-transition-v1\",\"directory\":\"%s\","
       "\"oldOwnerWitness\":\"%s\",\"currentOwnerWitness\":\"%llu:%llu\","
       "\"attemptManifest\":\"%016llx\",\"ownerAttempt\":%llu,\"nativePid\":%d,\"nativeBirth\":\"%llu:%llu\","
@@ -3667,10 +3668,25 @@ static int br_instance_recover(BatonProcessCall *call) {
       (unsigned long long)manifest_digest,(unsigned long long)reply.attempt,birth.pid,
       (unsigned long long)birth.first,
       (unsigned long long)birth.second,
-      reply.state==2?"owner-rebound-monitor":"same-owner-observer",
+      custody_mode,
       observation,terminal_status);
-    if(!error && (written<0 || (size_t)written>=sizeof(transition)))error=EOVERFLOW;
-    if(!error) {call->text=strdup(transition);if(!call->text)error=ENOMEM;else call->length=(size_t)written;}
+    if(!error && needed<0)error=EIO;
+    char *transition=!error?malloc((size_t)needed+1):NULL;
+    if(!error && !transition)error=ENOMEM;
+    int written=error?-1:snprintf(transition,(size_t)needed+1,
+      "{\"schema\":\"baton2-custody-transition-v1\",\"directory\":\"%s\","
+      "\"oldOwnerWitness\":\"%s\",\"currentOwnerWitness\":\"%llu:%llu\","
+      "\"attemptManifest\":\"%016llx\",\"ownerAttempt\":%llu,\"nativePid\":%d,\"nativeBirth\":\"%llu:%llu\","
+      "\"custodyMode\":\"%s\",\"observation\":\"%s\",\"historicalGuard\":\"not-carried\","
+      "\"terminalStatus\":\"%s\"}",escaped,call->owner_witness,
+      (unsigned long long)new_token,(unsigned long long)new_epoch,
+      (unsigned long long)manifest_digest,(unsigned long long)reply.attempt,birth.pid,
+      (unsigned long long)birth.first,(unsigned long long)birth.second,
+      custody_mode,
+      observation,terminal_status);
+    if(!error && (written<0 || written!=needed))error=EIO;
+    if(!error) {call->text=transition;transition=NULL;call->length=(size_t)written;}
+    free(transition);
     free(escaped);br_manifest_free(&manifest);
   }
   free(directory);

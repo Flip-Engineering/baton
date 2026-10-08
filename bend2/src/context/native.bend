@@ -850,16 +850,16 @@ def managed_recovery_association(+db: String, +binding: String,
     case Done{+association}: IO.pure(Bool,
       managed_recovery_association_ok(bootstrap, admission, association))
 
-def managed_recovery_readiness_json(+bootstrap: ManagedQuery.Bootstrap,
+def managed_recovery_readiness_join(+bootstrap: ManagedQuery.Bootstrap,
                                     +expected_binding: String,
-                                    +transition: String,
-                                    decoded: ProjectPolicyJson) -> IO(ManagedQuery.KeeperReadiness):
-  match decoded:
+                                    host: ProjectPolicyJson,
+                                    transition: ProjectPolicyJson) -> IO(ManagedQuery.KeeperReadiness):
+  match host:
     case ProjectPolicyJsonRefused{reason}:
       IO.pure(ManagedQuery.KeeperReadiness,
         ManagedQuery.KeeperObserverUnavailable{"recoveryStateJson:" ++ reason})
     case ProjectPolicyJsonReady{+value}:
-      match project_policy_json_rows(transition):
+      match transition:
         case ProjectPolicyJsonRefused{reason}:
           IO.pure(ManagedQuery.KeeperReadiness,
             ManagedQuery.KeeperObserverUnavailable{"custodyTransitionJson:" ++ reason})
@@ -869,14 +869,32 @@ def managed_recovery_readiness_json(+bootstrap: ManagedQuery.Bootstrap,
             ManagedQuery.keeper_recovery_readiness_from_host(bootstrap,
               expected_binding, current_witness, receipt, value))
 
+def managed_recovery_readiness_transition_rows(+bootstrap: ManagedQuery.Bootstrap,
+    +expected_binding: String, host: ProjectPolicyJson,
+    result: Result<&1,&1,U32 & String,String>) -> IO(ManagedQuery.KeeperReadiness):
+  match result:
+    case Fail{error}: IO.pure(ManagedQuery.KeeperReadiness,
+      ManagedQuery.KeeperObserverUnavailable{"custodyTransitionDecode"})
+    case Done{+rows}: managed_recovery_readiness_join(bootstrap, expected_binding,
+      host, project_policy_json_rows(rows))
+
+def managed_recovery_readiness_json(+db: String, +binding: String,
+                                    +bootstrap: ManagedQuery.Bootstrap,
+                                    +expected_binding: String, +transition: String,
+                                    host: ProjectPolicyJson) -> IO(ManagedQuery.KeeperReadiness):
+  do IO<ManagedQuery.KeeperReadiness>:
+    rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+      Req.json_tree_sql(transition))
+    managed_recovery_readiness_transition_rows(bootstrap, expected_binding, host, rows)
+
 def managed_recovery_readiness_rows(+bootstrap: ManagedQuery.Bootstrap,
-                                    +expected_binding: String,
-                                    +transition: String,
+                                    +db: String, +binding: String,
+                                    +expected_binding: String, +transition: String,
                                     result: Result<&1,&1,U32 & String,String>) -> IO(ManagedQuery.KeeperReadiness):
   match result:
     case Fail{error}: IO.pure(ManagedQuery.KeeperReadiness,
       ManagedQuery.KeeperObserverUnavailable{"recoveryStateDecode"})
-    case Done{+rows}: managed_recovery_readiness_json(bootstrap,
+    case Done{+rows}: managed_recovery_readiness_json(db, binding, bootstrap,
       expected_binding, transition, project_policy_json_rows(rows))
 
 def decode_managed_recovery_readiness(+db: String, +binding: String,
@@ -888,7 +906,8 @@ def decode_managed_recovery_readiness(+db: String, +binding: String,
       ContextIdentity.role_guard_key(ManagedQuery.bootstrap_text(bootstrap)))
     rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
       Req.json_tree_sql(host_json))
-    managed_recovery_readiness_rows(bootstrap, expected_binding, transition, rows)
+    managed_recovery_readiness_rows(bootstrap, db, binding, expected_binding,
+      transition, rows)
 
 def managed_recovery_admission(+db: String, +binding: String,
                                +bootstrap: ManagedQuery.Bootstrap,

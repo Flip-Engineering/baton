@@ -134,76 +134,85 @@ law changed_host_owner_witness_holds_managed_start:
 def changed_host_owner_witness_holds_managed_start():
   {==}
 
-law recovery_accepts_attached_ready_process_state:
-  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
-    custody_transition_json("7:1", "same-owner-observer"),
+law recovery_refuses_prestart_ready_process_state:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "8:2",
+    custody_transition_json("8:2", "owner-rebound-monitor"),
     ready_host_json("ready", "binding-digest", 7, 1, False{}, False{}, False{})) ==
     Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
 
-def recovery_accepts_attached_ready_process_state():
+def recovery_refuses_prestart_ready_process_state():
   {==}
 
 law recovery_accepts_attached_running_process_state:
-  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
-    custody_transition_json("7:1", "same-owner-observer"),
-    ready_host_json("running", "binding-digest", 7, 1, True{}, False{}, False{})) ==
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "8:2",
+    custody_transition_json("8:2", "owner-rebound-monitor"),
+    ready_host_json("running", "binding-digest", 8, 2, True{}, False{}, False{})) ==
     Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
 
 def recovery_accepts_attached_running_process_state():
   {==}
 
-law recovery_requires_a_latched_running_process:
+law recovery_accepts_an_existing_monitor_on_the_current_owner:
   {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
     custody_transition_json("7:1", "same-owner-observer"),
-    ready_host_json("running", "binding-digest", 7, 1, False{}, False{}, False{})) ==
+    ready_host_json("running", "binding-digest", 7, 1, True{}, False{}, False{})) ==
+    Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
+
+def recovery_accepts_an_existing_monitor_on_the_current_owner():
+  {==}
+
+law recovery_requires_a_latched_running_process:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "8:2",
+    custody_transition_json("8:2", "owner-rebound-monitor"),
+    ready_host_json("running", "binding-digest", 8, 2, False{}, False{}, False{})) ==
     Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
 
 def recovery_requires_a_latched_running_process():
   {==}
 
 law recovery_refuses_a_cancelled_attached_keeper:
-  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
-    custody_transition_json("7:1", "same-owner-observer"),
-    ready_host_json("running", "binding-digest", 7, 1, True{}, False{}, True{})) ==
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "8:2",
+    custody_transition_json("8:2", "owner-rebound-monitor"),
+    ready_host_json("running", "binding-digest", 8, 2, True{}, False{}, True{})) ==
     Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
 
 def recovery_refuses_a_cancelled_attached_keeper():
   {==}
 
 law recovery_accepts_attached_exited_process_state:
-  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
-    custody_transition_exited_json("7:1", "same-owner-observer"),
-    ready_host_json("exited", "binding-digest", 7, 1, True{}, True{}, False{})) ==
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "8:2",
+    custody_transition_exited_json("8:2", "owner-rebound-monitor"),
+    ready_host_json("exited", "binding-digest", 8, 2, True{}, True{}, False{})) ==
     Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "starter", "0"} : Managed.KeeperReadiness}
 
 def recovery_accepts_attached_exited_process_state():
   {==}
 
 law recovery_requires_a_known_exit_status:
-  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
-    custody_transition_json("7:1", "same-owner-observer"),
-    ready_host_json("exited", "binding-digest", 7, 1, True{}, False{}, False{})) ==
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "8:2",
+    custody_transition_json("8:2", "owner-rebound-monitor"),
+    ready_host_json("exited", "binding-digest", 8, 2, True{}, False{}, False{})) ==
     Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
 
 def recovery_requires_a_known_exit_status():
   {==}
 
-law recovery_accepts_attached_uncertain_process_state:
-  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
-    custody_transition_json("7:1", "same-owner-observer"),
-    ready_host_json("uncertain", "binding-digest", 7, 1, True{}, False{}, False{})) ==
+law recovery_refuses_uncertain_process_state:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "8:2",
+    custody_transition_json("8:2", "owner-rebound-monitor"),
+    ready_host_json("uncertain", "binding-digest", 8, 2, True{}, False{}, False{})) ==
     Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
 
-def recovery_accepts_attached_uncertain_process_state():
+def recovery_refuses_uncertain_process_state():
   {==}
 
-law recovery_accepts_attached_failed_process_state:
-  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "7:1",
-    custody_transition_json("7:1", "same-owner-observer"),
-    ready_host_json("failed", "binding-digest", 7, 1, True{}, False{}, False{})) ==
+law recovery_refuses_failed_process_state:
+  {Managed.keeper_recovery_readiness_from_host(managed_bootstrap(), "binding-digest", "8:2",
+    custody_transition_json("8:2", "owner-rebound-monitor"),
+    ready_host_json("failed", "binding-digest", 8, 2, True{}, False{}, False{})) ==
     Managed.KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"} : Managed.KeeperReadiness}
 
-def recovery_accepts_attached_failed_process_state():
+def recovery_refuses_failed_process_state():
   {==}
 
 law recovery_accepts_a_typed_owner_incarnation_transition:

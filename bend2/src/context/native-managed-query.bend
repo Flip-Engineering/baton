@@ -375,10 +375,8 @@ def custody_transition_pid_matches(+transition: J.Json, +host: J.Json) -> Bool:
 def custody_transition_mode_matches(+bootstrap: Bootstrap, +current_witness: String,
                                     +value: J.Json) -> Bool:
   Bool.and(String.eq(readiness_text(value, "historicalGuard"), "not-carried"),
-  Bool.pick(Bool, String.eq(readiness_text(value, "custodyMode"), "same-owner-observer"),
-    String.eq(current_witness, bootstrap_owner_witness(bootstrap)),
-    Bool.and(String.eq(readiness_text(value, "custodyMode"), "owner-rebound-monitor"),
-      Bool.not(String.eq(current_witness, bootstrap_owner_witness(bootstrap))))))
+  Bool.and(String.eq(readiness_text(value, "custodyMode"), "owner-rebound-monitor"),
+    Bool.not(String.eq(current_witness, bootstrap_owner_witness(bootstrap))))))
 
 def custody_transition_status_matches(+value: J.Json) -> Bool:
   Bool.pick(Bool, String.eq(readiness_text(value, "observation"), "live"),
