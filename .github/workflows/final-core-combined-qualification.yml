@@ -22,7 +22,7 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: ceb914218e5edbdcf5d9284f712b94fe6760ac7b
+  PRODUCT_SOURCE_SHA: 02d781f4ea00f521285d4854cf1fc795bc405c53
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
 
@@ -127,7 +127,7 @@ jobs:
           retention-days: 14
 
   darwin:
-    if: ${{ github.event_name == 'push' }}
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') }}
     needs: build
     runs-on: macos-15
     steps:
@@ -147,14 +147,30 @@ jobs:
           evidence="$RUNNER_TEMP/final-native-context-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-darwin"
           mkdir -p "$evidence/toolchain"
           printf 'FINAL_NATIVE_CONTEXT_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            printf 'PACKAGE_DIRECTORY=%s/retained/package\n' "$evidence" >> "$GITHUB_ENV"
+          else
+            printf 'PACKAGE_DIRECTORY=%s/package\n' "$evidence" >> "$GITHUB_ENV"
+          fi
           git -C owned rev-parse HEAD > "$evidence/source-commit.txt"
           uname -a > "$evidence/platform.txt"
+      - name: Download retained Darwin package for fixture recheck
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: final-native-context-darwin-${{ env.PRODUCT_RUN_ID }}-${{ env.PRODUCT_RUN_ATTEMPT }}
+          run-id: ${{ env.PRODUCT_RUN_ID }}
+          repository: Flip-Engineering/baton
+          github-token: ${{ github.token }}
+          path: ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/retained
       - name: Download generated production C from this build
+        if: ${{ github.event_name == 'push' }}
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: final-native-context-binaries-${{ github.run_id }}-${{ github.run_attempt }}
           path: generated
       - name: Install Bend package notices
+        if: ${{ github.event_name == 'push' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -165,6 +181,7 @@ jobs:
             https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
             -o "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/compiler.tar.gz"
       - name: Compile and package Darwin executable
+        if: ${{ github.event_name == 'push' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -192,13 +209,14 @@ jobs:
           retained="$GITHUB_WORKSPACE/owned-retained"
           mv "$build" "$retained"
           trap 'mv "$retained" "$build"' EXIT
-          archive="$FINAL_NATIVE_CONTEXT_EVIDENCE/package/baton2-development-darwin-arm64-$PRODUCT_SOURCE_SHA.tar.gz"
-          archive_digest=$(awk '{print $1}' "$FINAL_NATIVE_CONTEXT_EVIDENCE/package/SHA256SUMS")
+          archives=("$PACKAGE_DIRECTORY"/baton2-development-darwin-arm64-*.tar.gz)
+          archive="${archives[0]}"
+          archive_digest=$(awk '{print $1}' "$PACKAGE_DIRECTORY/SHA256SUMS")
           status=0
           set +e
           python3 "$retained/bend2/scripts/smoke-native-artifact.py" \
             --archive "$archive" --sha256 "$archive_digest" \
-            --manifest "$FINAL_NATIVE_CONTEXT_EVIDENCE/package/manifest.json" \
+            --manifest "$PACKAGE_DIRECTORY/manifest.json" \
             --unavailable-source "$build" --output "$FINAL_NATIVE_CONTEXT_EVIDENCE/smoke" \
             > "$FINAL_NATIVE_CONTEXT_EVIDENCE/smoke.stdout" \
             2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/smoke.stderr"
