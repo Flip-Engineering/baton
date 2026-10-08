@@ -77,10 +77,18 @@ jobs:
           set -euo pipefail
           output="$BATON2_LAWS_RUN/evidence/controls"
           mkdir -p "$output"
+          set +e
           node bend2/scripts/laws-check-focused-validation.mjs \
             "$GITHUB_WORKSPACE/source" \
             "$BATON2_LAWS_RUN/toolchain-home/bin/bend" \
             "$output" > "$output/driver.stdout" 2> "$output/driver.stderr"
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            cat "$output/driver.stderr"
+            if [ -f "$output/summary.json" ]; then cat "$output/summary.json"; fi
+            exit "$status"
+          fi
 
       - name: Retain focused evidence
         if: always()
