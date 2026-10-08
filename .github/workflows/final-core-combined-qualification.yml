@@ -16,8 +16,8 @@ jobs:
       matrix:
         include:
           - product: combined-context
-            source_sha: dd6e18083c161500fefc1bee0a07d4c3b99bc022
-            source_tree: 8bd700a93aa1b4715ea189b966c6a4a2efabd155
+            source_sha: b0401aabe94f4826af92cc62013354e6c3568939
+            source_tree: 68b0c3711939db71c03aa7eb00abd52a9a9d4ac2
     env:
       BEND_NO_TELEMETRY: '1'
     steps:
@@ -44,8 +44,8 @@ jobs:
           evidence="$FINAL_NATIVE_CONTEXT_EVIDENCE/logs"
           status=0
           set +e
-          "$@" > "$evidence/$label.stdout" 2> "$evidence/$label.stderr"
-          status=$?
+          "$@" 2> "$evidence/$label.stderr" | tee "$evidence/$label.stdout"
+          status=${PIPESTATUS[0]}
           set -e
           printf '%s\n' "$status" > "$evidence/$label.exit-status"
           sha256sum "$evidence/$label.stdout" "$evidence/$label.stderr" \
@@ -280,45 +280,6 @@ jobs:
           path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/process.*
           if-no-files-found: warn
           retention-days: 14
-      - name: Run Receive tests
-        id: suite_receive
-        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
-        shell: bash
-        run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/receive.py
-      - name: Retain Receive tests failure output
-        if: ${{ always() && steps.suite_receive.outcome == 'failure' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: native-context-test-failure-receive-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/receive.*
-          if-no-files-found: warn
-          retention-days: 14
-      - name: Run Receive output tests
-        id: suite_receive_output
-        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
-        shell: bash
-        run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-output env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/receive-output.py
-      - name: Retain Receive output tests failure output
-        if: ${{ always() && steps.suite_receive_output.outcome == 'failure' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: native-context-test-failure-receive-output-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/receive-output.*
-          if-no-files-found: warn
-          retention-days: 14
-      - name: Run Receive terminal boundary tests
-        id: suite_receive_terminal_boundary
-        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
-        shell: bash
-        run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-terminal-boundary env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/receive-terminal-boundary.py
-      - name: Retain Receive terminal boundary tests failure output
-        if: ${{ always() && steps.suite_receive_terminal_boundary.outcome == 'failure' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: native-context-test-failure-receive-terminal-boundary-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/receive-terminal-boundary.*
-          if-no-files-found: warn
-          retention-days: 14
       - name: Run Configure tests
         id: suite_configure
         if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
@@ -551,6 +512,45 @@ jobs:
         with:
           name: native-context-test-failure-selected-context-package-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/selected-context-package.*
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Run Receive tests
+        id: suite_receive
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
+        shell: bash
+        run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/receive.py -v
+      - name: Retain Receive tests failure output
+        if: ${{ always() && steps.suite_receive.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-receive-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/receive.*
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Run Receive output tests
+        id: suite_receive_output
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
+        shell: bash
+        run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-output env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/receive-output.py
+      - name: Retain Receive output tests failure output
+        if: ${{ always() && steps.suite_receive_output.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-receive-output-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/receive-output.*
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Run Receive terminal boundary tests
+        id: suite_receive_terminal_boundary
+        if: ${{ !cancelled() && steps.syntax.outcome == 'success' && steps.main_build.outcome == 'success' && steps.host_fixtures.outcome == 'success' }}
+        shell: bash
+        run: cd owned && "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-terminal-boundary env BEND="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" python3 bend2/test/receive-terminal-boundary.py
+      - name: Retain Receive terminal boundary tests failure output
+        if: ${{ always() && steps.suite_receive_terminal_boundary.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-context-test-failure-receive-terminal-boundary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.product }}/logs/receive-terminal-boundary.*
           if-no-files-found: warn
           retention-days: 14
       - name: Print failure logs
