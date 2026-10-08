@@ -346,13 +346,18 @@ def is_zero(s: String) -> Bool:
     case SNil{}: False{}
     case SCon{+head, +tail}: Bool.pick(Bool, String.is_empty(tail), U32.is_eq(cp(head), 48), False{})
 
-def digits_le(+a: String, +b: String) -> Bool:
+def digits_same_length_le(+a: String, +b: String) -> Bool:
   match a:
     case SNil{}: True{}
     case SCon{+ha, +ta}:
       Bool.pick(Bool, U32.is_lt(cp(ha), cp(head_ch(b))), True{},
         Bool.pick(Bool, U32.is_lt(cp(head_ch(b)), cp(ha)), False{},
-          digits_le(ta, tail_of(b))))
+          digits_same_length_le(ta, tail_of(b))))
+
+def digits_le(+a: String, +b: String) -> Bool:
+  Bool.pick(Bool, Nat.is_lt(String.length(a), String.length(b)), True{},
+    Bool.pick(Bool, Nat.is_lt(String.length(b), String.length(a)), False{},
+      digits_same_length_le(a, b)))
 
 # An unsigned decimal U32 token is admitted by its value domain, without a
 # separate token-length cutoff.
