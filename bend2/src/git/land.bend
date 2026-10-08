@@ -2276,26 +2276,6 @@ def shared_reserved_attested(repo: String, +target: String, cand: String, basis:
   +rel = T.release_raw_of(released)
   ld_attest_admit(AttemptEvidence{reserved, repo, target, cand, basis, guard, shared_parent_path(reserved, "stderr"), ld_adv_of(obs), ld_adv_capture(obs), ld_adv_qualification(obs), rel, IdentityObserved{common, common_observed, target}, ld_adv_association(obs), ld_adv_intent(obs), reservation})
 
-law the_reserved_continuation_runs_the_selected_route_and_releases_before_attesting:
-  for handle: U32
-  for repo: String
-  for target: String
-  for cand: String
-  for basis: String
-  for guard: String
-  for common: String
-  for common_observed: T.GitOut
-  for reserved: String
-  for attempt_name: String
-  for attempt_parent: String
-  {shared_reserved_continue(handle, repo, target, cand, basis, guard, common, common_observed, reserved, attempt_name, attempt_parent) == (do IO<SharedLanding>:
-    o : LdAdvObs <- ld_adv_run(repo, target, cand, basis, LdAdvContext{handle, guard, shared_parent_path(reserved, "stderr"), attempt_name, common, reserved})
-    released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(handle)
-    shared_reserved_attested(repo, target, cand, basis, guard, common, common_observed, reserved, ReservationObserved{attempt_parent, attempt_name}, o, released)) : IO(SharedLanding)}
-
-def the_reserved_continuation_runs_the_selected_route_and_releases_before_attesting():
-  {==}
-
 # The evidence the reserved continuation attests: the guard and the reservation-derived artifact destination
 # are the same operands the capture call used, the capture and qualification are the ones the attempt
 # observation returned, and the release is the raw result of the same release call.
@@ -2337,6 +2317,26 @@ def shared_reserved_continue(handle: U32, repo: String, target: String, cand: St
     o : LdAdvObs <- ld_adv_run(rp, tg, c, b, cx)
     released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(h)
     shared_reserved_attested(rp, tg, c, b, gd, cm, cobs, rv, idn, o, released)
+
+law the_reserved_continuation_runs_the_selected_route_and_releases_before_attesting:
+  for handle: U32
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  for guard: String
+  for common: String
+  for common_observed: T.GitOut
+  for reserved: String
+  for attempt_name: String
+  for attempt_parent: String
+  {shared_reserved_continue(handle, repo, target, cand, basis, guard, common, common_observed, reserved, attempt_name, attempt_parent) == (do IO<SharedLanding>:
+    o : LdAdvObs <- ld_adv_run(repo, target, cand, basis, LdAdvContext{handle, guard, shared_parent_path(reserved, "stderr"), attempt_name, common, reserved})
+    released : Result<&1, &1, U32 & String, Unit> <- Rec.Receipt.release(handle)
+    shared_reserved_attested(repo, target, cand, basis, guard, common, common_observed, reserved, ReservationObserved{attempt_parent, attempt_name}, o, released)) : IO(SharedLanding)}
+
+def the_reserved_continuation_runs_the_selected_route_and_releases_before_attesting():
+  {==}
 
 # The attempt name: the bare base for the first attempt, then the base extended with the
 # counter rendered by U32.show. The only refusal past a collision is the U32 maximum, checked
