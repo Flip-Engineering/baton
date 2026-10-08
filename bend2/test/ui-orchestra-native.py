@@ -86,7 +86,7 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
     def ui_snapshot(self, reader, subject):
         node = shutil.which('node')
         self.assertIsNotNone(node, 'Node 22 is required for the Orchestra UI fixture')
-        server = ROOT / 'ui' / 'orchestra' / 'server.mjs'
+        server = ROOT / 'bend2' / 'ui' / 'orchestra' / 'server.mjs'
         process = subprocess.Popen(
             [node, str(server), '--database', str(self.db), '--reader', reader,
              '--subject', subject, '--port', '0'],

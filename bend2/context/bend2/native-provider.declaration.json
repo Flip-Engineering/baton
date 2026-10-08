@@ -33,7 +33,7 @@
     },
     {
       "packagePath": "frontend-hooks.mjs",
-      "sha256": "218e2e5601d5acaf61f15e31576b82fbb184dee3f30256458f1730c79aa55bef",
+      "sha256": "c51422db5433c039798aa138e3e64e86552f77c807780f47291391c3650b4823",
       "role": "frontend-hooks"
     },
     {
@@ -90,7 +90,7 @@
     },
     {
       "packagePath": "frontend-hooks.mjs",
-      "sha256": "218e2e5601d5acaf61f15e31576b82fbb184dee3f30256458f1730c79aa55bef",
+      "sha256": "c51422db5433c039798aa138e3e64e86552f77c807780f47291391c3650b4823",
       "role": "frontend-hooks"
     },
     {

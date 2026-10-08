@@ -132,6 +132,13 @@ class Stop(unittest.TestCase):
             return state if state.get('status') == 'stopped' and state.get('nativeStatus') else None
         return self.eventually(answer, 'stopped native process was not reaped')
 
+    def output_log(self):
+        with sqlite3.connect(self.db) as database:
+            path, = database.execute(
+                "SELECT log FROM log_generations WHERE session='parent' ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()
+        return pathlib.Path(path)
+
     def test_idle_stop_preserves_input_refuses_new_execution_and_retries(self):
         self.configure()
         self.player(harness='omp')
@@ -182,7 +189,7 @@ class Stop(unittest.TestCase):
         self.assertEqual(self.rows("SELECT id,body,receipt FROM messages WHERE recipient='parent' ORDER BY seq"), original)
         self.assertIn('Progress before stop.', work.read_text())
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
-        self.assertIn('output before terminal stop', (self.directory / 'parent.jsonl').read_text())
+        self.assertIn('output before terminal stop', self.output_log().read_text())
         report = self.rows('SELECT * FROM messages WHERE id=?', [completed['reportId']])[0]
         self.assertEqual(report['receipt'], 'parent-received')
         self.assertEqual(json.loads(report['body'])['nativeStatus'], 'signal 15')
@@ -213,7 +220,7 @@ class Stop(unittest.TestCase):
         self.finish(observer, ok=False)
         self.action(stream, progress='output after stop and observer loss')
         self.assertEqual(json.loads(stream.readline()), {'progress_written': 'output after stop and observer loss'})
-        self.eventually(lambda: 'output after stop and observer loss' in (self.directory / 'parent.jsonl').read_text(),
+        self.eventually(lambda: 'output after stop and observer loss' in self.output_log().read_text(),
                         'recovery did not retain post-loss output')
         before_force = self.rows('SELECT * FROM session_stops')
         wrong = self.coord('force-stop', 'parent', 'different-stop', ok=False)
@@ -317,6 +324,7 @@ class Stop(unittest.TestCase):
         initial = self.coord('native-reply', 'root', 'unknown-request', '{"value":"answer"}', ok=False)
         self.assertNotEqual(initial.returncode, 0)
         self.assertTrue(self.rows("SELECT name FROM sqlite_master WHERE name='native_requests'"))
+        self.shutdown_idle_database_owner('native reply left the fixture database owner active')
         self.assertEqual(self.owned_processes(), [])
         with sqlite3.connect(self.db) as database:
             database.executescript('DROP TABLE executions; DROP TABLE session_stops;')
@@ -327,6 +335,7 @@ class Stop(unittest.TestCase):
         self.assertEqual({row['name'] for row in self.rows(
             "SELECT name FROM sqlite_master WHERE name IN ('executions','session_stops')")},
             {'executions', 'session_stops'})
+        self.shutdown_idle_database_owner('refused native reply left the fixture database owner active')
         self.assertEqual(self.owned_processes(), [])
 
 

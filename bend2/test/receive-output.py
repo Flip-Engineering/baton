@@ -32,10 +32,14 @@ class ReceiveOutput(unittest.TestCase):
     def setUpClass(cls):
         if not EXE.exists():
             raise unittest.SkipTest(f'Coordinator not built at {EXE}')
+        env = os.environ.copy()
+        # The runner's binary artifact is stored in .scratch/bend2, while the
+        # compiler's standard library is the checked-in matching upstream tree.
+        env['BEND_DIR'] = str(ROOT / 'bend2/context/bend2/upstream')
         for source, output in [('receive-output', FIXTURE), ('control-output', CONTROL)]:
             result = subprocess.run(['sh', 'bend2/scripts/build-native.sh',
                                      f'bend2/test/{source}.bend', str(output)],
-                                    cwd=ROOT, capture_output=True, text=True)
+                                    cwd=ROOT, env=env, capture_output=True, text=True)
             if result.returncode:
                 raise AssertionError(result.stdout + result.stderr)
 
@@ -218,7 +222,8 @@ class NativeFailureOutput(unittest.TestCase):
         self.assertEqual(fixture.coord('inbox', 'parent'), [])
         self.assertEqual(fixture.coord('inbox', 'root'), [])
         self.assertTrue((attempt / 'released').exists())
-        self.assertTrue((attempt / 'acknowledged').exists())
+        self.assertFalse((attempt / 'acknowledged').exists(),
+                         'A failed native outcome must keep its retained attempt available for recovery.')
         fixture.shutdown_idle_database_owner('The fixture retained a process after completion.')
         print(json.dumps({'test': self.id(), 'coordinatorExit': observer.returncode,
                           'nativeWaitStatus': native_status,

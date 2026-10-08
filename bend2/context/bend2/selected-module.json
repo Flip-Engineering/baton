@@ -26,7 +26,7 @@
     },
     {
       "packagePath": "frontend-hooks.mjs",
-      "sha256": "218e2e5601d5acaf61f15e31576b82fbb184dee3f30256458f1730c79aa55bef",
+      "sha256": "c51422db5433c039798aa138e3e64e86552f77c807780f47291391c3650b4823",
       "role": "frontend-hooks"
     },
     {
@@ -78,8 +78,8 @@
     },
     {
       "path": "frontend-hooks.mjs",
-      "bytes": 39063,
-      "sha256": "218e2e5601d5acaf61f15e31576b82fbb184dee3f30256458f1730c79aa55bef"
+      "bytes": 39033,
+      "sha256": "c51422db5433c039798aa138e3e64e86552f77c807780f47291391c3650b4823"
     },
     {
       "path": "frontend-invocation.mjs",
@@ -89,7 +89,7 @@
     {
       "path": "native-provider.declaration.json",
       "bytes": 5674,
-      "sha256": "d9f417a8a8b353c25124cfb61ac779f07a68c1bf0731ade9e1dc10bd9bcac9ab"
+      "sha256": "d1a8793703892bb7c94ca597c0a2e0ddf75ac23fc062aad25cb7cee4bc50a805"
     },
     {
       "path": "native-provider.mjs",

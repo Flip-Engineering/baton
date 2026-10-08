@@ -386,8 +386,8 @@ export const HOOK_OPERATIONS = Object.freeze({
     Object.freeze({
       id: 'bend.checkEntry',
       summary: 'emit the checker entry for one definition',
-      anchor: 'export function def_check(book: Book, k: Name, def: Def, z?: number): LTerm {',
-      replacement: 'export function def_check(book: Book, k: Name, def: Def, z?: number): LTerm {\n  bendEmit({ kind: "checkEntry", phase: "check", definition: k });',
+      anchor: 'export function def_check(book: Book, k: Name, def: Def): LTerm {',
+      replacement: 'export function def_check(book: Book, k: Name, def: Def): LTerm {\n  bendEmit({ kind: "checkEntry", phase: "check", definition: k });',
     }),
     Object.freeze({
       id: 'bend.checkPreRegion',
@@ -398,8 +398,8 @@ export const HOOK_OPERATIONS = Object.freeze({
     Object.freeze({
       id: 'bend.checkOutcome',
       summary: 'emit checker success or failure around the original check, preserving the throw',
-      anchor: '  return term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u, z }, v, Lone(), T, ctx_nil(), 0).tm;',
-      replacement: '  try {\n    const bendChecked = term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u, z }, v, Lone(), T, ctx_nil(), 0).tm;\n    bendEmit({ kind: "checkSuccess", phase: "check", definition: k });\n    const bendCheckedText = bendTermShow(bendChecked, "elaboratedTerm", k, (value) => value as LTerm, "term_show");\n    if (bendCheckedText !== null) {\n      bendEmit({ kind: "typeObservation", phase: "check", status: "elaboratedTerm", qualified: k, definition: k, file: null, text: bendCheckedText, quantities: [], span: null });\n    }\n    return bendChecked;\n  } catch (bendCheckError) {\n    const bendCheckIsErr = bendCheckError !== null && typeof bendCheckError === "object" && (bendCheckError as { $?: string }).$ === "Err";\n    bendEmit({ kind: "checkFailure", phase: "check", definition: k, thrownDiagnostic: bendCheckIsErr });\n    const bendCheckContext = bendThrownContext(bendCheckError);\n    bendEmit({ kind: "diagnostic", phase: "check", form: "thrown", file: null, thrown: bendCheckError, rendered: bendShow(bendCheckError), definition: bendCheckContext.definition === null ? k : bendCheckContext.definition, span: bendCheckContext.span });\n    throw bendCheckError;\n  }',
+      anchor: '  return term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u }, v, Lone(), T, ctx_nil(), 0).tm;',
+      replacement: '  try {\n    const bendChecked = term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u }, v, Lone(), T, ctx_nil(), 0).tm;\n    bendEmit({ kind: "checkSuccess", phase: "check", definition: k });\n    const bendCheckedText = bendTermShow(bendChecked, "elaboratedTerm", k, (value) => value as LTerm, "term_show");\n    if (bendCheckedText !== null) {\n      bendEmit({ kind: "typeObservation", phase: "check", status: "elaboratedTerm", qualified: k, definition: k, file: null, text: bendCheckedText, quantities: [], span: null });\n    }\n    return bendChecked;\n  } catch (bendCheckError) {\n    const bendCheckIsErr = bendCheckError !== null && typeof bendCheckError === "object" && (bendCheckError as { $?: string }).$ === "Err";\n    bendEmit({ kind: "checkFailure", phase: "check", definition: k, thrownDiagnostic: bendCheckIsErr });\n    const bendCheckContext = bendThrownContext(bendCheckError);\n    bendEmit({ kind: "diagnostic", phase: "check", form: "thrown", file: null, thrown: bendCheckError, rendered: bendShow(bendCheckError), definition: bendCheckContext.definition === null ? k : bendCheckContext.definition, span: bendCheckContext.span });\n    throw bendCheckError;\n  }',
     }),
     Object.freeze({
       id: 'bend.validStart',
