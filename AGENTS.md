@@ -19,6 +19,14 @@ in `docs/bend2/host-crash-2026-10-05.md`.
 
 # Banned runtime patterns
 
+## Mechanisms need an observed failure
+
+Checks, gates, guards, recovery layers and accounting must serve a named real
+failed run. A hypothetical race, a constructed probe or property accounting
+does not justify adding a mechanism. Remove unused APIs, duplicate state and
+procedural requirements that obstruct ordinary work. Judge removals by whether
+the affected real work runs. Issue #598 records this requirement.
+
 ## No budget control flow
 
 Budgets must never control admission, continuation, completion, input acceptance,
