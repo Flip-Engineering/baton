@@ -13,11 +13,11 @@ if (!SOURCE || !BEND || !OUTPUT || !existsSync(join(SOURCE, 'bend2', 'scripts', 
   process.exit(2);
 }
 
-const PIN = '50ff4ffbbf6a92c6e1dce58b4eaa777704702daa';
+const PIN = '1efba19415bfbf868a9da4ccfadd2d31455f6812';
 const SOURCE_SHA = execFileSync('git', ['-C', SOURCE, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 if (SOURCE_SHA !== PIN) throw new Error(`source pin mismatch: ${SOURCE_SHA}`);
 const SOURCE_TREE = execFileSync('git', ['-C', SOURCE, 'rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
-if (SOURCE_TREE !== 'db52c7b5c3166d03d7a58fba3b88eaf9afa5e3b5') throw new Error(`source tree mismatch: ${SOURCE_TREE}`);
+if (SOURCE_TREE !== '095c9bda972066ec0fccbb032b6991a57ca76ea0') throw new Error(`source tree mismatch: ${SOURCE_TREE}`);
 const DRIVER_SHA = process.env.BATON2_DRIVER_SHA ?? null;
 const DRIVER_TREE = process.env.BATON2_DRIVER_TREE ?? null;
 mkdirSync(OUTPUT, { recursive: true });
@@ -28,6 +28,7 @@ const commands = [];
 let inventory = [];
 let selectedNames = [];
 let gateStatus = 'in_progress';
+const controlFailures = [];
 const lawsCheckPath = join(SOURCE, 'bend2', 'scripts', 'laws-check.mjs');
 const lawsText = readFileSync(lawsCheckPath, 'utf8');
 const mutationStart = lawsText.indexOf('const MUTATIONS = [');
@@ -81,6 +82,7 @@ function persistSummary() {
     lawsCheckSha256: shaFile(lawsCheckPath),
     staticMutationCount: inventory.length,
     focusedMutationNames: selectedNames,
+    controlFailures,
     compileCount: commands.length,
     commands,
     completeLawsSuiteOrPackageAcceptance: false,
@@ -198,7 +200,11 @@ mkdirSync(CASES, { recursive: true });
 cpSync(join(SOURCE, 'bend2'), join(CASES, 'bend2'), { recursive: true });
 persistSummary();
 bendCheck('baseline-source-check');
-if (!commands.at(-1).passed) { gateStatus = 'failed'; persistSummary(); throw new Error('pinned source check failed'); }
+if (!commands.at(-1).passed) {
+  gateStatus = 'failed';
+  controlFailures.push({ phase: 'baseline', name: 'baseline-source-check', exitCode: commands.at(-1).exitCode });
+  persistSummary();
+}
 
 for (const item of selected) {
   restore(item.file);
@@ -211,25 +217,44 @@ for (const item of selected) {
   result.expectedDiagnosticLaw = item.law;
   result.passed = result.exitCode !== 0 && output.includes(item.law);
   restore(item.file);
-  if (!result.passed) { gateStatus = 'failed'; persistSummary(); throw new Error(`mutation did not fail with its intended law: ${item.name}`); }
+  if (!result.passed) {
+    gateStatus = 'failed';
+    controlFailures.push({ phase: 'mutation', name: item.name, law: item.law, exitCode: result.exitCode });
+    persistSummary();
+  }
 }
 
 for (const item of selected) {
   const declaration = lawDefinitions(item.law);
-  if (declaration.length !== 1) throw new Error(`expected exactly one law definition: ${item.law}`);
+  if (declaration.length !== 1) {
+    gateStatus = 'failed';
+    controlFailures.push({ phase: 'proof-removal', name: item.name, law: item.law, error: `expected exactly one law definition, found ${declaration.length}` });
+    persistSummary();
+    continue;
+  }
   restore(declaration[0].path);
   const removed = removeProof(declaration[0].path, item.law);
-  if (!removed) throw new Error(`proof helper not found: ${item.law}`);
+  if (!removed) {
+    gateStatus = 'failed';
+    controlFailures.push({ phase: 'proof-removal', name: item.name, law: item.law, error: 'proof helper not found' });
+    persistSummary();
+    continue;
+  }
   const result = bendCheck(`proof-removal-${item.law}`);
   const output = readFileSync(join(OUTPUT, result.stderr.path), 'utf8') + readFileSync(join(OUTPUT, result.stdout.path), 'utf8');
   result.expectedDiagnosticLaw = item.law;
   result.passed = result.exitCode !== 0 && output.includes(item.law);
   restore(declaration[0].path);
-  if (!result.passed) { gateStatus = 'failed'; persistSummary(); throw new Error(`proof removal did not fail with its intended law: ${item.law}`); }
+  if (!result.passed) {
+    gateStatus = 'failed';
+    controlFailures.push({ phase: 'proof-removal', name: item.name, law: item.law, exitCode: result.exitCode });
+    persistSummary();
+  }
 }
 
 const version = execFileSync(BEND, ['version'], { encoding: 'utf8', env: { ...process.env, BEND_NO_TELEMETRY: '1' } }).trim();
 globalThis.bendVersion = version;
-gateStatus = commands.every((command) => command.passed) ? 'passed' : 'failed';
+gateStatus = commands.every((command) => command.passed) && controlFailures.length === 0 ? 'passed' : 'failed';
 persistSummary();
-console.log(JSON.stringify({ passed: commands.every((command) => command.passed), sourceSha: SOURCE_SHA, bendVersion: version, staticMutationCount: inventory.length, compileCount: commands.length, status: gateStatus }));
+console.log(JSON.stringify({ passed: gateStatus === 'passed', sourceSha: SOURCE_SHA, bendVersion: version, staticMutationCount: inventory.length, compileCount: commands.length, status: gateStatus }));
+if (gateStatus !== 'passed') process.exitCode = 1;

@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       BEND_NO_TELEMETRY: '1'
-      BATON2_SOURCE_SHA: 50ff4ffbbf6a92c6e1dce58b4eaa777704702daa
+      BATON2_SOURCE_SHA: 1efba19415bfbf868a9da4ccfadd2d31455f6812
     steps:
       - name: Checkout validation driver
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: Flip-Engineering/baton
-          ref: 50ff4ffbbf6a92c6e1dce58b4eaa777704702daa
+          ref: 1efba19415bfbf868a9da4ccfadd2d31455f6812
           path: source
           persist-credentials: false
 
@@ -46,7 +46,7 @@ jobs:
           printf '%s\n' "$driver_tree" > "$RUNNER_TEMP/laws-check-focused/evidence/driver.tree"
           source_sha=$(git -C source rev-parse HEAD)
           test "$source_sha" = "$BATON2_SOURCE_SHA"
-          test "$(git -C source rev-parse 'HEAD^{tree}')" = db52c7b5c3166d03d7a58fba3b88eaf9afa5e3b5
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = 095c9bda972066ec0fccbb032b6991a57ca76ea0
           printf '%s\n' "$source_sha" > "$RUNNER_TEMP/laws-check-focused/evidence/source.sha"
           printf '%s\n' "$(git -C source rev-parse 'HEAD^{tree}')" > "$RUNNER_TEMP/laws-check-focused/evidence/source.tree"
           uname -a > "$RUNNER_TEMP/laws-check-focused/toolchain/runner-uname.log"
@@ -68,6 +68,7 @@ jobs:
           sha256sum source/bend2/scripts/laws-check.mjs source/bend2/src/coordinator/turn.bend \
             source/bend2/src/coordinator/main.bend source/bend2/src/coordinator/receive.bend \
             source/bend2/src/coordinator/wake.bend \
+            source/bend2/src/git/laws.bend \
             source/bend2/src/git/land.bend > "$RUNNER_TEMP/laws-check-focused/evidence/source-files.sha256"
           sha256sum bend2/scripts/laws-check-focused-validation.mjs .github/workflows/laws-check-focused-validation.yml \
             > "$RUNNER_TEMP/laws-check-focused/evidence/driver-files.sha256"
