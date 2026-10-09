@@ -123,14 +123,36 @@ def receiver_result(saved: String, denied: Bool) -> IO(String):
     case True{}: IO.die(String,2,saved)
     case False{}: IO.pure(String,saved)
 
+# An explicit Git directory supplies its current branch. Other directories
+# keep the recorded branch, and an empty CWD keeps the recorded assignment.
+def receiver_branch_result(result: T.GitOut) -> Maybe<String>:
+  match result:
+    case T.GRun{code,out}:
+      Bool.pick(Maybe<String>,U32.is_eq(code,0),Some{Tx.trim_nl(out)},None{})
+    case T.GBroken{detail}: None{}
+
+def receiver_branch(workspace: String) -> IO(Maybe<String>):
+  match workspace:
+    case SNil{}: IO.pure(Maybe<String>,None{})
+    case SCon{head,tail}: do IO<Maybe<String>>:
+      result : T.GitOut <- Process.runGit(SCon{head,tail},["symbolic-ref","--quiet","--short","HEAD"])
+      IO.pure(Maybe<String>,receiver_branch_result(result))
+
+def receiver_branch_sql(+session: String, +endpoint: String, +cwd: String, branch: Maybe<String>) -> String:
+  match branch:
+    case None{}: ""
+    case Some{current}:
+      "UPDATE sessions SET branch=" ++ C.q(current) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ receiver_admitted(session,endpoint,cwd) ++ ";"
+
 def receiver(+db: String, +session: String, cmd: String, log: String, +cwd: String) -> IO(String):
   do IO<String>:
     found : String <- IO.try(String,Store.apply(db,C.Session{session}))
     accepted : String <- registered(found)
     model : String <- IO.try(String,DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +workspace : String <- Bool.pick(IO(String),String.is_empty(cwd),IO.pure(String,""),IO.try(String,Host.Control.workspace(cwd)))
+    branch : Maybe<String> <- receiver_branch(workspace)
     endpoint : String <- configured_endpoint(db,session,cmd,log,Tx.trim_nl(model))
-    +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_sql(session,endpoint,workspace) ++ "COMMIT;"))
+    +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_branch_sql(session,endpoint,workspace,branch) ++ receiver_sql(session,endpoint,workspace) ++ "COMMIT;"))
     receiver_result(saved,Tx.starts_with(saved,"{\"error\":\"receiver-refused\""))
 
 # An existing Player changes its configured provider route in place. The stored

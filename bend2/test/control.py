@@ -394,12 +394,94 @@ class Control(unittest.TestCase):
         self.call('stop', 'stopped', 'idle-stop', 'Controlled idle stop.')
         before = self.call('player', 'stopped')
         self.call('receiver', 'stopped', self.fixture, self.directory / 'stopped.jsonl', ok=False)
+        self.call('receiver', 'stopped', self.fixture, self.directory / 'stopped.jsonl',
+                  self.repo, ok=False)
         self.call('dispatch-turn', 'stopped', 'refused-turn', self.fixture,
                   self.directory / 'stopped.jsonl', self.task, ok=False)
         self.assertEqual(self.call('player', 'stopped'), before)
         self.assertIsNone(self.call('delivery', 'retained')['receipt'])
         self.call('receiver', 'missing', self.fixture, self.directory / 'missing.jsonl', ok=False)
         self.assertEqual(self.rows('SELECT * FROM executions'), [])
+
+    def test_completed_player_moves_to_shared_checkout_and_resumes_after_task_retirement(self):
+        self.root()
+        assignment = self.recruit('completed', 'codex')
+        workspace = pathlib.Path(assignment['workspace'])
+        (workspace / 'completed.txt').write_text('Completed contribution.\n')
+        for args in (('add', 'completed.txt'), ('commit', '-q', '-m', 'Completed contribution')):
+            subprocess.run(['git', '-C', str(workspace), *args], env=self.environment,
+                           check=True, capture_output=True, text=True)
+        log = self.receiver('completed')
+        self.dispatch('dispatch-file', 'completed-task', 'root', 'completed', 'task', self.task)
+        stream, first = self.accept('completed')
+        self.assertEqual(first['cwd'], str(workspace))
+        self.finish(stream, 'Completed contribution is ready to integrate.')
+        self.exited('completed')
+        shutdown_fixture_owner(self)
+        self.eventually(lambda: not self.process_rows())
+        original = self.call('session', 'completed')
+        history = self.rows('SELECT * FROM messages ORDER BY seq'), self.rows('SELECT * FROM turns')
+        stops = self.rows('SELECT * FROM session_stops')
+
+        self.assertEqual(self.call('land', 'completed', self.repo, 'main')['status'], 'landed')
+        remote = self.directory / 'published.git'
+        self.git('init', '--bare', '-q', str(remote))
+        self.assertEqual(self.call('push', self.repo, 'main', remote)['status'], 'pushed')
+        unfinished = self.repo / 'unfinished.txt'
+        unfinished.write_text('Shared work remains unfinished.\n')
+        self.call('receiver', 'completed', self.fixture, log, self.repo)
+        moved = self.call('session', 'completed')
+        self.assertEqual((moved['workspace'], moved['branch']), (str(self.repo.resolve()), 'main'))
+        for field in ('id', 'parent', 'harness', 'model', 'effort', 'base', 'native'):
+            self.assertEqual(moved[field], original[field])
+        self.assertEqual((self.rows('SELECT * FROM messages ORDER BY seq'),
+                          self.rows('SELECT * FROM turns')), history)
+        self.assertEqual(self.rows('SELECT * FROM session_stops'), stops)
+        self.git('worktree', 'remove', str(workspace))
+        self.git('branch', '-d', assignment['branch'])
+        self.assertFalse(workspace.exists())
+        self.assertNotIn(assignment['branch'], self.git('branch', '--format=%(refname:short)').stdout.splitlines())
+        self.receiver('completed')
+        self.assertEqual(self.call('session', 'completed'), moved)
+
+        self.dispatch('dispatch-file', 'shared-task', 'root', 'completed', 'task', self.task)
+        continued, second = self.accept('completed')
+        self.assertEqual(second['cwd'], str(self.repo.resolve()))
+        self.assertEqual(second['native'], first['native'])
+        self.assertEqual(second['resume'], first['native'])
+        self.finish(continued, 'Original conversation continued in the shared checkout.')
+        self.exited('completed')
+        self.assertEqual(unfinished.read_text(), 'Shared work remains unfinished.\n')
+        self.assertEqual((self.repo / 'completed.txt').read_text(), 'Completed contribution.\n')
+        self.assertEqual(self.call('session', 'completed')['branch'], 'main')
+        turns = self.call('turns', 'completed')
+        self.assertEqual({row['reportBody'] for row in turns}, {
+            'Completed contribution is ready to integrate.',
+            'Original conversation continued in the shared checkout.'})
+        for ident in ('completed-task', 'shared-task'):
+            self.assertEqual(self.call('delivery', ident)['receipt'], 'fixture-native-reviewed')
+
+    def test_receiver_empty_cwd_keeps_assignment_and_non_git_cwd_is_supported(self):
+        self.root()
+        assignment = self.recruit('ordinary', 'codex')
+        self.call('connect', 'ordinary', 'saved-ordinary', '')
+        log = self.receiver('ordinary')
+        before = self.call('session', 'ordinary')
+        self.call('receiver', 'ordinary', self.fixture, log, '')
+        self.assertEqual(self.call('session', 'ordinary'), before)
+        plain = self.directory / 'plain workspace'
+        plain.mkdir()
+        self.call('receiver', 'ordinary', self.fixture, log, plain)
+        moved = self.call('session', 'ordinary')
+        self.assertEqual(moved['workspace'], str(plain.resolve()))
+        self.assertEqual((moved['branch'], moved['base'], moved['parent'], moved['native']),
+                         (assignment['branch'], assignment['base'], 'root', 'saved-ordinary'))
+        self.dispatch('dispatch-file', 'plain-task', 'root', 'ordinary', 'task', self.task)
+        stream, native = self.accept('ordinary')
+        self.assertEqual(native['cwd'], str(plain.resolve()))
+        self.assertEqual(native['resume'], 'saved-ordinary')
+        self.finish(stream)
+        self.exited('ordinary')
 
     def test_detached_file_dispatch_uses_recorded_route_and_live_omp_guidance(self):
         self.root()

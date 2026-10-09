@@ -65,8 +65,12 @@ notifies the destination owner, who decides further distribution to Ensembles.
 review, visibility and promotion.
 
 Checked landing prepares a candidate, runs selected checks on the target and
-candidate, and advances the target through a compare-and-swap update. Player
-branches and workspaces remain available after completion and landing. The
+candidate, and advances the target through a compare-and-swap update. Conductors
+integrate completed contributions and publish the target branch. After a Player's
+owned turn finishes, its Conductor can move the same session to the shared checkout
+with `receiver SESSION HARNESS_COMMAND OUTPUT_LOG CWD`, then retire its clean,
+inactive task worktree and fully integrated branch. Active checkouts, unfinished
+changes, native conversations and explicit stops remain available. The
 [architecture](docs/bend2/architecture.md) describes subsystem responsibilities
 and recovery limits.
 
