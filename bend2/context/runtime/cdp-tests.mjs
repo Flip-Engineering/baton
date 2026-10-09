@@ -483,7 +483,9 @@ test('request-admission-splits-the-read-path-from-the-control-path', () => {
   // The control path needs the grant and carries configuration only.
   assertEqual(admitControlRequest(runnable, 'NodeWorker.detach', {}, []).condition, 'missingEffect',
     'a control request without its grant was admitted');
-  assertEqual(admitControlRequest(runnable, 'NodeWorker.detach', {}, ['controlRuntime']).category, 'control',
+  const worker = 'worker-session:1';
+  assertEqual(admitControlRequest(runnable, 'NodeWorker.detach', { sessionId: worker },
+    ['controlRuntime'], [worker]).category, 'control',
     'a granted worker detach was refused');
   assertEqual(admitControlRequest(runnable, 'Runtime.runIfWaitingForDebugger', {}, ['controlRuntime']).ok, true,
     'a granted startup release was refused');
@@ -494,16 +496,19 @@ test('request-admission-splits-the-read-path-from-the-control-path', () => {
 
   // A nested worker message must itself be a read, on both the outer and the nested path.
   const nestedRead = admitControlRequest(runnable, 'NodeWorker.sendMessageToWorker', {
+    sessionId: worker,
     message: JSON.stringify({ id: 1, method: 'Runtime.getProperties', params: {} }),
-  }, ['controlRuntime']);
+  }, ['controlRuntime'], [worker]);
   assertEqual(nestedRead.category, 'control', 'a nested read was refused');
   const nestedEvaluate = admitControlRequest(runnable, 'NodeWorker.sendMessageToWorker', {
+    sessionId: worker,
     message: JSON.stringify({ id: 2, method: 'Runtime.evaluate', params: { expression: '1+1' } }),
-  }, ['controlRuntime']);
+  }, ['controlRuntime'], [worker]);
   assertEqual(nestedEvaluate.condition, 'evaluationRequiresIntent', 'a nested evaluation was admitted');
   const nestedControl = admitControlRequest(runnable, 'NodeWorker.sendMessageToWorker', {
+    sessionId: worker,
     message: JSON.stringify({ id: 3, method: 'Debugger.setBreakpointByUrl', params: {} }),
-  }, ['controlRuntime']);
+  }, ['controlRuntime'], [worker]);
   assertEqual(nestedControl.condition, 'nestedControlNotAdmitted', 'a nested control request was admitted');
   assertEqual(nestedRead.inner, 'Runtime.getProperties', 'the admitted nested method');
 
@@ -550,8 +555,10 @@ test('launch-document-admission-refusals', () => {
     assertEqual(refusal.ok, false, `refusal ${condition}`);
     assertEqual(refusal.condition, condition, `condition for ${text.slice(0, 40)}`);
   }
-  const nul = admitLaunchDocument(JSON.stringify(good).replace('"A":"b"', '"A":"b\\u0000c"'));
-  assertEqual(nul.condition, 'launchDocumentNul', 'NUL in the document refuses');
+  const nul = admitLaunchDocument(JSON.stringify(good).replace('"A":"b"', '"A":"b\u0000c"'));
+  assertEqual(nul.condition, 'launchDocumentNul', 'raw NUL in the document refuses');
+  const decodedNul = admitLaunchDocument(JSON.stringify(good).replace('"A":"b"', '"A":"b\\u0000c"'));
+  assertEqual(decodedNul.condition, 'launchEnvInvalid', 'decoded NUL in the environment refuses');
 });
 
 // ---------------------------------------------------------------------------
@@ -740,6 +747,7 @@ test('pause-acknowledgment-after-a-stopped-event-keeps-the-stop', async () => {
     connect: async () => transport,
   });
   await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch-stub', webSocketUrl: 'ws://127.0.0.1:1/stub' });
+  const before = session.snapshot();
   // The stop arrives before the acknowledgment of Debugger.pause.
   const pending = session.execute('pause', { effects: ['controlRuntime'], query: 'q-pause' });
   transport.emit('Debugger.paused', { reason: 'other', callFrames: [], hitBreakpoints: [], threadId: 'main:0' });
@@ -747,7 +755,7 @@ test('pause-acknowledgment-after-a-stopped-event-keeps-the-stop', async () => {
   assertEqual(result.state, 'paused', 'the stop was lost when the acknowledgment arrived');
   const snapshot = session.snapshot();
   assertEqual(snapshot.pending, null, 'the pause request stayed pending');
-  assertEqual(snapshot.epoch, '2', 'the stop advanced the epoch');
+  assertEqual(snapshot.epoch, counterNext(before.epoch).value, 'the stop advanced the epoch');
   assertEqual(snapshot.lastPause.liveness, 'live', 'the stop is live evidence');
   // The session is not stuck: a following intent is admitted and refused on its own rule.
   assertEqual(session.admit('pause', { effects: ['controlRuntime'] }).condition, 'intentNotAdmitted',
@@ -1143,7 +1151,7 @@ test('ref-decisions-and-thread-membership', () => {
     'a pause-scoped ref was admitted outside a stop');
   assertEqual(refDecision(session.admitRef(refIdentity(base))).decision, 'admitted', 'the decision did not revalidate');
   assertEqual(refDecision(null).condition, 'refDecisionMalformed', 'a null decision was admitted');
-  assertEqual(refDecision({ ok: true }).condition, 'refDecisionMalformed', 'a bare ok was admitted');
+  assertEqual(refDecision({ ok: true }).condition, 'refDecisionRefused', 'a candidate without a decision refuses');
   writeFileSync(join(dir, 'case.json'), `${JSON.stringify({ scope })}\n`);
 });
 
@@ -1554,7 +1562,8 @@ test('worker-attachment-records-thread-identity', async () => {
     const endpoint = await keeper.endpoint();
     await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch-target', webSocketUrl: endpoint.url });
     await session.waitFor('Debugger.paused');
-    await session.send({ query: 'q-worker-enable', method: 'NodeWorker.enable', params: { waitForDebuggerOnStart: false } });
+    await session.control({ effects: ['controlRuntime'], query: 'q-worker-enable',
+      method: 'NodeWorker.enable', params: { waitForDebuggerOnStart: false } });
     const attached = session.waitFor('NodeWorker.attachedToWorker', { after: 0 });
     await session.execute('resume-step', { effects: ['controlRuntime'], query: 'q-step-resume', action: 'resume' });
     const event = await attached;

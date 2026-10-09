@@ -23,6 +23,7 @@ const session = createAdapterSession({
 
 process.stdout.write(`${JSON.stringify({ holder: 'pid', pid: process.pid })}\n`);
 await session.execute('launch', { effects: ['controlRuntime'], query: 'q-holder-launch', webSocketUrl });
+await session.waitFor('Debugger.paused');
 await session.execute('resume-step', { effects: ['controlRuntime'], query: 'q-holder-resume', action: 'resume' });
 process.stdout.write(`${JSON.stringify({ holder: 'ready', state: session.snapshot().state })}\n`);
 if (typeof readinessPath === 'string' && readinessPath.length > 0) {

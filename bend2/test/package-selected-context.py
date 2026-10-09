@@ -17,6 +17,10 @@ TYPESCRIPT_SOURCE = Path(__file__).resolve().parents[1] / 'context/typescript'
 SPEC = importlib.util.spec_from_file_location('package_native', SCRIPT)
 PACKAGE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PACKAGE)
+RECEIVE_SPEC = importlib.util.spec_from_file_location(
+    'receive_fixture', Path(__file__).with_name('receive.py'))
+RECEIVE = importlib.util.module_from_spec(RECEIVE_SPEC)
+RECEIVE_SPEC.loader.exec_module(RECEIVE)
 
 
 # Scripted Muse protocol fixture using the installed coordinator and MCP adapter.
@@ -260,6 +264,7 @@ class SelectedContextPackageTest(unittest.TestCase):
         shutil.copyfile(coordinator, installed)
         installed.chmod(0o755)
         database = self.root / 'state.db'
+        RECEIVE.install_public_queue_codex(self, self.root)
 
         def invoke(*args, cwd=repository):
             return subprocess.run([str(installed), str(database), *args], cwd=cwd,
