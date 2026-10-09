@@ -22,7 +22,7 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: 4944885fb3bba1b6142266c68f41cd34222fbdc5
+  PRODUCT_SOURCE_SHA: dd46162be0c89bd885e150014870f7142a6f669a
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
 
@@ -61,7 +61,7 @@ jobs:
           compiler_source="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-source"
           mkdir -p "$compiler_source/bin"
           cp -R "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bend2" "$compiler_source/bend2"
-          printf 'https://github.com/bendlang/bend/tree/v2.0.25/bend2\nBun runtime: retained Bend 2.0.25 executable via BUN_BE_BUN=1\nReporting change: append RangeError.stack\n' \
+          printf 'https://github.com/bendlang/bend/tree/v2.0.25/bend2\nBun runtime: retained Bend 2.0.25 executable via BUN_BE_BUN=1\nReporting changes: RangeError stack, failed memo cache, compiler definition and stage\n' \
             > "$compiler_source/origin.txt"
           for source in main bend comp; do
             curl -fsSL "https://raw.githubusercontent.com/bendlang/bend/v2.0.25/bend2/$source.ts" \
@@ -82,6 +82,45 @@ jobs:
           (root / 'reporting.diff').write_text(''.join(difflib.unified_diff(
               original.splitlines(keepends=True), changed.splitlines(keepends=True),
               fromfile='official-v2.0.25/main.ts', tofile='diagnostic/main.ts')))
+          path = root / 'bend2/comp.ts'
+          original = path.read_text()
+          changed = original.replace('  m.set(k, out);', '''  try {
+            m.set(k, out);
+          } catch (e) {
+            if (e instanceof RangeError) {
+              const label = m === CONSTS ? "CONSTS" : m === FLATS ? "FLATS"
+                : m === FOLDS ? "FOLDS" : m === LITS ? "LITS"
+                : m === OPENS ? "OPENS" : m === USES ? "USES"
+                : m === SPINES ? "SPINES" : "other";
+              const key = k as any;
+              console.error("compiler memo failure", label, "size", m.size,
+                "keyTag", key?.$, "keyName", typeof key === "string" ? key : key?.k);
+            }
+            throw e;
+          }''', 1)
+          changed = changed.replace('      compile_def(fl, k, tld);', '''      try {
+                  compile_def(fl, k, tld);
+                } catch (e) {
+                  if (e instanceof RangeError) {
+                    console.error("compiler definition failure", k);
+                  }
+                  throw e;
+                }''', 1)
+          changed = changed.replace('  const cb = carb_book(book, ["main", ...RUNTIME_ADTS]);', '''  let cb: Carb;
+            try {
+              cb = carb_book(book, ["main", ...RUNTIME_ADTS]);
+            } catch (e) {
+              if (e instanceof RangeError) {
+                console.error("compiler stage failure", "carb_book");
+              }
+              throw e;
+            }''', 1)
+          (root / 'comp.ts.upstream').write_text(original)
+          path.write_text(changed)
+          with (root / 'reporting.diff').open('a') as evidence:
+              evidence.write(''.join(difflib.unified_diff(
+                  original.splitlines(keepends=True), changed.splitlines(keepends=True),
+                  fromfile='official-v2.0.25/comp.ts', tofile='diagnostic/comp.ts')))
           PY
           cat > "$compiler_source/bin/bend-diagnostic" <<'SH'
           #!/bin/sh
