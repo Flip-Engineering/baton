@@ -286,20 +286,31 @@ class NativeObservation(RECEIVE.Receive):
         self.assertIn('[id: provider-error-task]', started['prompt'])
         directory, _ = self.eventually(lambda: self._retained_attempt(),
                                        'provider error attempt was not registered')
+        user_history = 'Retained original user instruction and reviewed reports.\n' * 800
+        tool_history = 'Retained prior tool output for source inspection.\n' * 400
+        provider_cause = "You've reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends."
+        provider_diagnostic = '403 ' + json.dumps({
+            'error': {'type': 'permission_error', 'message': provider_cause},
+            'type': 'error',
+        })
         terminal = {
             'type': 'agent_end', 'isTerminal': True, 'is_error': False,
             'messages': [
-                {'role': 'user', 'content': [{'type': 'text', 'text': 'Read this task.'}]},
+                {'role': 'user', 'content': [{'type': 'text', 'text': user_history}]},
+                {'role': 'toolResult', 'content': [{'type': 'text', 'text': tool_history}]},
                 {'role': 'assistant', 'content': [
                     {'type': 'text', 'text': 'Earlier successful assistant text.'}]},
                 {'role': 'assistant', 'stopReason': 'error', 'errorStatus': 403,
-                 'errorMessage': '403 {"error":{"type":"permission_error","message":"fixture provider refusal"}}',
-                 'content': [{'type': 'text', 'text': 'Unfinished assistant text.'}]},
+                 'errorMessage': provider_diagnostic, 'content': []},
                 '…[181 items elided for RPC frame]', None, {'metadata': 'retained marker'},
             ],
         }
         self.action(stream, native_frame=terminal)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.eventually(lambda: self.coord('turns', 'parent'),
+                        'provider error terminal was not observed before raw stdout capture')
+        raw = self.attempt_stdout('parent').read_text()
+        self.assertIn(json.dumps(terminal), raw)
         self.action(stream, exit_fixture=True)
         _, stderr = self.finish(observer, ok=False)
 
@@ -308,11 +319,11 @@ class NativeObservation(RECEIVE.Receive):
                                 'error terminal did not store its failure report')
         self.assertEqual(len(turns), 1)
         body = turns[0]['reportBody']
-        self.assertIn('OMP provider failure', body)
-        self.assertIn('403', body)
-        self.assertIn('fixture provider refusal', body)
+        self.assertEqual(body,
+                         'OMP provider failure: stopReason=error, errorStatus=403; ' + provider_diagnostic)
+        self.assertNotIn('Retained original user instruction', body)
+        self.assertNotIn('Retained prior tool output', body)
         self.assertNotIn('Earlier successful assistant text.', body)
-        self.assertNotIn('Unfinished assistant text.', body)
         self.assertNotIn('agent_end', body)
         log = self.output_log('parent').read_text()
         self.assertIn('stopReason', log)
