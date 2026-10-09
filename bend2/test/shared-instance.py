@@ -804,6 +804,42 @@ class SharedInstance(unittest.TestCase):
         print('evidence subscription ready', ready, 'resuming', resuming,
               'delayed publication', unchanged, 'replaced', replaced)
 
+    def test_owned_adoption_controls_the_surviving_legacy_keeper(self):
+        directory = pathlib.Path(f'{self.db}.attempt-legacy')
+        original = self.spawn('legacy-hold', self.db, directory, self.home,
+                              'before adoption\n', sys.executable, self.fixture)
+        self.line(original, 'admitted')
+        spool = directory / 'stdout'
+        retained = self.hold(spool, 'echo:before adoption', child=original)
+        native = self.native(retained)
+        manifest = (directory / 'manifest').read_bytes()
+        original.kill()
+        original.wait()
+        self.hold(directory / 'observer.log', '')
+        self.assertIsNone(os.kill(native['pid'], 0))
+
+        adopted = self.spawn('attach-owned-close', self.db, directory)
+        self.line(adopted, 'attached')
+        output = self.wait_run(adopted)
+        self.assertEqual(self.native(output), native)
+        self.assertIn('echo:before adoption', output)
+        self.assertIn('echo:continued', output)
+        self.assertIn('native-done', output)
+        self.assertIn('native-exit 0', output)
+        self.assertIn('release-ok', output)
+        self.assertIn('acknowledge-ok', output)
+        self.assertIn('retire-ok', output)
+        self.assertEqual((directory / 'manifest').read_bytes(), manifest)
+        self.assertTrue(spool.read_text().startswith(retained))
+        self.assertTrue((directory / 'acknowledged').exists())
+        owners = self.owner_processes()
+        self.assertEqual(len(owners), 1, owners)
+        self.assertNotEqual(native['ppid'], int(owners[0].split()[0]))
+
+        _, continued = self.begin('after-legacy', payload='later work\n')
+        self.assertIn('echo:later work', self.wait_run(continued))
+        print('evidence legacy-adoption', native, output.replace('\n', '|'))
+
     def test_adoption_refuses_a_directory_without_custody(self):
         """The request-level ENOENT adoption path adopts real custody only: a
         directory that holds no attempt gets no child and no new custody."""

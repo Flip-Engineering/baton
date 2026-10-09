@@ -137,17 +137,33 @@ def recovery_complete_cli(args: List<String>) -> IO(Unit):
       IO.pure(Unit,Unit{})
     case _: IO.die(Unit,2,"attach-complete DATABASE ATTEMPT")
 
-def attached_locked(database: String, directory: String, lock: Maybe<U32>) -> IO(Unit):
+def continued_attached(result: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+  match result:
+    case Fail{(code,text)}: IO.die(Unit,1,U32.show(code) ++ ": " ++ text)
+    case Done{+handle}: do IO<Unit>:
+      printed : Unit <- IO.print("attached")
+      written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,"continued\n"))
+      closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
+      restored : Unit <- restore_step(handle)
+      line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      recovery_complete_lines(handle,line)
+
+def owned_observation(result: Result<&1,&1,U32 & String,U32>, continued: Bool) -> IO(Unit):
+  match continued:
+    case True{}: continued_attached(result)
+    case False{}: observe_attached(result)
+
+def attached_locked(database: String, directory: String, lock: Maybe<U32>, continued: Bool) -> IO(Unit):
   match lock:
     case None{}: IO.die(Unit,1,"fixture session busy")
     case Some{+handle}: do IO<Unit>:
       result : Result<&1,&1,U32 & String,U32> <- Custody.Instance.attach_owned(database,directory,handle)
-      observed : Unit <- observe_attached(result)
+      observed : Unit <- owned_observation(result,continued)
       IO.pure(Unit,Unit{})
 
-def attach_owned_cli(args: List<String>) -> IO(Unit):
+def attach_owned_cli(args: List<String>, continued: Bool) -> IO(Unit):
   match args:
-    case database <> directory <> Nil{}: Lock.SessionLock.acquire_session(Unit,database,"fixture",canonical => lock => attached_locked(canonical,directory,lock))
+    case database <> directory <> Nil{}: Lock.SessionLock.acquire_session(Unit,database,"fixture",canonical => lock => attached_locked(canonical,directory,lock,continued))
     case _: IO.die(Unit,2,"attach-owned DATABASE ATTEMPT")
 
 # The completion cycle. Release and acknowledgment end custody; retirement
@@ -231,6 +247,30 @@ def hold_started(start: P.RetainedStart, payload: String) -> IO(Unit):
       written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,payload))
       gate : String <- IO.try(String,Text.Text.read("-"))
       IO.print("hold-released")
+
+def legacy_locked(+directory: String, cwd: String, payload: String, program: List<String>, lock: Maybe<U32>) -> IO(Unit):
+  match lock:
+    case None{}: IO.die(Unit,1,"fixture legacy session busy")
+    case Some{guard}: do IO<Unit>:
+      start : P.RetainedStart <- IO.try(P.RetainedStart,P.ProcessChild.retain(directory,P.argv(program),cwd,directory ++ "/native.stderr","",1,guard,P.argv(["/usr/bin/false"])))
+      hold_started(start,payload)
+
+# The legacy keeper retains its original guard; adoption acquires the current one.
+def legacy_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case database <> directory <> cwd <> payload <> program:
+      Lock.SessionLock.acquire_session(Unit,database,"legacy-fixture",canonical => lock => legacy_locked(directory,cwd,payload,program,lock))
+    case _: IO.die(Unit,2,"legacy-hold DATABASE ATTEMPT CWD PAYLOAD PROGRAM ARGS...")
+
+def legacy_keeper(directory: String, lock: Maybe<&2,U32>) -> IO(Unit):
+  match lock:
+    case None{}: IO.die(Unit,2,"invalid keeper lock")
+    case Some{handle}: IO.try(Unit,P.ProcessChild.keeper(directory,handle))
+
+def legacy_keeper_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case directory <> lock <> Nil{}: legacy_keeper(directory,U32.read(lock))
+    case _: IO.die(Unit,2,"--host-process-keeper ATTEMPT LOCK")
 
 def attempted_started(start: P.RetainedStart, payload: String, kind: U32) -> IO(Unit):
   match kind:
@@ -646,7 +686,7 @@ def publish_cli(args: List<String>) -> IO(Unit):
       IO.pure(Unit,Unit{})
     case _: IO.die(Unit,2,"publish DATABASE CURSOR")
 
-def mode_number(+mode: String) -> U32:
+def existing_mode_number(+mode: String) -> U32:
   Bool.pick(U32,Bool.or(String.eq(mode,"--instance-owner"),String.eq(mode,"owner")),1,
   Bool.pick(U32,String.eq(mode,"admit"),2,
   Bool.pick(U32,String.eq(mode,"hold"),3,
@@ -672,6 +712,11 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"prepare-stale"),26,
   Bool.pick(U32,String.eq(mode,"ensure-owner-witness"),27,
   Bool.pick(U32,String.eq(mode,"recover-observation"),29,0)))))))))))))))))))))))))))))
+
+def mode_number(+mode: String) -> U32:
+  Bool.pick(U32,String.eq(mode,"legacy-hold"),30,
+  Bool.pick(U32,String.eq(mode,"attach-owned-close"),31,
+  Bool.pick(U32,String.eq(mode,"--host-process-keeper"),32,existing_mode_number(mode))))
 
 # Admits under the shared owner while holding no session guard, so the record
 # states no guard binding.
@@ -700,7 +745,7 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 2: admit_cli(rest,1)
     case 3: admit_cli(rest,2)
     case 4: attach_cli(rest)
-    case 5: attach_owned_cli(rest)
+    case 5: attach_owned_cli(rest,False{})
     case 6: write_cli(rest)
     case 7: signal_cli(rest)
     case 8: shutdown_cli(rest)
@@ -724,6 +769,9 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 26: stale_prepare_cli(rest)
     case 27: ensure_owner_witness_cli(rest)
     case 29: recover_observation_cli(rest)
+    case 30: legacy_cli(rest)
+    case 31: attach_owned_cli(rest,True{})
+    case 32: legacy_keeper_cli(rest)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):
