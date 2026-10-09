@@ -418,6 +418,25 @@ class Receive(unittest.TestCase):
             self.fail(f'{session} has no registered output log generation')
         return pathlib.Path(row[0])
 
+    def reference_startup_stderr(self, executable, session):
+        """Read the complete platform diagnostic for the harness's fresh launch.
+
+        The argv matches harness/codex-player.bend and runs in the fixture's
+        directory with its inherited environment.
+        """
+        argv = ['/usr/bin/env', '-u', 'OPENAI_API_KEY', '-u', 'CODEX_API_KEY', str(executable),
+                '-c', 'forced_login_method="chatgpt"', 'exec', '--json', '--model', session,
+                '-c', 'model_reasoning_effort="low"', '--dangerously-bypass-approvals-and-sandbox', '-']
+        diagnostic = self.directory / 'reference-env.stderr'
+        with open(diagnostic, 'wb') as stream:
+            reference = subprocess.run(argv, cwd=str(self.directory), stdout=subprocess.DEVNULL,
+                                       stderr=stream)
+        data = diagnostic.read_bytes()
+        self.assertEqual(reference.returncode, 127,
+                         'the reference launch did not report the missing program')
+        self.assertTrue(data, 'the reference launch produced no diagnostic')
+        return data
+
     def endpoint(self, session):
         return json.dumps([str(EXE), str(self.db), *self.receive_args(session)[:-1]])
 
@@ -1799,9 +1818,9 @@ class Receive(unittest.TestCase):
         self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['input'])
         startup_report = next(m for m in self.coord('inbox', 'root') if 'without a native result (exit 127)' in m['body'])
         self.assertIn('Output: '+str(self.output_log('parent')), startup_report['body'])
-        startup_stderr = pathlib.Path(startup_report['body'].split(' Stderr: ', 1)[1]).read_text()
-        self.assertIn(str(self.directory / 'missing executable'), startup_stderr)
-        self.assertIn('No such file or directory', startup_stderr)
+        startup_stderr = pathlib.Path(startup_report['body'].split(' Stderr: ', 1)[1]).read_bytes()
+        reference = self.reference_startup_stderr(self.directory / 'missing executable', 'parent')
+        self.assertEqual(startup_stderr, reference)
         failed = self.spawn(*self.receive_args('parent'))
         control, _ = self.accept('parent')
         self.action(control, fail=True, ack=False)
@@ -1828,9 +1847,9 @@ class Receive(unittest.TestCase):
         startup_report = next(m for m in self.coord('inbox', 'root') if 'without a native result (exit 127)' in m['body'])
         self.assertIn(startup_report['body'], notified['prompt'])
         self.assertIn('Output: '+str(self.output_log('parent')), startup_report['body'])
-        startup_stderr = pathlib.Path(startup_report['body'].split(' Stderr: ', 1)[1]).read_text()
-        self.assertIn(str(self.directory / 'missing executable'), startup_stderr)
-        self.assertIn('No such file or directory', startup_stderr)
+        startup_stderr = pathlib.Path(startup_report['body'].split(' Stderr: ', 1)[1]).read_bytes()
+        reference = self.reference_startup_stderr(self.directory / 'missing executable', 'parent')
+        self.assertEqual(startup_stderr, reference)
         self.action(parent)
         self.finish(failed, ok=False)
         self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['input'])
@@ -1943,7 +1962,16 @@ class Receive(unittest.TestCase):
         self.player()
         report = self.directory / 'large report'
         report.write_text('retained report\n' * 30000)
-        self.coord('message-file', 'saved-turn', 'parent', 'root', 'report', report)
+        recorded_parent = self.coord('player', 'parent')['parent']
+        self.assertEqual(recorded_parent, 'root')
+        self.coord('message-file', 'saved-turn', 'parent', recorded_parent, 'report', report)
+        retained = self.coord('delivery', 'saved-turn')
+        self.assertEqual(retained['id'], 'saved-turn')
+        self.assertEqual(retained['sender'], 'parent')
+        self.assertEqual(retained['recipient'], recorded_parent)
+        self.assertEqual(retained['kind'], 'report')
+        self.assertEqual(retained['body'], report.read_text())
+        self.assertIsNone(retained['receipt'])
         self.connect('parent')
         child = self.spawn('turn', 'parent', 'saved-turn', self.fixture, 'parent', 'low',
                            self.directory, self.directory / 'unused task',
@@ -1962,6 +1990,12 @@ class Receive(unittest.TestCase):
         self.assertFalse(drain.is_alive())
         self.finish(child)
         self.assertIn('retained report', output[0])
+        returned = json.loads('{' + output[0])
+        self.assertEqual(returned['id'], 'saved-turn')
+        self.assertEqual(returned['sender'], 'parent')
+        self.assertEqual(returned['recipient'], recorded_parent)
+        self.assertEqual(returned['kind'], 'report')
+        self.assertEqual(returned['body'], report.read_text())
         self.assertEqual(self.coord('inbox', 'parent'), [])
 
 
