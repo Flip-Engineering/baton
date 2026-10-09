@@ -183,8 +183,18 @@ const TOOLS = [
       required: ['player'], additionalProperties: false },
   },
   {
+    name: 'baton2_join',
+    description: 'Register a Player in an existing checkout shared with other Players.',
+    inputSchema: { type: 'object', properties: {
+      player: { type: 'string', description: 'New Player session ID' },
+      parent: { type: 'string', description: 'Parent session ID (default: attached Conductor)' },
+      harness: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
+      workspace: { type: 'string', description: 'Existing checkout path' },
+    }, required: ['player', 'harness', 'model', 'effort', 'workspace'], additionalProperties: false },
+  },
+  {
     name: 'baton2_recruit',
-    description: 'Recruit a Player with a registered assignment and Git worktree.',
+    description: 'Recruit a Player for a task that needs a separate Git worktree.',
     inputSchema: { type: 'object', properties: {
       player: { type: 'string', description: 'New Player session ID' },
       parent: { type: 'string', description: 'Parent session ID (default: attached Conductor)' },
@@ -234,7 +244,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_dispatch_turn',
-    description: 'Launch a recruited Player turn from a task file using its recorded model, effort and workspace.',
+    description: 'Launch a registered Player turn from a task file using its recorded model, effort and workspace.',
     inputSchema: { type: 'object', properties: {
       player: { type: 'string', description: 'Registered Player session ID' },
       id: { type: 'string', description: 'Turn ID' },
@@ -518,7 +528,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-conductor', version: '0.1.0' },
-      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_recruit to assign a Player and its worktree. Use baton2_receiver to register a Player's Codex, OMP, Muse or Claude Code receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a recruited Player's task file with its recorded route. Use baton2_configure to move an inactive Player to another provider harness, model and effort while keeping its identity, work and pending input. Use baton2_inbox or baton2_pending to see pending messages. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`,
+      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join to register a Player in an existing checkout. Use baton2_recruit when the task needs a separate worktree. Commit and push completed work, then integrate it into the intended delivery branch. Preserve incomplete work and explicit stops. Use baton2_receiver to register a Player's Codex, OMP, Muse or Claude Code receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a registered Player's task file with its recorded route. Use baton2_configure to move an inactive Player to another provider harness, model and effort while keeping its identity, work and pending input. Use baton2_inbox or baton2_pending to see pending messages. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`,
     });
     return;
   }
@@ -596,6 +606,10 @@ function handleToolCall(msg) {
         break;
       case 'baton2_player':
         result = coord('player', player);
+        break;
+      case 'baton2_join':
+        result = coord('join', player, args.parent ?? sessionId, args.harness, args.model,
+          args.effort, args.workspace);
         break;
       case 'baton2_recruit':
         result = coord('recruit', player, args.parent ?? sessionId, args.harness, args.model,

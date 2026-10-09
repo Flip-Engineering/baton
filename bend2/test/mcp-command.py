@@ -77,6 +77,9 @@ class McpCommand(unittest.TestCase):
             'workspace': "/worktree's review λ", 'base': 'main',
         }
         return {
+            'baton2_join': ({'player': player, 'harness': 'omp',
+                'model': 'deepseek/deepseek-flash', 'effort': 'low', 'workspace': recruitment['workspace']},
+                ['join', player, 'root', 'omp', 'deepseek/deepseek-flash', 'low', recruitment['workspace']]),
             'baton2_recruit': (recruitment, ['recruit', player, 'root', 'omp',
                 'deepseek/deepseek-flash', 'low', recruitment['repo'], 'review-λ',
                 recruitment['workspace'], 'main']),
@@ -98,6 +101,7 @@ class McpCommand(unittest.TestCase):
     def test_native_control_tools_advertise_typed_arguments(self):
         self.command()
         contracts = {
+            'baton2_join': ({'player', 'harness', 'model', 'effort', 'workspace'}, {'parent'}),
             'baton2_recruit': ({'player', 'harness', 'model', 'effort', 'repo',
                 'branch', 'workspace', 'base'}, {'parent'}),
             'baton2_receiver': ({'player', 'command', 'log'}, {'cwd'}),
@@ -132,6 +136,24 @@ class McpCommand(unittest.TestCase):
                 expected = list(argv)
                 expected[2] = parent
                 self.command(tool='baton2_recruit', arguments={**arguments, 'parent': parent},
+                             session='associate', expected_args=expected)
+
+    def test_join_defaults_parent_to_selected_conductor(self):
+        arguments, argv = self.native_controls()['baton2_join']
+        for session in (None, "Associate's λ", ''):
+            with self.subTest(session=session):
+                expected = list(argv)
+                expected[2] = 'root' if session is None else session
+                self.command(tool='baton2_join', arguments=arguments,
+                             session=session, expected_args=expected)
+
+    def test_join_preserves_explicit_parent(self):
+        arguments, argv = self.native_controls()['baton2_join']
+        for parent in ("Principal's λ", ''):
+            with self.subTest(parent=parent):
+                expected = list(argv)
+                expected[2] = parent
+                self.command(tool='baton2_join', arguments={**arguments, 'parent': parent},
                              session='associate', expected_args=expected)
 
     def test_receiver_forwards_explicit_player_and_native_paths(self):
