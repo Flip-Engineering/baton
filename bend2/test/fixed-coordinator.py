@@ -416,7 +416,13 @@ class FixedCoordinator(unittest.TestCase):
                 self.assertEqual(saved['workspace'], assignments[name]['workspace'])
                 self.assertNotEqual(self.query(
                     f"SELECT receipt FROM messages WHERE id='{name}-task'"), [(None,)])
-                log = self.co_dir / (name + '.jsonl')
+                registered = self.query(
+                    "SELECT g.log,g.base FROM log_generations g JOIN executions e "
+                    "ON e.session=g.session AND e.id=g.attempt "
+                    f"WHERE g.session='{name}'")
+                self.assertEqual(len(registered), 1, registered)
+                self.assertEqual(registered[0][1], str(self.co_dir / (name + '.jsonl')))
+                log = pathlib.Path(registered[0][0])
                 self.assertIn(name + ' fixed default completion', log.read_text())
             self.shutdown()
         self.assertEqual(hashlib.sha256(binary.read_bytes()).hexdigest(), binary_digest)

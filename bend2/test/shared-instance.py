@@ -830,7 +830,7 @@ class SharedInstance(unittest.TestCase):
         self.assertIn('acknowledge-ok', output)
         self.assertIn('retire-ok', output)
         self.assertEqual((directory / 'manifest').read_bytes(), manifest)
-        self.assertTrue(spool.read_text().startswith(retained))
+        self.assertFalse(spool.exists())
         self.assertTrue((directory / 'acknowledged').exists())
         owners = self.owner_processes()
         self.assertEqual(len(owners), 1, owners)
