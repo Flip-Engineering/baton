@@ -145,24 +145,32 @@ type RuntimeCopy is Data:
   RuntimeCopy{copied: Bool, evidence: String}
 
 @unsafe
+def runtime_copy_drain_line(+handle: U32,
+    line: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match line:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{error})
+    case Done{value}:
+      match value:
+        case None{}: IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}})
+        case Some{text}:
+          do IO<Result<&1,&1,U32 & String,Unit>>:
+            next : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
+            runtime_copy_drain_line(handle, next)
+
 def runtime_copy_drain(+handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     line : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
-    match line:
-      case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{error})
-      case Done{value}:
-        match value:
-          case None{}: IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}})
-          case Some{text}: runtime_copy_drain(handle)
+    runtime_copy_drain_line(handle, line)
 
 def runtime_copy_waited(+close_error: String, +read_error: String,
     waited: Result<&1,&1,U32 & String,String>) -> RuntimeCopy:
-  +errors : String = "\"closeError\":" ++ close_error ++ ",\"readError\":" ++ read_error
   match waited:
     case Fail{(code, detail)}:
+      +errors : String = "\"closeError\":" ++ close_error ++ ",\"readError\":" ++ read_error
       RuntimeCopy{False{}, "{" ++ errors ++ ",\"nativeStatus\":null,\"waitError\":"
         ++ runtime_control_error(Fail{(code, detail)}) ++ "}"}
     case Done{+status}:
+      +errors : String = "\"closeError\":" ++ close_error ++ ",\"readError\":" ++ read_error
       RuntimeCopy{Bool.and(String.eq(status, "exit 0"),
         Bool.and(String.eq(close_error, "null"), String.eq(read_error, "null"))),
         "{" ++ errors ++ ",\"nativeStatus\":" ++ J.json_text(J.Jstr{status})

@@ -1614,13 +1614,16 @@ def launch_runtime_id_sql(+query: String, +runtime_id: String) -> String:
 # The public caller returns the retained query envelope. The envelope row is
 # read back and printed; the retained owner and the public recovery observer
 # publish completion later.
+def launch_runtime_envelope_fields(fields: List<String>) -> IO(String):
+  match fields:
+    case +envelope <> Nil{}: IO.pure(String, envelope)
+    case other: IO.die(String, 3, "runtimeEnvelopeMissing")
+
 def launch_runtime_envelope_text(result: Result<&1,&1,U32 & String,String>) -> IO(String):
   match result:
     case Fail{error}: IO.die(String, 3, "runtimeEnvelopeUnreadable")
     case Done{+text}:
-      match Tx.split_tabs(Tx.trim_nl(text)):
-        case +envelope <> Nil{}: IO.pure(String, envelope)
-        case other: IO.die(String, 3, "runtimeEnvelopeMissing")
+      launch_runtime_envelope_fields(Tx.split_tabs(Tx.trim_nl(text)))
 
 def launch_runtime_envelope(+db: String, +binding: String, +query: String) -> IO(Unit):
   do IO<Unit>:
@@ -2164,11 +2167,21 @@ def launch_source_program_sql(+canonical: String, +owner: String) -> String:
   ++ " AND r.id=json_extract(" ++ ContextCommands.q(canonical)
   ++ ",'$.subject.session');"
 
-def launch_source_program_field(+hex: String) -> IO(String):
-  +field : CoreCodec.FieldText = CoreCodec.text_field(hex)
+def launch_source_program_decoded(field: CoreCodec.FieldText) -> IO(String):
   match field:
     case CoreCodec.FtBad{condition}: IO.die(String, 3, "runtimeSessionSource:" ++ condition)
     case CoreCodec.FtText{+program}: IO.pure(String, program)
+
+def launch_source_program_field(+hex: String) -> IO(String):
+  launch_source_program_decoded(CoreCodec.text_field(hex))
+
+def launch_source_program_fields(fields: List<String>) -> IO(String):
+  match fields:
+    case +hex <> Nil{}:
+      Bool.pick(IO(String), String.is_empty(hex),
+        IO.die(String, 3, "runtimeSessionLaunchAbsent"),
+        launch_source_program_field(hex))
+    case other: IO.die(String, 3, "runtimeSessionLaunchAbsent")
 
 def launch_source_program_result(result: Result<&1,&1,U32 & String,String>) -> IO(String):
   match result:
@@ -2176,12 +2189,7 @@ def launch_source_program_result(result: Result<&1,&1,U32 & String,String>) -> I
       match error:
         case (code, detail): IO.die(String, code, "runtimeSessionSource:" ++ detail)
     case Done{+text}:
-      match Tx.split_tabs(Tx.trim_nl(text)):
-        case +hex <> Nil{}:
-          Bool.pick(IO(String), String.is_empty(hex),
-            IO.die(String, 3, "runtimeSessionLaunchAbsent"),
-            launch_source_program_field(hex))
-        case other: IO.die(String, 3, "runtimeSessionLaunchAbsent")
+      launch_source_program_fields(Tx.split_tabs(Tx.trim_nl(text)))
 
 def launch_source_program(+db: String, +binding: String, +canonical: String,
                           +owner: String) -> IO(String):
