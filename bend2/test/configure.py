@@ -130,12 +130,19 @@ class Configure(unittest.TestCase):
         self.assertEqual(active['code'], 2)
         self.assertIn('configure-refused', active['stderr'])
         self.assertEqual(self.assignment('leaf'), before)
+        execution = self.rows("SELECT * FROM executions WHERE session='leaf'")
+        changed = self.route('leaf', 'omp', 'kimi-code/k3', 'max',
+                             ('omp', 'kimi-code/k3', 'low'))
+        self.assertEqual(changed['effort'], 'max')
+        self.assertEqual(self.assignment('leaf'), dict(before, effort='max'))
+        self.assertEqual(self.rows("SELECT * FROM executions WHERE session='leaf'"), execution)
+        before = self.assignment('leaf')
         with closing(sqlite3.connect(self.db)) as db:
             db.execute("DELETE FROM executions WHERE session='leaf'")
             db.commit()
         self.call('stop', 'leaf', 'idle-stop', 'Controlled idle stop.')
         stopped = self.route('leaf', 'omp', 'gpt-6-astra', 'high',
-                             ('omp', 'kimi-code/k3', 'low'), ok=False)
+                             ('omp', 'kimi-code/k3', 'max'), ok=False)
         self.assertEqual(stopped['code'], 2)
         self.assertIn('configure-refused', stopped['stderr'])
         self.assertEqual(self.assignment('leaf'), before)
@@ -143,6 +150,67 @@ class Configure(unittest.TestCase):
                              ('omp', 'kimi-code/k3', 'low'), ok=False)
         self.assertEqual(missing['code'], 2)
         self.assertIn('not registered', missing['stderr'])
+
+    def test_effort_change_keeps_the_running_turn_and_launches_the_next_turn_with_max(self):
+        self.root()
+        self.recruit('leaf', effort='high')
+        log = self.directory / 'original-receiver.jsonl'
+        self.call('receiver', 'leaf', self.fixture, log)
+        self.dispatch('dispatch-file', 'current-task', 'root', 'leaf', 'task', self.task)
+        stream, native = self.accept('leaf')
+        self.assertEqual(native['args'][native['args'].index('--thinking') + 1], 'high')
+
+        def observed_session():
+            session = self.call('session', 'leaf')
+            return session if session['native'] else None
+
+        before = self.eventually(observed_session)
+        execution = self.rows("SELECT * FROM executions WHERE session='leaf'")
+        self.assertEqual(execution[0]['phase'], 'running')
+        manifest = pathlib.Path(execution[0]['directory']) / 'manifest'
+        retained = manifest.read_bytes()
+        messages = self.messages()
+        changed = self.call('configure', 'leaf', 'omp', 'kimi-code/k3', 'max', '',
+                            self.directory / 'unused-future-log.jsonl',
+                            'omp', 'kimi-code/k3', 'high')
+        self.assertEqual(changed['effort'], 'max')
+        for field in ('id', 'parent', 'harness', 'model', 'native', 'endpoint', 'endpointArgv',
+                      'workspace', 'branch', 'base', 'observedHarness', 'observedModel', 'observedEffort'):
+            self.assertEqual(changed[field], before[field], field)
+        self.assertEqual(self.rows("SELECT * FROM executions WHERE session='leaf'"), execution)
+        self.assertEqual(manifest.read_bytes(), retained)
+        self.assertEqual(self.messages(), messages)
+        self.finish(stream)
+        self.exited('leaf')
+
+        self.dispatch('dispatch-file', 'next-task', 'root', 'leaf', 'task', self.task)
+        next_stream, next_native = self.accept('leaf')
+        self.assertEqual(next_native['args'][next_native['args'].index('--thinking') + 1], 'max')
+        self.assertEqual(next_native['native'], native['native'])
+        self.assertEqual(next_native['cwd'], before['workspace'])
+        self.assertIn('[id: next-task]', next_native['prompt'])
+        self.finish(next_stream)
+        self.exited('leaf')
+        self.assertEqual(self.call('delivery', 'next-task')['receipt'], 'fixture-native-reviewed')
+
+    def test_effort_change_on_a_stopped_session_preserves_its_stop_and_pending_input(self):
+        self.root()
+        self.recruit('leaf', harness='muse', model='gpt-6-astra', effort='high')
+        self.call('receiver', 'leaf', self.fixture, self.directory / 'original-receiver.jsonl')
+        self.call('bind', 'leaf', 'saved-native', 'muse', 'gpt-6-astra', 'high')
+        self.call('message', 'pending-task', 'root', 'leaf', 'task', self.task.read_text())
+        self.call('stop', 'leaf', 'explicit-stop', 'Retain the stopped session.')
+        before = self.call('session', 'leaf')
+        stops = self.rows("SELECT * FROM session_stops WHERE session='leaf'")
+        messages = self.messages()
+        changed = self.call('configure', 'leaf', 'muse', 'gpt-6-astra', 'max', '',
+                            self.directory / 'unused-future-log.jsonl',
+                            'muse', 'gpt-6-astra', 'high')
+        self.assertEqual(changed, dict(before, effort='max'))
+        self.assertEqual(self.rows("SELECT * FROM session_stops WHERE session='leaf'"), stops)
+        self.assertEqual(self.messages(), messages)
+        self.assertEqual(self.rows("SELECT * FROM executions WHERE session='leaf'"), [])
+        self.assertEqual(self.controls, [])
 
     def test_route_change_refuses_an_unmapped_model_an_unsupported_harness_and_an_empty_model(self):
         self.root()

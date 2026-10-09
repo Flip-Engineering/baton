@@ -604,44 +604,6 @@ law m8_configure_compares_the_expected_route:
 def m8_configure_compares_the_expected_route(session,harness,model,effort):
   {==}
 
-# M-8: the route change writes the named session row's four route columns and
-# nothing else. The refusal answer is built only when the guarded update changed
-# no row, and the answer is the stored row only when it changed one, so a refused
-# change cannot answer with the row it refused to write.
-law m8_configure_writes_only_the_named_route_row:
-  for session: String
-  for harness: String
-  for model: String
-  for effort: String
-  for endpoint: String
-  for expected_harness: String
-  for expected_model: String
-  for expected_effort: String
-  for admitted: String
-  {C.configure_update_sql(session,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,admitted) == "UPDATE sessions SET harness=" ++ C.q(harness) ++ ",model=" ++ C.q(model) ++ ",effort=" ++ C.q(effort) ++ ",endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
-  ++ "SELECT json_object('error','configure-refused','session'," ++ C.q(session) ++ ",'expected',json_object('harness'," ++ C.q(expected_harness) ++ ",'model'," ++ C.q(expected_model) ++ ",'effort'," ++ C.q(expected_effort) ++ "),'requested',json_object('harness'," ++ C.q(harness) ++ ",'model'," ++ C.q(model) ++ ",'effort'," ++ C.q(effort) ++ "),'condition','A route change requires a registered Player whose recorded harness, model and effort are still the expected route, no owned attempt, no terminal stop, and a launchable harness with a resolvable model key.','next','Read session ID and inbox. Pass the recorded harness, model and effort as the expected route; retry after an active attempt exits; use a supported harness; or recruit a new session for a stopped Player.') WHERE changes()=0;"
-  ++ C.session_result_where("id=" ++ C.q(session) ++ " AND changes()=1") : String}
-
-def m8_configure_writes_only_the_named_route_row(session,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,admitted):
-  {==}
-
-# M-8: the route change is admitted only for a registered session whose recorded
-# route is still the expected one, with no terminal stop, no owned attempt, a
-# launchable harness, a named model and an admissible endpoint. The admission
-# reads the recorded row and the attempt and stop records; it changes none.
-law m8_configure_admits_only_a_free_expected_route:
-  for session: String
-  for harness: String
-  for model: String
-  for endpoint: String
-  for expected_harness: String
-  for expected_model: String
-  for expected_effort: String
-  {C.configure_admitted(session,harness,model,endpoint,expected_harness,expected_model,expected_effort) == "(" ++ C.q(harness) ++ " IN ('codex','omp','muse','claude-code') AND " ++ C.q(model) ++ "<>'' AND " ++ C.configure_matches(session,expected_harness,expected_model,expected_effort) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ C.q(session) ++ " AND phase<>'exited')" ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")" : String}
-
-def m8_configure_admits_only_a_free_expected_route(session,harness,model,endpoint,expected_harness,expected_model,expected_effort):
-  {==}
-
 # ---------------------------------------------------------------------------
 # The coordinator's landing and push commands.
 
