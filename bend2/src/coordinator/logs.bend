@@ -227,6 +227,40 @@ def terminal_ids_of(source: String) -> String:
 def terminal_calls_of() -> String:
   "(SELECT json_group_array(call_id) FROM calls)"
 
+# The file name without its directories, so a marker in a parent directory
+# never resolves as the generation identity.
+def has_slash(s: String) -> Bool:
+  match s:
+    case SNil{}: False{}
+    case SCon{c, +rest}: Bool.pick(Bool,U32.is_eq(J.cp(c),47),True{},has_slash(rest))
+
+def base_name(s: String) -> String:
+  match s:
+    case SNil{}: ""
+    case SCon{c, +rest}: Bool.pick(String,has_slash(rest),base_name(rest),SCon{c, rest})
+
+# The marker match starts at each position of the file name in turn.
+def after_here(s: String, m: String) -> String:
+  match s m:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{mc, mrest}: ""
+    case SCon{c, rest} SNil{}: SCon{c, rest}
+    case SCon{c, rest} SCon{mc, mrest}: Bool.pick(String,Char.is_eq(c,mc),after_here(rest,mrest),"")
+
+def attempt_of_go(s: String) -> String:
+  match s:
+    case SNil{}: ""
+    case SCon{c, +rest}:
+      +later = attempt_of_go(rest)
+      +here = after_here(SCon{c, rest},".attempt-")
+      Bool.pick(String,String.is_empty(here),later,Bool.pick(String,String.is_empty(later),here,later))
+
+# The attempt code a generation file name carries, or empty for the base log
+# and for any other name. Scoped to the file name; the registry binds
+# registered files to their attempt authority.
+def attempt_of(+log: String) -> String:
+  attempt_of_go(base_name(log))
+
 # Byte and message counts describe the raw frame. Text and response identifiers
 # come from the normalized event, including its streamed-message fallback.
 # The turns row stores that event. Retained receive stdout keeps raw frames
@@ -542,40 +576,6 @@ def open_attempt_named(empty: Bool, +db: String, +session: String, +base: String
 
 def open_attempt(+db: String, +session: String, +base: String, +attempt: String) -> IO(Policy):
   open_attempt_named(String.is_empty(attempt),db,session,base,attempt)
-
-# The file name without its directories, so a marker in a parent directory
-# never resolves as the generation identity.
-def has_slash(s: String) -> Bool:
-  match s:
-    case SNil{}: False{}
-    case SCon{c, +rest}: Bool.pick(Bool,U32.is_eq(J.cp(c),47),True{},has_slash(rest))
-
-def base_name(s: String) -> String:
-  match s:
-    case SNil{}: ""
-    case SCon{c, +rest}: Bool.pick(String,has_slash(rest),base_name(rest),SCon{c, rest})
-
-# The marker match starts at each position of the file name in turn.
-def after_here(s: String, m: String) -> String:
-  match s m:
-    case SNil{} SNil{}: ""
-    case SNil{} SCon{mc, mrest}: ""
-    case SCon{c, rest} SNil{}: SCon{c, rest}
-    case SCon{c, rest} SCon{mc, mrest}: Bool.pick(String,Char.is_eq(c,mc),after_here(rest,mrest),"")
-
-def attempt_of_go(s: String) -> String:
-  match s:
-    case SNil{}: ""
-    case SCon{c, +rest}:
-      +later = attempt_of_go(rest)
-      +here = after_here(SCon{c, rest},".attempt-")
-      Bool.pick(String,String.is_empty(here),later,Bool.pick(String,String.is_empty(later),here,later))
-
-# The attempt code a generation file name carries, or empty for the base log
-# and for any other name. Scoped to the file name; the registry binds
-# registered files to their attempt authority.
-def attempt_of(+log: String) -> String:
-  attempt_of_go(base_name(log))
 
 def segment_json(log: String, +index: String, +size: U32) -> String:
   Bool.pick(String,U32.is_eq(size,0),"",
