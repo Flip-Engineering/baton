@@ -53,7 +53,7 @@ def tool(name,arguments):
     answer=reply['result']
     assert not answer.get('isError',False),answer
     return json.loads(answer['content'][0]['text'])
-if session==config['producer']:
+if session==config['producer'] and not resume:
     tool('baton2_context_query_file',{'query':config['query'],'path':config['request']})
 retained=tool('baton2_context_result',{'query':config['query']})
 assert retained['state']=='complete',retained
@@ -397,6 +397,7 @@ class SelectedContextPackageTest(unittest.TestCase):
             return json.loads(result.stdout)
 
         handoff_reports = {}
+        producer_continuation = None
         for actor in (producer, consumer):
             actor_workspace = self.root / actor
             checked('recruit', actor, 'validation-root', 'muse', actor, 'low',
@@ -405,17 +406,31 @@ class SelectedContextPackageTest(unittest.TestCase):
                             'low', str(actor_workspace), str(handoff_task),
                             str(self.root / (actor + '.jsonl')), '')
             self.assertEqual(turned.returncode, 0, turned.stdout + turned.stderr)
-            rows = checked('players')
-            report = json.loads(next(row for row in rows if row['id'] == actor)['latestReport'])
+            report = json.loads(checked('delivery', actor + '-first')['body'])
             handoff_reports[actor] = report
             self.assertEqual(report['session'], actor)
             self.assertEqual(report['native'], checked('session', actor)['native'])
             self.assertEqual(report['resume'], '')
+            if actor == producer:
+                rows = checked('players')
+                player = next(row for row in rows if row['id'] == actor)
+                producer_continuation = json.loads(player['latestReport'])
+                terminal = 'context-query:' + handoff_query + ':terminal'
+                notification = checked('delivery', terminal)
+                self.assertEqual((producer_continuation['session'],
+                                  producer_continuation['native'],
+                                  producer_continuation['resume']),
+                                 (producer, report['native'], report['native']))
+                self.assertIn(terminal, producer_continuation['prompt'])
+                self.assertEqual(notification['recipient'], producer)
+                self.assertEqual(notification['receipt'], 'native-consumed-' + handoff_query)
+                self.assertEqual(player['pendingCount'], 0)
         shared = checked('context-result', handoff_query)
         self.assertEqual(shared['owner'], producer)
         self.assertEqual(shared['result']['payload']['schema'], payload['schema'])
         for report in handoff_reports.values():
             self.assertEqual(report['retained'], shared)
+        self.assertEqual(producer_continuation['retained'], shared)
 
         project_description = checked('project', str(project))
         original = checked('session', consumer)

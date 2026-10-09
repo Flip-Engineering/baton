@@ -570,14 +570,14 @@ class Control(unittest.TestCase):
         stopped_attempt = self.eventually(lambda: next((row for row in self.rows(
             'SELECT * FROM executions WHERE session=?', (stopped,))
             if row['phase'] == 'exited'), None))
-        self.assertEqual(stopped_attempt['status'], 'exit 143')
+        self.assertEqual(stopped_attempt['status'], 'signal 15')
         self.eventually(lambda: (pathlib.Path(stopped_attempt['directory']) / 'acknowledged').exists())
         report_id = 'stop-result:' + 'project-stop'.encode().hex()
         stop_report = self.call('delivery', report_id)
         refusal = self.project_call(self.repo, 'resume', stopped, ok=False)
         self.assertIn('terminally stopped', refusal['stderr'])
         self.assertEqual(self.rows('SELECT id,status FROM executions WHERE session=?', (stopped,)),
-                         [{'id': 'project-stopped-turn', 'status': 'exit 143'}])
+                         [{'id': 'project-stopped-turn', 'status': 'signal 15'}])
         self.assertIsNone(self.call('delivery', 'project-stopped-task')['receipt'])
         self.assertEqual(self.call('session', stopped)['native'], 'saved-stopped-project-native')
         self.assertEqual(self.rows('SELECT id FROM session_stops WHERE session=?',
@@ -588,7 +588,7 @@ class Control(unittest.TestCase):
                                                 'receive', stopped, str(self.fixture.resolve()),
                                                 '', '', '', str(refreshed_log.resolve())])
         self.assertEqual(self.rows('SELECT id,status FROM executions WHERE session=?', (stopped,)),
-                         [{'id': 'project-stopped-turn', 'status': 'exit 143'}])
+                         [{'id': 'project-stopped-turn', 'status': 'signal 15'}])
         self.assertEqual(self.rows('SELECT id FROM session_stops WHERE session=?',
                                    (stopped,)), [{'id': 'project-stop'}])
         self.assertIsNone(self.call('delivery', 'project-stopped-task')['receipt'])
