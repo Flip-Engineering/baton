@@ -544,7 +544,7 @@ def generations_schema() -> String:
   "CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt));CREATE UNIQUE INDEX IF NOT EXISTS log_generations_log ON log_generations(log);"
 
 def stderr_runs_schema() -> String:
-  "CREATE TABLE IF NOT EXISTS log_stderr_runs(session TEXT NOT NULL,attempt TEXT NOT NULL,run INTEGER NOT NULL,generation TEXT NOT NULL,stderr TEXT NOT NULL,PRIMARY KEY(session,attempt,run),UNIQUE(stderr));"
+  Schema.stderr_runs_table()
 
 def stderr_runs_migration() -> String:
   "BEGIN IMMEDIATE;ALTER TABLE log_stderr_runs RENAME TO log_stderr_runs_legacy;"

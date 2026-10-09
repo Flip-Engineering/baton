@@ -1,4 +1,5 @@
 import Base
+import ./log-schema.bend as LogSchema
 
 type Command is Data:
   Join{id: String, parent: String, harness: String, model: String, effort: String, path: String}
@@ -101,6 +102,9 @@ def messaging_schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS ensemble_members (ensemble TEXT NOT NULL REFERENCES ensembles(id),session TEXT NOT NULL REFERENCES sessions(id),PRIMARY KEY(ensemble,session));"
   ++ section_schema()
 
+def log_schema() -> String:
+  LogSchema.tables()
+
 # Stored role families and turn columns retain their existing names. Section
 # membership references the existing Ensemble membership of each Player.
 
@@ -122,6 +126,7 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');"
   ++ messaging_schema()
+  ++ log_schema()
 
 def stopped_session_sql(session: String) -> String:
   "EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ session ++ ")"

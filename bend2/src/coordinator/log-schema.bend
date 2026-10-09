@@ -2,9 +2,13 @@ import Base
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 
+def stderr_runs_table() -> String:
+  "CREATE TABLE IF NOT EXISTS log_stderr_runs(session TEXT NOT NULL,attempt TEXT NOT NULL,run INTEGER NOT NULL,generation TEXT NOT NULL,stderr TEXT NOT NULL,PRIMARY KEY(session,attempt,run),UNIQUE(stderr));"
+
 def tables() -> String:
   "CREATE TABLE IF NOT EXISTS log_policies (session TEXT PRIMARY KEY NOT NULL,level TEXT NOT NULL CHECK(level IN ('quiet','default','diagnostic')));"
   ++ "CREATE TABLE IF NOT EXISTS log_files (session TEXT NOT NULL,log TEXT NOT NULL,PRIMARY KEY(session,log));"
+  ++ stderr_runs_table()
 
 def migration() -> String:
   "BEGIN IMMEDIATE;"
