@@ -12,6 +12,7 @@ import Base
 import ../coordinator/commands.bend as C
 import ./knowledge.bend as K
 import ./delivery.bend as Delivery
+import ./store.bend as Store
 import ../host/sqlite.bend as DB
 
 law m1_the_knowledge_schema_retains_findings_and_promotions:
@@ -290,7 +291,7 @@ def m1_a_stored_record_result_delivers_its_notice(db,id,h,t):
 
 def record_io(+db: String, +id: String, author: String, claim: String, evidence: String, limits: String) -> IO(Unit):
   do IO<Unit>:
-    saved : String <- IO.try(String,DB.Sql.query(db,K.commit_sql(K.record_statements(id,author,claim,evidence,limits))))
+    saved : String <- IO.try(String,Store.transact_sql(db,K.commit_sql(K.record_statements(id,author,claim,evidence,limits))))
     delivery : Result<&1,&1,U32 & String,String> <- K.deliver_record(db,id,saved)
     K.answered(delivery)
 
@@ -343,7 +344,7 @@ def m1_a_stored_promotion_result_delivers_its_notice(db,id,h,t):
 # M-1: the promotion commits its row and notice, delivers, then answers.
 def promote_io(+db: String, +id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> IO(Unit):
   do IO<Unit>:
-    saved : String <- IO.try(String,DB.Sql.query(db,K.commit_sql(K.promote_statements(id,promoter,source,destination,finding))))
+    saved : String <- IO.try(String,Store.transact_sql(db,K.commit_sql(K.promote_statements(id,promoter,source,destination,finding))))
     delivery : Result<&1,&1,U32 & String,String> <- K.deliver_promotion(db,id,saved)
     K.answered(delivery)
 
