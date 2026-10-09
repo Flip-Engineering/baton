@@ -220,12 +220,19 @@ def recover_direct_cli(+flag: String, +db: String, +player: String, +id: String,
     Turn.recover(db, player, id, cmd, model, effort, cwd, log, harness, directory, native),
     normal_cli([flag, db, player, id, cmd, model, effort, cwd, log, harness, directory, native]))
 
+def observe_context_runtime_cli(+flag: String, +db: String, +owner: String,
+                                +launch_query: String, +target_dir: String,
+                                +adapter_dir: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.eq(flag, "--observe-context-runtime"),
+    ContextRuntime.runtime_recover(db, owner, launch_query, target_dir, adapter_dir),
+    normal_cli([flag, db, owner, launch_query, target_dir, adapter_dir]))
+
 def cli(args: List<String>) -> IO(Unit):
   match args:
     case "--project" <> path <> rest: normal_cli(Con{"--project",Con{path,rest}})
     case flag <> database <> Nil{}: instance_owner_cli(database,flag)
-    case "--observe-context-runtime" <> db <> owner <> launch_query <> target_dir <> adapter_dir <> Nil{}:
-      ContextRuntime.runtime_recover(db, owner, launch_query, target_dir, adapter_dir)
+    case flag <> db <> owner <> launch_query <> target_dir <> adapter_dir <> Nil{}:
+      observe_context_runtime_cli(flag, db, owner, launch_query, target_dir, adapter_dir)
     case flag <> db <> owner <> query <> directory <> worktree <> bootstrap_file <> Nil{}:
       recover_context_query_cli(flag, db, owner, query, directory, worktree,
         bootstrap_file)
