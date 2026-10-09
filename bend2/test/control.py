@@ -577,7 +577,7 @@ class Control(unittest.TestCase):
         refusal = self.project_call(self.repo, 'resume', stopped, ok=False)
         self.assertIn('terminally stopped', refusal['stderr'])
         self.assertEqual(self.rows('SELECT id,status FROM executions WHERE session=?', (stopped,)),
-                         [{'id': 'project-stopped-turn', 'status': 'signal 15'}])
+                         [{'id': stopped_attempt['id'], 'status': 'signal 15'}])
         self.assertIsNone(self.call('delivery', 'project-stopped-task')['receipt'])
         self.assertEqual(self.call('session', stopped)['native'], 'saved-stopped-project-native')
         self.assertEqual(self.rows('SELECT id FROM session_stops WHERE session=?',
@@ -588,7 +588,7 @@ class Control(unittest.TestCase):
                                                 'receive', stopped, str(self.fixture.resolve()),
                                                 '', '', '', str(refreshed_log.resolve())])
         self.assertEqual(self.rows('SELECT id,status FROM executions WHERE session=?', (stopped,)),
-                         [{'id': 'project-stopped-turn', 'status': 'signal 15'}])
+                         [{'id': stopped_attempt['id'], 'status': 'signal 15'}])
         self.assertEqual(self.rows('SELECT id FROM session_stops WHERE session=?',
                                    (stopped,)), [{'id': 'project-stop'}])
         self.assertIsNone(self.call('delivery', 'project-stopped-task')['receipt'])
