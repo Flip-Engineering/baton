@@ -2,6 +2,7 @@ import Base
 import ../coordinator/commands.bend as C
 import ../host/sqlite.bend as DB
 import ../host/text.bend as Text
+import ../host/process.bend as Child
 import ../git/process.bend as Process
 import ../git/text.bend as Tx
 import ../git/types.bend as T
@@ -80,32 +81,133 @@ def endpointless_native_sql(id: String, condition: String) -> String:
 def endpointless_recipient_sql(id: String, condition: String) -> String:
   "SELECT coalesce((SELECT m.recipient FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ condition ++ "),'');"
 
-def queue_pointer(db: String, id: String, recipient: String) -> String:
-  "Baton input is pending.\n{\"database\":" ++ J.string_literal(db) ++ ",\"message\":" ++ J.string_literal(id) ++ ",\"recipient\":" ++ J.string_literal(recipient) ++ "}\nRead the full input with baton2 DATABASE delivery MESSAGE, or baton2 DATABASE inbox RECIPIENT. Handle the work and acknowledge your own message with baton2 DATABASE ack MESSAGE RECIPIENT RECEIPT."
+# One notification names the recipient's whole durable inbox. Recipient-owned
+# acknowledgement clears its marker so a later admission can notify again.
+def queue_retry_sql(recipient: String, retry: Bool) -> String:
+  match retry:
+    case False{}: ""
+    case True{}: "DELETE FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ " AND cause<>'';"
 
-# Queue output records the submission identity. The recipient's receipt stays pending.
-def queue_launch(+db: String, id: String, saved: String, native: String, recipient: String) -> IO(Result<&1,&1,U32 & String,String>):
+def queue_claim_sql(+id: String, +condition: String, +recipient: String, +native: String, retry: Bool) -> String:
+  "BEGIN IMMEDIATE;"
+  ++ "CREATE TABLE IF NOT EXISTS codex_inbox_wakes(session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id),native TEXT NOT NULL,token TEXT NOT NULL,cause TEXT NOT NULL DEFAULT '');"
+  ++ "CREATE TRIGGER IF NOT EXISTS codex_inbox_wake_receipt AFTER UPDATE OF receipt ON messages WHEN OLD.receipt IS NULL AND NEW.receipt IS NOT NULL BEGIN DELETE FROM codex_inbox_wakes WHERE session=NEW.recipient;END;"
+  ++ "DELETE FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ " AND native<>" ++ C.q(native) ++ ";"
+  ++ queue_retry_sql(recipient,retry)
+  ++ "INSERT INTO codex_inbox_wakes(session,native,token) SELECT s.id,s.native,lower(hex(randomblob(16))) FROM sessions s WHERE s.id=" ++ C.q(recipient) ++ " AND s.harness='codex' AND s.native=" ++ C.q(native) ++ " AND NOT " ++ C.stopped_session_sql("s.id") ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND m.recipient=s.id AND m.receipt IS NULL AND " ++ condition ++ ") ON CONFLICT(session) DO NOTHING;"
+  ++ "SELECT CASE WHEN changes()=1 THEN (SELECT token FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ ") ELSE '' END;COMMIT;"
+
+def queue_pointer(db: String, id: String, recipient: String, pending: String) -> String:
+  "Baton input is pending.\n{\"database\":" ++ J.string_literal(db) ++ ",\"message\":" ++ J.string_literal(id) ++ ",\"recipient\":" ++ J.string_literal(recipient) ++ ",\"pendingCount\":" ++ pending ++ "}\nRead all owed input with baton2 DATABASE inbox RECIPIENT. Read any complete message with baton2 DATABASE delivery MESSAGE. Handle the work and acknowledge each of your own messages with baton2 DATABASE ack MESSAGE RECIPIENT RECEIPT. This notification records queue admission; Baton receipts remain pending until you accept the input."
+
+def queue_waited(output: String, result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,String>:
+  match result:
+    case Fail{error}: Fail{error}
+    case Done{status}: Done{status ++ "\n" ++ output}
+
+@unsafe
+def queue_read_result(line: Result<&1,&1,U32 & String,Maybe<String>>, +handle: U32, output: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match line:
+    case Fail{error}: do IO<Result<&1,&1,U32 & String,String>>:
+      waited : Result<&1,&1,U32 & String,String> <- Child.ProcessChild.wait(handle)
+      IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{None{}}: do IO<Result<&1,&1,U32 & String,String>>:
+      waited : Result<&1,&1,U32 & String,String> <- Child.ProcessChild.wait(handle)
+      IO.pure(Result<&1,&1,U32 & String,String>,queue_waited(output,waited))
+    case Done{Some{text}}: do IO<Result<&1,&1,U32 & String,String>>:
+      next : Result<&1,&1,U32 & String,Maybe<String>> <- Child.ProcessChild.read_line(handle)
+      queue_read_result(next,handle,output ++ text ++ "\n")
+
+def queue_closed(+handle: U32, closed: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,String>):
+  match closed:
+    case Fail{error}: do IO<Result<&1,&1,U32 & String,String>>:
+      waited : Result<&1,&1,U32 & String,String> <- Child.ProcessChild.wait(handle)
+      IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{unit}: do IO<Result<&1,&1,U32 & String,String>>:
+      line : Result<&1,&1,U32 & String,Maybe<String>> <- Child.ProcessChild.read_line(handle)
+      queue_read_result(line,handle,"")
+
+def queue_spawned(spawned: Result<&1,&1,U32 & String,U32>) -> IO(Result<&1,&1,U32 & String,String>):
+  match spawned:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{+handle}: do IO<Result<&1,&1,U32 & String,String>>:
+      closed : Result<&1,&1,U32 & String,Unit> <- Child.ProcessChild.close_stdin(handle)
+      queue_closed(handle,closed)
+
+def queue_stderr(db: String, saved: String, output: String, error: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match error:
+    case Fail{(code,detail)}: completed(db,saved,Fail{(code,output ++ "Queue stderr read failed: " ++ detail)})
+    case Done{text}: completed(db,saved,Done{output ++ text})
+
+def queue_captured(+db: String, saved: String, stderr: String, run: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match run:
+    case Fail{error}: completed(db,saved,Fail{error})
+    case Done{output}: do IO<Result<&1,&1,U32 & String,String>>:
+      error : Result<&1,&1,U32 & String,String> <- Text.Text.read(stderr)
+      queue_stderr(db,saved,output,error)
+
+def queue_recorded(+db: String, recipient: String, token: String, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Done{output}: IO.pure(Result<&1,&1,U32 & String,String>,Done{output})
+    case Fail{(+code,+cause)}: do IO<Result<&1,&1,U32 & String,String>>:
+      recorded : String <- IO.try(String,DB.Sql.query(db,"UPDATE codex_inbox_wakes SET cause=" ++ C.q(cause) ++ " WHERE session=" ++ C.q(recipient) ++ " AND token=" ++ C.q(token) ++ ";"))
+      IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,cause)})
+
+# Queue stderr and stdout are retained with the submission result. Ordinary
+# admissions share the notification; explicit resume retries a failed attempt.
+def queue_launch(+db: String, id: String, saved: String, native: String, +recipient: String, +token: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    pointer : String <- IO.pure(String,queue_pointer(db,id,recipient))
-    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(Codex.queue_admission(native,pointer)),".")
-    completed(db,saved,run)
+    pending : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE recipient=" ++ C.q(recipient) ++ " AND receipt IS NULL;"))
+    pointer : String <- IO.pure(String,queue_pointer(db,id,recipient,Tx.trim_nl(pending)))
+    +stderr : String <- IO.pure(String,db ++ ".queue-" ++ token ++ ".stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- Child.ProcessChild.spawn(Child.argv(Codex.queue_admission(native,pointer)),".",stderr)
+    run : Result<&1,&1,U32 & String,String> <- queue_spawned(spawned)
+    result : Result<&1,&1,U32 & String,String> <- queue_captured(db,saved,stderr,run)
+    queue_recorded(db,recipient,token,result)
 
-def codex_queue(+db: String, +id: String, +condition: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+def queue_previous(saved: String, cause: String, notified: Bool) -> Result<&1,&1,U32 & String,String>:
+  match notified:
+    case True{}: Done{saved}
+    case False{}: Fail{(1,cause)}
+
+def queue_selected(+db: String, id: String, saved: String, native: String, +recipient: String, token: String, coalesced: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match coalesced:
+    case False{}: queue_launch(db,id,saved,native,recipient,token)
+    case True{}: do IO<Result<&1,&1,U32 & String,String>>:
+      row : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT hex(cause) FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ "),'');"))
+      +cause : String = Tx.hex_decode(Tx.trim_nl(row))
+      IO.pure(Result<&1,&1,U32 & String,String>,queue_previous(saved,cause,String.is_empty(cause)))
+
+def queue_claimed(+db: String, +id: String, condition: String, saved: String, +native: String, +recipient: String, retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    row : String <- IO.try(String,DB.Sql.query(db,queue_claim_sql(id,condition,recipient,native,retry)))
+    +token : String = Tx.trim_nl(row)
+    queue_selected(db,id,saved,native,recipient,token,String.is_empty(token))
+
+def queue_native(db: String, id: String, condition: String, saved: String, native: String, recipient: String, retry: Bool, absent: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match absent:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Message " ++ id ++ " is addressed to a Codex session that records no native session identity, so the public queue cannot address it. Connect an endpoint or record the session's native identity, then retry delivery from the pending inbox.")})
+    case False{}: queue_claimed(db,id,condition,saved,native,recipient,retry)
+
+def codex_queue_mode(+db: String, +id: String, +condition: String, saved: String, retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     native_row : String <- IO.try(String,DB.Sql.query(db,endpointless_native_sql(id,condition)))
     +native : String <- IO.pure(String,Tx.trim_nl(native_row))
     recipient_row : String <- IO.try(String,DB.Sql.query(db,endpointless_recipient_sql(id,condition)))
     recipient : String <- IO.pure(String,Tx.trim_nl(recipient_row))
-    Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(native),
-      IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Message " ++ id ++ " is addressed to a Codex session that records no native session identity, so the public queue cannot address it. Connect an endpoint or record the session's native identity, then retry delivery from the pending inbox.")}),
-      queue_launch(db,id,saved,native,recipient))
+    queue_native(db,id,condition,saved,native,recipient,retry,String.is_empty(native))
+
+# Explicit resume can retry a rejected notification. Ordinary admissions keep
+# that rejection coalesced until recipient acknowledgement permits another wake.
+def codex_queue(db: String, id: String, condition: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  codex_queue_mode(db,id,condition,saved,True{})
 
 def endpointless(+db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     harness_row : String <- IO.try(String,DB.Sql.query(db,endpointless_harness_sql(id,condition)))
     +harness : String <- IO.pure(String,Tx.trim_nl(harness_row))
     Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(harness,"codex"),
-      codex_queue(db,id,condition,saved),
+      codex_queue_mode(db,id,condition,saved,False{}),
       IO.pure(Result<&1,&1,U32 & String,String>,Done{saved}))
 
 def normal_delivery(+db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):

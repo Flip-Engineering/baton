@@ -225,19 +225,46 @@ class RootWake(unittest.TestCase):
             self.assertTrue(all(stored[ident]['recipient'] == session for ident in own),
                             f'{session} consumed a row addressed to another session')
 
-    def test_endpointless_codex_root_queues_pending_input(self):
+    def public_queue(self):
         queued = self.directory / 'queue-arguments.json'
+        refused = self.directory / 'queue-refused'
         command = self.directory / 'codex'
         command.write_text('#!' + sys.executable + '\n'
                            + 'import json,pathlib,sys\n'
                            + f'with pathlib.Path({str(queued)!r}).open("a") as calls:\n'
                            + '    calls.write(json.dumps(sys.argv[1:]) + chr(10))\n'
+                           + f'if pathlib.Path({str(refused)!r}).exists():\n'
+                           + '    print(\'Error: {"code":-32600,"message":"Queue is full (100 queued messages)"}\', file=sys.stderr, flush=True)\n'
+                           + '    sys.exit(23)\n'
                            + 'print("Queued message fixture-submission for thread native-app-root", flush=True)\n')
         command.chmod(0o700)
         self.environment['PATH'] = str(self.directory) + os.pathsep + self.environment.get('PATH', '')
-        self.coord('attach', 'root', 'codex', 'native-app-root', '')
+        return queued, refused
+
+    def test_endpointless_codex_root_coalesces_owed_input_until_recipient_progress(self):
+        queued, _ = self.public_queue()
+        self.coord('attach', 'root', 'codex', '', '')
         self.recruit('child', 'root', 'omp')
+        owed = {'app-root-early-' + str(index): 'Earlier child work ' + str(index)
+                for index in range(3)}
+        for ident, body in owed.items():
+            pending = self.coord_raw('report', ident, 'child', body)
+            self.assertNotEqual(pending.returncode, 0)
+            self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
+        self.assertFalse(queued.exists())
+        self.coord('connect', 'root', 'native-app-root', '')
+        owed['app-root-report'] = 'Read the completed child work.'
         self.coord('report', 'app-root-report', 'child', 'Read the completed child work.')
+        additions = [('app-root-more-' + str(index), 'Additional child work ' + str(index))
+                     for index in range(2)]
+        children = [subprocess.Popen([str(EXE), str(self.db), 'report', ident, 'child', body],
+                                    env=self.environment, text=True, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE)
+                    for ident, body in additions]
+        results = [(child, *child.communicate()) for child in children]
+        for child, stdout, stderr in results:
+            self.assertEqual(child.returncode, 0, stderr)
+        owed.update(additions)
         delivery_log = pathlib.Path(str(self.db) + '.root.log')
         self.eventually(lambda: delivery_log.exists() and 'fixture-submission' in delivery_log.read_text(),
                         'the queue submission result was not retained')
@@ -251,22 +278,31 @@ class RootWake(unittest.TestCase):
                                          'native-app-root', '--message'])
         pointer = json.loads(arguments[6].splitlines()[1])
         self.assertEqual(pointer, {'database': str(self.db), 'message': 'app-root-report',
-                                   'recipient': 'root'})
-        message = json.loads(self.coord('delivery', 'app-root-report'))
-        self.assertEqual(message['body'], 'Read the completed child work.')
-        self.assertIsNone(message['receipt'])
+                                   'recipient': 'root', 'pendingCount': 4})
+        self.assertIn('Read all owed input with baton2 DATABASE inbox RECIPIENT', arguments[6])
+        inbox = {message['id']: message for message in json.loads(self.coord('inbox', 'root'))}
+        self.assertEqual(set(inbox), set(owed))
+        for ident, body in owed.items():
+            self.assertEqual(inbox[ident]['body'], body)
+            self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
         self.assertEqual(json.loads(self.coord('turns', 'root')), [])
         root = json.loads(self.coord('session', 'root'))
         self.assertEqual((root['native'], root['endpoint']), ('native-app-root', ''))
 
+        accepted = next(iter(owed))
+        self.coord('ack', accepted, 'root', 'root reviewed this input')
+        self.coord('report', 'app-root-after-progress', 'child', 'Continue after root progress.')
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 2, calls)
+        self.assertEqual(json.loads(calls[1][6].splitlines()[1])['pendingCount'], len(owed))
+        self.assertEqual(json.loads(self.coord('delivery', accepted))['receipt'],
+                         'root reviewed this input')
+        for ident in set(owed) - {accepted}:
+            self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
+
     def test_refused_codex_queue_preserves_pending_input_and_failure(self):
-        command = self.directory / 'codex'
-        command.write_text('#!' + sys.executable + '\n'
-                           + 'import sys\n'
-                           + 'print("Public queue refused this input.", flush=True)\n'
-                           + 'sys.exit(23)\n')
-        command.chmod(0o700)
-        self.environment['PATH'] = str(self.directory) + os.pathsep + self.environment.get('PATH', '')
+        queued, refused_queue = self.public_queue()
+        refused_queue.write_text('The public daemon queue is full.\n')
         self.coord('attach', 'root', 'codex', 'native-app-root', '')
         self.recruit('child', 'root', 'omp')
         refused = subprocess.run([str(EXE), str(self.db), 'report', 'refused-app-input',
@@ -280,7 +316,38 @@ class RootWake(unittest.TestCase):
         self.assertEqual(json.loads(self.coord('turns', 'root')), [])
         log = pathlib.Path(str(self.db) + '.root.log').read_text()
         self.assertIn('exit 23', log)
-        self.assertIn('Public queue refused this input.', log)
+        cause = 'Error: {"code":-32600,"message":"Queue is full (100 queued messages)"}'
+        self.assertIn(cause, log)
+        self.assertTrue(any(cause in path.read_text()
+                            for path in self.directory.glob('state.db.queue-*.stderr')))
+
+        for index in range(3):
+            ident = 'refused-app-more-' + str(index)
+            additional = self.coord_raw('report', ident, 'child', 'Further work remains owed.')
+            self.assertNotEqual(additional.returncode, 0)
+            self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 1, calls)
+        self.assertIsNone(json.loads(self.coord('delivery', 'refused-app-input'))['receipt'])
+
+        refused_queue.unlink()
+        self.coord('resume', 'root')
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 2, calls)
+        self.assertEqual(json.loads(calls[1][6].splitlines()[1])['pendingCount'], 4)
+        owed = ['refused-app-input'] + ['refused-app-more-' + str(index) for index in range(3)]
+        for ident in owed:
+            self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
+        self.coord('resume', 'root')
+        self.assertEqual(len(queued.read_text().splitlines()), 2)
+
+        self.coord('ack', 'refused-app-input', 'root', 'root reviewed the retained report')
+        self.coord('report', 'retry-after-root-progress', 'child', 'Read the remaining inbox.')
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 3, calls)
+        self.assertEqual(json.loads(calls[2][6].splitlines()[1])['pendingCount'], 4)
+        for ident in ['refused-app-more-' + str(index) for index in range(3)] + ['retry-after-root-progress']:
+            self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
 
     def test_codex_root_endpoint_wakes_the_root_and_routes_to_the_operator(self):
         self.release('root', 1)

@@ -88,6 +88,18 @@ static void baton_file_remove_call(IoWork *w) {
   if(unlink(call->path) && errno!=ENOENT) call->error=errno;
 }
 
+static void baton_file_mkdir_call(IoWork *w) {
+  BatonFileOp *call=(BatonFileOp *)w->data;
+  if(mkdir(call->path,0700)) {
+    if(errno!=EEXIST) call->error=errno;
+    else {
+      struct stat info;
+      if(stat(call->path,&info)) call->error=errno;
+      else if(!S_ISDIR(info.st_mode)) call->error=ENOTDIR;
+    }
+  }
+}
+
 static Term baton_file_unit_pack(Env e,IoWork *w) {
   BatonFileOp *call=(BatonFileOp *)w->data;
   Term result=call->error ? io_fail(e,call->error,NULL) : io_done(e,term_pak(CID_UNIT,0));
@@ -119,6 +131,16 @@ static Term baton_file_size_run(Env e,Term *f,IoWork *w) {
   return io_work(w,baton_file_size_call,baton_file_size_pack);
 }
 static void __attribute__((constructor)) baton_file_size_use(void) {io_eff(CID_FILES_SIZE,baton_file_size_run,0);}
+#endif
+
+#ifdef CID_FILES_MKDIR
+static Term baton_file_mkdir_run(Env e,Term *f,IoWork *w) {
+  BatonFileOp *call=baton_file_op(e,f,w,1);
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  if(call->error) return baton_file_unit_pack(e,w);
+  return io_work(w,baton_file_mkdir_call,baton_file_unit_pack);
+}
+static void __attribute__((constructor)) baton_file_mkdir_use(void) {io_eff(CID_FILES_MKDIR,baton_file_mkdir_run,0);}
 #endif
 
 #ifdef CID_FILES_RENAME

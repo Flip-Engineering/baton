@@ -1,5 +1,9 @@
 import Base
 
+# Creates one directory. An existing directory succeeds.
+def Files.mkdir(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
 def Files.find_suffix(directory: String, suffix: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
 

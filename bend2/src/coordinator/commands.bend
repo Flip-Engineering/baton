@@ -59,6 +59,9 @@ type Command is Data:
   SectionMember{ensemble: String, id: String, owner: String, player: String, action: String}
   Orchestra{}
   Turns{id: String}
+  Project{path: String}
+  ProjectSessions{path: String}
+  Resume{session: String}
   KnowledgeRecord{id: String, author: String, claim: String, evidence: String, limits: String}
   KnowledgeRead{reader: String}
   KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
@@ -443,6 +446,9 @@ def sql(command: Command) -> String:
     case Orchestra{}: orchestra_sql()
     case Turns{id}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',t.id,'player',t.worker,'eventType',coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')),'reportBody',m.body,'receipt',m.receipt) AS item FROM turns t JOIN messages m ON m.id=t.id WHERE t.worker=" ++ q(id) ++ " ORDER BY m.seq);"
+    case Project{path}: ""
+    case ProjectSessions{path}: ""
+    case Resume{session}: ""
     case ObserveFile{id,player,path}: ""
     case ReportFile{id,sender,path}: ""
     case MessageFile{id,sender,recipient,kind,path}: ""
@@ -527,6 +533,9 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "delivery": Delivery{id}
     case "worktree": Worktree{id}
     case "turns": Turns{id}
+    case "project": Project{id}
+    case "project-sessions": ProjectSessions{id}
+    case "resume": Resume{id}
     case "knowledge": KnowledgeRead{id}
     case "observed-usage": ObservedUsage{id}
     case "models": Models{id}

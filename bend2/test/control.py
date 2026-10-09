@@ -212,6 +212,20 @@ class Control(unittest.TestCase):
         self.call('attach', 'operator', 'operator', '', '')
         self.call('role', 'operator', 'operator')
 
+    def project_call(self, path, *args, ok=True):
+        argv = ['--project', str(path), *map(str, args)]
+        result = subprocess.run([str(EXE), *argv], env=self.environment,
+                                capture_output=True, text=True)
+        record = {'argv': argv, 'code': result.returncode,
+                  'stdout': result.stdout, 'stderr': result.stderr}
+        with (self.directory / 'commands.jsonl').open('a') as output:
+            output.write(json.dumps(record) + '\n')
+        if not ok:
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            return record
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
     def recruit(self, session, harness='omp', parent='root'):
         return self.call('recruit', session, parent, harness, session, 'low',
                          self.repo, session + '-branch', self.checkouts / session, self.base)
@@ -402,6 +416,162 @@ class Control(unittest.TestCase):
         self.assertIsNone(self.call('delivery', 'retained')['receipt'])
         self.call('receiver', 'missing', self.fixture, self.directory / 'missing.jsonl', ok=False)
         self.assertEqual(self.rows('SELECT * FROM executions'), [])
+
+    def test_project_discovery_keeps_worktree_sessions_and_shared_knowledge(self):
+        self.root()
+        assignment = self.recruit('project-linked', 'muse')
+        workspace = pathlib.Path(assignment['workspace'])
+        self.call('join', 'project-shared', 'root', 'muse', 'project-shared',
+                  'low', self.repo)
+        self.call('connect', 'project-linked', 'saved-project-native', '')
+        self.call('message', 'project-owed', 'root', 'project-linked', 'task',
+                  'Continue the retained project work.')
+        self.call('record', 'project-finding', 'project-shared',
+                  'The retained project finding remains available.',
+                  'seed.txt', 'Fixture project.')
+
+        unrelated = self.repo / 'nested unrelated repository'
+        unrelated.mkdir()
+        for args in (('init', '-q', '-b', 'main'),
+                     ('config', 'user.name', 'Control fixture'),
+                     ('config', 'user.email', 'fixture@example.invalid'),
+                     ('commit', '-q', '--allow-empty', '-m', 'Unrelated fixture')):
+            subprocess.run(['git', '-C', str(unrelated), *args],
+                           env=self.environment, check=True,
+                           capture_output=True, text=True)
+        self.call('join', 'project-unrelated', 'root', 'muse',
+                  'project-unrelated', 'low', unrelated)
+
+        subdirectory = self.repo / 'project subdirectory'
+        subdirectory.mkdir()
+        linked_subdirectory = workspace / 'linked subdirectory'
+        linked_subdirectory.mkdir()
+        described = self.call('project', subdirectory)
+        linked = self.call('project', linked_subdirectory)
+        common = pathlib.Path(self.git('rev-parse', '--path-format=absolute',
+                                       '--git-common-dir').stdout.strip()).resolve()
+        self.assertEqual(described['project'], str(common))
+        self.assertEqual(linked['project'], described['project'])
+        self.assertEqual(described['rule'], 'common-dir')
+        self.assertEqual(described['git']['ok'], 1)
+        self.assertEqual(described['database'], str(self.db.resolve()))
+        pointer = common / 'baton2' / 'database'
+        self.assertEqual(described['pointer'], str(pointer))
+        self.assertEqual(pointer.read_text().rstrip('\n'), str(self.db.resolve()))
+
+        selected = self.project_call(linked_subdirectory, 'project-sessions', subdirectory)
+        sessions = {row['id']: row for row in selected['sessions']}
+        self.assertEqual(set(sessions), {'project-linked', 'project-shared'})
+        self.assertEqual(selected['project']['project'], str(common))
+        self.assertEqual(sessions['project-linked']['native'], 'saved-project-native')
+        self.assertEqual(sessions['project-linked']['pendingCount'], 1)
+        self.assertEqual(self.project_call(subdirectory, 'inbox', 'project-linked')[0]['id'],
+                         'project-owed')
+        self.assertEqual(self.project_call(linked_subdirectory, 'knowledge', 'project-shared'),
+                         self.call('knowledge', 'project-shared'))
+        self.assertEqual(self.project_call(subdirectory, 'knowledge', 'project-shared')[0]['claim'],
+                         'The retained project finding remains available.')
+
+    def test_project_resume_continues_same_native_and_preserves_tab_message_id(self):
+        self.root()
+        session = 'project-resumed-muse'
+        assignment = self.recruit(session, 'muse')
+        self.call('project', self.repo)
+        log = self.receiver(session)
+        self.dispatch('dispatch-turn', session, 'project-original-turn',
+                      self.fixture, log, self.task)
+        stream, first = self.accept(session)
+        self.finish(stream, 'Original project report.')
+        self.exited(session)
+        shutdown_fixture_owner(self)
+        self.eventually(lambda: not self.process_rows())
+        original = self.call('session', session)
+        endpoint = original['endpointArgv']
+        unfinished = pathlib.Path(assignment['workspace']) / 'unfinished.txt'
+        unfinished.write_text('Retained unfinished project source.\n')
+        self.call('connect', session, first['native'], '')
+        ident = 'project-input\twith-tab'
+        self.call('message', ident, 'root', session, 'task', 'Resume the original project task.')
+        self.assertIsNone(self.call('delivery', ident)['receipt'])
+        self.call('connect', session, first['native'], json.dumps(endpoint))
+
+        resumed = subprocess.Popen([str(EXE), '--project', assignment['workspace'],
+                                    'resume', session], env=self.environment,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        continued, start = self.accept(session)
+        self.assertEqual(start['native'], first['native'])
+        self.assertEqual(start['resume'], first['native'])
+        self.assertEqual(start['cwd'], assignment['workspace'])
+        self.assertIn('[id: ' + ident + ']', start['prompt'])
+        self.assertIn('Resume the original project task.', start['prompt'])
+        self.finish(continued, 'Resumed project work completed.')
+        stdout, stderr = resumed.communicate()
+        self.assertEqual(resumed.returncode, 0, stderr)
+        answer = json.loads(stdout)
+        self.assertEqual((answer['session'], answer['message']), (session, ident))
+        self.assertEqual(answer['delivery']['id'], ident)
+        self.assertEqual(answer['delivery']['receipt'], 'fixture-native-reviewed')
+        self.exited(session)
+        self.assertEqual(answer['latestReport'], 'Resumed project work completed.')
+        self.assertEqual(answer['latestReportId'], self.call('turns', session)[-1]['id'])
+        self.assertEqual(self.call('inbox', session), [])
+        final = self.call('session', session)
+        for field in ('id', 'parent', 'harness', 'workspace', 'branch', 'native'):
+            self.assertEqual(final[field], original[field])
+        self.assertEqual(unfinished.read_text(), 'Retained unfinished project source.\n')
+
+    def test_project_resume_keeps_queued_delivery_separate_from_history_and_preserves_stops(self):
+        self.root()
+        session = 'project-active-muse'
+        self.recruit(session, 'muse')
+        self.call('project', self.repo)
+        log = self.receiver(session)
+        self.dispatch('dispatch-turn', session, 'project-history-turn',
+                      self.fixture, log, self.task)
+        original_stream, first = self.accept(session)
+        self.finish(original_stream, 'Historical project report.')
+        self.exited(session)
+        shutdown_fixture_owner(self)
+        self.eventually(lambda: not self.process_rows())
+
+        self.dispatch('dispatch-file', 'project-active-task', 'root', session, 'task', self.task)
+        active, started = self.accept(session)
+        self.assertEqual(started['resume'], first['native'])
+        self.assertEqual(self.action(active, ack=True), {'acknowledged': True})
+        self.call('message', 'project-next-task', 'root', session, 'task',
+                  'Input queued behind the active project turn.')
+        queued = self.project_call(self.repo, 'resume', session)
+        self.assertEqual((queued['session'], queued['message']), (session, 'project-next-task'))
+        self.assertEqual(queued['delivery']['id'], 'project-next-task')
+        self.assertIsNone(queued['delivery']['receipt'])
+        self.assertEqual(queued['latestReportId'], 'project-history-turn')
+        self.assertEqual(queued['latestReport'], 'Historical project report.')
+        self.assertEqual(self.rows('SELECT phase FROM executions WHERE session=?',
+                                   (session,))[0]['phase'], 'running')
+        self.finish(active, 'The active project task completed.')
+        continued, later = self.accept(session)
+        self.assertEqual(later['native'], first['native'])
+        self.assertEqual(later['resume'], first['native'])
+        self.assertIn('[id: project-next-task]', later['prompt'])
+        self.finish(continued, 'The queued project task completed.')
+        self.exited(session)
+        self.assertEqual(self.call('delivery', 'project-next-task')['receipt'],
+                         'fixture-native-reviewed')
+        self.assertEqual(self.call('inbox', session), [])
+
+        stopped = 'project-stopped-muse'
+        self.recruit(stopped, 'muse')
+        self.call('connect', stopped, 'saved-stopped-project-native', '')
+        self.call('message', 'project-stopped-task', 'root', stopped, 'task',
+                  'This input remains recorded under the operator stop.')
+        self.call('stop', stopped, 'project-stop', 'Operator stopped this project session.')
+        refusal = self.project_call(self.repo, 'resume', stopped, ok=False)
+        self.assertIn('terminally stopped', refusal['stderr'])
+        self.assertEqual(self.rows('SELECT * FROM executions WHERE session=?', (stopped,)), [])
+        self.assertIsNone(self.call('delivery', 'project-stopped-task')['receipt'])
+        self.assertEqual(self.call('session', stopped)['native'], 'saved-stopped-project-native')
+        self.assertEqual(self.rows('SELECT id FROM session_stops WHERE session=?',
+                                   (stopped,)), [{'id': 'project-stop'}])
 
     def test_completed_player_moves_to_shared_checkout_and_resumes_after_task_retirement(self):
         self.root()
