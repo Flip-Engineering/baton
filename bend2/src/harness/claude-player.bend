@@ -29,7 +29,7 @@ def input(handle: U32, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 def bound_head(binding: List<String>, cmd: String, model: String, effort: String) -> List<String>:
   match binding:
     case Nil{}: arguments(cmd,model,effort)
-    case other: List.append(&1,String,List.append(&1,String,["/usr/bin/env","-u","ANTHROPIC_API_KEY","-u","ANTHROPIC_AUTH_TOKEN","-u","CLAUDE_CODE_OAUTH_TOKEN"],binding),arguments(cmd,model,effort))
+    case other: List.append(&1,String,List.append(&1,String,["/usr/bin/env","-u","ANTHROPIC_API_KEY","-u","ANTHROPIC_AUTH_TOKEN","-u","CLAUDE_CODE_OAUTH_TOKEN"],other),arguments(cmd,model,effort))
 
 def bound_arguments(binding: List<String>, cmd: String, model: String, effort: String, session: String, fresh: Bool) -> List<String>:
   match fresh:

@@ -30,7 +30,7 @@ def directory_of(path: String) -> String:
 
 # One three-field line: the third field is the rest of the line, so a store path with
 # spaces survives. A line whose fields are empty is skipped rather than guessed at.
-def profile_fields(harness: String, label: String, store: String) -> Maybe<Profile>:
+def profile_fields(+harness: String, +label: String, +store: String) -> Maybe<Profile>:
   Bool.pick(Maybe<Profile>,Bool.and(Bool.not(String.is_empty(harness)),Bool.and(Bool.not(String.is_empty(label)),Bool.not(String.is_empty(store)))),Some{Pr{harness,label,store}},None{})
 
 def profile_of(fields: List<String>) -> Maybe<Profile>:
@@ -42,39 +42,48 @@ def profile_of(fields: List<String>) -> Maybe<Profile>:
 def profile_lines(lines: List<String>) -> List<Profile>:
   match lines:
     case Nil{}: Nil{}
-    case line <> rest: match profile_of(String.split(Tx.trim_nl(line),Char.from_u32(32))):
-      case Some{+profile}: Con{profile,profile_lines(rest)}
-      case None{}: profile_lines(rest)
+    case line <> rest: profile_line(profile_of(String.split(Tx.trim_nl(line),Char.from_u32(32))),rest)
 
-def profiles_for(profiles: List<Profile>, harness: String) -> List<Profile>:
+def profile_line(parsed: Maybe<Profile>, rest: List<String>) -> List<Profile>:
+  match parsed:
+    case Some{profile}: Con{profile,profile_lines(rest)}
+    case None{}: profile_lines(rest)
+
+def profiles_for(profiles: List<Profile>, +harness: String) -> List<Profile>:
   match profiles:
     case Nil{}: Nil{}
-    case +profile <> rest: Bool.pick(List<Profile>,String.eq(profile.harness,harness),Con{profile,profiles_for(rest,harness)},profiles_for(rest,harness))
+    case +profile <> +rest: Bool.pick(List<Profile>,String.eq(profile.harness,harness),Con{profile,profiles_for(rest,harness)},profiles_for(rest,harness))
 
 def first_profile(profiles: List<Profile>, harness: String) -> Maybe<Profile>:
-  match profiles_for(profiles,harness):
+  first_selected(profiles_for(profiles,harness))
+
+def first_selected(profiles: List<Profile>) -> Maybe<Profile>:
+  match profiles:
     case Nil{}: None{}
     case +profile <> rest: Some{profile}
 
 # The credential-store variable each harness reads. A harness without one gets no
 # binding, so an unknown harness adds nothing to the spawn environment.
-def store_variable(harness: String) -> Maybe<String>:
+def store_variable(+harness: String) -> Maybe<String>:
   Bool.pick(Maybe<String>,String.eq(harness,"codex"),Some{"CODEX_HOME"},Bool.pick(Maybe<String>,Bool.or(String.eq(harness,"claude-code"),String.eq(harness,"claude")),Some{"CLAUDE_CONFIG_DIR"},None{}))
 
 # One element per binding. The host encodes each argv element separately, so a store
 # path with spaces stays a single argument and needs no shell quoting.
 def store_binding(harness: String, store: String) -> List<String>:
-  match store_variable(harness):
+  binding_for(store_variable(harness),store)
+
+def binding_for(variable: Maybe<String>, store: String) -> List<String>:
+  match variable:
     case None{}: Nil{}
     case Some{variable}: Con{variable ++ "=" ++ store, Nil{}}
 
 # The profile after the one that refused, in operator order, or none when the
 # operator listed no further profile for that harness. Order is the file's own order;
 # no history and no observation reorders or suppresses a listed profile.
-def next_after(profiles: List<Profile>, harness: String, current: String, seen: Bool) -> Maybe<Profile>:
+def next_after(profiles: List<Profile>, +harness: String, +current: String, seen: Bool) -> Maybe<Profile>:
   match profiles:
     case Nil{}: None{}
-    case +profile <> rest:
+    case +profile <> +rest:
       match seen:
         case True{}: Bool.pick(Maybe<Profile>,String.eq(profile.harness,harness),Some{profile},next_after(rest,harness,current,True{}))
         case False{}: Bool.pick(Maybe<Profile>,Bool.and(String.eq(profile.harness,harness),String.eq(profile.label,current)),next_after(rest,harness,current,True{}),next_after(rest,harness,current,False{}))
@@ -83,20 +92,21 @@ def next_profile(profiles: List<Profile>, harness: String, current: String) -> M
   next_after(profiles,harness,current,False{})
 
 # A handoff with no profile record yet selects the head of the operator's list.
-def started_or_next(profiles: List<Profile>, harness: String, current: String) -> Maybe<Profile>:
+def started_or_next(+profiles: List<Profile>, +harness: String, +current: String) -> Maybe<Profile>:
   Bool.pick(Maybe<Profile>,String.is_empty(current),first_profile(profiles,harness),next_profile(profiles,harness,current))
 
 # The per-session record is append-only: the last non-empty line is the profile in
 # use, so advancing it needs no rewrite and no lock. Its fields are the label and the
 # rest of the line as the store.
 def record_of(line: String) -> Maybe<Profile>:
-  match String.split(Tx.trim_nl(line),Char.from_u32(32)):
-    case label <> rest: match record_fields(label,Tx.join(" ",rest)):
-      case Some{+profile}: Some{profile}
-      case None{}: None{}
+  record_parts(String.split(Tx.trim_nl(line),Char.from_u32(32)))
+
+def record_parts(fields: List<String>) -> Maybe<Profile>:
+  match fields:
+    case label <> rest: record_fields(label,Tx.join(" ",rest))
     case other: None{}
 
-def record_fields(label: String, store: String) -> Maybe<Profile>:
+def record_fields(+label: String, +store: String) -> Maybe<Profile>:
   Bool.pick(Maybe<Profile>,Bool.and(Bool.not(String.is_empty(label)),Bool.not(String.is_empty(store))),Some{Pr{"",label,store}},None{})
 
 def last_line(lines: List<String>) -> String:
@@ -107,16 +117,22 @@ def last_line(lines: List<String>) -> String:
       Bool.pick(String,String.is_empty(last),Tx.trim_nl(line),last)
 
 def record_label(line: String) -> String:
-  match record_of(line):
+  label_of(record_of(line))
+
+def label_of(parsed: Maybe<Profile>) -> String:
+  match parsed:
     case Some{+profile}: profile.label
     case None{}: ""
 
 def record_store(line: String) -> String:
-  match record_of(line):
+  store_of(record_of(line))
+
+def store_of(parsed: Maybe<Profile>) -> String:
+  match parsed:
     case Some{+profile}: profile.store
     case None{}: ""
 
-def record_line(profile: Profile) -> String:
+def record_line(+profile: Profile) -> String:
   profile.label ++ " " ++ profile.store
 
 # The report bodies carry the account change and the provider's own cause. Nothing
@@ -189,7 +205,7 @@ def history_home_sql(+line: String) -> String:
 # The packaged native history helper of the runtime this deployment resolves: it sits beside
 # the resolved identity helper, so it is installed and versioned with that runtime. No
 # resolved helper means no such capability in this deployment.
-def history_helper(helper: String) -> String:
+def history_helper(+helper: String) -> String:
   Bool.pick(String,String.is_empty(helper),"",directory_of(helper) ++ "/native-history.mjs")
 
 # The helper's request: every element is one literal argv element and the host encodes them
@@ -203,5 +219,5 @@ def history_prepare_args(script: String, harness: String, cmd: String, cwd: Stri
 # configuration ahead of the environment as well, so the preserved home travels as one
 # explicit argument value in the config value's own string form. The host encodes each
 # argv element separately, so the value reaches the provider without a shell.
-def history_override(harness: String, home: String) -> List<String>:
+def history_override(harness: String, +home: String) -> List<String>:
   Bool.pick(List<String>,Bool.and(String.eq(harness,"codex"),Bool.not(String.is_empty(home))),["-c","sqlite_home=" ++ J.string_literal(home)],Nil{})

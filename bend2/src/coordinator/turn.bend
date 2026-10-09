@@ -445,7 +445,10 @@ def codex_frame_kind(db: String, line: String) -> IO(String):
   IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.item.type')='command_execution' AND json_type(value,'$.item.id')='text' AND json_extract(value,'$.item.id')<>'' THEN CASE json_extract(value,'$.type') WHEN 'item.started' THEN 'codex_command_start' WHEN 'item.completed' THEN 'codex_command_end' ELSE '' END ELSE '' END ELSE '' END FROM frame;"))
 
 def frame_kind(db: String, line: String, +harness: String) -> IO(String):
-  match String.eq(harness,"codex\n"):
+  frame_kind_selected(db,line,harness,String.eq(harness,"codex\n"))
+
+def frame_kind_selected(db: String, line: String, harness: String, codex: Bool) -> IO(String):
+  match codex:
     case True{}: codex_frame_kind(db,line)
     case False{}: omp_frame_kind(db,line,String.eq(harness,"omp\n"))
 
@@ -721,7 +724,7 @@ def retained_arguments(omp: Bool, claude: Bool, +cmd: String, +model: String, +e
     Claude.argv(cmd,model,effort,native,String.is_empty(native)),
   Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
 
-def profile_path(db: String, player: String) -> IO(String):
+def profile_path(+db: String, player: String) -> IO(String):
   do IO<String>:
     saved : String <- IO.try(String,DB.Sql.query(db,Subs.profile_record_sql(db,player)))
     IO.pure(String,Tx.trim_nl(saved))
@@ -736,7 +739,7 @@ def current_store(db: String, player: String) -> IO(String):
     text : String <- IO.pass(String,Subs.optional_text(read))
     IO.pure(String,Subs.record_store(Subs.last_line(Tx.split_lines(text))))
 
-def history_path(db: String, player: String) -> IO(String):
+def history_path(+db: String, player: String) -> IO(String):
   do IO<String>:
     saved : String <- IO.try(String,DB.Sql.query(db,Subs.history_record_sql(db,player)))
     IO.pure(String,Tx.trim_nl(saved))
@@ -746,7 +749,7 @@ def history_path(db: String, player: String) -> IO(String):
 # switched store spawns with the environment and configuration it has today. The last
 # non-empty line is the handoff in force; the home is read through the database's
 # JSON reader, which retains a malformed JSON failure.
-def current_history(db: String, player: String) -> IO(String):
+def current_history(+db: String, player: String) -> IO(String):
   do IO<String>:
     path : String <- history_path(db,player)
     read : Result<&1,&1,U32 & String,String> <- T.Text.read(path)
@@ -791,7 +794,7 @@ def retained(+db: String, +player: String, +directory: String, +cmd: String, +mo
     muse_args : String <- IO.pure(String,prefix ++ P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
     +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
     +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
-    store : String <- current_store(db,player)
+    +store : String <- current_store(db,player)
     history : String <- current_history(db,player)
     args : String <- IO.pure(String,prefix ++ Bool.pick(String,String.is_empty(store),retained_arguments(omp,claude,cmd,model,effort,sessions,native),retained_profile_arguments(omp,claude,Subs.store_binding(Tx.trim_nl(harness),store),Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)))
     input : String <- IO.pure(String,retained_input(False{},omp,claude,prompt,level))
