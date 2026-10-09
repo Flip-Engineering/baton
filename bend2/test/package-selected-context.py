@@ -4,6 +4,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -16,6 +17,50 @@ TYPESCRIPT_SOURCE = Path(__file__).resolve().parents[1] / 'context/typescript'
 SPEC = importlib.util.spec_from_file_location('package_native', SCRIPT)
 PACKAGE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PACKAGE)
+
+
+# Scripted Muse protocol fixture using the installed coordinator and MCP adapter.
+NATIVE_HANDOFF = r'''import json,pathlib,re,subprocess,sys
+config=json.loads(pathlib.Path(__file__).with_suffix('.json').read_text())
+args=sys.argv[1:]
+session=args[args.index('--model')+1]
+resume=args[args.index('--session-id')+1] if '--session-id' in args else ''
+native=resume or ('native-'+session)
+prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
+stream={'kind':'session','id':native}
+print(json.dumps({'stream':stream,'payload_type':'run.model.configured',
+                 'payload':{'kind':'run_model_configured','model_id':session}}),flush=True)
+print(json.dumps({'stream':stream,'payload_type':'turn.input.user',
+                 'payload':{'kind':'turn_input_user','command_id':'handoff'}}),flush=True)
+def tool(name,arguments):
+    requests=[{'jsonrpc':'2.0','id':1,'method':'initialize',
+               'params':{'protocolVersion':'2024-11-05','capabilities':{},
+                         'clientInfo':{'name':'native-object-handoff','version':'1'}}},
+              {'jsonrpc':'2.0','id':2,'method':'tools/call',
+               'params':{'name':name,'arguments':arguments}}]
+    result=subprocess.run([config['node'],config['mcp'],config['db'],config['exe'],
+                           '--session',session],
+                          input=''.join(json.dumps(row)+'\n' for row in requests),
+                          capture_output=True,text=True)
+    assert result.returncode==0,(result.stdout,result.stderr)
+    replies=[json.loads(line) for line in result.stdout.splitlines()]
+    reply=next(row for row in replies if row.get('id')==2)
+    assert 'error' not in reply,reply
+    answer=reply['result']
+    assert not answer.get('isError',False),answer
+    return json.loads(answer['content'][0]['text'])
+if session==config['producer']:
+    tool('baton2_context_query_file',{'query':config['query'],'path':config['request']})
+retained=tool('baton2_context_result',{'query':config['query']})
+assert retained['state']=='complete',retained
+for ident in re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M):
+    tool('baton2_ack',{'id':ident,'receipt':'native-consumed-'+config['query']})
+body=json.dumps({'session':session,'native':native,'resume':resume,'prompt':prompt,
+                 'retained':retained},ensure_ascii=False)
+print(json.dumps({'stream':stream,'payload_type':'run.terminal.completed',
+                 'payload':{'kind':'run_terminal','terminal':'completed',
+                            'command_id':'handoff','text':body}}),flush=True)
+'''
 
 
 class SelectedContextPackageTest(unittest.TestCase):
@@ -272,6 +317,109 @@ class SelectedContextPackageTest(unittest.TestCase):
         self.assertEqual(payload['schema'],
                          'baton2.context.bend2.source-analysis.result.v1', retained.stdout)
         self.assertEqual(payload['status'], 'completed', retained.stdout)
+
+        handoff_query = 'installed-native-handoff'
+        producer, consumer = 'native-object-producer', 'native-object-consumer'
+        handoff_request = self.root / 'handoff-request.json'
+        source_request = json.loads(request.read_text())
+        source_request['cwd'] = str(self.root / producer)
+        handoff_request.write_text(json.dumps(source_request) + '\n')
+        native_fixture = self.root / 'native-handoff.py'
+        native_fixture.write_text('#!' + sys.executable + '\n' + NATIVE_HANDOFF)
+        native_fixture.chmod(0o700)
+        native_fixture.with_suffix('.json').write_text(json.dumps({
+            'node': node, 'mcp': str(self.payload / 'libexec/baton2/mcp-conductor.mjs'),
+            'db': str(database), 'exe': str(installed), 'producer': producer,
+            'query': handoff_query, 'request': str(handoff_request),
+        }))
+        handoff_task = self.root / 'handoff-task.txt'
+        handoff_task.write_text('Read the complete retained source object for ' + handoff_query + '.\n')
+
+        def checked(*args, cwd=repository):
+            result = invoke(*args, cwd=cwd)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return json.loads(result.stdout)
+
+        handoff_reports = {}
+        for actor in (producer, consumer):
+            actor_workspace = self.root / actor
+            checked('recruit', actor, 'validation-root', 'muse', actor, 'low',
+                    str(project), actor, str(actor_workspace), 'HEAD')
+            turned = invoke('turn', actor, actor + '-first', str(native_fixture), actor,
+                            'low', str(actor_workspace), str(handoff_task),
+                            str(self.root / (actor + '.jsonl')), '')
+            self.assertEqual(turned.returncode, 0, turned.stdout + turned.stderr)
+            rows = checked('players')
+            report = json.loads(next(row for row in rows if row['id'] == actor)['latestReport'])
+            handoff_reports[actor] = report
+            self.assertEqual(report['session'], actor)
+            self.assertEqual(report['native'], checked('session', actor)['native'])
+            self.assertEqual(report['resume'], '')
+        shared = checked('context-result', handoff_query)
+        self.assertEqual(shared['owner'], producer)
+        self.assertEqual(shared['result']['payload']['schema'], payload['schema'])
+        for report in handoff_reports.values():
+            self.assertEqual(report['retained'], shared)
+
+        project_description = checked('project', str(project))
+        original = checked('session', consumer)
+        consumer_workspace = Path(original['workspace'])
+        linked = checked('project', str(consumer_workspace))
+        self.assertEqual(linked['project'], project_description['project'])
+        self.assertEqual(linked['database'], str(database.resolve()))
+        unfinished = consumer_workspace / 'unfinished.txt'
+        unfinished.write_text('Keep unfinished native consumer source. λ\n')
+        checked('connect', consumer, original['native'], '')
+        message = 'native-handoff-resume'
+        body = 'Read the same full retained source object again: ' + handoff_query
+        checked('message', message, 'validation-root', consumer, 'task', body)
+        self.assertIsNone(checked('delivery', message)['receipt'])
+        checked('connect', consumer, original['native'], json.dumps(original['endpointArgv']))
+        resumed = subprocess.run([str(installed), '--project', str(consumer_workspace),
+                                  'resume', consumer], capture_output=True, text=True)
+        self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
+        answer = json.loads(resumed.stdout)
+        continued = json.loads(answer['latestReport'])
+        self.assertEqual((answer['session'], answer['message']), (consumer, message))
+        self.assertEqual(answer['delivery']['receipt'], 'native-consumed-' + handoff_query)
+        self.assertEqual((continued['native'], continued['resume']),
+                         (original['native'], original['native']))
+        self.assertIn(body, continued['prompt'])
+        self.assertEqual(continued['retained'], shared)
+        final = checked('session', consumer)
+        for field in ('id', 'parent', 'harness', 'workspace', 'branch', 'native'):
+            self.assertEqual(final[field], original[field])
+        self.assertEqual(unfinished.read_text(), 'Keep unfinished native consumer source. λ\n')
+        discovered = subprocess.run([str(installed), '--project', str(consumer_workspace),
+                                     'project-sessions', str(project)],
+                                    capture_output=True, text=True)
+        self.assertEqual(discovered.returncode, 0, discovered.stdout + discovered.stderr)
+        sessions = {row['id']: row for row in json.loads(discovered.stdout)['sessions']}
+        self.assertEqual(sessions[consumer]['native'], original['native'])
+        self.assertEqual(sessions[producer]['native'], handoff_reports[producer]['native'])
+        self.assertEqual(sessions[consumer]['pendingCount'], 0)
+
+        checked('connect', consumer, original['native'], '')
+        stopped_input = 'native-handoff-stopped-input'
+        checked('message', stopped_input, 'validation-root', consumer, 'task',
+                'Retain this input under the native consumer stop.')
+        checked('stop', consumer, 'native-handoff-stop', 'Native consumer work is complete.')
+        refused = subprocess.run([str(installed), '--project', str(consumer_workspace),
+                                  'resume', consumer], capture_output=True, text=True)
+        self.assertNotEqual(refused.returncode, 0, refused.stdout)
+        self.assertIn('terminally stopped', refused.stderr)
+        self.assertIsNone(checked('delivery', stopped_input)['receipt'])
+        self.assertEqual(checked('session', consumer)['native'], original['native'])
+        self.assertEqual(checked('context-result', handoff_query, cwd=consumer_workspace), shared)
+        handoff_evidence = Path(os.environ.get('FINAL_NATIVE_CONTEXT_EVIDENCE', str(self.root)))
+        handoff_evidence.mkdir(parents=True, exist_ok=True)
+        (handoff_evidence / 'native-object-handoff.json').write_text(json.dumps({
+            'harnessFixture': 'scripted-muse-protocol',
+            'producer': handoff_reports[producer], 'consumer': handoff_reports[consumer],
+            'resumed': answer, 'projectSessions': json.loads(discovered.stdout),
+            'stoppedResume': {'code': refused.returncode, 'stdout': refused.stdout,
+                              'stderr': refused.stderr}, 'retained': shared,
+        }, ensure_ascii=False) + '\n')
 
         compiler = os.environ.get('BATON2_CONTEXT_TYPESCRIPT')
         if compiler is not None:
