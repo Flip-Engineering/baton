@@ -270,7 +270,7 @@ while True:
         with pathlib.Path(__QUEUED__).open('a') as calls:
             calls.write(json.dumps(request)+chr(10))
         if pathlib.Path(__REFUSED__).exists():
-            reply({'id':request['id'],'error':{'code':-32600,'message':'Queue is full (100 queued messages)'}})
+            reply({'id':request['id'],'error':{'code':-32600,'message':'Queue is full (100 queued messages): café Ω 🙂'}})
             continue
         result={'turnId':'fixture-turn'}
     else:raise AssertionError(request)
@@ -357,7 +357,7 @@ while True:
         self.assertEqual(json.loads(self.coord('turns', 'root')), [])
         log = pathlib.Path(str(self.db) + '.root.log').read_text()
         self.assertIn('exit 1', log)
-        cause = '{"code":-32600,"message":"Queue is full (100 queued messages)"}'
+        cause = '{"code":-32600,"message":"Queue is full (100 queued messages): café Ω 🙂"}'
         self.assertIn(cause, log)
         self.assertTrue(any(cause in path.read_text()
                             for path in self.directory.glob('state.db.queue-*.stderr')))

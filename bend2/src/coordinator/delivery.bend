@@ -9,6 +9,7 @@ import ../git/text.bend as Tx
 import ../git/types.bend as T
 import ../harness/codex-player.bend as Codex
 import ../json/canonical.bend as J
+import ../context/request.bend as Req
 
 # The historical .root.log pathname remains the delivery log for existing databases.
 # The endpoint is an argv JSON array. The committed message ID is its last argument.
@@ -174,12 +175,17 @@ def queue_previous(saved: String, cause: String, notified: Bool) -> Result<&1,&1
     case True{}: Done{saved}
     case False{}: Fail{(1,cause)}
 
+def queue_cause(decoded: Req.Scalar) -> IO(String):
+  match decoded:
+    case Req.ScalarText{value}: IO.pure(String,value)
+    case other: IO.die(String,22,"Stored Codex wake failure could not be decoded: " ++ Req.scalar_reason(other))
+
 def queue_selected(+db: String, id: String, saved: String, native: String, +recipient: String, token: String, coalesced: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match coalesced:
     case False{}: queue_launch(db,id,saved,native,recipient,token)
     case True{}: do IO<Result<&1,&1,U32 & String,String>>:
       row : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT hex(cause) FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ "),'');"))
-      +cause : String = Tx.hex_decode(Tx.trim_nl(row))
+      +cause : String <- queue_cause(Req.decode_scalar_utf8(Tx.hex_decode(Tx.trim_nl(row))))
       IO.pure(Result<&1,&1,U32 & String,String>,queue_previous(saved,cause,String.is_empty(cause)))
 
 def queue_claimed(+db: String, +id: String, condition: String, saved: String, +native: String, +recipient: String, retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
