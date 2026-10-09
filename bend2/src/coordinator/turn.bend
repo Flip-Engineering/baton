@@ -158,7 +158,7 @@ def finish_parent(db: String, player: String, id: String, log: String, outcome: 
       match parent:
         case True{}: player_finished(db,player,id)
         case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-          output : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'error'," ++ C.q(error) ++ ");"))
+          output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
           T.Text.control_output(output)
 
 def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -209,7 +209,7 @@ def codex_report(db: String, player: String, id: String, event: String, empty: B
 
 def codex_result_sql(source: String) -> String:
   +events = "'[' || replace(trim(" ++ C.q(source) ++ ",char(10)),char(10),',') || ']'"
-  "SELECT json_object('type','result','is_error',json_extract(e.value,'$.type')='turn.failed','nativeEvent',json(e.value),'result',CASE WHEN json_extract(e.value,'$.type')='turn.failed' THEN json_extract(e.value,'$.error.message') ELSE (SELECT json_extract(m.value,'$.item.text') FROM json_each(" ++ events ++ ") m WHERE m.key<e.key AND json_extract(m.value,'$.type')='item.completed' AND json_extract(m.value,'$.item.type')='agent_message' ORDER BY m.key DESC LIMIT 1) END) FROM json_each(" ++ events ++ ") e WHERE json_extract(e.value,'$.type') IN ('turn.completed','turn.failed') ORDER BY e.key DESC LIMIT 1;"
+  "WITH frames(value) AS (SELECT " ++ events ++ ") SELECT json_object('type','result','is_error',json_extract(e.value,'$.type')='turn.failed','nativeEvent',json(e.value),'result',CASE WHEN json_extract(e.value,'$.type')='turn.failed' THEN json_extract(e.value,'$.error.message') ELSE (SELECT json_extract(m.value,'$.item.text') FROM json_each(frames.value) m WHERE m.key<e.key AND json_extract(m.value,'$.type')='item.completed' AND json_extract(m.value,'$.item.type')='agent_message' ORDER BY m.key DESC LIMIT 1) END) FROM frames,json_each(frames.value) e WHERE json_extract(e.value,'$.type') IN ('turn.completed','turn.failed') ORDER BY e.key DESC LIMIT 1;"
 
 # Keep this invocation's latest Codex assistant message and terminal event.
 def codex_finished(+db: String, player: String, id: String, +source: String, previous: String, codex: Bool, sealed: Bool) -> IO(String):
@@ -232,7 +232,7 @@ def omp_message(db: String, +event: String, previous: String, enabled: Bool) -> 
   match enabled:
     case False{}: IO.pure(String,previous)
     case True{}: do IO<String>:
-      message : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='message_end' AND json_extract(" ++ C.q(event) ++ ",'$.message.role')='assistant' THEN json_extract(" ++ C.q(event) ++ ",'$.message') ELSE " ++ C.q(previous) ++ " END;"))
+      message : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value,previous) AS (VALUES(" ++ C.q(event) ++ "," ++ C.q(previous) ++ ")) SELECT CASE WHEN json_extract(value,'$.type')='message_end' AND json_extract(value,'$.message.role')='assistant' THEN json_extract(value,'$.message') ELSE previous END FROM frame;"))
       IO.pure(String,Tx.trim_nl(message))
 
 # The completion reader calls json_extract for content block fields. Keep
@@ -256,7 +256,7 @@ def omp_terminal_kept_sql(+source: String) -> String:
 def omp_terminal_messages_sql(+source: String, +message: String) -> String:
   +objects = omp_terminal_objects_sql(source)
   +kept = omp_terminal_kept_sql(source)
-  "CASE WHEN " ++ objects ++ "=0 AND json_valid(" ++ C.q(message) ++ ") THEN json_array(json(" ++ C.q(message) ++ ")) ELSE " ++ kept ++ " END"
+  "CASE WHEN " ++ objects ++ "=0 AND json_valid(" ++ message ++ ") THEN json_array(json(" ++ message ++ ")) ELSE " ++ kept ++ " END"
 
 # OMP may return valid terminal envelopes whose messages array contains a
 # non-object metadata marker. Keep object messages in their original order for
@@ -265,11 +265,11 @@ def omp_terminal_messages_sql(+source: String, +message: String) -> String:
 # built by logs.bend terminal_object_sql. The raw frame stream stays in the
 # attempt stdout spool of a retained receive until acknowledgement, and the
 # provider's own journal holds the provider's raw record.
-# The frame arrives once, through the one-row seam frame_id_sql already uses, so
-# the extraction quotes the envelope once instead of once per SQL expression.
+# The frame and fallback message each enter the one-row relation once.
+# Extraction reads their SQL columns.
 def omp_terminal_sql(+event: String, +message: String) -> String:
-  +messages = omp_terminal_messages_sql("frame.value",message)
-  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='agent_end' AND coalesce(json_extract(value,'$.isTerminal'),1)=1 THEN CASE WHEN json_type(value,'$.messages')='array' THEN json_set(value,'$.messages',json(" ++ messages ++ ")) WHEN json_valid(" ++ C.q(message) ++ ") THEN json_set(value,'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE value END ELSE value END ELSE value END FROM frame;"
+  +messages = omp_terminal_messages_sql("frame.value","frame.message")
+  "WITH frame(value,message) AS (VALUES(" ++ C.q(event) ++ "," ++ C.q(message) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='agent_end' AND coalesce(json_extract(value,'$.isTerminal'),1)=1 THEN CASE WHEN json_type(value,'$.messages')='array' THEN json_set(value,'$.messages',json(" ++ messages ++ ")) WHEN json_valid(frame.message) THEN json_set(value,'$.messages',json_array(json(frame.message))) ELSE value END ELSE value END ELSE value END FROM frame;"
 
 def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) -> IO(String):
   match enabled:
@@ -281,7 +281,7 @@ def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) ->
 # The root turn input identifies the admitted Muse invocation. Nested task
 # streams can complete while that invocation is still running.
 def primary_command_sql(+event: String) -> String:
-  "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.payload_type')='turn.input.user' AND json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='turn_input_user' THEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.payload.command_id'),'') ELSE '' END ELSE '' END;"
+  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.payload_type')='turn.input.user' AND json_extract(value,'$.payload.kind')='turn_input_user' THEN coalesce(json_extract(value,'$.payload.command_id'),'') ELSE '' END ELSE '' END FROM frame;"
 
 def primary_command(db: String, +event: String, +previous: String, muse: Bool) -> IO(String):
   match muse:
@@ -300,15 +300,15 @@ def current_command(db: String, +event: String, +previous: String, muse: Bool) -
       IO.pure(String,Bool.pick(String,String.is_empty(selected),previous,selected))
 
 def primary_terminal_expr(+event: String, +primary: String) -> String:
-  "CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='run_terminal' AND " ++ C.q(primary) ++ "<>'' AND json_extract(" ++ C.q(event) ++ ",'$.payload.command_id')=" ++ C.q(primary) ++ " THEN 1 ELSE 0 END ELSE 0 END"
+  "CASE WHEN json_valid(" ++ event ++ ") THEN CASE WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' AND " ++ C.q(primary) ++ "<>'' AND json_extract(" ++ event ++ ",'$.payload.command_id')=" ++ C.q(primary) ++ " THEN 1 ELSE 0 END ELSE 0 END"
 
 def primary_terminal_sql(+event: String, +primary: String) -> String:
-  "SELECT " ++ primary_terminal_expr(event,primary) ++ ";"
+  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT " ++ primary_terminal_expr("frame.value",primary) ++ " FROM frame;"
 
 def primary_terminal(db: String, +event: String, +primary: String, muse: Bool) -> IO(Bool):
   match muse:
     case False{}: do IO<Bool>:
-      found : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN " ++ C.terminal(event) ++ " ELSE 0 END;"))
+      found : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT CASE WHEN json_valid(value) THEN " ++ C.terminal_expr("frame.value") ++ " ELSE 0 END FROM frame;"))
       IO.pure(Bool,String.eq(Tx.trim_nl(found),"1"))
     case True{}: do IO<Bool>:
       found : String <- IO.try(String,DB.Sql.query(db,primary_terminal_sql(event,primary)))
@@ -327,10 +327,10 @@ def terminal_admitted(db: String, event: String, primary: String, candidate: Boo
 # terminal. Compare the report body before committing so the upsert guard never
 # turns a changed observation into a NOT NULL failure.
 def completion_state_expr(+id: String, +player: String, +event: String) -> String:
-  "CASE WHEN EXISTS(SELECT 1 FROM turns WHERE id=" ++ C.q(id) ++ ") AND EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(player) ++ " AND kind='report' AND body=" ++ C.terminal_body(event) ++ ") THEN 'same' WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(player) ++ " AND kind='report' AND body=" ++ C.terminal_body(event) ++ ") THEN '' WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ ") OR EXISTS(SELECT 1 FROM turns WHERE id=" ++ C.q(id) ++ ") THEN 'conflict' ELSE '' END"
+  "CASE WHEN EXISTS(SELECT 1 FROM turns WHERE id=" ++ C.q(id) ++ ") AND EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(player) ++ " AND kind='report' AND body=" ++ C.terminal_body_expr(event) ++ ") THEN 'same' WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(player) ++ " AND kind='report' AND body=" ++ C.terminal_body_expr(event) ++ ") THEN '' WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ ") OR EXISTS(SELECT 1 FROM turns WHERE id=" ++ C.q(id) ++ ") THEN 'conflict' ELSE '' END"
 
 def completion_state_sql(+id: String, +player: String, +event: String) -> String:
-  "SELECT " ++ completion_state_expr(id,player,event) ++ ";"
+  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT " ++ completion_state_expr(id,player,"frame.value") ++ " FROM frame;"
 
 def completion_state(db: String, +id: String, +player: String, +event: String) -> IO(String):
   do IO<String>:
@@ -343,7 +343,7 @@ def completion_state_event(db: String, id: String, player: String, event: String
     case True{}: completion_state(db,id,player,event)
 
 def completion_note_id_sql(+id: String, +event: String) -> String:
-  "SELECT " ++ C.q(id ++ ":observation-conflict:") ++ " || coalesce(json_extract(" ++ C.q(event) ++ ",'$.id'),json_extract(" ++ C.q(event) ++ ",'$.payload.command_id'),json_extract(" ++ C.q(event) ++ ",'$.command_id'),'unknown');"
+  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT " ++ C.q(id ++ ":observation-conflict:") ++ " || coalesce(json_extract(value,'$.id'),json_extract(value,'$.payload.command_id'),json_extract(value,'$.command_id'),'unknown') FROM frame;"
 
 def completion_conflict_note(+db: String, player: String, +id: String, +event: String, conflict: Bool) -> IO(Unit):
   match conflict:
@@ -368,12 +368,12 @@ def observe_event(db: String, player: String, id: String, line: String, relevant
 # report of this receive attempt, and a later episode is named once in the
 # separate diagnostic with the guidance it leaves for the next receive.
 def deferred_terminal_sql(+event: String, +terminal: String) -> String:
-  "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END ELSE 0 END;"
+  "WITH frame(value,terminal) AS (VALUES(" ++ C.q(event) ++ "," ++ C.q(terminal) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN value='' THEN 0 WHEN terminal='' THEN 0 WHEN value=terminal THEN 0 WHEN " ++ C.terminal_expr("frame.value") ++ " THEN 1 ELSE 0 END ELSE 0 END FROM frame;"
 
 def muse_deferred_terminal_sql(+event: String, +terminal: String, +primary: String, +current: String) -> String:
-  +candidate = primary_terminal_expr(event,current)
+  +candidate = primary_terminal_expr("frame.value",current)
   +later = C.q(current) ++ "<>'' AND " ++ C.q(current) ++ "<>" ++ C.q(primary)
-  "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ candidate ++ " AND " ++ later ++ " THEN 1 ELSE 0 END ELSE 0 END;"
+  "WITH frame(value,terminal) AS (VALUES(" ++ C.q(event) ++ "," ++ C.q(terminal) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN value='' THEN 0 WHEN terminal='' THEN 0 WHEN value=terminal THEN 0 WHEN " ++ candidate ++ " AND " ++ later ++ " THEN 1 ELSE 0 END ELSE 0 END FROM frame;"
 
 # The note is written once: a later terminal frame must not try a second body
 # under the same identity, which the same-identity store guard would refuse.

@@ -292,7 +292,7 @@ def terminal_object_sql(+line: String, +event: String, +log: String) -> String:
     ++ "+(CASE WHEN json_type(value,'$.toolResults')='array' THEN (SELECT count(*) FROM json_each(frame.value,'$.toolResults') r WHERE r.type='object') ELSE 0 END),"
     ++ "'textCharacters',coalesce(length(" ++ text ++ "),0),"
     ++ "'text'," ++ text ++ ","
-    ++ "'error'," ++ C.omp_terminal_error_text_sql(event) ++ ","
+    ++ "'error'," ++ C.omp_terminal_error_text_sql_expr("observed") ++ ","
     ++ "'isTerminal',json(CASE WHEN json_extract(value,'$.isTerminal')=1 THEN 'true' WHEN json_extract(value,'$.isTerminal')=0 THEN 'false' END),"
     ++ "'yielded',json(CASE WHEN json_extract(value,'$.yielded')=1 THEN 'true' WHEN json_extract(value,'$.yielded')=0 THEN 'false' END),"
     ++ "'identifiers',json_object('responseIds'," ++ terminal_ids_of("observed") ++ ",'toolCallIds'," ++ terminal_calls_of() ++ "),"

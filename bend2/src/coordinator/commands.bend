@@ -253,8 +253,11 @@ def message_upsert() -> String:
 def delivery_row() -> String:
   "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'body',m.body,'receipt',m.receipt,'harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ endpoint_argv("s.endpoint") ++ ")," ++ input_state_sql("m") ++ ")"
 
+def terminal_expr(+event: String) -> String:
+  "(json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.type')='result' OR (json_extract(" ++ event ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ event ++ ",'$.isTerminal'),1)=1))"
+
 def terminal(+event: String) -> String:
-  "(json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ q(event) ++ ",'$.type')='result' OR (json_extract(" ++ q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ q(event) ++ ",'$.isTerminal'),1)=1))"
+  "(SELECT " ++ terminal_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
 
 # A child reports to its recorded parent. A parentless Conductor reports to the
 # registered operator when that session has the explicit operator responsibility.
@@ -262,26 +265,35 @@ def report_recipient(+session: String) -> String:
   "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN " ++ assigned_role("report_sender.id") ++ "='conductor' THEN (SELECT report_operator.id FROM sessions report_operator WHERE report_operator.id='operator' AND report_operator.parent IS NULL AND " ++ assigned_role("report_operator.id") ++ "='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
 
 # OMP terminal arrays can contain scalar markers and metadata objects.
+def last_assistant_sql_expr(+event: String) -> String:
+  "(SELECT m.value FROM json_each(CASE WHEN json_type(" ++ event ++ ",'$.messages')='array' THEN json_extract(" ++ event ++ ",'$.messages') ELSE '[]' END) m WHERE CASE WHEN m.type='object' THEN json_extract(m.value,'$.role') END='assistant' ORDER BY m.key DESC LIMIT 1)"
+
 def last_assistant_sql(+event: String) -> String:
-  "(SELECT m.value FROM json_each(CASE WHEN json_type(" ++ q(event) ++ ",'$.messages')='array' THEN json_extract(" ++ q(event) ++ ",'$.messages') ELSE '[]' END) m WHERE CASE WHEN m.type='object' THEN json_extract(m.value,'$.role') END='assistant' ORDER BY m.key DESC LIMIT 1)"
+  "(SELECT " ++ last_assistant_sql_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
 
 # OMP records provider failure on the terminal's latest assistant message.
+def omp_terminal_error_sql_expr(+event: String) -> String:
+  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce((SELECT 1 FROM (SELECT " ++ last_assistant_sql_expr(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error'),0) ELSE 0 END"
+
 def omp_terminal_error_sql(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='agent_end' THEN coalesce((SELECT 1 FROM (SELECT " ++ last_assistant_sql(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error'),0) ELSE 0 END"
+  "(SELECT " ++ omp_terminal_error_sql_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
 
 # The report carries the observed provider status and diagnostic. The native
 # log retains the complete terminal frame.
+def omp_terminal_error_text_sql_expr(+event: String) -> String:
+  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN (SELECT 'OMP provider failure: stopReason=error, errorStatus=' || coalesce(CAST(json_extract(m.value,'$.errorStatus') AS TEXT),'unknown') || '; ' || coalesce(json_extract(m.value,'$.errorMessage'),'the retained frame carries no provider diagnostic') FROM (SELECT " ++ last_assistant_sql_expr(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error') END"
+
 def omp_terminal_error_text_sql(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='agent_end' THEN (SELECT 'OMP provider failure: stopReason=error, errorStatus=' || coalesce(CAST(json_extract(m.value,'$.errorStatus') AS TEXT),'unknown') || '; ' || coalesce(json_extract(m.value,'$.errorMessage'),'the retained frame carries no provider diagnostic') FROM (SELECT " ++ last_assistant_sql(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error') END"
+  "(SELECT " ++ omp_terminal_error_text_sql_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
 
-def assistant_text_sql(+event: String) -> String:
-  "(SELECT group_concat(CASE WHEN c.type='object' THEN json_extract(c.value,'$.text') END,char(10)) FROM json_each(CASE WHEN json_type(" ++ last_assistant_sql(event) ++ ",'$.content')='array' THEN json_extract(" ++ last_assistant_sql(event) ++ ",'$.content') ELSE '[]' END) c WHERE CASE WHEN c.type='object' THEN json_extract(c.value,'$.type') END='text')"
+def assistant_text_sql_expr(+event: String) -> String:
+  "(SELECT group_concat(CASE WHEN c.type='object' THEN json_extract(c.value,'$.text') END,char(10)) FROM json_each(CASE WHEN json_type(" ++ last_assistant_sql_expr(event) ++ ",'$.content')='array' THEN json_extract(" ++ last_assistant_sql_expr(event) ++ ",'$.content') ELSE '[]' END) c WHERE CASE WHEN c.type='object' THEN json_extract(c.value,'$.type') END='text')"
 
-def terminal_body(+event: String) -> String:
-  "coalesce(" ++ omp_terminal_error_text_sql(event) ++ ",CASE WHEN json_extract(" ++ q(event) ++ ",'$.is_error')=1 OR (json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ q(event) ++ ",'$.payload.terminal')<>'completed') THEN " ++ q(event) ++ " ELSE coalesce(json_extract(" ++ q(event) ++ ",'$.result'),CASE WHEN json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ q(event) ++ ",'$.payload.text') END," ++ assistant_text_sql(event) ++ "," ++ q(event) ++ ") END)"
+def terminal_body_expr(+event: String) -> String:
+  "coalesce(" ++ omp_terminal_error_text_sql_expr(event) ++ ",CASE WHEN json_extract(" ++ event ++ ",'$.is_error')=1 OR (json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ event ++ ",'$.payload.terminal')<>'completed') THEN " ++ event ++ " ELSE coalesce(json_extract(" ++ event ++ ",'$.result'),CASE WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ event ++ ",'$.payload.text') END," ++ assistant_text_sql_expr(event) ++ "," ++ event ++ ") END)"
 
-def observe_identity_sql(+player: String, +event: String) -> String:
-  "UPDATE sessions SET native=coalesce(CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='response' AND json_extract(" ++ q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ q(event) ++ ",'$.success')=1 THEN json_extract(" ++ q(event) ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='thread.started' THEN json_extract(" ++ q(event) ++ ",'$.thread_id') END,json_extract(" ++ q(event) ++ ",'$.session_id'),CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='session' THEN json_extract(" ++ q(event) ++ ",'$.id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.stream.kind')='session' THEN json_extract(" ++ q(event) ++ ",'$.stream.id') END,native),observed_model=coalesce(CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='response' AND json_extract(" ++ q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ q(event) ++ ",'$.success')=1 THEN json_extract(" ++ q(event) ++ ",'$.data.model.provider') || '/' || json_extract(" ++ q(event) ++ ",'$.data.model.id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.payload_type')='run.model.configured' THEN json_extract(" ++ q(event) ++ ",'$.payload.model_id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.message.provider') IS NOT NULL AND json_extract(" ++ q(event) ++ ",'$.message.model') IS NOT NULL THEN json_extract(" ++ q(event) ++ ",'$.message.provider') || '/' || json_extract(" ++ q(event) ++ ",'$.message.model') END,json_extract(" ++ q(event) ++ ",'$.message.model'),json_extract(" ++ q(event) ++ ",'$.model'),observed_model) WHERE id=" ++ q(player) ++ ";"
+def observe_identity_sql_expr(+player: String, +event: String) -> String:
+  "UPDATE sessions SET native=coalesce(CASE WHEN json_extract(" ++ event ++ ",'$.type')='response' AND json_extract(" ++ event ++ ",'$.command')='get_state' AND json_extract(" ++ event ++ ",'$.success')=1 THEN json_extract(" ++ event ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ event ++ ",'$.type')='thread.started' THEN json_extract(" ++ event ++ ",'$.thread_id') END,json_extract(" ++ event ++ ",'$.session_id'),CASE WHEN json_extract(" ++ event ++ ",'$.type')='session' THEN json_extract(" ++ event ++ ",'$.id') END,CASE WHEN json_extract(" ++ event ++ ",'$.stream.kind')='session' THEN json_extract(" ++ event ++ ",'$.stream.id') END,native),observed_model=coalesce(CASE WHEN json_extract(" ++ event ++ ",'$.type')='response' AND json_extract(" ++ event ++ ",'$.command')='get_state' AND json_extract(" ++ event ++ ",'$.success')=1 THEN json_extract(" ++ event ++ ",'$.data.model.provider') || '/' || json_extract(" ++ event ++ ",'$.data.model.id') END,CASE WHEN json_extract(" ++ event ++ ",'$.payload_type')='run.model.configured' THEN json_extract(" ++ event ++ ",'$.payload.model_id') END,CASE WHEN json_extract(" ++ event ++ ",'$.message.provider') IS NOT NULL AND json_extract(" ++ event ++ ",'$.message.model') IS NOT NULL THEN json_extract(" ++ event ++ ",'$.message.provider') || '/' || json_extract(" ++ event ++ ",'$.message.model') END,json_extract(" ++ event ++ ",'$.message.model'),json_extract(" ++ event ++ ",'$.model'),observed_model) WHERE id=" ++ q(player) ++ ";"
 
 # Completion record for issue #685. Every terminal observation records its
 # completion report and turn row. The answer carries the pending-input
@@ -293,17 +305,30 @@ def completion_pending_sql(+player: String) -> String:
 def completion_oldest_sql(+player: String) -> String:
   "(SELECT id FROM messages WHERE recipient=" ++ q(player) ++ " AND receipt IS NULL AND NOT " ++ stopped_session_sql(q(player)) ++ " ORDER BY seq LIMIT 1)"
 
+def completion_sql_expr(+id: String, +player: String, +event: String) -> String:
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ report_recipient("sessions.id") ++ ",'report'," ++ terminal_body_expr(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ message_upsert()
+  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(player) ++ "," ++ event ++ " WHERE " ++ report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
+  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ event ++ ",'$.type'),json_extract(" ++ event ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ completion_pending_sql(player) ++ ",'oldestPendingId'," ++ completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
+
+# The SQL query owns this temporary frame relation for its complete transaction.
+# Identity, report and turn statements read the same complete native frame.
+def observation_frame_sql(+event: String) -> String:
+  "CREATE TEMP TABLE baton_observation_frame(value TEXT NOT NULL);INSERT INTO temp.baton_observation_frame(value) VALUES(" ++ q(event) ++ ");"
+
+def observation_frame() -> String:
+  "(SELECT value FROM temp.baton_observation_frame)"
+
 def completion_sql(+id: String, +player: String, +event: String) -> String:
-  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ report_recipient("sessions.id") ++ ",'report'," ++ terminal_body(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal(event) ++ message_upsert()
-  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(player) ++ "," ++ q(event) ++ " WHERE " ++ report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
-  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ q(event) ++ ",'$.type'),json_extract(" ++ q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ completion_pending_sql(player) ++ ",'oldestPendingId'," ++ completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
+  observation_frame_sql(event) ++ completion_sql_expr(id,player,observation_frame()) ++ "DROP TABLE temp.baton_observation_frame;"
 
 def observe_completion_sql(+id: String, +player: String, +event: String, sealed: Bool) -> String:
   Bool.pick(String,sealed,"",completion_sql(id,player,event))
 
 def observe_sql(+id: String, +player: String, +event: String, sealed: Bool) -> String:
-  observe_identity_sql(player,event) ++ observe_completion_sql(id,player,event,sealed)
-
+  observation_frame_sql(event)
+  ++ observe_identity_sql_expr(player,observation_frame())
+  ++ Bool.pick(String,sealed,"",completion_sql_expr(id,player,observation_frame()))
+  ++ "DROP TABLE temp.baton_observation_frame;"
 
 # UNION makes ancestry finite even if a database has malformed cyclic parentage.
 def ancestors(+session: String) -> String:
@@ -360,7 +385,6 @@ def ensemble_member_sql(+id: String, +owner: String, +session: String, +action: 
   ++ "INSERT OR IGNORE INTO ensemble_members(ensemble,session) SELECT " ++ q(id) ++ "," ++ q(session) ++ " WHERE " ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND " ++ assigned_role(q(session)) ++ "<>'operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ ");"
   ++ "SELECT json_object('ensemble'," ++ q(id) ++ ",'owner'," ++ q(owner) ++ ",'session'," ++ q(session) ++ ",'membership'," ++ q(action) ++ ") WHERE EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND ((" ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ ")) OR (" ++ q(action) ++ "='remove' AND NOT EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ ")));"
 
-
 def section_owner(+ensemble: String, +owner: String) -> String:
   "EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(ensemble) ++ " AND owner=" ++ q(owner) ++ ")"
 
@@ -404,7 +428,6 @@ def orchestra_role_array(condition: String) -> String:
 
 def orchestra_sql() -> String:
   String.concat(["WITH surface AS ", orchestra_surface(), " SELECT json_object('players',", orchestra_role_array("<>'operator'"), ",'operators',", orchestra_role_array("='operator'"), ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT ", ensemble_row("e"), " AS item FROM ensembles e ORDER BY e.id)));"])
-
 
 def sql(command: Command) -> String:
   match command:

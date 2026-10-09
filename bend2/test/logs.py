@@ -125,7 +125,8 @@ sys.exit(%d)
                            'messages': [{'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}]})
 
     def test_default_policy_drops_snapshot_frames_and_keeps_evidence(self):
-        payload = 'tool payload ' * 200
+        payload = "tool payload λ's\n" * 200
+        answer = "Complete answer λ's\n" * 200
         frames = [
             json.dumps({'type': 'response', 'command': 'get_state', 'success': True, 'id': 'baton:session',
                         'data': {'sessionId': 'omp-default', 'model': {'provider': 'provider', 'id': 'actual'}}}),
@@ -137,8 +138,8 @@ sys.exit(%d)
             json.dumps({'type': 'tool_execution_end', 'toolCallId': 'tool-1', 'toolName': 'bash',
                         'result': {'content': [{'type': 'text', 'text': payload}]}, 'isError': False}),
             json.dumps({'type': 'message_end', 'message': {'id': 'm1', 'role': 'assistant', 'provider': 'provider',
-                                                           'model': 'actual', 'content': [{'type': 'text', 'text': 'Complete answer λ'}]}}),
-            self.terminal(),
+                                                           'model': 'actual', 'content': [{'type': 'text', 'text': answer}]}}),
+            self.terminal(answer),
             '{"probe":"unclassified frame"}',
         ]
         self.stream(frames)
@@ -146,6 +147,9 @@ sys.exit(%d)
             stderr = pathlib.Path(connection.execute(
                 'SELECT stderr FROM log_stderr_runs WHERE session=? AND attempt=? ORDER BY run DESC LIMIT 1',
                 ('omp-worker', self.active_turn)).fetchone()[0])
+            terminal_event = json.loads(connection.execute(
+                'SELECT event FROM turns WHERE id=? AND worker=?',
+                (self.active_turn, 'omp-worker')).fetchone()[0])
         self.assertTrue(stderr.is_file())
         self.assertFalse(pathlib.Path(str(stderr) + '.full').exists())
         self.assertFalse(pathlib.Path(str(stderr) + '.meta').exists())
@@ -157,8 +161,14 @@ sys.exit(%d)
                          ['response', 'tool_execution_start', 'tool_execution_update', 'tool_execution_end',
                           'message_end', 'agent_end', None, 'baton_event_filter'])
         self.assertEqual([f for f in map(json.loads, saved) if f.get('type') == 'message_update'], [])
-        self.assertIn(payload, '\n'.join(saved))
-        self.assertEqual(json.loads(self.call('delivery', 'turn-1'))['body'], 'Complete answer λ')
+        tool_end = next(frame for frame in map(json.loads, saved) if frame.get('type') == 'tool_execution_end')
+        self.assertEqual(tool_end['result']['content'][0]['text'], payload)
+        self.assertEqual(json.loads(self.call('delivery', 'turn-1'))['body'], answer)
+        self.assertEqual(terminal_event, json.loads(self.terminal(answer)))
+        compact = next(frame for frame in map(json.loads, saved) if frame.get('type') == 'agent_end')
+        self.assertEqual(compact['text'], answer)
+        self.assertEqual(compact['textCharacters'], len(answer))
+        self.assertEqual(compact['eventBytes'], len(self.terminal(answer).encode()))
         self.assertEqual(json.loads(self.call('player', 'omp-worker'))['native'], 'omp-default')
         self.assertEqual(json.loads(self.call('logs', 'omp-worker'))['level'], 'default')
 

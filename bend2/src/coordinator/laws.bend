@@ -162,7 +162,7 @@ def m7_report_routes_to_the_recorded_parent(id, sender, body):
 # the caller's body cannot make a record terminal.
 law m11_terminal_reads_the_records_own_event:
   for +event: String
-  {C.terminal(event) == "(json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ C.q(event) ++ ",'$.type')='result' OR (json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1))" : String}
+  {C.terminal_expr(event) == "(json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.type')='result' OR (json_extract(" ++ event ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ event ++ ",'$.isTerminal'),1)=1))" : String}
 
 def m11_terminal_reads_the_records_own_event(event):
   {==}
@@ -1101,8 +1101,8 @@ def principal_reports_use_the_recorded_upstream_recipient(session):
 
 law terminal_reports_preserve_the_native_result:
   for +event: String
-  {C.terminal_body(event) == (
-  "CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.is_error')=1 OR (json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ C.q(event) ++ ",'$.payload.terminal')<>'completed') THEN " ++ C.q(event) ++ " ELSE coalesce(json_extract(" ++ C.q(event) ++ ",'$.result'),CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ C.q(event) ++ ",'$.payload.text') END,(SELECT group_concat(json_extract(c.value,'$.text'),char(10)) FROM json_each((SELECT m.value FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_extract(m.value,'$.role')='assistant' ORDER BY m.key DESC LIMIT 1),'$.content') c WHERE json_extract(c.value,'$.type')='text')," ++ C.q(event) ++ ") END") : String}
+  {C.terminal_body_expr(event) == (
+  "coalesce(" ++ C.omp_terminal_error_text_sql_expr(event) ++ ",CASE WHEN json_extract(" ++ event ++ ",'$.is_error')=1 OR (json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ event ++ ",'$.payload.terminal')<>'completed') THEN " ++ event ++ " ELSE coalesce(json_extract(" ++ event ++ ",'$.result'),CASE WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ event ++ ",'$.payload.text') END," ++ C.assistant_text_sql_expr(event) ++ "," ++ event ++ ") END)") : String}
 
 def terminal_reports_preserve_the_native_result(event):
   {==}
@@ -1111,10 +1111,10 @@ law terminal_observation_records_the_report_and_turn:
   for +id: String
   for +player: String
   for +event: String
-  {C.completion_sql(id,player,event) == (
-  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.terminal_body(event) ++ " FROM sessions WHERE id=" ++ C.q(player) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ C.message_upsert()
-  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ C.q(id) ++ "," ++ C.q(player) ++ "," ++ C.q(event) ++ " WHERE " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
-  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ C.q(event) ++ ",'$.type'),json_extract(" ++ C.q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " THEN " ++ C.q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ C.completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ C.completion_pending_sql(player) ++ ",'oldestPendingId'," ++ C.completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ C.q(player) ++ ";") : String}
+  {C.completion_sql_expr(id,player,event) == (
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.terminal_body_expr(event) ++ " FROM sessions WHERE id=" ++ C.q(player) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal_expr(event) ++ C.message_upsert()
+  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ C.q(id) ++ "," ++ C.q(player) ++ "," ++ event ++ " WHERE " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL AND " ++ C.terminal_expr(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
+  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ event ++ ",'$.type'),json_extract(" ++ event ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal_expr(event) ++ " THEN " ++ C.q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ C.completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ C.completion_pending_sql(player) ++ ",'oldestPendingId'," ++ C.completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ C.q(player) ++ ";") : String}
 
 def terminal_observation_records_the_report_and_turn(id,player,event):
   {==}
@@ -1124,7 +1124,7 @@ law observations_update_identity_before_recording_completion:
   for +player: String
   for +event: String
   for sealed: Bool
-  {C.observe_sql(id,player,event,sealed) == C.observe_identity_sql(player,event) ++ C.observe_completion_sql(id,player,event,sealed) : String}
+  {C.observe_sql(id,player,event,sealed) == C.observation_frame_sql(event) ++ C.observe_identity_sql_expr(player,C.observation_frame()) ++ Bool.pick(String,sealed,"",C.completion_sql_expr(id,player,C.observation_frame())) ++ "DROP TABLE temp.baton_observation_frame;" : String}
 
 def observations_update_identity_before_recording_completion(id,player,event,sealed):
   {==}
@@ -1141,7 +1141,7 @@ def the_sealed_managed_completion_records_nothing(id,player,event):
 law a_later_native_terminal_is_named_once:
   for +event: String
   for +terminal: String
-  {Turn.deferred_terminal_sql(event,terminal) == ("SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END ELSE 0 END;") : String}
+  {Turn.deferred_terminal_sql(event,terminal) == ("WITH frame(value,terminal) AS (VALUES(" ++ C.q(event) ++ "," ++ C.q(terminal) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN value='' THEN 0 WHEN terminal='' THEN 0 WHEN value=terminal THEN 0 WHEN " ++ C.terminal_expr("frame.value") ++ " THEN 1 ELSE 0 END ELSE 0 END FROM frame;") : String}
 
 def a_later_native_terminal_is_named_once(event,terminal):
   {==}
