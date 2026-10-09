@@ -277,7 +277,10 @@ sys.exit(%d)
         attempt, attempt_dir = self.prepare_attempt_artifacts()
         evidence = attempt_dir / 'observer.log'
         evidence.write_text('observer evidence')
-        self.call('message', 'pending-attempt-cleanup', 'root', 'omp-worker', 'guidance', 'Review this first.')
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(
+                'INSERT INTO messages(id,sender,recipient,kind,body) VALUES (?,?,?,?,?)',
+                ('pending-attempt-cleanup', 'root', 'omp-worker', 'guidance', 'Review this first.'))
         row = next(item for item in json.loads(self.call('logs-storage'))['attempts']
                    if item['attempt'] == attempt)
         self.assertEqual(row['cleanupReason'], 'pending-input')
