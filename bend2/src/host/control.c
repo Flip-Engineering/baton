@@ -50,26 +50,28 @@ static void baton_control_identity(BatonControl *call) {
     free(candidate);
     if(configured && *configured) {call->error=error?error:ENOENT;return;}
     if(error && error!=ENOENT) {call->error=error;return;}
-    call->path=strdup("");call->helper=strdup("");
-    if(!call->path || !call->helper) call->error=ENOMEM;
-    return;
+    call->path=strdup("");
+    if(!call->path) {call->error=ENOMEM;return;}
+  } else {
+    call->path=realpath(candidate,NULL);free(candidate);
+    if(!call->path) {call->error=errno;return;}
   }
-  call->path=realpath(candidate,NULL);free(candidate);
-  if(!call->path) {call->error=errno;return;}
   char *directory=strdup(call->input);
   if(!directory) {call->error=ENOMEM;return;}
   char *slash=strrchr(directory,'/');
   if(!slash) {free(directory);call->error=EINVAL;return;}
   *slash=0;
-  candidate=baton_control_join(directory,"/../libexec/baton2/git-series.mjs");
-  if(candidate) call->helper=realpath(candidate,NULL);
-  free(candidate);
+  char *installed=baton_control_join(directory,"/../libexec/baton2/git-series.mjs");
+  if(!installed) {free(directory);call->error=ENOMEM;return;}
+  call->helper=realpath(installed,NULL);
   if(!call->helper) {
     candidate=baton_control_join(directory,"/../../bend2/harness/git-series.mjs");
     if(candidate) call->helper=realpath(candidate,NULL);
     free(candidate);
   }
   free(directory);
+  if(!call->helper && !*call->path) {call->helper=installed;installed=NULL;}
+  free(installed);
   if(!call->helper) call->error=ENOENT;
 }
 
