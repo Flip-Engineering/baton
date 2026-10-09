@@ -554,8 +554,11 @@ def helper_script() -> IO(String):
   do IO<String>:
     +executable : String <- IO.try(String,Lock.SessionLock.executable())
     identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-    (registry,helper)=identity
-    IO.pure(String,Subs.history_helper(helper))
+    IO.pure(String,history_helper_of(identity))
+
+def history_helper_of(identity: String & String) -> String:
+  (registry,helper)=identity
+  Subs.history_helper(helper)
 
 # The preserved history home for this handoff. The packaged native runtime helper reads the
 # original account's effective provider history home and materializes what the next account
