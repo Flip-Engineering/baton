@@ -13,7 +13,7 @@
 const started = Date.now();
 const envKeys = Object.keys(process.env).sort();
 
-const timer = setInterval(() => {
+setInterval(() => {
   process.stdout.write(`${JSON.stringify({
     heartbeat: true,
     pid: process.pid,
@@ -28,5 +28,3 @@ process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-timer.unref();
-setTimeout(() => {}, 24 * 60 * 60 * 1000);

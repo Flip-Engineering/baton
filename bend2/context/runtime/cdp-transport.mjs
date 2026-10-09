@@ -51,9 +51,7 @@ export function admitLoopbackEndpoint(url) {
   return { ok: true, identity: endpointIdentity(url) };
 }
 
-// The default request timeout is a caller-supplied observation bound, never a protocol
-// rule: the protocol has no response deadline. A caller that passes no deadline waits
-// indefinitely, which is what a pending evaluation requires.
+// Requests finish when the target responds or the transport fails.
 export class CdpTransport {
   #socket;
   #url;
