@@ -780,6 +780,57 @@ await evalJs(`document.querySelector('#attention-band svg.att-stage').dispatchEv
 await evalJs(`document.querySelector('#attention-band svg.att-stage').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))`);
 await until('stage arrow walks to a different seat',
   `document.querySelector('#selection h2') && !['', '${stageFirst}'].includes(document.querySelector('#selection h2').textContent)`);
+await evalJs(`(() => {
+  const strip = document.getElementById('attention-band');
+  window.__qaStageStyle = strip.getAttribute('style');
+  Object.assign(strip.style, {height:'96px', maxHeight:'96px', minHeight:'0', overflowY:'auto'});
+  strip.scrollTop = 0;
+  strip.querySelector('svg.att-stage').focus();
+  strip.querySelector('svg.att-stage').dispatchEvent(new KeyboardEvent('keydown', {key:'End', bubbles:true}));
+})()`);
+const stageEnd = await evalJs(`(() => {
+  const strip = document.getElementById('attention-band');
+  const seats = [...strip.querySelectorAll('.att-seat')];
+  const cursor = strip.querySelector('.att-seat.att-cursor');
+  const ring = cursor.querySelector('.att-seat-ring').getBoundingClientRect();
+  const bounds = strip.getBoundingClientRect();
+  return {id:cursor.dataset.attId, last:seats.at(-1).dataset.attId,
+    scroll:strip.scrollTop, overflow:strip.scrollHeight > strip.clientHeight,
+    visible:ring.top >= bounds.top && ring.bottom <= bounds.bottom};
+})()`);
+check('stage End reveals its last seat in a scrolling strip',
+  stageEnd.overflow && stageEnd.scroll > 0 && stageEnd.id === stageEnd.last && stageEnd.visible,
+  JSON.stringify(stageEnd));
+await evalJs(`(() => {
+  window.__qaOldStage = document.querySelector('#attention-band svg.att-stage');
+  const row = document.querySelector('#roster .doc-row[data-doc-id="${stageEnd.id}"] .doc-open');
+  row.focus(); row.click();
+})()`);
+await until('record selection redraws the unfocused stage',
+  `document.querySelector('#attention-band svg.att-stage') !== window.__qaOldStage`);
+const stageKeptScroll = await evalJs(`document.getElementById('attention-band').scrollTop`);
+check('stage redraw preserves the reader scroll position',
+  stageKeptScroll === stageEnd.scroll, JSON.stringify({before:stageEnd.scroll, after:stageKeptScroll}));
+await evalJs(`(() => {
+  const stage = document.querySelector('#attention-band svg.att-stage');
+  stage.focus(); stage.dispatchEvent(new KeyboardEvent('keydown', {key:'Home', bubbles:true}));
+})()`);
+const stageHome = await evalJs(`(() => {
+  const strip = document.getElementById('attention-band');
+  const cursor = strip.querySelector('.att-seat.att-cursor');
+  const ring = cursor.querySelector('.att-seat-ring').getBoundingClientRect();
+  const bounds = strip.getBoundingClientRect();
+  return {id:cursor.dataset.attId, first:strip.querySelector('.att-seat').dataset.attId,
+    scroll:strip.scrollTop, visible:ring.top >= bounds.top && ring.bottom <= bounds.bottom};
+})()`);
+check('stage Home reveals its first seat',
+  stageHome.id === stageHome.first && stageHome.scroll < stageEnd.scroll && stageHome.visible,
+  JSON.stringify(stageHome));
+await evalJs(`(() => {
+  const strip = document.getElementById('attention-band');
+  if (window.__qaStageStyle === null) strip.removeAttribute('style');
+  else strip.setAttribute('style', window.__qaStageStyle);
+})()`);
 let workerExecution;
 {
   const db = new DatabaseSync(DB);

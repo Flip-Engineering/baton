@@ -1,4 +1,5 @@
 """Retained process control shares native ownership with the existing observer."""
+import errno
 import hashlib
 import json
 import os
@@ -318,6 +319,70 @@ class RetainedControl(unittest.TestCase):
         # The observer still holds its copy until the controlled completion step.
         self.assertEqual(self.run_control('lock-try', self.db).stdout, 'busy\n')
         self.finish(observer, status='signal 15', status_observed=True)
+
+    def test_spawned_child_is_reaped_when_birth_persistence_fails(self):
+        payload = self.home / 'empty.input'
+        payload.write_bytes(b'')
+        stderr = self.home / 'setup.stderr'
+        os.mkfifo(stderr)
+        observer = self.spawn('retain', self.db, self.attempt, self.home, payload,
+                              'setup-failure', sys.executable, self.fixture,
+                              self.server.getsockname()[1], 'normal')
+        while not (self.attempt / 'manifest').exists():
+            self.assertIsNone(observer.poll(), 'retain exited before creating its manifest')
+            time.sleep(.01)
+        # The keeper waits for a reader before spawning with this stderr FIFO.
+        # The birth path then causes an ordinary filesystem error after spawn.
+        (self.attempt / 'native.birth').mkdir()
+        reader = os.open(stderr, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            observer.stdin.close()
+            status = observer.wait()
+            while observer.lines.get() is not None:
+                pass
+            output = ''.join(observer.output)
+            error = observer.stderr.read()
+        finally:
+            os.close(reader)
+        native = int((self.attempt / 'native.pid').read_text().strip())
+        print('evidence spawned-setup-failure', json.dumps({
+            'native': native, 'error': error.strip(), 'exit': status}))
+        self.assertNotEqual(status, 0, output)
+        self.assertIn(os.strerror(errno.EISDIR), error)
+        self.assertGreater(native, 0)
+        # A zombie still answers kill(pid, 0), so absence checks both exit and reap.
+        with self.assertRaises(ProcessLookupError):
+            os.kill(native, 0)
+        lock = self.run_control('lock-try', self.db)
+        self.assertEqual(lock.stdout, 'acquired\n')
+        print('evidence spawned-setup-failure', json.dumps({
+            'native': native, 'error': error.strip(), 'exit': status,
+            'absentAndReaped': True, 'guard': lock.stdout.strip()}))
+
+    def test_ended_orphan_first_wait_preserves_retained_status(self):
+        probe = self.home / 'orphan-first-wait'
+        compiled = subprocess.run([
+            os.environ.get('CC', 'clang'), '-O1', '-pthread',
+            '-DBATON2_PROCESS_SOURCE=' + json.dumps(str(EXE.with_suffix('.c'))),
+            str(ROOT / 'bend2/test/orphan-first-wait.c'),
+            '-lsqlite3', '-lm', '-o', str(probe),
+        ], capture_output=True, text=True)
+        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        for mode, expected in [('absent', 'unknown after keeper loss'),
+                               ('malformed', 'unknown after keeper loss'),
+                               ('nonzero', 'exit 13'), ('zero', 'exit 0'),
+                               ('signal', 'signal 15')]:
+            with self.subTest(mode=mode):
+                attempt = self.home / ('orphan-' + mode)
+                attempt.mkdir()
+                result = subprocess.run([str(probe), mode, str(attempt)],
+                                        capture_output=True, text=True)
+                print('evidence ended-orphan-first-wait', result.stdout.strip())
+                self.assertEqual(result.returncode, 0, result.stderr)
+                observed = json.loads(result.stdout)
+                self.assertEqual(observed['case'], mode)
+                self.assertEqual(observed['firstWait'], expected)
+                self.assertEqual(observed['afterFollower'], expected)
 
     def test_native_waiter_keeps_exited_identity_until_keeper_reaps(self):
         source = self.home / 'waiter.c'

@@ -526,17 +526,6 @@ static int br_lifetime(const char *directory,int *ended) {
 }
 static int br_watch_file(int spool,const char *path);
 static void br_watch_drain(int fd);
-static int br_orphan(BatonRetained *retained) {
-  if(retained->guard<0)return EBUSY;
-  if(retained->watch<0) {
-    char *path=br_path(retained->directory,"stdout");
-    retained->watch=path?br_watch_file(retained->spool,path):-1;free(path);
-    if(retained->watch<0)return errno;
-  }
-  retained->orphan=1;retained->input_closed=1;retained->version++;
-  if(retained->life<0)retained->exited=1;
-  return 0;
-}
 static void br_orphan_exit(BatonRetained *retained) {
   char *path=br_path(retained->directory,"status");FILE *file=path?fopen(path,"r"):NULL;free(path);
   int status;
@@ -545,12 +534,26 @@ static void br_orphan_exit(BatonRetained *retained) {
   if(file)fclose(file);
   retained->exited=1;retained->version++;
 }
+/* Marks the orphan and, when no lifetime watch remains, loads the ended
+   status before any waiter can observe the exit. A zeroed status with no
+   unknown marker would otherwise read as a clean exit. */
+static int br_orphan(BatonRetained *retained) {
+  if(retained->guard<0)return EBUSY;
+  if(retained->watch<0) {
+    char *path=br_path(retained->directory,"stdout");
+    retained->watch=path?br_watch_file(retained->spool,path):-1;free(path);
+    if(retained->watch<0)return errno;
+  }
+  retained->orphan=1;retained->input_closed=1;retained->version++;
+  if(retained->life<0)br_orphan_exit(retained);
+  return 0;
+}
 static void *br_follow(void *argument) {
   BatonRetained *retained=argument;
   for(;;) {
     pthread_mutex_lock(&retained->state);
     if(retained->exited) {
-      br_orphan_exit(retained);pthread_cond_broadcast(&retained->changed);
+      pthread_cond_broadcast(&retained->changed);
       pthread_mutex_unlock(&retained->state);return NULL;
     }
     pthread_mutex_unlock(&retained->state);
@@ -884,12 +887,13 @@ static void baton_retained_call(BatonProcessCall *call) {
     pthread_mutex_lock(&retained->state);
     while(!retained->exited && !retained->error) pthread_cond_wait(&retained->changed,&retained->state);
     call->error=retained->error;int status=retained->status;
+    int unknown=retained->unknown,observer_only=retained->observer_only;
     pthread_mutex_unlock(&retained->state);
     if(call->error) return;
     char text[64];
-    if(retained->observer_only && retained->unknown)
+    if(observer_only && unknown)
       snprintf(text,sizeof(text),"unavailable: native exit status was not retained");
-    else if(retained->unknown) snprintf(text,sizeof(text),"unknown after keeper loss");
+    else if(unknown) snprintf(text,sizeof(text),"unknown after keeper loss");
     else if(WIFEXITED(status)) snprintf(text,sizeof(text),"exit %d",WEXITSTATUS(status));
     else if(WIFSIGNALED(status)) snprintf(text,sizeof(text),"signal %d",WTERMSIG(status));
     else {call->error=ECHILD;return;}

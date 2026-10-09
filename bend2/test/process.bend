@@ -98,13 +98,14 @@ def retained_started(start: P.RetainedStart, lock: U32, payload: String, close: 
     case P.Unstarted{error}: IO.die(Unit,1,error)
     case P.Retained{handle}: observe_retained(handle,Some{lock},payload,close)
 
-def retained_locked(+directory: String, cwd: String, payload: String, mode: String, program: List<String>, lock: Maybe<U32>) -> IO(Unit):
+def retained_locked(+directory: String, +cwd: String, payload: String, +mode: String, program: List<String>, lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: IO.die(Unit,1,"fixture session busy")
     case Some{+handle}: do IO<Unit>:
       executable : String <- IO.try(String,Lock.SessionLock.executable())
       bytes : String <- IO.try(String,Text.Text.read(payload))
-      start : P.RetainedStart <- IO.try(P.RetainedStart,P.ProcessChild.retain(directory,P.argv(program),cwd,directory ++ "/native.stderr","",1,handle,P.argv([executable,"recover-retained",directory])))
+      stderr : String = Bool.pick(String,String.eq(mode,"setup-failure"),cwd ++ "/setup.stderr",directory ++ "/native.stderr")
+      start : P.RetainedStart <- IO.try(P.RetainedStart,P.ProcessChild.retain(directory,P.argv(program),cwd,stderr,"",1,handle,P.argv([executable,"recover-retained",directory])))
       retained_started(start,handle,bytes,String.eq(mode,"close"))
 
 def retained_cli(args: List<String>) -> IO(Unit):
