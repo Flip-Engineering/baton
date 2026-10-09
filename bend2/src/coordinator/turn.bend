@@ -2,6 +2,7 @@ import Base
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./stop.bend as Stop
+import ./subscription-fallback.bend as Subs
 import ./delivery.bend as Delivery
 import ./control.bend as Control
 import ../host/session-lock.bend as Lock
@@ -720,6 +721,49 @@ def retained_arguments(omp: Bool, claude: Bool, +cmd: String, +model: String, +e
     Claude.argv(cmd,model,effort,native,String.is_empty(native)),
   Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
 
+def profile_path(db: String, player: String) -> IO(String):
+  do IO<String>:
+    saved : String <- IO.try(String,DB.Sql.query(db,Subs.profile_record_sql(db,player)))
+    IO.pure(String,Tx.trim_nl(saved))
+
+# The profile in use is the last line of the session's append-only record. A missing
+# record keeps the harness's default store. Other read failures stop the launch with
+# the filesystem's code and detail.
+def current_store(db: String, player: String) -> IO(String):
+  do IO<String>:
+    path : String <- profile_path(db,player)
+    read : Result<&1,&1,U32 & String,String> <- T.Text.read(path)
+    text : String <- IO.pass(String,Subs.optional_text(read))
+    IO.pure(String,Subs.record_store(Subs.last_line(Tx.split_lines(text))))
+
+def history_path(db: String, player: String) -> IO(String):
+  do IO<String>:
+    saved : String <- IO.try(String,DB.Sql.query(db,Subs.history_record_sql(db,player)))
+    IO.pure(String,Tx.trim_nl(saved))
+
+# The preserved provider history home recorded at the last handoff, or "" when the
+# session has no such record: an empty home adds no argument, so a session that never
+# switched store spawns with the environment and configuration it has today. The last
+# non-empty line is the handoff in force; the home is read through the database's
+# JSON reader, which retains a malformed JSON failure.
+def current_history(db: String, player: String) -> IO(String):
+  do IO<String>:
+    path : String <- history_path(db,player)
+    read : Result<&1,&1,U32 & String,String> <- T.Text.read(path)
+    text : String <- IO.pass(String,Subs.optional_text(read))
+    +line : String <- IO.pure(String,Subs.last_line(Tx.split_lines(text)))
+    home : String <- Bool.pick(IO(String),String.is_empty(line),IO.pure(String,""),IO.try(String,DB.Sql.query(db,Subs.history_home_sql(line))))
+    IO.pure(String,Tx.trim_nl(home))
+
+# The recorded route with the profile's credential store bound into the spawn argv and
+# the preserved provider history home carried as an ordinary config argument; an empty
+# binding keeps today's argv through retained_arguments, so a session with no record
+# spawns exactly as before.
+def retained_profile_arguments(omp: Bool, claude: Bool, +binding: List<String>, +override: List<String>, +cmd: String, +model: String, +effort: String, sessions: String, +native: String) -> String:
+  Bool.pick(String,claude,
+    Claude.argv_profile(binding,cmd,model,effort,native,String.is_empty(native)),
+  Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv_profile(binding,override,cmd,model,effort,native,String.is_empty(native))))
+
 def retained_identity_prefix(model: String, identity: String & String) -> String:
   (registry,helper)=identity
   +configured=registry
@@ -747,7 +791,9 @@ def retained(+db: String, +player: String, +directory: String, +cmd: String, +mo
     muse_args : String <- IO.pure(String,prefix ++ P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
     +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
     +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
-    args : String <- IO.pure(String,prefix ++ retained_arguments(omp,claude,cmd,model,effort,sessions,native))
+    store : String <- current_store(db,player)
+    history : String <- current_history(db,player)
+    args : String <- IO.pure(String,prefix ++ Bool.pick(String,String.is_empty(store),retained_arguments(omp,claude,cmd,model,effort,sessions,native),retained_profile_arguments(omp,claude,Subs.store_binding(Tx.trim_nl(harness),store),Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)))
     input : String <- IO.pure(String,retained_input(False{},omp,claude,prompt,level))
     Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),String.eq(harness,"muse\n"),Custody.Instance.admit_with_file(db,directory,muse_args,cwd,directory ++ "/native.stderr","prompt.txt",prompt,retained_input(True{},omp,claude,prompt,level),retained_keep_stdin(True{},omp,claude),Some{lock},recovery),Custody.Instance.admit(db,directory,args,cwd,directory ++ "/native.stderr",input,retained_keep_stdin(False{},omp,claude),Some{lock},recovery))
 

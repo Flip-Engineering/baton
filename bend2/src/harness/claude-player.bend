@@ -23,3 +23,21 @@ def user_frame(text: String) -> String:
 
 def input(handle: U32, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.ProcessChild.write(handle,user_frame(text))
+
+# The profile route removes inherited authentication overrides and binds the selected
+# credential store. An empty binding uses the harness's ordinary arguments.
+def bound_head(binding: List<String>, cmd: String, model: String, effort: String) -> List<String>:
+  match binding:
+    case Nil{}: arguments(cmd,model,effort)
+    case other: List.append(&1,String,List.append(&1,String,["/usr/bin/env","-u","ANTHROPIC_API_KEY","-u","ANTHROPIC_AUTH_TOKEN","-u","CLAUDE_CODE_OAUTH_TOKEN"],binding),arguments(cmd,model,effort))
+
+def bound_arguments(binding: List<String>, cmd: String, model: String, effort: String, session: String, fresh: Bool) -> List<String>:
+  match fresh:
+    case True{}: bound_head(binding,cmd,model,effort)
+    case False{}: List.append(&1,String,bound_head(binding,cmd,model,effort),["--resume",session])
+
+def argv_profile(binding: List<String>, cmd: String, model: String, effort: String, session: String, fresh: Bool) -> String:
+  P.argv(bound_arguments(binding,cmd,model,effort,session,fresh))
+
+def start_player_profile(binding: List<String>, cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
+  P.ProcessChild.spawn(argv_profile(binding,cmd,model,effort,session,fresh),cwd,stderr)

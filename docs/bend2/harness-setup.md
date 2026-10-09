@@ -56,6 +56,68 @@ source `6a7df0eedd57c7ce9c59cb836a405cc0dc658880` qualified direct native
 subscription enforcement with the earlier Python Git helper. That measured
 route and the public 1.0 archive retain their original source-specific scope.
 
+## Subscription profiles
+
+Development `receive` supports an ordered list of Codex and Claude subscription
+accounts. Authenticate each account in its own absolute configuration directory.
+Keep these directories and their credentials outside the repository.
+
+For Codex, set `cli_auth_credentials_store = "file"` in each directory's
+`config.toml`, then sign in and inspect that directory's login:
+
+```sh
+env -u OPENAI_API_KEY -u CODEX_API_KEY CODEX_HOME="/absolute/private/codex-primary" \
+  /absolute/path/codex -c 'forced_login_method="chatgpt"' login
+env -u OPENAI_API_KEY -u CODEX_API_KEY CODEX_HOME="/absolute/private/codex-primary" \
+  /absolute/path/codex -c 'forced_login_method="chatgpt"' login status
+```
+
+The [official OpenAI authentication documentation](https://learn.chatgpt.com/docs/auth#credential-storage)
+describes credential storage, and the [Codex login reference](https://learn.chatgpt.com/docs/developer-commands#codex-login)
+describes login and status commands. For Claude, use its native account login:
+
+```sh
+env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN \
+  CLAUDE_CONFIG_DIR="/absolute/private/claude-primary" /absolute/path/claude auth login
+env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN \
+  CLAUDE_CONFIG_DIR="/absolute/private/claude-primary" /absolute/path/claude auth status
+```
+
+[Claude configuration directories](https://code.claude.com/docs/en/env-vars)
+separate accounts and retained sessions. Its [CLI reference](https://code.claude.com/docs/en/cli-reference#cli-commands)
+describes the authentication commands. Profiled Claude launches remove inherited
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` values
+before binding the selected account; Claude documents their
+[precedence](https://code.claude.com/docs/en/authentication#authentication-precedence).
+Repeat the login commands with a separate directory for each account.
+
+Create `DATABASE.profiles` beside the coordinator database. Each line contains
+the harness, a unique label for that harness, and the credential directory:
+
+```text
+codex primary /absolute/private/codex-primary
+codex secondary /absolute/private/codex secondary
+claude-code primary /absolute/private/claude-primary
+claude-code secondary /absolute/private/claude-secondary
+```
+
+The directory is the rest of the line. Write absolute paths directly; a path
+containing spaces needs no quotes. The order determines the next account.
+
+`DATABASE.profile-SESSION_HEX` records the selected label and directory, one
+selection per line; `SESSION_HEX` is the UTF-8 session ID encoded as lowercase
+hex. An initial line can select the account before its first turn. For a session
+named `root`, the file is `DATABASE.profile-726f6f74` and its initial line can be
+`primary /absolute/private/codex-primary`. A session without a record uses its
+existing native login and selects the first listed account after exhaustion.
+
+When the provider reports subscription exhaustion, `receive` records the next
+account, preserves the provider's cause, and resumes the same native conversation
+with its unfinished work. `DATABASE.history-SESSION_HEX` retains the history
+paths prepared for that handoff. Preserve both records with the database and
+native conversation files. If every listed account reports exhaustion, the
+report retains the last cause and the unfinished work.
+
 ## OMP and Muse
 
 OMP requires an existing provider configuration for the selected `provider/model`

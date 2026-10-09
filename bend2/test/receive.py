@@ -51,9 +51,42 @@ if args[:1] in (['parent_endpoint'],['answering_parent']):
             delivered.write(json.dumps(message)+'\n')
     print(json.dumps({'received':args[1]}))
     sys.exit(0)
+def configured_home(store):
+    text=pathlib.Path(store)/'config.toml'
+    if not store or not text.exists(): return ''
+    for line in text.read_text().splitlines():
+        if line.strip().startswith('sqlite_home'):
+            return line.split('=',1)[1].strip().strip('"')
+    return ''
+def effective_history_home(arguments):
+    override=''
+    for index,argument in enumerate(arguments[:-1]):
+        if argument=='-c' and arguments[index+1].startswith('sqlite_home='):
+            override=arguments[index+1].split('=',1)[1].strip('"')
+    return override or configured_home(os.environ.get('CODEX_HOME','')) or os.environ.get('CODEX_SQLITE_HOME','') or os.environ.get('CODEX_HOME','')
+if 'app-server' in args:
+    def answer(request):
+        identifier=request.get('id')
+        if identifier is None: return
+        method=request.get('method','')
+        if method=='initialize': print(json.dumps({'id':identifier,'result':{'userAgent':'fixture','capabilities':{}}}),flush=True)
+        elif method=='config/read': print(json.dumps({'id':identifier,'result':{'config':{'sqlite_home':effective_history_home(args)},'sqlite_home':effective_history_home(args)}}),flush=True)
+        elif method=='thread/read':
+            thread=(request.get('params') or {}).get('threadId','')
+            rollout=str(pathlib.Path(os.environ.get('CODEX_HOME',''))/'sessions'/(thread+'.jsonl'))
+            print(json.dumps({'id':identifier,'result':{'thread':{'id':thread,'path':rollout,'rolloutPath':rollout}}}),flush=True)
+        else: print(json.dumps({'id':identifier,'error':{'code':-32601,'message':'unsupported method'}}),flush=True)
+    for request_line in sys.stdin:
+        request_line=request_line.strip()
+        if not request_line: continue
+        try: answer(json.loads(request_line))
+        except ValueError: continue
+    sys.exit(0)
 omp='--mode' in args
+claude='--input-format' in args
 model=args[args.index('--model')+1]
-native_args=args[2:] if args[:2]==['-c','forced_login_method="chatgpt"'] else args
+native_args=args[:]
+while native_args[:1]==['-c'] and len(native_args)>1: native_args=native_args[2:]
 resume=args[args.index('--resume')+1] if '--resume' in args else (native_args[2] if native_args[:2]==['exec','resume'] else '')
 if config.get('record_launches'):
     with (home/'native-launches.jsonl').open('a') as launches:
@@ -79,8 +112,37 @@ if omp:
     print(json.dumps({'type':'response','command':'get_state','success':True,'id':state['id'],'data':{'sessionId':native,'model':{'provider':'fixture','id':model}}}),flush=True)
 else:
     prompt=sys.stdin.read()
+    if claude: prompt=json.loads(prompt)['message']['content']
     native=resume or native
-    print(json.dumps({'type':'thread.started','thread_id':native}),flush=True)
+    store=os.environ.get('CLAUDE_CONFIG_DIR' if claude else 'CODEX_HOME','')
+    history_home=store if claude else effective_history_home(args)
+    thread=resume or native
+    candidates=([pathlib.Path(store)/'projects'/'fixture-project'/(thread+'.jsonl')] if claude else
+                [pathlib.Path(store)/'sessions'/(thread+'.jsonl')])
+    prior=''
+    origin=''
+    if resume:
+        for candidate in candidates:
+            if candidate.exists():
+                retained=[json.loads(line) for line in candidate.read_text().splitlines() if line.strip()][-1]
+                prior=retained.get('message',{}).get('content','') if claude else retained.get('content','')
+                origin=str(candidate)
+                break
+    if config.get('record_launches'):
+        with (home/'native-history.jsonl').open('a') as recorded:
+            recorded.write(json.dumps({'native':native,'resume':resume,'home':history_home,'content':prior,'origin':origin})+'\n')
+    if not resume:
+        rollout=candidates[0]
+        rollout.parent.mkdir(parents=True,exist_ok=True)
+        if claude:
+            rollout.write_text(json.dumps({'type':'user','sessionId':native,'message':{'role':'user','content':prompt}})+'\n')
+            subagent=rollout.parent/native/'subagents'/'agent-fixture.jsonl'
+            subagent.parent.mkdir(parents=True,exist_ok=True)
+            subagent.write_text(json.dumps({'type':'assistant','sessionId':native,'message':{'role':'assistant','content':[{'type':'text','text':'Retained subagent work for '+prompt}]}})+'\n')
+        else:
+            rollout.write_text(json.dumps({'type':'session','id':native})+'\n'+json.dumps({'type':'message','role':'user','content':prompt})+'\n')
+    print(json.dumps({'type':'system','subtype':'init','session_id':native} if claude else
+                     {'type':'thread.started','thread_id':native}),flush=True)
 client=socket.create_connection(('127.0.0.1',config['port']))
 stream=client.makefile('rwb',buffering=0)
 def reply(value): stream.write((json.dumps(value)+'\n').encode())
@@ -101,6 +163,7 @@ if config.get('inspect_session_guard'):
         if (info.st_dev,info.st_ino)==(guard.st_dev,guard.st_ino): guard_descriptors.append(int(descriptor))
 reply({'pid':os.getpid(),'ppid':os.getppid(),'session':model,'native':native,'resume':resume,'args':args,'prompt':prompt,
        'cwd':os.getcwd(),'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ],
+       'claudeAuthVariablesPresent':[key for key in ('ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN') if key in os.environ],
        'sessionGuardDescriptors':guard_descriptors})
 while True:
     line=stream.readline()
@@ -164,8 +227,12 @@ while True:
     if omp:
         print(json.dumps({'type':'agent_end','isTerminal':True,'is_error':failure,'messages':[{'role':'assistant','content':[{'type':'text','text':body}]}]}),flush=True)
         remaining_input=sys.stdin.read()
+    elif claude:
+        print(json.dumps({'type':'result','subtype':'error_during_execution' if failure else 'success',
+                          'session_id':native,'is_error':failure,
+                          'result':action.get('fail_message','fixture provider failed') if failure else body}),flush=True)
     elif failure:
-        print(json.dumps({'type':'turn.failed','error':{'message':'fixture provider failed'}}),flush=True)
+        print(json.dumps({'type':'turn.failed','error':{'message':action.get('fail_message','fixture provider failed')}}),flush=True)
     else:
         print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':body}}),flush=True)
         print(json.dumps({'type':'turn.completed'}),flush=True)
@@ -1372,6 +1439,215 @@ class Receive(unittest.TestCase):
         self.assertEqual(observed[1][0]['resume'],native)
         self.assertEqual(self.coord('player','root')['native'],native)
         self.assertEqual(self.coord('inbox','root'),[])
+
+    def test_codex_receive_hands_off_to_the_next_profile_and_resumes_the_same_native(self):
+        self.codex_profile_handoff(ack_before_exhaustion=False)
+
+    def test_codex_receive_resumes_acknowledged_work_after_profile_exhaustion(self):
+        self.codex_profile_handoff(ack_before_exhaustion=True)
+
+    def codex_profile_handoff(self, ack_before_exhaustion):
+        # Root's #702 fallback order inside one receive invocation: profile A refuses with the
+        # provider's own usage-exhaustion message, the record advances to profile B, the same
+        # invocation's continuation spawns B with its own store on the recorded native conversation,
+        # and B acknowledges the retained original task. Every assertion reads coordinator state.
+        self.coord('attach', 'root', 'codex', '', '')
+        store_a = self.directory / 'store-a'
+        store_b = self.directory / 'store-b'
+        store_a.mkdir()
+        store_b.mkdir()
+        home_a = self.directory / 'history-a'
+        home_b = self.directory / 'history-b'
+        home_a.mkdir()
+        home_b.mkdir()
+        (store_a / 'config.toml').write_text('model = "gpt-5.6-codex"\nsqlite_home = "' + str(home_a) + '"\n')
+        (store_b / 'config.toml').write_text('# profile B names a different history root\nsqlite_home = "' + str(home_b) + '"\n')
+        record = self.directory / ('state.db.profile-' + 'root'.encode().hex())
+        (self.directory / 'state.db.profiles').write_text(
+            'codex A ' + str(store_a) + '\ncodex B ' + str(store_b) + '\n')
+        record.write_text('A ' + str(store_a) + '\n')
+        document = json.loads((self.directory / 'fixture.json').read_text())
+        document['record_launches'] = True
+        (self.directory / 'fixture.json').write_text(json.dumps(document))
+        body = 'Retained task for the handoff.\n'
+        self.prepare_input('fallback', 'root', body, kind='task')
+        cause = 'You’ve hit your usage limit for gpt-5.6-codex. Switch to another model now, or try again later.'
+        # The fake app-server resolves the original transcript under A's sessions directory.
+        # The helper copies it into B's sessions directory, and B reads the retained task
+        # content before its own acknowledgment.
+        observer = self.spawn(*self.receive_args('root'))
+        first, started = self.accept('root')
+        self.assertTrue(any(str(store_a) in argument for argument in started['args']))
+        self.action(first, fail=True, ack=ack_before_exhaustion, fail_message=cause)
+        self.action(first, exit_fixture=True)
+        second, resumed = self.accept('root')
+        launches = [json.loads(line) for line in
+                    (self.directory / 'native-launches.jsonl').read_text().splitlines()]
+        self.assertEqual(len(launches), 2)
+        self.assertEqual(launches[0]['resume'], '')
+        self.assertEqual(launches[1]['resume'], started['native'])
+        self.assertTrue(any(str(store_b) in argument for argument in resumed['args']))
+        # Profile B names its own history root in its own configuration, and the preserved
+        # home is profile A's configured root: the continuation resolves A's history through
+        # the recorded override, so a contrary configuration in B does not win.
+        self.assertIn('sqlite_home="' + str(home_a) + '"', resumed['args'])
+        self.assertNotIn('sqlite_home="' + str(home_b) + '"', resumed['args'])
+        sidecar = self.directory / ('state.db.history-' + 'root'.encode().hex())
+        recorded_home = json.loads(sidecar.read_text().splitlines()[-1])
+        # The sidecar carries the fields a prepared helper answer and this deployment's own
+        # line share; the profile record's last line is what proves profile B.
+        self.assertEqual(recorded_home['harness'], 'codex')
+        self.assertEqual(recorded_home['sourceStore'], str(store_a))
+        self.assertEqual(recorded_home['store'], str(store_b))
+        self.assertEqual(recorded_home['home'], str(home_a))
+        rollout = store_a / 'sessions' / (started['native'] + '.jsonl')
+        copied = store_b / 'sessions' / (started['native'] + '.jsonl')
+        self.assertEqual(recorded_home['rolloutPath'], str(rollout))
+        self.assertEqual(recorded_home['historyPath'], str(copied))
+        self.assertEqual(copied.read_text(), rollout.read_text())
+        history = [json.loads(line) for line in
+                   (self.directory / 'native-history.jsonl').read_text().splitlines()]
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0]['home'], str(home_a))
+        self.assertEqual(history[0]['content'], '')
+        self.assertEqual(history[1]['resume'], started['native'])
+        self.assertEqual(history[1]['native'], started['native'])
+        self.assertEqual(history[1]['home'], str(home_a))
+        self.assertEqual(history[1]['content'], started['prompt'])
+        self.assertIn(body, history[1]['content'])
+        self.assertIn('[id: fallback]', history[1]['content'])
+        self.assertEqual(history[1]['origin'], str(copied))
+        self.assertEqual(self.coord('delivery', 'fallback')['receipt'],
+                         'native-reviewed' if ack_before_exhaustion else None)
+        # The provider's own app-server surface answers with the same retained transcript the
+        # resume path loaded, which is what the packaged history helper reads under the
+        # original account.
+        app_server = subprocess.run(
+            [str(self.fixture), 'app-server', '--listen', 'stdio://'],
+            input=json.dumps({'id': 1, 'method': 'initialize', 'params': {}}) + '\n'
+                  + json.dumps({'id': 2, 'method': 'config/read', 'params': {}}) + '\n'
+                  + json.dumps({'id': 3, 'method': 'thread/read', 'params': {'threadId': started['native']}}) + '\n',
+            capture_output=True, text=True, cwd=str(self.directory),
+            env={**os.environ, 'CODEX_HOME': str(store_a)})
+        answers = [json.loads(line) for line in app_server.stdout.splitlines()]
+        self.assertEqual(answers[1]['result']['config']['sqlite_home'], str(home_a))
+        self.assertEqual(answers[2]['result']['thread']['rolloutPath'], str(rollout))
+        self.assertEqual(answers[2]['result']['thread']['path'], str(rollout))
+        self.assertIn(body, json.loads(rollout.read_text().splitlines()[-1])['content'])
+        self.assertEqual(resumed['args'][resumed['args'].index('--model') + 1], 'root')
+        if ack_before_exhaustion:
+            self.assertIn(':handoff-guidance]', resumed['prompt'])
+            self.assertIn('Continue the original retained attempt', resumed['prompt'])
+            self.assertNotIn('[id: fallback]', resumed['prompt'])
+        else:
+            self.assertIn('[id: fallback]', resumed['prompt'])
+            self.assertIn(body, resumed['prompt'])
+        self.action(second)
+        self.finish(observer)
+        self.assertEqual(self.coord('delivery', 'fallback')['receipt'], 'native-reviewed')
+        self.assertEqual(record.read_text().splitlines()[-1], 'B ' + str(store_b))
+        handoff = [message for message in self.coord('inbox', 'operator')
+                   if 'subscription profile handoff' in message['body']]
+        self.assertEqual(len(handoff), 1)
+        self.assertIn(cause, handoff[0]['body'])
+        self.assertIn('refused profile=A', handoff[0]['body'])
+        self.assertIn('bound profile=B', handoff[0]['body'])
+        self.assertIsNone(self.coord('delivery', handoff[0]['id'])['receipt'])
+        failed = [turn for turn in self.coord('turns', 'root') if cause in turn['reportBody']]
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(json.loads(failed[0]['reportBody']),
+                         {'type': 'result', 'is_error': 1,
+                          'nativeEvent': {'type': 'turn.failed', 'error': {'message': cause}},
+                          'result': cause})
+
+    def test_claude_receive_preserves_transcript_and_subagent_history_on_profile_handoff(self):
+        self.coord('attach', 'root', 'claude-code', '', '')
+        store_a = self.directory / 'claude account A'
+        store_b = self.directory / 'claude account B'
+        store_a.mkdir()
+        store_b.mkdir()
+        record = self.directory / ('state.db.profile-' + 'root'.encode().hex())
+        record.write_text('A ' + str(store_a) + '\n')
+        (self.directory / 'state.db.profiles').write_text(
+            'claude-code A ' + str(store_a) + '\nclaude-code B ' + str(store_b) + '\n')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
+        body = 'Continue the retained Claude task and its subagent work.\n'
+        self.prepare_input('claude-fallback', 'root', body, kind='task')
+        cause = "You've hit your session limit. Try again later."
+        overrides = {key: 'controlled-unused-credential' for key in
+                     ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN')}
+        with patch.dict(os.environ, overrides):
+            observer = self.spawn(*self.receive_args('root'))
+            first, started = self.accept('root')
+            self.assertEqual(started['claudeAuthVariablesPresent'], [])
+            self.action(first, fail=True, ack=False, fail_message=cause)
+            self.action(first, exit_fixture=True)
+            second, resumed = self.accept('root')
+            self.assertEqual(resumed['claudeAuthVariablesPresent'], [])
+            self.assertEqual(resumed['native'], started['native'])
+            self.assertEqual(resumed['resume'], started['native'])
+            self.assertIn(body, resumed['prompt'])
+            self.assertIsNone(self.coord('delivery', 'claude-fallback')['receipt'])
+            transcript_a = store_a / 'projects' / 'fixture-project' / (started['native'] + '.jsonl')
+            transcript_b = store_b / 'projects' / 'fixture-project' / (started['native'] + '.jsonl')
+            self.assertEqual(transcript_b.read_text(), transcript_a.read_text())
+            self.assertEqual(json.loads(transcript_b.read_text())['message']['content'], started['prompt'])
+            subagent_a = transcript_a.parent / started['native'] / 'subagents' / 'agent-fixture.jsonl'
+            subagent_b = transcript_b.parent / started['native'] / 'subagents' / 'agent-fixture.jsonl'
+            self.assertEqual(subagent_b.read_text(), subagent_a.read_text())
+            self.assertIn(body, json.loads(subagent_b.read_text())['message']['content'][0]['text'])
+            history = [json.loads(line) for line in
+                       (self.directory / 'native-history.jsonl').read_text().splitlines()]
+            self.assertEqual(history[-1]['content'], started['prompt'])
+            self.assertEqual(history[-1]['origin'], str(transcript_b))
+            sidecar = self.directory / ('state.db.history-' + 'root'.encode().hex())
+            prepared = json.loads(sidecar.read_text().splitlines()[-1])
+            self.assertEqual(prepared['harness'], 'claude-code')
+            self.assertEqual(prepared['sourceStore'], str(store_a))
+            self.assertEqual(prepared['store'], str(store_b))
+            self.assertEqual(prepared['rolloutPath'], str(transcript_a))
+            self.assertEqual(prepared['historyPath'], str(transcript_b))
+            self.assertEqual(record.read_text().splitlines()[-1], 'B ' + str(store_b))
+            self.action(second)
+            self.finish(observer)
+        self.assertEqual(self.coord('delivery', 'claude-fallback')['receipt'], 'native-reviewed')
+        handoff = [message for message in self.coord('inbox', 'operator')
+                   if 'subscription profile handoff' in message['body']]
+        self.assertEqual(len(handoff), 1)
+        self.assertIn(cause, handoff[0]['body'])
+
+    def test_codex_receive_keeps_non_exhaustion_causes_without_a_profile_change(self):
+        # Non-exhaustion causes that must keep their own cause: three contract wordings (rate-limit,
+        # context-window, stream-disconnect) plus an auth placeholder with no established source string.
+        # The record does not advance and no handoff report appears, whatever the failed terminal says.
+        store_a = self.directory / 'store-a'
+        store_b = self.directory / 'store-b'
+        store_a.mkdir()
+        store_b.mkdir()
+        record = self.directory / ('state.db.profile-' + 'root'.encode().hex())
+        (self.directory / 'state.db.profiles').write_text(
+            'codex A ' + str(store_a) + '\ncodex B ' + str(store_b) + '\n')
+        record.write_text('A ' + str(store_a) + '\n')
+        causes = ['refresh token rejected',
+                  'rate limit exceeded: too many requests',
+                  "Codex ran out of room in the model's context window. Start a new thread or clear earlier history before retrying.",
+                  'stream disconnected before completion: Incomplete response returned']
+        for index, cause in enumerate(causes):
+            ident = 'kept-' + str(index)
+            self.prepare_input(ident, 'root', 'Cause probe.\n', kind='task')
+            observer = self.spawn(*self.receive_args('root'))
+            control, started = self.accept('root')
+            self.action(control, fail=True, ack=False, fail_message=cause)
+            self.action(control, exit_fixture=True)
+            self.finish(observer, ok=False)
+            self.assertEqual(record.read_text().splitlines()[-1], 'A ' + str(store_a))
+            self.assertEqual([message for message in self.coord('inbox', 'operator')
+                              if 'subscription profile handoff' in message['body']], [])
+            failed = [turn for turn in self.coord('turns', 'root') if cause in turn['reportBody']]
+            self.assertEqual(len(failed), 1)
 
     def test_busy_direct_receive_drains_new_input_and_preserves_native_session(self):
         self.player()
