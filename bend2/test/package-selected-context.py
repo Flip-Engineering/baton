@@ -5,6 +5,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import unittest
@@ -332,7 +333,7 @@ void handler(const char *dynamic) {
             'request': {'version': 1, 'engine': 'clang-analyzer',
                         'subject': {'kind': 'symbol', 'path': source.name, 'name': 'handler'},
                         'select': ['databaseAccesses'], 'cwd': str(project),
-                        'options': {'client': 'query_sql', 'database': database.name}},
+                        'options': {'database': database.name}},
             'operationPlan': [{'binding': binding, 'common': 'sourceAnalysis', 'dependencies': []}],
             'role': 'starter', 'incarnation': '1',
         }
@@ -377,6 +378,104 @@ void handler(const char *dynamic) {
         with sqlite3.connect(database) as connection:
             self.assertEqual(connection.execute('SELECT value FROM records').fetchall(),
                              [('alpha',)])
+
+    def test_selected_clang_maps_original_fossil_and_discovers_declared_database_helper(self):
+        runtime = os.environ.get('BATON2_CONTEXT_CLANG')
+        if runtime is None:
+            self.skipTest('Selected Clang runtime requires BATON2_CONTEXT_CLANG')
+        repository = Path(__file__).resolve().parents[2]
+        for directory in ('clang', 'catalogs'):
+            shutil.copytree(repository / 'bend2/context' / directory,
+                            self.root / 'bend2/context' / directory)
+        selected = PACKAGE.stage_clang_module(
+            self.payload, 'clang-analyzer', ['type', 'calls', 'databaseAccesses'], Path(runtime))
+        module_root = self.payload / selected['path']
+        declaration = json.loads((module_root / 'native-provider.declaration.json').read_text())
+        project = self.root / 'fossil project'
+        project.mkdir()
+        fixture = repository / 'bend2/context/clang/test/fixtures/fossil-reportlist.tar.gz'
+        with tarfile.open(fixture) as archive:
+            archive.extractall(project)
+        source = project / 'src/report.c'
+        generated = project / 'bld/report_.c'
+        (project / 'compile_commands.json').write_text(json.dumps([{
+            'directory': str(project), 'file': 'bld/report_.c',
+            'arguments': ['clang', '-std=gnu89', '-I./src', '-fsyntax-only',
+                          'bld/report_.c'],
+        }]))
+        database = project / 'reports.db'
+        with sqlite3.connect(database) as connection:
+            connection.execute('CREATE TABLE reportfmt(rn INTEGER PRIMARY KEY,title TEXT,owner TEXT)')
+            connection.execute("INSERT INTO reportfmt VALUES (1,'Example report','operator')")
+        wrapper = self.payload / 'libexec/baton2/context-provider.mjs'
+        wrapper.parent.mkdir(parents=True)
+        shutil.copyfile(SCRIPT.parent / 'context-provider.mjs', wrapper)
+        binding = {'id': 'clang-analyzer', 'revision': declaration['revision'],
+                   'protocolVersion': '2', 'operation': 'sourceAnalysis',
+                   'artifactIdentities': declaration['artifactIdentities'],
+                   'schemaIdentities': declaration['schemaIdentities'],
+                   'packageIdentity': declaration['packageIdentity']}
+        invocation = {
+            'version': 2, 'query': 'fossil-reportlist-catalog', 'owner': 'clang-owner',
+            'moduleBinding': binding,
+            'request': {'version': 1, 'engine': 'clang-analyzer',
+                        'subject': {'kind': 'position', 'path': 'src/report.c',
+                                    'line': 30, 'column': 5},
+                        'select': ['type', 'calls', 'databaseAccesses'],
+                        'cwd': str(project),
+                        'options': {'project': 'compile_commands.json',
+                                    'database': {'engine': 'sqlite-schema', 'path': database.name}}},
+            'operationPlan': [{'binding': binding, 'common': 'sourceAnalysis', 'dependencies': []}],
+            'role': 'starter', 'incarnation': '1',
+        }
+        result = subprocess.run(['node', str(wrapper)], input=json.dumps(invocation),
+                                cwd=project, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        frame = json.loads(result.stdout)
+        self.assertEqual(frame['payload']['status'], 'complete', result.stdout)
+        output = frame['payload']['result']
+        function = output['selectedFunction']
+        self.assertEqual(function['name'], 'view_list', result.stdout)
+        self.assertEqual(function['formals'], [], result.stdout)
+        self.assertEqual(output['translationUnit'], str(generated), result.stdout)
+        mapping = function['correspondence']
+        self.assertEqual((mapping['status'], mapping['original'], mapping['generated']),
+                         ('mapped', str(source), str(generated)), result.stdout)
+        self.assertEqual(source.read_bytes()[mapping['originalStart']:mapping['originalEnd']],
+                         generated.read_bytes()[mapping['generatedStart']:mapping['generatedEnd']])
+        prepare = next(call for call in output['calls'] if call['name'] == 'db_prepare')
+        self.assertTrue(prepare['direct'], result.stdout)
+        self.assertEqual(len(prepare['parameterTypes']), 2, result.stdout)
+        self.assertTrue(prepare['usr'], result.stdout)
+        self.assertFalse(any(helper['name'] == 'db_prepare'
+                             for helper in output['helperDefinitions']), result.stdout)
+        candidate = next(row for row in output['helperCandidates']
+                         if row['callId'] == prepare['id'])
+        sql = 'SELECT rn, title, owner FROM reportfmt ORDER BY title'
+        literal = next(row for row in candidate['sqlLiterals'] if row['valueText'] == sql)
+        self.assertEqual(literal['argumentIndex'], 1, result.stdout)
+        self.assertEqual(candidate['helperUsr'], prepare['usr'], result.stdout)
+        self.assertEqual(candidate['boundLocalName'], 'q', result.stdout)
+        accesses = output['databaseAccesses']
+        self.assertEqual(accesses['status'], 'complete', result.stdout)
+        self.assertEqual(accesses['database']['path'], str(database), result.stdout)
+        relations = [row for row in accesses['relations']
+                     if row['value']['statement']['callId'] == prepare['id']]
+        self.assertTrue(relations, result.stdout)
+        refs = {ref['id']: ref for ref in accesses['refs']}
+        for relation in relations:
+            self.assertEqual(relation['classification'], 'static-possible', result.stdout)
+            self.assertEqual(relation['value']['statementText'], sql, result.stdout)
+            self.assertEqual(relation['value']['statementKind'], 'read', result.stdout)
+            self.assertEqual(relation['value']['object']['name'], 'reportfmt', result.stdout)
+            self.assertEqual(relation['value']['statement']['helperName'], 'db_prepare', result.stdout)
+            span = refs[relation['from']]['subject']
+            self.assertEqual(span['path'], str(generated), result.stdout)
+            self.assertIn(sql.encode(), generated.read_bytes()[span['byteStart']:span['byteEnd']])
+            self.assertEqual(refs[relation['to']]['subject']['name'], 'reportfmt', result.stdout)
+        with sqlite3.connect(database) as connection:
+            self.assertEqual(connection.execute('SELECT rn,title,owner FROM reportfmt').fetchall(),
+                             [(1, 'Example report', 'operator')])
 
     def test_installed_native_cli_completes_a_selected_source_analysis(self):
         repository = Path(__file__).resolve().parents[2]

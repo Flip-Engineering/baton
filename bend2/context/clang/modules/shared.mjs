@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, resolve } from 'node:path';
 
 export const RESULT_SCHEMA = 'baton2.context.clang.source-analysis.result.v1';
 
@@ -74,11 +74,31 @@ export function compilation(request, cwd, file) {
   const database = resolve(cwd, project);
   const rows = JSON.parse(readFileSync(database, 'utf8'));
   const target = resolve(file);
-  const row = rows.find((entry) => {
+  let row = rows.find((entry) => {
     if (typeof entry?.file !== 'string') return false;
     const directory = typeof entry.directory === 'string' ? resolve(entry.directory) : cwd;
     return resolve(directory, entry.file) === target;
   });
+  const pairs = [];
+  if (!row && request.engine === 'clang-analyzer') {
+    // Fossil's translation rules name the original and generated input files.
+    // The extractor maps the selected function's bytes between that pair.
+    let rules = [];
+    try {
+      rules = readFileSync(resolve(dirname(target), 'main.mk'), 'utf8')
+        .split('\n').map((line) => line.match(
+          /^\$\(OBJDIR\)\/([^\s:]+):\s+\$\(SRCDIR\)\/([^\s]+)(?:\s|$)/,
+        )).filter((rule) => rule && rule[2] === basename(target));
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    const generated = rows.filter((entry) => typeof entry?.file === 'string'
+      && rules.some((rule) => rule[1] === basename(entry.file)));
+    if (generated.length > 1) throw new Error(`compile database has multiple generated commands for ${file}`);
+    row = generated[0];
+    if (row) pairs.push({ original: target,
+      generated: resolve(typeof row.directory === 'string' ? row.directory : cwd, row.file) });
+  }
   if (!row) throw new Error(`compile database has no command for ${file}`);
   const args = Array.isArray(row.arguments) ? row.arguments :
     typeof row.command === 'string' ? shellArguments(row.command) : null;
@@ -87,7 +107,7 @@ export function compilation(request, cwd, file) {
   }
   return { databaseDirectory: dirname(database),
     directory: typeof row.directory === 'string' ? resolve(row.directory) : cwd,
-    file: row.file, arguments: args };
+    file: row.file, arguments: args, pairs };
 }
 
 export function runAdapter(adapterPath, document) {

@@ -31,6 +31,7 @@ export async function executeInvocation(invocation, { packageRoot }) {
         file: compile.file,
         arguments: argumentsWithTranslationUnitLast,
         subject: extractorSubject,
+        pairs: compile.pairs,
         helpers: request.options?.client ? [request.options.client] : [],
       },
     };
@@ -43,7 +44,7 @@ export async function executeInvocation(invocation, { packageRoot }) {
     }
     if (!output.error && joinsDatabase) {
       output.databaseAccesses = await databaseAccesses(output, {
-        cwd, database: request.options?.database,
+        cwd, database: request.options?.database?.path ?? request.options?.database,
       });
     }
     return eventFrame(invocation, { status: output.error ? 'unavailable' : 'complete',

@@ -1308,27 +1308,28 @@ private:
 
   void emitHelpers(ASTContext &Ctx, SourceManager &SM, const LangOptions &LO,
                    FunctionDecl *FD, BodyVisitor &V) {
-    (void)LO;
-    std::map<std::string, const FunctionDecl *> HelperOfName;
-    for (const std::string &Name : In_.helpers) {
-      const FunctionDecl *H = nullptr;
-      int Match = 0;
-      std::set<const FunctionDecl *> SeenDefinitions;
-      for (auto *D : Ctx.getTranslationUnitDecl()->decls()) {
-        auto *Declaration = dyn_cast<FunctionDecl>(D);
-        if (!Declaration || Declaration->getNameAsString() != Name)
-          continue;
-        const FunctionDecl *Cand = Declaration->getDefinition();
-        if (!Cand || !SeenDefinitions.insert(Cand).second)
-          continue;
-        ++Match;
-        H = Cand;
-      }
-      if (Match != 1)
+    std::map<std::string, const FunctionDecl *> Helpers;
+    for (const auto &KV : CallExprOf_) {
+      const FunctionDecl *Callee = KV.second->getDirectCallee();
+      if (!Callee)
         continue;
-      HelperOfName[Name] = H;
+      const std::string Name = Callee->getNameAsString();
+      if (!In_.helpers.empty() &&
+          std::find(In_.helpers.begin(), In_.helpers.end(), Name) ==
+              In_.helpers.end())
+        continue;
+      const FunctionDecl *Canonical = Callee->getCanonicalDecl();
+      Helpers.emplace(declUsr(Canonical), Canonical);
+    }
+
+    for (const auto &KV : Helpers) {
+      const FunctionDecl *H = KV.second->getDefinition();
+      // A cross-translation-unit call retains its declaration and arguments.
+      // Its implementation body is present only when this AST contains it.
+      if (!H)
+        continue;
       HelperDefinition HD;
-      HD.name = Name;
+      HD.name = H->getNameAsString();
       HD.usr = declUsr(H->getCanonicalDecl());
       HD.returnType = typeText(H->getReturnType(), Ctx);
       HD.variadic = H->isVariadic();
@@ -1349,18 +1350,12 @@ private:
     for (const CallInfo &Call : Out_.calls) {
       if (!Call.direct)
         continue;
-      std::string HelperName;
-      for (const auto &KV : HelperOfName) {
-        if (declUsr(KV.second->getCanonicalDecl()) == Call.usr) {
-          HelperName = KV.first;
-          break;
-        }
-      }
-      if (HelperName.empty())
+      const auto Helper = Helpers.find(Call.usr);
+      if (Helper == Helpers.end())
         continue;
       CandidateRec R;
       R.C.callId = Call.id;
-      R.C.helperName = HelperName;
+      R.C.helperName = Helper->second->getNameAsString();
       R.C.helperUsr = Call.usr;
       R.blockId = Call.blockId;
       Cands.push_back(std::move(R));

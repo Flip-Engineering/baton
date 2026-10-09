@@ -39,7 +39,7 @@ struct Input {
   std::vector<std::string> arguments; // reduced frontend command, argv[0] first
   Subject subject;
   std::vector<FilePair> pairs;
-  std::vector<std::string> helpers;   // helper function names to parse/emit
+  std::vector<std::string> helpers;   // selected names; empty discovers direct callees
 
   // Strict closed decode. Unknown members, missing members, wrong types and
   // duplicate members refuse with the failure reason in Error.
