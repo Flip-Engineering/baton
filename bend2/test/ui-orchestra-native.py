@@ -95,7 +95,7 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
                                         kind,summary
                                    FROM native_changes ORDER BY change_id''').fetchall()
 
-    def ui_snapshot(self, reader, subject):
+    def ui_snapshot(self, reader, subject, knowledge_actor=None):
         node = shutil.which('node')
         self.assertIsNotNone(node, 'Node 22 is required for the Orchestra UI fixture')
         server = ROOT / 'bend2' / 'ui' / 'orchestra' / 'server.mjs'
@@ -117,12 +117,97 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
                 urllib.request.urlopen(url + 'orchestra/snapshot?subject=root&since=0')
             self.assertEqual(denied.exception.code, 403)
             denied.exception.close()
+            if knowledge_actor:
+                with urllib.request.urlopen(url + 'orchestra/knowledge?actor=' + knowledge_actor) as response:
+                    self.assertEqual(response.status, 200)
+                    return snapshot, json.load(response)
             return snapshot
         finally:
             process.stdin.close()
             process.wait()
             stderr = process.stderr.read()
             self.assertEqual(process.returncode, 0, stderr)
+
+    def test_public_findings_and_promotions_publish_scoped_native_changes(self):
+        subscribers = []
+
+        def subscribe(cursor, generation):
+            process = subprocess.Popen(
+                [str(EXE), str(self.db), 'ui-subscribe', str(cursor), str(generation)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            subscribers.append(process)
+            line = process.stdout.readline()
+            if not line:
+                self.fail(process.stderr.read())
+            return process, json.loads(line)
+
+        def high_water():
+            return self.changes()[-1][0]
+
+        try:
+            first, ready = subscribe(high_water(), 0)
+            self.assertEqual(int(ready['cursor']), high_water(), ready)
+
+            def committed():
+                cursor = high_water()
+                _, current = subscribe(cursor, ready['generation'])
+                self.assertFalse(current['gap'], current)
+                self.assertEqual(int(current['cursor']), cursor, current)
+                while True:
+                    line = first.stdout.readline()
+                    if not line:
+                        self.fail(first.stderr.read())
+                    notice = json.loads(line)
+                    self.assertEqual(notice['kind'], 'commit', notice)
+                    self.assertEqual(notice['generation'], ready['generation'], notice)
+                    if int(notice['cursor']) >= cursor:
+                        self.assertEqual(int(notice['cursor']), cursor, notice)
+                        return cursor
+
+            finding = self.call('record', 'worker-finding', 'worker', 'Retained finding.',
+                                'Full evidence.', 'Declared limits.')
+            self.assertEqual(finding['evidence'], 'Full evidence.')
+            recorded = committed()
+            knowledge = [row for row in self.changes() if row[2] == 'knowledge']
+            self.assertEqual([(row[1], row[3], row[4]) for row in knowledge],
+                             [('worker', 'worker-finding', 'insert')])
+
+            self.call('record', 'worker-finding', 'worker', 'Conflicting claim.',
+                      'Full evidence.', 'Declared limits.', success=False)
+            self.assertEqual(high_water(), recorded)
+            _, unchanged = subscribe(recorded, ready['generation'])
+            self.assertEqual(int(unchanged['cursor']), recorded, unchanged)
+
+            self.call('promote', 'lead-promotion', 'lead', 'worker', 'lead', 'worker-finding')
+            promoted = committed()
+            first_promotion = [row for row in self.changes()
+                               if recorded < row[0] <= promoted and row[2] == 'promotion']
+            self.assertEqual({row[1] for row in first_promotion}, {'worker', 'lead'})
+            self.assertTrue(all(row[3:6] == ('worker-finding', 'insert', 'promotion')
+                                for row in first_promotion))
+
+            self.call('promote', 'descendant-promotion', 'failed-worker', 'lead',
+                      'failed-worker', 'worker-finding')
+            continued = committed()
+            carried_promotion = [row for row in self.changes()
+                                 if promoted < row[0] <= continued and row[2] == 'promotion']
+            self.assertEqual({row[1] for row in carried_promotion},
+                             {'worker', 'lead', 'failed-worker'})
+            snapshot, actor = self.ui_snapshot('lead', 'worker', knowledge_actor='failed-worker')
+            visible_promotions = [row for row in snapshot['transitions']
+                                  if row['entity'] == 'promotion' and row['seq'] > promoted]
+            self.assertEqual({row['session'] for row in visible_promotions},
+                             {'worker', 'failed-worker'})
+            self.assertEqual(actor['received'][0]['finding'], 'worker-finding')
+            self.assertEqual(actor['received'][0]['evidence'], 'Full evidence.')
+            self.assertEqual(actor['received'][0]['limits'], 'Declared limits.')
+            print('public knowledge native cursor', recorded, promoted, continued, flush=True)
+        finally:
+            for process in subscribers:
+                process.terminate()
+                process.wait()
+                process.stdout.close()
+                process.stderr.close()
 
     def test_multilevel_native_turns_report_finish_fail_and_pending_input_are_projected(self):
         pending = self.call('message', 'task-worker', 'root', 'worker', 'task',

@@ -780,24 +780,29 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(self.subscription_line(second, 'notice:')['cursor'], baseline + 3)
         # The next ordered notice is the barrier for the repeated-cursor publication.
         self.assertEqual(self.subscription_line(first, 'notice:')['cursor'], baseline + 3)
-        # A cursor below the record belongs to a different sequence: the publisher
-        # is the authority there, and subscribers are told to snapshot rather than
-        # wait for a value the database already passed.
+        # A delayed publication from an earlier writer preserves the high-water.
         self.command('publish', self.db, str(baseline + 1))
-        reset = self.subscription_line(first, 'notice:')
-        self.assertEqual((reset['kind'], reset['cursor']), ('gap', baseline + 1), reset)
+        current = self.spawn('subscribe', self.db, str(baseline + 3), str(ready['generation']))
+        unchanged = self.subscription_line(current, 'ready:')
+        self.assertFalse(unchanged['gap'], unchanged)
+        self.assertEqual(unchanged['cursor'], baseline + 3, unchanged)
+        self.command('publish', self.db, str(baseline + 4))
+        for subscriber in (first, second, current):
+            notice = self.subscription_line(subscriber, 'notice:')
+            self.assertEqual((notice['kind'], notice['cursor']), ('commit', baseline + 4), notice)
         # The cursor is durable across the owner incarnation, and a replaced
         # incarnation reports the gap that forces a snapshot.
         owners = self.owner_processes()
         self.assertEqual(len(owners), 1, owners)
         os.kill(int(owners[0].split()[0]), signal.SIGKILL)
-        third = self.spawn('subscribe', self.db, str(baseline + 1), str(ready['generation']))
+        third = self.spawn('subscribe', self.db, str(baseline + 4), str(ready['generation']))
         replaced = self.subscription_line(third, 'ready:')
         self.assertTrue(replaced['gap'], replaced)
-        self.assertEqual(replaced['cursor'], baseline + 1, replaced)
-        self.command('publish', self.db, str(baseline + 4))
-        self.assertEqual(self.subscription_line(third, 'notice:')['cursor'], baseline + 4)
-        print('evidence subscription ready', ready, 'resuming', resuming, 'replaced', replaced)
+        self.assertEqual(replaced['cursor'], baseline + 4, replaced)
+        self.command('publish', self.db, str(baseline + 5))
+        self.assertEqual(self.subscription_line(third, 'notice:')['cursor'], baseline + 5)
+        print('evidence subscription ready', ready, 'resuming', resuming,
+              'delayed publication', unchanged, 'replaced', replaced)
 
     def test_adoption_refuses_a_directory_without_custody(self):
         """The request-level ENOENT adoption path adopts real custody only: a

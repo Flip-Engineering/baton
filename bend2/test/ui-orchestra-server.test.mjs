@@ -36,6 +36,31 @@ function fixture() {
       entity TEXT NOT NULL, entity_id TEXT NOT NULL, session_id TEXT NOT NULL,
       operation TEXT NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL
     );
+    CREATE TABLE native_requests (
+      id TEXT PRIMARY KEY NOT NULL, worker TEXT NOT NULL, parent TEXT NOT NULL, attempt TEXT NOT NULL,
+      native_id TEXT NOT NULL, method TEXT NOT NULL, event TEXT NOT NULL, reply TEXT,
+      written INTEGER NOT NULL DEFAULT 0, closed TEXT, UNIQUE(attempt, native_id)
+    );
+    CREATE TRIGGER ui_request_insert AFTER INSERT ON native_requests
+    BEGIN
+      INSERT INTO native_changes(recorded_at,entity,entity_id,session_id,operation,kind,summary)
+      VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),'native-request',NEW.id,NEW.worker,'insert',
+        'native-request',NEW.method || ' request recorded');
+    END;
+    CREATE TRIGGER ui_request_update AFTER UPDATE ON native_requests
+    WHEN OLD.reply IS NOT NEW.reply OR OLD.written IS NOT NEW.written OR OLD.closed IS NOT NEW.closed
+    BEGIN
+      INSERT INTO native_changes(recorded_at,entity,entity_id,session_id,operation,kind,summary)
+      VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),'native-request',NEW.id,NEW.worker,'update',
+        'native-request',NEW.method || CASE WHEN NEW.reply IS NOT OLD.reply THEN ' response stored'
+          WHEN NEW.written IS NOT OLD.written THEN ' response written' ELSE ' request closed' END);
+    END;
+    CREATE TRIGGER ui_request_delete AFTER DELETE ON native_requests
+    BEGIN
+      INSERT INTO native_changes(recorded_at,entity,entity_id,session_id,operation,kind,summary)
+      VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),'native-request',OLD.id,OLD.worker,'delete',
+        'native-request',OLD.method || ' request removed');
+    END;
     CREATE TRIGGER ui_execution_change AFTER UPDATE ON executions
     BEGIN
       INSERT INTO native_changes(recorded_at,entity,entity_id,session_id,operation,kind,summary)
@@ -82,6 +107,8 @@ function fixture() {
              ('external','sibling','codex','configured/external','low','/external','other','base','');
     INSERT INTO session_roles VALUES ('root','conductor'),('child','conductor'),('grandchild','player'),('sibling','player');
     INSERT INTO executions VALUES ('child','attempt-1','direct','running','');
+    INSERT INTO native_requests(id,worker,parent,attempt,native_id,method,event)
+      VALUES ('req-1','grandchild','child','attempt-1','native-req-1','input','{"id":"native-req-1","method":"input"}');
     INSERT INTO messages(id,sender,recipient,kind,body) VALUES
       ('pending-1','root','child','task','pending input body');
     INSERT INTO ensembles VALUES ('shared-ensemble','external','tight');
@@ -170,6 +197,26 @@ test('snapshot binds a selected subtree to the reader and preserves recorded unk
 
   const denied = await fetch(`${base}/orchestra/snapshot?subject=external&since=0`);
   assert.equal(denied.status, 403);
+});
+
+test('snapshot serves ordinary databases before native requests are recorded', async (t) => {
+  const f = fixture();
+  const db = new DatabaseSync(f.databasePath);
+  db.exec('DROP TABLE native_requests');
+  db.close();
+  const server = createOrchestraServer({ databasePath: f.databasePath, reader: 'root' });
+  t.after(async () => { await close(server); rmSync(f.directory, { recursive: true, force: true }); });
+  const base = await listen(server);
+
+  const response = await fetch(`${base}/orchestra/snapshot?subject=child`);
+  assert.equal(response.status, 200);
+  const snapshot = await response.json();
+  const byId = new Map(snapshot.players.map((player) => [player.id, player]));
+  assert.deepEqual([...byId.keys()], ['child', 'grandchild']);
+  assert.equal(byId.get('child').currentAction.kind, 'execution');
+  assert.equal(byId.get('child').currentAction.label, 'running');
+  assert.equal(byId.get('child').pendingSample[0].id, 'pending-1');
+  assert.equal(byId.get('grandchild').currentAction, null);
 });
 
 test('event endpoint stays unavailable when the canonical owner has no subscription source', async (t) => {
@@ -697,4 +744,33 @@ test('a held write lock answers recoverably and the view keeps serving', async (
   const recovered = await fetch(`${base}/orchestra/snapshot?subject=child`);
   assert.equal(recovered.status, 200, 'the view stopped serving after a locked read');
   assert.equal((await recovered.json()).players[0].id, 'child');
+});
+
+test('the snapshot names the recorded current action and every stored awaiting', async (t) => {
+  const space = fixture();
+  t.after(() => rmSync(space.directory, { recursive: true, force: true }));
+  const server = createOrchestraServer({ databasePath: space.databasePath, reader: 'root' });
+  const base = await listen(server);
+  t.after(() => close(server));
+
+  const response = await fetch(`${base}/orchestra/snapshot?subject=child`);
+  assert.equal(response.status, 200);
+  const snapshot = await response.json();
+  const byId = new Map(snapshot.players.map((player) => [player.id, player]));
+
+  // An open recorded native request is what that actor waits on.
+  const waiting = byId.get('grandchild');
+  assert.equal(waiting.currentAction.kind, 'native-request');
+  assert.equal(waiting.currentAction.label, 'input request awaiting response');
+  assert.match(waiting.currentAction.at, /^\d{4}-\d{2}-\d{2}T/);
+
+  // The running actor records no open request, so its execution phase is its action.
+  const running = byId.get('child');
+  assert.equal(running.currentAction.kind, 'execution');
+  assert.equal(running.currentAction.label, 'running');
+
+  // The awaiting sample names the stored message itself, not a summary of it.
+  assert.equal(running.pendingSample.length, 1);
+  assert.equal(running.pendingSample[0].id, 'pending-1');
+  assert.equal(running.pendingSample[0].kind, 'task');
 });

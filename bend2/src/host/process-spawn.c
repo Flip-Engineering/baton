@@ -2129,21 +2129,12 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
         .epoch=owner->epoch,.error=EPROTO},NULL);
     BrInstanceCommit commit;
     memcpy(&commit,payload,sizeof(commit));
-    /* A commit that does not advance the high-water publishes nothing: a
-       rolled-back transaction publishes nothing because it never calls here.
-       A commit below the recorded high-water means the record belongs to a
-       different sequence than this database, which the physical key cannot
-       distinguish when a file reuses an inode; the publisher's cursor is then
-       the authority, and subscribers are told to take a fresh snapshot instead
-       of waiting for a value the database has already passed. */
+    /* Concurrent writers can publish their committed cursors out of order.
+       The owner retains the highest published cursor. */
     if(commit.cursor>owner->cursor) {
       owner->cursor=commit.cursor;
       br_owner_cursor_store(owner);
       br_owner_notify(owner,BN_COMMIT);
-    } else if(commit.cursor<owner->cursor) {
-      owner->cursor=commit.cursor;
-      br_owner_cursor_store(owner);
-      br_owner_notify(owner,BN_GAP);
     }
     BrInstanceReady ready={.generation=owner->epoch,.cursor=owner->cursor};
     return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,

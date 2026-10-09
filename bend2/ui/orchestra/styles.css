@@ -1,295 +1,762 @@
+/* Orchestra live view — presentation.
+
+   An operations ledger for one live run: hairline rules, a tabular
+   sans for data, a serif voice for the page title and pane headings,
+   and one accent spent on attention. Structure comes from rules and
+   indentation; only the toolbar controls are raised surfaces.
+
+   Type stays in system families: the page fetches no font and makes no
+   request other than the snapshot and the event stream. The serif, sans
+   and mono stacks each carry a Linux fallback because the hosted gate
+   renders them in Chrome on Ubuntu. */
+
 :root {
   color-scheme: light;
-  --ink: #1c2333;
+
+  --paper: #fbfcfe;
+  --surface: #ffffff;
+  --ink: #141a26;
+  --wash: #eef1f6;
+  --hairline: #d7dce5;
   --muted: #5b6478;
-  --line: #d9dee7;
-  --paper: #ffffff;
-  --wash: #f2f4f8;
-  --accent: #1f5fa8;
-  --accent-ink: #ffffff;
-  --flash: #fff3c4;
-  --ok: #1e7e34;
-  --wait: #8a6d00;
-  --bad: #b3261e;
-  --stop: #5b6478;
-  --radius: 6px;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Selection, focus and links. */
+  --selection: #2a3e6b;
+
+  /* The sole attention accent: pending counts, the playhead, arrivals. */
+  --attention: #a2611f;
+
+  /* Status inks, as shipped. Pending has none of its own: it renders as a
+     hollow outline, and unknown renders as the literal word. */
+  --running: #1e7e34;
+  --waiting: #8a6d00;
+  --failed: #b3261e;
+
+  --serif: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia,
+    "DejaVu Serif", "Liberation Serif", serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
+    Helvetica, Arial, "DejaVu Sans", "Liberation Sans", "Noto Sans", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono",
+    "Liberation Mono", monospace;
+
+  --step0: 12px;
+  --step1: 13px;
+  --step2: 15px;
+  --step3: 20px;
+  --step4: 26px;
+
+  --row: 28px;
+  --gutter: 20px;
+  --radius: 3px;
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  padding: 16px 20px 32px;
+  padding: 0 0 40px;
   color: var(--ink);
   background: var(--paper);
-  font-family: var(--font);
-  font-size: 14px;
-  line-height: 1.45;
+  font-family: var(--sans);
+  font-size: var(--step1);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
+
+h1, h2 { margin: 0; font-family: var(--serif); font-weight: 600; }
+
+a { color: var(--selection); }
+
+/* ── header: one status line, transport folded into details ────────────── */
 
 .page-head {
   display: flex;
   flex-wrap: wrap;
+  align-items: baseline;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  border-bottom: 2px solid var(--ink);
-  padding-bottom: 10px;
-  margin-bottom: 12px;
+  gap: 4px var(--gutter);
+  padding: 14px 20px 10px;
+  border-bottom: 1px solid var(--hairline);
 }
+
+.page-head > div:first-child { min-width: 0; }
 
 h1 {
-  font-size: 20px;
-  margin: 0 0 2px;
-  font-weight: 650;
+  font-size: var(--step3);
+  line-height: 1.2;
+  letter-spacing: -0.005em;
 }
 
-.subtitle { margin: 0; color: var(--muted); font-size: 13px; }
+.subtitle {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: var(--step0);
+  overflow-wrap: anywhere;
+}
+
+.conn-details { font-size: var(--step0); color: var(--muted); }
+
+.conn-details > summary {
+  padding: 2px 0;
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+}
+
+.conn-details > summary::-webkit-details-marker { display: none; }
+
+.conn-details > summary::after { content: " \25be"; font-size: 10px; }
+
+.conn-details[open] > summary::after { content: " \25b4"; }
+
+.conn-details > summary:hover { color: var(--selection); }
 
 .conn {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  margin: 0;
-  font-size: 12px;
-  white-space: nowrap;
+  display: grid;
+  grid-template-columns: max-content max-content;
+  gap: 2px 12px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
 }
 
-.conn div { display: flex; gap: 6px; }
+.conn div { display: contents; }
 .conn dt { color: var(--muted); }
-.conn dd { margin: 0; font-family: var(--mono); }
+.conn dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--step0);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── notices ───────────────────────────────────────────────────────────── */
 
 .notice {
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--wait);
-  background: var(--wash);
+  margin: 12px 20px 0;
   padding: 8px 12px;
-  margin-bottom: 10px;
-  font-size: 13px;
+  background: var(--wash);
+  border-left: 3px solid var(--waiting);
+  font-size: var(--step1);
 }
 
-.notice.fixture { border-left-color: var(--accent); }
+.notice.fixture { border-left-color: var(--attention); }
+
+/* ── toolbar: the only raised surfaces ─────────────────────────────────── */
 
 .toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
   align-items: flex-end;
-  margin-bottom: 12px;
+  gap: 10px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--hairline);
 }
 
-.field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: var(--step0);
+  color: var(--muted);
+}
 
-.field input, .field select {
+.field input,
+.field select {
   font: inherit;
+  font-size: var(--step1);
   color: var(--ink);
-  padding: 5px 8px;
-  border: 1px solid var(--line);
+  padding: 4px 7px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius);
-  background: var(--paper);
 }
 
-.field input { min-width: 240px; }
+.field input { min-width: 220px; }
+
+.field input::placeholder { color: #8b93a1; }
 
 button {
   font: inherit;
-  padding: 6px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--wash);
+  font-size: var(--step1);
+  padding: 5px 10px;
   color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
   cursor: pointer;
 }
 
-button:hover { border-color: var(--accent); color: var(--accent); }
+button:hover { border-color: var(--selection); color: var(--selection); }
 
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button:active { background: var(--wash); }
+
+:focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }
+
+.toolbar .pair { display: flex; gap: 4px; }
+
+/* ── layout: rules, not boxes ──────────────────────────────────────────── */
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(320px, 1.2fr) minmax(300px, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);
+  gap: var(--gutter);
   align-items: start;
+  padding: 16px 20px 0;
 }
 
-.tree-pane, .detail, .transitions {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  background: var(--paper);
+.tree-pane,
+.detail,
+.transitions { min-width: 0; padding: 0; }
+
+/* The two panes are the only surfaces: white on the paper ground, no border
+   and no radius. The right pane separates its two sections by a hairline. */
+.tree-pane,
+.side {
+  padding: 12px 14px;
+  background: var(--surface);
 }
 
-.tree-pane h2, .detail h2, .transitions h2 {
-  font-size: 13px;
-  text-transform: none;
-  letter-spacing: 0;
-  margin: 0 0 4px;
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.detail,
+.transitions {
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+}
+
+.tree-pane h2,
+.detail h2,
+.transitions h2 {
+  margin: 0 0 6px;
+  font-size: var(--step2);
+  line-height: 1.3;
+}
+
+.count,
+.legend {
+  margin: 0 0 6px;
+  font-size: var(--step0);
   color: var(--muted);
-  font-weight: 600;
 }
 
-.count { margin: 0 0 2px; font-size: 12px; color: var(--muted); }
+.count { font-variant-numeric: tabular-nums; }
 
-.legend { margin: 0 0 6px; font-size: 12px; color: var(--muted); }
+/* ── hierarchy ─────────────────────────────────────────────────────────── */
 
 .tree {
-  list-style: none;
-  margin: 0;
+  position: relative;
+  margin: 6px 0 0;
   padding: 0;
-  max-height: 70vh;
+  list-style: none;
+  max-height: calc(100vh - 250px);
+  min-height: 200px;
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 
-.tree ul { list-style: none; margin: 0; padding-left: 18px; border-left: 1px solid var(--line); }
+.tree ul {
+  margin: 0 0 0 6px;
+  padding: 0 0 0 14px;
+  list-style: none;
+  border-left: 1px solid var(--hairline);
+}
+
+/* Rows are positioned so a transient gutter connector can be drawn in the
+   indent beside them. */
+.tree li { position: relative; }
+
+/* The connector host must not become the connector's containing block: the
+   connector's coordinates are tree-relative, so the host stays static and the
+   connector resolves against .tree (which is positioned). */
+.tree .connector-host { position: static; }
 
 .node-row {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px;
-  padding: 2px 4px;
-  border-radius: 4px;
-  min-width: 0;
+  gap: 0 8px;
+  min-height: var(--row);
+  padding: 3px 6px 3px 2px;
+  border-left: 2px solid transparent;
 }
 
-.node-row[aria-selected="true"] { background: var(--wash); box-shadow: inset 2px 0 0 var(--accent); }
+.node-row:hover { background: var(--wash); }
 
+.node-row[aria-selected="true"] {
+  background: var(--wash);
+  border-left-color: var(--selection);
+}
+
+.node-row[aria-selected="true"] .node-id { color: var(--selection); font-weight: 600; }
+
+/* The chevron is drawn, so the "+" and "-" glyphs app.js writes are hidden
+   and the parent li's own aria-expanded rotates it. */
 .twisty {
-  border: none;
+  flex: none;
+  align-self: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  font-size: 0;
   background: none;
-  padding: 0 4px;
-  font-family: var(--mono);
-  color: var(--muted);
+  border: none;
   cursor: pointer;
 }
+
+.twisty::before {
+  content: "";
+  display: block;
+  width: 5px;
+  height: 5px;
+  margin: 0 auto;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(-45deg);
+}
+
+.tree li[aria-expanded="true"] > .node-row .twisty::before {
+  transform: rotate(45deg);
+}
+
+.twisty:hover::before { border-color: var(--selection); }
 
 .twisty.leaf { visibility: hidden; }
 
+/* Status reads at the left edge as well as in the word, so a column of
+   rows can be scanned vertically. A phase change re-inks this mark and the
+   status word with no transition declared anywhere, so the change lands
+   without motion. */
+.dot {
+  flex: none;
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.dot.running { background: var(--running); }
+.dot.waiting { background: var(--waiting); }
+.dot.completed { background: var(--selection); }
+.dot.failed { background: var(--failed); }
+.dot.stopped { background: var(--muted); }
+.dot.pending { background: none; border: 1.5px solid var(--attention); }
+.dot.unknown { background: none; border: 1.5px solid var(--hairline); }
+
 .role-tag {
-  font-family: var(--mono);
-  font-size: 11px;
+  flex: none;
+  font-size: var(--step0);
+  font-weight: 600;
   color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 0 4px;
   white-space: nowrap;
 }
 
-.role-tag.principal-conductor { color: var(--ink); border-color: var(--ink); font-weight: 700; }
-.role-tag.associate-conductor { color: var(--accent); border-color: var(--accent); }
+.role-tag.principal-conductor { color: var(--ink); }
+.role-tag.associate-conductor { color: var(--ink); }
+.role-tag.operator { color: var(--selection); }
 
 .node-id {
+  min-width: 0;
+  padding: 0;
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--step1);
+  color: var(--ink);
   background: none;
   border: none;
-  padding: 0;
-  cursor: pointer;
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--ink);
 }
 
-.node-id:hover { color: var(--accent); text-decoration: underline; }
+.node-id:hover { color: var(--selection); text-decoration: underline; }
 
-.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; align-self: center; }
-.dot.running { background: var(--ok); }
-.dot.waiting { background: var(--wait); }
-.dot.completed { background: var(--accent); }
-.dot.failed { background: var(--bad); }
-.dot.stopped { background: var(--stop); }
-.dot.pending { background: transparent; border: 2px solid var(--wait); }
-.dot.unknown { background: transparent; border: 2px solid var(--line); }
+.status-word { flex: none; font-size: var(--step0); white-space: nowrap; }
 
-.status-word { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.dot.running ~ .status-word { color: var(--running); }
+.dot.waiting ~ .status-word { color: var(--waiting); }
+.dot.completed ~ .status-word { color: var(--selection); }
+.dot.failed ~ .status-word { color: var(--failed); }
+.dot.stopped ~ .status-word { color: var(--muted); }
+.dot.pending ~ .status-word { color: var(--attention); }
+.dot.unknown ~ .status-word { color: var(--muted); }
+
+/* Messages awaiting acknowledgement. A button when app.js expands the
+   awaiting messages; the count stays the stored count. */
 .pend-badge {
-  font-size: 11px;
+  flex: none;
+  padding: 0 5px;
   font-family: var(--mono);
-  color: var(--wait);
+  font-size: var(--step0);
+  color: var(--attention);
+  background: none;
   border: 1px solid currentColor;
-  border-radius: 4px;
-  padding: 0 4px;
   white-space: nowrap;
 }
 
-.model-note {
-  font-size: 12px;
+button.pend-badge { border-radius: 2px; cursor: pointer; }
+button.pend-badge:hover { color: var(--selection); border-color: currentColor; }
+
+/* The actor's activity slot: the recorded current action with its age, or
+   the last transition, dimmed. It takes its own line under the row. */
+.node-action {
+  flex: 1 0 100%;
+  min-width: 0;
+  margin-left: 21px;
+  font-size: var(--step0);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.node-action.stale { color: #8b93a1; }
+
+.model-note {
+  flex: none;
   margin-left: auto;
-}
-
-.member-tags { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 0 3px 26px; }
-
-.member-tags button {
-  font-size: 11px;
   font-family: var(--mono);
-  padding: 0 6px;
-  border-radius: 10px;
+  font-size: var(--step0);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 42%;
 }
 
-.member-tags button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-
-.side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-
-.detail dl {
-  display: grid;
-  grid-template-columns: 130px 1fr;
-  gap: 3px 10px;
-  margin: 0;
-  font-size: 13px;
+/* Ensemble and section membership: the brace gutter. One quiet line under a
+   row, separated by rules. Each ensemble is a group whose label carries its
+   own id and, when app.js emits them, its owner, coupling and counts. */
+.member-tags {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  margin: 0 0 3px 21px;
+  padding-left: 7px;
+  border-left: 1px solid var(--hairline);
+  border-left: 2px solid color-mix(in srgb, var(--attention) 45%, var(--paper));
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.detail dt { color: var(--muted); }
-.detail dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-.detail dd.mono { font-family: var(--mono); font-size: 12px; }
+.member-tags::-webkit-scrollbar { height: 0; }
 
-.detail .unknown { color: var(--muted); font-style: italic; }
-
-.transitions ol { margin: 0; padding-left: 0; list-style: none; max-height: 40vh; overflow: auto; }
-
-.transitions li {
-  padding: 5px 0;
-  border-top: 1px solid var(--line);
-  font-size: 13px;
+.member-tags .ens {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  padding-right: 7px;
+  border-right: 1px solid var(--hairline);
 }
 
-.transitions li:first-child { border-top: none; }
+.member-tags .ens:last-child { border-right: none; padding-right: 0; }
 
-.transitions time { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-right: 8px; }
-
-.transitions .go {
+.member-tags button,
+.member-tags .ens-id {
+  flex: none;
+  padding: 0 7px;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--step0);
+  color: var(--muted);
   background: none;
   border: none;
-  padding: 0;
-  color: var(--accent);
+  border-radius: 0;
   cursor: pointer;
 }
 
-.muted { color: var(--muted); }
+.member-tags button[aria-pressed="true"] .ens-id,
+.member-tags .ens-id[aria-pressed="true"] {
+  color: var(--selection);
+  font-weight: 600;
+}
 
-.flash { animation: row-flash 1.2s ease-out 1; }
+.member-tags button:hover,
+.member-tags .ens-id:hover { color: var(--selection); text-decoration: underline; }
 
-@keyframes row-flash {
-  from { background: var(--flash); }
-  to { background: transparent; }
+/* Owner, coupling and counts sit in the label, quiet and unpunctuated. */
+.member-tags .ens-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  font-size: var(--step0);
+  color: var(--muted);
+}
+
+.member-tags .ens-meta > span {
+  padding: 0 6px;
+  border-left: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+
+.member-tags .ens-meta > span:first-child { border-left: none; }
+
+/* A membership change re-renders the tree; this line states what changed. */
+.tree-notice {
+  margin: 0 0 6px;
+  padding: 2px 0 2px 7px;
+  border-left: 2px solid var(--attention);
+  font-size: var(--step0);
+  color: var(--muted);
+}
+
+/* One transient connector in the gutter for a message arrival, drawn from the
+   sender's row to the recipient's. app.js positions it with inline top and
+   height inside .tree; this supplies the ink and the single fade. */
+.tree .connector {
+  position: absolute;
+  left: 3px;
+  width: 2px;
+  opacity: 0;
+  background: var(--attention);
+  animation: connector 400ms ease-out 1 forwards;
+  pointer-events: none;
+}
+
+@keyframes connector {
+  0% { opacity: 0; }
+  20% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .flash { animation: none; }
+  .tree .connector { animation: none; }
 }
 
-@media (max-width: 900px) {
-  .layout { grid-template-columns: 1fr; }
-  .tree { max-height: 50vh; }
-  .field input { min-width: 160px; }
-  .detail dl { grid-template-columns: 110px 1fr; }
+/* ── selected actor ────────────────────────────────────────────────────── */
+
+.detail dl {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 2px 10px;
+  margin: 0;
+  font-size: var(--step1);
 }
+
+.detail dt { color: var(--muted); font-size: var(--step0); }
+
+.detail dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+
+.detail dd.mono { font-family: var(--mono); font-size: var(--step0); }
+
+.detail .unknown { color: var(--muted); }
+
+.muted { color: var(--muted); }
+
+/* ── activity rail ─────────────────────────────────────────────────────── */
+
+.transitions ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 46vh;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.transitions li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 7px;
+  padding: 4px 0 4px 7px;
+  border-top: 1px solid var(--hairline);
+  border-left: 2px solid transparent;
+  font-size: var(--step1);
+}
+
+/* The playhead: the newest committed record, marked in the attention accent. */
+.transitions li:first-child { border-top: none; border-left-color: var(--attention); }
+
+.transitions time {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--step0);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.transitions li:first-child time { color: var(--ink); }
+
+.transitions .go {
+  padding: 0;
+  font-family: var(--mono);
+  font-size: var(--step0);
+  color: var(--selection);
+  background: none;
+  border: none;
+}
+
+.transitions .go:hover { text-decoration: underline; }
+
+/* A kind mark carries what moved. app.js sanitizes the recorded kind to a
+   class: `message:report` -> .t-message-report, `section-membership` ->
+   .t-section-membership, `native-request` -> .t-native-request. */
+.transitions li::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: 5px;
+  height: 5px;
+  background: var(--hairline);
+}
+
+/* A message moved between seats: the ledger's ordinary entry. */
+.transitions li[class*="t-message-"]::before { background: var(--ink); }
+
+/* Recorded work started, advanced or was observed. */
+.transitions li.t-execution::before,
+.transitions li.t-native-request::before { background: var(--running); }
+
+/* A turn ended, a report landed, a role or session changed. */
+.transitions li.t-report::before,
+.transitions li.t-session::before,
+.transitions li.t-role::before { background: var(--selection); }
+
+/* Structure changed: ensembles, sections, membership. */
+.transitions li.t-ensemble::before,
+.transitions li.t-membership::before,
+.transitions li.t-section::before,
+.transitions li.t-section-membership::before { background: var(--waiting); }
+
+/* A seat stopped. */
+.transitions li.t-stop::before { background: var(--failed); }
+
+/* An acknowledgement, and a bare cursor advance: quiet, hollow marks. */
+.transitions li.t-receipt::before { background: none; border: 1px solid var(--muted); }
+.transitions li.t-cursor::before { background: none; border: 1px solid var(--hairline); }
+
+/* ── motion: one committed arrival, under 400ms, then still ────────────── */
+
+.flash,
+.arrival { animation: arrival 400ms ease-out 1; }
+
+@keyframes arrival {
+  0% { background: var(--wash); }
+  100% { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flash,
+  .arrival { animation: none; }
+}
+
+/* ── responsive ────────────────────────────────────────────────────────── */
+
+@media (min-width: 1200px) {
+  h1 { font-size: var(--step4); }
+}
+
+@media (max-width: 1000px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .tree { max-height: 46vh; }
+  .model-note { max-width: 34%; }
+}
+
+@media (max-width: 720px) {
+  .page-head { padding: 12px 14px 10px; }
+  .toolbar { padding: 10px 14px; }
+  .layout { padding: 12px 14px 0; gap: 12px; }
+  .notice { margin: 10px 14px 0; }
+  .field input { min-width: 140px; }
+  .detail dl { grid-template-columns: 76px minmax(0, 1fr); }
+  /* The detail panel carries the branch, so the row drops it first. */
+  .model-note { display: none; }
+}
+
+/* ── knowledge ─────────────────────────────────────────────────────────── */
+
+.knowledge {
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+  min-width: 0;
+}
+
+.knowledge h2,
+.knowledge h3 {
+  margin: 12px 0 6px;
+  font-size: var(--step2);
+  line-height: 1.3;
+}
+
+.knowledge h2 { margin-top: 0; }
+
+.knowledge p { margin: 0 0 6px; font-size: var(--step0); }
+
+.knowledge #include-unshared,
+.knowledge #show-findings { margin: 0 0 6px; }
+
+.knowledge > ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 40vh;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.knowledge > ol > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 7px;
+  padding: 4px 0 4px 7px;
+  border-top: 1px solid var(--hairline);
+  border-left: 2px solid transparent;
+  font-size: var(--step1);
+}
+
+/* The newest promotion carries the playhead, as the activity rail does. */
+.knowledge > ol > li:first-child { border-top: none; border-left-color: var(--attention); }
+.knowledge > ol > li.finding-unshared { border-left-color: var(--waiting); }
+
+.knowledge .finding-id {
+  font-family: var(--mono);
+  font-size: var(--step0);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--selection);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.knowledge .finding-meta { color: var(--muted); font-size: var(--step0); }
+.knowledge .share-path { color: var(--ink); font-size: var(--step0); }
+
+.knowledge ul.knowledge-list {
+  width: 100%;
+  margin: 3px 0 0;
+  padding: 0 0 0 14px;
+  list-style: none;
+}
+
+.knowledge ul.knowledge-list li {
+  border: 0;
+  padding: 1px 0;
+  font-size: var(--step0);
+  max-height: none;
+}
+
+/* Inside the dossier the block is a plain section, not a bordered pane. */
+.detail .knowledge { border-top: 1px solid var(--hairline); }
+
+/* The knowledge rail uses the same kind marks as the activity rail: a promotion
+   edge is a recorded sharing fact, so it takes the structure (waiting) ink. */
+.knowledge > ol > li::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: 5px;
+  height: 5px;
+  background: var(--hairline);
+}
+
+.knowledge > ol > li.t-promotion::before { background: var(--ink); }
+.knowledge > ol > li.t-promotion.finding-unshared::before { background: none; border: 1px solid var(--muted); }
+.knowledge > ol > li.t-knowledge::before { background: var(--ink); }

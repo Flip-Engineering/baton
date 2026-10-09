@@ -13,18 +13,21 @@
     <h1>Orchestra live view</h1>
     <p class="subtitle" id="snapshot-line">No snapshot loaded.</p>
   </div>
-  <dl class="conn" aria-label="Connection state">
-    <div><dt>Stream</dt><dd id="conn-state">idle</dd></div>
-    <div><dt>Cursor</dt><dd id="cursor-state">none</dd></div>
-    <div><dt>Generation</dt><dd id="generation-state">none</dd></div>
-    <div><dt>Contract</dt><dd id="contract-state">want 1</dd></div>
-  </dl>
+  <details class="conn-details">
+    <summary>Connection</summary>
+    <dl class="conn" aria-label="Connection state">
+      <div><dt>Stream</dt><dd id="conn-state">idle</dd></div>
+      <div><dt>Cursor</dt><dd id="cursor-state">none</dd></div>
+      <div><dt>Generation</dt><dd id="generation-state">none</dd></div>
+      <div><dt>Contract</dt><dd id="contract-state">want 1</dd></div>
+    </dl>
+  </details>
 </header>
 
 <div class="notice" id="notice" hidden></div>
 <div class="notice fixture" id="fixture-notice" hidden></div>
 
-<div class="toolbar" role="search">
+<div class="toolbar" role="search" aria-label="Filter actors">
   <label class="field">Search
     <input type="search" id="search" placeholder="id, model, branch, capability" autocomplete="off">
   </label>
@@ -45,15 +48,20 @@
       <option value="all">all</option>
     </select>
   </label>
+  <span class="pair" role="group" aria-label="Tree expansion">
+    <button type="button" id="collapse-all">Collapse all</button>
+    <button type="button" id="expand-all">Expand all</button>
+  </span>
   <button type="button" id="clear-filters">Clear</button>
   <button type="button" id="reconnect">Reconnect</button>
 </div>
 
 <main class="layout">
   <section class="tree-pane" aria-labelledby="tree-title">
-    <h2 id="tree-title">Hierarchy</h2>
+    <h2 id="tree-title">Actors</h2>
     <p class="count" id="tree-count"></p>
-    <p class="legend">Statuses show recorded coordinator state. Process liveness is unknown unless observed.</p>
+    <p class="legend">Recorded coordinator state. Process liveness appears only where it was observed.</p>
+    <p class="tree-notice" id="tree-notice" hidden></p>
     <ul class="tree" id="tree" role="tree" aria-label="Orchestra hierarchy"></ul>
   </section>
 
@@ -64,8 +72,19 @@
     </section>
 
     <section class="transitions" aria-labelledby="transitions-title">
-      <h2 id="transitions-title">Recent committed transitions</h2>
-      <ol id="transitions"></ol>
+      <h2 id="transitions-title">Recent transitions</h2>
+      <ol id="transitions" class="activity"></ol>
+    </section>
+    <section class="knowledge" aria-labelledby="knowledge-title">
+      <h2 id="knowledge-title">Knowledge shared</h2>
+      <p class="legend">Recorded findings and promotion edges. Display order follows the recorded hierarchy; it carries no trust meaning.</p>
+      <p class="count" id="knowledge-count"></p>
+      <label class="field">Filter findings
+        <input type="search" id="knowledge-search" autocomplete="off">
+      </label>
+      <button type="button" id="include-unshared" aria-pressed="false">Include unshared</button>
+      <ol id="knowledge-promotions" class="activity"></ol>
+      <p class="muted" id="knowledge-empty" hidden></p>
     </section>
   </div>
 </main>

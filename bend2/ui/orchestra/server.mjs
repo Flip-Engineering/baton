@@ -93,6 +93,69 @@ function stoppedSession(db, session) {
   return one(db, 'SELECT id, outcome AS status, attempt, report_id AS reportId FROM session_stops WHERE session = ?', session) ?? null;
 }
 
+function latestChange(db, entity, entityId) {
+  return one(db, `SELECT kind, summary, recorded_at AS at
+                    FROM native_changes
+                   WHERE entity = ? AND entity_id = ?
+                   ORDER BY change_id DESC LIMIT 1`, entity, entityId) ?? null;
+}
+
+// What the actor is doing now, from recorded state only: an open native request
+// it waits on, then its recorded execution phase. Null when nothing is recorded,
+// and then the page falls back to the actor's latest transition.
+function currentAction(db, session, execution) {
+  const hasRequests = one(db,
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'native_requests'");
+  const open = hasRequests ? one(db, `SELECT id, method, reply, written
+                          FROM native_requests
+                         WHERE worker = ? AND closed IS NULL
+                         ORDER BY rowid DESC LIMIT 1`, session) ?? null : null;
+  if (open) {
+    const stage = open.reply === null || open.reply === ''
+      ? 'awaiting response'
+      : (Number(open.written) === 1 ? 'response written' : 'response stored');
+    const change = latestChange(db, 'native-request', open.id);
+    return { kind: 'native-request', label: `${open.method || 'native'} request ${stage}`, at: change?.at || '' };
+  }
+  const phase = execution?.phase || '';
+  if (phase === 'running' || phase === 'starting') {
+    const change = latestChange(db, 'execution', session);
+    return { kind: 'execution', label: phase, at: change?.at || '' };
+  }
+  return null;
+}
+
+// The same set the pending badge counts: stored task/guidance/recovery messages
+// awaiting acknowledgement on a session with no recorded stop. One definition for the
+// count and the list; recorded stops and other kinds stay visible through their own
+// fields, never through this list.
+function pendingSample(db, session) {
+  return rows(db, `SELECT m.id AS id, m.kind AS kind,
+                          coalesce((SELECT n.recorded_at FROM native_changes n
+                                     WHERE n.entity = 'message' AND n.entity_id = m.id
+                                       AND n.operation = 'insert'
+                                     ORDER BY n.change_id LIMIT 1), '') AS at
+                     FROM messages m
+                    WHERE m.recipient = ? AND m.receipt IS NULL
+                      AND m.kind IN ('task', 'guidance', 'recovery')
+                      AND NOT EXISTS (SELECT 1 FROM session_stops stop
+                                       WHERE stop.session = m.recipient)
+                    ORDER BY m.seq DESC`, session);
+}
+
+// A message moves between two recorded actors; the projection names the far side
+// so the page can light both rows without reading a message body.
+function messageCounterparts(db, ids) {
+  const found = new Map();
+  const wanted = [...new Set(ids.filter(Boolean))];
+  if (!wanted.length) return found;
+  const placeholders = wanted.map(() => '?').join(',');
+  for (const row of rows(db, `SELECT id, sender, kind, receipt FROM messages WHERE id IN (${placeholders})`, ...wanted)) {
+    found.set(row.id, row);
+  }
+  return found;
+}
+
 function playerSnapshot(db, session) {
   const player = one(db, `
     SELECT s.id, s.parent, s.harness, s.model, s.effort, s.observed_harness AS observedHarness,
@@ -147,6 +210,8 @@ function playerSnapshot(db, session) {
     reference: null,
     inputRead: ['unknown'],
     stop,
+    currentAction: currentAction(db, session, execution),
+    pendingSample: pendingSample(db, session),
   };
 }
 
@@ -187,12 +252,24 @@ function snapshot(db, reader, subject, since) {
     }
     const ensembles = [...ensembleIds].sort().map((id) => JSON.parse(ensembleSnapshot(db, id, scope)));
     const placeholders = scope.map(() => '?').join(',') || "''";
-    const transitions = rows(db, `
+    const transitionRows = rows(db, `
       SELECT change_id AS seq, recorded_at AS at, session_id AS session,
-             kind, summary
+             entity, entity_id AS entityId, operation, kind, summary
         FROM native_changes WHERE session_id IN (${placeholders})
-       ORDER BY change_id DESC`, ...scope)
-      .map((row) => ({ seq: row.seq, at: row.at, session: row.session, kind: row.kind, summary: row.summary }));
+       ORDER BY change_id DESC`, ...scope);
+    const counterparts = messageCounterparts(db,
+      transitionRows.filter((row) => row.entity === 'message').map((row) => row.entityId));
+    const transitions = transitionRows.map((row) => ({
+      seq: row.seq,
+      at: row.at,
+      session: row.session,
+      kind: row.kind,
+      summary: row.summary,
+      entity: row.entity,
+      entityId: row.entityId,
+      operation: row.operation,
+      counterpart: counterparts.get(row.entityId)?.sender || '',
+    }));
     const selection = {
       mode: subject === reader ? 'all' : 'subtree',
       rule: 'parent-owner-member-routes-v1',
@@ -231,6 +308,19 @@ function ensembleHasVisibleMember(db, id, scope) {
     SELECT EXISTS(SELECT 1 FROM ensemble_members
       WHERE ensemble = ? AND session IN (SELECT value FROM json_each(?))) AS visible`,
   id, JSON.stringify(scope))?.visible);
+}
+
+// The durable projection is the authority on whether a client's cursor can still be
+// honored. An owner readiness flag or notice is a hint: a lagging owner high-water
+// must not close a stream whose durable position is valid.
+function durableGap(db, cursor) {
+  return inTransaction(db, () => {
+    const bounds = one(db, 'SELECT min(change_id) AS first, max(change_id) AS last FROM native_changes');
+    if (bounds.last === null) return false;
+    const high = Number(bounds.last);
+    const first = Number(bounds.first);
+    return cursor > high || (cursor > 0 && cursor < first - 1);
+  });
 }
 
 async function streamEvents(response, db, databasePath, reader, subject, initialCursor,
@@ -349,12 +439,19 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
           if (frame.player) writeEvent(response, 'player', String(cursor), frame.player);
           if (frame.pending) writeEvent(response, 'pending', String(cursor), frame.pending);
           const change = frame.transition;
+          const counterpart = change.entity === 'message'
+            ? (messageCounterparts(db, [change.entityId]).get(change.entityId)?.sender || '')
+            : '';
           writeEvent(response, 'transition', String(cursor), {
             seq: cursor,
             at: change.at,
             session: frame.sessionVisible === false ? '' : change.session,
             kind: change.kind,
             summary: change.summary,
+            entity: change.entity,
+            entityId: change.entityId,
+            operation: change.operation,
+            counterpart,
           });
         }
       } while (pumpAgain && !closed);
@@ -370,7 +467,11 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
       return endWithGap('owner-generation-changed');
     }
     if (notice.kind === 'commit') pump();
-    if (notice.kind === 'gap') endWithGap(notice.reason || 'cursor-gap');
+    if (notice.kind === 'gap') {
+      // Same authority rule as readiness: only a durable gap closes the stream.
+      if (durableGap(db, cursor)) return endWithGap(notice.reason || 'cursor-gap');
+      return pump();
+    }
     if (notice.kind === 'lost' || notice.kind === 'unavailable') endWithGap('owner-notification-lost');
   };
   response.on('close', () => {
@@ -386,7 +487,7 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
     cursor: String(cursor),
     generation: subscription.generation,
   });
-  if (subscription.gap) {
+  if (subscription.gap && durableGap(db, cursor)) {
     endWithGap('cursor-gap');
     return;
   }
@@ -432,6 +533,53 @@ export function createOrchestraServer({ databasePath, reader, subject = reader,
     ? subscribeCommittedChanges
     : baton2Executable ? createNativeOwnerSubscriber(baton2Executable) : undefined;
   const db = new DatabaseSync(databasePath, { readOnly: true });
+  // Allow an in-flight SQLite writer to release its lock before reading.
+  db.exec('PRAGMA busy_timeout = 250');
+
+// Read shared findings on demand. Actor details follow the bound reader's scope.
+// Absent knowledge tables produce the empty response shape.
+function knowledgeTablesReady(db) {
+  const found = one(db,
+    "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name IN ('knowledge', 'knowledge_promotions')");
+  return found && found.n === 2;
+}
+
+function knowledgeOverview(db) {
+  if (!knowledgeTablesReady(db)) {
+    return { contractVersion: 1, findings: [], promotions: [], actors: {}, empty: true };
+  }
+  const findings = rows(db, 'SELECT id, author, claim FROM knowledge ORDER BY id');
+  const promotions = rows(db,
+    'SELECT id, finding, author, source, destination, promoted_by AS promotedBy FROM knowledge_promotions ORDER BY id');
+  const actors = {};
+  for (const f of findings) {
+    if (!actors[f.author]) actors[f.author] = { authored: 0, received: 0 };
+    actors[f.author].authored += 1;
+  }
+  for (const p of promotions) {
+    if (!actors[p.destination]) actors[p.destination] = { authored: 0, received: 0 };
+    actors[p.destination].received += 1;
+  }
+  return { contractVersion: 1, findings, promotions, actors, empty: findings.length === 0 && promotions.length === 0 };
+}
+
+function knowledgeForActor(db, session) {
+  if (!knowledgeTablesReady(db)) {
+    return { contractVersion: 1, actor: session, authored: [], received: [], counts: { authored: 0, received: 0, unshared: 0 }, empty: true };
+  }
+  const authored = rows(db,
+    'SELECT id, author, claim, evidence, limits FROM knowledge WHERE author = ? ORDER BY id', session);
+  const received = rows(db,
+    `SELECT p.id AS id, p.finding AS finding, p.author AS author, p.source AS source,
+            p.destination AS destination, p.promoted_by AS promotedBy,
+            k.claim AS claim, k.evidence AS evidence, k.limits AS limits
+       FROM knowledge_promotions p LEFT JOIN knowledge k ON k.id = p.finding
+      WHERE p.destination = ? ORDER BY p.id`, session);
+  const promoted = new Set(rows(db, 'SELECT DISTINCT finding AS f FROM knowledge_promotions').map((r) => r.f));
+  const unshared = authored.filter((f) => !promoted.has(f.id)).length;
+  return { contractVersion: 1, actor: session, authored, received,
+    counts: { authored: authored.length, received: received.length, unshared }, empty: authored.length === 0 && received.length === 0 };
+}
   const handleRequest = (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     if (request.method !== 'GET') return json(response, 405, { error: 'method-not-allowed' });
@@ -457,7 +605,7 @@ export function createOrchestraServer({ databasePath, reader, subject = reader,
       }
       void streamEvents(response, db, databasePath, reader, selected, since,
         url.searchParams.get('generation') || '', committedChanges)
-        .catch(() => {
+        .catch((error) => {
           if (response.headersSent) {
             try { response.end(); } catch {}
             return;
@@ -465,6 +613,24 @@ export function createOrchestraServer({ databasePath, reader, subject = reader,
           json(response, 503, { error: 'native-owner-subscription-unavailable' });
         });
       return;
+    }
+    if (url.pathname === '/orchestra/knowledge/overview') {
+      try {
+        return json(response, 200, knowledgeOverview(db));
+      } catch (error) {
+        return json(response, 503, { error: 'knowledge-unavailable' });
+      }
+    }
+    if (url.pathname === '/orchestra/knowledge') {
+      const actor = url.searchParams.get('actor') || '';
+      if (!actor) return json(response, 400, { error: 'actor-required' });
+      try {
+        const scope = visibleScope(db, reader, subject);
+        if (!scope || !scope.includes(actor)) return json(response, 403, { error: 'reader-scope-denied' });
+        return json(response, 200, knowledgeForActor(db, actor));
+      } catch (error) {
+        return json(response, 503, { error: 'knowledge-unavailable' });
+      }
     }
     if (url.pathname.startsWith('/orchestra/')) return json(response, 404, { error: 'not-found' });
     if (url.pathname === '/' && !url.searchParams.has('api') && !url.searchParams.has('fixture')) {

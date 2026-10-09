@@ -15,11 +15,27 @@ The browser implements exactly this boundary and nothing else.
   as the snapshot. The reader identity stays the immutable startup
   identity; subject only filters within it. `generation` binds the
   reconnect to the stored owner generation.
+- `GET {apiBase}/orchestra/knowledge/overview` returns the
+  orchestra-wide knowledge map: `findings` as `{id, author, claim}`,
+  `promotions` as `{id, finding, author, source, destination,
+  promotedBy}`, and per-actor `authored`/`received` counts. Evidence
+  and limits stay out of the overview.
+- `GET {apiBase}/orchestra/knowledge?actor=<id>` returns one actor's
+  authored findings with full `claim`, `evidence`, and `limits`, the
+  promotions it received joined to their finding's fields, and
+  `counts` including `unshared` (authored, never promoted). The actor
+  must be inside the bound reader's subject scope (403
+  `reader-scope-denied`); a missing actor is a 400 `actor-required`.
+
+Both knowledge routes are read-only and on demand: the snapshot never
+carries claims. Absent or empty knowledge tables answer the same
+shapes with empty arrays and `empty: true`. A failed database read
+answers 503 `knowledge-unavailable`.
 
 `apiBase` is supplied to the page with `?api=<base>` or the
 `orchestra-api-base` meta tag. A server `/` redirect that carries
-the loopback API base is the normal launch path. The page makes no
-other network calls.
+the loopback API base is the normal launch path. The page calls only
+these endpoints, and calls the knowledge routes only on demand.
 
 ## Snapshot object
 
