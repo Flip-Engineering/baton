@@ -292,17 +292,24 @@ def provider_usage_result(+db: String, harness: String, command: String, observe
     case Done{raw}: provider_usage_outcome(db,harness,command,observedAt,Tx.run_res(Done{raw}))
 
 # Each explicit usage read runs one supported harness query in its workspace.
-def provider_usage_query(+db: String, harness: String, +command: String, +cwd: String) -> IO(String):
-  do IO<String>:
-    observedAt : String <- IO.try(String,DB.Sql.read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000;"))
-    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(provider_usage_args(command)),Bool.pick(String,String.is_empty(cwd),".",cwd))
-    provider_usage_result(db,harness,command,Tx.trim_nl(observedAt),run)
+def provider_usage_query_time(+db: String, harness: String, +command: String, +cwd: String, observed: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match observed:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{observedAt}: do IO<Result<&1,&1,U32 & String,String>>:
+      run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(provider_usage_args(command)),Bool.pick(String,String.is_empty(cwd),".",cwd))
+      answer : String <- provider_usage_result(db,harness,command,Tx.trim_nl(observedAt),run)
+      IO.pure(Result<&1,&1,U32 & String,String>,Done{answer})
 
-def provider_usage_command(+db: String, +harness: String, +command: String, cwd: String) -> IO(String):
-  Bool.pick(IO(String),String.is_empty(command),IO.pure(String,provider_usage_absent(harness,command,"noRecordedHarnessCommand")),provider_usage_query(db,harness,command,cwd))
+def provider_usage_query(+db: String, harness: String, command: String, cwd: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    observed : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000;")
+    provider_usage_query_time(db,harness,command,cwd,observed)
 
-def provider_usage(+db: String, +harness: String, +command: String, cwd: String) -> IO(String):
-  Bool.pick(IO(String),String.eq(harness,"omp"),provider_usage_command(db,harness,command,cwd),IO.pure(String,provider_usage_absent(harness,command,"unsupportedHarness")))
+def provider_usage_command(+db: String, +harness: String, +command: String, cwd: String) -> IO(Result<&1,&1,U32 & String,String>):
+  Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(command),IO.pure(Result<&1,&1,U32 & String,String>,Done{provider_usage_absent(harness,command,"noRecordedHarnessCommand")}),provider_usage_query(db,harness,command,cwd))
+
+def provider_usage(+db: String, +harness: String, +command: String, cwd: String) -> IO(Result<&1,&1,U32 & String,String>):
+  Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(harness,"omp"),provider_usage_command(db,harness,command,cwd),IO.pure(Result<&1,&1,U32 & String,String>,Done{provider_usage_absent(harness,command,"unsupportedHarness")}))
 
 # project_sql supplies a nonempty JSON object. The accumulated conversation
 # prints after provider-read failures without another database read.
@@ -311,19 +318,22 @@ def print_with_provider(conversation: String, provider: String) -> IO(Unit):
     case SCon{'{',rest}: IO.print("{\"providerUsage\":" ++ provider ++ "," ++ rest)
     case other: IO.die(Unit,2,"Observed usage conversation projection is not an object")
 
-def provider_usage_for_session(+db: String, +session: String, harness: String) -> IO(String):
-  do IO<String>:
-    command : String <- IO.try(String,DB.Sql.read(db,harness_command_sql(session)))
-    cwd : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce(workspace,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    provider_usage(db,harness,Tx.trim_nl(command),Tx.trim_nl(cwd))
+def provider_usage_session_workspace(db: String, harness: String, command: String, workspace: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match workspace:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{cwd}: provider_usage(db,harness,Tx.trim_nl(command),Tx.trim_nl(cwd))
 
-def usage_provider_io_result(-R: Type, outcome: IO.OP<String>, next: Result<&1,&1,U32 & String,String> -> IO.OP<R>) -> IO.OP<R>:
-  match outcome:
-    case Emit{provider}: next(Done{provider})
-    case Halt{code,detail}: next(Fail{(code,detail)})
+def provider_usage_session_command(+db: String, session: String, harness: String, recorded: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match recorded:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{command}: do IO<Result<&1,&1,U32 & String,String>>:
+      workspace : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT coalesce(workspace,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";")
+      provider_usage_session_workspace(db,harness,command,workspace)
 
-def usage_provider_observation(action: IO(String)) -> IO(Result<&1,&1,U32 & String,String>):
-  R => next => usage_provider_io_result(R,action(String,provider => Emit{provider}),next)
+def provider_usage_for_session(+db: String, +session: String, harness: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    recorded : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,harness_command_sql(session))
+    provider_usage_session_command(db,session,harness,recorded)
 
 def usage_provider_result(harness: String, conversation: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
@@ -332,7 +342,7 @@ def usage_provider_result(harness: String, conversation: String, result: Result<
 
 def usage_with_provider(db: String, session: String, +harness: String, conversation: String) -> IO(Unit):
   do IO<Unit>:
-    result : Result<&1,&1,U32 & String,String> <- usage_provider_observation(provider_usage_for_session(db,session,harness))
+    result : Result<&1,&1,U32 & String,String> <- provider_usage_for_session(db,session,harness)
     usage_provider_result(harness,conversation,result)
 
 # --- the model discovery read ------------------------------------------------
