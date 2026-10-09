@@ -152,6 +152,14 @@ def blocked_endpoint_absent_sql(+session: String) -> String:
 def direct_app_route_sql(+session: String) -> String:
   "EXISTS(SELECT 1 FROM sessions AS route WHERE route.id=" ++ session ++ " AND route.harness='codex' AND route.native<>'' AND route.endpoint='')"
 
+# OMP terminal arrays can contain scalar markers and metadata objects.
+def last_assistant_sql_expr(+event: String) -> String:
+  "(SELECT m.value FROM json_each(CASE WHEN json_type(" ++ event ++ ",'$.messages')='array' THEN json_extract(" ++ event ++ ",'$.messages') ELSE '[]' END) m WHERE CASE WHEN m.type='object' THEN json_extract(m.value,'$.role') END='assistant' ORDER BY m.key DESC LIMIT 1)"
+
+# OMP records provider failure on the terminal's latest assistant message.
+def omp_terminal_error_sql_expr(+event: String) -> String:
+  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce((SELECT 1 FROM (SELECT " ++ last_assistant_sql_expr(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error'),0) ELSE 0 END"
+
 def blocked_cause_sql(+session: String) -> String:
   "CASE WHEN " ++ stopped_session_sql(session) ++ " THEN 'terminal-stop'"
   ++ " WHEN (SELECT route.harness FROM sessions AS route WHERE route.id=" ++ session ++ ") NOT IN ('codex','omp','muse','claude-code') THEN 'harness-unsupported'"
@@ -270,16 +278,8 @@ def terminal(+event: String) -> String:
 def report_recipient(+session: String) -> String:
   "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN " ++ assigned_role("report_sender.id") ++ "='conductor' THEN (SELECT report_operator.id FROM sessions report_operator WHERE report_operator.id='operator' AND report_operator.parent IS NULL AND " ++ assigned_role("report_operator.id") ++ "='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
 
-# OMP terminal arrays can contain scalar markers and metadata objects.
-def last_assistant_sql_expr(+event: String) -> String:
-  "(SELECT m.value FROM json_each(CASE WHEN json_type(" ++ event ++ ",'$.messages')='array' THEN json_extract(" ++ event ++ ",'$.messages') ELSE '[]' END) m WHERE CASE WHEN m.type='object' THEN json_extract(m.value,'$.role') END='assistant' ORDER BY m.key DESC LIMIT 1)"
-
 def last_assistant_sql(+event: String) -> String:
   "(SELECT " ++ last_assistant_sql_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
-
-# OMP records provider failure on the terminal's latest assistant message.
-def omp_terminal_error_sql_expr(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce((SELECT 1 FROM (SELECT " ++ last_assistant_sql_expr(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error'),0) ELSE 0 END"
 
 def omp_terminal_error_sql(+event: String) -> String:
   "(SELECT " ++ omp_terminal_error_sql_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
