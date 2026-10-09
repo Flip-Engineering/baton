@@ -249,12 +249,11 @@ function advance(running, delta, field) {
 }
 
 // Decodes the mappings string into ordered segments with zero-based generated
-// positions. Generated columns restart at every line and must stay
-// non-decreasing within a line; the source, line, column and name running
-// state persists across lines and must stay inside the safe-integer domain
-// and nonnegative. No U32 bound is applied: the bound is the exact numeric
-// domain the arithmetic itself can answer for. Throws SourceMapError with
-// conditions 'badVLQ', 'malformedMap' or 'coordinateRangeExceeded'.
+// positions. Generated columns restart at every line. Source, line, column
+// and name deltas follow the encoded order; decoded segments are sorted by
+// generated position for lookup. Coordinates stay nonnegative and inside
+// the safe-integer domain. Throws SourceMapError with
+// conditions 'badVLQ' or 'coordinateRangeExceeded'.
 export function decodeMappings(mappingsText) {
   const segments = [];
   let sourceIndex = 0;
@@ -271,11 +270,7 @@ export function decodeMappings(mappingsText) {
         throw new SourceMapError('badVLQ', 'empty mapping segment between separators');
       }
       const fields = decodeVlqSegment(part);
-      const previousColumn = generatedColumn;
       generatedColumn = advance(generatedColumn, fields[0], 'generated column');
-      if (segments.length > 0 && generatedColumn < previousColumn) {
-        throw new SourceMapError('malformedMap', 'generated columns decrease within one line');
-      }
       const segment = { generatedLine: line, generatedColumn };
       if (fields.length >= 4) {
         sourceIndex = advance(sourceIndex, fields[1], 'source index');
@@ -292,7 +287,7 @@ export function decodeMappings(mappingsText) {
       segments.push(segment);
     }
   }
-  return segments;
+  return segments.sort((a, b) => a.generatedLine - b.generatedLine || a.generatedColumn - b.generatedColumn);
 }
 
 // Parses a source map v3 document and returns the decoded map with its raw

@@ -1,10 +1,6 @@
-// Unit laws for source map decoding, lookup and admitted-closure loading
-// against the hand-authored compiled fixture pair (fixtures/fixture-ts.js +
-// fixture-ts.js.map). These tests pin decoder behavior, identity rules,
-// refusal conditions and the structural numeric bounds; the real provider
-// path (scriptParsed wiring, mapped pause frames, embedded maps) is
-// exercised by cdp-fixture.test.mjs and the production admission by
-// cdp-composition.test.mjs, all on remote runners.
+// Source map decoding, lookup and local loading with the compiled fixture
+// pair fixtures/fixture-ts.js and fixture-ts.js.map. CDP session integration
+// runs in cdp-fixture.test.mjs and cdp-composition.test.mjs.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -85,7 +81,7 @@ test('VLQ accumulation is bounded by the safe-integer domain, not a U32 rule', (
 });
 
 test('mapping segments decode with per-line generated columns and persistent source state', () => {
-  const segments = decodeMappings(';MAGQ;JACN;;');
+  const segments = decodeMappings(';MAGQ;EACN;;');
   assert.deepEqual(segments, [
     { generatedLine: 1, generatedColumn: 6, sourceIndex: 0, sourceLine: 3, sourceColumn: 8 },
     { generatedLine: 2, generatedColumn: 2, sourceIndex: 0, sourceLine: 4, sourceColumn: 2 },
@@ -101,18 +97,23 @@ test('running coordinate state must stay nonnegative and inside the safe-integer
   // generated column below zero
   assert.equal(conditionOf(() => decodeMappings(`${encodeVlqNumber(10)},${encodeVlqNumber(-20)}`)), 'badVLQ');
   // source line below zero
-  const negativeSourceLine = `${encodeVlqNumber(0)},${encodeVlqNumber(0)},${encodeVlqNumber(-1)},${encodeVlqNumber(0)}`;
+  const negativeSourceLine = [0, 0, -1, 0].map(encodeVlqNumber).join('');
   assert.equal(conditionOf(() => decodeMappings(negativeSourceLine)), 'badVLQ');
   // source line beyond the safe-integer domain
-  const hugeSourceLine = `${encodeVlqNumber(0)},${encodeVlqNumber(0)},${encodeVlqNumber(2 ** 54)},${encodeVlqNumber(0)}`;
+  const hugeSourceLine = [0, 0, 2 ** 54, 0].map(encodeVlqNumber).join('');
   assert.equal(conditionOf(() => decodeMappings(hugeSourceLine)), 'coordinateRangeExceeded');
 });
 
-test('generated columns must not decrease within one line', () => {
-  // A positive delta after a larger column still increases; encode a
-  // decreasing chain through the negative delta form.
-  const decreasing = `${encodeVlqNumber(10)},${encodeVlqNumber(-4)}`;
-  assert.equal(conditionOf(() => decodeMappings(decreasing)), 'badVLQ');
+test('mapping lookup orders generated columns after decoding their deltas', () => {
+  const first = [10, 0, 0, 1].map(encodeVlqNumber).join('');
+  const second = [-4, 0, 0, 2].map(encodeVlqNumber).join('');
+  const map = parseSourceMapV3(JSON.stringify({ version: 3, sources: ['a.ts'], mappings: `${first},${second}` }));
+  assert.deepEqual(originalPositionFor(map, { line: 0, column: 6 }), {
+    source: 'a.ts', sourceIndex: 0, line: 0, column: 3,
+  });
+  assert.deepEqual(originalPositionFor(map, { line: 0, column: 10 }), {
+    source: 'a.ts', sourceIndex: 0, line: 0, column: 1,
+  });
 });
 
 test('source map v3 parsing keeps sources, sourceRoot, names and the raw byte digest', () => {
@@ -153,7 +154,7 @@ test('sources, names and sourcesContent element domains are checked', () => {
 test('segment indices outside sources or names refuse', () => {
   const missingSource = JSON.stringify({ version: 3, sources: ['only.ts'], mappings: 'ACAA' });
   assert.equal(conditionOf(() => parseSourceMapV3(missingSource)), 'sourceUrlOutOfRange');
-  const missingName = JSON.stringify({ version: 3, sources: ['a.ts'], names: [], mappings: 'ACAAA' });
+  const missingName = JSON.stringify({ version: 3, sources: ['a.ts'], names: [], mappings: 'AAAAA' });
   assert.equal(conditionOf(() => parseSourceMapV3(missingName)), 'nameOutOfRange');
 });
 
@@ -236,8 +237,8 @@ test('loadSourceMap reads a local map through the enforced reader with its read 
 test('loadSourceMap resolves relative references against the generated script directory', () => {
   const dir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
   try {
-    mkdirSync(join(dir, 'maps'));
-    writeFileSync(join(dir, 'maps', 'm.map'), MAP_JSON);
+    mkdirSync(join(dir, 'build', 'maps'), { recursive: true });
+    writeFileSync(join(dir, 'build', 'maps', 'm.map'), MAP_JSON);
     const loaded = loadSourceMap({
       sourceMapURL: 'maps/m.map',
       generatedPath: join(dir, 'build', 'gen.js'),
@@ -245,7 +246,7 @@ test('loadSourceMap resolves relative references against the generated script di
     });
     assert.equal(loaded.condition, undefined);
     assert.equal(loaded.origin, 'file');
-    assert.equal(loaded.path, realpathSync(join(dir, 'maps', 'm.map')));
+    assert.equal(loaded.path, realpathSync(join(dir, 'build', 'maps', 'm.map')));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
