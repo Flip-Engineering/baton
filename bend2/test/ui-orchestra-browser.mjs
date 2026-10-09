@@ -103,10 +103,18 @@ const wsUrl = await new Promise((resolve, reject) => {
 
 let msgId = 0;
 const pendingCalls = new Map();
+const pendingNavigations = new Map();
 let pageWs = null;
 function attach(ws) {
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
+    if (msg.method === 'Page.lifecycleEvent' && msg.params?.name === 'DOMContentLoaded') {
+      const navigation = pendingNavigations.get(ws);
+      if (navigation) {
+        navigation.loaded.add(msg.params.loaderId);
+        if (navigation.loaderId === msg.params.loaderId) navigation.resolve();
+      }
+    }
     if (msg.id && pendingCalls.has(msg.id)) {
       const call = pendingCalls.get(msg.id);
       pendingCalls.delete(msg.id);
@@ -116,6 +124,7 @@ function attach(ws) {
   };
   ws.onerror = (event) => {
     console.log(`CDP websocket error: ${event.message || event.type}`);
+    pendingNavigations.get(ws)?.reject(new Error(`CDP websocket error: ${event.message || event.type}`));
     for (const [id, call] of pendingCalls) {
       if (call.ws === ws) {
         call.reject(new Error(`CDP websocket error: ${event.message || event.type}`));
@@ -124,6 +133,7 @@ function attach(ws) {
     }
   };
   ws.onclose = (event) => {
+    pendingNavigations.get(ws)?.reject(new Error(`CDP connection closed ${event.code}: ${event.reason}`));
     for (const [id, call] of pendingCalls) {
       if (call.ws === ws) {
         call.reject(new Error(`CDP connection closed ${event.code}: ${event.reason}`));
@@ -140,6 +150,25 @@ function send(ws, method, params = {}) {
     catch (error) { pendingCalls.delete(id); reject(error); }
   });
 }
+async function navigatePage(ws, url) {
+  const navigation = { loaderId: null, loaded: new Set() };
+  const loaded = new Promise((resolve, reject) => Object.assign(navigation, { resolve, reject }));
+  pendingNavigations.set(ws, navigation);
+  try {
+    await Promise.all([
+      send(ws, 'Page.navigate', { url }).then((response) => {
+        if (response.result.errorText) throw new Error(JSON.stringify(response.result));
+        navigation.loaderId = response.result.loaderId;
+        if (!navigation.loaderId) throw new Error('Navigation returned no document loader: ' + JSON.stringify(response.result));
+        if (navigation.loaded.has(navigation.loaderId)) navigation.resolve();
+      }),
+      loaded,
+    ]);
+  } finally {
+    pendingNavigations.delete(ws);
+  }
+}
+
 async function openPage(url) {
   let response;
   try {
@@ -166,7 +195,8 @@ async function openPage(url) {
   attach(pageWs);
   await send(pageWs, 'Runtime.enable');
   await send(pageWs, 'Page.enable');
-  await send(pageWs, 'Page.navigate', { url });
+  await send(pageWs, 'Page.setLifecycleEventsEnabled', { enabled: true });
+  await navigatePage(pageWs, url);
 }
 async function evalJs(expression) {
   const r = await send(pageWs, 'Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
@@ -210,7 +240,7 @@ check('view URL uses the loopback HTTP listener', urlA.startsWith('http://127.0.
 
 await openPage(urlA);
 await until('snapshot line leaves its unloaded state',
-  `!document.getElementById('snapshot-line').textContent.includes('No snapshot loaded')`);
+  `document.getElementById('snapshot-line') && !document.getElementById('snapshot-line').textContent.includes('No snapshot loaded')`);
 await until('attention strip settles on the snapshot actors',
   `(document.getElementById('attention-band').textContent || '').length > 0`);
 check('quiet seats fold behind the control by default', await evalJs(
@@ -339,7 +369,7 @@ startupWriter.exec('BEGIN EXCLUSIVE');
 try {
   await openPage(`http://127.0.0.1:${portB}/`);
   await until('a locked initial snapshot reports its failed read',
-    `(document.getElementById('snapshot-line').textContent + document.getElementById('notice').textContent).includes('503')`);
+    `document.getElementById('snapshot-line') && document.getElementById('notice') && (document.getElementById('snapshot-line').textContent + document.getElementById('notice').textContent).includes('503')`);
   check('initial snapshot failure enters the existing retry path', await evalJs(
     `!document.getElementById('notice').hidden && /retrying/i.test(document.getElementById('notice').textContent)`));
 } finally {
@@ -347,7 +377,7 @@ try {
   startupWriter.close();
 }
 await until('phase B snapshot reports its actor line',
-  `!document.getElementById('snapshot-line').textContent.includes('No snapshot loaded')`);
+  `document.getElementById('snapshot-line') && !document.getElementById('snapshot-line').textContent.includes('No snapshot loaded')`);
 await evalJs(`document.getElementById('doc-ended').click()`);
 await until('phase B roster renders', `document.querySelectorAll('#roster .doc-row').length >= 3`);
 await until('phase B attention settles on the snapshot actors',
