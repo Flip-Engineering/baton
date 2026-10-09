@@ -280,6 +280,8 @@ class NativeObservation(RECEIVE.Receive):
 
     def test_omp_provider_error_terminal_records_failure_not_success(self):
         self.player(harness='omp')
+        self.coord('receiver', 'parent', self.fixture, self.directory / 'parent.jsonl',
+                   self.directory)
         self.coord('message', 'provider-error-task', 'root', 'parent', 'task', 'Read this task.')
         observer = self.spawn(*self.receive_args('parent'))
         stream, started = self.accept_child(observer, 'parent',
@@ -332,6 +334,38 @@ class NativeObservation(RECEIVE.Receive):
         self.assertTrue(any(row['id'] == 'provider-error-task'
                             for row in self.coord('inbox', 'parent')))
         self.assertTrue((pathlib.Path(directory) / 'acknowledged').exists())
+        failed_attempt = next(row for row in self.coord('players')
+                              if row['id'] == 'parent')['execution']
+        self.assertEqual((failed_attempt['phase'], failed_attempt['status']),
+                         ('exited', 'exit 0'))
+
+        def surfaces():
+            return [
+                self.coord('session', 'parent'),
+                self.coord('player', 'parent'),
+                next(row for row in self.coord('status') if row['id'] == 'parent'),
+                next(row for row in self.coord('players') if row['id'] == 'parent'),
+                next(row for row in self.coord('orchestra')['players'] if row['id'] == 'parent'),
+            ]
+
+        for surface in surfaces():
+            self.assertEqual(surface['blockedCause'], 'provider-failure')
+
+        retry = self.spawn(*self.receive_args('parent'))
+        resumed_stream, resumed = self.accept_child(
+            retry, 'parent', 'Provider failure retry exited before native startup')
+        self.assertEqual(resumed['native'], started['native'])
+        self.action(resumed_stream, body='Provider continuation succeeded.')
+        self.finish(retry)
+        latest_attempt = next(row for row in self.coord('players')
+                              if row['id'] == 'parent')['execution']
+        self.assertNotEqual(latest_attempt['attempt'], failed_attempt['attempt'])
+        self.assertEqual((latest_attempt['phase'], latest_attempt['status']),
+                         ('exited', 'exit 0'))
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
+                         [body, 'Provider continuation succeeded.'])
+        for surface in surfaces():
+            self.assertEqual(surface['blockedCause'], '')
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
     def test_an_observed_later_failure_is_reported_over_an_older_observed_error(self):
