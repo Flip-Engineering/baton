@@ -167,16 +167,16 @@ def all_refused_body(harness: String, refused: String, cause: String) -> String:
 #   Claude {"type":"result","subtype":...,"is_error":true,"result":"...","errors":[...],
 #           "api_error_status":429,...}   (ResultMessage: is_error, result, errors,
 #           api_error_status; the CLI emits api_error_status since v2.1.110)
-def usage_text_sql(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' THEN coalesce(json_extract((SELECT " ++ C.last_assistant_sql(event) ++ "),'$.errorMessage'),'') WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='turn.failed' THEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.error.message'),'') WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='result' THEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.result'),'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_each(CASE WHEN json_type(" ++ C.q(event) ++ ",'$.errors')='array' THEN json_extract(" ++ C.q(event) ++ ",'$.errors') ELSE '[]' END)),'') ELSE '' END"
+def usage_text_sql_expr(+event: String) -> String:
+  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce(json_extract((SELECT " ++ C.last_assistant_sql_expr(event) ++ "),'$.errorMessage'),'') WHEN json_extract(" ++ event ++ ",'$.type')='turn.failed' THEN coalesce(json_extract(" ++ event ++ ",'$.error.message'),'') WHEN json_extract(" ++ event ++ ",'$.type')='result' THEN coalesce(json_extract(" ++ event ++ ",'$.result'),'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_each(CASE WHEN json_type(" ++ event ++ ",'$.errors')='array' THEN json_extract(" ++ event ++ ",'$.errors') ELSE '[]' END)),'') ELSE '' END"
 
 # A genuinely failed provider terminal only:
 #   Codex  {"type":"turn.failed","error":{"message":"..."}}
 #   Claude {"type":"result","is_error":true,...}          (a successful result that merely
 #                                                          quotes limit words is never one)
 #   OMP    {"type":"agent_end", ... {"stopReason":"error","errorMessage":"..."}}
-def failed_terminal_sql(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='turn.failed' THEN 1 WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='result' AND json_extract(" ++ C.q(event) ++ ",'$.is_error')=1 THEN 1 WHEN " ++ C.omp_terminal_error_sql(event) ++ "=1 THEN 1 ELSE 0 END"
+def failed_terminal_sql_expr(+event: String) -> String:
+  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='turn.failed' THEN 1 WHEN json_extract(" ++ event ++ ",'$.type')='result' AND json_extract(" ++ event ++ ",'$.is_error')=1 THEN 1 WHEN " ++ C.omp_terminal_error_sql_expr(event) ++ "=1 THEN 1 ELSE 0 END"
 
 # The provider's own subscription-limit wordings. Codex (protocol src/error.rs Display):
 # "You’ve hit your usage limit[ for {limit_name}]", "Your workspace is out of credits.",
@@ -189,14 +189,13 @@ def failed_terminal_sql(+event: String) -> String:
 # the curly and ASCII forms both match. Not matched: the upstream "limit reached" header
 # flag, "rate limit exceeded", the context-window message, stream disconnection and
 # timeouts.
-def exhausted_marker_sql(+event: String) -> String:
-  "CASE WHEN (instr(lower(" ++ usage_text_sql(event) ++ "),'hit your')>0 AND (instr(lower(" ++ usage_text_sql(event) ++ "),'limit')>0 OR instr(lower(" ++ usage_text_sql(event) ++ "),'budget')>0)) OR (instr(lower(" ++ usage_text_sql(event) ++ "),'reached your')>0 AND (instr(lower(" ++ usage_text_sql(event) ++ "),'limit')>0 OR instr(lower(" ++ usage_text_sql(event) ++ "),'quota')>0)) OR instr(lower(" ++ usage_text_sql(event) ++ "),'out of credits')>0 OR instr(lower(" ++ usage_text_sql(event) ++ "),'spend cap')>0 OR instr(lower(" ++ usage_text_sql(event) ++ "),'quota exceeded')>0 OR instr(lower(" ++ usage_text_sql(event) ++ "),'spend limit reached')>0 OR instr(lower(" ++ usage_text_sql(event) ++ "),'spend limit unavailable')>0 THEN 1 ELSE 0 END"
+def exhausted_marker_sql(+text: String) -> String:
+  "CASE WHEN (instr(lower(" ++ text ++ "),'hit your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'budget')>0)) OR (instr(lower(" ++ text ++ "),'reached your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'quota')>0)) OR instr(lower(" ++ text ++ "),'out of credits')>0 OR instr(lower(" ++ text ++ "),'spend cap')>0 OR instr(lower(" ++ text ++ "),'quota exceeded')>0 OR instr(lower(" ++ text ++ "),'spend limit reached')>0 OR instr(lower(" ++ text ++ "),'spend limit unavailable')>0 THEN 1 ELSE 0 END"
 
-def exhausted_sql(+event: String) -> String:
-  "CASE WHEN " ++ failed_terminal_sql(event) ++ "=1 AND " ++ exhausted_marker_sql(event) ++ "=1 THEN 1 ELSE 0 END"
-
-def exhausted_reason_sql(+event: String) -> String:
-  "CASE WHEN " ++ exhausted_sql(event) ++ "=1 THEN 'provider-reported usage exhaustion: ' || " ++ usage_text_sql(event) ++ " END"
+# Bind the complete terminal once and extract its diagnostic once for the
+# provider's subscription-limit wording and the returned cause.
+def exhausted_reason_sql(event: String) -> String:
+  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")), diagnostic(failed,text) AS MATERIALIZED (SELECT " ++ failed_terminal_sql_expr("frame.value") ++ "," ++ usage_text_sql_expr("frame.value") ++ " FROM frame) SELECT CASE WHEN diagnostic.failed=1 AND " ++ exhausted_marker_sql("diagnostic.text") ++ "=1 THEN 'provider-reported usage exhaustion: ' || diagnostic.text ELSE '' END FROM diagnostic;"
 
 # The operator list and the per-session record are plain files beside the database,
 # like the other coordinator sidecars: no schema, no daemon, no environment lookup.

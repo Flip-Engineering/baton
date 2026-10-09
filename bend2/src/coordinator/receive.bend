@@ -486,11 +486,10 @@ def terminal_event(outcome: Turn.Outcome) -> String:
   match outcome:
     case Turn.Ended{status,event,error,incomplete}: event
 
-def exhaustion_stated(+db: String, +event: String) -> IO(String):
+def exhaustion_stated(db: String, event: String) -> IO(String):
   do IO<String>:
-    stated : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ Subs.exhausted_sql(event) ++ ";"))
-    reason : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(" ++ Subs.exhausted_reason_sql(event) ++ ",'');"))
-    IO.pure(String,Bool.pick(String,String.eq(Tx.trim_nl(stated),"1"),Tx.trim_nl(reason),""))
+    reason : String <- IO.try(String,DB.Sql.query(db,Subs.exhausted_reason_sql(event)))
+    IO.pure(String,Tx.trim_nl(reason))
 
 def exhaustion_present(db: String, event: String, empty: Bool) -> IO(String):
   match empty:
