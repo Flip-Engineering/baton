@@ -137,6 +137,35 @@ Ensembles, Sections and execution state and pending counts. Each database
 represents its own Orchestra. See [terminology](../docs/bend2/terminology.md)
 for the full naming contract.
 
+## Project sessions
+
+Register an existing database with its project checkout:
+
+```sh
+baton2 state.db project /path/to/project
+baton2 --project /path/to/project project-sessions /path/to/project
+baton2 --project /path/to/project inbox worker1
+baton2 --project /path/to/project resume worker1
+```
+
+`project` writes the database's absolute path to `baton2/database` under the
+canonical Git common directory. Linked worktrees and project subdirectories
+resolve that same pointer. A directory outside Git stores it under that
+directory. The database retains its sessions, messages, findings and native
+conversation identities across CLI invocations.
+
+`project-sessions` lists the project's recorded agents, their pending counts
+and latest reports. `resume` requests delivery of the oldest owed message
+through the agent's registered receiver or supported Codex queue. It returns
+that message's current receipt and the latest retained report in separate
+fields. A queued request keeps its receipt pending until the recipient handles
+it. Explicit stops remain in effect.
+
+Codex App notifications name the recipient's whole pending inbox. Additional
+admissions share the notification until recipient acknowledgement permits a
+new one. A failed submission retains the daemon's output and owed messages;
+`resume` retries that submission through the public queue.
+
 ## Status and report inspection
 
 The native read commands format complete JSON with `--pretty`:
@@ -185,11 +214,10 @@ During an OMP turn, send guidance with:
 .scratch/bend2/baton2 state.db message guide1 root worker1 guidance "Focus the review on recovery."
 ```
 
-The supervisor forwards pending guidance through OMP's `steer` command when it
-receives a native response, a completed message or a tool event. During a silent
-tool run or a stream of text updates, guidance waits for the next such event.
-The native response records the delivery receipt. Guidance
-with no receipt remains in the Player's inbox for a later delivery attempt.
+The supervisor listens for newly committed guidance throughout an active OMP
+turn and forwards it through OMP's `steer` command. The native response records
+the delivery receipt. Guidance with no receipt remains in the Player's inbox
+for a later delivery attempt.
 
 `join ID PARENT HARNESS MODEL EFFORT WORKSPACE` registers a Player in an
 existing checkout. The recorded workspace is absolute; branch and base come
