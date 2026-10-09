@@ -577,10 +577,11 @@ button:active { background: var(--wash); }
 
 .node-id {
   min-width: 0;
+  max-width: 32%;
   padding: 0;
   font-family: var(--mono);
-  font-size: var(--step1);
-  color: var(--ink);
+  font-size: var(--step0);
+  color: var(--muted);
   background: none;
   border: none;
   text-align: left;
@@ -623,8 +624,9 @@ button.pend-badge:hover { color: var(--selection); border-color: currentColor; }
   flex: 1 0 100%;
   min-width: 0;
   margin-left: 21px;
-  font-size: var(--step0);
-  color: var(--muted);
+  font-size: var(--step1);
+  font-weight: 600;
+  color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

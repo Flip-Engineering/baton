@@ -110,6 +110,15 @@ function attach(ws) {
       else call.resolve(msg);
     }
   };
+  ws.onerror = (event) => {
+    console.log(`CDP websocket error: ${event.message || event.type}`);
+    for (const [id, call] of pendingCalls) {
+      if (call.ws === ws) {
+        call.reject(new Error(`CDP websocket error: ${event.message || event.type}`));
+        pendingCalls.delete(id);
+      }
+    }
+  };
   ws.onclose = (event) => {
     for (const [id, call] of pendingCalls) {
       if (call.ws === ws) {

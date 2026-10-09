@@ -535,7 +535,8 @@ function buildRow(p, hasChildren) {
   idBtn.className = "node-id";
   idBtn.type = "button";
   idBtn.dataset.focus = focusKey("id", p.id);
-  text(idBtn, p.id);
+  text(idBtn, p.id.length > 24 ? p.id.slice(0, 23) + "…" : p.id);
+  idBtn.title = p.id;
   idBtn.addEventListener("click", () => select(p.id));
   row.appendChild(idBtn);
 
