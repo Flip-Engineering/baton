@@ -89,58 +89,164 @@ function visibleScope(db, reader, subject) {
     SELECT id FROM scope ORDER BY id`, subject).map((row) => row.id);
 }
 
-function stoppedSession(db, session) {
-  return one(db, 'SELECT id, outcome AS status, attempt, report_id AS reportId FROM session_stops WHERE session = ?', session) ?? null;
-}
+// The per-session values the player projection reports, read with one pass per
+// recorded relation over the sessions asked for. A snapshot of N sessions costs
+// a fixed number of scans; a stream frame for one session scans the same
+// relations once.
+function playerSupport(db, sessionIds) {
+  const ids = [...new Set(sessionIds.filter(Boolean))];
+  const support = {
+    execution: new Map(),
+    lastTurn: new Map(),
+    latestReport: new Map(),
+    unacknowledged: new Map(),
+    pending: new Map(),
+    pendingSample: new Map(),
+    messageAt: new Map(),
+    ownedEnsembles: new Map(),
+    memberEnsembles: new Map(),
+    stop: new Map(),
+    openRequest: new Map(),
+    changeAt: new Map(),
+  };
+  if (!ids.length) return support;
+  const placeholders = ids.map(() => '?').join(',');
+  const changeKey = (entity, id) => entity + '\u0000' + id;
 
-function latestChange(db, entity, entityId) {
-  return one(db, `SELECT kind, summary, recorded_at AS at
-                    FROM native_changes
-                   WHERE entity = ? AND entity_id = ?
-                   ORDER BY change_id DESC LIMIT 1`, entity, entityId) ?? null;
+  // The recorded execution of a session: the first row in rowid order.
+  for (const row of rows(db, `SELECT session, id, mode, phase, status FROM executions
+                               WHERE session IN (${placeholders}) ORDER BY session, rowid`, ...ids)) {
+    if (!support.execution.has(row.session)) {
+      support.execution.set(row.session, {
+        attempt: row.id, mode: row.mode, phase: row.phase, status: row.status,
+      });
+    }
+  }
+  // The newest turn per worker: the last row in rowid order.
+  for (const row of rows(db, `SELECT worker, id FROM turns
+                               WHERE worker IN (${placeholders}) ORDER BY rowid`, ...ids)) {
+    support.lastTurn.set(row.worker, row.id);
+  }
+  // The newest report per sender: the last row in message sequence order.
+  for (const row of rows(db, `SELECT sender, id FROM messages
+                               WHERE sender IN (${placeholders}) AND kind = 'report'
+                               ORDER BY seq`, ...ids)) {
+    support.latestReport.set(row.sender, row.id);
+  }
+  for (const row of rows(db, `SELECT recipient, count(*) AS n FROM messages
+                               WHERE recipient IN (${placeholders}) AND receipt IS NULL
+                               GROUP BY recipient`, ...ids)) {
+    support.unacknowledged.set(row.recipient, row.n);
+  }
+  // A recorded stop suppresses the pending set for that session.
+  for (const row of rows(db, `SELECT session, id, outcome AS status, attempt,
+                                     report_id AS reportId
+                                FROM session_stops
+                               WHERE session IN (${placeholders}) ORDER BY rowid`, ...ids)) {
+    if (!support.stop.has(row.session)) {
+      support.stop.set(row.session, {
+        id: row.id, status: row.status, attempt: row.attempt, reportId: row.reportId,
+      });
+    }
+  }
+  // The set the pending badge counts: stored task, guidance and recovery
+  // messages awaiting acknowledgement on a session with no recorded stop. One
+  // definition for the count and the list; recorded stops and other kinds stay
+  // visible through their own fields, never through this set.
+  for (const row of rows(db, `SELECT recipient, count(*) AS n FROM messages
+                               WHERE recipient IN (${placeholders}) AND receipt IS NULL
+                                 AND kind IN ('task', 'guidance', 'recovery')
+                               GROUP BY recipient`, ...ids)) {
+    if (!support.stop.has(row.recipient)) support.pending.set(row.recipient, row.n);
+  }
+  // The stored rows behind those counts, newest first per recipient.
+  for (const row of rows(db, `SELECT recipient, id, kind FROM messages
+                               WHERE recipient IN (${placeholders}) AND receipt IS NULL
+                                 AND kind IN ('task', 'guidance', 'recovery')
+                               ORDER BY seq DESC`, ...ids)) {
+    if (support.stop.has(row.recipient)) continue;
+    const list = support.pendingSample.get(row.recipient) || [];
+    list.push(row);
+    support.pendingSample.set(row.recipient, list);
+  }
+  if (support.pendingSample.size) {
+    const wanted = new Set();
+    for (const list of support.pendingSample.values()) {
+      for (const row of list) wanted.add(row.id);
+    }
+    // The recorded time of a message's first insert, as the sample reports it.
+    for (const row of rows(db, `SELECT entity_id AS id, recorded_at AS at FROM native_changes
+                                 WHERE entity = 'message' AND operation = 'insert'
+                                 ORDER BY change_id`)) {
+      if (wanted.has(row.id) && !support.messageAt.has(row.id)) support.messageAt.set(row.id, row.at);
+    }
+  }
+  for (const row of rows(db, `SELECT owner AS session, id FROM ensembles
+                               WHERE owner IN (${placeholders}) ORDER BY rowid`, ...ids)) {
+    const list = support.ownedEnsembles.get(row.session) || [];
+    list.push(row.id);
+    support.ownedEnsembles.set(row.session, list);
+  }
+  for (const row of rows(db, `SELECT session, ensemble FROM ensemble_members
+                               WHERE session IN (${placeholders}) ORDER BY rowid`, ...ids)) {
+    const list = support.memberEnsembles.get(row.session) || [];
+    list.push(row.ensemble);
+    support.memberEnsembles.set(row.session, list);
+  }
+  // The open native request a session waits on, newest rowid per worker.
+  const hasRequests = Boolean(one(db,
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'native_requests'"));
+  if (hasRequests) {
+    for (const row of rows(db, `SELECT worker, id, method, reply, written FROM native_requests
+                                 WHERE worker IN (${placeholders}) AND closed IS NULL
+                                 ORDER BY rowid`, ...ids)) {
+      support.openRequest.set(row.worker, row);
+    }
+  }
+  // The recorded time of the newest change behind each reported activity.
+  const changeKeys = new Set();
+  for (const open of support.openRequest.values()) changeKeys.add(changeKey('native-request', open.id));
+  for (const [session, execution] of support.execution) {
+    if (execution.phase === 'running' || execution.phase === 'starting') {
+      changeKeys.add(changeKey('execution', session));
+    }
+  }
+  if (changeKeys.size) {
+    for (const row of rows(db, `SELECT entity, entity_id AS entityId, recorded_at AS at
+                                  FROM native_changes
+                                 WHERE entity IN ('native-request', 'execution')
+                                 ORDER BY change_id`)) {
+      const key = changeKey(row.entity, row.entityId);
+      if (changeKeys.has(key)) support.changeAt.set(key, row.at);
+    }
+  }
+  return support;
 }
 
 // What the actor is doing now, from recorded state only: an open native request
 // it waits on, then its recorded execution phase. Null when nothing is recorded,
 // and then the page falls back to the actor's latest transition.
-function currentAction(db, session, execution) {
-  const hasRequests = one(db,
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'native_requests'");
-  const open = hasRequests ? one(db, `SELECT id, method, reply, written
-                          FROM native_requests
-                         WHERE worker = ? AND closed IS NULL
-                         ORDER BY rowid DESC LIMIT 1`, session) ?? null : null;
+function currentAction(support, session, execution) {
+  const open = support.openRequest.get(session);
   if (open) {
     const stage = open.reply === null || open.reply === ''
       ? 'awaiting response'
       : (Number(open.written) === 1 ? 'response written' : 'response stored');
-    const change = latestChange(db, 'native-request', open.id);
-    return { kind: 'native-request', label: `${open.method || 'native'} request ${stage}`, at: change?.at || '' };
+    return {
+      kind: 'native-request',
+      label: `${open.method || 'native'} request ${stage}`,
+      at: support.changeAt.get('native-request\u0000' + open.id) || '',
+    };
   }
   const phase = execution?.phase || '';
   if (phase === 'running' || phase === 'starting') {
-    const change = latestChange(db, 'execution', session);
-    return { kind: 'execution', label: phase, at: change?.at || '' };
+    return {
+      kind: 'execution',
+      label: phase,
+      at: support.changeAt.get('execution\u0000' + session) || '',
+    };
   }
   return null;
-}
-
-// The same set the pending badge counts: stored task/guidance/recovery messages
-// awaiting acknowledgement on a session with no recorded stop. One definition for the
-// count and the list; recorded stops and other kinds stay visible through their own
-// fields, never through this list.
-function pendingSample(db, session) {
-  return rows(db, `SELECT m.id AS id, m.kind AS kind,
-                          coalesce((SELECT n.recorded_at FROM native_changes n
-                                     WHERE n.entity = 'message' AND n.entity_id = m.id
-                                       AND n.operation = 'insert'
-                                     ORDER BY n.change_id LIMIT 1), '') AS at
-                     FROM messages m
-                    WHERE m.recipient = ? AND m.receipt IS NULL
-                      AND m.kind IN ('task', 'guidance', 'recovery')
-                      AND NOT EXISTS (SELECT 1 FROM session_stops stop
-                                       WHERE stop.session = m.recipient)
-                    ORDER BY m.seq DESC`, session);
 }
 
 // A message moves between two recorded actors; the projection names the far side
@@ -156,33 +262,21 @@ function messageCounterparts(db, ids) {
   return found;
 }
 
-function playerSnapshot(db, session) {
+function playerSnapshot(db, session, support) {
   const player = one(db, `
     SELECT s.id, s.parent, s.harness, s.model, s.effort, s.observed_harness AS observedHarness,
            s.observed_model AS observedModel, s.observed_effort AS observedEffort,
-           s.workspace, s.branch, s.base, s.native,
+           s.workspace, s.branch, s.base,
            CASE WHEN coalesce(r.role, 'player') = 'operator' THEN 'operator' ELSE 'player' END AS kind,
            CASE coalesce(r.role, 'player')
              WHEN 'conductor' THEN CASE WHEN s.parent IS NULL THEN 'principal-conductor' ELSE 'associate-conductor' END
              ELSE coalesce(r.role, 'player') END AS role,
-           (SELECT json_object('attempt', e.id, 'mode', e.mode, 'phase', e.phase, 'status', e.status)
-              FROM executions e WHERE e.session = s.id) AS executionJson,
-           (SELECT t.id FROM turns t WHERE t.worker = s.id ORDER BY t.rowid DESC LIMIT 1) AS lastTurnId,
-           (SELECT m.id FROM messages m WHERE m.sender = s.id AND m.kind = 'report' ORDER BY m.seq DESC LIMIT 1) AS latestReportId,
-           (SELECT count(*) FROM messages m WHERE m.recipient = s.id AND m.receipt IS NULL) AS unacknowledgedCount,
-           (SELECT count(*) FROM messages m WHERE m.recipient = s.id AND m.receipt IS NULL
-             AND m.kind IN ('task', 'guidance', 'recovery')
-             AND NOT EXISTS(SELECT 1 FROM session_stops stop WHERE stop.session = s.id)) AS pendingCount,
-           (SELECT json_group_array(e.id) FROM ensembles e WHERE e.owner = s.id) AS ownedEnsemblesJson,
-           (SELECT json_group_array(em.ensemble) FROM ensemble_members em WHERE em.session = s.id) AS memberEnsemblesJson,
            (s.endpoint <> '') AS endpointRegistered
       FROM sessions s LEFT JOIN session_roles r ON r.session = s.id WHERE s.id = ?`, session);
   if (!player) return null;
 
-  const execution = player.executionJson ? JSON.parse(player.executionJson) : null;
-  const ownedEnsembles = JSON.parse(player.ownedEnsemblesJson || '[]');
-  const memberEnsembles = JSON.parse(player.memberEnsemblesJson || '[]');
-  const stop = stoppedSession(db, session);
+  const execution = support.execution.get(session) || null;
+  const sample = support.pendingSample.get(session) || [];
   return {
     id: player.id,
     parent: player.parent ?? '',
@@ -199,19 +293,21 @@ function playerSnapshot(db, session) {
     base: player.base,
     execution,
     actualProcess: 'unknown',
-    lastTurnId: player.lastTurnId || '',
-    latestReportId: player.latestReportId || '',
-    pendingCount: player.pendingCount,
-    unacknowledgedCount: player.unacknowledgedCount,
-    ownedEnsembles,
-    memberEnsembles,
+    lastTurnId: support.lastTurn.get(session) || '',
+    latestReportId: support.latestReport.get(session) || '',
+    pendingCount: support.pending.get(session) || 0,
+    unacknowledgedCount: support.unacknowledged.get(session) || 0,
+    ownedEnsembles: support.ownedEnsembles.get(session) || [],
+    memberEnsembles: support.memberEnsembles.get(session) || [],
     liveReceiver: null,
     endpointRegistered: Boolean(player.endpointRegistered),
     reference: null,
     inputRead: ['unknown'],
-    stop,
-    currentAction: currentAction(db, session, execution),
-    pendingSample: pendingSample(db, session),
+    stop: support.stop.get(session) || null,
+    currentAction: currentAction(support, session, execution),
+    pendingSample: sample.map((row) => ({
+      id: row.id, kind: row.kind, at: support.messageAt.get(row.id) || '',
+    })),
   };
 }
 
@@ -243,7 +339,8 @@ function snapshot(db, reader, subject, since) {
     const bounds = one(db, 'SELECT min(change_id) AS first, max(change_id) AS last FROM native_changes');
     const first = bounds.first === null ? high + 1 : Number(bounds.first);
     const gap = since > high || (since > 0 && since < first - 1);
-    const players = scope.map((id) => playerSnapshot(db, id)).filter(Boolean);
+    const support = playerSupport(db, scope);
+    const players = scope.map((id) => playerSnapshot(db, id, support)).filter(Boolean);
     const scopeSet = new Set(scope);
     const ensembleIds = new Set();
     for (const player of players) {
@@ -403,6 +500,7 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
         const change = gap ? null : nextEventRow(db, cursor);
         const changes = change ? [change] : [];
         const visible = new Set(scope);
+        const support = playerSupport(db, changes.map((item) => item.session));
         const frames = changes.map((change) => {
           const id = Number(change.id);
           const ensembleId = change.entity === 'ensemble'
@@ -421,11 +519,11 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
           if (['ensemble', 'membership', 'section', 'section-membership'].includes(change.entity)) {
             const value = ensembleSnapshot(db, change.entityId.split('/')[0], scope);
             const player = change.entity === 'membership' && visible.has(change.session)
-              ? playerSnapshot(db, change.session) : null;
+              ? playerSnapshot(db, change.session, support) : null;
             return { id, type: 'ensemble', data: value ? JSON.parse(value) : null,
               player, transition: change, sessionVisible: visible.has(change.session) };
           }
-          const player = playerSnapshot(db, change.session);
+          const player = playerSnapshot(db, change.session, support);
           return { id, type: 'player', data: player, transition: change,
             sessionVisible: visible.has(change.session),
             pending: player && (change.kind.startsWith('message:')
