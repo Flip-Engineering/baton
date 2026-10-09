@@ -67,10 +67,9 @@ shared graph service, provider plug-in registry or indexing daemon is added.
 ## Native surfaces
 
 ```text
-baton2 DATABASE context-engines [--pretty]
-baton2 DATABASE context-query SESSION QUERY_ID REQUEST_JSON
+baton2 DATABASE context-engines
 baton2 DATABASE context-query-file SESSION QUERY_ID PATH
-baton2 DATABASE context-result QUERY_ID [--pretty]
+baton2 DATABASE context-result QUERY_ID
 ```
 
 `context-engines` returns `{engines, runtimes}`. An engine entry has `engine`,
@@ -94,16 +93,19 @@ coordination database may read a retained query. It has no requester argument
 and establishes no owner-only read boundary. MCP result lookup uses the same
 rule. Control effects separately require the recorded owner identity.
 
-MCP tools are `baton2_context_engines`, `baton2_context_query` and
-`baton2_context_result`. Query arguments are `{query, request}` with `request`
-a JSON object. The context codec extracts the request from the original frame
-bytes and forwards its canonical text to the native command's file input
-(`PATH -`) through stdin. Omission is preserved. Both surfaces call the same native validator and return the same
-result schema. Success is one JSON document, exit 0. New-family refusals,
-including unknown identity, use exit 2 and `{error, command, condition, next}`.
-MCP sets `isError` and places that JSON in text content. Refusals echo identifying
-fields only; bodies, expressions, environments and connection credentials never
-appear in refusal text.
+The Conductor MCP tools are `baton2_context_query_file` and
+`baton2_context_result`. Query arguments are `{query, path}`. The attachment
+supplies SESSION and invokes `context-query-file SESSION QUERY_ID PATH` through
+the coordinator CLI. Result arguments are `{query}` and invoke `context-result`.
+The request file must be accessible to the coordinator. The CLI also accepts
+`PATH -` to read its stdin.
+
+The MCP adapter parses newline-delimited JSON-RPC messages, dispatches the named
+tool and returns the coordinator output as text content. Command failures set
+`isError` and include the process exit code and captured stdout/stderr. Native
+request decoding and absent-result lookup currently report diagnostics on stderr
+with exit 3; host-operation failures can retain their own error code. Retained
+query envelopes carry their computation state and error fields.
 
 The shared native orientation function places a context discovery/query example
 in receive and direct-turn briefings. Conductor adapter orientation and MCP
@@ -235,135 +237,44 @@ requires `controlRuntime` for its owned process effect. Runtime launch/resume/pa
 loading requires `executeTarget`; target SQL planning requires
 `planTargetSql`; SQL migration replay requires `replayMigrations`.
 
-Inline/file queries share canonical request identity. Validation precedes
-admission and provider resolution. `Request.read_utf8(path)` reads raw file bytes,
+File queries use canonical request identity. Validation precedes
+admission and provider resolution. `Raw.read_utf8(path)` reads raw file bytes,
 with `-` selecting stdin, and checks RFC 3629 UTF-8 and NUL before
 the compiler runtime's `io_str` conversion. That conversion replaces invalid
-byte sequences, so a later String check cannot implement this boundary. Inline
-argv uses the runtime's existing strict UTF-8 argument decoding and then the
-same text validator. Invalid argv can fail in that runtime before the structured
-context refusal exists. A leading BOM has its own refusal condition.
+byte sequences, so a later String check cannot implement this boundary.
+A leading BOM has its own refusal condition.
 
-`Context.validate_json_text` uses linked SQLite's strict no-flag `json_valid(text)` and
-`json_tree`. It refuses malformed/trailing JSON, duplicate decoded member names
-grouped by parent and key, and NUL in decoded names. It inspects numeric spelling
-with the JSON-text operator `raw -> row.fullkey`, where `raw` is the complete
-document held in a CTE. The converted `value` and `atom` columns cannot preserve
-that spelling. This SQL check applies the unsigned decimal U32 token domain to
-every numeric request row without a path allowlist. It checks digits, digit
-length and the upper-bound token before any numeric conversion. Native closed
-subject/options validation separately admits numeric fields only in declared
-shapes: root version and line/column coordinates in source selectors, including
-nested selectors. Version must equal 1. Decimal fractions, exponent notation and signs refuse.
-Runtime thread/frame/object references and migration revisions are strings.
-`Context.validate_declaration_text` applies the raw reader, duplicate/scalar
-checks and a separate numeric/schema profile before provider use: byte offsets
-admit unsigned safe-integer tokens through 2^53-1 or decimal strings for larger
-offsets. Before native tree reconstruction, numeric offsets above U32 normalize
-to their exact decimal-token strings. Argument indices use U32. This profile
-has no U32 file-size restriction.
+`NativeRequest.read_file` runs `Request.validity_sql` against the bound database
+before traversing the JSON. A valid document then reaches
+`Request.validate_json_text_sql`, which checks duplicate decoded member names
+within each object. `Request.json_tree_sql` returns node IDs, parent IDs, kinds,
+member names and scalar values as hex fields. Numeric rows retain their original
+JSON tokens through the text operator `raw -> row.fullkey`.
 
-Canonical request identity uses the existing `json/canonical.bend` representation
-and `json_text`. Its `Json` covers null, booleans, U32, strings, arrays and objects.
-After strict SQL validation, a query against a private in-memory SQLite
-connection returns `json_tree` node ID, parent, type, key and scalar value as
-hex-encoded fields. Native SQL builders quote the source text with the existing
-SQL literal encoder; no target content becomes executable SQL syntax. Hex
-preserves tabs, newlines, NUL and invalid decoded surrogate bytes across the
-current tab/newline row transport and its C `strlen` callback. Raw decoded JSON
-strings are never passed through that lossy row boundary.
+`CoreCodec.frame_read` reconstructs the raw tree from those rows and decodes
+scalar UTF-8. `Schema.schema_admit_value` checks the request shape.
+`CoreCodec.raw_to_json` converts the admitted tree to the native canonical JSON
+representation, and `Request.request_validate` checks the request fields.
+`Request.request_identity` produces the canonical text used for replay.
+The accepted `RequestDecoded` value carries that text, engine-selection operands,
+the requested operation chain, `cwd` and the source path. Read, validation and
+decode failures return `RequestDecodeRefused` with the condition for the ordinary
+query caller.
 
-`Context.decode_scalar_utf8` consumes the byte-valued characters obtained from
-`Tx.hex_decode`, rejecting invalid UTF-8, surrogate-range values, overlong forms,
-values above U+10FFFF and decoded NUL in names or values. It constructs valid
-native Unicode Strings. `Context.reconstruct_json` joins nodes through their
-explicit parent identities, reconstructs objects and array elements in numeric
-key order, and validates container shape. Node IDs need not be contiguous and
-are not interpreted as array offsets. Internal row/index identities remain
-decimal text, without imposing U32 node-count limits. Empty arrays use
-`Jarr{Jnil{},Jnil{}}`; `[null]` uses `Jarr{Jnull{},Jnil{}}`. Missing/ambiguous
-parents, repeated array indexes or malformed row transport refuse.
+`Native.query_file` obtains the database binding and calls this decoder.
+`query_request_result` reads the owner's workspace and resolves the target
+working directory. The existing provider inventory and project selection calls
+select the installed engine plan. `capture_plan_inputs` acquires the plan's input
+records, and `launch_captured_plan` passes that plan and those records to the
+selected provider through the installed `context-provider.mjs`. Managed query
+state and results use the existing context service and query rows.
+`Native.result` reads the retained result through `ContextService.retained`.
 
-Native closed-schema validation and resolved defaults operate on this tree.
-`json_text(tree)` performs its existing code-point member normalization and
-preserves array order. The exact emitted canonical text and owner are the
-request replay identity; the stored canonical body is compared directly.
-No second request encoder or request digest is required. Snapshot artifact
-hashes remain separate. The module's demo `utf8` helper is excluded from byte
-lengths and hashes: its current implementation lacks a four-byte branch.
-Actual String serialization uses the qualified runtime encoder. The raw reader,
-SQLite parser/token traversal, row transport and runtime String encoding remain
-foreign assumptions exercised by host tests. The new pure decoder/reconstructor
-and actual native refusal/admission/spawn ordering have operative laws.
-
-The MCP bridge retains raw Buffer frames split at byte 0x0A. A preliminary
-`JSON.parse` selects only whether a frame names one of the three context tools;
-it performs no dispatch. Selected context frames go as original bytes to the
-native internal `--context-request-codec` entry. That entry checks the entire
-frame for invalid UTF-8 and duplicates. Its frame shape is
-`{jsonrpc:"2.0",id,method:"tools/call",params:{name,arguments,_meta?}}`; `id` is a
-string or a signed safe-integer token. It admits exactly the three named context
-tools. Query arguments are `{query,request}`, result arguments are `{query}`,
-and engines arguments are `{}`. Query IDs are nonempty strings; request is an
-object. The root, params and arguments objects reject unknown fields except for
-the declared metadata extension. After these checks the entry extracts the request
-container with SQLite `json_extract`, which preserves its numeric tokens. That
-container follows the shared request profile above. Hex-encoded frame string
-fields pass through the same pure scalar decoder, including all metadata names
-and values. The signed safe-integer frame ID is validated as its exact JSON token
-and retained as envelope transport. SQLite's JSON validity alone does not
-establish scalar-string validity.
-
-Optional `params._meta` is an object. Its optional `progressToken` accepts a
-string or JSON number, as specified by the
-[MCP 2024-11-05 Request and ProgressToken schema](https://raw.githubusercontent.com/modelcontextprotocol/specification/main/schema/2024-11-05/schema.ts).
-Additional metadata members are opaque transport data subject to the same raw
-JSON, duplicate-name and scalar-string validation. The
-[JSON schema](https://raw.githubusercontent.com/modelcontextprotocol/specification/main/schema/2024-11-05/schema.json)
-defines ProgressToken as string or integer, while the TypeScript declaration
-uses string or number. Neither definition specifies a numeric maximum. This
-receiver explicitly selects the broader strict JSON-number compatibility profile
-requested by root, including fractions. For example, `0.5` is admitted by this
-profile and excluded by the published JSON Schema integer branch. The linked
-URLs use `main`; these statements describe the reviewed source snapshots.
-The metadata numeric profile admits strict JSON number tokens, including
-negative, fractional, exponent and above-U32 forms, independently of the request
-U32 and frame-ID
-safe-integer profiles. Validation uses the raw token and JSON node kind without
-conversion through Bend U32 or a JS Number; a valid large token is not rejected
-because a host numeric conversion would round or overflow. Null, booleans,
-arrays and objects are invalid progress tokens. Raw `NaN` and `Infinity` are
-invalid JSON. The metadata object is validated and then discarded before codec
-success; it enters neither the canonical request tree nor the success document,
-query identity, grants or provider dispatch. No full canonical frame tree is
-needed. This adapter emits no MCP progress notifications; the protocol permits
-a receiver to omit them. Managed query progress and owner notices retain their
-existing lifecycle contracts.
-
-Codec success is one JSON document:
-`{version:1,tool,id,query,requestCanonical}`. `tool` is `context-query`,
-`context-engines` or `context-result`; `query` is null for engines and the
-validated query ID otherwise; `requestCanonical` is canonical text for query
-and null otherwise. `id` is the validated frame ID, emitted from its checked
-JSON token. The bridge dispatches solely
-from this result, forwarding request text verbatim to `context-query-file`.
-It never rebuilds that request from a parsed JS object.
-Context notifications without an ID do not dispatch. A preliminary parse error
-keeps the existing no-dispatch error path. Ordinary non-context frames retain
-their existing parsing semantics; this raw validation guarantee is context-scoped.
-Duplicate method/name fields use JS last-wins behavior only for selection. If
-the selected name is a context tool, the raw duplicate check refuses the frame;
-if it selects another tool, the existing non-context path applies.
-
-Public and internal codec refusals use exit 2 and the structured refusal JSON
-on stderr, with empty stdout. The bridge decodes that document into `isError`
-content. Conditions use fixed text; only the raw byte reader can supply a byte
-offset. Input member names, tokens and paths are not echoed. Allocation failure
-reports the host error; buffers grow as needed without a configured size cutoff.
-The admitted canonical body, owner and resolved defaults are retained. Same ID and
-same canonical input replay its row without rerunning an effect; conflicting
-reuse refuses. A failed or interrupted query keeps its ID. A new query ID is
-required for a fresh computation.
+The Conductor MCP adapter passes the file path and attached session to these
+ordinary commands. Its JSON-RPC request ID correlates the MCP reply. The file
+reader and native decoder operate on the query request file; the request's
+canonical text, operation chain and selection operands are internal values used
+by the native callers. MCP result text contains the coordinator output.
 
 ## Results, classifications and references
 
