@@ -721,14 +721,20 @@ class Control(unittest.TestCase):
         self.call('message', 'owed-legacy-input', 'root', 'legacy-muse', 'task',
                   'Continue the original conversation.')
         self.assertIsNone(self.call('delivery', 'owed-legacy-input')['receipt'])
-        replay = self.call('turn', 'legacy-muse', 'completed-legacy-turn', self.fixture,
-                           'legacy-muse', 'low', assignment['workspace'], self.task, log, native)
-        self.assertEqual(replay['id'], 'completed-legacy-turn')
+        replay = subprocess.Popen([str(EXE), str(self.db), 'turn', 'legacy-muse',
+                                   'completed-legacy-turn', str(self.fixture),
+                                   'legacy-muse', 'low', assignment['workspace'],
+                                   str(self.task), str(log), native],
+                                  env=self.environment, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True)
         continued, start = self.accept('legacy-muse')
         self.assertEqual(start['resume'], native)
         self.assertIn('[id: owed-legacy-input]', start['prompt'])
         self.assertNotEqual(start['prompt'], self.task.read_text())
         self.finish(continued, 'The owed input is complete.')
+        replay_stdout, replay_stderr = replay.communicate()
+        self.assertEqual(replay.returncode, 0, replay_stderr)
+        self.assertEqual(json.loads(replay_stdout)['id'], 'completed-legacy-turn')
         self.exited('legacy-muse')
         self.assertEqual(self.call('delivery', 'owed-legacy-input')['receipt'],
                          'fixture-native-reviewed')

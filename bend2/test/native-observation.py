@@ -22,6 +22,12 @@ class NativeObservation(RECEIVE.Receive):
         fixture = self.fixture.read_text()
         needle = "    action=json.loads(line)\n"
         addition = (
+            "    if 'review_input' in action:\n"
+            "        ident=action['review_input']\n"
+            "        assert ident in re.findall(r'^Message \\([^\\n]*\\) from [^\\n]* \\[id: (.*?)\\]:$',prompt,re.M),ident\n"
+            "        subprocess.run([config['exe'],config['db'],'ack',ident,model,'native-reviewed'],check=True,stdout=subprocess.DEVNULL)\n"
+            "        reply({'reviewed_input':ident})\n"
+            "        continue\n"
             "    if 'native_line' in action:\n"
             "        print(action['native_line'],flush=True)\n"
             "        reply({'line_written':action['native_line']})\n"
@@ -32,6 +38,11 @@ class NativeObservation(RECEIVE.Receive):
             "        continue\n")
         self.assertIn(needle, fixture)
         self.fixture.write_text(fixture.replace(needle, needle + addition, 1))
+
+    def review_input(self, stream, ident):
+        self.action(stream, review_input=ident)
+        self.assertEqual(json.loads(stream.readline()), {'reviewed_input': ident})
+        self.assertEqual(self.coord('delivery', ident)['receipt'], 'native-reviewed')
 
     def eventually_slow_case(self, observation, description):
         while True:
@@ -77,6 +88,7 @@ class NativeObservation(RECEIVE.Receive):
                 '…[181 items elided for RPC frame]', None, {'metadata': 'retained in raw log'},
             ],
         }
+        self.review_input(stream, 'mixed-task')
         self.action(stream, native_frame=terminal)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
         self.eventually(lambda: self.coord('turns', 'parent'),
@@ -184,6 +196,7 @@ class NativeObservation(RECEIVE.Receive):
         observer.kill()
         observer.wait()
         resumed = self.spawn(*self.receive_args('parent'))
+        self.review_input(stream, 'checkpoint-task')
         self.action(stream, native_frame={'type': 'agent_end', 'isTerminal': True,
                                           'is_error': False, 'messages': []})
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
@@ -232,6 +245,7 @@ class NativeObservation(RECEIVE.Receive):
         observer.wait()
         resumed = self.spawn(*self.receive_args('parent'))
         terminal = {'type': 'agent_end', 'isTerminal': True, 'is_error': False, 'messages': []}
+        self.review_input(stream, 'reattach-checkpoint-task')
         self.action(stream, native_frame=terminal)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
         self.action(stream, exit_fixture=True)
@@ -315,7 +329,7 @@ class NativeObservation(RECEIVE.Receive):
         stream, started = self.accept_child(observer, 'parent',
                                             'Observation receive exited before native startup')
         self.assertIn('[id: stale-success-task]', started['prompt'])
-        self.coord('ack', 'stale-success-task', 'parent', 'native-reviewed')
+        self.review_input(stream, 'stale-success-task')
         success = {'type': 'agent_end', 'isTerminal': True, 'is_error': False,
                    'messages': [{'role': 'assistant', 'content': [
                        {'type': 'text', 'text': 'Stale success text.'}]}]}
@@ -386,7 +400,7 @@ class NativeObservation(RECEIVE.Receive):
         stream, started = self.accept_child(observer, 'parent',
                                             'Observation receive exited before native startup')
         self.assertIn('[id: latest-success-task]', started['prompt'])
-        self.coord('ack', 'latest-success-task', 'parent', 'native-reviewed')
+        self.review_input(stream, 'latest-success-task')
         terminal = {
             'type': 'agent_end', 'isTerminal': True, 'is_error': False,
             'messages': [

@@ -59,7 +59,16 @@ baton('section-member', 'qa-ensemble', 'qa-section', 'lead', 'worker', 'add');
 baton('message', 'qa-task-1', 'root', 'worker', 'task', 'Retained task input.');
 const workerCmd = join(WORK, 'worker-native');
 writeFileSync(workerCmd, `#!${process.execPath}\n` +
+  `const {readFileSync} = require('node:fs'); const {spawnSync} = require('node:child_process');\n` +
   `console.log(JSON.stringify({stream:{kind:'session',id:'native-worker'},payload_type:'turn.input.user',payload:{kind:'turn_input_user',command_id:'worker-primary'}}));\n` +
+  `const prompt = readFileSync(process.argv[process.argv.indexOf('--prompt-file')+1], 'utf8');\n` +
+  `const inputs = ['qa-task-1', ...[...prompt.matchAll(/^Message \\([^\\n]*\\) from [^\\n]* \\[id: (.*?)\\]:$/gm)].map((match) => match[1])];\n` +
+  `for (const id of new Set(inputs)) {\n` +
+  `  const delivered = spawnSync(${JSON.stringify(EXE)}, [${JSON.stringify(DB)}, 'delivery', id], {encoding:'utf8'});\n` +
+  `  if (delivered.status !== 0 || JSON.parse(delivered.stdout).recipient !== 'worker') throw new Error(delivered.stderr || 'wrong fixture recipient');\n` +
+  `  const accepted = spawnSync(${JSON.stringify(EXE)}, [${JSON.stringify(DB)}, 'ack', id, 'worker', 'fixture-native-reviewed'], {encoding:'utf8'});\n` +
+  `  if (accepted.status !== 0) throw new Error(accepted.stdout + accepted.stderr);\n` +
+  `}\n` +
   `console.log(JSON.stringify({stream:{kind:'session',id:'native-worker'},payload_type:'run.terminal.completed',payload:{kind:'run_terminal',terminal:'completed',command_id:'worker-primary',text:'Worker completed the assigned task.'}}));\n`);
 chmodSync(workerCmd, 0o755);
 writeFileSync(join(WORK, 'worker-task.txt'), 'Task for worker');

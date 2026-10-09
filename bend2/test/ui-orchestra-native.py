@@ -54,19 +54,31 @@ class OrchestraProjection(unittest.TestCase):
         return self.call('recruit', name, parent, 'muse', 'configured-model', 'low',
                          str(self.repo), name + '-branch', str(workspace), 'HEAD')
 
-    def run_turn(self, player, ident, terminal, text):
+    def run_turn(self, player, ident, terminal, text, input_id=''):
         workspace = self.directory / player
         command = self.directory / (player + '-native')
         task = self.directory / (player + '-task.txt')
         log = self.directory / (player + '-native.jsonl')
         task.write_text('Task for ' + player)
         failed = 'sys.exit(1)' if terminal == 'failed' else ''
-        command.write_text('#!' + sys.executable + '\n' + '''import json,sys
+        review = '' if terminal == 'failed' else (
+            "prompt=pathlib.Path(sys.argv[sys.argv.index('--prompt-file')+1]).read_text()\n"
+            "inputs=re.findall(r'^Message \\([^\\n]*\\) from [^\\n]* \\[id: (.*?)\\]:$',prompt,re.M)\n"
+            "if " + repr(input_id) + ": inputs.insert(0," + repr(input_id) + ")\n"
+            "for message in dict.fromkeys(inputs):\n"
+            "    delivery=json.loads(subprocess.check_output([" + repr(str(EXE)) + ","
+            + repr(str(self.db)) + ",'delivery',message],text=True))\n"
+            "    assert delivery['recipient']==" + repr(player) + ",delivery\n"
+            "    subprocess.run([" + repr(str(EXE)) + "," + repr(str(self.db))
+            + ",'ack',message," + repr(player)
+            + ",'fixture-native-reviewed'],check=True,stdout=subprocess.DEVNULL)\n")
+        command.write_text('#!' + sys.executable + '\n' + '''import json,pathlib,re,subprocess,sys
 native = 'native-''' + player + ''''
 print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.model.configured',
   'payload':{'kind':'run_model_configured','model_id':'observed-fixture-model'}}), flush=True)
 print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'turn.input.user',
   'payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}), flush=True)
+''' + review + '''
 print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.terminal.''' + terminal + '''',
   'payload':{'kind':'run_terminal','command_id':'fixture-primary','terminal':''' + repr(terminal) + ''','text':''' + repr(text) + '''}}), flush=True)
 ''' + failed + '\n')
@@ -126,7 +138,8 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
         self.call('report', 'lead-report', 'lead', 'Lead report is retained.')
 
         self.run_turn('worker', 'worker-finished', 'completed',
-                      'Worker completed the assigned task.')
+                      'Worker completed the assigned task.', input_id='task-worker')
+        self.assertEqual(self.call('delivery', 'task-worker')['receipt'], 'fixture-native-reviewed')
         self.assertEqual(self.call('delivery', 'worker-finished')['recipient'], 'lead')
         self.run_turn('failed-worker', 'worker-failed', 'failed',
                       'Worker failed with a provider error.')
@@ -161,7 +174,7 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
                                                                 WHERE session='worker')
                                              ORDER BY seq''').fetchall()
             print('pending inputs admitted for worker: ' + json.dumps(pending_inputs), flush=True)
-            self.assertEqual(pending_inputs, [('task-worker', 'task', 'root', None)])
+            self.assertEqual(pending_inputs, [])
             events = {row[0]: json.loads(row[1]) for row in db.execute(
                 'SELECT id,event FROM turns WHERE worker IN (?,?)',
                 ('worker', 'failed-worker'))}
