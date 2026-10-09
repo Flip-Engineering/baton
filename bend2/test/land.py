@@ -650,14 +650,14 @@ class Land(unittest.TestCase):
         self.git('commit', '-q', '-m', 'check fixtures')
 
     def land_under_a_move(self, under, mover, mover_check='check-plain.sh',
-                          mover_selected='file.txt'):
+                          mover_selected='file.txt', under_selected='file.txt'):
         """Start UNDER's landing, move the target with MOVER's, answer UNDER's."""
         answer = {}
 
         def land_under():
             try:
                 answer['result'] = self.call('land-checked', under, self.repo, 'main',
-                                             'check-wait.sh', 'file.txt')
+                                             'check-wait.sh', under_selected)
             except BaseException as error:
                 answer['error'] = error
 
@@ -762,7 +762,7 @@ class Land(unittest.TestCase):
 
         moved, stale = self.land_under_a_move(
             'wb', 'wa', str(ROOT / 'bend2/scripts/check-unittest.sh'),
-            'compatibility-selected.py')
+            'compatibility-selected.py', 'compatibility-selected.py')
         events = [json.loads(line) for line in observations.read_text().splitlines()]
         self.assertIn({'passed': True, 'left': 4, 'right': 6}, events)
         self.assertEqual(moved['status'], 'landed')
