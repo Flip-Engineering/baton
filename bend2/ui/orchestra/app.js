@@ -424,8 +424,7 @@ function select(id) {
   renderDetail();
   void loadActorKnowledge(id);
   void loadActorWork(id);
-  // Keyboard users land on the selected row instead of back at the top:
-  // the view switch hides the chip they came from.
+  // Move keyboard focus to the selected actor's row.
   const target = el.tree.querySelector("[data-focus=\"" + CSS.escape(focusKey("id", id)) + "\"]");
   if (target && typeof target.focus === "function") target.focus();
 }
@@ -1221,11 +1220,19 @@ function restoreGraphFocus(findingId) {
   if (node && typeof node.focus === "function") node.focus();
 }
 
-// A finding selection opens the complete record inline beside the graph:
-// the readout expansion carries the full claim, evidence and limits, so the
-// relationship context stays visible while reading. The selection never
-// leaves the Knowledge view. Focus restore lives in the shared graph render
-// wrapper, which keeps the actual focused node across every redraw.
+// Select the finding author for actor details while keeping the graph visible
+// and keyboard focus on its node.
+function followGraphAuthor(id) {
+  const actor = graphFindingAuthor(id);
+  if (!actor || !state.players.has(actor) || actor === state.selectionId) return;
+  state.selectionId = actor;
+  renderTree();
+  renderDetail();
+  void loadActorKnowledge(actor);
+  void loadActorWork(actor);
+}
+
+// Open the complete claim, evidence and limits beside the graph.
 function toggleFinding(id) {
   if (!id) return;
   state.findingId = state.findingId === id ? null : id;
@@ -1239,24 +1246,24 @@ function toggleFinding(id) {
     // The overview carries no evidence or limits, so the selected record is
     // read through the existing on-demand author knowledge endpoint.
     void loadGraphRecord(graphFindingAuthor(state.findingId), state.findingId);
+    followGraphAuthor(state.findingId);
   }
   renderKnowledge();
   renderDetail();
 }
 
-// The recorded author behind a finding: the current actor read first, then
-// the overview findings, then the promotion source. Only recorded identities.
+// Read the finding author from actor knowledge, the overview or a promotion.
 function graphFindingAuthor(id) {
   const data = state.knowledgeActor;
   if (data && state.knowledgeActorId === state.selectionId && state.selectionId) {
     for (const f of data.authored || []) if (f && f.id === id) return state.selectionId;
-    for (const r of data.received || []) if (r && (r.finding || r.id) === id) return state.selectionId;
+    for (const r of data.received || []) if (r && (r.finding || r.id) === id && r.author) return r.author;
   }
   const overview = state.knowledge || {};
   const record = (overview.findings || []).find((f) => f && f.id === id) || {};
   if (record.author) return record.author;
   const edge = (overview.promotions || []).find((p) => p && (p.finding || p.id) === id) || {};
-  return edge.source || edge.author || "";
+  return edge.author || "";
 }
 
 // The selected inline record, read through the existing on-demand actor

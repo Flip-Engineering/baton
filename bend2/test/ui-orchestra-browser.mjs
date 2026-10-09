@@ -241,6 +241,8 @@ check('graph finding keeps keyboard focus on its node', await evalJs(
   `document.activeElement === document.querySelector('#knowledge-graph .knode.selected')`));
 await until('graph finding opens its complete record beside the graph',
   `!document.getElementById('view-knowledge').hidden && ['Worker retained finding.', 'Worker evidence.', 'Worker limits.'].every((value) => document.getElementById('knowledge-promotions').textContent.includes(value))`);
+await until('graph selection follows the recorded author without leaving Knowledge',
+  `!document.getElementById('view-knowledge').hidden && document.querySelector('[data-row="worker"]')?.getAttribute('aria-selected') === 'true'`);
 await evalJs(`document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]').click()`);
 check('toggle-off keeps focus on its graph node', await evalJs(
   `document.activeElement && document.activeElement.getAttribute("aria-label") === 'qa-worker-finding' && !document.querySelector('#knowledge-graph .knode.selected')`));
@@ -266,6 +268,19 @@ check('actor detail opens the full claim, evidence and limits', await evalJs(
 // Capture the selected work for review.
 const selectedWorkShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'selected-work.png'), Buffer.from(selectedWorkShot.result.data, 'base64'));
+// Select a received finding while its recipient's knowledge is cached.
+// The selection follows the finding's author and retains graph focus.
+await evalJs(`[...document.querySelectorAll('#tree button')].find((b) => (b.textContent || '').includes('aide'))?.click()`);
+await until("recipient caches its authored and received knowledge",
+  `document.getElementById('detail').textContent.includes('1 authored / 1 received')`);
+await evalJs(`document.getElementById('view-knowledge-btn').click()`);
+await evalJs(`(() => { const node = document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]'); node.focus(); node.click(); })()`);
+await until('received finding selection follows its recorded author',
+  `!document.getElementById('view-knowledge').hidden && document.activeElement === document.querySelector('#knowledge-graph .knode.selected') && document.querySelector('[data-row="worker"]')?.getAttribute('aria-selected') === 'true' && ['Worker retained finding.', 'Worker evidence.', 'Worker limits.'].every((value) => document.getElementById('knowledge-promotions').textContent.includes(value))`);
+await evalJs(`document.getElementById('view-actors-btn').click()`);
+await evalJs(`[...document.querySelectorAll('#tree button')].find((b) => (b.textContent || '').includes('worker'))?.click()`);
+await until('worker detail is restored for the live finding steps',
+  `document.getElementById('detail').textContent.includes('1 authored / 0 received')`);
 baton('record', 'qa-worker-live-finding', 'worker', 'Worker live finding.',
   'Live evidence.', 'Live limits.');
 await until('public record refreshes selected actor knowledge through native SSE',
