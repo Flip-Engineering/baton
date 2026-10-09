@@ -313,6 +313,15 @@ def primary_terminal(db: String, +event: String, +primary: String, muse: Bool) -
       found : String <- IO.try(String,DB.Sql.query(db,primary_terminal_sql(event,primary)))
       IO.pure(Bool,String.eq(Tx.trim_nl(found),"1"))
 
+# The generic terminal predicate is read once for each frame. Muse also binds
+# an admitted terminal to the primary command of this receive.
+def terminal_admitted(db: String, event: String, primary: String, candidate: Bool, muse: Bool) -> IO(Bool):
+  match candidate muse:
+    case False{} False{}: IO.pure(Bool,False{})
+    case False{} True{}: IO.pure(Bool,False{})
+    case True{} False{}: IO.pure(Bool,True{})
+    case True{} True{}: primary_terminal(db,event,primary,True{})
+
 # A completion identity may already name a delivered report or a different
 # terminal. Compare the report body before committing so the upsert guard never
 # turns a changed observation into a NOT NULL failure.
@@ -327,14 +336,10 @@ def completion_state(db: String, +id: String, +player: String, +event: String) -
     state : String <- IO.try(String,DB.Sql.query(db,completion_state_sql(id,player,event)))
     IO.pure(String,Tx.trim_nl(state))
 
-def completion_state_event_sql(+id: String, +player: String, +event: String) -> String:
-  "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.terminal(event) ++ " THEN " ++ completion_state_expr(id,player,event) ++ " ELSE '' END ELSE '' END;"
-
-def completion_state_event(+db: String, +id: String, +player: String, +event: String, +primary: String, muse: Bool) -> IO(String):
-  do IO<String>:
-    accepted : Bool <- primary_terminal(db,event,primary,muse)
-    selected : String <- Bool.pick(IO(String),accepted,IO.try(String,DB.Sql.query(db,completion_state_event_sql(id,player,event))),IO.pure(String,""))
-    IO.pure(String,Tx.trim_nl(selected))
+def completion_state_event(db: String, id: String, player: String, event: String, admitted: Bool) -> IO(String):
+  match admitted:
+    case False{}: IO.pure(String,"")
+    case True{}: completion_state(db,id,player,event)
 
 def completion_note_id_sql(+id: String, +event: String) -> String:
   "SELECT " ++ C.q(id ++ ":observation-conflict:") ++ " || coalesce(json_extract(" ++ C.q(event) ++ ",'$.id'),json_extract(" ++ C.q(event) ++ ",'$.payload.command_id'),json_extract(" ++ C.q(event) ++ ",'$.command_id'),'unknown');"
@@ -348,16 +353,9 @@ def completion_conflict_note(+db: String, player: String, +id: String, +event: S
       IO.pure(Unit,Unit{})
 
 def terminal_observation_sealed(sealed: Bool, terminal: Bool, admitted: Bool, +state: String) -> Bool:
-  Bool.or(sealed,Bool.and(terminal,Bool.or(Bool.not(admitted),Bool.not(String.is_empty(state)))))
-
-def observe_sealed(+db: String, id: String, player: String, +event: String, +primary: String, sealed: Bool, +muse: Bool) -> IO(Bool):
-  do IO<Bool>:
-      terminal_text : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN " ++ C.terminal(event) ++ " ELSE 0 END;"))
-      +terminal : Bool <- IO.pure(Bool,String.eq(Tx.trim_nl(terminal_text),"1"))
-      accepted : Bool <- primary_terminal(db,event,primary,muse)
-      +admitted : Bool <- IO.pure(Bool,Bool.and(terminal,Bool.or(Bool.not(muse),accepted)))
-      state : String <- Bool.pick(IO(String),admitted,completion_state(db,id,player,event),IO.pure(String,""))
-      IO.pure(Bool,terminal_observation_sealed(sealed,terminal,admitted,state))
+  match sealed:
+    case True{}: True{}
+    case False{}: Bool.and(terminal,Bool.or(Bool.not(admitted),Bool.not(String.is_empty(state))))
 
 def observe_event(db: String, player: String, id: String, line: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
@@ -413,11 +411,18 @@ def record_deferred(+db: String, +player: String, +id: String, +event: String, l
       written : Unit <- write_deferred(db,player,id,Tx.trim_nl(failure),Tx.trim_nl(pending),String.eq(presence,"1\n"))
       IO.pure(Unit,Unit{})
 
-def deferred_note(+db: String, player: String, id: String, +event: String, +terminal: String, +primary: String, +current: String, sealed: Bool, muse: Bool) -> IO(Unit):
-  match sealed:
+def deferred_query(event: String, terminal: String, primary: String, current: String, muse: Bool) -> String:
+  match muse:
+    case False{}: deferred_terminal_sql(event,terminal)
+    case True{}: muse_deferred_terminal_sql(event,terminal,primary,current)
+
+# Only a later terminal can produce this note. Progress frames keep draining
+# without constructing a query that embeds the saved terminal.
+def deferred_note(+db: String, player: String, id: String, +event: String, terminal: String, primary: String, current: String, enabled: Bool, muse: Bool) -> IO(Unit):
+  match enabled:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
-      query : String <- IO.pure(String,Bool.pick(String,muse,muse_deferred_terminal_sql(event,terminal,primary,current),deferred_terminal_sql(event,terminal)))
+      query : String <- IO.pure(String,deferred_query(event,terminal,primary,current,muse))
       later : String <- IO.try(String,DB.Sql.query(db,query))
       noted : Unit <- record_deferred(db,player,id,event,String.eq(later,"1\n"))
       IO.pure(Unit,Unit{})
@@ -457,19 +462,10 @@ def record_filter(log: String, +state: String, +requested: String, omp: Bool) ->
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case True{}: append_frame(log,Omp.filter_note(state,requested),True{})
 
-def terminal_event(db: String, +event: String, +previous: String, relevant: Bool) -> IO(String):
-  match relevant:
+def terminal_event(event: String, previous: String, selected: Bool) -> IO(String):
+  match selected:
     case False{}: IO.pure(String,previous)
-    case True{}: do IO<String>:
-      selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.terminal(event) ++ " THEN CASE WHEN " ++ C.q(previous) ++ "='' THEN " ++ C.q(event) ++ " ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
-      IO.pure(String,Tx.trim_nl(selected))
-
-def muse_terminal_event(db: String, +event: String, +previous: String, +primary: String, relevant: Bool) -> IO(String):
-  match relevant:
-    case False{}: IO.pure(String,previous)
-    case True{}: do IO<String>:
-      selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ primary_terminal_expr(event,primary) ++ " THEN CASE WHEN " ++ C.q(previous) ++ "='' THEN " ++ C.q(event) ++ " ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
-      IO.pure(String,Tx.trim_nl(selected))
+    case True{}: IO.pure(String,event)
 
 def codex_frames(db: String, +previous: String, +line: String, codex: Bool) -> IO(String):
   match codex:
@@ -544,7 +540,8 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +current_policy : Logs.Policy <- Logs.policy(db,player)
         +kind : String <- frame_kind(db,line,String.eq(harness,"omp\n"))
         +frame_key : String <- Logs.frame_identity(db,line,Tx.trim_nl(kind),String.eq(harness,"omp\n"))
-        +message : String <- omp_message(db,line,last_message,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"message_end")))
+        +message_frame : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"message_end")))
+        +message : String <- omp_message(db,line,last_message,message_frame)
         +event : String <- omp_terminal(db,line,message,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"agent_end")))
         +kept : String <- Logs.retained(db,current_policy,Tx.trim_nl(kind),line,event,log)
         +step : List<String> & String <- IO.pure(List<String> & String,Logs.frame_step(current_policy,Tx.trim_nl(kind),frame_key,kept,held))
@@ -558,14 +555,18 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +next_cursor : String <- Guidance.observe(db,player,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant),sealed)
         +next_primary : String <- primary_command(db,event,primary,String.eq(harness,"muse\n"))
         +next_current : String <- current_command(db,event,current,String.eq(harness,"muse\n"))
-        +state : String <- completion_state_event(db,id,player,event,next_primary,String.eq(harness,"muse\n"))
-        +observation_sealed : Bool <- observe_sealed(db,id,player,event,next_primary,sealed,String.eq(harness,"muse\n"))
+        +terminal_frame : Bool <- primary_terminal(db,event,"",False{})
+        +admitted : Bool <- terminal_admitted(db,event,next_primary,terminal_frame,String.eq(harness,"muse\n"))
+        +state : String <- completion_state_event(db,id,player,event,admitted)
+        +observation_sealed : Bool <- IO.pure(Bool,terminal_observation_sealed(sealed,terminal_frame,admitted,state))
         conflict_note : Unit <- completion_conflict_note(db,player,id,event,String.eq(state,"conflict"))
-        deferred : Unit <- deferred_note(db,player,id,event,terminal,next_primary,next_current,sealed,String.eq(harness,"muse\n"))
+        deferred : Unit <- deferred_note(db,player,id,event,terminal,next_primary,next_current,Bool.and(sealed,terminal_frame),String.eq(harness,"muse\n"))
         +observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant,Bool.or(observation_sealed,failed))
-        +ended : String <- Bool.pick(IO(String),String.eq(harness,"muse\n"),muse_terminal_event(db,event,terminal,next_primary,relevant),terminal_event(db,event,terminal,relevant))
+        +terminal_selected : Bool <- IO.pure(Bool,Bool.and(relevant,Bool.and(admitted,Bool.not(sealed))))
+        +ended : String <- terminal_event(event,terminal,terminal_selected)
         +closed_input : Result<&1,&1,U32 & String,Unit> <- close_input(handle,Bool.not(Bool.and(String.eq(harness,"omp\n"),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended))))))
-        +codex_state : String <- codex_frames(db,codex_log,line,String.eq(harness,"codex\n"))
+        +codex_frame : Bool <- IO.pure(Bool,String.eq(harness,"codex\n"))
+        +codex_state : String <- codex_frames(db,codex_log,line,codex_frame)
         questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool <- NativeRequests.observe(db,player,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
         +mode : String <- filter_mode(db,line,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"response")),requested)
         +next_filter : String <- IO.pure(String,Omp.filter_next(filter,Tx.trim_nl(mode)))
@@ -573,7 +574,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         NativeRequests.with_observation(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,questions,wakes => question_error => question_incomplete => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
           +question_text : String <- IO.pure(String,question_error)
           +request_incomplete : Bool <- IO.pure(Bool,question_incomplete)
-          +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(request_incomplete),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due(checkpoint_state,next_checkpoint))))))
+          +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(request_incomplete),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due_fields(checkpoint_state,next_checkpoint,message_frame,terminal_selected,codex_frame))))))
           +checkpointed : Result<&1,&1,U32 & String,Unit> <- Observer.after_observation(db,handle,next_checkpoint,checkpoint_enabled,observed)
           checkpoint_notice : Unit <- checkpoint_failure_notice(db,player,id,attempt,checkpoint_enabled,checkpointed)
           +next_error : String <- IO.pure(String,append_write_error(append_write_error(append_store_error(append_write_error(append_error(first_error,question_text),written),observed),closed_input),checkpointed))

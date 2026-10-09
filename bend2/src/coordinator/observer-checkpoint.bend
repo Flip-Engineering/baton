@@ -54,15 +54,25 @@ def held(state: State) -> String:
 # Held OMP prefixes stay in memory while a message or tool call is active. They
 # are included in the next semantic checkpoint, but do not cause a disk write
 # for every cumulative progress frame. Restart replays from the prior offset.
-def checkpoint_due(+previous: State, +next: State) -> Bool:
+def changed_when(enabled: Bool, previous: String, next: String) -> Bool:
+  match enabled:
+    case False{}: False{}
+    case True{}: Bool.not(String.eq(previous,next))
+
+# Turn supplies the payload fields its reducer can change on this frame.
+# Cursor, command and filter changes always participate in the decision.
+def checkpoint_due_fields(+previous: State, +next: State, message_enabled: Bool, terminal_enabled: Bool, codex_enabled: Bool) -> Bool:
   +guidance_changed = Bool.not(String.eq(cursor(previous),cursor(next)))
-  +message_changed = Bool.not(String.eq(last_message(previous),last_message(next)))
+  +message_changed = changed_when(message_enabled,last_message(previous),last_message(next))
   +primary_changed = Bool.not(String.eq(muse_primary(previous),muse_primary(next)))
   +current_changed = Bool.not(String.eq(muse_current(previous),muse_current(next)))
-  +terminal_changed = Bool.not(String.eq(terminal(previous),terminal(next)))
+  +terminal_changed = changed_when(terminal_enabled,terminal(previous),terminal(next))
   +filter_changed = Bool.not(String.eq(filter_mode(previous),filter_mode(next)))
-  +codex_changed = Bool.not(String.eq(codex_log(previous),codex_log(next)))
+  +codex_changed = changed_when(codex_enabled,codex_log(previous),codex_log(next))
   Bool.or(guidance_changed,Bool.or(message_changed,Bool.or(primary_changed,Bool.or(current_changed,Bool.or(terminal_changed,Bool.or(filter_changed,codex_changed))))))
+
+def checkpoint_due(previous: State, next: State) -> Bool:
+  checkpoint_due_fields(previous,next,True{},True{},True{})
 
 # SQLite encodes every reducer field as a JSON string, including raw provider
 # frames and the newline-delimited held log state.
