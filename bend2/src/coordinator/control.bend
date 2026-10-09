@@ -275,8 +275,9 @@ def recorded_field(db: String, player: String, column: String) -> IO(String):
     value : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ column ++ " FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     IO.pure(String,Tx.trim_nl(value))
 
-# A direct turn records its launch arguments as the default wake route. An
-# existing receiver keeps its configured arguments.
+# A direct turn records its launch arguments as the default wake route.
+# Replaying a completed turn repairs an absent route. Existing routes and
+# terminal stops keep their recorded state.
 def default_receiver_absent(+db: String, +player: String, cmd: String, +model: String, effort: String, cwd: String, log: String, absent: Bool) -> IO(Unit):
   match absent:
     case False{}: IO.pure(Unit,Unit{})
@@ -286,7 +287,7 @@ def default_receiver_absent(+db: String, +player: String, cmd: String, +model: S
       output : String <- IO.try(String,Host.Control.output(log))
       identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
       endpoint : String <- IO.pure(String,"[" ++ strings(identity_args([executable,database,"receive",player,cmd,model,effort,cwd,output],model,identity)) ++ "]")
-      saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(player) ++ " AND coalesce(endpoint,'')='';"))
+      saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(player) ++ " AND coalesce(endpoint,'')='' AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ ";"))
       IO.pure(Unit,Unit{})
 
 def default_receiver(+db: String, +player: String, cmd: String, model: String, effort: String, cwd: String, log: String) -> IO(Unit):

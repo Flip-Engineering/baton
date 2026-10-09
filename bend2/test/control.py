@@ -666,6 +666,43 @@ class Control(unittest.TestCase):
         self.assertEqual(self.call('session', 'configured')['endpointArgv'], endpoint)
         self.assertEqual(self.call('session', 'configured')['workspace'], assignment['workspace'])
 
+    def test_completed_turn_replay_repairs_an_absent_receiver_and_delivers_pending_input(self):
+        self.root()
+        assignment = self.recruit('legacy-muse', 'muse')
+        native = 'saved-legacy-muse'
+        self.call('connect', 'legacy-muse', native, '')
+        log = self.directory / 'legacy-muse.jsonl'
+        self.dispatch('dispatch-turn', 'legacy-muse', 'completed-legacy-turn',
+                      self.fixture, log, self.task)
+        stream, _ = self.accept('legacy-muse')
+        self.finish(stream, 'The original task is complete.')
+        self.exited('legacy-muse')
+        shutdown_fixture_owner(self)
+        self.eventually(lambda: not self.process_rows())
+
+        self.call('connect', 'legacy-muse', native, '')
+        self.call('message', 'owed-legacy-input', 'root', 'legacy-muse', 'task',
+                  'Continue the original conversation.')
+        self.assertIsNone(self.call('delivery', 'owed-legacy-input')['receipt'])
+        replay = self.call('turn', 'legacy-muse', 'completed-legacy-turn', self.fixture,
+                           'legacy-muse', 'low', assignment['workspace'], self.task, log, native)
+        self.assertEqual(replay['id'], 'completed-legacy-turn')
+        continued, start = self.accept('legacy-muse')
+        self.assertEqual(start['resume'], native)
+        self.assertIn('[id: owed-legacy-input]', start['prompt'])
+        self.assertNotEqual(start['prompt'], self.task.read_text())
+        self.finish(continued, 'The owed input is complete.')
+        self.exited('legacy-muse')
+        self.assertEqual(self.call('delivery', 'owed-legacy-input')['receipt'],
+                         'fixture-native-reviewed')
+        self.assertEqual(self.call('inbox', 'legacy-muse'), [])
+
+        self.call('connect', 'legacy-muse', native, '')
+        self.call('stop', 'legacy-muse', 'legacy-stop', 'Operator stopped this session.')
+        self.call('turn', 'legacy-muse', 'completed-legacy-turn', self.fixture,
+                  'legacy-muse', 'low', assignment['workspace'], self.task, log, native)
+        self.assertEqual(self.call('session', 'legacy-muse')['endpoint'], '')
+
     def test_pretty_reads_preserve_complete_machine_fields_and_long_report(self):
         self.root()
         self.recruit('leaf', 'muse')

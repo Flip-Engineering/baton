@@ -768,6 +768,7 @@ def choose(+db: String, +player: String, +id: String, +cmd: String, +model: Stri
   match replay:
     case True{}:
       do IO<Result<&1,&1,U32 & String,Maybe<Outcome>>>:
+        receiver : Unit <- Control.default_receiver(db,player,cmd,model,effort,cwd,log)
         +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
         written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
         IO.pure(Result<&1,&1,U32 & String,Maybe<Outcome>>,replay_result(written))
