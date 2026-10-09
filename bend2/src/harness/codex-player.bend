@@ -33,7 +33,7 @@ def wake_directory(executable: String) -> String:
 def wake_source_result(code: U32, detail: String, source: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,String>:
   match source:
     case Done{path}: Done{path}
-    case Fail{(source_code,source_detail)}:
+    case Fail{(+source_code,source_detail)}:
       Fail{(source_code,"Installed Codex inbox helper: " ++ U32.show(code) ++ ": " ++ detail ++ "\nSource Codex inbox helper: " ++ U32.show(source_code) ++ ": " ++ source_detail)}
 
 def wake_source_path(installed: Result<&1,&1,U32 & String,String>, source: String) -> IO(Result<&1,&1,U32 & String,String>):
