@@ -20,7 +20,7 @@ import ./delivery.bend as Delivery
 # a late commit starts while older tasks are still held, and older actionable
 # IDs replay after any restart. The owner publishes the high-water; this loop
 # only reads rows and never publishes.
-type Event is Data:
+type Event is Type:
   TaskDone{session: String, result: Result<&1,&1,U32 & String,Unit>}
   Committed{}
   Gap{}
