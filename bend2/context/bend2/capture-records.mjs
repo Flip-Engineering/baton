@@ -65,6 +65,21 @@ export function producerOf(producer) {
   return Object.freeze({ status: 'claimed', module, digest, operation });
 }
 
+// The wire boundary check. A record may travel before selection with its producing triple unclaimed,
+// but nothing may be encoded or published while the producing association is incomplete, so the caller
+// enforces that with one call instead of re-deriving the triple.
+export function requireClaimed(record) {
+  if (record === null || typeof record !== 'object') return unavailable('recordMissing');
+  const triple = producerOf({
+    module: record.producerModule,
+    digest: record.producerDigest,
+    operation: record.producerOperation,
+  });
+  if (triple.status === 'unclaimed') return unavailable('producerIncomplete');
+  if (triple.status !== 'claimed') return triple;
+  return Object.freeze({ status: 'claimed', module: triple.module, digest: triple.digest, operation: triple.operation });
+}
+
 // One immutable capture record. The caller supplies the admitted canonical identity and, for a file or
 // configuration, the exact accepted bytes; for a link the resolved target; for a directory the admitted
 // digest. Nothing here derives authority from a label and nothing falls back to the filesystem.
@@ -73,7 +88,10 @@ export function captureRecord({ identity, bytes = null, role = 'frontend-source'
   if (!KINDS.includes(kind)) return unavailable('captureKindUnsupported', String(kind));
   const triple = producerOf(producer);
   if (triple.status !== 'claimed' && triple.status !== 'unclaimed') return triple;
-  const field = isNonEmptyString(role) ? role : null;
+  // Every record carries an explicit nonempty role. A record whose role is unknown would put a bare
+  // label into the wire and leave the consumer to guess what it describes.
+  if (!isNonEmptyString(role)) return unavailable('roleMissing');
+  const field = role;
 
   if (kind === 'absent') {
     return Object.freeze({

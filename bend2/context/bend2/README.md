@@ -271,6 +271,8 @@ captureRecord({ identity, bytes, role, kind, target, marker, producer, encoding 
 encodeExactBytes(bytes, encoding)   -> {status: "encoded", payload, payloadEncoding}; base64 or hex,
                                        each verified to reproduce the bytes, others refused
 producerOf(producer)                -> unclaimed, or a complete claimed triple, or producerIncomplete
+requireClaimed(record)              -> claimed triple, or producerIncomplete for an unclaimed record,
+                                       so the wire boundary refuses an incomplete association in one call
 createCaptureRecords({ acquisition, encoding, role })
   .acquire(identity) -> {status: "captured"|"absent"} or an unavailable outcome with its reason
   .claim(identity, producer) -> a new record carrying the producing triple

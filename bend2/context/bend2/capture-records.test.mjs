@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { captureRecord, createCaptureRecords, encodeExactBytes, producerOf } from './capture-records.mjs';
+import { captureRecord, createCaptureRecords, encodeExactBytes, producerOf, requireClaimed } from './capture-records.mjs';
 import { decodeCoreCapture } from './source-binding.mjs';
 import { createFrontendAdapter } from './frontend-adapter.mjs';
 
@@ -95,6 +95,24 @@ test('an empty file is a valid record and an admitted-empty capture, not an abse
   assert.equal(decoded.status, 'bytes');
   assert.equal(decoded.bytes.byteLength, 0);
 });
+
+test('a record always carries a role, and the wire boundary refuses an incomplete association', () => {
+  const bytes = bytesOf('def a() -> U32:\n  1\n');
+  // The default role is explicit, and an unspecified one is refused rather than emitted as null.
+  assert.equal(captureRecord({ identity: '/src/a.bend', bytes }).role, 'frontend-source');
+  assert.equal(captureRecord({ identity: '/src/a.bend', bytes, role: '' }).reason, 'roleMissing');
+  assert.equal(captureRecord({ identity: '/src/a.bend', bytes, role: null }).reason, 'roleMissing');
+
+  const unclaimed = captureRecord({ identity: '/src/a.bend', bytes });
+  assert.equal(requireClaimed(unclaimed).reason, 'producerIncomplete', 'an unclaimed record cannot be encoded');
+  assert.equal(requireClaimed(null).reason, 'recordMissing');
+  const claimed = captureRecord({ identity: '/src/a.bend', bytes, producer: { module: 'm', digest: 'd', operation: 'o' } });
+  const checked = requireClaimed(claimed);
+  assert.equal(checked.status, 'claimed');
+  assert.equal(checked.operation, 'o');
+  assert.equal(requireClaimed({ producerModule: 'm', producerDigest: null, producerOperation: 'o' }).reason, 'producerIncomplete');
+});
+
 
 test('the producing triple is attached by claim, and the acquired record is never mutated', () => {
   const produced = createCaptureRecords({
