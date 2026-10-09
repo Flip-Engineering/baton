@@ -317,6 +317,14 @@ def provider_usage_for_session(+db: String, +session: String, harness: String) -
     cwd : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce(workspace,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     provider_usage(db,harness,Tx.trim_nl(command),Tx.trim_nl(cwd))
 
+def usage_provider_io_result(-R: Type, outcome: IO.OP<String>, next: Result<&1,&1,U32 & String,String> -> IO.OP<R>) -> IO.OP<R>:
+  match outcome:
+    case Emit{provider}: next(Done{provider})
+    case Halt{code,detail}: next(Fail{(code,detail)})
+
+def usage_provider_observation(action: IO(String)) -> IO(Result<&1,&1,U32 & String,String>):
+  R => next => usage_provider_io_result(R,action(String,provider => Emit{provider}),next)
+
 def usage_provider_result(harness: String, conversation: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Fail{(code,detail)}: print_with_provider(conversation,provider_usage_unknown(harness,"","null","usageObservationHostFailure",U32.show(code),detail))
@@ -324,7 +332,7 @@ def usage_provider_result(harness: String, conversation: String, result: Result<
 
 def usage_with_provider(db: String, session: String, +harness: String, conversation: String) -> IO(Unit):
   do IO<Unit>:
-    result : Result<&1,&1,U32 & String,String> <- provider_usage_for_session(db,session,harness)
+    result : Result<&1,&1,U32 & String,String> <- usage_provider_observation(provider_usage_for_session(db,session,harness))
     usage_provider_result(harness,conversation,result)
 
 # --- the model discovery read ------------------------------------------------
