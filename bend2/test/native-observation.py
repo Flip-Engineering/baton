@@ -333,6 +333,53 @@ class NativeObservation(RECEIVE.Receive):
         self.assertTrue((pathlib.Path(directory) / 'acknowledged').exists())
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
+    def test_an_observed_later_failure_is_reported_over_an_older_observed_error(self):
+        # Adapted from the original audit-native regression in 7946abb6.
+        self.player(harness='omp')
+        self.coord('message', 'observed-later-failure', 'root', 'parent', 'task',
+                   'Read this task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(
+            observer, 'parent', 'Observation receive exited before native startup')
+        directory, attempt = self.eventually(
+            lambda: self._retained_attempt(), 'later failure attempt was not registered')
+        earlier = {'role': 'assistant', 'stopReason': 'error', 'errorStatus': 403,
+                   'errorMessage': '403 earlier failure', 'provider': 'kimi-code',
+                   'model': 'k3', 'responseId': 'response-e0', 'content': []}
+        later = {'role': 'assistant', 'stopReason': 'error', 'errorStatus': 429,
+                 'errorMessage': '429 later failure', 'provider': 'kimi-code',
+                 'model': 'k3', 'responseId': 'response-e2', 'content': []}
+        terminal = {'type': 'agent_end', 'isTerminal': True,
+                    'messages': [earlier, 'elided']}
+        frames = [{'type': 'agent_start'},
+                  {'type': 'message_end', 'message': earlier},
+                  {'type': 'message_end', 'message': later}, terminal]
+        for frame in frames:
+            self.action(stream, native_frame=frame)
+            self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        turns = self.eventually(lambda: self.coord('turns', 'parent'),
+                                'later provider failure was not reported')
+        raw = self.attempt_stdout('parent').read_text()
+        for frame in frames:
+            self.assertIn(json.dumps(frame), raw)
+        self.action(stream, exit_fixture=True)
+        _, stderr = self.finish(observer, ok=False)
+
+        self.assertIn('Native receive failed;', stderr)
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0]['id'], attempt)
+        self.assertEqual(turns[0]['reportBody'],
+                         'OMP provider failure: stopReason=error, errorStatus=429; 429 later failure')
+        self.assertNotIn('403 earlier failure', turns[0]['reportBody'])
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            event = json.loads(database.execute(
+                'SELECT event FROM turns WHERE id=?', (attempt,)).fetchone()[0])
+        self.assertEqual(event, {**terminal, 'messages': [later]})
+        self.assertEqual(self.coord('delivery', attempt)['body'], turns[0]['reportBody'])
+        self.assertEqual(int((pathlib.Path(directory) / 'status').read_text()), 0)
+        self.assertTrue((pathlib.Path(directory) / 'acknowledged').exists())
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
     def test_omp_late_failure_keeps_the_sealed_result_and_reports_failure(self):
         self.player(harness='omp')
         self.coord('message', 'stale-success-task', 'root', 'parent', 'task', 'Read this task.')

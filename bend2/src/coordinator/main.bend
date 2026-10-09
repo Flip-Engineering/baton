@@ -211,6 +211,14 @@ def recover_context_query_cli(+flag: String, +db: String, +owner: String,
       bootstrap_file), normal_cli([flag, db, owner, query, directory, worktree,
         bootstrap_file]))
 
+def recover_direct_cli(+flag: String, +db: String, +player: String, +id: String,
+                       +cmd: String, +model: String, +effort: String, +cwd: String,
+                       +log: String, +harness: String, +directory: String,
+                       +native: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.eq(flag, "--recover-direct"),
+    Turn.recover(db, player, id, cmd, model, effort, cwd, log, harness, directory, native),
+    normal_cli([flag, db, player, id, cmd, model, effort, cwd, log, harness, directory, native]))
+
 def cli(args: List<String>) -> IO(Unit):
   match args:
     case "--project" <> path <> rest: normal_cli(Con{"--project",Con{path,rest}})
@@ -220,6 +228,8 @@ def cli(args: List<String>) -> IO(Unit):
         bootstrap_file)
     case +flag <> +directory <> +lock <> Nil{}:
       dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
+    case flag <> db <> player <> id <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
+      recover_direct_cli(flag, db, player, id, cmd, model, effort, cwd, log, harness, directory, native)
     case flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
       recover_cli(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,String.eq(flag,"--recover-receive"))
     case other: normal_cli(other)

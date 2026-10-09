@@ -8,48 +8,59 @@ import ../git/text.bend as Tx
 # attempt. The host binds the encoded value to its attempt identity and byte
 # offset in the same atomic checkpoint record.
 type State is Data:
-  State{guidance_cursor: String, last_message: String, muse_primary: String, muse_current: String, terminal: String, filter_mode: String, codex_log: String, held: String}
+  State{guidance_cursor: String, last_message: String, muse_primary: String, muse_current: String, terminal: String, filter_mode: String, codex_log: String, held: String, omp_activity: String}
 
 def schema_version() -> U32:
   1
 
 def empty() -> State:
-  State{"0\n","","","","","","",""}
+  State{"0\n","","","","","","","",""}
 
 def make(guidance_cursor: String, last_message: String, muse_primary: String, muse_current: String, terminal: String, filter_mode: String, codex_log: String, held: String) -> State:
-  State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}
+  State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,""}
+
+# The optional schema-1 field records the assistant activity and completed error
+# identities needed to recognize an elided terminal repeating an observed error.
+def with_omp_activity(state: State, omp_activity: String) -> State:
+  match state:
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,previous}:
+      State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity}
+
+def omp_activity(state: State) -> String:
+  match state:
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity}: omp_activity
 
 def cursor(state: State) -> String:
   match state:
-    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}: guidance_cursor
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity}: guidance_cursor
 
 def last_message(state: State) -> String:
   match state:
-    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}: last_message
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity}: last_message
 
 def muse_primary(state: State) -> String:
   match state:
-    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}: muse_primary
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity}: muse_primary
 
 def muse_current(state: State) -> String:
   match state:
-    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}: muse_current
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity}: muse_current
 
 def terminal(state: State) -> String:
   match state:
-    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}: terminal
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity}: terminal
 
 def filter_mode(state: State) -> String:
   match state:
-    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}: filter_mode
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity}: filter_mode
 
 def codex_log(state: State) -> String:
   match state:
-    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}: codex_log
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity}: codex_log
 
 def held(state: State) -> String:
   match state:
-    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}: held
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity}: held
 
 # Held OMP prefixes stay in memory while a message or tool call is active. They
 # are included in the next semantic checkpoint, but do not cause a disk write
@@ -64,12 +75,13 @@ def changed_when(enabled: Bool, previous: String, next: String) -> Bool:
 def checkpoint_due_fields(+previous: State, +next: State, message_enabled: Bool, terminal_enabled: Bool, codex_enabled: Bool) -> Bool:
   +guidance_changed = Bool.not(String.eq(cursor(previous),cursor(next)))
   +message_changed = changed_when(message_enabled,last_message(previous),last_message(next))
+  +activity_changed = Bool.not(String.eq(omp_activity(previous),omp_activity(next)))
   +primary_changed = Bool.not(String.eq(muse_primary(previous),muse_primary(next)))
   +current_changed = Bool.not(String.eq(muse_current(previous),muse_current(next)))
   +terminal_changed = changed_when(terminal_enabled,terminal(previous),terminal(next))
   +filter_changed = Bool.not(String.eq(filter_mode(previous),filter_mode(next)))
   +codex_changed = changed_when(codex_enabled,codex_log(previous),codex_log(next))
-  Bool.or(guidance_changed,Bool.or(message_changed,Bool.or(primary_changed,Bool.or(current_changed,Bool.or(terminal_changed,Bool.or(filter_changed,codex_changed))))))
+  Bool.or(activity_changed,Bool.or(guidance_changed,Bool.or(message_changed,Bool.or(primary_changed,Bool.or(current_changed,Bool.or(terminal_changed,Bool.or(filter_changed,codex_changed)))))))
 
 def checkpoint_due(previous: State, next: State) -> Bool:
   checkpoint_due_fields(previous,next,True{},True{},True{})
@@ -78,11 +90,11 @@ def checkpoint_due(previous: State, next: State) -> Bool:
 # frames and the newline-delimited held log state.
 def encode_sql(+state: State) -> String:
   match state:
-    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}:
-      "SELECT json_object('schema',1,'guidance_cursor'," ++ C.q(guidance_cursor) ++ ",'last_message'," ++ C.q(last_message) ++ ",'muse_primary'," ++ C.q(muse_primary) ++ ",'muse_current'," ++ C.q(muse_current) ++ ",'terminal'," ++ C.q(terminal) ++ ",'filter_mode'," ++ C.q(filter_mode) ++ ",'codex_log'," ++ C.q(codex_log) ++ ",'held'," ++ C.q(held) ++ ");"
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity}:
+      "SELECT json_object('schema',1,'guidance_cursor'," ++ C.q(guidance_cursor) ++ ",'last_message'," ++ C.q(last_message) ++ ",'muse_primary'," ++ C.q(muse_primary) ++ ",'muse_current'," ++ C.q(muse_current) ++ ",'terminal'," ++ C.q(terminal) ++ ",'filter_mode'," ++ C.q(filter_mode) ++ ",'codex_log'," ++ C.q(codex_log) ++ ",'held'," ++ C.q(held) ++ ",'omp_activity'," ++ C.q(omp_activity) ++ ");"
 
 def valid_fields_sql() -> String:
-  "json_type(value)='object' AND json_type(value,'$.schema')='integer' AND json_extract(value,'$.schema')=1 AND json_type(value,'$.guidance_cursor')='text' AND json_type(value,'$.last_message')='text' AND json_type(value,'$.muse_primary')='text' AND json_type(value,'$.muse_current')='text' AND json_type(value,'$.terminal')='text' AND json_type(value,'$.filter_mode')='text' AND json_type(value,'$.codex_log')='text' AND json_type(value,'$.held')='text'"
+  "json_type(value)='object' AND json_type(value,'$.schema')='integer' AND json_extract(value,'$.schema')=1 AND json_type(value,'$.guidance_cursor')='text' AND json_type(value,'$.last_message')='text' AND json_type(value,'$.muse_primary')='text' AND json_type(value,'$.muse_current')='text' AND json_type(value,'$.terminal')='text' AND json_type(value,'$.filter_mode')='text' AND json_type(value,'$.codex_log')='text' AND json_type(value,'$.held')='text' AND (json_type(value,'$.omp_activity') IS NULL OR json_type(value,'$.omp_activity')='text')"
 
 def valid_sql(+value: String) -> String:
   +quoted = C.q(value)
@@ -110,7 +122,8 @@ def decode_valid(+db: String, +value: String) -> IO(State):
     filter_mode : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"filter_mode")))
     codex_log : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"codex_log")))
     held : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"held")))
-    IO.pure(State,State{without_query_newline(guidance_cursor),without_query_newline(last_message),without_query_newline(muse_primary),without_query_newline(muse_current),without_query_newline(terminal),without_query_newline(filter_mode),without_query_newline(codex_log),without_query_newline(held)})
+    omp_activity : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"omp_activity")))
+    IO.pure(State,State{without_query_newline(guidance_cursor),without_query_newline(last_message),without_query_newline(muse_primary),without_query_newline(muse_current),without_query_newline(terminal),without_query_newline(filter_mode),without_query_newline(codex_log),without_query_newline(held),without_query_newline(omp_activity)})
 
 def reset_empty(handle: U32) -> IO(State):
   do IO<State>:
