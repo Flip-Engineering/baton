@@ -19,6 +19,10 @@ on:
         description: Published fixture and UI source to exercise with retained native artifacts
         required: false
         type: string
+      runtime_suite:
+        description: One existing runtime suite to recheck; empty runs the full selection
+        required: false
+        type: string
 
 permissions:
   actions: read
@@ -145,7 +149,7 @@ jobs:
           retention-days: 14
 
   darwin:
-    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') }}
+    if: ${{ !cancelled() && !inputs.runtime_suite && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') }}
     needs: build
     runs-on: macos-15
     steps:
@@ -364,7 +368,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON('["land","recruit","mcp-command","mcp-root","mcp-contract","logs","turn","process","configure","native-observation","fixed-coordinator","control","retained-control","role-guard","messaging","naming","knowledge","native-cli","root-wake","codex-root","muse-root","omp-root","control-identity","shared-instance","ui-orchestra-native","ui-orchestra-browser","node-provider-ui","selected-context-package","observed-usage","stop","receive","receive-output","receive-terminal-boundary"]') }}
+        suite: ${{ fromJSON(inputs.runtime_suite && format('["{0}"]', inputs.runtime_suite) || '["land","recruit","mcp-command","mcp-root","mcp-contract","logs","turn","process","configure","native-observation","fixed-coordinator","control","retained-control","role-guard","messaging","naming","knowledge","native-cli","root-wake","codex-root","muse-root","omp-root","control-identity","shared-instance","ui-orchestra-native","ui-orchestra-browser","node-provider-ui","selected-context-package","observed-usage","stop","receive","receive-output","receive-terminal-boundary"]') }}
     steps:
       - name: Check out pinned product source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
