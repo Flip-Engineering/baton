@@ -22,7 +22,7 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: f9bc15966f886c6f82b51ce739dbda6d66e8beb3
+  PRODUCT_SOURCE_SHA: 7a88f383a4025786de749872f73a87ebac1e6163
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
 
@@ -67,8 +67,20 @@ jobs:
           mkdir -p owned/.scratch/bend2
           status=0
           set +e
-          (cd owned && BEND="$bend" CC=clang-19 sh bend2/scripts/build-native.sh \
-            bend2/src/coordinator/main.bend .scratch/bend2/baton2) \
+          (
+            cd owned || exit "$?"
+            printf 'inherited-soft-stack-kib='
+            ulimit -S -s
+            printf 'inherited-hard-stack-kib='
+            ulimit -H -s
+            ulimit -S -s unlimited
+            printf 'compiler-soft-stack-kib='
+            ulimit -S -s
+            printf 'BUN_JSC_maxPerThreadStackUsage=67108864\n'
+            BUN_JSC_maxPerThreadStackUsage=67108864 BEND="$bend" CC=clang-19 \
+              sh bend2/scripts/build-native.sh \
+              bend2/src/coordinator/main.bend .scratch/bend2/baton2
+          ) \
             > "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/main-build.stdout" \
             2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/main-build.stderr"
           status=$?
