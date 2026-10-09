@@ -105,38 +105,33 @@ function attach(ws) {
     }
   };
 }
+let pageSession = '';
 function send(ws, method, params = {}) {
   const id = ++msgId;
   return new Promise((resolve, reject) => {
     pendingCalls.set(id, { ws, resolve, reject });
-    try { ws.send(JSON.stringify({ id, method, params })); }
+    const payload = { id, method, params };
+    if (pageSession) payload.sessionId = pageSession;
+    try { ws.send(JSON.stringify(payload)); }
     catch (error) { pendingCalls.delete(id); reject(error); }
   });
 }
+// Snap Chromium closes the /json/* HTTP endpoints on this host; targets are created
+// over the browser websocket instead (Target.createTarget + flatten attach).
 async function openPage(url) {
-  let response;
-  try {
-    response = await fetch(
-      wsUrl.replace('ws://', 'http://').replace(/\/devtools\/.*$/, '/json/new?about:blank'),
-      { method: 'PUT' },
-    );
-  } catch (error) {
-    const failure = new Error(
-      `Chromium target request failed; exit=${chrome.exitCode}; signal=${chrome.signalCode}; stderr=${chromeErr}`,
-      { cause: error },
-    );
-    throw failure;
+  pageSession = '';
+  if (!pageWs || pageWs.readyState !== WebSocket.OPEN) {
+    pageWs = new WebSocket(wsUrl);
+    await new Promise((resolve, reject) => {
+      pageWs.onopen = resolve;
+      pageWs.onerror = reject;
+    });
+    attach(pageWs);
   }
-  if (!response.ok) throw new Error(await response.text());
-  const page = await response.json();
-  if (pageWs) pageWs.close();
-  pageWs = new WebSocket(page.webSocketDebuggerUrl);
-  await new Promise((resolve, reject) => {
-    pageWs.onopen = resolve;
-    pageWs.onerror = reject;
-    pageWs.onclose = (event) => reject(new Error(`CDP closed before open ${event.code}: ${event.reason}`));
-  });
-  attach(pageWs);
+  const created = await send(pageWs, 'Target.createTarget', { url: 'about:blank' });
+  const attached = await send(pageWs, 'Target.attachToTarget',
+    { targetId: created.result.targetId, flatten: true });
+  pageSession = attached.result.sessionId;
   await send(pageWs, 'Runtime.enable');
   await send(pageWs, 'Page.enable');
   await send(pageWs, 'Page.navigate', { url });
