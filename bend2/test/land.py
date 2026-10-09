@@ -649,7 +649,8 @@ class Land(unittest.TestCase):
         self.git('add', 'check-plain.sh')
         self.git('commit', '-q', '-m', 'check fixtures')
 
-    def land_under_a_move(self, under, mover):
+    def land_under_a_move(self, under, mover, mover_check='check-plain.sh',
+                          mover_selected='file.txt'):
         """Start UNDER's landing, move the target with MOVER's, answer UNDER's."""
         answer = {}
 
@@ -668,7 +669,7 @@ class Land(unittest.TestCase):
                 self.assertEqual(incoming.read(5), b'ready')
             try:
                 moved = self.call('land-checked', mover, self.repo, 'main',
-                                  'check-plain.sh', 'file.txt')
+                                  mover_check, mover_selected)
             finally:
                 connection.sendall(b'1')
         thread.join()
@@ -709,6 +710,78 @@ class Land(unittest.TestCase):
         self.assertEqual(self.git('show', 'main:a.txt').strip(), 'alpha')
         self.assertEqual(self.git('show', 'main:b.txt').strip(), 'beta')
         self.assertEqual(self.scratch_trees('w2'), kept)
+
+    def test_target_change_rechecks_selected_failure_on_recomposed_candidate(self):
+        self.waiting_checks()
+        marker = self.directory / 'compatibility-check-held'
+        observations = self.directory / 'compatibility-check-observations.jsonl'
+        runner = self.directory / 'compatibility-check.py'
+        (self.repo / 'left.txt').write_text('4\n')
+        (self.repo / 'right.txt').write_text('4\n')
+        (self.repo / 'compatibility-selected.py').write_text(
+            'import pathlib, unittest\n'
+            'class Compatibility(unittest.TestCase):\n'
+            '    def test_compatible_versions(self):\n'
+            '        left = int(pathlib.Path("left.txt").read_text())\n'
+            '        right = int(pathlib.Path("right.txt").read_text())\n'
+            '        self.assertNotEqual((left, right), (6, 6))\n')
+        runner.write_text(
+            'import json, pathlib, socket, subprocess, sys\n'
+            f'marker = pathlib.Path({str(marker)!r})\n'
+            f'observations = pathlib.Path({str(observations)!r})\n'
+            f'check = {str(ROOT / "bend2/scripts/check-unittest.sh")!r}\n'
+            'selected = sys.argv[1]\n'
+            'run = subprocess.run(["/bin/sh", check, selected], capture_output=True)\n'
+            'report = {"passed": run.returncode == 0,\n'
+            '          "left": int(pathlib.Path("left.txt").read_text()),\n'
+            '          "right": int(pathlib.Path("right.txt").read_text())}\n'
+            'with observations.open("a") as stream:\n'
+            '    stream.write(json.dumps(report) + "\\n")\n'
+            'try:\n'
+            '    marker.mkdir()\n'
+            '    first = True\n'
+            'except FileExistsError:\n'
+            '    first = False\n'
+            'if first:\n'
+            f'    with socket.create_connection({self.check_socket.getsockname()!r}) as peer:\n'
+            '        peer.sendall(b"ready")\n'
+            '        if peer.recv(1) != b"1":\n'
+            '            raise SystemExit("held check was not released")\n'
+            'sys.stdout.buffer.write(run.stdout)\n'
+            'sys.stderr.buffer.write(run.stderr)\n'
+            'raise SystemExit(run.returncode)\n')
+        (self.repo / 'check-wait.sh').write_text(
+            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} '
+            f'{shlex.quote(str(runner))} "$1"\n')
+        self.git('add', 'left.txt', 'right.txt', 'compatibility-selected.py', 'check-wait.sh')
+        self.git('commit', '-q', '-m', 'compatibility check fixture')
+        self.base = self.git('rev-parse', 'HEAD').strip()
+        self.git('checkout', '-q', '--detach')
+        a_commit = self.recruit_and_write('wa', 'wa-branch', 'wta', 'left.txt', '6\n')
+        b_commit = self.recruit_and_write('wb', 'wb-branch', 'wtb', 'right.txt', '6\n')
+
+        moved, stale = self.land_under_a_move(
+            'wb', 'wa', str(ROOT / 'bend2/scripts/check-unittest.sh'),
+            'compatibility-selected.py')
+        events = [json.loads(line) for line in observations.read_text().splitlines()]
+        self.assertIn({'passed': True, 'left': 4, 'right': 6}, events)
+        self.assertEqual(moved['status'], 'landed')
+        self.assertEqual(stale['status'], 'blocked')
+        self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
+        self.assertEqual(self.git('show', 'main:left.txt').strip(), '6')
+        self.assertEqual(self.git('show', 'main:right.txt').strip(), '4')
+        self.assertEqual(self.git('rev-parse', 'wa-branch').strip(), a_commit)
+        self.assertEqual(self.git('rev-parse', 'wb-branch').strip(), b_commit)
+        self.assertEqual((self.repo / 'wtb' / 'right.txt').read_text(), '6\n')
+
+        retry = self.call('land-checked', 'wb', self.repo, 'main',
+                          'check-wait.sh', 'compatibility-selected.py')
+        events = [json.loads(line) for line in observations.read_text().splitlines()]
+        self.assertIn({'passed': False, 'left': 6, 'right': 6}, events)
+        self.assertEqual(retry['status'], 'blocked')
+        self.assertIn('compatibility-selected.py'.encode().hex(), retry['reason'])
+        self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
+        self.assertEqual(self.git('rev-parse', 'wb-branch').strip(), b_commit)
 
     def test_target_moves_under_the_second_landing_and_retry_conflicts(self):
         self.waiting_checks()
