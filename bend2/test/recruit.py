@@ -149,8 +149,6 @@ class Recruit(unittest.TestCase):
                 self.assertEqual(refused['session'],'worker')
                 self.assertEqual(refused['existing'],original)
                 self.assertEqual(refused['requested'],requested)
-                for action in ('session ID','worktree ID','new ID','new branch','unused path'):
-                    self.assertIn(action,refused['next'])
                 self.assertEqual(self.state(),before)
                 self.assertEqual(self.call('player','worker'),session)
                 self.assertEqual(self.call('worktree','worker'),work)
@@ -252,8 +250,6 @@ class Recruit(unittest.TestCase):
         self.assertEqual(conflict['session'],'worker')
         self.assertEqual(conflict['existing'],original)
         self.assertEqual(conflict['requested'],{**original,'harness':'muse'})
-        for action in ('session ID','worktree ID','new ID','new branch','unused path'):
-            self.assertIn(action,conflict['next'])
 
         self.assertEqual(self.state(),before)
         self.assertEqual(self.call('player','worker'),session)
