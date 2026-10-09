@@ -499,35 +499,58 @@ def current_outcome(observation: Turn.Outcome & List<Chan(Result<&1,&1,U32 & Str
   (outcome,deliveries)=observation
   outcome
 
-# The provider's own cause for a terminal frame that names usage exhaustion, or "" for
-# every other outcome. A terminal that stated no event carries no cause, and its text is
-# never read as JSON.
-def exhaustion_cause(db: String, +event: String) -> IO(String):
-  exhaustion_present(db,event,String.is_empty(event))
-
-def exhaustion_present(db: String, event: String, empty: Bool) -> IO(String):
-  match empty:
-    case True{}: IO.pure(String,"")
-    case False{}: exhaustion_stated(db,event)
-
 def exhaustion_stated(+db: String, +event: String) -> IO(String):
   do IO<String>:
     stated : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ Subs.exhausted_sql(event) ++ ";"))
     reason : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(" ++ Subs.exhausted_reason_sql(event) ++ ",'');"))
     IO.pure(String,Bool.pick(String,String.eq(Tx.trim_nl(stated),"1"),Tx.trim_nl(reason),""))
 
-# True only when a next operator-listed profile was recorded, so the caller continues the
-# same actor; false when the list is exhausted, which terminates with the report.
-def profile_handoff(+db: String, session: String, id: String, outcome: Turn.Outcome, native: String, cmd: String, cwd: String) -> IO(Bool):
-  do IO<Bool>:
-    +cause : String <- exhaustion_cause(db,terminal_event(outcome))
-    advanced : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_profile(db,session,id,cause,native,cmd,cwd))
-    IO.pure(Bool,advanced)
+def exhaustion_present(db: String, event: String, empty: Bool) -> IO(String):
+  match empty:
+    case True{}: IO.pure(String,"")
+    case False{}: exhaustion_stated(db,event)
+
+# The provider's own cause for a terminal frame that names usage exhaustion, or "" for
+# every other outcome. A terminal that stated no event carries no cause, and its text is
+# never read as JSON.
+def exhaustion_cause(db: String, +event: String) -> IO(String):
+  exhaustion_present(db,event,String.is_empty(event))
 
 def history_path(+db: String, session: String) -> IO(String):
   do IO<String>:
     saved : String <- IO.try(String,DB.Sql.query(db,Subs.history_record_sql(db,session)))
     IO.pure(String,Tx.trim_nl(saved))
+
+def run_text(result: T.RunRes) -> String:
+  match result:
+    case T.RRun{T.SExit{code}, out}: out
+    case T.RRun{T.SSignal{num}, out}: out
+    case T.RSpawn{detail}: ""
+
+def history_helper_of(identity: String & String) -> String:
+  (registry,helper)=identity
+  Subs.history_helper(helper)
+
+# The packaged native history helper of the runtime this coordinator runs: the sibling of the
+# identity helper the host resolves. The script is invoked as it is, so a runtime that does not
+# install it fails this step with the helper's own cause and no history value is substituted
+# for the answer it did not give.
+def helper_script() -> IO(String):
+  do IO<String>:
+    +executable : String <- IO.try(String,Lock.SessionLock.executable())
+    identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
+    IO.pure(String,history_helper_of(identity))
+
+def run_status(result: T.RunRes) -> String:
+  match result:
+    case T.RRun{T.SExit{code}, out}: "exit " ++ U32.show(code)
+    case T.RRun{T.SSignal{num}, out}: "signal " ++ U32.show(num)
+    case T.RSpawn{detail}: detail
+
+def report_body(db: String, session: String, id: String, kind: String, body: String) -> IO<Unit>:
+  do IO<Unit>:
+    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":" ++ kind) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(body) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
+    IO.pure(Unit,Unit{})
 
 # The verdict of the sidecar write, at the head of the definition so the caller's do block
 # ends on a term. A failed write reports its cause and returns false, so no profile is
@@ -540,52 +563,21 @@ def history_appended(db: String, session: String, id: String, path: String, vari
         noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":profile-history-failed") ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q("subscription profile history home record failed at " ++ path ++ " for " ++ variable ++ ": " ++ U32.show(code) ++ ": " ++ detail ++ "; the provider cause stands and no profile was advanced.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
         IO.pure(Bool,False{})
 
-def run_text(result: T.RunRes) -> String:
-  match result:
-    case T.RRun{T.SExit{code}, out}: out
-    case T.RRun{T.SSignal{num}, out}: out
-    case T.RSpawn{detail}: ""
-
-# The packaged native history helper of the runtime this coordinator runs: the sibling of the
-# identity helper the host resolves. The script is invoked as it is, so a runtime that does not
-# install it fails this step with the helper's own cause and no history value is substituted
-# for the answer it did not give.
-def helper_script() -> IO(String):
-  do IO<String>:
-    +executable : String <- IO.try(String,Lock.SessionLock.executable())
-    identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-    IO.pure(String,history_helper_of(identity))
-
-def history_helper_of(identity: String & String) -> String:
-  (registry,helper)=identity
-  Subs.history_helper(helper)
-
-# The preserved history home for this handoff. The packaged native runtime helper reads the
-# original account's effective provider history home and materializes what the next account
-# needs, and its answer is recorded for the continuation to bind. A helper that fails
-# reports its own cause and leaves the original input owed, so no profile is advanced.
-def prepare_history(+db: String, +session: String, +id: String, +harness: String, +from_store: String, +cmd: String, +cwd: String, +native: String, decided: Maybe<Subs.Profile>) -> IO(Bool):
-  match decided:
-    case None{}: IO.pure(Bool,True{})
-    case Some{profile}: prepare_history_variable(db,session,id,harness,from_store,cmd,cwd,native,profile,Subs.store_variable(harness))
-
-def prepare_history_variable(+db: String, +session: String, id: String, harness: String, from_store: String, cmd: String, cwd: String, native: String, profile: Subs.Profile, selected: Maybe<String>) -> IO(Bool):
-  match selected:
-    case None{}: IO.pure(Bool,True{})
-    case Some{variable}: do IO<Bool>:
-      +path : String <- history_path(db,session)
-      recorded : String <- file_text(path)
-      last : String <- IO.pure(String,Subs.last_line(Tx.split_lines(recorded)))
-      script : String <- helper_script()
-      history_from_helper(db,session,id,harness,variable,from_store,path,profile,script,cmd,cwd,native,last)
-
-# The helper's own answer is the sidecar line: it carries the provider history home, the
-# source and selected stores, the native identity and the rollout and history paths, and the
-# continuation reads its home from it. An answer that names no home is not a usable one.
-def history_from_helper(db: String, session: String, id: String, +harness: String, variable: String, +from_store: String, path: String, profile: Subs.Profile, script: String, cmd: String, +cwd: String, native: String, existing: String) -> IO(Bool):
+def history_recorded(db: String, session: String, id: String, variable: String, +path: String, line: String) -> IO<Bool>:
   do IO<Bool>:
-    run : T.RunRes <- Proc.runFull(Subs.history_prepare_args(script,harness,cmd,cwd,native,from_store,profile.store,existing),cwd)
-    history_helper_result(db,session,id,harness,variable,from_store,path,run)
+    appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(path,Tx.trim_nl(line) ++ "\n")
+    history_appended(db,session,id,path,variable,appended)
+
+def history_answered_empty(db: String, session: String, id: String, variable: String, path: String, answer: String, empty: Bool) -> IO<Bool>:
+  match empty:
+    case True{}: do IO<Bool>:
+      noted : Unit <- report_body(db,session,id,"profile-history-failed","the native history helper answered without a provider history home; the provider cause stands and no profile was advanced; helper output: " ++ Tx.trim_nl(answer))
+      IO.pure(Bool,False{})
+    case False{}: history_recorded(db,session,id,variable,path,answer)
+
+# A usable answer is recorded whole, so the sidecar keeps what the helper resolved.
+def history_answered(+db: String, +session: String, +id: String, variable: String, path: String, answer: String, +home: String) -> IO<Bool>:
+  history_answered_empty(db,session,id,variable,path,answer,String.is_empty(home))
 
 def history_helper_result(+db: String, +session: String, +id: String, harness: String, variable: String, from_store: String, path: String, run: T.RunRes) -> IO(Bool):
   match run:
@@ -597,46 +589,32 @@ def history_helper_result(+db: String, +session: String, +id: String, harness: S
       noted : Unit <- report_body(db,session,id,"profile-history-failed","the native history helper did not prepare the preserved provider history; the provider cause stands and no profile was advanced; helper exit and output: " ++ Tx.trim_nl(run_status(other)) ++ " " ++ Tx.trim_nl(run_text(other)))
       IO.pure(Bool,False{})
 
-# A usable answer is recorded whole, so the sidecar keeps what the helper resolved.
-def history_answered(+db: String, +session: String, +id: String, variable: String, path: String, answer: String, +home: String) -> IO<Bool>:
-  history_answered_empty(db,session,id,variable,path,answer,String.is_empty(home))
-
-def history_answered_empty(db: String, session: String, id: String, variable: String, path: String, answer: String, empty: Bool) -> IO<Bool>:
-  match empty:
-    case True{}: do IO<Bool>:
-      noted : Unit <- report_body(db,session,id,"profile-history-failed","the native history helper answered without a provider history home; the provider cause stands and no profile was advanced; helper output: " ++ Tx.trim_nl(answer))
-      IO.pure(Bool,False{})
-    case False{}: history_recorded(db,session,id,variable,path,answer)
-
-def run_status(result: T.RunRes) -> String:
-  match result:
-    case T.RRun{T.SExit{code}, out}: "exit " ++ U32.show(code)
-    case T.RRun{T.SSignal{num}, out}: "signal " ++ U32.show(num)
-    case T.RSpawn{detail}: detail
-
-def history_recorded(db: String, session: String, id: String, variable: String, +path: String, line: String) -> IO<Bool>:
+# The helper's own answer is the sidecar line: it carries the provider history home, the
+# source and selected stores, the native identity and the rollout and history paths, and the
+# continuation reads its home from it. An answer that names no home is not a usable one.
+def history_from_helper(db: String, session: String, id: String, +harness: String, variable: String, +from_store: String, path: String, profile: Subs.Profile, script: String, cmd: String, +cwd: String, native: String, existing: String) -> IO(Bool):
   do IO<Bool>:
-    appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(path,Tx.trim_nl(line) ++ "\n")
-    history_appended(db,session,id,path,variable,appended)
+    run : T.RunRes <- Proc.runFull(Subs.history_prepare_args(script,harness,cmd,cwd,native,from_store,profile.store,existing),cwd)
+    history_helper_result(db,session,id,harness,variable,from_store,path,run)
 
-def advance_profile(+db: String, +session: String, +id: String, cause: String, native: String, cmd: String, cwd: String) -> IO(Bool):
-  do IO<Bool>:
-    +harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    list_path : String <- profile_list_path(db)
-    listed : String <- file_text(list_path)
-    +profiles : List<Subs.Profile> <- IO.pure(List<Subs.Profile>,Subs.profile_lines(Tx.split_lines(listed)))
-    +record_path : String <- profile_record_path(db,session)
-    +current : String <- file_text(record_path)
-    +from_label : String <- IO.pure(String,Subs.record_label(Subs.last_line(Tx.split_lines(current))))
-    from_store : String <- IO.pure(String,Subs.record_store(Subs.last_line(Tx.split_lines(current))))
-    prepared : Bool <- prepare_history(db,session,id,Tx.trim_nl(harness),from_store,cmd,cwd,native,Subs.started_or_next(profiles,Tx.trim_nl(harness),from_label))
-    taken : Bool <- Bool.pick(IO(Bool),prepared,choose_profile(db,session,id,record_path,Tx.trim_nl(harness),from_label,cause,Subs.started_or_next(profiles,Tx.trim_nl(harness),from_label)),IO.pure(Bool,False{}))
-    IO.pure(Bool,taken)
+def prepare_history_variable(+db: String, +session: String, id: String, harness: String, from_store: String, cmd: String, cwd: String, native: String, profile: Subs.Profile, selected: Maybe<String>) -> IO(Bool):
+  match selected:
+    case None{}: IO.pure(Bool,True{})
+    case Some{variable}: do IO<Bool>:
+      +path : String <- history_path(db,session)
+      recorded : String <- file_text(path)
+      last : String <- IO.pure(String,Subs.last_line(Tx.split_lines(recorded)))
+      script : String <- helper_script()
+      history_from_helper(db,session,id,harness,variable,from_store,path,profile,script,cmd,cwd,native,last)
 
-def choose_profile(db: String, session: String, id: String, record_path: String, harness: String, from_label: String, cause: String, decided: Maybe<Subs.Profile>) -> IO(Bool):
+# The preserved history home for this handoff. The packaged native runtime helper reads the
+# original account's effective provider history home and materializes what the next account
+# needs, and its answer is recorded for the continuation to bind. A helper that fails
+# reports its own cause and leaves the original input owed, so no profile is advanced.
+def prepare_history(+db: String, +session: String, +id: String, +harness: String, +from_store: String, +cmd: String, +cwd: String, +native: String, decided: Maybe<Subs.Profile>) -> IO(Bool):
   match decided:
-    case Some{+profile}: record_and_report(db,session,id,record_path,harness,from_label,profile,cause)
-    case None{}: report_all_refused(db,session,id,harness,from_label,cause)
+    case None{}: IO.pure(Bool,True{})
+    case Some{profile}: prepare_history_variable(db,session,id,harness,from_store,cmd,cwd,native,profile,Subs.store_variable(harness))
 
 # The record is append-only, so the next spawn reads the profile now bound; the report
 # names the account change and keeps the provider's own cause. Nothing here touches a
@@ -653,20 +631,6 @@ def append_error(result: Result<&1,&1,U32 & String,Unit>) -> String:
     case Fail{error}: match error:
       case (code,detail): U32.show(code) ++ ": " ++ detail
 
-def report_body(db: String, session: String, id: String, kind: String, body: String) -> IO<Unit>:
-  do IO<Unit>:
-    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":" ++ kind) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(body) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
-    IO.pure(Unit,Unit{})
-
-# The append is observed: the advance proceeds only on success. A failed append reports
-# the IO failure against this attempt and returns false, so no continuation runs and the
-# attempt's own outcome, cause and owed input stay exactly as the failure path leaves them.
-def record_and_report(+db: String, +session: String, +id: String, +record_path: String, harness: String, from_label: String, +profile: Subs.Profile, cause: String) -> IO(Bool):
-  do IO<Bool>:
-    +appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(record_path,Subs.record_line(profile) ++ "\n")
-    advanced : Bool <- Bool.pick(IO(Bool),append_ok(appended),record_handoff(db,session,id,harness,from_label,profile,cause),record_append_failure(db,session,id,record_path,append_error(appended)))
-    IO.pure(Bool,advanced)
-
 def record_handoff(db: String, session: String, id: String, harness: String, from_label: String, +profile: Subs.Profile, cause: String) -> IO(Bool):
   do IO<Bool>:
     noted : Unit <- report_body(db,session,id,"profile-handoff",Subs.handoff_body(harness,from_label,profile.label,profile.store,cause))
@@ -677,10 +641,64 @@ def record_append_failure(db: String, session: String, id: String, record_path: 
     noted : Unit <- report_body(db,session,id,"profile-append-failed","subscription profile record append failed at " ++ record_path ++ ": " ++ detail ++ "; the provider cause stands and no profile was advanced.")
     IO.pure(Bool,False{})
 
+# The append is observed: the advance proceeds only on success. A failed append reports
+# the IO failure against this attempt and returns false, so no continuation runs and the
+# attempt's own outcome, cause and owed input stay exactly as the failure path leaves them.
+def record_and_report(+db: String, +session: String, +id: String, +record_path: String, harness: String, from_label: String, +profile: Subs.Profile, cause: String) -> IO(Bool):
+  do IO<Bool>:
+    +appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(record_path,Subs.record_line(profile) ++ "\n")
+    advanced : Bool <- Bool.pick(IO(Bool),append_ok(appended),record_handoff(db,session,id,harness,from_label,profile,cause),record_append_failure(db,session,id,record_path,append_error(appended)))
+    IO.pure(Bool,advanced)
+
 def report_all_refused(db: String, session: String, id: String, harness: String, from_label: String, cause: String) -> IO(Bool):
   do IO<Bool>:
     noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":profile-exhausted") ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(Subs.all_refused_body(harness,from_label,cause)) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
     IO.pure(Bool,False{})
+
+def choose_profile(db: String, session: String, id: String, record_path: String, harness: String, from_label: String, cause: String, decided: Maybe<Subs.Profile>) -> IO(Bool):
+  match decided:
+    case Some{+profile}: record_and_report(db,session,id,record_path,harness,from_label,profile,cause)
+    case None{}: report_all_refused(db,session,id,harness,from_label,cause)
+
+def advance_profile(+db: String, +session: String, +id: String, cause: String, native: String, cmd: String, cwd: String) -> IO(Bool):
+  do IO<Bool>:
+    +harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    list_path : String <- profile_list_path(db)
+    listed : String <- file_text(list_path)
+    +profiles : List<Subs.Profile> <- IO.pure(List<Subs.Profile>,Subs.profile_lines(Tx.split_lines(listed)))
+    +record_path : String <- profile_record_path(db,session)
+    +current : String <- file_text(record_path)
+    +from_label : String <- IO.pure(String,Subs.record_label(Subs.last_line(Tx.split_lines(current))))
+    from_store : String <- IO.pure(String,Subs.record_store(Subs.last_line(Tx.split_lines(current))))
+    prepared : Bool <- prepare_history(db,session,id,Tx.trim_nl(harness),from_store,cmd,cwd,native,Subs.started_or_next(profiles,Tx.trim_nl(harness),from_label))
+    taken : Bool <- Bool.pick(IO(Bool),prepared,choose_profile(db,session,id,record_path,Tx.trim_nl(harness),from_label,cause,Subs.started_or_next(profiles,Tx.trim_nl(harness),from_label)),IO.pure(Bool,False{}))
+    IO.pure(Bool,taken)
+
+# True only when a next operator-listed profile was recorded, so the caller continues the
+# same actor; false when the list is exhausted, which terminates with the report.
+def profile_handoff(+db: String, session: String, id: String, outcome: Turn.Outcome, native: String, cmd: String, cwd: String) -> IO(Bool):
+  do IO<Bool>:
+    +cause : String <- exhaustion_cause(db,terminal_event(outcome))
+    advanced : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_profile(db,session,id,cause,native,cmd,cwd))
+    IO.pure(Bool,advanced)
+
+# The guidance message is written only for this session and names the retained attempt the
+# continuation resumes, so a session that already holds owed input is left untouched.
+def handoff_guidance(db: String, session: String, id: String, attempt: String) -> IO(Unit):
+  do IO<Unit>:
+    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":handoff-guidance") ++ ",id,id,'guidance'," ++ C.q("The provider reported usage exhaustion and the subscription profile advanced to the next operator-listed account. Continue the original retained attempt " ++ attempt ++ " on this binding; the task message that started it is already acknowledged.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
+    IO.pure(Unit,Unit{})
+
+# After a successful cleanup and a recorded handoff the same actor continues on the binding
+# the advance recorded. The guidance belongs only when the whole inbox holds nothing for this
+# session, which the zero cursor asks for: the attempt cursor excludes the input that attempt
+# already read, so a task the attempt never acknowledged would read as empty there and the
+# continuation would run without it. No receipt is reset and no operator task is repeated.
+def continue_after_advance(+db: String, +session: String, id: String, attempt: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    owed : Bool <- wake_owed(db,session,"0")
+    noted : Unit <- Bool.pick(IO(Unit),owed,IO.pure(Unit,Unit{}),handoff_guidance(db,session,id,attempt))
+    again(Unit{})
 
 # One completion shared by a fresh start and a recovered observation: the provider
 # outcome decides whether a profile advance is recorded, an exhausted terminal advances
@@ -695,24 +713,6 @@ def completed_observation(+db: String, +session: String, +id: String, +log: Stri
     +observed : Result<&1,&1,U32 & String,Unit> <- observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,lock,observation,again,adopted,superseded)
     continued : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),Bool.and(superseded,finished_clean(observed)),continue_after_advance(db,session,id,attempt,again),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(observed,continued))
-
-# After a successful cleanup and a recorded handoff the same actor continues on the binding
-# the advance recorded. The guidance belongs only when the whole inbox holds nothing for this
-# session, which the zero cursor asks for: the attempt cursor excludes the input that attempt
-# already read, so a task the attempt never acknowledged would read as empty there and the
-# continuation would run without it. No receipt is reset and no operator task is repeated.
-def continue_after_advance(+db: String, +session: String, id: String, attempt: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  do IO<Result<&1,&1,U32 & String,Unit>>:
-    owed : Bool <- wake_owed(db,session,"0")
-    noted : Unit <- Bool.pick(IO(Unit),owed,IO.pure(Unit,Unit{}),handoff_guidance(db,session,id,attempt))
-    again(Unit{})
-
-# The guidance message is written only for this session and names the retained attempt the
-# continuation resumes, so a session that already holds owed input is left untouched.
-def handoff_guidance(db: String, session: String, id: String, attempt: String) -> IO(Unit):
-  do IO<Unit>:
-    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":handoff-guidance") ++ ",id,id,'guidance'," ++ C.q("The provider reported usage exhaustion and the subscription profile advanced to the next operator-listed account. Continue the original retained attempt " ++ attempt ++ " on this binding; the task message that started it is already acknowledged.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
-    IO.pure(Unit,Unit{})
 
 def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, level: String, lock: U32, start: P.RetainedStart, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match start:

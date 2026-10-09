@@ -444,13 +444,13 @@ def omp_frame_kind(db: String, line: String, omp: Bool) -> IO(String):
 def codex_frame_kind(db: String, line: String) -> IO(String):
   IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.item.type')='command_execution' AND json_type(value,'$.item.id')='text' AND json_extract(value,'$.item.id')<>'' THEN CASE json_extract(value,'$.type') WHEN 'item.started' THEN 'codex_command_start' WHEN 'item.completed' THEN 'codex_command_end' ELSE '' END ELSE '' END ELSE '' END FROM frame;"))
 
-def frame_kind(db: String, line: String, +harness: String) -> IO(String):
-  frame_kind_selected(db,line,harness,String.eq(harness,"codex\n"))
-
 def frame_kind_selected(db: String, line: String, harness: String, codex: Bool) -> IO(String):
   match codex:
     case True{}: codex_frame_kind(db,line)
     case False{}: omp_frame_kind(db,line,String.eq(harness,"omp\n"))
+
+def frame_kind(db: String, line: String, +harness: String) -> IO(String):
+  frame_kind_selected(db,line,harness,String.eq(harness,"codex\n"))
 
 # The requested selection is active only when the server answered the
 # set_event_filter request successfully with that exact selection: the echoed

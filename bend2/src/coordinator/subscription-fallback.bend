@@ -43,44 +43,44 @@ def profile_of(fields: List<String>) -> Maybe<Profile>:
     case harness <> label <> rest: profile_fields(harness,label,Tx.join(" ",rest))
     case other: None{}
 
+def profile_line(parsed: Maybe<Profile>, tail: List<Profile>) -> List<Profile>:
+  match parsed:
+    case Some{profile}: Con{profile,tail}
+    case None{}: tail
+
 # The walk is one recursive function and the parse beside it is nonrecursive.
 def profile_lines(lines: List<String>) -> List<Profile>:
   match lines:
     case Nil{}: Nil{}
-    case line <> rest: profile_line(profile_of(split_parts(String.split(Tx.trim_nl(line),Char.from_u32(32)))),rest)
-
-def profile_line(parsed: Maybe<Profile>, rest: List<String>) -> List<Profile>:
-  match parsed:
-    case Some{profile}: Con{profile,profile_lines(rest)}
-    case None{}: profile_lines(rest)
+    case line <> rest: profile_line(profile_of(split_parts(String.split(Tx.trim_nl(line),Char.from_u32(32)))),profile_lines(rest))
 
 def profiles_for(profiles: List<Profile>, +harness: String) -> List<Profile>:
   match profiles:
     case Nil{}: Nil{}
     case +profile <> +rest: Bool.pick(List<Profile>,String.eq(profile.harness,harness),Con{profile,profiles_for(rest,harness)},profiles_for(rest,harness))
 
-def first_profile(profiles: List<Profile>, harness: String) -> Maybe<Profile>:
-  first_selected(profiles_for(profiles,harness))
-
 def first_selected(profiles: List<Profile>) -> Maybe<Profile>:
   match profiles:
     case Nil{}: None{}
     case +profile <> rest: Some{profile}
+
+def first_profile(profiles: List<Profile>, harness: String) -> Maybe<Profile>:
+  first_selected(profiles_for(profiles,harness))
 
 # The credential-store variable each harness reads. A harness without one gets no
 # binding, so an unknown harness adds nothing to the spawn environment.
 def store_variable(+harness: String) -> Maybe<String>:
   Bool.pick(Maybe<String>,String.eq(harness,"codex"),Some{"CODEX_HOME"},Bool.pick(Maybe<String>,Bool.or(String.eq(harness,"claude-code"),String.eq(harness,"claude")),Some{"CLAUDE_CONFIG_DIR"},None{}))
 
-# One element per binding. The host encodes each argv element separately, so a store
-# path with spaces stays a single argument and needs no shell quoting.
-def store_binding(harness: String, store: String) -> List<String>:
-  binding_for(store_variable(harness),store)
-
 def binding_for(variable: Maybe<String>, store: String) -> List<String>:
   match variable:
     case None{}: Nil{}
     case Some{variable}: Con{variable ++ "=" ++ store, Nil{}}
+
+# One element per binding. The host encodes each argv element separately, so a store
+# path with spaces stays a single argument and needs no shell quoting.
+def store_binding(harness: String, store: String) -> List<String>:
+  binding_for(store_variable(harness),store)
 
 # The profile after the one that refused, in operator order, or none when the
 # operator listed no further profile for that harness. Order is the file's own order;
@@ -100,19 +100,19 @@ def next_profile(profiles: List<Profile>, harness: String, current: String) -> M
 def started_or_next(+profiles: List<Profile>, +harness: String, +current: String) -> Maybe<Profile>:
   Bool.pick(Maybe<Profile>,String.is_empty(current),first_profile(profiles,harness),next_profile(profiles,harness,current))
 
-# The per-session record is append-only: the last non-empty line is the profile in
-# use, so advancing it needs no rewrite and no lock. Its fields are the label and the
-# rest of the line as the store.
-def record_of(line: String) -> Maybe<Profile>:
-  record_parts(split_parts(String.split(Tx.trim_nl(line),Char.from_u32(32))))
+def record_fields(+label: String, +store: String) -> Maybe<Profile>:
+  Bool.pick(Maybe<Profile>,Bool.and(Bool.not(String.is_empty(label)),Bool.not(String.is_empty(store))),Some{Pr{"",label,store}},None{})
 
 def record_parts(fields: List<String>) -> Maybe<Profile>:
   match fields:
     case label <> rest: record_fields(label,Tx.join(" ",rest))
     case other: None{}
 
-def record_fields(+label: String, +store: String) -> Maybe<Profile>:
-  Bool.pick(Maybe<Profile>,Bool.and(Bool.not(String.is_empty(label)),Bool.not(String.is_empty(store))),Some{Pr{"",label,store}},None{})
+# The per-session record is append-only: the last non-empty line is the profile in
+# use, so advancing it needs no rewrite and no lock. Its fields are the label and the
+# rest of the line as the store.
+def record_of(line: String) -> Maybe<Profile>:
+  record_parts(split_parts(String.split(Tx.trim_nl(line),Char.from_u32(32))))
 
 def last_line(lines: List<String>) -> String:
   match lines:
@@ -121,21 +121,21 @@ def last_line(lines: List<String>) -> String:
       +last = last_line(rest)
       Bool.pick(String,String.is_empty(last),Tx.trim_nl(line),last)
 
-def record_label(line: String) -> String:
-  label_of(record_of(line))
-
 def label_of(parsed: Maybe<Profile>) -> String:
   match parsed:
     case Some{+profile}: profile.label
     case None{}: ""
 
-def record_store(line: String) -> String:
-  store_of(record_of(line))
+def record_label(line: String) -> String:
+  label_of(record_of(line))
 
 def store_of(parsed: Maybe<Profile>) -> String:
   match parsed:
     case Some{+profile}: profile.store
     case None{}: ""
+
+def record_store(line: String) -> String:
+  store_of(record_of(line))
 
 def record_line(+profile: Profile) -> String:
   profile.label ++ " " ++ profile.store

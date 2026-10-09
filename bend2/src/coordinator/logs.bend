@@ -208,14 +208,14 @@ def codex_frame_id(db: String, line: String) -> IO(String):
     found : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT json_extract(value,'$.item.id') FROM frame;"))
     IO.pure(String,Tx.trim_nl(found))
 
-# The identity is read only for a frame the policy holds or closes.
-def frame_identity(db: String, line: String, +kind: String, +omp: Bool) -> IO(String):
-  frame_identity_kind(db,line,kind,omp,codex_kind(kind))
-
 def frame_identity_kind(db: String, line: String, +kind: String, omp: Bool, codex: Bool) -> IO(String):
   match codex:
     case True{}: codex_frame_id(db,line)
     case False{}: frame_id(db,line,Bool.and(omp,Bool.or(prefix_kind(kind),close_kind(kind))))
+
+# The identity is read only for a frame the policy holds or closes.
+def frame_identity(db: String, line: String, +kind: String, +omp: Bool) -> IO(String):
+  frame_identity_kind(db,line,kind,omp,codex_kind(kind))
 
 # Public terminal projections retain identifiers, status, completion text and
 # raw size accounting. Turn supplies the normalized event and streamed-message
