@@ -86,7 +86,10 @@ class SelectedContextPackageTest(unittest.TestCase):
             'include': ['src/**/*.ts'],
         }))
         entry = project / 'src/app.ts'
-        entry.write_text('export function double(value: number): number { return value * 2; }\n'
+        shared_type = self.root / 'shared types.ts'
+        shared_type.write_text('export type Value = number;\n')
+        entry.write_text('import type { Value } from "../../shared types";\n'
+                         'export function double(value: Value): number { return value * 2; }\n'
                          'export const result = double(21);\n'
                          'export const wrong: string = 3;\n')
         wrapper = self.payload / 'libexec/baton2/context-provider.mjs'
@@ -124,6 +127,7 @@ class SelectedContextPackageTest(unittest.TestCase):
             {fact['kind'] for fact in payload['facts']}), result.stdout)
         inputs = payload['snapshot']['inputs']
         self.assertTrue(any(row['path'] == str(entry) and row['sha256'] for row in inputs), result.stdout)
+        self.assertTrue(any(row['path'] == str(shared_type) and row['sha256'] for row in inputs), result.stdout)
         self.assertTrue(payload['refs'], result.stdout)
         self.assertTrue(all(ref['snapshotId'] == payload['snapshot']['snapshotId']
                             for ref in payload['refs']), result.stdout)

@@ -54,7 +54,7 @@ export function runQuery({ resolved, request, queryId = null }) {
   const capture = createCapture({
     cwd: request.cwd,
     readRoots: request.options.readRoots,
-    providerRoots: [resolved.libraryDir],
+    providerRoots: [resolved.contextRoot],
   });
   const service = createService({ resolved, capture, request });
 

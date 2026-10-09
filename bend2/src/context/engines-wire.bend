@@ -281,8 +281,6 @@ def dr_reason_json(+r: Decl.DeclReject) -> J.Json:
     case Decl.DrMissingDeclarationDigest{module_id}:
       J.Jobj{wire_obj("kind", J.Jstr{"missingDeclarationDigest"},
              wire_obj("moduleId", J.Jstr{module_id}, J.Jnil{}))}
-    case Decl.DrEmptyEntryVector{}:
-      J.Jobj{wire_obj("kind", J.Jstr{"emptyEntryVector"}, J.Jnil{})}
     case Decl.DrDuplicateOperation{module_id, +operation}:
       J.Jobj{wire_obj("kind", J.Jstr{"duplicateOperation"},
              wire_obj("moduleId", J.Jstr{module_id},

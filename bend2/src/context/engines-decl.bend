@@ -139,7 +139,6 @@ type DeclReject is Data:
   DrEmptyId{what: String}
   DrConflictingId{module_id: String, other: String}
   DrMissingDeclarationDigest{module_id: String}
-  DrEmptyEntryVector{}
   DrDuplicateOperation{module_id: String, operation: String}
   DrUnknownCommonOperation{module_id: String, operation: String, common: String}
   DrEffectRequiresReview{module_id: String, operation: String, effect: String}
@@ -251,14 +250,13 @@ def check_declaration_digest(+module_id: String, +inv: Inv) -> Chk:
       bool_chk(Bool.not(String.is_empty(digest_of(digests, module_id))),
                DrMissingDeclarationDigest{module_id})
 
-# Stage four: the entry export identity or process argument vector.
+# A native entry names its exported function. A process entry carries optional arguments.
 def check_entry(+entry: Entry) -> Chk:
   match entry:
     case ENative{artifact, export_identity}:
       bool_chk(Bool.not(String.is_empty(export_identity)),
                DrEmptyId{"entry export identity"})
-    case EProcess{artifact, argv}:
-      bool_chk(Eng.ss_nonempty(argv), DrEmptyEntryVector{})
+    case EProcess{artifact, argv}: ChkOk{}
 
 # Every declared effect must have an admitted meaning.
 def check_effects(+module_id: String, +operation: String, +effects: Eng.SS) -> Chk:

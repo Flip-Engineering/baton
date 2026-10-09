@@ -13,7 +13,8 @@
 //   absent    a failed lookup, recorded so a later appearance invalidates the snapshot
 //   failed    a probe that raised; it never agrees with anything
 //
-// Reads are admitted only under the request's read roots and the provider's own resource roots.
+// Explicit read roots constrain reads to those paths and the provider's resources.
+// Requests without read roots use ordinary filesystem resolution.
 
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
@@ -41,7 +42,10 @@ function listingDigest(names) {
 }
 
 export function createCapture({ cwd, readRoots = [], providerRoots = [] }) {
-  const admitted = [...readRoots, ...providerRoots].map((root) => realpathSync(resolve(cwd, root)));
+  const restricted = readRoots.length > 0;
+  const admitted = restricted
+    ? [...readRoots, ...providerRoots].map((root) => realpathSync(resolve(cwd, root)))
+    : [];
   const entries = new Map();
 
   function admit(path) {
@@ -51,7 +55,7 @@ export function createCapture({ cwd, readRoots = [], providerRoots = [] }) {
     } catch {
       return null;
     }
-    if (!admitted.some((root) => within(root, real))) {
+    if (restricted && !admitted.some((root) => within(root, real))) {
       throw new CaptureRefusal(
         'context-read-outside-admitted-roots',
         `${real} is outside every admitted read root`,

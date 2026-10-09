@@ -27,7 +27,7 @@ function analysisRequest(request) {
     options: {
       ...options,
       project: options.project ?? '',
-      readRoots: [request.cwd, ...(options.readRoots ?? [])],
+      readRoots: options.readRoots ?? [],
       database: options.database ?? null,
       client: options.client ?? null,
     },
