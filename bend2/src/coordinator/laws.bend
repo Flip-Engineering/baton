@@ -1,88 +1,4 @@
-# CLAIM: the operative laws whose real functions live in bend2/src/coordinator, each stated
-# over the function that implements it and proved beside its claim. The coordinator entry
-# imports this module, so every compile of the entry verifies every operative law, and an
-# unproven law fails that compile. This module imports the laws of the Git operations, the host
-# bindings and the canonical encoder as well.
-#
-# Approval: the operative set reviewed at 1fab9a1d, operator authorization relayed in the
-# bend2-laws-lead4 brief; docs/bend2/laws-proposed.md carries the statements, docs/bend2/laws.bend
-# the recorded models and docs/bend2/laws-trace.md the per-entry application obligations.
-# Reference: docs/bend2/reference/README.md, bend 2.0.25, a4952426.
-#
-# Which entries are bound to real functions, and to which. Every row below names the functions
-# the laws of this module and the modules it imports are stated over. No law in the entry's
-# import graph is stated over a module the entry does not reach.
-#
-# M-1  bound: Store.commit and Store.committed, C.sql(Message/Report/Ask), C.session_result,
-#      C.message_result and Delivery.result. A write answers by re-selecting the row it stored, keyed
-#      by the caller's identity, and a writer's answer names the stored result only for a delivery
-#      that reached exit 0.
-# M-2  bound: P.git_out, Tx.run_res, Turn.refusal_body, Turn.status_text, Recruit.git_status, the
-#      Git status and create-worktree stage readers, and the adapter dispatch in Turn.input and
-#      Turn.launch. Each carries an observed status or an unresolved one and never invents either.
-# M-3a bound: L.pair_cv, L.pair_targ, L.pair_news, L.run_verdict, L.exit_verdict, L.check_argv and
-#      the Git status stages. A verdict that did not run blocks, a passing candidate contributes
-#      nothing, and each selected file is paired with the candidate and target verdicts of itself.
-# M-3b bound: L.ff_stage2_ancestor and C.message_upsert. A commit the target already contains is
-#      answered already, and a repeated operation identity re-selects the stored row.
-# M-3c bound: L.outcome_json and L.ff_answer. Each answer names the outcome the landing reached.
-# M-4  bound: Deb.debris_argv, Deb.debris_note, Deb.debris_note_of and the create-worktree stage
-#      readers. The dropped set is named and the work the stages made is kept.
-# M-5  bound: Store.commit and Store.committed, C.sql(Pending/Inbox/Delivery/Bind),
-#      Delivery.wake_sql, Receive.pending_count_sql, P.argv, Turn.remember and Land.require_branch. A
-#      report and its parent delivery are written in one transaction, a transaction that did not
-#      commit delivers nothing, and owed messages are named in the store's own sequence order and
-#      remain owed until receipt. J.json_text is supplementary, not operative: see below.
-# M-7  bound: Turn.id_owner_sql, C.schema, C.sql(Report) and C.sql(Ack). The store validates the
-#      sender it records against the sessions it holds, a turn identity is admitted only for a
-#      report the player itself wrote, and a report routes to the sender's recorded parent.
-# M-8  bound: Turn.player_checked, Turn.turn_present_sql, Receive.acquired, Turn.acquired,
-#      Turn.matching_turn, C.sql(Ack), C.sql(Player) and C.sql(Attach). One native owner per
-#      session, a turn identity admitted only for a message the store holds, and every write
-#      bound to the stored row it names.
-# M-10 partly bound: L.check_argv and L.append_when. The judged selection is the caller's, and a
-#      failure the decision kept stays in the answer. The retention and continuation clause over
-#      owed data is stated under M-5 above; the application-wide cutoff clause is open.
-# M-11 bound: C.terminal, C.sql(Report), L.exit_verdict, L.run_verdict, Recruit.absolute and
-#      Tx.run_res. A verdict, a terminal event and a workspace come from what was observed.
-# M-12 bound: Delivery.after, Delivery.launch, Guidance.send, Receive.continue_if and Turn.close_input. A
-#      command that owes no delivery answers from its own committed result.
-# M-13 bound: Delivery.after, Guidance.relevant and Turn.close_input. The commit path itself invokes
-#      the recipient's registered endpoint, at the frames that carry guidance.
-# M-14 bound: T.fail_text, Receive.registered, Receive.exit_status, Turn.supported_harness,
-#      Land.require_player, Land.require_branch_pick and Recruit.git_status. Each refusal names its
-#      own rule and subject. The Git status and create-worktree reader laws are supplementary: see
-#      below.
-# M-17 bound: Turn.combine, Turn.send_result, Turn.remember, Turn.result_missing, Turn.diagnostic
-#      and Receive.exit_status. A failed step stays the answer, and an unsettled turn reports to
-#      its parent or names the log and inbox that continue it.
-# M-18 bound: L.push_argv and L.push_git, L.tip_ref, L.ls_remote_argv, L.tip_object and
-#      L.remote_tip_git, and Land.tip_json, Land.tip_object_tail, Land.tip_exit_tail, Land.tip_present,
-#      Land.tip_zero, Land.tip_run and Land.tip_pick. The push argv names the declared remote at the
-#      destination position; the remote-tip argv names the declared remote and one requested ref, and
-#      each read answer names the advertised object, the absent ref or the observed exit status.
-# The adapter dispatch is bound under M-2, M-5 and M-11: Turn.input and Turn.launch select the
-# adapter by the harness the session recorded, and Turn.claude_launch and Turn.muse_launch start a
-# session when none is recorded and carry the recorded one otherwise.
-# The shared knowledge path binds M-1, M-8 and M-14 in knowledge-laws.bend:
-# Knowledge.commit_sql, finding_statement, record, read and promote carry the
-# transaction, evidence, scoped visibility and explicit promotion decisions.
-# The entry states its three knowledge dispatch laws over execute itself.
-# SQLite execution and persistence remain host assumptions; declared session
-# scopes select context inside the trusted local database.
-#
-# Supplementary laws. Three groups are checked by the same compile and are not operative runtime
-# coverage. The six laws in bend2/src/json/laws.bend are corpus-only: each fixes one value from
-# the encoder's corpus rather than quantifying over every value the encoder can be given. The ten
-# laws marked Supplementary in bend2/src/git/laws.bend's own sections are over readers that only
-# the tree's own test entry calls. No clause of any operative entry rests on those sixteen laws.
-#
-# No entry carries a replay residue. M-5, M-7 and M-8 were bound to the replay experiments until
-# the store transaction and the command admission above replaced them; the replay prototype's own
-# laws have left this module's import graph. The replay modules under bend2/src/replay remain in
-# the tree and the entry graph does not import them, so no operative law is stated over them. The
-# clauses laws-trace.md records as host assumptions - durability, crash windows, provider
-# idempotency, interface delivery and process lifetime - are outside what a Bend term decides.
+# Coordination-law diagnostics for stored messages, native turns and Git operations.
 import Base
 import ./receive-laws.bend as ReceiveLaws
 import ./stop-laws.bend as StopLaws
@@ -90,12 +6,13 @@ import ./native-request-laws.bend as NativeRequestLaws
 import ./knowledge-laws.bend as KnowledgeLaws
 import ./observation-laws.bend as ObservationLaws
 import ./observer-checkpoint-laws.bend as ObserverCheckpointLaws
+import ./instance-laws.bend as InstanceLaws
 import ./messaging-laws.bend as MessagingLaws
 import ./connect-laws.bend as ConnectLaws
 import ./naming-laws.bend as NamingLaws
 import ./delivery.bend as Delivery
 import ./turn.bend as Turn
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./receive.bend as Receive
 import ./guidance.bend as Guidance
 import ./land.bend as Land
@@ -110,6 +27,8 @@ import ../host/laws.bend as HostLaws
 import ../json/laws.bend as JsonLaws
 import ../json/canonical.bend as J
 import ../context/codec-schema-integration-laws.bend as CodecSchemaLaws
+import ../context/native-laws.bend as ContextNativeLaws
+import ../context/native-managed-query-laws.bend as ContextManagedLaws
 import ../git/laws.bend as GitLaws
 import ../git/types.bend as T
 import ../git/text.bend as Tx
@@ -150,104 +69,6 @@ def m1_unstarted_delivery_is_not_an_acceptance(saved, log, detail):
   {==}
 
 # ---------------------------------------------------------------------------
-# M-12: no mandatory wait for managed work to finish before its acceptance is
-# acknowledged. A command that owes no delivery answers from its own committed
-# result, and a write whose recipient has no registered endpoint answers at
-# once with the stored identity.
-
-law m12_no_delivery_owes_no_wait:
-  for +db: String
-  for +saved: String
-  {Delivery.after(db, C.Status{}, saved) == IO.pure(Result<&1,&1,U32 & String,String>, Done{saved}) : IO(Result<&1,&1,U32 & String,String>)}
-
-def m12_no_delivery_owes_no_wait(db, saved):
-  {==}
-
-law m12_absent_receiver_answers_at_once:
-  for +db: String
-  for +id: String
-  for +saved: String
-  for +argv: String
-  {Delivery.launch(db, id, saved, argv, True{}) == IO.pure(Result<&1,&1,U32 & String,String>, Done{saved}) : IO(Result<&1,&1,U32 & String,String>)}
-
-def m12_absent_receiver_answers_at_once(db, id, saved, argv):
-  {==}
-
-# ---------------------------------------------------------------------------
-# M-13: required progress notifications reach the agent interface without an
-# agent-invoked fetch. The commit path itself invokes the recipient's recorded
-# endpoint, for every command that owes a notification and for a terminal
-# native event.
-
-law m13_report_invokes_the_registered_endpoint:
-  for +db: String
-  for +id: String
-  for +sender: String
-  for +body: String
-  for +saved: String
-  {Delivery.after(db, C.Report{id, sender, body}, saved) == Delivery.deliver(db, id, "1", saved) : IO(Result<&1,&1,U32 & String,String>)}
-
-def m13_report_invokes_the_registered_endpoint(db, id, sender, body, saved):
-  {==}
-
-law m13_ask_invokes_the_registered_endpoint:
-  for +db: String
-  for +id: String
-  for +player: String
-  for +body: String
-  for +saved: String
-  {Delivery.after(db, C.Ask{id, player, body}, saved) == Delivery.deliver(db, id, "1", saved) : IO(Result<&1,&1,U32 & String,String>)}
-
-def m13_ask_invokes_the_registered_endpoint(db, id, player, body, saved):
-  {==}
-
-law m13_message_invokes_the_registered_endpoint:
-  for +db: String
-  for +id: String
-  for +sender: String
-  for +recipient: String
-  for +kind: String
-  for +body: String
-  for +saved: String
-  {Delivery.after(db, C.Message{id, sender, recipient, kind, body}, saved) == Delivery.deliver(db, id, "1", saved) : IO(Result<&1,&1,U32 & String,String>)}
-
-def m13_message_invokes_the_registered_endpoint(db, id, sender, recipient, kind, body, saved):
-  {==}
-
-law m13_terminal_event_invokes_the_registered_endpoint:
-  for +db: String
-  for +id: String
-  for +player: String
-  for +event: String
-  for +saved: String
-  for +sealed: Bool
-  {Delivery.after(db, C.Observe{id, player, event, sealed}, saved) == Delivery.observe_delivery(db, id, event, saved, sealed) : IO(Result<&1,&1,U32 & String,String>)}
-
-def m13_terminal_event_invokes_the_registered_endpoint(db, id, player, event, saved, sealed):
-  {==}
-
-law the_sealed_observation_delivers_nothing:
-  for +db: String
-  for +id: String
-  for +event: String
-  for +saved: String
-  {Delivery.observe_delivery(db, id, event, saved, True{}) == IO.pure(Result<&1,&1,U32 & String,String>,Done{saved}) : IO(Result<&1,&1,U32 & String,String>)}
-
-def the_sealed_observation_delivers_nothing(db, id, event, saved):
-  {==}
-
-law the_live_observation_delivers_its_terminal:
-  for +db: String
-  for +id: String
-  for +event: String
-  for +saved: String
-  {Delivery.observe_delivery(db, id, event, saved, False{}) == Delivery.deliver(db, id, C.terminal(event), saved) : IO(Result<&1,&1,U32 & String,String>)}
-
-def the_live_observation_delivers_its_terminal(db, id, event, saved):
-  {==}
-
-
-# ---------------------------------------------------------------------------
 # M-17: no silent abandonment of accepted, unsettled work. A player process
 # that ended with a failure reports to its parent, and an unsettled delivery
 # names the inbox and the log that continue it.
@@ -266,7 +87,6 @@ law m17_missing_native_result_reports_to_the_parent:
   for +db: String
   for +player: String
   for +id: String
-  for +log: String
   for +stderr: String
   for +status: String
   {Turn.result_missing(db, player, id, log, stderr, status, False{}) == Turn.report(db, player, id, "Player process ended without a native result (" ++ status ++ "). Output: " ++ log ++ ". Stderr: " ++ stderr) : IO(Unit)}
@@ -368,6 +188,15 @@ law m8_one_native_owner_refuses_a_second_turn:
   {Turn.acquired(db, player, id, cmd, model, effort, cwd, task, log, session, missing, None{}) == IO.die(Unit,2,"Session already has an active native turn; send a message to queue input.") : IO(Unit)}
 
 def m8_one_native_owner_refuses_a_second_turn(db, player, id, cmd, model, effort, cwd, task, log, session, missing):
+  {==}
+
+# The Orchestra command answers through the role surfaces builder. This law
+# pins the dispatch step; the builder assembly has its own law, and the
+# players surface content is pinned through the Players command law.
+law orchestra_dispatch_answers_the_role_surfaces:
+  {C.sql(C.Orchestra{}) == C.orchestra_sql() : String}
+
+def orchestra_dispatch_answers_the_role_surfaces():
   {==}
 
 law m14_missing_adapter_refuses_with_its_rule:
@@ -681,7 +510,7 @@ def m5_owed_input_is_counted_after_the_cursor(session, cursor):
 # session. The store's own schema declares that reference, so the database
 # refuses a message from an unknown sender.
 law m7_the_store_validates_the_sender_it_records:
-  {C.schema() == "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
+  {C.schema() == C.wake_claim_schema() ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');" ++ C.messaging_schema() : String}
 
 def m7_the_store_validates_the_sender_it_records():
@@ -691,12 +520,13 @@ def m7_the_store_validates_the_sender_it_records():
 # writes. Each law checks a bounded part of the projection schema.
 # M-8: an acknowledgement is bound to the message and to the recipient it
 # names, and it keeps the first receipt. A caller cannot acknowledge a message
-# addressed to another session.
+# addressed to another session. Acknowledgement discharges the recipient's
+# wake claim in the same statement, which is how the obligation clears.
 law m8_acknowledgement_is_bound_to_its_recipient:
   for +id: String
   for +recipient: String
   for +receipt: String
-  {C.sql(C.Ack{id, recipient, receipt}) == "UPDATE messages SET receipt=coalesce(receipt," ++ C.q(receipt) ++ ") WHERE id=" ++ C.q(id) ++ " AND recipient=" ++ C.q(recipient) ++ ";SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ C.q(id) ++ " AND recipient=" ++ C.q(recipient) ++ ";" : String}
+  {C.sql(C.Ack{id, recipient, receipt}) == "UPDATE messages SET receipt=coalesce(receipt," ++ C.q(receipt) ++ ") WHERE id=" ++ C.q(id) ++ " AND recipient=" ++ C.q(recipient) ++ ";DELETE FROM wake_claims WHERE session=" ++ C.q(recipient) ++ " AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=" ++ C.q(recipient) ++ " AND receipt IS NULL);SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ C.q(id) ++ " AND recipient=" ++ C.q(recipient) ++ ";" : String}
 
 def m8_acknowledgement_is_bound_to_its_recipient(id, recipient, receipt):
   {==}
@@ -743,7 +573,7 @@ def m14_player_conflict_output_is_refused():
 law m14_player_conflict_returns_the_structured_refusal:
   for db: String
   for command: C.Command
-  {Store.committed(db,command,Done{"{\"error\":\"player-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"player-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}")}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.committed(Done{"{\"error\":\"player-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"player-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}")}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def m14_player_conflict_returns_the_structured_refusal(db,command):
   {==}
@@ -759,6 +589,57 @@ law m8_attach_never_overwrites_a_player_row:
   {C.sql(C.Attach{id, harness, native, endpoint}) == "INSERT INTO sessions(id,harness,native,endpoint) VALUES(" ++ C.q(id) ++ "," ++ C.q(harness) ++ "," ++ C.q(native) ++ "," ++ C.q(endpoint) ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN sessions.parent IS NULL THEN sessions.id ELSE NULL END,harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint;" ++ C.session_result(id) : String}
 
 def m8_attach_never_overwrites_a_player_row(id, harness, native, endpoint):
+  {==}
+
+# M-8: a route change is bound to the route the caller expected. The predicate
+# is the stored row's own id, harness, model and effort, so a delayed or repeated
+# continuation cannot reconfigure a session whose recorded route already moved.
+law m8_configure_compares_the_expected_route:
+  for session: String
+  for harness: String
+  for model: String
+  for effort: String
+  {C.configure_matches(session,harness,model,effort) == "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness=" ++ C.q(harness) ++ " AND model=" ++ C.q(model) ++ " AND effort=" ++ C.q(effort) ++ ")" : String}
+
+def m8_configure_compares_the_expected_route(session,harness,model,effort):
+  {==}
+
+# M-8: the route change writes the named session row's four route columns and
+# nothing else. The refusal answer is built only when the guarded update changed
+# no row, and the answer is the stored row only when it changed one, so a refused
+# change cannot answer with the row it refused to write.
+law m8_configure_writes_only_the_named_route_row:
+  for session: String
+  for harness: String
+  for model: String
+  for effort: String
+  for endpoint: String
+  for expected_harness: String
+  for expected_model: String
+  for expected_effort: String
+  for admitted: String
+  {C.configure_update_sql(session,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,admitted) == "UPDATE sessions SET harness=" ++ C.q(harness) ++ ",model=" ++ C.q(model) ++ ",effort=" ++ C.q(effort) ++ ",endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
+  ++ "SELECT json_object('error','configure-refused','session'," ++ C.q(session) ++ ",'expected',json_object('harness'," ++ C.q(expected_harness) ++ ",'model'," ++ C.q(expected_model) ++ ",'effort'," ++ C.q(expected_effort) ++ "),'requested',json_object('harness'," ++ C.q(harness) ++ ",'model'," ++ C.q(model) ++ ",'effort'," ++ C.q(effort) ++ "),'condition','A route change requires a registered Player whose recorded harness, model and effort are still the expected route, no owned attempt, no terminal stop, and a launchable harness with a resolvable model key.','next','Read session ID and inbox. Pass the recorded harness, model and effort as the expected route; retry after an active attempt exits; use a supported harness; or recruit a new session for a stopped Player.') WHERE changes()=0;"
+  ++ C.session_result_where("id=" ++ C.q(session) ++ " AND changes()=1") : String}
+
+def m8_configure_writes_only_the_named_route_row(session,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,admitted):
+  {==}
+
+# M-8: the route change is admitted only for a registered session whose recorded
+# route is still the expected one, with no terminal stop, no owned attempt, a
+# launchable harness, a named model and an admissible endpoint. The admission
+# reads the recorded row and the attempt and stop records; it changes none.
+law m8_configure_admits_only_a_free_expected_route:
+  for session: String
+  for harness: String
+  for model: String
+  for endpoint: String
+  for expected_harness: String
+  for expected_model: String
+  for expected_effort: String
+  {C.configure_admitted(session,harness,model,endpoint,expected_harness,expected_model,expected_effort) == "(" ++ C.q(harness) ++ " IN ('codex','omp','muse','claude-code') AND " ++ C.q(model) ++ "<>'' AND " ++ C.configure_matches(session,expected_harness,expected_model,expected_effort) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ C.q(session) ++ " AND phase<>'exited')" ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")" : String}
+
+def m8_configure_admits_only_a_free_expected_route(session,harness,model,endpoint,expected_harness,expected_model,expected_effort):
   {==}
 
 # ---------------------------------------------------------------------------
@@ -915,14 +796,31 @@ def m3c_checked_landing_answers_the_outcome_it_reached(outcome):
 # M-5: a report row and its pending parent delivery are written in one
 # transaction. The schema, the report insert that names the sender's recorded
 # parent as its recipient, and the commit are the whole of it.
+# M-5: the report commit runs the preflight installer, the single committed
+# transaction, and the post-commit publication. A failed query returns its
+# failure unpublished, so a transaction that did not commit delivers nothing.
 law m5_a_report_and_its_delivery_are_one_transaction:
   for +db: String
   for +id: String
   for +sender: String
   for +body: String
-  {Store.commit(db, C.Report{id, sender, body}) == DB.Sql.query(db, "BEGIN IMMEDIATE;" ++ C.schema() ++ ("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ C.q(id) ++ "," ++ C.q(sender) ++ "," ++ C.report_recipient(C.q(sender)) ++ ",'report'," ++ C.q(body) ++ ")" ++ C.message_upsert() ++ C.message_result(id)) ++ "COMMIT;") : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.commit(db, C.Report{id, sender, body}) == (do IO<Result<&1,&1,U32 & String,String>>:
+    ensured : Unit <- Store.ensure_before_begin(db)
+    queried : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,Store.commit_sql(C.Report{id, sender, body}))
+    Store.publish_after_commit(db,queried)) : IO(Result<&1,&1,U32 & String,String>)}
 
 def m5_a_report_and_its_delivery_are_one_transaction(db, id, sender, body):
+  {==}
+
+# M-5: the report insert names the sender's recorded parent as its
+# recipient. This pins the exact bytes the committed transaction carries.
+law m5_report_insert_names_the_sender_parent:
+  for +id: String
+  for +sender: String
+  for +body: String
+  {C.sql(C.Report{id, sender, body}) == ("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ C.q(id) ++ "," ++ C.q(sender) ++ "," ++ C.report_recipient(C.q(sender)) ++ ",'report'," ++ C.q(body) ++ ")" ++ C.message_upsert() ++ C.message_result(id)) : String}
+
+def m5_report_insert_names_the_sender_parent(id, sender, body):
   {==}
 
 # M-5: a transaction that did not commit delivers nothing and answers its own
@@ -932,7 +830,7 @@ law m5_a_failed_transaction_delivers_nothing:
   for +command: C.Command
   for +code: U32
   for +text: String
-  {Store.committed(db, command, Fail{(code, text)}) == IO.pure(Result<&1,&1,U32 & String,String>, Fail{(code, text)}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.committed(Fail{(code, text)}) == IO.pure(Result<&1,&1,U32 & String,String>, Fail{(code, text)}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def m5_a_failed_transaction_delivers_nothing(db, command, code, text):
   {==}
@@ -983,33 +881,37 @@ def m8_an_unregistered_player_is_refused_before_any_turn(db, player, id, cmd, mo
 law m11_omp_input_reaches_the_omp_adapter:
   for +handle: U32
   for +prompt: String
-  {Turn.input(handle, prompt, "omp\n") == Omp.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for +level: String
+  {Turn.input(handle, prompt, "omp\n", level) == Omp.input(handle, prompt, level) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m11_omp_input_reaches_the_omp_adapter(handle, prompt):
+def m11_omp_input_reaches_the_omp_adapter(handle, prompt, level):
   {==}
 
 law m11_muse_input_reaches_the_muse_adapter:
   for +handle: U32
   for +prompt: String
-  {Turn.input(handle, prompt, "muse\n") == Muse.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for +level: String
+  {Turn.input(handle, prompt, "muse\n", level) == Muse.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m11_muse_input_reaches_the_muse_adapter(handle, prompt):
+def m11_muse_input_reaches_the_muse_adapter(handle, prompt, level):
   {==}
 
 law m11_codex_input_reaches_the_codex_adapter:
   for +handle: U32
   for +prompt: String
-  {Turn.input(handle, prompt, "codex\n") == Codex.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for +level: String
+  {Turn.input(handle, prompt, "codex\n", level) == Codex.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m11_codex_input_reaches_the_codex_adapter(handle, prompt):
+def m11_codex_input_reaches_the_codex_adapter(handle, prompt, level):
   {==}
 
 law m11_any_other_harness_input_reaches_the_claude_adapter:
   for +handle: U32
   for +prompt: String
-  {Turn.input(handle, prompt, "claude-code\n") == Claude.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for +level: String
+  {Turn.input(handle, prompt, "claude-code\n", level) == Claude.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m11_any_other_harness_input_reaches_the_claude_adapter(handle, prompt):
+def m11_any_other_harness_input_reaches_the_claude_adapter(handle, prompt, level):
   {==}
 
 law m2_omp_launch_reaches_the_omp_adapter:
@@ -1019,11 +921,12 @@ law m2_omp_launch_reaches_the_omp_adapter:
   for +effort: String
   for +cwd: String
   for +log: String
+  for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "omp\n", task) == Omp.start_player(cmd, model, effort, cwd, log, sessions, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "omp\n", task) == Omp.start_player(cmd, model, effort, cwd, sessions, session, String.is_empty(session), stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_omp_launch_reaches_the_omp_adapter(sessions, cmd, model, effort, cwd, log, session, task):
+def m2_omp_launch_reaches_the_omp_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
   {==}
 
 law m2_muse_launch_reaches_the_muse_adapter:
@@ -1032,12 +935,12 @@ law m2_muse_launch_reaches_the_muse_adapter:
   for +model: String
   for +effort: String
   for +cwd: String
-  for +log: String
+  for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "muse\n", task) == Turn.muse_launch(cmd, model, effort, cwd, log ++ ".stderr", session, task, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "muse\n", task) == Turn.muse_launch(cmd, model, effort, cwd, stderr, session, task, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_muse_launch_reaches_the_muse_adapter(sessions, cmd, model, effort, cwd, log, session, task):
+def m2_muse_launch_reaches_the_muse_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
   {==}
 
 law m2_codex_launch_reaches_the_codex_adapter:
@@ -1046,12 +949,12 @@ law m2_codex_launch_reaches_the_codex_adapter:
   for +model: String
   for +effort: String
   for +cwd: String
-  for +log: String
+  for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "codex\n", task) == Codex.start_player(cmd, model, effort, cwd, log ++ ".stderr", session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "codex\n", task) == Codex.start_player(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_codex_launch_reaches_the_codex_adapter(sessions, cmd, model, effort, cwd, log, session, task):
+def m2_codex_launch_reaches_the_codex_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
   {==}
 
 law m2_any_other_harness_launch_reaches_the_claude_adapter:
@@ -1060,12 +963,12 @@ law m2_any_other_harness_launch_reaches_the_claude_adapter:
   for +model: String
   for +effort: String
   for +cwd: String
-  for +log: String
+  for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "claude-code\n", task) == Turn.claude_launch(cmd, model, effort, cwd, log ++ ".stderr", session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", task) == Turn.claude_launch(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_any_other_harness_launch_reaches_the_claude_adapter(sessions, cmd, model, effort, cwd, log, session, task):
+def m2_any_other_harness_launch_reaches_the_claude_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
   {==}
 
 law m5_a_fresh_claude_turn_starts_a_session:
@@ -1119,6 +1022,49 @@ def m5_a_resumable_muse_turn_carries_the_recorded_session(cmd, model, effort, cw
   {==}
 
 # ---------------------------------------------------------------------------
+# M-13 over the retained receive path. A retained Muse attempt takes the composed
+# input as its own task file, which the host writes inside the attempt directory
+# before the child starts, and writes no bytes to the child's input. A retained
+# Claude attempt carries the composed input as one user frame.
+
+law m13_a_retained_muse_attempt_closes_its_input_as_a_codex_attempt_does:
+  {U32.is_eq(Turn.retained_keep_stdin(True{},False{},False{}),Turn.retained_keep_stdin(False{},False{},False{})) == True{} : Bool}
+
+def m13_a_retained_muse_attempt_closes_its_input_as_a_codex_attempt_does():
+  {==}
+
+law m13_a_retained_claude_attempt_closes_its_input_as_a_codex_attempt_does:
+  {U32.is_eq(Turn.retained_keep_stdin(False{},False{},True{}),Turn.retained_keep_stdin(False{},False{},False{})) == True{} : Bool}
+
+def m13_a_retained_claude_attempt_closes_its_input_as_a_codex_attempt_does():
+  {==}
+
+# M-5: the retained Muse and Claude attempts reach the conversation the session
+# recorded. Production selects the Muse argv through muse_retained_arguments and
+# the Claude argv through the retained selection.
+law m5_the_retained_muse_argv_resumes_the_recorded_conversation:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +prompt_file: String
+  for +session: String
+  {Turn.muse_retained_arguments(cmd,model,effort,prompt_file,session) == List.append(&1,String,Muse.arguments(cmd,model,effort,prompt_file),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session])) : List<String>}
+
+def m5_the_retained_muse_argv_resumes_the_recorded_conversation(cmd, model, effort, prompt_file, session):
+  {==}
+
+law m5_the_retained_claude_argv_resumes_the_recorded_conversation:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +sessions: String
+  for +session: String
+  {Turn.retained_arguments(False{},True{},cmd,model,effort,sessions,session) == Claude.argv(cmd,model,effort,session,String.is_empty(session)) : String}
+
+def m5_the_retained_claude_argv_resumes_the_recorded_conversation(cmd, model, effort, sessions, session):
+  {==}
+
+# ---------------------------------------------------------------------------
 # M-1 over the whole write. A message command writes the row the caller named
 # and answers by re-selecting that row by the same identity, so the answer a
 # retry returns names the coordinates the transaction stored.
@@ -1168,13 +1114,13 @@ law terminal_observation_records_the_report_and_turn:
   {C.completion_sql(id,player,event) == (
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.terminal_body(event) ++ " FROM sessions WHERE id=" ++ C.q(player) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ C.message_upsert()
   ++ "INSERT INTO turns(id,worker,event) SELECT " ++ C.q(id) ++ "," ++ C.q(player) ++ "," ++ C.q(event) ++ " WHERE " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
-  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ C.q(event) ++ ",'$.type'),json_extract(" ++ C.q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " THEN " ++ C.q(id) ++ " ELSE NULL END) FROM sessions WHERE id=" ++ C.q(player) ++ ";") : String}
+  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ C.q(event) ++ ",'$.type'),json_extract(" ++ C.q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " THEN " ++ C.q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ C.completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ C.completion_pending_sql(player) ++ ",'oldestPendingId'," ++ C.completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ C.q(player) ++ ";") : String}
 
 def terminal_observation_records_the_report_and_turn(id,player,event):
   {==}
 
 law observations_update_identity_before_recording_completion:
-  for id: String
+  for +id: String
   for +player: String
   for +event: String
   for sealed: Bool
@@ -1289,13 +1235,14 @@ def a_response_after_the_first_terminal_leaves_guidance_pending(db,player,event)
 law completion_preparation_checks_the_upstream_recipient:
   for +db: String
   for +player: String
-  for id: String
+  for +id: String
   for log: String
   for stderr: String
   for outcome: Turn.Outcome
   {Turn.prepare(db,player,id,log,stderr,outcome) == (do IO<Unit>:
+    +generation : String <- IO.pure(String,Turn.generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    Turn.prepare_parent(db,player,id,log,stderr,outcome,String.eq(recipient,"1\n"))) : IO(Unit)}
+    Turn.prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))) : IO(Unit)}
 
 def completion_preparation_checks_the_upstream_recipient(db,player,id,log,stderr,outcome):
   {==}
@@ -1317,20 +1264,7 @@ law stopped_input_reports_use_the_recorded_upstream_recipient:
   for +id: String
   {Delivery.handoff_sql(id) == (
   "BEGIN IMMEDIATE;INSERT INTO messages(id,sender,recipient,kind,body) SELECT 'stopped-input:' || lower(hex(m.id)),s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','stopped-recipient-input','recipient',s.id,'stopId',st.id,'originalMessage',m.id,'originalSender',m.sender,'originalKind',m.kind,'originalBody',m.body,'retainedWorkSession',m.sender,'disposition','The original message and work remain available. The stopped recipient has not accepted or reviewed this input.') FROM messages m JOIN sessions s ON s.id=m.recipient JOIN session_stops st ON st.session=s.id WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert()
-  ++ "SELECT coalesce((SELECT n.id FROM messages n WHERE n.id='stopped-input:' || lower(hex(" ++ C.q(id) ++ ")) AND (n.receipt IS NOT NULL OR EXISTS(SELECT 1 FROM sessions p WHERE p.id=n.recipient AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=p.id) AND CASE WHEN json_valid(p.endpoint) THEN json_type(p.endpoint)='array' AND json_array_length(p.endpoint)>0 ELSE 0 END))),'');COMMIT;") : String}
+  ++ "SELECT coalesce((SELECT n.id FROM messages n WHERE n.id='stopped-input:' || lower(hex(" ++ C.q(id) ++ ")) AND (n.receipt IS NOT NULL OR EXISTS(SELECT 1 FROM sessions p WHERE p.id=n.recipient AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=p.id) AND (CASE WHEN json_valid(p.endpoint) THEN json_type(p.endpoint)='array' AND json_array_length(p.endpoint)>0 ELSE 0 END OR p.harness='codex')))),'');COMMIT;") : String}
 
 def stopped_input_reports_use_the_recorded_upstream_recipient(id):
-  {==}
-
-# The OMP setup filter decision (issue #662) reads the server's own answer, and
-# only the exact successful full-category delta selection activates the
-# projection: the response must carry the set_event_filter command, success,
-# an explicitly echoed null events value and delta message updates. A
-# successful answer without that selection is unconfirmed, a failed answer is
-# refused, and every other line leaves the mode unchanged. The nested CASE
-# keeps json extraction behind the validity check.
-law omp_filter_activation_requires_the_complete_echoed_selection:
-  {Turn.filter_mode_sql("x") == "SELECT CASE WHEN json_valid('x') THEN CASE WHEN json_extract('x','$.type')='response' AND json_extract('x','$.id')='baton:filter' AND json_extract('x','$.command')='set_event_filter' THEN CASE WHEN json_extract('x','$.success')=1 THEN CASE WHEN json_type('x','$.data.events')='null' AND json_extract('x','$.data.messageUpdates')='delta' THEN 'delta' ELSE 'unconfirmed' END ELSE 'refused' END ELSE '' END ELSE '' END;" : String}
-
-def omp_filter_activation_requires_the_complete_echoed_selection():
   {==}

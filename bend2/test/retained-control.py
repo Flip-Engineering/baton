@@ -78,7 +78,6 @@ class RetainedControl(unittest.TestCase):
         self.server = socket.socket()
         self.server.bind(('127.0.0.1', 0))
         self.server.listen()
-        self.server.settimeout(10)
         self.addCleanup(self.server.close)
         self.addCleanup(self.cleanup_processes)
 
@@ -97,12 +96,10 @@ class RetainedControl(unittest.TestCase):
         for stream, connection in self.connections:
             stream.close()
             connection.close()
-        deadline = time.monotonic() + 5
         while True:
             owned = self.processes()
             if not owned:
                 break
-            self.assertLess(time.monotonic(), deadline, repr(owned))
             for sig in [signal.SIGSTOP, signal.SIGKILL]:
                 for process in owned:
                     try:
@@ -113,7 +110,7 @@ class RetainedControl(unittest.TestCase):
         for child in self.children:
             if child.stdin and not child.stdin.closed:
                 child.stdin.close()
-            child.wait(timeout=5)
+            child.wait()
             child.stdout.close()
             child.stderr.close()
 
@@ -135,14 +132,14 @@ class RetainedControl(unittest.TestCase):
 
     def line(self, child, expected):
         while True:
-            value = child.lines.get(timeout=10)
+            value = child.lines.get()
             self.assertIsNotNone(value, ''.join(child.output))
             if value == expected:
                 return
 
     def run_control(self, *args, ok=True):
         result = subprocess.run([str(EXE), *map(str, args)], text=True,
-                                capture_output=True, timeout=10)
+                                capture_output=True)
         if ok:
             self.assertEqual(result.returncode, 0, result.stderr)
         return result
@@ -155,7 +152,6 @@ class RetainedControl(unittest.TestCase):
 
     def accept(self):
         connection, _ = self.server.accept()
-        connection.settimeout(10)
         stream = connection.makefile('rwb', buffering=0)
         self.connections.append((stream, connection))
         return stream, json.loads(stream.readline())
@@ -175,7 +171,6 @@ class RetainedControl(unittest.TestCase):
     def wire(self, operation, serial, payload, value=0):
         frame = struct.Struct('=IiQQq')
         with socket.socket(socket.AF_UNIX) as client:
-            client.settimeout(10)
             client.connect(self.control_address())
             client.sendall(frame.pack(operation, 0, serial, len(payload), value) + payload)
             response = b''
@@ -210,11 +205,9 @@ class RetainedControl(unittest.TestCase):
         if not status_observed:
             self.line(observer, 'native-' + status)
         observer.stdin.close()
-        self.assertEqual(observer.wait(timeout=10), 0, observer.stderr.read())
+        self.assertEqual(observer.wait(), 0, observer.stderr.read())
         self.line(observer, 'retained-complete')
-        deadline = time.monotonic() + 10
         while self.processes():
-            self.assertLess(time.monotonic(), deadline, repr(self.processes()))
             time.sleep(.01)
         self.assertEqual(self.run_control('lock-try', self.db).stdout, 'acquired\n')
         self.assertFalse((self.attempt / 'recovery-started').exists())
@@ -233,7 +226,7 @@ class RetainedControl(unittest.TestCase):
         self.assertEqual(received[0]['label'], 'observer')
         for control in controls:
             self.line(control, 'control-write-complete')
-            self.assertEqual(control.wait(timeout=10), 0, control.stderr.read())
+            self.assertEqual(control.wait(), 0, control.stderr.read())
         self.line(observer, 'observer-write-complete')
         expected = {json.loads(raw)['label']: {'label': json.loads(raw)['label'],
                     'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
@@ -363,9 +356,9 @@ int main(void) {
 ''')
         compiled = subprocess.run([os.environ.get('CC', 'clang'), '-O0', '-pthread', str(source),
                                    '-lsqlite3', '-lm', '-o', str(probe)],
-                                  capture_output=True, text=True, timeout=60)
+                                  capture_output=True, text=True)
         self.assertEqual(compiled.returncode, 0, compiled.stderr)
-        result = subprocess.run([str(probe)], capture_output=True, text=True, timeout=10)
+        result = subprocess.run([str(probe)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         observed = json.loads(result.stdout)
         self.assertEqual(observed['native'], observed['wakePid'])

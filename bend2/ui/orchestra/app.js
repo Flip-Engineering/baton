@@ -3,7 +3,6 @@
 /* Orchestra live view. Read-only. All DOM text via textContent. */
 
 const CONTRACT_VERSION = 1;
-const TRANSITION_LIMIT = 50;
 
 const state = {
   apiBase: "",
@@ -25,7 +24,6 @@ const state = {
   ensembleFilter: "all",
   collapsed: new Set(),
   sse: null,
-  reconnectDelay: 1000,
   connected: false,
 };
 
@@ -398,7 +396,7 @@ function renderTransitions() {
     el.transitions.appendChild(li);
     return;
   }
-  for (const t of state.transitions.slice(0, TRANSITION_LIMIT)) {
+  for (const t of state.transitions) {
     const li = document.createElement("li");
     const when = document.createElement("time");
     text(when, t.at || "time unrecorded");
@@ -520,7 +518,6 @@ function connectEvents() {
     if (ev.lastEventId) setCursor(ev.lastEventId);
     else if (msg.cursor) setCursor(msg.cursor);
     state.opened = true;
-    state.reconnectDelay = 1000;
     setConn("live");
     if (state.gapHeld) setNotice(state.gapText);
     else setNotice("");
@@ -585,7 +582,6 @@ function connectEvents() {
     try { t = JSON.parse(ev.data); } catch (e) { return; }
     if (!t) return;
     state.transitions.unshift(t);
-    state.transitions = state.transitions.slice(0, TRANSITION_LIMIT);
     if (ev.lastEventId) setCursor(ev.lastEventId);
     renderTransitions();
     clearGapNotice();
@@ -633,46 +629,33 @@ async function resnapshotThenResume() {
 }
 
 function scheduleEndpointRetry(cause) {
-  const wait = state.reconnectDelay;
-  state.reconnectDelay = Math.min(state.reconnectDelay * 2, 30000);
+  const wait = 1000;
   setConn("retrying");
   setNotice("Snapshot endpoint unreachable (" + (cause && cause.message ? cause.message : cause) + "). Retrying in " + Math.round(wait / 1000) + "s.");
   setTimeout(resnapshotThenResume, wait);
 }
 
 function scheduleEventsRetry() {
-  const wait = state.reconnectDelay;
-  state.reconnectDelay = Math.min(state.reconnectDelay * 2, 30000);
+  const wait = 1000;
   setConn("retrying");
   setNotice("Event stream unavailable before first hello. Retrying events in " + Math.round(wait / 1000) + "s.");
   setTimeout(async () => {
     if (state.opened) return;
-    // A 503 native-owner-subscription-unavailable is a permanent condition of this
-    // server, not a transient failure: stop retrying (no browser polling loop) until
-    // the operator asks with Reconnect.
-    //
-    // Probe bound: a healthy events endpoint answers 200 with an infinite SSE
-    // body, so the body is never awaited here. Response headers alone decide:
-    // only a 503 carries the finite JSON refusal. An open 200 stream proves
-    // the endpoint is available; its body is cancelled and connectEvents()
-    // resumes without an extra snapshot. Snapshot retry stays separate in
-    // scheduleEndpointRetry; events-only recovery never resnapshots.
-    const PROBE_BUDGET_MS = 5000;
-    const ctrl = new AbortController();
-    const budget = setTimeout(() => ctrl.abort(), PROBE_BUDGET_MS);
+    // Response headers identify an available stream. A 503 carries its JSON
+    // refusal. The probe body is cancelled before connectEvents opens the stream.
     try {
-      const probe = await fetch(state.apiBase + "/orchestra/events" + queryString(), { signal: ctrl.signal });
-      clearTimeout(budget);
+      const probe = await fetch(state.apiBase + "/orchestra/events" + queryString());
       if (probe.status === 503) {
         const body = await probe.json().catch(() => ({}));
         if (body && body.error === "native-owner-subscription-unavailable") {
           setConn("unavailable");
-          setNotice("Live stream unavailable: the shared owner subscription is not installed yet (#676). The snapshot still updates on Reconnect.");
+          setNotice("Live stream unavailable: the shared owner subscription is not installed yet (#676). The client continues checking for the owner subscription.");
+          scheduleEventsRetry();
           return;
         }
       }
       if (probe.body) await probe.body.cancel().catch(() => {});
-    } catch (e) { /* endpoint unreachable or probe over budget: keep the retry path */ }
+    } catch (e) { /* A failed request resumes the event connection. */ }
     connectEvents();
   }, wait);
 }
@@ -707,7 +690,6 @@ function init() {
     renderTree();
   });
   document.getElementById("reconnect").addEventListener("click", async () => {
-    state.reconnectDelay = 1000;
     try {
       await loadSnapshot();
       setNotice("");

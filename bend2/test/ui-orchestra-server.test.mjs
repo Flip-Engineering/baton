@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
@@ -257,13 +257,10 @@ test('scoped readers receive updates to outside-owned ensembles they can see thr
   writer.exec("UPDATE ensembles SET coupling='loose' WHERE id='shared-ensemble';");
   notifications.committed();
   let frame = '';
-  const deadline = Date.now() + 3000;
-  while (!frame.includes('event: ensemble') && Date.now() < deadline) {
-    const chunk = await Promise.race([
-      reader.read(),
-      new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1000)),
-    ]);
-    if (!chunk.timeout) frame += decoder.decode(chunk.value);
+  while (!frame.includes('event: ensemble')) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    frame += decoder.decode(chunk.value);
   }
   assert.match(frame, /event: ensemble/);
   assert.match(frame, /"owner":null/);
@@ -289,13 +286,10 @@ test('membership removal updates the ensemble and the affected player', async (t
   writer.exec("DELETE FROM ensemble_members WHERE ensemble='shared-ensemble' AND session='child';");
   notifications.committed();
   let frames = '';
-  const deadline = Date.now() + 3000;
-  while (!frames.includes('event: transition') && Date.now() < deadline) {
-    const chunk = await Promise.race([
-      reader.read(),
-      new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1000)),
-    ]);
-    if (!chunk.timeout) frames += decoder.decode(chunk.value);
+  while (!frames.includes('event: transition')) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    frames += decoder.decode(chunk.value);
   }
   assert.match(frames, /event: ensemble/);
   assert.match(frames, /"members":\[\]/);
@@ -346,26 +340,20 @@ test('SSE pumps committed rows from owner hints and replays by durable cursor af
   writer.exec("INSERT INTO messages(id,sender,recipient,kind,body) VALUES ('outside-scope','root','orphan','guidance','private sibling input');");
   notifications.committed();
   let cursorOnly = '';
-  const cursorDeadline = Date.now() + 3000;
-  while (!cursorOnly.includes('event: cursor') && Date.now() < cursorDeadline) {
-    const chunk = await Promise.race([
-      reader.read(),
-      new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1000)),
-    ]);
-    if (!chunk.timeout) cursorOnly += decoder.decode(chunk.value);
+  while (!cursorOnly.includes('event: cursor')) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    cursorOnly += decoder.decode(chunk.value);
   }
   assert.match(cursorOnly, /event: cursor/);
   assert.doesNotMatch(cursorOnly, /outside-scope|private sibling input|external/);
   writer.exec("INSERT INTO messages(id,sender,recipient,kind,body) VALUES ('pending-2','root','child','guidance','new input');");
   notifications.committed();
   let messageEvents = '';
-  const messageDeadline = Date.now() + 3000;
-  while (!messageEvents.includes('guidance from root') && Date.now() < messageDeadline) {
-    const chunk = await Promise.race([
-      reader.read(),
-      new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1000)),
-    ]);
-    if (!chunk.timeout) messageEvents += decoder.decode(chunk.value);
+  while (!messageEvents.includes('guidance from root')) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    messageEvents += decoder.decode(chunk.value);
   }
   assert.match(messageEvents, /event: pending/);
   assert.match(messageEvents, /"unacknowledgedCount":2/);
@@ -374,13 +362,10 @@ test('SSE pumps committed rows from owner hints and replays by durable cursor af
   writer.exec("UPDATE messages SET receipt='accepted' WHERE id='pending-2';");
   notifications.committed();
   let receiptEvents = '';
-  const receiptDeadline = Date.now() + 3000;
-  while (!receiptEvents.includes('"unacknowledgedCount":1') && Date.now() < receiptDeadline) {
-    const chunk = await Promise.race([
-      reader.read(),
-      new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1000)),
-    ]);
-    if (!chunk.timeout) receiptEvents += decoder.decode(chunk.value);
+  while (!receiptEvents.includes('"unacknowledgedCount":1')) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    receiptEvents += decoder.decode(chunk.value);
   }
   assert.match(receiptEvents, /event: pending/);
   assert.match(receiptEvents, /"unacknowledgedCount":1/);
@@ -394,13 +379,9 @@ test('SSE pumps committed rows from owner hints and replays by durable cursor af
   writer.close();
 
   let text = '';
-  const deadline = Date.now() + 3000;
-  while (!text.includes('exited exit 1') && Date.now() < deadline) {
-    const chunk = await Promise.race([
-      reader.read(),
-      new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1000)),
-    ]);
-    if (chunk.timeout) continue;
+  while (!text.includes('exited exit 1')) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
     text += decoder.decode(chunk.value);
   }
   assert.match(text, /event: player/);
@@ -413,13 +394,9 @@ test('SSE pumps committed rows from owner hints and replays by durable cursor af
   assert.equal(replay.status, 200);
   const replayReader = replay.body.getReader();
   let replayText = '';
-  const replayDeadline = Date.now() + 3000;
-  while (!replayText.includes('exited exit 1') && Date.now() < replayDeadline) {
-    const chunk = await Promise.race([
-      replayReader.read(),
-      new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1000)),
-    ]);
-    if (chunk.timeout) continue;
+  while (!replayText.includes('exited exit 1')) {
+    const chunk = await replayReader.read();
+    if (chunk.done) break;
     replayText += decoder.decode(chunk.value);
   }
   assert.match(replayText, /exited exit 1/);
@@ -463,12 +440,44 @@ test('native coordinator commit is replayed through an injected owner notificati
   const repository = join(directory, 'repository');
   const workspace = join(directory, 'child-worktree');
   const binary = join(process.cwd(), '.scratch/bend2/baton2');
+  const database = new DatabaseSync(databasePath);
+  database.close();
+  const owner = spawn(binary, ['--instance-owner', databasePath], {
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  const ownerErrors = [];
+  owner.on('error', (error) => ownerErrors.push(String(error)));
+  owner.stderr.on('data', (chunk) => ownerErrors.push(String(chunk)));
+  const ownerClosed = new Promise((resolve) => {
+    owner.once('close', (code, signal) => resolve({ code, signal }));
+  });
   const notifications = commitNotifications();
   const native = (...args) => {
     const value = execFileSync(binary, [databasePath, ...args], { encoding: 'utf8' });
     notifications.committed();
     return value;
   };
+  let reader;
+  let server;
+  t.after(async () => {
+    if (reader) await reader.cancel().catch(() => {});
+    if (server) await close(server);
+    execFileSync(binary, ['--instance-shutdown', databasePath], { encoding: 'utf8' });
+    const stopped = await ownerClosed;
+    assert.deepEqual(stopped, { code: 0, signal: null }, ownerErrors.join(''));
+    rmSync(directory, { recursive: true, force: true });
+  });
+  let ownerReadiness;
+  while (!ownerReadiness) {
+    const result = spawnSync(binary, [databasePath, 'owner-status'], {
+      encoding: 'utf8',
+    });
+    if (result.error) throw result.error;
+    if (result.status === 0 && result.stdout.trim()) ownerReadiness = JSON.parse(result.stdout);
+    else if (owner.exitCode !== null || owner.signalCode !== null) {
+      assert.fail(`native database owner exited before readiness: ${ownerErrors.join('')}`);
+    } else await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   mkdirSync(repository);
   execFileSync('git', ['-C', repository, 'init', '-q', '-b', 'main']);
   execFileSync('git', ['-C', repository, 'config', 'user.name', 'Orchestra UI native fixture']);
@@ -479,31 +488,213 @@ test('native coordinator commit is replayed through an injected owner notificati
   native('recruit', 'child', 'root', 'muse', 'configured-model', 'low', repository,
     'child-branch', workspace, 'HEAD');
 
-  const server = createOrchestraServer({ databasePath, reader: 'root',
+  server = createOrchestraServer({ databasePath, reader: 'root',
     subscribeCommittedChanges: notifications.subscribeCommittedChanges });
-  t.after(async () => { await close(server); rmSync(directory, { recursive: true, force: true }); });
   const base = await listen(server);
   const initial = await fetch(`${base}/orchestra/snapshot?subject=child&since=0`);
   const cursor = (await initial.json()).cursor;
   const response = await fetch(`${base}/orchestra/events?subject=child&since=${cursor}`);
   assert.equal(response.status, 200);
-  const reader = response.body.getReader();
+  reader = response.body.getReader();
   const decoder = new TextDecoder();
   await reader.read();
 
   native('message', 'socket-notify', 'root', 'child', 'guidance', 'private message body');
   let frames = '';
-  const deadline = Date.now() + 3000;
-  while (!frames.includes('guidance from root') && Date.now() < deadline) {
-    const chunk = await Promise.race([
-      reader.read(),
-      new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1000)),
-    ]);
-    if (!chunk.timeout) frames += decoder.decode(chunk.value);
+  while (!frames.includes('guidance from root')) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    frames += decoder.decode(chunk.value);
   }
   assert.match(frames, /event: pending/);
   assert.match(frames, /"pendingCount":1/);
   assert.match(frames, /guidance from root/);
   assert.doesNotMatch(frames, /private message body/);
   await reader.cancel();
+});
+
+test('view CLI streams a committed native message through the owner subscription', {
+  skip: process.env.BATON2_REQUIRE_NATIVE_VIEW !== '1'
+    && !existsSync(process.env.BATON2_NATIVE_BINARY
+      || join(process.cwd(), '.scratch/bend2/baton2')),
+}, async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'baton-orchestra-owner-view-'));
+  const databasePath = join(directory, 'orchestra.db');
+  const repository = join(directory, 'repository');
+  const workspace = join(directory, 'child-worktree');
+  const binary = process.env.BATON2_NATIVE_BINARY
+    || join(process.cwd(), '.scratch/bend2/baton2');
+  assert.ok(existsSync(binary), `native Baton2 binary is missing: ${binary}`);
+  const packageRoot = process.env.BATON2_PACKAGE_ROOT;
+  if (packageRoot) {
+    assert.equal(resolve(binary), resolve(packageRoot, 'bin/baton2'),
+      'package asset coverage must launch the packaged Baton2 executable');
+  }
+  const uiRoot = packageRoot
+    ? join(packageRoot, 'libexec/baton2/ui')
+    : fileURLToPath(new URL('../ui/orchestra', import.meta.url));
+  const serverPath = join(uiRoot, 'server.mjs');
+  const adapterPath = join(uiRoot, 'native-owner-subscription.mjs');
+  assert.ok(existsSync(serverPath), `view server is missing: ${serverPath}`);
+  assert.ok(existsSync(adapterPath), `native owner adapter is missing: ${adapterPath}`);
+  const binDirectory = join(directory, 'bin');
+  mkdirSync(binDirectory);
+  for (const command of ['open', 'xdg-open']) {
+    const opener = join(binDirectory, command);
+    writeFileSync(opener, '#!/bin/sh\nexit 0\n');
+    chmodSync(opener, 0o755);
+  }
+
+  mkdirSync(repository);
+  const native = (...args) => execFileSync(binary, [databasePath, ...args], {
+    encoding: 'utf8',
+  });
+  const git = (...args) => execFileSync('git', ['-C', repository, ...args]);
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.name', 'Orchestra owner view fixture');
+  git('config', 'user.email', 'owner-view@example.invalid');
+  git('commit', '-q', '--allow-empty', '-m', 'fixture');
+  native('attach', 'root', 'codex', '', '');
+  native('role', 'root', 'principal-conductor');
+  native('recruit', 'child', 'root', 'muse', 'configured-model', 'low', repository,
+    'child-branch', workspace, 'HEAD');
+
+  const path = [binDirectory, dirname(process.execPath), process.env.PATH || ''].join(delimiter);
+  const view = spawn(binary, [databasePath, 'view', 'child', 'root', '0'], {
+    env: { ...process.env, PATH: path },
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const viewClosed = new Promise((resolve) => view.once('close', (code) => resolve(code)));
+  const viewErrors = [];
+  view.stderr.on('data', (chunk) => viewErrors.push(String(chunk)));
+  const viewLines = createInterface({ input: view.stdout, crlfDelay: Infinity })[Symbol.asyncIterator]();
+  let streamReader;
+  t.after(async () => {
+    if (streamReader) await streamReader.cancel().catch(() => {});
+    if (view.exitCode === null && view.signalCode === null) {
+      try { process.kill(-view.pid, 'SIGTERM'); } catch {}
+      await viewClosed;
+    }
+    try { execFileSync(binary, ['--instance-shutdown', databasePath]); } catch {}
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  let ownerReadiness;
+  while (!ownerReadiness) {
+    const result = spawnSync(binary, [databasePath, 'owner-status'], {
+      encoding: 'utf8',
+    });
+    if (result.error) throw result.error;
+    if (result.status === 0 && result.stdout.trim()) ownerReadiness = JSON.parse(result.stdout);
+    else if (view.exitCode !== null || view.signalCode !== null) {
+      assert.fail(`view command exited before owner readiness: ${viewErrors.join('')}`);
+    } else await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  let base;
+  for await (const line of viewLines) {
+    const match = /^Orchestra live view: (https?:\/\/\S+)$/.exec(line);
+    if (match) {
+      base = match[1];
+      break;
+    }
+  }
+  assert.ok(base, `view command exited before printing its URL: ${viewErrors.join('')}`);
+  const snapshotResponse = await fetch(`${base}orchestra/snapshot?subject=child&since=0`);
+  assert.equal(snapshotResponse.status, 200);
+  const initial = await snapshotResponse.json();
+  const response = await fetch(`${base}orchestra/events?subject=child&since=${initial.cursor}`
+    + `&generation=${ownerReadiness.generation}`);
+  assert.equal(response.status, 200, viewErrors.join(''));
+  streamReader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = '';
+  async function readStreamChunk() {
+    return streamReader.read();
+  }
+  async function nextFrame() {
+    while (!pending.includes('\n\n')) {
+      const chunk = await readStreamChunk();
+      assert.equal(chunk.done, false, 'native owner event stream closed before the frame arrived');
+      pending += decoder.decode(chunk.value, { stream: true });
+    }
+    const end = pending.indexOf('\n\n');
+    const frame = pending.slice(0, end);
+    pending = pending.slice(end + 2);
+    return frame;
+  }
+  const hello = await nextFrame();
+  assert.match(hello, /event: hello/);
+  assert.match(hello, new RegExp(`"generation":"${ownerReadiness.generation}"`));
+
+  const messageId = 'native-owner-view-message';
+  native('message', messageId, 'root', 'child', 'guidance', 'private message body');
+  const stored = new DatabaseSync(databasePath, { readOnly: true });
+  assert.equal(stored.prepare('SELECT body FROM messages WHERE id=?').get(messageId)?.body,
+    'private message body');
+  stored.close();
+
+  let frames = '';
+  while (!frames.includes('guidance from root')) {
+    frames += await nextFrame();
+  }
+  assert.match(frames, /event: pending/);
+  assert.match(frames, /"pendingCount":1/);
+  assert.match(frames, /guidance from root/);
+  assert.doesNotMatch(frames, /private message body/);
+  execFileSync(binary, ['--instance-shutdown', databasePath]);
+  let shutdownEvents = '';
+  let streamClosed = false;
+  while (!streamClosed) {
+    const chunk = await readStreamChunk();
+    streamClosed = chunk.done;
+    if (chunk.value) shutdownEvents += decoder.decode(chunk.value);
+  }
+  assert.match(shutdownEvents, /event: gap/);
+  assert.match(shutdownEvents, /owner-notification-lost/);
+  assert.equal(streamClosed, true, 'owner shutdown did not close the SSE response');
+  streamReader = undefined;
+  assert.equal(view.exitCode, null, 'view command exited when its owner stopped');
+  const afterShutdown = await fetch(`${base}orchestra/snapshot?subject=child&since=0`);
+  assert.equal(afterShutdown.status, 200, 'read-only HTTP server stopped with the owner');
+});
+
+test('a held write lock answers recoverably and the view keeps serving', async (t) => {
+  // An ordinary writer holds the database while an actor commits. Both routes must
+  // answer with a state the page already handles, and the process must survive:
+  // the page retries the snapshot and resumes the event connection.
+  const space = fixture();
+  t.after(() => rmSync(space.directory, { recursive: true, force: true }));
+  const server = createOrchestraServer({
+    databasePath: space.databasePath,
+    reader: 'root',
+    subscribeCommittedChanges: commitNotifications().subscribeCommittedChanges,
+  });
+  const base = await listen(server);
+  t.after(() => close(server));
+
+  const healthy = await fetch(`${base}/orchestra/snapshot?subject=child`);
+  assert.equal(healthy.status, 200);
+
+  const writer = new DatabaseSync(space.databasePath);
+  writer.exec('BEGIN EXCLUSIVE');
+  let busySnapshot;
+  let busyEvents;
+  try {
+    busySnapshot = await fetch(`${base}/orchestra/snapshot?subject=child`);
+    busyEvents = await fetch(`${base}/orchestra/events?subject=child`);
+  } finally {
+    writer.exec('ROLLBACK');
+    writer.close();
+  }
+
+  assert.equal(busySnapshot.status, 503);
+  assert.deepEqual(await busySnapshot.json(), { error: 'snapshot-unavailable' });
+  assert.equal(busyEvents.status, 503);
+  assert.deepEqual(await busyEvents.json(), { error: 'database-busy' });
+
+  const recovered = await fetch(`${base}/orchestra/snapshot?subject=child`);
+  assert.equal(recovered.status, 200, 'the view stopped serving after a locked read');
+  assert.equal((await recovered.json()).players[0].id, 'child');
 });

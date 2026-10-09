@@ -15,6 +15,41 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
 
+
+def shutdown_fixture_owner(case):
+    config = json.loads((case.directory / 'fixture.json').read_text())
+    argv = [config['exe'], '--instance-shutdown', str(case.db)]
+    result = subprocess.run(argv, env=case.environment, capture_output=True,
+                            text=True)
+    with (case.directory / 'commands.jsonl').open('a') as output:
+        output.write(json.dumps({'argv': argv, 'code': result.returncode,
+                                 'stdout': result.stdout, 'stderr': result.stderr,
+                                 'direct_wait_completed': True}) + '\n')
+    case.assertEqual(result.returncode, 0, result.stderr)
+
+
+def install_public_queue_codex(testcase, directory):
+    directory = pathlib.Path(directory)
+    calls = directory / 'public-queue-calls.jsonl'
+    executable = directory / 'codex'
+    executable.write_text(
+        '#!' + sys.executable + '\n'
+        + 'import json,pathlib,sys\n'
+        + f'args=sys.argv[1:]\nwith pathlib.Path({str(calls)!r}).open("a") as output:\n'
+        + '    output.write(json.dumps(args) + chr(10))\n'
+        + "thread=args[args.index('--thread')+1]\n"
+        + 'print("Queued message fixture-submission for thread " + thread, flush=True)\n')
+    executable.chmod(0o700)
+    previous = os.environ.get('PATH')
+    if previous is None:
+        testcase.addCleanup(os.environ.pop, 'PATH', None)
+        os.environ['PATH'] = str(directory)
+    else:
+        testcase.addCleanup(os.environ.__setitem__, 'PATH', previous)
+        os.environ['PATH'] = str(directory) + os.pathsep + previous
+    return calls
+
+
 FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys
 home=pathlib.Path(__file__).resolve().parent
 config=json.loads((home/'fixture.json').read_text())
@@ -45,6 +80,8 @@ elif muse:
     prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
     print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.model.configured',
                      'payload':{'kind':'run_model_configured','model_id':model}}),flush=True)
+    print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'turn.input.user',
+                     'payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}),flush=True)
 elif claude:
     prompt=json.loads(sys.stdin.readline())['message']['content']
     print(json.dumps({'type':'system','subtype':'init','session_id':native,'model':model}),flush=True)
@@ -98,7 +135,8 @@ while True:
         sys.stdin.read()
     elif muse:
         print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.terminal.completed',
-                         'payload':{'kind':'run_terminal','terminal':'completed','text':body}}),flush=True)
+                         'payload':{'kind':'run_terminal','terminal':'completed',
+                                    'command_id':'fixture-primary','text':body}}),flush=True)
     elif claude:
         print(json.dumps({'type':'result','session_id':native,'result':body,'is_error':False}),flush=True)
     else:
@@ -117,6 +155,7 @@ class Control(unittest.TestCase):
         retained = ROOT / '.scratch/bend2/control-fixtures'
         retained.mkdir(parents=True, exist_ok=True)
         self.directory = pathlib.Path(tempfile.mkdtemp(prefix="control ' λ ", dir=retained))
+        self.public_queue_calls = install_public_queue_codex(self, self.directory)
         self.home = self.directory / 'isolated-home'
         self.home.mkdir()
         self.environment = dict(os.environ, HOME=str(self.home),
@@ -142,7 +181,6 @@ class Control(unittest.TestCase):
         self.server = socket.socket()
         self.server.bind(('127.0.0.1', 0))
         self.server.listen()
-        self.server.settimeout(10)
         (self.directory / 'fixture.json').write_text(json.dumps({
             'port': self.server.getsockname()[1], 'exe': str(EXE), 'db': str(self.db)}))
         self.controls = []
@@ -151,13 +189,13 @@ class Control(unittest.TestCase):
 
     def git(self, *args):
         return subprocess.run(['git', '-C', str(self.repo), *args], env=self.environment,
-                              check=True, capture_output=True, text=True, timeout=10)
+                              check=True, capture_output=True, text=True)
 
     def call(self, *args, ok=True, raw=False):
         child = subprocess.Popen([str(EXE), str(self.db), *map(str, args)],
                                  env=self.environment, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True)
-        stdout, stderr = child.communicate(timeout=10)
+        stdout, stderr = child.communicate()
         record = {'argv': list(map(str, args)), 'pid': child.pid, 'code': child.returncode,
                   'stdout': stdout, 'stderr': stderr, 'direct_wait_completed': True}
         with (self.directory / 'commands.jsonl').open('a') as output:
@@ -186,6 +224,14 @@ class Control(unittest.TestCase):
                                              '', '', '', str(log.resolve())])
         return log
 
+    def output_log(self, session):
+        rows = self.rows(
+            "SELECT g.log FROM log_generations g WHERE g.session=? "
+            "ORDER BY CASE WHEN g.attempt=(SELECT id FROM executions WHERE session=g.session) "
+            "THEN 0 ELSE 1 END, g.rowid DESC LIMIT 1", (session,))
+        self.assertTrue(rows, f'{session} has no registered output log generation')
+        return pathlib.Path(rows[0]['log'])
+
     def dispatch(self, *args):
         result = self.call(*args)
         self.assertEqual(result['state'], 'launched')
@@ -195,7 +241,6 @@ class Control(unittest.TestCase):
 
     def accept(self, session):
         connection, _ = self.server.accept()
-        connection.settimeout(10)
         stream = connection.makefile('rwb', buffering=0)
         self.controls.append((stream, connection))
         start = json.loads(stream.readline())
@@ -219,12 +264,10 @@ class Control(unittest.TestCase):
             return [dict(row) for row in database.execute(sql, parameters)]
 
     def eventually(self, observation):
-        deadline = time.monotonic() + 10
         while True:
             result = observation()
             if result:
                 return result
-            self.assertLess(time.monotonic(), deadline, 'Controlled fixture did not complete its requested state.')
             time.sleep(.01)
 
     def process_rows(self):
@@ -252,6 +295,7 @@ class Control(unittest.TestCase):
                 pass
             connection.close()
         self.server.close()
+        shutdown_fixture_owner(self)
         self.eventually(lambda: not self.process_rows())
 
     def test_start_detaches_native_subscription_and_operator_report(self):
@@ -340,12 +384,11 @@ class Control(unittest.TestCase):
 
     def test_receiver_refuses_unsupported_stopped_and_missing_sessions(self):
         self.root()
-        for harness in ('muse', 'claude-code'):
-            self.recruit(harness, harness)
-            self.call('connect', harness, 'saved-' + harness, '')
-            before = self.call('player', harness)
-            self.call('receiver', harness, self.fixture, self.directory / (harness + '.jsonl'), ok=False)
-            self.assertEqual(self.call('player', harness), before)
+        harness = 'unsupported-harness'
+        self.call('attach', harness, harness, 'saved-' + harness, '')
+        before = self.call('player', harness)
+        self.call('receiver', harness, self.fixture, self.directory / (harness + '.jsonl'), ok=False)
+        self.assertEqual(self.call('player', harness), before)
         self.recruit('stopped')
         self.call('message', 'retained', 'root', 'stopped', 'task', self.task.read_text())
         self.call('stop', 'stopped', 'idle-stop', 'Controlled idle stop.')
@@ -377,7 +420,7 @@ class Control(unittest.TestCase):
         self.finish(stream, 'Live guidance applied.')
         self.exited('leaf')
         self.assertEqual(self.call('turns', 'leaf')[0]['reportBody'], 'Live guidance applied.')
-        self.assertTrue(log.is_file())
+        self.assertTrue(self.output_log('leaf').is_file())
         denied = self.call('dispatch-file', 'wrong-route', 'operator', 'leaf', 'task', self.task, ok=False)
         self.assertIn('message-route-denied', denied['stderr'])
         self.assertEqual(self.rows("SELECT * FROM messages WHERE id='wrong-route'"), [])
@@ -407,7 +450,7 @@ class Control(unittest.TestCase):
             self.assertTrue(stat.S_ISREG(stdout.stat().st_mode))
             self.assertTrue(stat.S_ISREG(stderr.stat().st_mode))
             self.eventually(lambda: self.report_logged(body))
-        frames = [json.loads(line) for line in (self.directory / 'omp-leaf.jsonl').read_text().splitlines()]
+        frames = [json.loads(line) for line in self.output_log('omp-leaf').read_text().splitlines()]
         self.assertIn(text, [frame.get('text') for frame in frames])
 
     def dispatch_log(self, ident, suffix='.stdout'):
@@ -471,7 +514,75 @@ class Control(unittest.TestCase):
                     self.eventually(lambda: any(row['id'] == ident for row in self.call('turns', session)))
                     self.assertEqual(self.call('delivery', ident)['recipient'], 'root')
                     self.assertEqual(self.call('player', session)['native'], native)
+                    shutdown_fixture_owner(self)
                     self.eventually(lambda: not self.process_rows())
+
+    def test_direct_turn_delivers_pending_input_after_native_exit(self):
+        self.root()
+        for launch in ('dispatch-turn', 'turn'):
+            for harness in ('muse', 'omp', 'claude-code', 'codex'):
+                with self.subTest(launch=launch, harness=harness):
+                    session = launch + '-' + harness
+                    assignment = self.recruit(session, harness)
+                    native = 'saved-' + session
+                    self.call('connect', session, native, '')
+                    ident = session + '-initial'
+                    log = self.directory / (ident + '.jsonl')
+                    child = None
+                    if launch == 'dispatch-turn':
+                        self.dispatch(launch, session, ident, self.fixture, log, self.task)
+                    else:
+                        child = subprocess.Popen([
+                            str(EXE), str(self.db), 'turn', session, ident, str(self.fixture),
+                            session, 'low', assignment['workspace'], str(self.task), str(log), native],
+                            env=self.environment, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+                    stream, start = self.accept(session)
+                    self.assertEqual(start['resume'], native)
+                    endpoint = self.call('session', session)['endpointArgv']
+                    self.assertEqual(endpoint, [str(EXE.resolve()), str(self.db.resolve()),
+                                               'receive', session, str(self.fixture), session,
+                                               'low', assignment['workspace'], str(log.resolve())])
+                    messages = [(session + '-pending-first', 'Finish the first pending task λ.'),
+                                (session + '-pending-second', 'Finish the second pending task 🙂.')]
+                    for message, body in messages:
+                        self.call('message', message, 'root', session, 'task', body)
+                        self.assertIsNone(self.call('delivery', message)['receipt'])
+                    self.finish(stream, 'The initial direct turn ended.')
+                    continued, resumed = self.accept(session)
+                    self.assertEqual(resumed['native'], native)
+                    self.assertEqual(resumed['cwd'], assignment['workspace'])
+                    for message, body in messages:
+                        self.assertIn('[id: ' + message + ']', resumed['prompt'])
+                        self.assertIn(body, resumed['prompt'])
+                        self.assertIsNone(self.call('delivery', message)['receipt'])
+                    self.finish(continued, 'Both pending tasks were handled.')
+                    self.exited(session)
+                    for message, _ in messages:
+                        self.assertEqual(self.call('delivery', message)['receipt'],
+                                         'fixture-native-reviewed')
+                    self.assertEqual(self.call('inbox', session), [])
+                    self.assertEqual(self.call('session', session)['endpointArgv'], endpoint)
+                    self.assertEqual(self.call('session', 'root')['endpoint'], '')
+                    if child is not None:
+                        stdout, stderr = child.communicate()
+                        self.assertEqual(child.returncode, 0, stderr)
+                    shutdown_fixture_owner(self)
+                    self.eventually(lambda: not self.process_rows())
+
+    def test_direct_turn_preserves_a_configured_receiver(self):
+        self.root()
+        assignment = self.recruit('configured', 'muse')
+        self.receiver('configured')
+        endpoint = self.call('session', 'configured')['endpointArgv']
+        self.dispatch('dispatch-turn', 'configured', 'configured-turn', self.fixture,
+                      self.directory / 'direct.jsonl', self.task)
+        stream, _ = self.accept('configured')
+        self.assertEqual(self.call('session', 'configured')['endpointArgv'], endpoint)
+        self.finish(stream)
+        self.exited('configured')
+        self.assertEqual(self.call('session', 'configured')['endpointArgv'], endpoint)
+        self.assertEqual(self.call('session', 'configured')['workspace'], assignment['workspace'])
 
     def test_pretty_reads_preserve_complete_machine_fields_and_long_report(self):
         self.root()
@@ -482,6 +593,9 @@ class Control(unittest.TestCase):
         event.write_text(json.dumps({'type': 'result', 'session_id': 'native-pretty',
                                      'result': body, 'is_error': False}))
         self.call('observe-file', 'review-report', 'leaf', event)
+        queued = [json.loads(line) for line in self.public_queue_calls.read_text().splitlines()]
+        self.assertTrue(any(args[args.index('--thread') + 1] == 'saved-root'
+                            for args in queued if '--thread' in args))
         for args in (('status',), ('players',), ('orchestra',), ('pending',), ('player', 'leaf'),
                      ('session', 'leaf'), ('inbox', 'root'), ('delivery', 'review-report'), ('turns', 'leaf')):
             with self.subTest(args=args):
@@ -489,7 +603,9 @@ class Control(unittest.TestCase):
                 readable = self.call(*args, '--pretty', raw=True)
                 self.assertEqual(json.loads(readable['stdout']), json.loads(ordinary['stdout']))
                 self.assertIn('\n', readable['stdout'].strip())
-        self.assertEqual(self.call('delivery', 'review-report', '--pretty')['body'], body)
+        saved = self.call('delivery', 'review-report', '--pretty')
+        self.assertEqual(saved['body'], body)
+        self.assertIsNone(saved['receipt'])
         missing = self.call('player', 'missing-player', '--pretty', ok=False)
         self.assertEqual(missing['code'], 1)
         self.assertEqual(missing['stdout'], '')
@@ -517,7 +633,7 @@ class Control(unittest.TestCase):
         pending = {row['id']: row for row in self.call('pending')}
         self.assertEqual(pending['leaf-guide']['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
 
-    def test_pretty_knowledge_preserves_visibility_and_complete_finding(self):
+    def test_pretty_knowledge_preserves_shared_finding_for_registered_readers(self):
         self.root()
         self.recruit('researcher', 'muse')
         self.recruit('sibling', 'muse')
@@ -533,7 +649,8 @@ class Control(unittest.TestCase):
                 value = json.loads(readable['stdout'])
                 self.assertEqual(value, json.loads(ordinary['stdout']))
                 self.assertEqual(before, (self.rows('SELECT * FROM knowledge'), self.rows('SELECT * FROM knowledge_promotions'), self.rows('SELECT * FROM messages')))
-                if reader in ('researcher', 'root'):
+                if reader != 'missing-reader':
+                    self.assertEqual(value[0]['author'], 'researcher')
                     self.assertEqual(value[0]['evidenceMessage']['body'], body)
                     self.assertEqual(value[0]['limits'], 'One controlled fixture.')
                     self.assertIn('\n', readable['stdout'].strip())

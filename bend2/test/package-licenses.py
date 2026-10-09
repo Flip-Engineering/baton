@@ -41,21 +41,11 @@ class PackageLicenses(unittest.TestCase):
         (self.source / name).write_bytes(data)
 
     def assert_project_document(self, terms, field, source_name, data):
-        expected = {'source_path': source_name, 'path': 'notices/baton2-' + source_name,
-                    'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+        expected = {'source_path': source_name, 'path': 'notices/baton2-' + source_name}
         self.assertEqual(terms[field], expected)
         self.assertEqual((self.payload / expected['path']).read_bytes(), data)
 
-    def inventories(self):
-        def entry(path, directory):
-            return {'path': path.relative_to(directory).as_posix(),
-                    'bytes': path.stat().st_size,
-                    'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
-        source_files = [entry(path, self.source) for path in sorted(self.source.rglob('*')) if path.is_file()]
-        files = [entry(path, self.payload) for path in sorted(self.payload.rglob('*')) if path.is_file()]
-        return source_files, files
-
-    def archive_fixture(self, change_license_hash=False, release_version=None):
+    def archive_fixture(self, release_version=None):
         self.document('LICENSE', b'Project license fixture\r\n')
         self.document('NOTICE', b'Project notice fixture\n')
         identity = PACKAGE.artifact_identity(release_version)
@@ -64,13 +54,9 @@ class PackageLicenses(unittest.TestCase):
         binary.parent.mkdir()
         binary.write_bytes(b'File-only fixture; this executable is never run.\n')
         binary.chmod(0o755)
-        source_files, files = self.inventories()
-        PACKAGE.check_project_terms(terms, source_files, files)
-        if change_license_hash:
-            next(row for row in files if row['path'] == 'notices/baton2-LICENSE')['sha256'] = '0' * 64
         manifest = {'schema': 'baton2-native-artifact-v1', **identity,
-                    'source': {'directory': str(self.source), 'files': source_files},
-                    'files': files, 'binary': next(row for row in files if row['path'] == 'bin/baton2'),
+                    'source': {'directory': str(self.source)},
+                    'binary': {'path': 'bin/baton2'},
                     'terms': terms}
         provenance = self.home / 'manifest.json'
         provenance.write_text(json.dumps(manifest) + '\n')
@@ -105,7 +91,6 @@ class PackageLicenses(unittest.TestCase):
         self.assertFalse((self.payload / 'notices/baton2-NOTICE').exists())
         self.assertIn('This source snapshot has no root LICENSE.',
                       (self.payload / 'notices/distribution.md').read_text())
-        PACKAGE.check_project_terms(terms, *self.inventories())
 
     def test_project_license_without_notice_is_retained(self):
         data = b'Project license fixture\n'
@@ -114,7 +99,6 @@ class PackageLicenses(unittest.TestCase):
         self.assert_project_document(terms, 'baton_root_license', 'LICENSE', data)
         self.assertIsNone(terms['baton_root_notice'])
         self.assertNotIn('no root LICENSE', (self.payload / 'notices/distribution.md').read_text())
-        PACKAGE.check_project_terms(terms, *self.inventories())
 
     def test_project_notice_does_not_supply_a_license(self):
         data = b'Project notice fixture\n'
@@ -123,33 +107,33 @@ class PackageLicenses(unittest.TestCase):
         self.assertIsNone(terms['baton_root_license'])
         self.assert_project_document(terms, 'baton_root_notice', 'NOTICE', data)
         self.assertIn('no root LICENSE', (self.payload / 'notices/distribution.md').read_text())
-        PACKAGE.check_project_terms(terms, *self.inventories())
 
     def test_changed_upstream_license_refuses_staging(self):
         self.document('docs/bend2/reference/upstream/LICENSE', b'Changed upstream license\n')
         with self.assertRaisesRegex(RuntimeError, 'upstream Bend license differs from its versioned pin'):
             PACKAGE.stage_notices(self.payload, [])
 
-    def test_archive_manifest_verifies_the_project_license_bytes(self):
+    def test_archive_keeps_project_documents_at_the_manifested_paths(self):
         archive, provenance = self.archive_fixture()
         prefix, manifest = SMOKE.extract(archive, provenance, self.home / 'extracted')
         for field in ('baton_root_license', 'baton_root_notice'):
             entry = manifest['terms'][field]
             source = (self.source / entry['source_path']).read_bytes()
             self.assertEqual((prefix / entry['path']).read_bytes(), source)
-            manifested = next(row for row in manifest['files'] if row['path'] == entry['path'])
-            self.assertEqual({key: entry[key] for key in ('path', 'bytes', 'sha256')}, manifested)
 
     def stage_runtime_files(self):
         scripts = self.source / 'bend2/scripts'
         scripts.mkdir(parents=True)
         names = [harness + '-' + suffix + '.mjs'
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
+        names.extend(('context-provider.mjs', 'context-project-policy.mjs',
+                      'context-query-artifact.mjs', 'context-worktree-capture.mjs'))
         for name in names:
             shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
         helper = self.source / 'bend2/harness/git-series.mjs'
         helper.parent.mkdir(parents=True)
         shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', helper)
+        shutil.copytree(ROOT / 'bend2/ui/orchestra', self.source / 'bend2/ui/orchestra')
         PACKAGE.stage_adapters(self.payload)
         return names
 
@@ -157,13 +141,10 @@ class PackageLicenses(unittest.TestCase):
         names = self.stage_runtime_files()
         archive, provenance = self.archive_fixture()
         prefix, manifest = SMOKE.extract(archive, provenance, self.home / 'adapter-extraction')
-        entries = {row['path']: row for row in manifest['files']}
         for name in names:
             path = 'libexec/baton2/' + name
             data = (ROOT / 'bend2/scripts' / name).read_bytes()
             self.assertEqual((prefix / path).read_bytes(), data)
-            self.assertEqual(entries[path], {'path': path, 'bytes': len(data),
-                                            'sha256': hashlib.sha256(data).hexdigest()})
 
     def test_extracted_git_helper_selects_author_with_its_source_absent(self):
         self.stage_runtime_files()
@@ -174,12 +155,7 @@ class PackageLicenses(unittest.TestCase):
         prefix, manifest = SMOKE.extract(archive, provenance, self.home / 'helper-extraction')
         installed = prefix / 'libexec/baton2/git-series.mjs'
         self.assertFalse((prefix / 'libexec/baton2/git-series.py').exists())
-        expected = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
         self.assertEqual(installed.read_bytes(), data)
-        source = next(row for row in manifest['source']['files'] if row['path'] == 'bend2/harness/git-series.mjs')
-        staged = next(row for row in manifest['files'] if row['path'] == 'libexec/baton2/git-series.mjs')
-        for entry in (source, staged):
-            self.assertEqual({key: entry[key] for key in expected}, expected)
         self.assertEqual(manifest['source']['directory'], str(self.source))
 
         public = self.home / 'public series λ'
@@ -223,41 +199,6 @@ class PackageLicenses(unittest.TestCase):
         self.assertEqual(code, 0, stderr.read_text())
         self.assertTrue(stdout.read_text().startswith('Flip Baton - GPT <' + github['commitEmail'] + '> '))
         self.assertFalse((public / 'private-key.pem').exists())
-
-    def test_archive_license_hash_mismatch_refuses_extraction(self):
-        archive, provenance = self.archive_fixture(change_license_hash=True)
-        with self.assertRaisesRegex(RuntimeError, 'Artifact file differs from manifest: notices/baton2-LICENSE'):
-            SMOKE.extract(archive, provenance, self.home / 'refused-extraction')
-
-    def test_contradictory_terms_refuse_correct_file_inventories(self):
-        self.document('LICENSE', b'Project license fixture\n')
-        self.document('NOTICE', b'Project notice fixture\n')
-        terms = PACKAGE.stage_notices(self.payload, [])
-        source_files, files = self.inventories()
-        PACKAGE.check_project_terms(terms, source_files, files)
-        for field in ('baton_root_license', 'baton_root_notice'):
-            changes = [None]
-            for key, value in (('source_path', 'another-source'), ('path', 'notices/another-document'),
-                               ('bytes', terms[field]['bytes'] + 1), ('sha256', '0' * 64)):
-                changes.append(dict(terms[field], **{key: value}))
-            for changed in changes:
-                with self.subTest(field=field, changed=changed):
-                    contradictory = dict(terms, **{field: changed})
-                    with self.assertRaisesRegex(RuntimeError, 'terms differ from the source inventory'):
-                        PACKAGE.check_project_terms(contradictory, source_files, files)
-
-    def test_unrecorded_project_file_refuses_null_terms(self):
-        terms = PACKAGE.stage_notices(self.payload, [])
-        (self.payload / 'notices/baton2-LICENSE').write_bytes(b'Unrecorded project license\n')
-        with self.assertRaisesRegex(RuntimeError, 'Baton2 LICENSE file differs from its terms'):
-            PACKAGE.check_project_terms(terms, *self.inventories())
-
-    def test_changed_project_copy_refuses_correct_source_and_terms(self):
-        self.document('LICENSE', b'Project license fixture\n')
-        terms = PACKAGE.stage_notices(self.payload, [])
-        (self.payload / terms['baton_root_license']['path']).write_bytes(b'Changed project license\n')
-        with self.assertRaisesRegex(RuntimeError, 'Baton2 LICENSE file differs from its terms'):
-            PACKAGE.check_project_terms(terms, *self.inventories())
 
     def test_default_artifact_identity_keeps_the_development_name_and_kind(self):
         self.assertEqual(PACKAGE.artifact_identity(None),

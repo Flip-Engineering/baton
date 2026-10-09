@@ -104,11 +104,11 @@ static Term baton_raw_read_pack(Env e, IoWork *w) {
   if (!call->error && call->refusal != 0) {
     int count = snprintf(digits, sizeof digits, "%lu", (unsigned long)call->offset);
     if (count < 0 || (size_t)count >= sizeof digits) call->error = EOVERFLOW;
-    else if (call->refusal == 1) value = io_box(e, CID_RAW_RAWINVALIDUTF8, io_str(e, digits, (u64)count));
-    else if (call->refusal == 2) value = io_box(e, CID_RAW_RAWNUL, io_str(e, digits, (u64)count));
-    else value = term_pak(CID_RAW_RAWBOM, 0);
+    else if (call->refusal == 1) value = io_box(e, CID_RAWINVALIDUTF8, io_str(e, digits, (u64)count));
+    else if (call->refusal == 2) value = io_box(e, CID_RAWNUL, io_str(e, digits, (u64)count));
+    else value = term_pak(CID_RAWBOM, 0);
   } else if (!call->error) {
-    value = io_box(e, CID_RAW_RAWTEXT, io_str(e, call->bytes, call->length));
+    value = io_box(e, CID_RAWTEXT, io_str(e, call->bytes, call->length));
   }
   Term result = call->error ? io_fail(e, call->error, NULL) : io_done(e, value);
   free(call->path); free(call->bytes); free(call);

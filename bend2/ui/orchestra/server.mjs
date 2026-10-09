@@ -3,9 +3,9 @@ import { createServer } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { createNativeOwnerSubscriber } from './native-owner-subscription.mjs';
 
 const CONTRACT_VERSION = 1;
-const TRANSITION_LIMIT = 50;
 const CONTENT_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
   ['.html', 'text/html; charset=utf-8'],
@@ -19,6 +19,25 @@ function json(response, status, value) {
     'x-content-type-options': 'nosniff',
   });
   response.end(JSON.stringify(value));
+}
+
+// A read against a database another connection is writing returns busy. That is
+// recoverable: the page retries the snapshot and resumes the event connection,
+// so the server answers with a state the client already handles and stays up.
+const SQLITE_BUSY_CODES = new Set([5, 6, 261]);
+
+function isBusy(error) {
+  if (!error) return false;
+  if (SQLITE_BUSY_CODES.has(error.errcode)) return true;
+  return /database is locked|database table is locked/i.test(String(error.message || ''));
+}
+
+function respondToFailure(response, error) {
+  if (response.headersSent) {
+    try { response.end(); } catch {}
+    return;
+  }
+  json(response, isBusy(error) ? 503 : 500, { error: isBusy(error) ? 'database-busy' : 'server-error' });
 }
 
 function parseCursor(value) {
@@ -172,7 +191,7 @@ function snapshot(db, reader, subject, since) {
       SELECT change_id AS seq, recorded_at AS at, session_id AS session,
              kind, summary
         FROM native_changes WHERE session_id IN (${placeholders})
-       ORDER BY change_id DESC LIMIT ?`, ...scope, TRANSITION_LIMIT)
+       ORDER BY change_id DESC`, ...scope)
       .map((row) => ({ seq: row.seq, at: row.at, session: row.session, kind: row.kind, summary: row.summary }));
     const selection = {
       mode: subject === reader ? 'all' : 'subtree',
@@ -200,11 +219,11 @@ function writeEvent(response, event, id, data) {
   response.write(`id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-function eventRows(db, cursor, limit = 100) {
+function eventRows(db, cursor) {
   return rows(db, `
     SELECT change_id AS id, recorded_at AS at, session_id AS session,
            entity, entity_id AS entityId, operation, kind, summary
-      FROM native_changes WHERE change_id > ? ORDER BY change_id LIMIT ?`, cursor, limit);
+      FROM native_changes WHERE change_id > ? ORDER BY change_id`, cursor);
 }
 
 function ensembleHasVisibleMember(db, id, scope) {
@@ -338,7 +357,6 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
             summary: change.summary,
           });
         }
-        if (batch.rows.length === 100) pumpAgain = true;
       } while (pumpAgain && !closed);
     } catch (error) {
       endWithGap('event-read-failed');
@@ -404,13 +422,17 @@ function serveAsset(response, assetRoot, pathname) {
 }
 
 export function createOrchestraServer({ databasePath, reader, subject = reader,
-  subscribeCommittedChanges, assetRoot = fileURLToPath(new URL('.', import.meta.url)),
+  subscribeCommittedChanges, baton2Executable,
+  assetRoot = fileURLToPath(new URL('.', import.meta.url)),
   host = '127.0.0.1', port = 0 }) {
   if (host !== '127.0.0.1' && host !== '::1' && host !== 'localhost') {
     throw new Error('The read-only Orchestra UI binds to loopback only.');
   }
+  const committedChanges = typeof subscribeCommittedChanges === 'function'
+    ? subscribeCommittedChanges
+    : baton2Executable ? createNativeOwnerSubscriber(baton2Executable) : undefined;
   const db = new DatabaseSync(databasePath, { readOnly: true });
-  const server = createServer((request, response) => {
+  const handleRequest = (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     if (request.method !== 'GET') return json(response, 405, { error: 'method-not-allowed' });
     if (url.pathname === '/orchestra/snapshot') {
@@ -430,12 +452,18 @@ export function createOrchestraServer({ databasePath, reader, subject = reader,
       const selected = url.searchParams.get('subject') || subject;
       if (since === null) return json(response, 400, { error: 'invalid-cursor' });
       if (!visibleScope(db, reader, selected)) return json(response, 403, { error: 'reader-scope-denied' });
-      if (typeof subscribeCommittedChanges !== 'function') {
+      if (typeof committedChanges !== 'function') {
         return json(response, 503, { error: 'native-owner-subscription-unavailable' });
       }
       void streamEvents(response, db, databasePath, reader, selected, since,
-        url.searchParams.get('generation') || '', subscribeCommittedChanges)
-        .catch(() => json(response, 503, { error: 'native-owner-subscription-unavailable' }));
+        url.searchParams.get('generation') || '', committedChanges)
+        .catch(() => {
+          if (response.headersSent) {
+            try { response.end(); } catch {}
+            return;
+          }
+          json(response, 503, { error: 'native-owner-subscription-unavailable' });
+        });
       return;
     }
     if (url.pathname.startsWith('/orchestra/')) return json(response, 404, { error: 'not-found' });
@@ -447,6 +475,13 @@ export function createOrchestraServer({ databasePath, reader, subject = reader,
       return;
     }
     return serveAsset(response, resolve(assetRoot), url.pathname);
+  };
+  const server = createServer((request, response) => {
+    try {
+      handleRequest(request, response);
+    } catch (error) {
+      respondToFailure(response, error);
+    }
   });
   server.on('close', () => db.close());
   server.listen(port, host);
@@ -457,7 +492,7 @@ function cli(args) {
   const values = new Map();
   for (let i = 0; i < args.length; i += 2) values.set(args[i], args[i + 1]);
   if (!values.get('--database') || !values.get('--reader')) {
-    throw new Error('usage: server.mjs --database PATH --reader SESSION [--subject SESSION] [--host 127.0.0.1] [--port 0]');
+    throw new Error('usage: server.mjs --database PATH --reader SESSION [--subject SESSION] [--baton2 EXECUTABLE] [--host 127.0.0.1] [--port 0]');
   }
   if (!/^[0-9]+$/.test(values.get('--port') || '0')) {
     throw new Error('usage: --port must be a decimal port number (0 selects an ephemeral port)');
@@ -466,6 +501,7 @@ function cli(args) {
     databasePath: values.get('--database'),
     reader: values.get('--reader'),
     subject: values.get('--subject') || values.get('--reader'),
+    baton2Executable: values.get('--baton2') || undefined,
     host: values.get('--host') || '127.0.0.1',
     port: Number(values.get('--port') || 0),
   };

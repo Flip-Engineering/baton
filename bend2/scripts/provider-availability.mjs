@@ -30,8 +30,6 @@
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { constants as bufferConstants } from 'node:buffer';
-import { getHeapStatistics } from 'node:v8';
 
 export function modelIdOf(selector) {
   const text = String(selector);
@@ -157,9 +155,7 @@ function parseArgs(argv) {
 
 function queryOmp(ompPath, observedAt) {
   try {
-    // Bound captured output by the available V8 heap and its maximum string size.
-    const maxBuffer = Math.min(getHeapStatistics().total_available_size, bufferConstants.MAX_STRING_LENGTH);
-    const output = execFileSync(ompPath, ['models', '--json'], { encoding: 'utf8', maxBuffer });
+    const output = execFileSync(ompPath, ['models', '--json'], { encoding: 'utf8', maxBuffer: Infinity });
     const models = parseCatalog(output);
     return { state: 'queried', observedAt, count: models.length, models };
   } catch (error) {

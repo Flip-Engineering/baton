@@ -39,7 +39,7 @@
 # The scratch worktrees one attempt prepares, the candidate and the target tree
 # named by appending "-target", are removed when the landing answers landed or
 # already. A refused or conflicted attempt keeps them for the requester, and
-# that worker's next attempt drops them.
+# later attempts leave those retained trees available to the requester.
 
 import Base
 import ./types.bend as T
@@ -506,6 +506,18 @@ def land_fast_forward(repo: String, workerBranch: String, target: String) -> IO(
   do IO<T.LandOutcome>:
     r1 : FFLD <- ff_stage1(rp, workerBranch)
     r2 : FFLD <- ff_go2(r1, rp, tg)
+    r3 : FFLD <- ff_go3(r2, rp, tg)
+    r4 : FFLD <- ff_go4(r3, rp, tg)
+    r5 : FFLD <- ff_go5(r4, rp, tg)
+    ff_answer(r5)
+
+# Lands a resolved commit through the target checks and compare-and-swap update.
+def land_fast_forward_at(repo: String, +workerCommit: String, target: String) -> IO(T.LandOutcome):
+  +rp = repo
+  +tg = target
+  +wc = workerCommit
+  do IO<T.LandOutcome>:
+    r2 : FFLD <- ff_go2(FFNext{wc, ""}, rp, tg)
     r3 : FFLD <- ff_go3(r2, rp, tg)
     r4 : FFLD <- ff_go4(r3, rp, tg)
     r5 : FFLD <- ff_go5(r4, rp, tg)
@@ -1086,11 +1098,7 @@ def settle_paths(scratch: String) -> List<String>:
 
 def drop_list(repo: String, dirs: List<String>) -> IO(Unit):
   match dirs:
-    case Nil{}:
-      +r2 = repo
-      do IO<Unit>:
-        _p : T.GitOut <- Git.runGit(r2, ["worktree", "prune"])
-        IO.pure(Unit, Unit{})
+    case Nil{}: IO.pure(Unit, Unit{})
     case Con{d, rest}:
       +r2 = repo
       do IO<Unit>:
@@ -1103,49 +1111,13 @@ def drop_scratch(repo: String, scratch: String) -> IO(Unit):
   +s2 = scratch
   drop_list(r2, settle_paths(s2))
 
-# One worktree-list line: a registered tree under the worker's prefix belongs
-# to an earlier attempt the worker has now replaced.
-def sweep_one(prefix: String, repo: String, line: String) -> IO(Unit):
-  +p2 = prefix
-  +r2 = repo
-  +path = wt_path(line)
-  Bool.pick(IO(Unit), Tx.starts_with(path, p2), scratch_remove1(r2, path), IO.pure(Unit, Unit{}))
-
-def sweep_lines(prefix: String, repo: String, lines: List<String>) -> IO(Unit):
-  match lines:
-    case Nil{}: IO.pure(Unit, Unit{})
-    case Con{h, rest}:
-      +p2 = prefix
-      +r2 = repo
-      do IO<Unit>:
-        _s : Unit <- sweep_one(p2, r2, h)
-        sweep_lines(p2, r2, rest)
-
-def sweep_out(g: T.GitOut, prefix: String, repo: String) -> IO(Unit):
-  match g:
-    case T.GRun{code, out}: sweep_lines(prefix, repo, Tx.split_lines(out))
-    case T.GBroken{detail}: IO.pure(Unit, Unit{})
-
-# The trees a refused or conflicted attempt of this worker kept: a landed
-# attempt's are already gone, so every registered tree under PREFIX is one the
-# worker's next attempt supersedes.
-def sweep_scratch(repo: String, prefix: String) -> IO(Unit):
-  +r2 = repo
-  +p2 = prefix
-  do IO<Unit>:
-    gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
-    sweep_out(gl, p2, r2)
-
-# The scratch path one attempt prepares: the trees the worker's earlier attempt
-# kept are dropped first, so a refused or conflicted attempt's trees live only
-# until the worker tries again.
+# Each attempt gets a distinct scratch path. Refused and conflicted attempts
+# keep their worktrees when later attempts start.
 def open_scratch(repo: String, worker: String, ts: String) -> IO(String):
   +r2 = repo
   +w2 = worker
   +p2 = scratch_prefix(r2, w2)
-  do IO<String>:
-    _sweep : Unit <- sweep_scratch(r2, p2)
-    IO.pure(String, Tx.str_cat(p2, ts))
+  IO.pure(String, Tx.str_cat(p2, ts))
 
 # The landing's own trees settle with its answer: a landed or already-merged
 # attempt needs them no longer, and a refused, conflicted or failed attempt

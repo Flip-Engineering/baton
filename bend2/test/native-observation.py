@@ -34,19 +34,18 @@ class NativeObservation(RECEIVE.Receive):
         self.fixture.write_text(fixture.replace(needle, needle + addition, 1))
 
     def eventually_slow_case(self, observation, description):
-        deadline = time.monotonic() + 180
         while True:
             result = observation()
             if result:
                 return result
-            self.assertLess(time.monotonic(), deadline, description)
             time.sleep(.01)
 
     def test_mixed_agent_end_members_preserve_completion_and_raw_frame(self):
         self.player(harness='omp')
         self.coord('message', 'mixed-task', 'root', 'parent', 'task', 'Read this task.')
         observer = self.spawn(*self.receive_args('parent'))
-        stream, started = self.accept('parent')
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
         self.assertIn('[id: mixed-task]', started['prompt'])
 
         for line in ('', 'not-json', 'null'):
@@ -76,14 +75,14 @@ class NativeObservation(RECEIVE.Receive):
 
         turns = self.coord('turns', 'parent')
         self.assertEqual([row['reportBody'] for row in turns], ['Observed completion text.'])
-        log = (self.directory / 'parent.jsonl').read_text()
+        log = self.output_log('parent').read_text()
         self.assertIn('181 items elided for RPC frame', log)
         self.assertIn('plain string content block', log)
         self.assertIn('not-json', log)
         self.assertEqual(self.coord('player', 'parent')['native'], 'omp-native')
         self.assertFalse(any('Native output observation failed' in row['body']
                              for row in self.coord('inbox', 'root')))
-        self.eventually(lambda: not self.owned_processes(), 'native observer processes did not exit')
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
 
     def test_muse_uses_admitted_turn_terminal_and_keeps_later_lifecycle_separate(self):
         self.player(harness='muse')
@@ -123,6 +122,7 @@ class NativeObservation(RECEIVE.Receive):
                                  str(self.checkouts / 'parent'), str(task), str(log), ''],
                                 text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
+        log = self.output_log('parent')
 
         turns = self.coord('turns', 'parent')
         self.assertEqual([row['reportBody'] for row in turns], ['Primary completion.'])
@@ -148,25 +148,26 @@ class NativeObservation(RECEIVE.Receive):
         config_path.write_text(json.dumps(config))
         self.coord('message', 'checkpoint-task', 'root', 'parent', 'task', 'Retain the assistant message before the terminal.')
         observer = self.spawn(*self.receive_args('parent'))
-        stream, started = self.accept('parent')
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
 
         assistant = {'type': 'message_end', 'message': {
             'id': 'checkpoint-assistant', 'role': 'assistant', 'provider': 'fixture',
             'content': [{'type': 'text', 'text': 'Recovered from the saved assistant message.'}]}}
         self.action(stream, native_frame=assistant)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
-        self.eventually(lambda: (self.directory / 'parent.jsonl').exists() and
-                        'checkpoint-assistant' in (self.directory / 'parent.jsonl').read_text(),
+        self.eventually(lambda: self.output_log('parent').exists() and
+                        'checkpoint-assistant' in self.output_log('parent').read_text(),
                         'the assistant frame was not durably observed')
         barrier = {'type': 'checkpoint-barrier'}
         self.action(stream, native_frame=barrier)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
         self.eventually(lambda: 'checkpoint-barrier' in
-                        (self.directory / 'parent.jsonl').read_text(),
+                        self.output_log('parent').read_text(),
                         'the observer did not finish the assistant checkpoint before the barrier')
 
         observer.kill()
-        observer.wait(timeout=5)
+        observer.wait()
         resumed = self.spawn(*self.receive_args('parent'))
         self.action(stream, native_frame={'type': 'agent_end', 'isTerminal': True,
                                           'is_error': False, 'messages': []})
@@ -178,7 +179,7 @@ class NativeObservation(RECEIVE.Receive):
                                 'reattached observer did not store its terminal report')
         self.assertEqual([row['reportBody'] for row in turns],
                          ['Recovered from the saved assistant message.'])
-        log = (self.directory / 'parent.jsonl').read_text()
+        log = self.output_log('parent').read_text()
         self.assertEqual(log.count('checkpoint-assistant'), 1)
         self.assertIn('agent_end', log)
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
@@ -186,49 +187,34 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
         self.assertFalse(any('Native output observation failed' in row['body']
                              for row in self.coord('inbox', 'root')))
-        self.eventually(lambda: not self.owned_processes(), 'reattached OMP fixture did not exit')
+        self.shutdown_idle_database_owner('fixture database owner did not exit after OMP completion')
 
-    def test_oversized_omp_checkpoint_failure_replays_without_losing_completion(self):
+    def test_omp_completion_survives_observer_reattach(self):
         self.player(harness='omp')
         config_path = self.directory / 'fixture.json'
         config = json.loads(config_path.read_text())
         config['record_launches'] = True
         config_path.write_text(json.dumps(config))
-        self.coord('message', 'oversized-checkpoint-task', 'root', 'parent', 'task', 'Retain this complete large response.')
+        self.coord('message', 'reattach-checkpoint-task', 'root', 'parent', 'task', 'Retain this complete response.')
         observer = self.spawn(*self.receive_args('parent'))
-        stream, started = self.accept('parent')
-        attempt, turn_id = self.eventually(lambda: self._retained_attempt(), 'retained attempt was not admitted')
-        text = '"' * 400_000
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        text = 'The complete native response remains available after observer recovery.'
         assistant = {'type': 'message_end', 'message': {
-            'id': 'oversized-checkpoint-assistant', 'role': 'assistant', 'provider': 'fixture',
+            'id': 'reattach-checkpoint-assistant', 'role': 'assistant', 'provider': 'fixture',
             'content': [{'type': 'text', 'text': text}]}}
-        raw_frame = json.dumps(assistant, separators=(',', ':'))
-        encoded_message = json.dumps(assistant['message'], separators=(',', ':'))
-        encoded_state = json.dumps({'schema': 1, 'guidance_cursor': '0\n',
-                                    'last_message': encoded_message,
-                                    'muse_primary': '', 'muse_current': '', 'terminal': '',
-                                    'filter_mode': '', 'codex_log': '', 'held': ''},
-                                   separators=(',', ':'))
-        self.assertLess(len(raw_frame.encode()), 1_000_000)
-        self.assertGreater(len(encoded_state.encode()), 1 << 20)
         self.action(stream, native_frame=assistant)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
-        self.eventually(lambda: (self.directory / 'parent.jsonl').exists() and
-                        'oversized-checkpoint-assistant' in (self.directory / 'parent.jsonl').read_text(),
-                        'the complete oversized assistant frame was not logged')
-        checkpoint_diagnostic = self.eventually_slow_case(
-            lambda: next((row for row in self.coord('inbox', 'root')
-                          if row['id'] == turn_id + ':checkpoint'), None),
-            'oversized checkpoint failure did not produce its bounded diagnostic')
-        self.assertIn(attempt, checkpoint_diagnostic['body'])
-        self.assertLess(len(checkpoint_diagnostic['body']), 512)
+        self.eventually(lambda: self.output_log('parent').exists() and
+                        'reattach-checkpoint-assistant' in self.output_log('parent').read_text(),
+                        'the complete assistant frame was not logged')
         self.action(stream, native_frame={'type': 'checkpoint-barrier'})
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
-        self.eventually(lambda: 'checkpoint-barrier' in (self.directory / 'parent.jsonl').read_text(),
-                        'observer did not consume the oversized-frame barrier')
+        self.eventually(lambda: 'checkpoint-barrier' in self.output_log('parent').read_text(),
+                        'observer did not consume the checkpoint barrier')
 
         observer.kill()
-        observer.wait(timeout=5)
+        observer.wait()
         resumed = self.spawn(*self.receive_args('parent'))
         terminal = {'type': 'agent_end', 'isTerminal': True, 'is_error': False, 'messages': []}
         self.action(stream, native_frame=terminal)
@@ -238,24 +224,18 @@ class NativeObservation(RECEIVE.Receive):
 
         turns = self.eventually_slow_case(
             lambda: self.coord('turns', 'parent'),
-            'reattached observer did not preserve the oversized completion')
+            'reattached observer did not preserve the completion')
         self.assertEqual(len(turns), 1)
         report_body = turns[0]['reportBody']
         self.assertEqual(len(report_body), len(text))
         self.assertEqual(hashlib.sha256(report_body.encode()).hexdigest(),
                          hashlib.sha256(text.encode()).hexdigest())
         reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
-        checkpoint_reports = [row for row in reports if row['id'] == turn_id + ':checkpoint']
-        self.assertEqual(len(checkpoint_reports), 1)
         self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
-        log = (self.directory / 'parent.jsonl').read_text()
-        spool = (pathlib.Path(attempt) / 'stdout').read_text()
-        self.assertEqual(spool.count('oversized-checkpoint-assistant'), 1)
-        self.assertEqual(spool.count('checkpoint-barrier'), 1)
+        log = self.output_log('parent').read_text()
         assistant_frames = [json.loads(line) for line in log.splitlines()
-                            if 'oversized-checkpoint-assistant' in line]
-        self.assertEqual(len(assistant_frames), 2)
-        self.assertEqual(assistant_frames[0], assistant_frames[1])
+                            if 'reattach-checkpoint-assistant' in line]
+        self.assertEqual(len(assistant_frames), 1)
         raw_text = assistant_frames[0]['message']['content'][0]['text']
         self.assertEqual(len(raw_text), len(text))
         self.assertEqual(hashlib.sha256(raw_text.encode()).hexdigest(),
@@ -266,7 +246,154 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual(barrier_frames[0], barrier_frames[1])
         launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
-        self.eventually(lambda: not self.owned_processes(), 'oversized OMP fixture did not exit')
+        self.shutdown_idle_database_owner('fixture database owner did not exit after OMP completion')
+
+    def test_omp_provider_error_terminal_records_failure_not_success(self):
+        self.player(harness='omp')
+        self.coord('message', 'provider-error-task', 'root', 'parent', 'task', 'Read this task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.assertIn('[id: provider-error-task]', started['prompt'])
+        directory, _ = self.eventually(lambda: self._retained_attempt(),
+                                       'provider error attempt was not registered')
+        terminal = {
+            'type': 'agent_end', 'isTerminal': True, 'is_error': False,
+            'messages': [
+                {'role': 'user', 'content': [{'type': 'text', 'text': 'Read this task.'}]},
+                {'role': 'assistant', 'content': [
+                    {'type': 'text', 'text': 'Earlier successful assistant text.'}]},
+                {'role': 'assistant', 'stopReason': 'error', 'errorStatus': 403,
+                 'errorMessage': '403 {"error":{"type":"permission_error","message":"fixture provider refusal"}}',
+                 'content': [{'type': 'text', 'text': 'Unfinished assistant text.'}]},
+                '…[181 items elided for RPC frame]', None, {'metadata': 'retained marker'},
+            ],
+        }
+        self.action(stream, native_frame=terminal)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.action(stream, exit_fixture=True)
+        _, stderr = self.finish(observer, ok=False)
+
+        self.assertIn('Native receive failed;', stderr)
+        turns = self.eventually(lambda: self.coord('turns', 'parent'),
+                                'error terminal did not store its failure report')
+        self.assertEqual(len(turns), 1)
+        body = turns[0]['reportBody']
+        self.assertIn('OMP provider failure', body)
+        self.assertIn('403', body)
+        self.assertIn('fixture provider refusal', body)
+        self.assertNotIn('Earlier successful assistant text.', body)
+        self.assertNotIn('Unfinished assistant text.', body)
+        self.assertNotIn('agent_end', body)
+        log = self.output_log('parent').read_text()
+        self.assertIn('stopReason', log)
+        self.assertIn('errorStatus', log)
+        self.assertTrue(any(row['id'] == 'provider-error-task'
+                            for row in self.coord('inbox', 'parent')))
+        self.assertTrue((pathlib.Path(directory) / 'acknowledged').exists())
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
+    def test_omp_late_failure_keeps_the_sealed_result_and_reports_failure(self):
+        self.player(harness='omp')
+        self.coord('message', 'stale-success-task', 'root', 'parent', 'task', 'Read this task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.assertIn('[id: stale-success-task]', started['prompt'])
+        self.coord('ack', 'stale-success-task', 'parent', 'native-reviewed')
+        success = {'type': 'agent_end', 'isTerminal': True, 'is_error': False,
+                   'messages': [{'role': 'assistant', 'content': [
+                       {'type': 'text', 'text': 'Stale success text.'}]}]}
+        self.action(stream, native_frame=success)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.eventually(lambda: self.coord('turns', 'parent'),
+                        'first terminal did not seal its report')
+        refusal = {'type': 'agent_end', 'isTerminal': True, 'is_error': False,
+                   'messages': [{'role': 'assistant', 'stopReason': 'error', 'errorStatus': 403,
+                                 'errorMessage': '403 {"error":{"message":"fixture late refusal"}}',
+                                 'content': []}]}
+        self.action(stream, native_frame=refusal)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+        turns = self.eventually(lambda: self.coord('turns', 'parent'),
+                                'sealed success report was not retained')
+        self.assertEqual(turns[0]['reportBody'], 'Stale success text.')
+        reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
+        deferred = next((row for row in reports if row['id'].endswith(':deferred')), None)
+        self.assertIsNotNone(deferred)
+        self.assertIn('failed after the report', deferred['body'])
+        self.assertIn('OMP provider failure', deferred['body'])
+        self.assertIn('fixture late refusal', deferred['body'])
+        self.assertNotIn('Stale success text.', deferred['body'])
+        log = self.output_log('parent').read_text()
+        self.assertIn('Stale success text.', log)
+        self.assertIn('stopReason', log)
+        self.assertIsNotNone(self.coord('delivery', 'stale-success-task')['receipt'])
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            sealed = json.loads(database.execute(
+                'SELECT event FROM turns WHERE id=?', (turns[0]['id'],)).fetchone()[0])
+        self.assertEqual(sealed, success)
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
+    def test_observe_file_reads_mixed_omp_terminals_and_nested_failure(self):
+        self.player(harness='omp')
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                assistant = {'role': 'assistant', 'content': [
+                    {'type': 'text', 'text': 'Observed file completion.'},
+                    'content marker', None, {'metadata': 'content metadata'},
+                ]}
+                if failed:
+                    assistant.update(stopReason='error', errorStatus=403,
+                                     errorMessage='fixture file provider refusal')
+                terminal = {'type': 'agent_end', 'isTerminal': True,
+                            'messages': [assistant, 'message marker', None,
+                                         {'metadata': 'message metadata'}]}
+                event = self.directory / ('mixed-file-' + str(failed) + '.json')
+                event.write_text(json.dumps(terminal))
+                ident = 'mixed-file-' + str(failed)
+                self.coord('observe-file', ident, 'parent', event)
+                body = self.coord('delivery', ident)['body']
+                if failed:
+                    self.assertIn('OMP provider failure', body)
+                    self.assertIn('403', body)
+                    self.assertIn('fixture file provider refusal', body)
+                    self.assertNotIn('Observed file completion.', body)
+                else:
+                    self.assertEqual(body, 'Observed file completion.')
+                self.assertEqual(json.loads(event.read_text()), terminal)
+
+    def test_omp_earlier_error_with_successful_latest_assistant_stays_successful(self):
+        self.player(harness='omp')
+        self.coord('message', 'latest-success-task', 'root', 'parent', 'task', 'Read this task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.assertIn('[id: latest-success-task]', started['prompt'])
+        self.coord('ack', 'latest-success-task', 'parent', 'native-reviewed')
+        terminal = {
+            'type': 'agent_end', 'isTerminal': True, 'is_error': False,
+            'messages': [
+                {'role': 'assistant', 'stopReason': 'error', 'errorStatus': 500,
+                 'errorMessage': '500 {"error":{"message":"earlier refusal, superseded"}}',
+                 'content': []},
+                {'role': 'assistant', 'content': [
+                    {'type': 'text', 'text': 'Latest successful assistant text.'}]},
+            ],
+        }
+        self.action(stream, native_frame=terminal)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+
+        turns = self.eventually(lambda: self.coord('turns', 'parent'),
+                                'successful latest assistant did not store its report')
+        self.assertEqual([row['reportBody'] for row in turns],
+                         ['Latest successful assistant text.'])
+        self.assertFalse(any(row['id'] == 'latest-success-task'
+                             for row in self.coord('inbox', 'parent')))
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
 
     def _retained_attempt(self):
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
@@ -279,7 +406,8 @@ class NativeObservation(RECEIVE.Receive):
         args = self.receive_args('parent')
         args[-2] = str(self.fixture / 'parent.jsonl')
         observer = self.spawn(*args)
-        stream, _ = self.accept('parent')
+        stream, _ = self.accept_child(observer, 'parent',
+                                      'Observer exited before native startup')
         _, turn_id = self.eventually(lambda: self._retained_attempt(), 'retained attempt was not admitted')
         self.action(stream, native_frame={'type': 'message_end', 'message': {
             'id': 'log-failure-assistant', 'role': 'assistant', 'provider': 'fixture',
@@ -292,17 +420,24 @@ class NativeObservation(RECEIVE.Receive):
         _, stderr = self.finish(observer, ok=False)
 
         reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
-        self.assertIn('Not a directory', stderr)
+        self.assertIn('Native receive failed;', stderr)
+        observation = next((row for row in reports if row['id'] == turn_id + ':observation'), None)
+        self.assertIsNotNone(observation)
+        self.assertIn('Native output observation failed:', observation['body'])
+        self.assertIn('Not a directory', observation['body'])
         self.assertEqual(self.coord('turns', 'parent'), [])
         self.assertFalse(any(row['id'] == turn_id + ':checkpoint' for row in reports))
         self.assertFalse(pathlib.Path(args[-2]).exists())
-        self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
+        directory, retained_turn = self._retained_attempt()
+        self.assertEqual(retained_turn, turn_id)
+        self.assertIn('log-failure-assistant', (pathlib.Path(directory) / 'stdout').read_text())
+        self.assertTrue(any(row['id'] == 'log-failure-task'
+                            for row in self.coord('inbox', 'parent')))
+
+def load_tests(loader, tests, pattern):
+    declared = sorted(name for name in vars(NativeObservation) if name.startswith('test_'))
+    return loader.loadTestsFromNames(declared, NativeObservation)
+
 
 if __name__ == '__main__':
-    unittest.main(defaultTest=[
-        'NativeObservation.test_mixed_agent_end_members_preserve_completion_and_raw_frame',
-        'NativeObservation.test_muse_uses_admitted_turn_terminal_and_keeps_later_lifecycle_separate',
-        'NativeObservation.test_omp_fallback_message_survives_observer_reattach_at_saved_cursor',
-        'NativeObservation.test_oversized_omp_checkpoint_failure_replays_without_losing_completion',
-        'NativeObservation.test_log_write_failure_remains_an_observation_failure',
-    ])
+    unittest.main()

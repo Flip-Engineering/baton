@@ -2,7 +2,7 @@
 # SQLite evaluates the SQL predicates and foreign keys. Native tests exercise
 # those host semantics with retained identities, messages and Git worktrees.
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
 
@@ -70,12 +70,12 @@ law member_presence_requires_a_stored_player_record:
 def member_presence_requires_a_stored_player_record(session):
   {==}
 
-law sections_use_the_existing_ensemble_conductor_owner:
+law sections_use_the_existing_ensemble_owner:
   for +ensemble: String
   for +owner: String
-  {C.section_owner(ensemble,owner) == "(EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ C.q(ensemble) ++ " AND owner=" ++ C.q(owner) ++ ") AND " ++ C.assigned_role(C.q(owner)) ++ "='conductor')" : String}
+  {C.section_owner(ensemble,owner) == "EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ C.q(ensemble) ++ " AND owner=" ++ C.q(owner) ++ ")" : String}
 
-def sections_use_the_existing_ensemble_conductor_owner(ensemble,owner):
+def sections_use_the_existing_ensemble_owner(ensemble,owner):
   {==}
 
 law section_capability_requires_owner_and_nonempty_text:
@@ -92,7 +92,7 @@ law section_refusal_names_the_requested_group_and_next_action:
   for id: String
   for owner: String
   for admitted: String
-  {C.section_refusal(ensemble,id,owner,admitted) == "SELECT json_object('error','section-refused','ensemble'," ++ C.q(ensemble) ++ ",'section'," ++ C.q(id) ++ ",'owner'," ++ C.q(owner) ++ ",'condition','Use the named Ensemble conductor owner, a nonempty capability, and an existing Ensemble Player for membership.','next','Read ensemble ID and section ENSEMBLE SECTION. Add the Player to that Ensemble before assigning its Section; use add or remove for membership.') WHERE NOT " ++ admitted ++ ";" : String}
+  {C.section_refusal(ensemble,id,owner,admitted) == "SELECT json_object('error','section-refused','ensemble'," ++ C.q(ensemble) ++ ",'section'," ++ C.q(id) ++ ",'owner'," ++ C.q(owner) ++ ",'condition','Use the named Ensemble owner, a nonempty capability, and an existing Ensemble Player for membership.','next','Read ensemble ID and section ENSEMBLE SECTION. Add the Player to that Ensemble before assigning its Section; use add or remove for membership.') WHERE NOT " ++ admitted ++ ";" : String}
 
 def section_refusal_names_the_requested_group_and_next_action(ensemble,id,owner,admitted):
   {==}
@@ -142,7 +142,7 @@ def player_snapshot_retains_route_turn_work_and_input_state(condition):
   {==}
 
 law orchestra_reads_players_operators_and_all_ensembles:
-  {C.orchestra_sql() == "SELECT json_object('players'," ++ C.players_json(C.assigned_role("s.id") ++ "<>'operator'") ++ ",'operators'," ++ C.players_json(C.assigned_role("s.id") ++ "='operator'") ++ ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT " ++ C.ensemble_row("e") ++ " AS item FROM ensembles e ORDER BY e.id)));" : String}
+  {C.orchestra_sql() == "WITH surface AS " ++ C.orchestra_surface() ++ " SELECT json_object('players'," ++ C.orchestra_role_array("<>'operator'") ++ ",'operators'," ++ C.orchestra_role_array("='operator'") ++ ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT " ++ C.ensemble_row("e") ++ " AS item FROM ensembles e ORDER BY e.id)));" : String}
 
 def orchestra_reads_players_operators_and_all_ensembles():
   {==}
@@ -256,12 +256,20 @@ law section_command_reads_the_named_pair:
 def section_command_reads_the_named_pair(ensemble,id):
   {==}
 
+# A named command runs the preflight installer, the single committed
+# transaction, the post-commit publication, and then the answer
+# classification. The pipeline stages below are the transaction contract:
+# rollback silence (a failed query returns its failure unpublished),
+# committed classification, and successful post-commit wake all flow
+# through Store.commit and Store.committed, unchanged in shape.
 law named_commands_execute_the_committed_query_and_classify_its_answer:
   for +db: String
   for +command: C.Command
   {Store.apply(db,command) == (do IO<Result<&1,&1,U32 & String,String>>:
-    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ C.sql(command) ++ "COMMIT;")
-    Store.committed(db,command,result)) : IO(Result<&1,&1,U32 & String,String>)}
+    ensured : Unit <- Store.ensure_before_begin(db)
+    queried : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,Store.commit_sql(command))
+    published : Result<&1,&1,U32 & String,String> <- Store.publish_after_commit(db,queried)
+    Store.committed(published)) : IO(Result<&1,&1,U32 & String,String>)}
 
 def named_commands_execute_the_committed_query_and_classify_its_answer(db,command):
   {==}
@@ -269,7 +277,7 @@ def named_commands_execute_the_committed_query_and_classify_its_answer(db,comman
 law invalid_role_returns_structured_exit_two:
   for db: String
   for command: C.Command
-  {Store.committed(db,command,Done{"{\"error\":\"invalid-role\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"invalid-role\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}")}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.committed(Done{"{\"error\":\"invalid-role\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"invalid-role\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}")}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def invalid_role_returns_structured_exit_two(db,command):
   {==}
@@ -277,7 +285,7 @@ def invalid_role_returns_structured_exit_two(db,command):
 law refused_section_returns_structured_exit_two:
   for db: String
   for command: C.Command
-  {Store.committed(db,command,Done{"{\"error\":\"section-refused\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"section-refused\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}")}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.committed(Done{"{\"error\":\"section-refused\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"section-refused\",\"condition\":\"Fixture refusal\",\"next\":\"Read the recorded session and Ensemble\"}")}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def refused_section_returns_structured_exit_two(db,command):
   {==}

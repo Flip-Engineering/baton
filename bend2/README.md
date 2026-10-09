@@ -25,22 +25,10 @@ executable at `.scratch/bend2/baton2`. Host bindings execute on Bend IO threads.
 The [native installation procedure](../docs/bend2/installation.md) covers staging,
 runtime paths, dependencies and retained state. [Harness setup](../docs/bend2/harness-setup.md)
 describes the qualified routes. [Native artifacts](../docs/bend2/native-artifacts.md)
-describes the exact-source packaging and extracted-use gates.
+describes native packaging and the extracted-artifact runtime smoke.
 
-`bend2/src/coordinator/laws.bend` states the sixteen operative entries of
-[the approved laws](../docs/bend2/laws-proposed.md) over the functions this
-tree implements them with, and proves each one beside its claim. The entry
-module imports that module, so a compile of the entry verifies every
-operative law, and the native build refuses the tree while a law is unproven
-or false.
-
-```sh
-node bend2/scripts/laws-check.mjs
-```
-
-This is the negative control for that gate. It removes one law's proof at a
-time in a copy of the tree and requires the entry's compile to fail, so a law
-whose proof the gate does not require is reported rather than assumed.
+Runtime fixtures are available in `bend2/test` and `bend2/tests`. Run checks for
+the affected commands and host behavior on remote validation runners.
 
 `python3 bend2/scripts/compare-coordinators.py --help` describes a repeatable
 comparison of retained coordination operations with a pinned old Baton checkout.
@@ -214,15 +202,36 @@ available. Read `session ID` and `worktree ID`, retry the recorded assignment,
 or recruit a new ID with a new branch and unused path.
 `worktree ID` reads its current Git branch, commit and dirty state.
 
-`land PLAYER_ID REPO TARGET_BRANCH` looks up the Player's branch from the
-database, verifies the Player tip is a fast-forward from the target, and
-advances the target with a compare-and-swap `update-ref`. The answer is JSON
+`configure ID HARNESS MODEL EFFORT HARNESS_CMD OUTPUT_LOG EXPECTED_HARNESS
+EXPECTED_MODEL EXPECTED_EFFORT` moves an existing registered session's next
+admitted turn to another provider route. It keeps the Player's identity,
+parentage, workspace, branch, base, native conversation and every stored
+message, and rebuilds the receiver endpoint from `MODEL` for a Codex or OMP
+route. A Muse or Claude harness keeps no receiver endpoint, because
+`dispatch-turn` reads the recorded route when it launches. The expected route is
+the route the caller read first: a delayed or repeated change that still names
+the old route is refused, so a continuation that lost its transport response
+cannot reconfigure a session whose route already moved. A terminal stop, an
+owned attempt, a harness a Player is not launched with, an empty model or an
+endpoint that is not admissible argv returns `configure-refused` with exit
+status 2. For `codex` and `omp`, an unmapped model key is refused before
+any row is written. `muse` and `claude-code` validate the model when the
+next turn launches. To
+continue a Player whose provider stopped accepting work, read `session` and
+`inbox`, configure the recorded route to an available provider, and deliver the
+retained input again.
+
+`land PLAYER_ID REPO TARGET_BRANCH [--commit COMMIT]` looks up the Player's branch
+from the database, verifies the selected commit is a fast-forward from the
+target, and advances the target through its holding worktree or a
+compare-and-swap `update-ref`. The answer is JSON
 with a `status` field: `landed` with the new target commit, `already` when the
 target already contains the Player commit, or `blocked` with a reason (the
 Player branch diverged or the target moved during the update). Player branches
 and worktrees are retained after landing.
 
-`land-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES` runs the gated landing.
+`land-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES [--commit COMMIT]`
+runs the checked landing.
 CHECK runs as `/bin/sh CHECK FILE` inside each checked tree, once per selected
 file per tree. `bend2/scripts/check-unittest.sh` judges one selected Python
 test file: a selection under `bend2/test/` builds the coordinator binary in
@@ -246,6 +255,12 @@ If the target moves while checks run, the command returns `blocked` and names
 target before advancing the branch. The Player's branch and worktree remain
 available throughout these attempts.
 
+`--commit COMMIT` selects a reviewed commit from the Player's recorded branch.
+The command resolves the commit, verifies its ancestry on that branch and uses
+the resolved object throughout landing. The Player's later commits and worktree
+remain available. Omitting the option selects the branch's current tip. The MCP
+landing tools accept the same selection through their optional `commit` field.
+
 The squash message describes the Player history above its merge-base with the
 target. A single commit retains its full message. Several commits use the tip
 commit's subject, with every branch commit's subject in the body, oldest first
@@ -266,6 +281,15 @@ read as the remote operand and answers `failed` with the read's own status.
 ```sh
 .scratch/bend2/baton2 state.db remote-tip /path/to/repo target-branch origin
 ```
+
+`models SESSION` queries the session's recorded harness in its recorded
+workspace. Codex and OMP return model catalogs; Muse returns the requested
+model's profile text with model existence recorded as unknown. The response
+retains the complete provider output, observation time and process errors.
+
+`observed-usage SESSION` also queries OMP account usage through the recorded
+harness command. `providerUsage` contains that provider answer beside the
+conversation totals.
 
 `observed-usage SESSION` projects the usage the session's own recorded native
 conversation states. Only persisted assistant messages that carry an object
@@ -332,12 +356,11 @@ the cumulative `message_update` and `tool_execution_update` snapshots the
 provider resends while a message or a tool call is running, and holds the newest
 `tool_execution_update` of each open call and the newest `message_start` and
 `message_update` of each message until its `tool_execution_end` or
-`message_end` arrives. The log rotates
-at the session's byte budget and retains the segments the session's retention
-count covers. `logs`, `logs-storage` and `logs-clean` read and set that policy,
-report the storage each producer uses, and remove eligible rotated segments;
-[the log policy](../docs/bend2/logging.md) describes the levels, the defaults
-and the ownership boundaries.
+`message_end` arrives. The coordinator appends complete retained frames to a
+per-turn log and writes native stderr to a separate per-run file. `logs` reads
+and sets the concise level, `logs-storage` reports registered files, and
+`logs-clean` removes eligible completed attempt artifacts. [The log policy](../docs/bend2/logging.md)
+describes the levels and file ownership.
 New supervisors use
 the selected coordinator executable. Keep existing logs at their recorded paths
 when changing the installed coordinator between lanes.
@@ -365,10 +388,10 @@ Conductor acceptance receipt are required for the live-slice result.
 
 ## Shared knowledge
 
-Agents record findings with a claim, a retained evidence message and stated
-limits. The evidence reference must name an existing message the author sent
-or received. An unpublished finding is visible to its author and immediate
-parent. `knowledge READER` returns the complete visible list, including the
+Agents record findings with a claim, a source reference and stated limits.
+A `message:MESSAGE_ID` reference includes the retained message body. References
+can also name source files, commits, runs or other evidence. An unpublished
+finding is visible to its author and immediate parent. `knowledge READER` returns the complete visible list, including the
 cited message body and promotion history.
 
 ```sh
@@ -410,9 +433,12 @@ DB="$STATE/state.db"
 
 `start` configures a native receiver and dispatches the task. It preserves a
 compatible existing Principal's saved conversation and pending input.
-`receiver SESSION HARNESS_COMMAND OUTPUT_LOG` generates the endpoint for an
-existing Codex or OMP session and preserves its saved native ID. It resolves
-executable and log paths and selects the recorded model, effort and workspace.
+`receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]` generates the endpoint for an
+existing Codex, OMP, Muse or Claude Code session and preserves its saved native ID. It resolves
+executable and log paths and selects the recorded model, effort and workspace; the
+optional `CWD` records the working directory the session's turns run in. A session
+that records no model or no working directory is refused, because that endpoint
+would start no turn.
 The configured model Git registry applies to each launched session through the
 installed Node helper; see [series Git identities](../docs/bend2/git-series-identities.md).
 
@@ -487,6 +513,25 @@ Codex retains conversations in its configured storage. Native OMP receive uses
 for sessions with a parent. The Node OMP adapter uses `DATABASE.root-sessions`
 for logical ID `root` and `DATABASE.session-HEX_ID` for other IDs. Each directory
 stores conversations by their native identity; the path does not assign a role.
+
+For Muse, register harness `muse` and use its executable, model and effort in the
+same endpoint. Muse reads its task from `exec --json --prompt-file`, so a Muse
+receive attempt writes the composed pending input at `ATTEMPT.prompt.txt` beside
+the attempt directory and passes that path to the adapter, adding
+`--session-id` for the session's recorded conversation. The attempt closes the
+child's input immediately and reads the child's `--json` stream. A Muse
+Conductor with no recorded conversation starts one and records its identity from
+the session envelope; later messages resume it. The principal `start` command
+accepts `muse` as well as `codex` and `omp`.
+
+For Claude Code, register harness `claude-code` and use its executable, model and
+effort in the same endpoint. Claude reads one user frame from its input, so a
+Claude receive attempt writes the composed pending input as that frame, adds
+`--resume` for the session's recorded conversation and closes the child's input.
+An interactive Claude Code Conductor keeps the channel attachment described
+below; a Claude Player's endpoint is the native receive operation, and the
+principal `start` command accepts `claude-code` as well as `codex`, `omp` and
+`muse`.
 
 Retained OMP children send native input, selection, confirmation and editor
 questions to their registered parent. The question names its request ID and
@@ -648,7 +693,7 @@ The existing JSON and replay programs are earlier experiments. Their optional
 runner, `node bend2/scripts/run-checks.mjs`, compares interpreted and native
 output with their `.expected.txt` fixtures. It can install Bend locally if
 absent. Those programs carry no law annotations and no dependence on the
-coordinator's laws module, which the entry imports.
+coordinator entry.
 
 ## Contributor real-route validation
 
@@ -675,7 +720,7 @@ native executable or launch wrapper an absolute path:
 ```
 
 The sequence starts real Players on all four routes, interrupts and resumes their
-native sessions, guides a running OMP Player, triggers native Codex and OMP Conductors
+native sessions, guides a running OMP Player, triggers native Codex, OMP and Muse Conductors
 from Player reports, delivers a Claude channel notification, and recovers all
 three Conductors. The Git stage lands reviewed Player commits, exercises a moving
 target and conflict resolution, and pushes to a scratch bare remote whose ref
@@ -712,8 +757,9 @@ resolve in the Player and both checked trees. Python checks under `bend2/test/`
 need an installed compiler selected through an absolute `BEND` path. An
 unjudged check blocks landing under the documented comparison rules.
 
-Keep each landing target branch unchecked-out. The Associate Conductor reviews
-and lands Player work onto its branch. The Principal reviews and lands that
+Landing advances a checked-out target through its holding worktree. Overlapping
+uncommitted changes return a refusal with the affected worktree. The Associate
+Conductor reviews and lands Player work onto its branch. The Principal reviews and lands that
 branch, publishes the target through `push`, verifies its advertised ref and
 reports to the operator. Retain the database, native stores, logs and worktrees
 for corrections and continued work.

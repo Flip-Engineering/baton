@@ -97,9 +97,10 @@ clang, and SQLite development headers and libraries. From the source checkout:
 BEND=/path/to/bend/bin/bend sh bend2/scripts/build-native.sh
 ```
 
-The entry imports its operative laws. This build verifies their proofs and
-creates `.scratch/bend2/baton2`. The [build and check instructions](../../bend2/README.md#build-and-check)
-describe the negative controls and native checks used for acceptance.
+The script compiles `bend2/src/coordinator/main.bend` to C and links the native
+entry point against SQLite and the system libraries. It creates
+`.scratch/bend2/baton2`. The [build and check instructions](../../bend2/README.md#build-and-check)
+describe the standalone native checks and runtime fixtures.
 
 Stage the executable and current Git identity helper in an unused prefix you own:
 
@@ -159,11 +160,11 @@ logs for acceptance and completion.
 The native terminal result is recorded in `turns PRINCIPAL --pretty` and sent
 to the operator inbox. Acknowledge each reviewed report with `ack`.
 
-Recruit subordinate Players with `recruit`. Configure Codex and OMP receivers
-with `receiver SESSION HARNESS_COMMAND OUTPUT_LOG`, then use
+Recruit subordinate Players with `recruit`. Configure Codex, OMP, Muse and Claude Code receivers
+with `receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]`, then use
 `dispatch-file ID SENDER RECIPIENT task TASK_FILE` for independent work.
 `dispatch-turn PLAYER TURN_ID HARNESS_COMMAND OUTPUT_LOG TASK_FILE` starts a
-Muse or Claude Player using its recorded model, effort, workspace and native ID.
+Claude Player using its recorded model, effort, workspace and native ID.
 
 An existing model Git registry at `~/.config/baton/github-apps/series.json` is
 applied to native receiver and detached turn launches. `BATON2_GIT_REGISTRY`

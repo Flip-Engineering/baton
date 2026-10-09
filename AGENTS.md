@@ -19,6 +19,23 @@ in `docs/bend2/host-crash-2026-10-05.md`.
 
 # Banned runtime patterns
 
+## Mechanisms need an observed failure
+
+Checks, gates, guards, recovery layers and accounting must serve a named real
+failed run. A hypothetical race, a constructed probe or property accounting
+does not justify adding a mechanism. Remove unused APIs, duplicate state and
+procedural requirements that obstruct ordinary work. Judge removals by whether
+the affected real work runs. Issue #598 records this requirement.
+
+## No budget control flow
+
+Budgets must never control admission, continuation, completion, input acceptance,
+or validation. Do not require callers to estimate input size, task size, tokens,
+cost, duration, retries, turns, or output volume. Do not add budget checks, refusals,
+pauses, truncation, or configurable replacements for those controls. Provider
+usage observations report facts. Actual allocation, filesystem and provider
+failures retain their causes and the unfinished work.
+
 ## No pausing, idling or truncating agents
 
 Baton never deliberately pauses, idles or truncates an agent's work. When an agent's turn ends,

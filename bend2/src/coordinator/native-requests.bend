@@ -1,14 +1,14 @@
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../git/text.bend as Tx
 import ../host/text.bend as Text
 
-def with_observation(-A: Type, observation: List<Chan(Result<&1,&1,U32 & String,String>)> & String, next: List<Chan(Result<&1,&1,U32 & String,String>)> -> String -> IO(A)) -> IO(A):
-  (tasks,error)=observation
-  next(tasks,error)
+def with_observation(-A: Type, observation: List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool, next: List<Chan(Result<&1,&1,U32 & String,String>)> -> String -> Bool -> IO(A)) -> IO(A):
+  (tasks,(error,incomplete))=observation
+  next(tasks,error,incomplete)
 
 def schema() -> String:
   "CREATE TABLE IF NOT EXISTS native_requests (id TEXT PRIMARY KEY NOT NULL,worker TEXT NOT NULL REFERENCES sessions(id),parent TEXT NOT NULL REFERENCES sessions(id),attempt TEXT NOT NULL,native_id TEXT NOT NULL,method TEXT NOT NULL,event TEXT NOT NULL,reply TEXT,written INTEGER NOT NULL DEFAULT 0,closed TEXT,UNIQUE(attempt,native_id));"
@@ -64,27 +64,27 @@ def fork_saved(db: String, id: String, tasks: List<Chan(Result<&1,&1,U32 & Strin
       IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)>,task <> tasks)
 
 # A failed transaction cannot publish a parent wake or send a stored answer.
-def saved(db: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,String>) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
+def saved(db: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,String>) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool):
   match result:
-    case Fail{(code,text)}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,U32.show(code) ++ ": " ++ text))
-    case Done{+id}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
+    case Fail{(code,text)}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,(U32.show(code) ++ ": " ++ text,True{})))
+    case Done{+id}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
       next : List<Chan(Result<&1,&1,U32 & String,String>)> <- fork_saved(db,Tx.trim_nl(id),tasks,String.is_empty(id))
-      IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(next,""))
+      IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(next,("",False{})))
 
-def record(+db: String, player: String, turn: String, attempt: String, event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, parent: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
+def record(+db: String, player: String, turn: String, attempt: String, event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, parent: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool):
   match parent:
-    case False{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
+    case False{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
       shown : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output("Native OMP UI request is unsupported for a session without a registered parent; its full frame remains in the native log.\n")
-      IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,"Native OMP UI request has no registered parent; interaction requires a registered parent."))
-    case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
+      IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,("Native OMP UI request has no registered parent; interaction requires a registered parent.",False{})))
+    case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
       ready : String <- IO.try(String,prepare_projection(db))
       result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ request_sql(player,turn,attempt,event) ++ "COMMIT;")
       saved(db,tasks,result)
 
-def observe(+db: String, +player: String, turn: String, attempt: String, +event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, enabled: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
+def observe(+db: String, +player: String, turn: String, attempt: String, +event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, enabled: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool):
   match enabled:
-    case False{}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,""))
-    case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
+    case False{}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,("",False{})))
+    case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
       parent : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN parent IS NULL AND json_extract(" ++ C.q(event) ++ ",'$.method') IN ('input','select','confirm','editor') THEN 0 ELSE 1 END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
       record(db,player,turn,attempt,event,tasks,String.eq(parent,"1\n"))
 

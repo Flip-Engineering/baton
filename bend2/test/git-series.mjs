@@ -97,6 +97,72 @@ test('exact models and all six series select fixed public metadata and friendly 
   assert.throws(() => model.selected_identity(null_mapping, 'null', 'glm'), model.Refusal);
 });
 
+test('shared registry attribution changes Git headers and leaves selected App identities intact', async () => {
+  const sharedRegistry = join(directory, 'shared-attribution.json');
+  const attribution = { name: 'Flip - Baton', email: 'baton@example.invalid' };
+  const repository = join(directory, 'shared-attribution-repository');
+  save(sharedRegistry, { models, series, attribution });
+  async function gitWith(registryPath, key, ...command) {
+    return child([SOURCE, 'launch', '--registry', registryPath, '--series-key', key, '--', 'git', ...command]);
+  }
+  const git = (key, ...command) => gitWith(sharedRegistry, key, ...command);
+  const initialized = await git('gpt', 'init', '--bare', repository);
+  assert.equal(initialized.code, 0, initialized.stderr);
+  const tree = await git('gpt', '-C', repository, 'hash-object', '-w', '-t', 'tree', '--stdin');
+  assert.equal(tree.code, 0, tree.stderr);
+  for (const key of model.SERIES) {
+    const [selected, , github, email, name] = model.selected_identity(sharedRegistry, null, key);
+    assert.equal(selected, key);
+    assert.deepEqual(github, identities[key]);
+    assert.equal(name, attribution.name);
+    assert.equal(email, attribution.email);
+    const committed = await git(key, '-C', repository, 'commit-tree', tree.stdout.trim(), '-m', 'Shared attribution fixture');
+    assert.equal(committed.code, 0, committed.stderr);
+    const readback = await git(key, '-C', repository, 'cat-file', 'commit', committed.stdout.trim());
+    assert.equal(readback.code, 0, readback.stderr);
+    for (const field of ['author', 'committer']) {
+      assert.ok(readback.stdout.split('\n').some(line => line.startsWith(
+        `${field} ${attribution.name} <${attribution.email}> `)), readback.stdout);
+    }
+  }
+  const sharedOnly = join(directory, 'shared-attribution-only.json');
+  save(sharedOnly, { models, series });
+  const gptIdentityPath = join(series.gpt, 'identity-series.json');
+  const originalIdentity = readFileSync(gptIdentityPath);
+  try {
+    save(gptIdentityPath, { seriesKey: 'gpt', displaySeries: 'GPT', authorEmail: 'gpt-author@example.invalid',
+      github: identities.gpt });
+    const [selected, , github, email, name] = model.selected_identity(sharedOnly, null, 'gpt');
+    assert.equal(selected, 'gpt');
+    assert.deepEqual(github, identities.gpt);
+    assert.equal(name, 'Flip Baton - GPT');
+    assert.equal(email, 'gpt-author@example.invalid');
+    const perSeriesCommit = await gitWith(sharedOnly, 'gpt', '-C', repository, 'commit-tree', tree.stdout.trim(), '-m', 'Series attribution fixture');
+    assert.equal(perSeriesCommit.code, 0, perSeriesCommit.stderr);
+    const perSeriesReadback = await gitWith(sharedOnly, 'gpt', '-C', repository, 'cat-file', 'commit', perSeriesCommit.stdout.trim());
+    assert.equal(perSeriesReadback.code, 0, perSeriesReadback.stderr);
+    assert.ok(perSeriesReadback.stdout.split('\n').some(line =>
+      line.startsWith('author Flip Baton - GPT <gpt-author@example.invalid> ')), perSeriesReadback.stdout);
+    assert.ok(perSeriesReadback.stdout.split('\n').some(line =>
+      line.startsWith('committer Flip Baton - GPT <gpt-author@example.invalid> ')), perSeriesReadback.stdout);
+  } finally {
+    writeFileSync(gptIdentityPath, originalIdentity, { mode: 0o600 });
+  }
+});
+
+test('malformed shared registry attribution refuses before launching Git', () => {
+  const alternative = join(directory, 'invalid-shared-attribution.json');
+  const invalid = [null, {}, { name: 'Flip - Baton' }, { email: 'baton@example.invalid' },
+    { name: 'Flip - Baton', email: 'not-an-email' },
+    { name: 'Flip\nBaton', email: 'baton@example.invalid' },
+    { name: 'Flip - Baton', email: 'baton@example.invalid\nuser.name=other' }];
+  for (const attribution of invalid) {
+    save(alternative, { models, series, attribution });
+    const selected = { ...args('gpt-6-astra', ['git', 'status']), registry: alternative };
+    assert.throws(() => model.launch(selected, {}, () => assert.fail('unexpected launch')), model.Refusal);
+  }
+});
+
 test('native validation preserves exact model agreement and separate Git -m meanings', () => {
   for (const command of [['native-fixture'], ['native-fixture', '--model'],
     ['native-fixture', '--model', 'kimi-code/k3'], ['native-fixture', '--model=gpt-6-astra', '-m', 'another-model']]) {

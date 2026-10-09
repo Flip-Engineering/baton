@@ -25,7 +25,7 @@ only with `?fixture=<name>`
   not a `?fixture=` render document. Scripts a transient pre-open 503
   (`native-owner-subscription-unavailable`) followed by a healthy
   long-lived SSE response (hello, pending, transition). Carries the
-  exact client assertions: bounded probe resumes via `connectEvents`,
+  exact client assertions: response-header probe resumes via `connectEvents`,
   zero snapshot requests during events-only recovery, bound
   subject/cursor/generation, terminal 503 still stops with no polling,
   notice clears after hello. Harness step-counting unit: one script

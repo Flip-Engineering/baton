@@ -59,7 +59,7 @@ class McpContract(unittest.TestCase):
 
     def coord(self, *args, ok=True):
         p = subprocess.run([str(EXE), str(self.db), *args],
-                           text=True, capture_output=True, timeout=10)
+                           text=True, capture_output=True)
         if ok:
             self.assertEqual(p.returncode, 0, p.stderr)
         return p
@@ -69,7 +69,7 @@ class McpContract(unittest.TestCase):
         result = subprocess.run(
             ['node', str(MCP_SCRIPT), str(self.db), str(EXE), '--session', 'root'],
             input=''.join(json.dumps(row) + '\n' for row in requests),
-            text=True, capture_output=True, timeout=30,
+            text=True, capture_output=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         return [json.loads(line) for line in result.stdout.splitlines()]

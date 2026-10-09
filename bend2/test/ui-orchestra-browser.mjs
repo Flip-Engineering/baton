@@ -1,28 +1,30 @@
 // #682 browser qualification, two phases (remote-only):
-// Phase A drives the real `view` command end-to-end. Until the shared per-DB
-// owner subscription (#676) exists, the events route answers 503 and the page
-// must show the stream as explicitly unavailable without a retry loop.
-// Phase B runs the real server in-process with a test commit-notification
-// seam (the same helper shape as ui-orchestra-server.test.mjs) over the real
-// database, so live update, reconnect-cursor and gap recovery are exercised in
-// the browser while the canonical owner interface is absent.
+// Phase A drives the real `view` command and its elected native-owner event stream.
+// Phase B uses the in-process server seam to exercise reconnect-cursor and gap
+// recovery over the same committed database.
 // Usage: node ui-orchestra-browser.mjs EXE WORKDIR OUTDIR [CHROMIUM]
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createOrchestraServer } from '../ui/orchestra/server.mjs';
 
 const [EXE, WORK, OUT, CHROMIUM] = [process.argv[2], process.argv[3], process.argv[4], process.argv[5] || 'chromium'];
 const DB = join(WORK, 'orchestra.db');
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let view = null;
 let view2 = null;
 let chrome = null;
 
+function spawnTracked(...args) {
+  const child = spawn(...args);
+  child.closed = new Promise((resolve) => child.once('close', resolve));
+  return child;
+}
+
 function check(name, ok, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`);
-  if (!ok) { teardown(); process.exit(1); }
+  if (!ok) throw new Error(name + ': ' + detail);
 }
 
 function baton(...args) {
@@ -31,6 +33,7 @@ function baton(...args) {
   return r.stdout.trim();
 }
 
+try {
 // --- fixture: root conductor -> lead associate conductor -> worker/aide, ensemble+section
 mkdirSync(WORK, { recursive: true });
 const REPO = join(WORK, 'repo');
@@ -44,7 +47,6 @@ baton('attach', 'root', 'fixture', 'root-native', '');
 baton('role', 'root', 'principal-conductor');
 for (const [name, parent] of [['lead', 'root'], ['worker', 'lead'], ['aide', 'lead']]) {
   const ws = join(WORK, name);
-  mkdirSync(ws, { recursive: true });
   baton('recruit', name, parent, 'muse', 'configured-model', 'low', REPO, `${name}-branch`, ws, 'HEAD');
 }
 baton('role', 'lead', 'associate-conductor');
@@ -57,16 +59,18 @@ baton('section-member', 'qa-ensemble', 'qa-section', 'lead', 'worker', 'add');
 baton('message', 'qa-task-1', 'root', 'worker', 'task', 'Retained task input.');
 const workerCmd = join(WORK, 'worker-native');
 writeFileSync(workerCmd, `#!${process.execPath}\n` +
-  `console.log(JSON.stringify({stream:{kind:'session',id:'native-worker'},payload_type:'run.terminal.completed',payload:{kind:'run_terminal',terminal:'completed',text:'Worker completed the assigned task.'}}));\n`);
+  `console.log(JSON.stringify({stream:{kind:'session',id:'native-worker'},payload_type:'turn.input.user',payload:{kind:'turn_input_user',command_id:'worker-primary'}}));\n` +
+  `console.log(JSON.stringify({stream:{kind:'session',id:'native-worker'},payload_type:'run.terminal.completed',payload:{kind:'run_terminal',terminal:'completed',command_id:'worker-primary',text:'Worker completed the assigned task.'}}));\n`);
+chmodSync(workerCmd, 0o755);
 writeFileSync(join(WORK, 'worker-task.txt'), 'Task for worker');
 {
   const turn = spawnSync(EXE, [DB, 'turn', 'worker', 'worker-finished', workerCmd, 'configured-model', 'low',
     join(WORK, 'worker'), join(WORK, 'worker-task.txt'), join(WORK, 'worker.jsonl'), ''], { encoding: 'utf8' });
-  if (turn.status !== 0) { console.log('FAIL fixture turn — ' + turn.stdout + turn.stderr); process.exit(1); }
+  if (turn.status !== 0) throw new Error('fixture turn: ' + turn.stdout + turn.stderr);
 }
 
 // --- chromium over CDP
-chrome = spawn(CHROMIUM, ['--headless=new', '--no-sandbox', '--remote-debugging-port=0',
+chrome = spawnTracked(CHROMIUM, ['--headless=new', '--no-sandbox', '--remote-debugging-port=0',
   `--user-data-dir=${join(WORK, 'chrome')}`, 'about:blank'], { stdio: ['ignore', 'pipe', 'pipe'] });
 let chromeErr = '';
 const wsUrl = await new Promise((resolve, reject) => {
@@ -75,9 +79,9 @@ const wsUrl = await new Promise((resolve, reject) => {
     const m = chromeErr.match(/DevTools listening on (ws:\/\/\S+)/);
     if (m) resolve(m[1]);
   });
-  chrome.on('exit', (c) => reject(new Error(`chromium exited ${c}: ${chromeErr.slice(-400)}`)));
-  setTimeout(() => reject(new Error('no DevTools endpoint')), 20000);
-}).catch((e) => { console.log('FAIL chromium startup — ' + e.message); teardown(); process.exit(1); });
+  chrome.once('error', reject);
+  chrome.once('exit', (c) => reject(new Error(`chromium exited ${c}: ${chromeErr}`)));
+}).catch((e) => { console.log('FAIL chromium startup — ' + e.message); throw e; });
 
 let msgId = 0;
 const pendingCalls = new Map();
@@ -85,19 +89,53 @@ let pageWs = null;
 function attach(ws) {
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    if (msg.id && pendingCalls.has(msg.id)) { pendingCalls.get(msg.id)(msg); pendingCalls.delete(msg.id); }
+    if (msg.id && pendingCalls.has(msg.id)) {
+      const call = pendingCalls.get(msg.id);
+      pendingCalls.delete(msg.id);
+      if (msg.error) call.reject(new Error(JSON.stringify(msg.error)));
+      else call.resolve(msg);
+    }
+  };
+  ws.onclose = (event) => {
+    for (const [id, call] of pendingCalls) {
+      if (call.ws === ws) {
+        call.reject(new Error(`CDP connection closed ${event.code}: ${event.reason}`));
+        pendingCalls.delete(id);
+      }
+    }
   };
 }
 function send(ws, method, params = {}) {
   const id = ++msgId;
-  ws.send(JSON.stringify({ id, method, params }));
-  return new Promise((resolve) => pendingCalls.set(id, resolve));
+  return new Promise((resolve, reject) => {
+    pendingCalls.set(id, { ws, resolve, reject });
+    try { ws.send(JSON.stringify({ id, method, params })); }
+    catch (error) { pendingCalls.delete(id); reject(error); }
+  });
 }
 async function openPage(url) {
-  const list = await (await fetch(wsUrl.replace('ws://', 'http://').replace(/\/devtools\/.*$/, '/json/list'))).json();
-  const page = list.find((t) => t.type === 'page');
+  let response;
+  try {
+    response = await fetch(
+      wsUrl.replace('ws://', 'http://').replace(/\/devtools\/.*$/, '/json/new?about:blank'),
+      { method: 'PUT' },
+    );
+  } catch (error) {
+    const failure = new Error(
+      `Chromium target request failed; exit=${chrome.exitCode}; signal=${chrome.signalCode}; stderr=${chromeErr}`,
+      { cause: error },
+    );
+    throw failure;
+  }
+  if (!response.ok) throw new Error(await response.text());
+  const page = await response.json();
+  if (pageWs) pageWs.close();
   pageWs = new WebSocket(page.webSocketDebuggerUrl);
-  await new Promise((r, j) => { pageWs.onopen = r; pageWs.onerror = j; });
+  await new Promise((resolve, reject) => {
+    pageWs.onopen = resolve;
+    pageWs.onerror = reject;
+    pageWs.onclose = (event) => reject(new Error(`CDP closed before open ${event.code}: ${event.reason}`));
+  });
   attach(pageWs);
   await send(pageWs, 'Runtime.enable');
   await send(pageWs, 'Page.enable');
@@ -105,38 +143,49 @@ async function openPage(url) {
 }
 async function evalJs(expression) {
   const r = await send(pageWs, 'Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+  if (r.result?.exceptionDetails) throw new Error(JSON.stringify(r.result.exceptionDetails));
   return r.result && r.result.result ? r.result.result.value : undefined;
 }
-async function until(name, expression, timeoutMs = 20000) {
-  const start = Date.now();
-  for (;;) {
-    const value = await evalJs(expression);
-    if (value) return value;
-    if (Date.now() - start > timeoutMs) { check(name, false, 'timeout'); return; }
-    await sleep(250);
-  }
+async function until(name, expression) {
+  const value = await evalJs(`new Promise((resolve) => {
+    const matches = () => Boolean(${expression});
+    if (matches()) return resolve(true);
+    const observer = new MutationObserver(() => {
+      if (matches()) { observer.disconnect(); resolve(true); }
+    });
+    observer.observe(document, {
+      subtree: true, childList: true, attributes: true, characterData: true,
+    });
+    if (matches()) { observer.disconnect(); resolve(true); }
+  })`);
+  check(name, value === true);
+  return value;
 }
 
 // ============ Phase A: the real view command ============
-const PORT_A = 17682;
-view = spawn(EXE, [DB, 'view', 'root', 'root', String(PORT_A)], { stdio: ['pipe', 'pipe', 'pipe'] });
-let viewBuf = '';
-view.stdout.on('data', (d) => { viewBuf += d; });
-let viewLines = await new Promise((resolve) => {
-  const t = setInterval(() => {
-    const lines = viewBuf.split('\n').filter(Boolean);
-    if (lines.length >= 2) { clearInterval(t); resolve(lines); }
-  }, 100);
-  setTimeout(() => { clearInterval(t); resolve(viewBuf.split('\n').filter(Boolean)); }, 15000);
+const ownerReady = JSON.parse(baton('owner-status'));
+check('native owner reports a ready generation and cursor',
+  /^\d+$/.test(String(ownerReady.generation))
+    && /^\d+$/.test(String(ownerReady.cursor))
+    && typeof ownerReady.gap === 'boolean', JSON.stringify(ownerReady));
+view = spawnTracked(EXE, [DB, 'view', 'root', 'root', '0'], { stdio: ['pipe', 'pipe', 'pipe'] });
+const viewLines = createInterface({ input: view.stdout })[Symbol.asyncIterator]();
+const viewExit = new Promise((_, reject) => {
+  view.once('error', reject);
+  view.once('exit', (code) => reject(new Error(`view exited ${code} before the readiness line`)));
 });
-check('view command reports listener JSON and URL line',
-  viewLines.length >= 2 && viewLines[0].includes('"port"') && viewLines[1].startsWith('http://127.0.0.1:'),
-  viewLines.join(' / '));
-const urlA = viewLines[1].trim();
+const firstViewLine = await Promise.race([viewLines.next(), viewExit]);
+check('view command reports the live URL',
+  !firstViewLine.done && firstViewLine.value.startsWith('Orchestra live view: '),
+  firstViewLine.value || 'view command closed stdout');
+const urlA = firstViewLine.value.slice('Orchestra live view: '.length).trim();
+check('view URL uses the loopback HTTP listener', urlA.startsWith('http://127.0.0.1:'));
 
 await openPage(urlA);
 await until('tree renders the fixture hierarchy from the snapshot',
   `document.querySelectorAll('#tree li').length >= 3 && document.getElementById('tree').textContent.includes('worker')`);
+await until('native owner event stream is ready',
+  `document.getElementById('conn-state').textContent === 'live'`);
 check('transitions list shows committed events with recorded times', await evalJs(
   `document.querySelectorAll('#transitions li').length > 0 && /\\d{4}-\\d{2}-\\d{2}|:/.test(document.getElementById('transitions').textContent)`));
 await evalJs(`[...document.querySelectorAll('#tree button')].find((b) => (b.textContent || '').includes('worker'))?.click()`);
@@ -144,30 +193,28 @@ check('detail separates configured, observed and recorded execution', await eval
   `['configured', 'observed', 'recorded execution', 'actual process'].every((k) => document.getElementById('detail').textContent.includes(k))`));
 check('actual process is explicit unknown', await evalJs(
   `document.getElementById('detail').textContent.includes('unknown')`));
-
-// Until the 676 subscription exists the page must report the stream as
-// unavailable and stop retrying (no browser polling loop).
-await until('events 503 surfaces as explicitly unavailable, not a retry loop',
-  `document.getElementById('conn-state').textContent === 'unavailable' && document.getElementById('notice').textContent.includes('#676')`, 45000);
-await sleep(4000);
-check('no retry loop after the permanent 503', await evalJs(
-  `document.getElementById('conn-state').textContent === 'unavailable'`));
 await evalJs(`window.__qaMark = 41`);
+const transitionsBeforeNativeCommit = await evalJs(`document.querySelectorAll('#transitions li').length`);
+const cursorBeforeNativeCommit = await evalJs(`document.getElementById('cursor-state').textContent`);
+baton('message', 'qa-guidance-native', 'root', 'worker', 'guidance', 'Committed through the native owner.');
+await until('native owner SSE delivers the committed message without reload',
+  `window.__qaMark === 41 && document.querySelectorAll('#transitions li').length > ${transitionsBeforeNativeCommit} && document.getElementById('cursor-state').textContent !== ${JSON.stringify(cursorBeforeNativeCommit)}`);
 
 // operator-triggered reconnect re-reads the snapshot through the view command server
+const cursorBeforeReconnect = await evalJs(`document.getElementById('cursor-state').textContent`);
 baton('message', 'qa-guidance-1', 'root', 'worker', 'guidance', 'Follow-up input.');
 await evalJs(`document.getElementById('reconnect').click()`);
 await until('manual reconnect re-reads the snapshot with the new commit',
-  `window.__qaMark === 41 && [...document.querySelectorAll('#transitions li')].some((li) => li.textContent.includes('guidance'))`);
+  `window.__qaMark === 41 && document.getElementById('cursor-state').textContent !== ${JSON.stringify(cursorBeforeReconnect)}`);
 
 // narrow viewport + reduced motion evidence (phase A server stays up)
 await send(pageWs, 'Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-await sleep(600);
+await evalJs('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
 const narrow = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'narrow-390.png'), Buffer.from(narrow.result.data, 'base64'));
 await send(pageWs, 'Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 await send(pageWs, 'Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
-await sleep(600);
+await evalJs('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
 const reduced = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'reduced-motion.png'), Buffer.from(reduced.result.data, 'base64'));
 check('narrow and reduced-motion evidence captured', true, 'narrow-390.png, reduced-motion.png');
@@ -210,29 +257,36 @@ const server2 = createOrchestraServer({ databasePath: DB, reader: 'root', subjec
   subscribeCommittedChanges, port: portB });
 await new Promise((r) => server2.on('listening', r));
 await until('page reconnects and resumes at its cursor',
-  `window.__qaMark === 42 && document.getElementById('conn-state').textContent === 'live'`, 45000);
+  `window.__qaMark === 42 && document.getElementById('conn-state').textContent === 'live'`);
 check('no duplicated transitions after reconnect', await evalJs(
   `(() => { const rows = [...document.querySelectorAll('#transitions li')].map((li) => li.textContent); return new Set(rows).size === rows.length; })()`));
 
-// retention gap: prune below the page cursor, then commit; page gaps and resnapshots
+// Remove an unnotified change after the page cursor, then let a later commit reveal the gap.
+baton('message', 'qa-guidance-pruned', 'root', 'worker', 'guidance', 'Committed without a notice.');
 {
   const db = new DatabaseSync(DB);
-  db.exec('DELETE FROM native_changes WHERE change_id <= (SELECT max(change_id) - 1 FROM native_changes)');
+  db.exec('DELETE FROM native_changes WHERE change_id <= (SELECT max(change_id) FROM native_changes)');
   db.close();
 }
 baton('message', 'qa-guidance-3', 'root', 'worker', 'guidance', 'After pruning.');
 committed();
 await until('pruned cursor produces a gap notice and fresh state',
-  `window.__qaMark === 42 && !document.getElementById('notice').hidden && document.getElementById('notice').textContent.length > 0`, 45000);
+  `window.__qaMark === 42 && !document.getElementById('notice').hidden && document.getElementById('notice').textContent.length > 0`);
 await until('page recovers to live after the gap resnapshot',
-  `document.getElementById('conn-state').textContent === 'live'`, 45000);
+  `document.getElementById('conn-state').textContent === 'live'`);
 
 console.log('BROWSER_QA_OK');
-teardown();
+} finally {
+  await teardown();
+}
 process.exit(0);
 
-function teardown() {
-  try { chrome && chrome.kill('SIGTERM'); } catch {}
-  try { view && view.kill('SIGTERM'); } catch {}
-  try { view2 && view2.kill('SIGTERM'); } catch {}
+async function stopChild(child) {
+  if (!child) return;
+  if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+  await child.closed;
+}
+
+async function teardown() {
+  await Promise.all([chrome, view, view2].map(stopChild));
 }

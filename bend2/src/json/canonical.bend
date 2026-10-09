@@ -23,6 +23,7 @@ type Json is Data:
   Jtrue{}
   Jfalse{}
   Jint{value: U32}
+  Jnum{token: String}
   Jstr{value: String}
   Jarr{head: Json, tail: Json}
   Jobj{members: Json}
@@ -138,6 +139,7 @@ def cell_le_b(akey: String, b: Json) -> Bool:
     case Jtrue{}: False{}
     case Jfalse{}: False{}
     case Jint{+value}: False{}
+    case Jnum{+token}: False{}
     case Jstr{+value}: False{}
     case Jarr{+head, +tail}: False{}
     case Jobj{+members}: False{}
@@ -150,6 +152,7 @@ def cell_le(a: Json, b: Json) -> Bool:
     case Jtrue{}: False{}
     case Jfalse{}: False{}
     case Jint{+value}: False{}
+    case Jnum{+token}: False{}
     case Jstr{+value}: False{}
     case Jarr{+head, +tail}: False{}
     case Jobj{+members}: False{}
@@ -165,6 +168,7 @@ def key_of(cell: Json) -> String:
     case Jtrue{}: SNil{}
     case Jfalse{}: SNil{}
     case Jint{+value}: SNil{}
+    case Jnum{+token}: SNil{}
     case Jstr{+value}: SNil{}
     case Jarr{+head, +tail}: SNil{}
     case Jobj{+members}: SNil{}
@@ -177,6 +181,7 @@ def value_of(cell: Json) -> Json:
     case Jtrue{}: Jnil{}
     case Jfalse{}: Jnil{}
     case Jint{+value}: Jnil{}
+    case Jnum{+token}: Jnil{}
     case Jstr{+value}: Jnil{}
     case Jarr{+head, +tail}: Jnil{}
     case Jobj{+members}: Jnil{}
@@ -193,6 +198,7 @@ def insert_cell(+cell: Json, +chain: Json) -> Json:
     case Jtrue{}: chain
     case Jfalse{}: chain
     case Jint{+value}: chain
+    case Jnum{+token}: chain
     case Jstr{+value}: chain
     case Jarr{+head, +tail}: chain
     case Jobj{+members}: chain
@@ -205,6 +211,7 @@ def sort_pairs(chain: Json) -> Json:
     case Jtrue{}: Jnil{}
     case Jfalse{}: Jnil{}
     case Jint{+value}: Jnil{}
+    case Jnum{+token}: Jnil{}
     case Jstr{+value}: Jnil{}
     case Jarr{+head, +tail}: Jnil{}
     case Jobj{+members}: Jnil{}
@@ -238,6 +245,7 @@ def normalize(+j: Json) -> Json:
     case Jtrue{}: Jtrue{}
     case Jfalse{}: Jfalse{}
     case Jint{+value}: Jint{value}
+    case Jnum{+token}: Jnum{token}
     case Jstr{+value}: Jstr{value}
     case Jarr{+head, +tail}: Jarr{normalize(head), normalize(tail)}
     case Jobj{+members}: Jobj{sort_pairs(normalize(members))}
@@ -261,6 +269,7 @@ def emit(+j: Json, +mode: Mode, first: Bool) -> List<String>:
     case Jtrue{}: ["true"]
     case Jfalse{}: ["false"]
     case Jint{+value}: [U32.show(value)]
+    case Jnum{+token}: [token]
     case Jstr{+value}: [string_literal(value)]
     case Jarr{+head, +tail}:
       pick_list(mode_is_value(mode),

@@ -4,7 +4,6 @@
 # exits. The server reads only committed coordinator state through the native_changes
 # projection; it never writes to the database.
 import Base
-import ../host/text.bend as T
 import ../host/process.bend as P
 import ../host/control.bend as Host
 import ../host/session-lock.bend as Lock
@@ -65,8 +64,8 @@ def resolve_server(+executable: String) -> IO(String):
   do IO<String>:
     installed_path : String <- IO.pure(String,installed_candidate(directory_of(executable)))
     source_path : String <- IO.pure(String,source_candidate(directory_of(executable)))
-    installed : Result<&1,&1,U32 & String,String> <- Host.Control.command(installed_path)
-    source : Result<&1,&1,U32 & String,String> <- Host.Control.command(source_path)
+    installed : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(installed_path)
+    source : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(source_path)
     resolve_choice(installed,source)
 
 def error_text(error: U32 & String) -> String:
@@ -147,11 +146,11 @@ def node_or_die(node: Result<&1,&1,U32 & String,String>) -> IO(String):
 
 def run_body(subject: String, +reader: String, port: String, +canonical: String) -> IO(Unit):
   do IO<Unit>:
-    executable : String <- IO.try(String,Lock.SessionLock.executable())
+    +executable : String <- IO.try(String,Lock.SessionLock.executable())
     found : Result<&1,&1,U32 & String,String> <- Host.Control.command("node")
     node : String <- node_or_die(found)
     server : String <- resolve_server(executable)
-    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([node,server,"--database",canonical,"--reader",reader,"--subject",subject,"--host","127.0.0.1","--port",port]),".",canonical ++ ".view.stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([node,server,"--database",canonical,"--reader",reader,"--subject",subject,"--host","127.0.0.1","--port",port,"--baton2",executable]),".",canonical ++ ".view.stderr")
     run_started(canonical,reader,spawned)
 
 def canonical_or_die(+db: String, canonical: Result<&1,&1,U32 & String,String>) -> IO(String):

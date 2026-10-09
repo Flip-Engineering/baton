@@ -16,6 +16,7 @@
 # docs/bend2/examples/arch-replay-cursor.evidence.md.
 
 import Base
+import ../host/text.bend as Text
 
 # CASE|name|restart|basis|rows|readerCursor
 type CaseRow is Data:
@@ -109,13 +110,6 @@ def emit_lines(lines: List<&2, String>) -> IO(Unit):
         u : Unit <- emit_line(h)
         emit_lines(t)
 
-def read_go(m: File & Result<&1, &1, (U32 & String), String>) -> IO(Unit):
-  (f, r) = m
-  do IO<Unit>:
-    text : String <- IO.pass(String, r)
-    u : Unit <- emit_lines(String.lines(text))
-    File.close(f)
-
 # The corpus path: the first command-line argument when one is given, else the repo-root-relative
 # default the header records.
 def corpus_path(args: List<&1, String>) -> String:
@@ -128,6 +122,5 @@ def corpus_path(args: List<&1, String>) -> String:
 def main() -> IO(Unit):
   do IO<Unit>:
     as : List<&1, String> <- IO.args()
-    f : File <- IO.try(File, File.open(corpus_path(as), "r"))
-    m : File & Result<&1, &1, (U32 & String), String> <- File.read(f, 8192)
-    read_go(m)
+    text : String <- IO.try(String, Text.Text.read(corpus_path(as)))
+    emit_lines(String.lines(text))

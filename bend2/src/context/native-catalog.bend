@@ -1,0 +1,137 @@
+# Decode the installed provider inventory into the existing declaration catalog.
+# The provider supplies package verification; this adapter preserves its declared
+# identities and refuses malformed inventory rows before selection.
+import Base
+import ../json/canonical.bend as J
+import ./request.bend as Req
+import ./codec.bend as Codec
+import ./engines.bend as Eng
+import ./engines-decl.bend as Decl
+import ./engines-select.bend as Sel
+import ./native-declaration.bend as NativeDecl
+
+type CatalogDecode is Data:
+  CatalogDecoded{catalog: Decl.Cat, inventory: Decl.Inv, installed: Eng.SS}
+  CatalogRefused{condition: String}
+
+type CatalogSelection is Data:
+  CatalogSelected{verdict: Sel.Verdict}
+  CatalogSelectionRefused{condition: String}
+
+def member_value(found: Maybe<&2, J.Json>) -> J.Json:
+  match found:
+    case None{}: J.Jnil{}
+    case Some{+value}: value
+
+def member(+object: J.Json, +key: String) -> J.Json:
+  match object:
+    case J.Jobj{+members}: member_value(Req.member_lookup(key, members))
+    case other: J.Jnil{}
+
+def field(+object: J.Json, +key: String) -> String:
+  Req.text_of(member(object, key))
+
+def is_array(+value: J.Json) -> Bool:
+  match value:
+    case J.Jarr{head, tail}: True{}
+    case other: False{}
+
+def artifact_items(+items: J.Json) -> Decl.Arts:
+  match items:
+    case J.Jarr{J.Jnil{}, J.Jnil{}}: Decl.ArtsNil{}
+    case J.Jarr{+head, +tail}:
+      Decl.ArtsCons{Decl.Art{field(head, "packagePath"), field(head, "sha256"), field(head, "role")}, artifact_items(tail)}
+    case other: Decl.ArtsNil{}
+
+def merge_arts(+left: Decl.Arts, +right: Decl.Arts) -> Decl.Arts:
+  match left:
+    case Decl.ArtsNil{}: right
+    case Decl.ArtsCons{+head, +rest}: Decl.ArtsCons{head, merge_arts(rest, right)}
+
+def merge_digs(+left: Decl.Digs, +right: Decl.Digs) -> Decl.Digs:
+  match left:
+    case Decl.DigsNil{}: right
+    case Decl.DigsCons{+head, +rest}: Decl.DigsCons{head, merge_digs(rest, right)}
+
+def merge_ss(+left: Eng.SS, +right: Eng.SS) -> Eng.SS:
+  match left:
+    case Eng.SSNil{}: right
+    case Eng.SSCons{+head, +rest}: Eng.SSCons{head, merge_ss(rest, right)}
+
+def merge_inv(+left: Decl.Inv, +right: Decl.Inv) -> Decl.Inv:
+  match left:
+    case Decl.Inv{artifacts, schemas, digests}:
+      match right:
+        case Decl.Inv{r_artifacts, r_schemas, r_digests}:
+          Decl.Inv{merge_arts(artifacts, r_artifacts), merge_ss(schemas, r_schemas), merge_digs(digests, r_digests)}
+
+def append_catalog(+catalog: Decl.Cat, +declaration: Decl.Decl) -> Decl.Cat:
+  match catalog:
+    case Decl.CatNil{}: Decl.CatCons{declaration, Decl.CatNil{}}
+    case Decl.CatCons{+head, +rest}: Decl.CatCons{head, append_catalog(rest, declaration)}
+
+def merge_catalog(+left: Decl.Cat, +right: Decl.Cat) -> Decl.Cat:
+  match left:
+    case Decl.CatNil{}: right
+    case Decl.CatCons{+head, +rest}: Decl.CatCons{head, merge_catalog(rest, right)}
+
+def decoded_declaration(+row: J.Json, decoded: NativeDecl.DeclarationDecode) -> CatalogDecode:
+  match decoded:
+    case NativeDecl.DeclarationRefused{field}: CatalogRefused{"moduleDeclaration:" ++ field}
+    case NativeDecl.DeclarationDecoded{declaration, inventory}:
+      CatalogDecoded{Decl.CatCons{declaration, Decl.CatNil{}}, inventory, Eng.ss_one(field(row, "moduleId"))}
+def decoded_row(+row: J.Json) -> CatalogDecode:
+  decoded_declaration(row, NativeDecl.decode(member(row, "declaration"), field(row, "declarationDigest")))
+
+def catalog_tail_join(catalog: Decl.Cat, +inventory: Decl.Inv, +installed: Eng.SS,
+                      tail: CatalogDecode) -> CatalogDecode:
+  match tail:
+    case CatalogRefused{condition}: CatalogRefused{condition}
+    case CatalogDecoded{next_catalog, next_inventory, next_installed}:
+      CatalogDecoded{merge_catalog(catalog, next_catalog), merge_inv(inventory, next_inventory), merge_ss(installed, next_installed)}
+
+def catalog_tail_row(row: CatalogDecode, tail: CatalogDecode) -> CatalogDecode:
+  match row:
+    case CatalogRefused{condition}: CatalogRefused{condition}
+    case CatalogDecoded{catalog, inventory, installed}:
+      catalog_tail_join(catalog, inventory, installed, tail)
+
+def catalog_tail(+rows: J.Json) -> CatalogDecode:
+  match rows:
+    case J.Jnil{}:
+      CatalogDecoded{Decl.CatNil{}, Decl.Inv{Decl.ArtsNil{}, Eng.ss_empty(), Decl.DigsNil{}}, Eng.ss_empty()}
+    case J.Jarr{J.Jnil{}, J.Jnil{}}:
+      CatalogDecoded{Decl.CatNil{}, Decl.Inv{Decl.ArtsNil{}, Eng.ss_empty(), Decl.DigsNil{}}, Eng.ss_empty()}
+    case J.Jarr{+head, +tail}: catalog_tail_row(decoded_row(head), catalog_tail(tail))
+    case other: CatalogRefused{"inventoryModulesMalformed"}
+
+def inventory_value(+value: J.Json) -> CatalogDecode:
+  match value:
+    case J.Jobj{members}:
+      Bool.pick(CatalogDecode,
+        Bool.and(String.eq(field(value, "status"), "available"), is_array(member(value, "modules"))),
+        catalog_tail(member(value, "modules")), CatalogRefused{"providerInventoryUnavailable"})
+    case other: CatalogRefused{"providerInventoryMalformed"}
+
+def inventory_convert(converted: Codec.JsonConv) -> CatalogDecode:
+  match converted:
+    case Codec.JcRefused{condition}: CatalogRefused{"providerInventoryJson:" ++ condition}
+    case Codec.JcJson{+value}: inventory_value(value)
+
+def inventory_raw(+raw: Codec.RawValue) -> CatalogDecode:
+  inventory_convert(Codec.raw_to_json(raw))
+
+def inventory_frame(frame: Codec.FrameRead) -> CatalogDecode:
+  match frame:
+    case Codec.FrRefused{condition}: CatalogRefused{"providerInventoryRows:" ++ condition}
+    case Codec.FrValue{+value}: inventory_raw(value)
+
+def inventory_rows(+rows: String) -> CatalogDecode:
+  inventory_frame(Codec.frame_read(Req.parse_rows(rows)))
+
+def select(+catalog: CatalogDecode, +operands: Sel.RequestOperands,
+           +project: Sel.ProjectState, +captures: Sel.Captures) -> CatalogSelection:
+  match catalog:
+    case CatalogRefused{condition}: CatalogSelectionRefused{condition}
+    case CatalogDecoded{catalog, inventory, installed}:
+      CatalogSelected{Sel.request_verdict(catalog, Sel.sel_inputs(operands, project), inventory, captures)}

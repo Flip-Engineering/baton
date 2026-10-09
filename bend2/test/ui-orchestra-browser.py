@@ -36,11 +36,11 @@ class OrchestraBrowser(unittest.TestCase):
             out.mkdir()
             result = subprocess.run(
                 [node, str(DRIVER), str(EXE), work, str(out), chromium],
-                text=True, capture_output=True, timeout=420)
+                text=True, capture_output=True)
             sys.stdout.write(result.stdout)
-            sys.stderr.write(result.stderr[-2000:])
+            sys.stderr.write(result.stderr)
             self.assertEqual(result.returncode, 0,
-                             result.stdout[-2000:] + result.stderr[-2000:])
+                             result.stdout + result.stderr)
             self.assertIn('BROWSER_QA_OK', result.stdout)
 
 

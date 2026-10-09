@@ -2,6 +2,9 @@ import Base
 import ../host/process.bend as P
 import ../json/canonical.bend as J
 
+def models_args(cmd: String) -> List<String>:
+  [cmd,"debug","models"]
+
 def arguments(model: String, effort: String) -> List<String>:
   ["--json","--model",model,"-c","model_reasoning_effort=" ++ J.string_literal(effort),"--dangerously-bypass-approvals-and-sandbox","-"]
 
@@ -15,3 +18,7 @@ def start_player(cmd: String, model: String, effort: String, cwd: String, stderr
 
 def input(handle: U32, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.ProcessChild.write(handle,text)
+
+# The public Unix daemon queues input for the recorded Codex thread.
+def queue_admission(thread: String, pointer: String) -> List<String>:
+  ["codex","queue","--remote","unix://","--thread",thread,"--message",pointer]

@@ -110,9 +110,9 @@ acceptance is recorded.
 
 The OMP Player turn path accepts guidance during a native turn at response,
 completed-message and tool-event boundaries. Guidance during a silent operation
-waits for the next such event. Codex and OMP retained receive can start the next
-turn from pending input. Other Player harnesses use an explicitly started native
-turn. Claude Conductor delivery uses Channels. The [architecture](architecture.md)
+waits for the next such event. Codex, OMP, Muse and Claude Code retained receive can start the next
+turn from pending input. An interactive Claude Conductor's delivery uses Channels. The
+[architecture](architecture.md)
 describes their protocol and recovery boundaries.
 
 Ensemble membership selects which peer messages may be sent. Messages still
@@ -120,14 +120,7 @@ address individual sessions. The Conductor sends separate messages to members
 when a finding or instruction needs several recipients. Knowledge visibility
 continues to follow its recorded session scopes and explicit promotions.
 
-## Laws and trust
+## Session identities
 
-The coordinator entry imports laws over the actual role, membership, route,
-admission and refusal functions. Native builds verify those laws. Runtime tests
-exercise the public CLI, stored messages, receipts and endpoint invocation;
-SQLite execution and host effects retain their external assumptions.
-
-The local CLI accepts declared session identities. Agents share the user's
-filesystem and database access. The routing contract checks those declared
-identities and recorded relationships. It does not authenticate a hostile
-caller who can choose another sender ID or edit the database.
+The local CLI addresses sessions by their recorded IDs. Parent relationships,
+roles and Ensemble membership configure message routes in the shared database.
