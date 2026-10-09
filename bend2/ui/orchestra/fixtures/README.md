@@ -1,7 +1,7 @@
 # DOM behavior fixtures
 
-These files exercise hierarchy, filter, detail, transition and
-knowledge band rendering in `bend2/ui/orchestra/`. Every id starts
+These files exercise the roster, selected records, transitions, and
+knowledge graphs in `bend2/ui/orchestra/`. Every id starts
 with `fixture-` and each file carries `"fixture": true`.
 
 They carry synthetic ids and a fixture marker. Backend field
@@ -11,9 +11,10 @@ only with `?fixture=<name>`
 `DOM behavior fixture, not live state` while live updates stay off.
 
 A fixture may carry a `knowledge` block shaped like the
-`/orchestra/knowledge/overview` response, and the knowledge band renders from
+`/orchestra/knowledge/overview` response, and the knowledge graph renders from
 that block; the shape is described in `../interface.md`. `fixture-small`,
-`fixture-dense` and `fixture-gap` carry no block and render the band's notice.
+`fixture-dense` and `fixture-gap` carry no block and render the notice in the
+knowledge readout.
 
 - `fixture-small.json`: 6 actors across three levels, two ensembles
   (one with a section), one orphaned parent reference, mixed
@@ -28,13 +29,13 @@ that block; the shape is described in `../interface.md`. `fixture-small`,
   `selection.gap: true`. Renders the history-gap notice path.
 - `fixture-knowledge.json`: 11 actors across four levels, one ensemble, three
   transitions, and a `knowledge` block with 14 findings and 9 promotions. It
-  covers the seats surface (four ranks plus an author the snapshot does not
-  carry), the promotion readout, a promotion whose source seat differs from the
+  covers parent-depth placement and an author the snapshot does not
+  carry, recorded sharing paths, a promotion whose source differs from the
   finding's author, six findings that no seat has promoted, and findings that
-  carry evidence and limits for the selected-actor pane. Actors are running,
-  completed, failed and pending, so `Live only` narrows the surface.
+  carry evidence and limits for the selected record. Actors are running,
+  completed, failed and pending, exercising the quiet-actor disclosure.
 - `fixture-knowledge-empty.json`: three actors and a `knowledge` block with no
-  findings, no promotions and `empty: true`. Renders the knowledge band's empty
+  findings, no promotions and `empty: true`. Renders the knowledge graph's empty
   state.
 - `fixture-events-recovery.json`: harness-driven SSE recovery script,
   not a `?fixture=` render document. Scripts a transient pre-open 503

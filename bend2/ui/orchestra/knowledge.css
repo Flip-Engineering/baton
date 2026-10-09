@@ -1,0 +1,106 @@
+/* Knowledge layer: findings attached to their authors, promotion
+   paths between bands, and the collapsed whole-orchestra canvas.
+   Self-sufficient styles with page-token fallbacks; the document
+   stylesheet may replace the tokens without breaking this module. */
+
+.kw-band { display: block; }
+
+.kw-author { margin: 0; }
+
+.kw-strip {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.kw-tick, .kw-anchor, .knode { cursor: pointer; }
+
+.kw-mark { fill: var(--ink, #141a26); }
+
+.kw-mark.unshared {
+  fill: var(--paper, #fbfcfe);
+  stroke: var(--attention, #a2611f);
+  stroke-width: 1.5px;
+}
+
+.kw-tick.selected .kw-mark {
+  stroke: var(--selection, #2a3e6b);
+  stroke-width: 2px;
+}
+
+.kw-strip text {
+  font-family: var(--sans, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif);
+  font-size: var(--step0, 12px);
+  fill: var(--muted, #5b6478);
+}
+
+.kw-stub { color: var(--attention, #a2611f); overflow-wrap: anywhere; }
+
+.kw-destinations { display: flex; flex-wrap: wrap; gap: 2px 12px; }
+
+.kw-claim {
+  font-family: var(--sans, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif);
+  font-size: var(--step1, 13px);
+  color: var(--ink, #141a26);
+  margin: 2px 0 0;
+}
+
+.kw-evidence, .kw-limits {
+  font-family: var(--sans, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif);
+  font-size: var(--step0, 12px);
+  color: var(--muted, #5b6478);
+  margin: 2px 0 0;
+}
+
+.kw-canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.kw-canvas text {
+  font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace);
+  font-size: var(--step0, 12px);
+  fill: var(--muted, #5b6478);
+}
+
+.kw-canvas .kw-word, .kw-canvas .kw-name {
+  font-family: var(--sans, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif);
+}
+
+.kw-actor { fill: var(--muted, #5b6478); }
+
+.knode.selected .kw-finding { stroke: var(--selection, #2a3e6b); stroke-width: 2px; }
+
+.kw-finding { fill: var(--ink, #141a26); }
+
+.kw-finding.unshared {
+  fill: var(--paper, #fbfcfe);
+  stroke: var(--attention, #a2611f);
+  stroke-width: 1.5px;
+}
+
+.kw-edge-authorship { stroke: var(--muted, #5b6478); stroke-width: 1px; }
+
+.kw-edge-share { stroke: var(--attention, #a2611f); stroke-width: 1.5px; }
+
+.kw-edge-deliver { stroke: var(--muted, #5b6478); stroke-width: 1.5px; }
+
+.kw-edge-promote {
+  stroke: var(--selection, #2a3e6b);
+  stroke-width: 1.5px;
+  stroke-dasharray: 5 3;
+}
+
+.kw-dim { opacity: 0.15; }
+
+.kw-legend {
+  font-size: var(--step0, 12px);
+  max-width: 78ch;
+}
+
+:focus-visible { outline: 2px solid var(--selection, #2a3e6b); }
+
+@media (prefers-reduced-motion: reduce) {
+  .kw-canvas * { transition: none; }
+}

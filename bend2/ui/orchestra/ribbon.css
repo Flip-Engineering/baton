@@ -1,0 +1,150 @@
+/* History ribbon presentation. One mark row, a readout line, and the full
+   recorded list behind one control. Colours come from the page tokens with the
+   shipped values as fallbacks. */
+
+.ribbon {
+  padding: 10px 0 6px;
+  border-top: 1px solid var(--hairline, #d7dce5);
+  min-width: 0;
+}
+
+.ribbon-slider {
+  position: relative;
+  padding: 6px 0 8px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.ribbon-slider:focus-visible {
+  outline: 2px solid var(--selection, #2a3e6b);
+  outline-offset: 2px;
+}
+
+.ribbon-strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 34px;
+}
+
+.ribbon-mark {
+  flex: 1 1 0;
+  min-width: 1px;
+  height: 20px;
+  background: var(--hairline, #d7dce5);
+  border-radius: 1px;
+}
+
+/* The strip reads as the run's activity: the colour is the recorded kind most
+   present in that stretch. */
+.ribbon-mark[class*="ribbon-kind-message-"] { background: var(--ink, #141a26); }
+.ribbon-mark.ribbon-kind-message-task,
+.ribbon-mark.ribbon-kind-message-guidance,
+.ribbon-mark.ribbon-kind-message-recovery { background: var(--attention, #a2611f); }
+.ribbon-mark.ribbon-kind-message-report,
+.ribbon-mark.ribbon-kind-message-receipt,
+.ribbon-mark.ribbon-kind-report { background: var(--selection, #2a3e6b); }
+.ribbon-mark.ribbon-kind-execution,
+.ribbon-mark.ribbon-kind-native-request { background: var(--running, #1e7e34); }
+.ribbon-mark.ribbon-kind-stop { background: var(--failed, #b3261e); }
+.ribbon-mark[class*="ribbon-kind-ensemble"],
+.ribbon-mark[class*="ribbon-kind-membership"],
+.ribbon-mark[class*="ribbon-kind-section"],
+.ribbon-mark.ribbon-kind-role { background: var(--waiting, #8a6d00); }
+
+.ribbon-mark.ribbon-many { height: 28px; }
+
+.ribbon-mark.ribbon-here {
+  height: 34px;
+  background: var(--attention, #a2611f);
+}
+
+.ribbon-readout {
+  margin: 0;
+  font-size: var(--step0, 12px);
+  color: var(--ink, #141a26);
+  font-family: var(--mono, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.ribbon-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.ribbon-button {
+  padding: 4px 9px;
+  font-size: var(--step0, 12px);
+  color: var(--ink, #141a26);
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--hairline, #d7dce5);
+  border-radius: var(--radius, 3px);
+  cursor: pointer;
+}
+
+.ribbon-button:hover { border-color: var(--selection, #2a3e6b); color: var(--selection, #2a3e6b); }
+
+.ribbon-button[disabled] {
+  color: var(--muted, #5b6478);
+  border-color: var(--hairline, #d7dce5);
+  cursor: default;
+}
+
+.ribbon-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  border-top: 1px solid var(--hairline, #d7dce5);
+}
+
+.ribbon-row {
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0 12px;
+  width: 100%;
+  padding: 3px 6px;
+  text-align: left;
+  font-size: var(--step0, 12px);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--hairline, #d7dce5);
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.ribbon-row:hover { background: var(--wash, #eef1f6); }
+.ribbon-row[aria-current="true"] { border-left: 3px solid var(--attention, #a2611f); }
+
+.ribbon-row time {
+  font-family: var(--mono, monospace);
+  color: var(--muted, #5b6478);
+  font-variant-numeric: tabular-nums;
+}
+
+.ribbon-row-kind { color: var(--ink, #141a26); }
+
+.ribbon-row-who,
+.ribbon-row-far {
+  font-family: var(--mono, monospace);
+  color: var(--muted, #5b6478);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ribbon-row-note {
+  padding: 6px;
+  font-size: var(--step0, 12px);
+  color: var(--muted, #5b6478);
+}
+
+@media (max-width: 720px) {
+  .ribbon-row { grid-template-columns: max-content minmax(0, 1fr); }
+  .ribbon-row-who,
+  .ribbon-row-far { display: none; }
+}

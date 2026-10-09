@@ -1,0 +1,9 @@
+/* Selection record reader. Definition lists follow the surface
+   convention; only the event list needs its own rules. State color
+   stays in the existing page tokens. */
+.sel-block { margin: 0 0 12px; }
+.sel-block > h2 { overflow-wrap: anywhere; }
+.sel-body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 2px 0 8px; }
+.sel-events { list-style: none; margin: 4px 0 8px; padding: 0; }
+.sel-events li { padding: 1px 0; }
+.sel-events .mono { color: var(--muted); margin-right: 8px; }

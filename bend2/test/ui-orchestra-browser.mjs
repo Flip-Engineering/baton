@@ -82,10 +82,10 @@ baton('record', 'qa-worker-finding', 'worker', 'Worker retained finding.',
 baton('record', 'qa-aide-finding', 'aide', 'Aide retained finding.',
   'Aide evidence.', 'Aide limits.');
 baton('promote', 'qa-worker-share', 'aide', 'worker', 'aide', 'qa-worker-finding');
-// A distinct recorded promoter exercises the fourth edge type: root promotes
-// the worker finding from the worker to the lead, so neither endpoint equals
-// the promoter and both conductors join the graph in their own tiers.
-baton('promote', 'qa-lead-share', 'root', 'worker', 'lead', 'qa-worker-finding');
+// The coordinator records a promotion under its destination, so the lead
+// promotes the worker finding from the worker to itself; the author and
+// source stay the worker while the destination and promoter are the lead.
+baton('promote', 'qa-lead-share', 'lead', 'worker', 'lead', 'qa-worker-finding');
 
 // --- chromium over CDP
 chrome = spawnTracked(CHROMIUM, ['--headless=new', '--no-sandbox', '--remote-debugging-port=0',
@@ -209,125 +209,101 @@ const urlA = firstViewLine.value.slice('Orchestra live view: '.length).trim();
 check('view URL uses the loopback HTTP listener', urlA.startsWith('http://127.0.0.1:'));
 
 await openPage(urlA);
-await until('status filter is available', `document.getElementById('status-filter')`);
-await until('initial snapshot reports its actor count',
-  `document.getElementById('tree-count').textContent.includes('actors shown')`);
-check('running is the default and the completed fixture has no matching actors', await evalJs(
-  `document.getElementById('status-filter').value === 'running' && document.querySelectorAll('#tree .node-row').length === 0`));
-await evalJs(`document.getElementById('status-filter').value = 'all'; document.getElementById('status-filter').dispatchEvent(new Event('change'));`);
-await until('tree renders the fixture hierarchy from the snapshot',
-  `document.querySelectorAll('#tree li').length >= 3 && document.getElementById('tree').textContent.includes('worker')`);
-await evalJs(`document.getElementById('view-knowledge-btn').click()`);
-await until('native owner event stream is ready',
-  `document.getElementById('conn-state').textContent === 'live'`);
-await until('knowledge graph draws the recorded findings and their promotion',
-  `document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]') && document.querySelector('#knowledge-graph .knode[aria-label="qa-aide-finding"]') && [...document.querySelectorAll('#knowledge-graph .kg-edge-share')].some((edge) => edge.getAttribute('aria-label') === 'promotion from worker to aide')`);
-check('authorship edges carry direction along the recorded relation', await evalJs(
-  `[...document.querySelectorAll('#knowledge-graph .kg-edge-authorship')].length > 0 && [...document.querySelectorAll('#knowledge-graph .kg-edge-authorship')].every((edge) => (edge.getAttribute('marker-end') || '').startsWith('url('))`));
-check('recorded hierarchy renders more than one tier row', await evalJs(
-  `document.querySelectorAll('#knowledge-graph .kg-tier-label').length > 1`));
-check('all four recorded edge types render directed', await evalJs(
-  `['kg-edge-authorship', 'kg-edge-share', 'kg-edge-deliver', 'kg-edge-promote'].every((cls) => [...document.querySelectorAll('#knowledge-graph .' + cls)].some((edge) => (edge.getAttribute('marker-end') || '').startsWith('url(')))`));
-check('knowledge graph nodes stay inside the drawn surface', await evalJs(`(() => {
-  const svg = document.querySelector('#knowledge-graph svg');
+await until('snapshot line leaves its unloaded state',
+  `!document.getElementById('snapshot-line').textContent.includes('No snapshot loaded')`);
+await until('attention strip settles on the snapshot actors',
+  `(document.getElementById('attention-band').textContent || '').length > 0`);
+check('quiet seats fold behind the control by default', await evalJs(
+  `document.getElementById('doc-ended').getAttribute('aria-pressed') === 'false' && document.querySelectorAll('#roster .doc-row').length === 0`));
+await evalJs(`document.getElementById('doc-ended').click()`);
+await until('roster renders the fixture actors in margin bands',
+  `document.querySelectorAll('#roster .doc-row').length >= 4 && (document.getElementById('roster').textContent || '').includes('qa-ensemble')`);
+check('roster rows lead with work before the name', await evalJs(
+  `[...document.querySelectorAll('#roster .doc-row')].every((row) => { const btn = row.querySelector('.doc-open'); const lead = btn ? btn.firstElementChild : null; return !!btn && !!lead && lead.classList.contains('doc-lead') && !!lead.querySelector('.doc-work') && !!btn.querySelector('.doc-name'); })`));
+await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
+await until('selection record opens for the chosen row',
+  `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'worker'`);
+await until('knowledge strip attaches finding ticks to their authors',
+  `document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-finding"] title') && document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-finding"] title').textContent === 'Worker retained finding. — 2 promotions'`);
+check('strip ticks encode degree and destinations as marks', await evalJs(`(() => {
+  const row = '#roster .doc-row[data-doc-id="worker"] ';
+  const tick = document.querySelector(row + '.kw-tick[data-kw-node="qa-worker-finding"]');
+  const aide = document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-tick[data-kw-node="qa-aide-finding"]');
+  const stubs = [...document.querySelectorAll(row + '.kw-stub')].map((s) => s.textContent);
+  return !!tick && tick.classList.contains('shared') && !!aide && aide.classList.contains('unshared')
+    && stubs.some((s) => s.includes('→ aide')) && stubs.some((s) => s.includes('→ lead'));
+})()`));
+await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-finding"]').click()`);
+check('strip tick selection marks, labels claim plus evidence, and keeps focus', await evalJs(`(() => {
+  const row = '#roster .doc-row[data-doc-id="worker"] ';
+  const tick = document.querySelector(row + '.kw-tick[data-kw-node="qa-worker-finding"]');
+  const label = document.querySelector(row + '.kw-claim');
+  const evidence = document.querySelector(row + '.kw-evidence');
+  const limits = document.querySelector(row + '.kw-limits');
+  return !!tick && tick.classList.contains('selected') && document.activeElement === tick
+    && !!label && label.textContent === 'Worker retained finding.'
+    && !!evidence && evidence.textContent === 'Worker evidence.'
+    && !!limits && limits.textContent === 'Worker limits.';
+})()`));
+// Capture the knowledge band for review.
+const knowledgeShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
+writeFileSync(join(OUT, 'knowledge.png'), Buffer.from(knowledgeShot.result.data, 'base64'));
+await evalJs(`document.querySelector('details.doc-whole').open = true`);
+await until('whole-orchestra canvas draws on demand behind its disclosure',
+  `document.querySelector('#knowledge-whole svg.kw-canvas') && document.querySelectorAll('#knowledge-whole .kw-tier').length > 1`);
+check('recorded edge types render directed', await evalJs(
+  `['kw-edge-authorship', 'kw-edge-share', 'kw-edge-deliver'].every((cls) => [...document.querySelectorAll('#knowledge-whole .' + cls)].some((edge) => (edge.getAttribute('marker-end') || '').startsWith('url(')))`));
+check('whole-orchestra nodes stay inside the drawn surface', await evalJs(`(() => {
+  const svg = document.querySelector('#knowledge-whole svg');
   const width = Number(svg.getAttribute('width'));
   const height = Number(svg.getAttribute('height'));
-  return [...document.querySelectorAll('#knowledge-graph circle')].every((node) => {
+  return [...document.querySelectorAll('#knowledge-whole circle')].every((node) => {
     const x = Number(node.getAttribute('cx'));
     const y = Number(node.getAttribute('cy'));
     const r = Number(node.getAttribute('r'));
     return x - r >= 0 && y - r >= 0 && x + r <= width && y + r <= height;
   });
 })()`));
-// Capture the knowledge view for review.
-const knowledgeShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
-writeFileSync(join(OUT, 'knowledge.png'), Buffer.from(knowledgeShot.result.data, 'base64'));
-await evalJs(`document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]').focus()`);
-await send(pageWs, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-await send(pageWs, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-check('graph finding marks its node selected', await evalJs(
-  `document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]').classList.contains('selected')`));
-check('graph finding keeps keyboard focus on its node', await evalJs(
-  `document.activeElement === document.querySelector('#knowledge-graph .knode.selected')`));
-await until('graph finding opens its complete record beside the graph',
-  `!document.getElementById('view-knowledge').hidden && ['Worker retained finding.', 'Worker evidence.', 'Worker limits.'].every((value) => document.getElementById('knowledge-promotions').textContent.includes(value))`);
-await until('graph selection follows the recorded author without leaving Knowledge',
-  `!document.getElementById('view-knowledge').hidden && document.querySelector('[data-row="worker"]')?.getAttribute('aria-selected') === 'true'`);
-await evalJs(`document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]').click()`);
-check('toggle-off keeps focus on its graph node', await evalJs(
-  `document.activeElement && document.activeElement.getAttribute("aria-label") === 'qa-worker-finding' && !document.querySelector('#knowledge-graph .knode.selected')`));
-await evalJs(`document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]').click()`);
-await until('reselected finding reopens its complete record beside the graph with focus',
-  `document.activeElement === document.querySelector('#knowledge-graph .knode.selected') && !document.getElementById('view-knowledge').hidden && ['Worker retained finding.', 'Worker evidence.', 'Worker limits.'].every((value) => document.getElementById('knowledge-promotions').textContent.includes(value))`);
-await evalJs(`document.getElementById('view-actors-btn').click()`);
-check('transitions list shows committed events with recorded times', await evalJs(
-  `document.querySelectorAll('#transitions li').length > 0 && /\\d{4}-\\d{2}-\\d{2}|:/.test(document.getElementById('transitions').textContent)`));
-await evalJs(`[...document.querySelectorAll('#tree button')].find((b) => (b.textContent || '').includes('worker'))?.click()`);
-check('detail separates configured, observed and recorded execution', await evalJs(
-  `['configured', 'observed', 'recorded execution', 'observed process'].every((k) => document.getElementById('detail').textContent.includes(k))`));
-check('observed process is explicit unknown', await evalJs(
-  `document.getElementById('detail').textContent.includes('unknown')`));
-await until('selected actor loads its stored findings',
-  `document.getElementById('detail').textContent.includes('1 authored / 0 received')`);
-await until('selected actor loads its complete recorded work',
-  `document.getElementById('detail').textContent.includes('Retained task input.')`);
-await evalJs(`document.getElementById('show-findings').click()`);
-await evalJs(`[...document.querySelectorAll('#detail .finding-id')].find((button) => button.textContent === 'qa-worker-finding').click()`);
-check('actor detail opens the full claim, evidence and limits', await evalJs(
-  `['Worker retained finding.', 'Worker evidence.', 'Worker limits.'].every((value) => document.getElementById('detail').textContent.includes(value))`));
-// Capture the selected work for review.
+check('shared findings read larger than unshared ones', await evalJs(`(() => {
+  const shared = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"] circle');
+  const unshared = document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"] circle');
+  return !!shared && !!unshared && Number(shared.getAttribute('r')) > Number(unshared.getAttribute('r'));
+})()`));
+await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').click()`);
+check('whole finding selection marks and keeps focus', await evalJs(
+  `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').classList.contains('selected') && document.activeElement === document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`));
+// Capture the selected finding for review.
 const selectedWorkShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'selected-work.png'), Buffer.from(selectedWorkShot.result.data, 'base64'));
-// Select a received finding while its recipient's knowledge is cached.
-// The selection follows the finding's author and retains graph focus.
-await evalJs(`[...document.querySelectorAll('#tree button')].find((b) => (b.textContent || '').includes('aide'))?.click()`);
-await until("recipient caches its authored and received knowledge",
-  `document.getElementById('detail').textContent.includes('1 authored / 1 received')`);
-// The dossier selects another finding while its recipient is cached: dimming
-// follows the new selection and the view stays on the graph.
-await evalJs(`[...document.querySelectorAll('#detail .finding-id')].find((button) => button.textContent === 'qa-aide-finding')?.click()`);
-await until('dossier selects another finding with its full record',
-  `['Aide retained finding.', 'Aide evidence.', 'Aide limits.'].every((value) => document.getElementById('detail').textContent.includes(value))`);
-await evalJs(`document.getElementById('view-knowledge-btn').click()`);
-await until('graph dimming follows the dossier selection',
-  `!document.getElementById('view-knowledge').hidden && document.querySelector('#knowledge-graph .knode.selected')?.getAttribute('aria-label') === 'qa-aide-finding' && !document.querySelector('#knowledge-graph .knode[aria-label="qa-aide-finding"]')?.classList.contains('kg-dim') && document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]')?.classList.contains('kg-dim')`);
-await evalJs(`(() => { const node = document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]'); node.focus(); node.click(); })()`);
-await until('received finding selection follows its recorded author',
-  `!document.getElementById('view-knowledge').hidden && document.activeElement === document.querySelector('#knowledge-graph .knode.selected') && document.querySelector('[data-row="worker"]')?.getAttribute('aria-selected') === 'true' && ['Worker retained finding.', 'Worker evidence.', 'Worker limits.'].every((value) => document.getElementById('knowledge-promotions').textContent.includes(value))`);
-await evalJs(`document.getElementById('view-actors-btn').click()`);
-await evalJs(`[...document.querySelectorAll('#tree button')].find((b) => (b.textContent || '').includes('worker'))?.click()`);
-await until('worker detail is restored for the live finding steps',
-  `document.getElementById('detail').textContent.includes('1 authored / 0 received')`);
-// Actor anchor focus survives the app-driven refresh below: the live record
-// and promotion re-render the graph while focus rests on the anchor.
-await evalJs(`document.getElementById('view-knowledge-btn').click()`);
-await evalJs(`document.querySelector('#knowledge-graph .kg-anchor[data-kg-id="worker"]')?.focus()`);
+await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open').click()`);
+await until('second actor record replaces the first',
+  `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'aide'`);
 baton('record', 'qa-worker-live-finding', 'worker', 'Worker live finding.',
   'Live evidence.', 'Live limits.');
-await until('public record refreshes selected actor knowledge through native SSE',
-  `document.getElementById('detail').textContent.includes('2 authored / 0 received') && document.getElementById('detail').textContent.includes('Worker live finding.')`);
-await until('public record draws the new finding node through native SSE',
-  `document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-live-finding"]')`);
+await until('live record adds a second tick to the author strip through native SSE',
+  `document.querySelectorAll('#roster .doc-row[data-doc-id="worker"] .kw-tick').length === 2`);
+await until('live record draws the new whole-canvas node through native SSE',
+  `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-live-finding"]')`);
 baton('promote', 'qa-worker-live-share', 'aide', 'worker', 'aide', 'qa-worker-live-finding');
-await until('public promotion refreshes the knowledge overview through native SSE',
-  `document.getElementById('knowledge-promotions').textContent.includes('qa-worker-live-finding')`);
-await until('public promotion draws the second recorded graph edge through native SSE',
-  `[...document.querySelectorAll('#knowledge-graph .kg-edge-share[aria-label="promotion from worker to aide"]')].length === 2`);
-await until('actor anchor focus survives the app-driven refresh',
-  `document.activeElement?.getAttribute('data-kg-id') === 'worker'`);
+await until('live promotion inks the new tick through native SSE',
+  `document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-live-finding"]').classList.contains('shared')`);
+await until('live promotion draws the second recorded share edge through native SSE',
+  `[...document.querySelectorAll('#knowledge-whole .kw-edge-share[aria-label="promotion from worker to aide"]')].length === 2`);
 await evalJs(`window.__qaMark = 41`);
-const transitionsBeforeNativeCommit = await evalJs(`document.querySelectorAll('#transitions li').length`);
-const cursorBeforeNativeCommit = await evalJs(`document.getElementById('cursor-state').textContent`);
+const ribbonMaxBeforeNativeCommit = await evalJs(`document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax')`);
 baton('message', 'qa-guidance-native', 'root', 'worker', 'guidance', 'Committed through the native owner.');
-await until('native owner SSE delivers the committed message without reload',
-  `window.__qaMark === 41 && document.querySelectorAll('#transitions li').length > ${transitionsBeforeNativeCommit} && document.getElementById('cursor-state').textContent !== ${JSON.stringify(cursorBeforeNativeCommit)}`);
+await until('native owner SSE moves the ribbon without reload',
+  `window.__qaMark === 41 && document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax') !== ${JSON.stringify(ribbonMaxBeforeNativeCommit)}`);
+await evalJs(`document.querySelector('#ribbon [data-focus="ribbon-list"]').click()`);
+await until('ribbon full list opens with recorded rows',
+  `document.querySelector('#ribbon .ribbon-list') && document.querySelectorAll('#ribbon .ribbon-row').length > 0 && (document.querySelector('#ribbon .ribbon-list').textContent || '').includes('worker')`);
 
 // operator-triggered reconnect re-reads the snapshot through the view command server
-const cursorBeforeReconnect = await evalJs(`document.getElementById('cursor-state').textContent`);
+const ribbonMaxBeforeReconnect = await evalJs(`document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax')`);
 baton('message', 'qa-guidance-1', 'root', 'worker', 'guidance', 'Follow-up input.');
 await evalJs(`document.getElementById('reconnect').click()`);
 await until('manual reconnect re-reads the snapshot with the new commit',
-  `window.__qaMark === 41 && document.getElementById('cursor-state').textContent !== ${JSON.stringify(cursorBeforeReconnect)}`);
+  `window.__qaMark === 41 && document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax') !== ${JSON.stringify(ribbonMaxBeforeReconnect)}`);
 
 // narrow viewport + reduced motion evidence (phase A server stays up)
 await send(pageWs, 'Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -365,35 +341,25 @@ try {
   await until('a locked initial snapshot reports its failed read',
     `(document.getElementById('snapshot-line').textContent + document.getElementById('notice').textContent).includes('503')`);
   check('initial snapshot failure enters the existing retry path', await evalJs(
-    `document.getElementById('conn-state').textContent === 'retrying'`));
+    `!document.getElementById('notice').hidden && /retrying/i.test(document.getElementById('notice').textContent)`));
 } finally {
   startupWriter.exec('ROLLBACK');
   startupWriter.close();
 }
-await until('phase B snapshot reports its actor count',
-  `document.getElementById('tree-count').textContent.includes('actors shown')`);
-check('phase B starts with the running filter and no running fixture actors', await evalJs(
-  `document.getElementById('status-filter').value === 'running' && document.querySelectorAll('#tree .node-row').length === 0`));
-await evalJs(`document.getElementById('status-filter').value = 'all'; document.getElementById('status-filter').dispatchEvent(new Event('change'));`);
-await until('phase B tree renders', `document.querySelectorAll('#tree li').length >= 3`);
-await until('phase B stream reaches live', `document.getElementById('conn-state').textContent === 'live'`);
+await until('phase B snapshot reports its actor line',
+  `!document.getElementById('snapshot-line').textContent.includes('No snapshot loaded')`);
+await evalJs(`document.getElementById('doc-ended').click()`);
+await until('phase B roster renders', `document.querySelectorAll('#roster .doc-row').length >= 3`);
+await until('phase B attention settles on the snapshot actors',
+  `(document.getElementById('attention-band').textContent || '').length > 0`);
 await evalJs(`window.__qaMark = 42`);
-await evalJs(`document.getElementById('view-knowledge-btn').click()`);
-await until('phase B graph holds the shared findings',
-  `document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]')`);
-check('phase B graph hides unshared findings until included', await evalJs(
-  `!document.querySelector('#knowledge-graph .knode[aria-label="qa-aide-finding"]')`));
-await evalJs(`document.getElementById('include-unshared').click()`);
-await until('including unshared reveals the aide finding node',
-  `document.querySelector('#knowledge-graph .knode[aria-label="qa-aide-finding"]')`);
-await evalJs(`(() => {
-  const node = document.querySelector('#knowledge-graph .knode[aria-label="qa-aide-finding"]');
-  node.focus();
-  node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-})()`);
-await until('a graph finding opens its stored content beside the graph',
-  `['Aide retained finding.', 'Aide evidence.', 'Aide limits.'].every((value) => document.getElementById('knowledge-promotions').textContent.includes(value))`);
-await evalJs(`document.getElementById('view-actors-btn').click()`);
+await evalJs(`document.querySelector('#ribbon [data-focus="ribbon-list"]').click()`);
+await until('phase B ribbon list opens', `document.querySelectorAll('#ribbon .ribbon-row').length > 0`);
+check('phase B strip holds shared and unshared ticks with no inclusion toggle', await evalJs(
+  `!!document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-finding"]') && !!document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-tick[data-kw-node="qa-aide-finding"]')`));
+await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-tick[data-kw-node="qa-aide-finding"]').click()`);
+check('strip tick selection marks its tick', await evalJs(
+  `document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-tick[data-kw-node="qa-aide-finding"]').classList.contains('selected')`));
 
 // Hold one real actor response until another actor's detail has rendered.
 await evalJs(`(() => {
@@ -406,7 +372,7 @@ await evalJs(`(() => {
   window.fetch = async (...args) => {
     const response = await actualFetch(...args);
     const url = new URL(args[0], location.href);
-    if (holdWorker && url.pathname === '/orchestra/knowledge' && url.searchParams.get('actor') === 'worker') {
+    if (holdWorker && url.pathname === '/orchestra/work' && url.searchParams.get('subject') === 'worker') {
       holdWorker = false;
       const actualJson = response.json.bind(response);
       response.json = async () => {
@@ -418,73 +384,67 @@ await evalJs(`(() => {
     }
     return response;
   };
-  document.querySelector('[data-row="worker"] .node-id').click();
+  document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click();
 })()`);
 await evalJs('window.__qaKnowledgeHeld');
-await evalJs(`document.querySelector('[data-row="aide"] .node-id').focus()`);
-await send(pageWs, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-await send(pageWs, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-await until('Enter selects the second actor while the first response is held',
-  `document.querySelector('[data-row="aide"]').getAttribute('aria-selected') === 'true' && document.getElementById('detail').textContent.includes('1 authored / 2 received')`);
-await evalJs(`document.getElementById('show-findings').click()`);
-await evalJs(`[...document.querySelectorAll('#detail .finding-id')].find((button) => button.textContent === 'qa-aide-finding').click()`);
-check('second actor detail shows its own stored evidence', await evalJs(
-  `['Aide retained finding.', 'Aide evidence.', 'Aide limits.'].every((value) => document.getElementById('detail').textContent.includes(value))`));
+await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open').click()`);
+await until('second row selects while the first work response is held',
+  `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'aide'`);
 await evalJs(`window.__qaReleaseKnowledge(); new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
-check('late first-actor response preserves the selected actor and findings', await evalJs(
-  `document.querySelector('[data-row="aide"]').getAttribute('aria-selected') === 'true' && ['1 authored / 2 received', 'Aide evidence.', 'Aide limits.'].every((value) => document.getElementById('detail').textContent.includes(value))`));
+check('late first-actor work preserves the selected record', await evalJs(
+  `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'aide'`));
 await evalJs('window.__qaRestoreFetch()');
 
 await evalJs(`(() => {
-  const actorSearch = document.getElementById('search');
-  actorSearch.value = 'aide';
-  actorSearch.dispatchEvent(new Event('input', { bubbles: true }));
-  const ensemble = document.getElementById('ensemble-filter');
-  ensemble.value = 'qa-ensemble';
-  ensemble.dispatchEvent(new Event('change', { bubbles: true }));
-  const knowledgeSearch = document.getElementById('knowledge-search');
-  knowledgeSearch.value = 'no-matching-finding';
-  knowledgeSearch.dispatchEvent(new Event('input', { bubbles: true }));
-  knowledgeSearch.focus();
+  const find = document.getElementById('doc-find');
+  find.value = 'aide';
+  find.dispatchEvent(new Event('input', { bubbles: true }));
 })()`);
-check('knowledge search filters the recorded findings', await evalJs(
-  `document.getElementById('knowledge-empty').textContent === 'No findings match.'`));
-await send(pageWs, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-await send(pageWs, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-check('knowledge Escape clears that query and preserves actor filters and detail', await evalJs(
-  `document.getElementById('knowledge-search').value === '' && document.activeElement !== document.getElementById('knowledge-search') && document.getElementById('search').value === 'aide' && document.getElementById('ensemble-filter').value === 'qa-ensemble' && document.getElementById('knowledge-promotions').textContent.includes('qa-aide-finding') && document.getElementById('detail').textContent.includes('Aide evidence.')`));
-await evalJs(`document.getElementById('search').focus()`);
-await send(pageWs, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-await send(pageWs, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-check('actor search Escape preserves the ensemble filter', await evalJs(
-  `document.getElementById('search').value === '' && document.getElementById('ensemble-filter').value === 'qa-ensemble'`));
-await evalJs(`document.getElementById('clear-filters').click()`);
-baton('message', 'qa-aide-receipt', 'root', 'aide', 'guidance', 'Receipt display probe.');
+check('find dims non-matches in place with one cursor', await evalJs(`(() => {
+  const rows = [...document.querySelectorAll('#roster .doc-row')];
+  const aide = rows.filter((row) => row.dataset.docId === 'aide');
+  const rest = rows.filter((row) => row.dataset.docId !== 'aide');
+  return aide.length > 0 && rest.length > 0 && rest.every((row) => row.classList.contains('doc-dim'))
+    && document.querySelectorAll('#roster .doc-cursor').length === 1;
+})()`));
+await evalJs(`(() => {
+  const find = document.getElementById('doc-find');
+  find.value = '';
+  find.dispatchEvent(new Event('input', { bubbles: true }));
+})()`);
+check('clearing find restores undimmed rows', await evalJs(
+  `document.querySelectorAll('#roster .doc-dim').length === 0`));
+const pendingBody = '  Inspect the stalled work.\n\nRetain this complete evidence.  ';
+baton('message', 'qa-aide-receipt', 'root', 'aide', 'guidance', pendingBody);
 committed();
-await until('message transition names its recorded sender once',
-  `[...document.querySelectorAll('#transitions li')].some((row) => row.querySelector('.go')?.textContent === 'aide' && row.textContent.includes('guidance from root'))`);
-check('message summaries do not duplicate their sender', await evalJs(
-  `![...document.querySelectorAll('#transitions li')].some((row) => row.textContent.includes('from root from root'))`));
+await until('ribbon rows name the recorded far side',
+  `[...document.querySelectorAll('#ribbon .ribbon-row')].some((row) => (row.textContent || '').includes('aide'))`);
+await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open').click()`);
+await until('pending message has a read control',
+  `document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]') !== null`);
+await evalJs(`(() => {
+  const button = document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]');
+  button.focus(); button.click();
+})()`);
+await until('pending message displays its complete stored body',
+  `[...document.querySelectorAll('#selection .sel-body')].some((node) => node.textContent === ${JSON.stringify(pendingBody)})`);
+check('message body remains open and focused after its asynchronous read', await evalJs(
+  `document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]').getAttribute('aria-expanded') === 'true'
+    && document.activeElement === document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]')`));
+await evalJs(`document.activeElement.blur(); document.dispatchEvent(new KeyboardEvent('keydown', {key:'/', bubbles:true, cancelable:true}))`);
+check('keyboard find shortcut focuses the visible query', await evalJs(
+  `document.activeElement === document.getElementById('doc-find')`));
 baton('ack', 'qa-aide-receipt', 'aide', 'fixture-ui-read');
 committed();
-await until('receipt transition names the acknowledging recipient and original sender',
-  `[...document.querySelectorAll('#transitions li')].some((row) => row.querySelector('.go')?.textContent === 'aide' && row.textContent.includes('acknowledged message from root'))`);
-const transitionsBefore = await evalJs(`document.querySelectorAll('#transitions li').length`);
+const ribbonRowsBefore = await evalJs(`document.querySelectorAll('#ribbon .ribbon-row').length`);
 
 // live committed update without reload
 baton('message', 'qa-guidance-2', 'root', 'worker', 'guidance', 'Live update probe.');
 committed();
 await until('committed message arrives live without reload',
-  `window.__qaMark === 42 && document.querySelectorAll('#transitions li').length > ${transitionsBefore}`);
-check('pending badge updates live', await evalJs(
-  `document.getElementById('tree').textContent.includes('worker')`));
-
-// Recorded knowledge persists in the graph while inclusion is on.
-check('graph places unshared findings below the shared field', await evalJs(`(() => {
-  const unshared = document.querySelector('#knowledge-graph .knode[aria-label="qa-aide-finding"] circle');
-  const shared = document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"] circle');
-  return !!unshared && !!shared && Number(unshared.getAttribute('cy')) > Number(shared.getAttribute('cy'));
-})()`));
+  `window.__qaMark === 42 && document.querySelectorAll('#ribbon .ribbon-row').length > ${ribbonRowsBefore}`);
+check('pending badge updates live on the worker row', await evalJs(
+  `document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-pending') !== null`));
 let workerExecution;
 {
   const db = new DatabaseSync(DB);
@@ -494,33 +454,19 @@ let workerExecution;
   db.close();
 }
 committed();
-await until('recorded running execution reaches the attention lane',
-  `[...document.querySelectorAll('#attention-lane .lane-chip')].some((chip) => chip.querySelector('.lane-id')?.textContent === 'worker' && chip.querySelector('.dot.running'))`);
-await evalJs(`document.getElementById('view-now-btn').click()`);
-await until('running lane is visible in the Now view',
-  `!document.getElementById('view-now').hidden && [...document.querySelectorAll('#attention-lane .lane-chip')].some((chip) => chip.querySelector('.lane-id')?.textContent === 'worker' && chip.querySelector('.dot.running'))`);
-// Capture the Now view with running work.
+await until('recorded running execution reaches the attention strip',
+  `document.querySelector('#attention-band [data-att-key="chip:worker"]') !== null`);
+// Capture the document with running work.
 const nowShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'now.png'), Buffer.from(nowShot.result.data, 'base64'));
-await evalJs(`(() => {
-  const chip = document.querySelector('#attention-lane [data-focus="worker"]');
-  chip.focus();
-  chip.click();
-})()`);
-await until('attention selection selects its actor with visible detail',
-  `document.querySelector('[data-row="worker"]').getAttribute('aria-selected') === 'true' && !document.getElementById('view-actors').hidden && document.getElementById('detail').textContent.includes('authored')`);
-await until('selection moves focus to the selected row id button',
-  `document.activeElement === document.querySelector('[data-row="worker"] [data-focus="id:worker"]')`);
-const lanePendingBefore = await evalJs(
-  `Number(document.querySelector('#attention-lane [data-focus="worker"] .lane-badge')?.textContent || 0)`);
-await evalJs(`document.getElementById('view-now-btn').click()`);
-await evalJs(`document.querySelector('#attention-lane [data-focus="worker"]').focus()`);
+await evalJs(`document.querySelector('#attention-band [data-att-key="chip:worker"]').click()`);
+await until('attention selection opens the actor record',
+  `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'worker'`);
+await evalJs(`document.querySelector('#attention-band [data-att-key="chip:worker"]').focus()`);
 baton('message', 'qa-guidance-lane-focus', 'root', 'worker', 'guidance', 'Attention focus retained on live input.');
 committed();
-await until('live input updates the focused attention chip badge',
-  `Number(document.querySelector('#attention-lane [data-focus="worker"] .lane-badge')?.textContent || 0) === ${lanePendingBefore + 1}`);
-check('live attention redraw preserves focus on the same actor', await evalJs(
-  `window.__qaMark === 42 && document.activeElement === document.querySelector('#attention-lane [data-focus="worker"]')`));
+check('live attention redraw preserves focus on the same chip', await evalJs(
+  `window.__qaMark === 42 && document.activeElement && document.activeElement.getAttribute('data-att-key') === 'chip:worker'`));
 {
   const db = new DatabaseSync(DB);
   db.prepare('UPDATE executions SET phase = ?, status = ? WHERE session = ? AND id = ?')
@@ -528,19 +474,19 @@ check('live attention redraw preserves focus on the same actor', await evalJs(
   db.close();
 }
 committed();
-await until('recorded completion removes the worker from the running lane while its findings persist in the graph',
-  `![...document.querySelectorAll('#attention-lane .lane-chip')].some((chip) => chip.querySelector('.lane-id')?.textContent === 'worker' && chip.querySelector('.dot.running')) && !!document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]')`);
+await until('recorded completion removes the worker chip while its findings persist in the band',
+  `!document.querySelector('#attention-band [data-att-key="chip:worker"]') && !!document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-finding"]')`);
 
 // reconnect: drop the server, restart on the same port, no duplicated transitions
 server.close(); server.closeAllConnections?.();
-await until('page notices the lost stream', `document.getElementById('conn-state').textContent !== 'live'`);
+await until('page notices the lost stream', `!document.getElementById('notice').hidden && /unavailable/i.test(document.getElementById('notice').textContent)`);
 const server2 = createOrchestraServer({ databasePath: DB, reader: 'root', subject: 'root',
   subscribeCommittedChanges, port: portB });
 await new Promise((r) => server2.on('listening', r));
-await until('page reconnects and resumes at its cursor',
-  `window.__qaMark === 42 && document.getElementById('conn-state').textContent === 'live'`);
-check('no duplicated transitions after reconnect', await evalJs(
-  `(() => { const rows = [...document.querySelectorAll('#transitions li')].map((li) => li.textContent); return new Set(rows).size === rows.length; })()`));
+await until('page reconnects and clears its notice',
+  `window.__qaMark === 42 && document.getElementById('notice').hidden`);
+check('no duplicated ribbon rows after reconnect', await evalJs(
+  `(() => { const rows = [...document.querySelectorAll('#ribbon .ribbon-row')].map((li) => li.textContent); return rows.length > 0 && new Set(rows).size === rows.length; })()`));
 
 // Remove an unnotified change after the page cursor, then let a later commit reveal the gap.
 baton('message', 'qa-guidance-pruned', 'root', 'worker', 'guidance', 'Committed without a notice.');
@@ -553,8 +499,11 @@ baton('message', 'qa-guidance-3', 'root', 'worker', 'guidance', 'After pruning.'
 committed();
 await until('pruned cursor produces a gap notice and fresh state',
   `window.__qaMark === 42 && !document.getElementById('notice').hidden && document.getElementById('notice').textContent.length > 0`);
+const ribbonMaxBeforeRecovery = await evalJs(`document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax')`);
+baton('message', 'qa-guidance-4', 'root', 'worker', 'guidance', 'After the gap.');
+committed();
 await until('page recovers to live after the gap resnapshot',
-  `document.getElementById('conn-state').textContent === 'live'`);
+  `window.__qaMark === 42 && document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax') !== ${JSON.stringify(ribbonMaxBeforeRecovery)}`);
 
 console.log('BROWSER_QA_OK');
 } finally {

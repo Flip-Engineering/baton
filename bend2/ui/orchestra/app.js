@@ -38,10 +38,13 @@ const state = {
   work: null,
   workRequest: null,
   workActorId: "",
+  // Complete stored bodies, keyed by message id, with an explicit read state.
+  messages: {},
   knowledgeOpen: false,
   includeUnshared: false,
   knowledgeSearch: "",
   findingId: null,
+  ribbonSeq: null,
   graphRecord: null,
   graphRecordRequest: null,
   knowledgeLiveOnly: false,
@@ -49,56 +52,42 @@ const state = {
   view: "now",
 };
 
+// A sink for values nothing displays. Stream, cursor, generation and contract
+// bookkeeping is written on every frame and is not human oversight, so it lands
+// here instead of on the page. The retired panel mounts and the renderers that
+// wrote to them are gone; only these writers remain.
+const sink = document.createElement("div");
 const el = {
-  tree: document.getElementById("tree"),
-  detail: document.getElementById("detail"),
-  transitions: document.getElementById("transitions"),
   snapshotLine: document.getElementById("snapshot-line"),
-  connState: document.getElementById("conn-state"),
-  cursorState: document.getElementById("cursor-state"),
-  contractState: document.getElementById("contract-state"),
   notice: document.getElementById("notice"),
   fixtureNotice: document.getElementById("fixture-notice"),
-  search: document.getElementById("search"),
-  statusFilter: document.getElementById("status-filter"),
-  ensembleFilter: document.getElementById("ensemble-filter"),
-  treeCount: document.getElementById("tree-count"),
-  knowledgePromotions: document.getElementById("knowledge-promotions"),
-  knowledgeEmpty: document.getElementById("knowledge-empty"),
-  knowledgeCount: document.getElementById("knowledge-count"),
-  includeUnshared: document.getElementById("include-unshared"),
-  knowledgeSearch: document.getElementById("knowledge-search"),
-  knowledgeSurface: document.getElementById("knowledge-surface"),
-  liveOnly: document.getElementById("live-only"),
-  attention: document.getElementById("attention-lane"),
-  board: document.getElementById("ensemble-board"),
-  graph: document.getElementById("knowledge-graph"),
-  viewNow: document.getElementById("view-now"),
-  viewKnowledge: document.getElementById("view-knowledge"),
-  viewActors: document.getElementById("view-actors"),
-  viewNowBtn: document.getElementById("view-now-btn"),
-  viewKnowledgeBtn: document.getElementById("view-knowledge-btn"),
-  viewActorsBtn: document.getElementById("view-actors-btn"),
+  // The document shell.
+  attentionBand: document.getElementById("attention-band"),
+  roster: document.getElementById("roster"),
+  selection: document.getElementById("selection"),
+  ribbon: document.getElementById("ribbon"),
+  knowledgeWhole: document.getElementById("knowledge-whole"),
+  counts: document.getElementById("doc-counts"),
+  find: document.getElementById("doc-find"),
+  showEnded: document.getElementById("doc-ended"),
+  reconnect: document.getElementById("reconnect"),
+  // Written, never displayed.
+  connState: sink,
+  cursorState: sink,
+  contractState: sink,
+  generationState: sink,
+  tree: sink,
+  search: sink,
+  statusFilter: sink,
+  ensembleFilter: sink,
+  includeUnshared: sink,
+  knowledgeSearch: sink,
 };
 
 function text(parent, value) {
   parent.appendChild(document.createTextNode(value == null ? "" : String(value)));
 }
 
-function td(row, label, value, mono) {
-  const dt = document.createElement("dt");
-  text(dt, label);
-  const dd = document.createElement("dd");
-  if (mono) dd.className = "mono";
-  if (value === null || value === undefined || value === "") {
-    dd.className += " unknown";
-    text(dd, "unknown");
-  } else {
-    text(dd, value);
-  }
-  row.appendChild(dt);
-  row.appendChild(dd);
-}
 
 /* --- recorded state ------------------------------------------------------- */
 
@@ -138,16 +127,6 @@ function childrenOf(id) {
   return out;
 }
 
-function roots() {
-  const ids = new Set(state.players.keys());
-  const out = [];
-  for (const p of state.players.values()) {
-    const parent = p.parent || "";
-    if (!parent || parent === p.id || !ids.has(parent)) out.push(p);
-  }
-  out.sort((a, b) => roleRank(a.role) - roleRank(b.role) || (a.id < b.id ? -1 : 1));
-  return out;
-}
 
 function matchesFilters(p) {
   if (state.statusFilter !== "all" && deriveStatus(p) !== state.statusFilter) return false;
@@ -189,10 +168,6 @@ function ensembleMemberSet(ensId) {
 
 // The activity rail class for one recorded change kind. Kind values carry ":" and
 // "-", so the class is the kind with every other character replaced by "-".
-function kindClass(kind) {
-  const slug = String(kind || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  return "t-" + (slug || "unknown");
-}
 
 function ageText(at) {
   if (!at) return "";
@@ -253,15 +228,13 @@ function setConn(word) {
   text(el.connState, word);
 }
 
-// The visible header line carries the transport facts a reader may want while the
-// full block stays in the Connection details.
+// The visible header line states the snapshot fact only.
 function renderHeaderLine() {
-  const parts = [state.snapshotLabel || "No snapshot loaded."];
-  parts.push("cursor " + (state.cursor || "none"));
-  parts.push("gen " + (state.generation || "none"));
-  parts.push("contract " + CONTRACT_VERSION);
+  // The header states the one recorded fact a reader needs: what this snapshot is
+  // and when it was taken. Stream, cursor, generation and contract are transport
+  // bookkeeping, so they are not shown.
   el.snapshotLine.textContent = "";
-  text(el.snapshotLine, parts.join(" · "));
+  text(el.snapshotLine, state.snapshotLabel || "No snapshot loaded.");
 }
 
 function setCursor(cursor) {
@@ -281,7 +254,8 @@ function queryString() {
 
 function setGeneration(generation) {
   state.generation = generation || "";
-  const node = document.getElementById("generation-state");
+  const node = el.generationState;
+  if (!node) return;
   node.textContent = "";
   text(node, state.generation || "none");
   renderHeaderLine();
@@ -326,39 +300,7 @@ function rowElement(id) {
 // Ensemble membership cross-cuts parentage, so it is a column device: a rule with
 // the group label, repeated per member row. Consecutive member rows read as one
 // column, and no row is regrouped or duplicated.
-function ensMetaRow(ensId) {
-  const ens = state.ensembles.get(ensId) || {};
-  const meta = document.createElement("span");
-  meta.className = "ens-meta";
-  const owner = document.createElement("span");
-  text(owner, ens.owner || "unknown");
-  meta.appendChild(owner);
-  if (ens.coupling) {
-    const coupling = document.createElement("span");
-    text(coupling, ens.coupling);
-    meta.appendChild(coupling);
-  }
-  const count = document.createElement("span");
-  text(count, ensembleMemberSet(ensId).size + " members");
-  meta.appendChild(count);
-  return meta;
-}
 
-function ensFilterButton(ensId, actorId) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "ens-id";
-  button.dataset.focus = "ensemble:" + ensId + ":" + actorId;
-  button.setAttribute("aria-pressed", state.ensembleFilter === ensId ? "true" : "false");
-  button.setAttribute("title", "Filter to ensemble " + ensId);
-  text(button, ensId);
-  button.addEventListener("click", () => {
-    state.ensembleFilter = state.ensembleFilter === ensId ? "all" : ensId;
-    el.ensembleFilter.value = state.ensembleFilter;
-    renderTree();
-  });
-  return button;
-}
 
 // One transient hairline for a message that moved between two rows, positioned in
 // the tree's own content coordinates because the tree is the scroll container.
@@ -417,11 +359,7 @@ function select(id) {
   state.selectionId = id;
   state.knowledgeOpen = false;
   state.findingId = null;
-  // The dossier lives in the Actors view, so every selection reveals it;
-  // selections made inside that view render unchanged.
-  setView("actors");
   renderTree();
-  renderDetail();
   void loadActorKnowledge(id);
   void loadActorWork(id);
   // Move keyboard focus to the selected actor's row.
@@ -435,15 +373,6 @@ function toggleCollapse(id) {
   renderTree();
 }
 
-function setAllCollapsed(collapsed) {
-  state.collapsed = new Set();
-  if (collapsed) {
-    for (const p of state.players.values()) {
-      if (childrenOf(p.id).length) state.collapsed.add(p.id);
-    }
-  }
-  renderTree();
-}
 
 function togglePending(id) {
   state.pendingOpen = state.pendingOpen === id ? null : id;
@@ -460,20 +389,11 @@ function restoreFocus(key) {
   if (next && typeof next.focus === "function") next.focus();
 }
 
+// The document is the page. Every path that used to repaint a panel calls this
+// entry instead, so one order and one selection serve the whole screen. The call
+// is coalesced, so a snapshot, a frame and a selection in one turn repaint once.
 function renderTree() {
-  const active = document.activeElement;
-  const key = active && active.dataset ? active.dataset.focus || "" : "";
-  el.tree.textContent = "";
-  const list = roots().filter(subtreeVisible);
-  let shown = 0;
-  for (const p of list) shown += renderNode(el.tree, p, 1);
-  el.treeCount.textContent = "";
-  text(el.treeCount, shown + " of " + state.players.size + " actors shown");
-  state.structure = structureSignature();
-  restoreFocus(key);
-  renderAttentionState();
-  renderBoardState();
-  refreshKnowledgeSeats();
+  renderDocumentSoon();
 }
 
 function renderAction(row, p) {
@@ -574,49 +494,6 @@ function buildRow(p, hasChildren) {
   return row;
 }
 
-function renderNode(parentUl, p, depth) {
-  let count = 0;
-  const visibleChildren = childrenOf(p.id).filter(subtreeVisible);
-  const selfMatch = matchesFilters(p);
-  const li = document.createElement("li");
-  li.setAttribute("role", "treeitem");
-  li.setAttribute("aria-level", String(depth));
-  li.setAttribute("aria-expanded", visibleChildren.length && !state.collapsed.has(p.id) ? "true" : "false");
-
-  const row = buildRow(p, visibleChildren.length > 0);
-
-
-  li.appendChild(row);
-
-  if (state.pendingOpen === p.id) {
-    li.appendChild(renderPendingList(p));
-  }
-
-  // Membership is a labeled column tag per member row, never regrouped.
-  const ensIds = Array.from(new Set((p.ownedEnsembles || []).concat(p.memberEnsembles || [])));
-  if (ensIds.length) {
-    const tags = document.createElement("div");
-    tags.className = "member-tags";
-    for (const ensId of ensIds) {
-      const ens = document.createElement("span");
-      ens.className = "ens";
-      ens.appendChild(ensFilterButton(ensId, p.id));
-      ens.appendChild(ensMetaRow(ensId));
-      tags.appendChild(ens);
-    }
-    li.appendChild(tags);
-  }
-
-  parentUl.appendChild(li);
-  if (selfMatch) count += 1;
-  if (visibleChildren.length && !state.collapsed.has(p.id)) {
-    const ul = document.createElement("ul");
-    ul.setAttribute("role", "group");
-    for (const c of visibleChildren) count += renderNode(ul, c, depth + 1);
-    li.appendChild(ul);
-  }
-  return count;
-}
 
 
 // A committed player event re-renders the full changed row: status, awaiting marker,
@@ -636,82 +513,20 @@ function updateRow(p) {
     if (oldList) oldList.replaceWith(renderPendingList(p));
     else fresh.after(renderPendingList(p));
   }
-  renderAttentionState();
-  renderBoardState();
-  refreshKnowledgeSeats();
+  // The document is the page, so a row update repaints through the one coalesced
+  // entry. The retired panel renderers are gone from this path.
+  renderDocumentSoon();
 }
 
 // The header switch shows one view at a time. Switching to Knowledge
 // re-renders the seats, whose layout reads zero while hidden.
-function setView(name) {
-  state.view = name;
-  const views = [["now", el.viewNowBtn, el.viewNow],
-    ["knowledge", el.viewKnowledgeBtn, el.viewKnowledge],
-    ["actors", el.viewActorsBtn, el.viewActors]];
-  for (const [n, button, section] of views) {
-    if (button) button.setAttribute("aria-pressed", n === name ? "true" : "false");
-    if (section) section.hidden = n !== name;
-  }
-  if (name === "knowledge") renderKnowledge();
-}
-
-// The attention lane mirrors recorded actor state with running actors first.
-// It renders from the same snapshot the tree reads and selects through it.
-function renderAttentionState() {
-  const mount = el.attention;
-  if (!mount || typeof renderAttention !== "function") return;
-  const players = [];
-  for (const p of state.players.values()) {
-    players.push({
-      id: p.id,
-      status: deriveStatus(p),
-      awaitingInput: awaitingInput(p),
-      pendingCount: p.pendingCount || 0,
-      action: (actionFor(p) || {}).label || "",
-    });
-  }
-  renderAttention(mount, players, {
-    selectedId: state.selectionId,
-    onSelect: (id) => select(id),
-  });
-}
 
 // The ensemble board reads the same snapshot as the tree: recorded
 // membership, derived status and the current action label per actor.
-function boardData() {
-  const actors = [];
-  for (const p of state.players.values()) {
-    const action = actionFor(p) || {};
-    const ensembles = [];
-    for (const id of (p.ownedEnsembles || []).concat(p.memberEnsembles || [])) {
-      if (id && !ensembles.includes(id)) ensembles.push(id);
-    }
-    actors.push({
-      id: p.id,
-      status: deriveStatus(p),
-      awaitingInput: awaitingInput(p),
-      pendingCount: p.pendingCount || 0,
-      action: action.label || "",
-      stale: !!action.stale,
-      task: (state.tasks[p.id] || {}).title || "",
-      ensembles,
-    });
-  }
-  const ensembles = [];
-  for (const e of state.ensembles.values()) {
-    ensembles.push({ id: e.id, owner: e.owner || "", coupling: e.coupling || "", members: e.members || [] });
-  }
-  return { actors, ensembles };
-}
 
-function renderBoardState() {
-  const mount = el.board;
-  if (!mount || typeof renderEnsembleBoard !== "function") return;
-  renderEnsembleBoard(mount, boardData(), {
-    selectedId: state.selectionId,
-    onSelect: (id) => select(id),
-  });
-}
+// The traffic surface reads the same snapshot: derived status per actor and
+// the committed transitions the activity rail already holds.
+
 // Every stored message the badge counts, newest first, named by id and kind. The
 // count is the stored count; this list is the sample behind it.
 function renderPendingList(p) {
@@ -746,48 +561,6 @@ function shortRole(role) {
 // work route: the full task body, the exact current input, the open native
 // request, and the latest report. Nothing is truncated; rows appear only
 // for records the route returns.
-function renderWorkBlock(dl, p) {
-  if (!knowledgeWired()) return;
-  const data = state.workActorId === p.id ? state.work : null;
-  if (!data) {
-    td(dl, "work", "Reading recorded work.");
-    return;
-  }
-  if (data.refused) {
-    td(dl, "work", "Work for this actor is outside the bound reader's scope.");
-    return;
-  }
-  if (data.error) {
-    td(dl, "work", "Work unavailable: " + data.error);
-    return;
-  }
-  let shown = false;
-  const task = data.task || null;
-  if (task && task.description) {
-    td(dl, "task description", task.description);
-    shown = true;
-  }
-  const input = data.input || null;
-  if (input) {
-    td(dl, "current input", (input.kind || "message") + " from " + (input.sender || "unknown"));
-    if (input.body) td(dl, "input text", input.body);
-    shown = true;
-  }
-  const request = data.request || null;
-  if (request) {
-    td(dl, "open request", (request.method || "native") + " " + (request.event || "")
-      + (request.reply ? " response written" : " awaiting response")
-      + (request.closed ? " (closed)" : ""));
-    shown = true;
-  }
-  const report = data.report || null;
-  if (report) {
-    td(dl, "latest report", (report.id || "") + " to " + (report.recipient || "unknown"));
-    if (report.body) td(dl, "report text", report.body);
-    shown = true;
-  }
-  if (!shown) td(dl, "work", "No recorded task, input, request, or report.");
-}
 
 async function loadActorWork(id) {
   const request = {};
@@ -795,7 +568,6 @@ async function loadActorWork(id) {
   state.work = null;
   state.workActorId = id || "";
   if (!knowledgeWired() || !id) {
-    renderDetail();
     return;
   }
   let data;
@@ -809,163 +581,15 @@ async function loadActorWork(id) {
   }
   if (state.workRequest !== request || state.selectionId !== id) return;
   state.work = data;
-  renderDetail();
+  renderDocumentSoon();
 }
 
-function renderDetail() {
-  el.detail.textContent = "";
-  const p = state.players.get(state.selectionId);
-  if (!p) {
-    const m = document.createElement("p");
-    m.className = "muted";
-    text(m, "Select an actor in the hierarchy.");
-    el.detail.appendChild(m);
-    return;
-  }
-  const dl = document.createElement("dl");
-
-  td(dl, "id", p.id, true);
-  td(dl, "role", (p.role || "unknown") + " / " + (p.kind || "unknown"));
-  td(dl, "recorded status", deriveStatus(p) + (awaitingInput(p) ? " (awaiting input)" : ""));
-
-  const action = actionFor(p);
-  if (action) {
-    const when = ageText(action.at);
-    td(dl, "current activity", action.label
-      + (action.stale ? " (last transition)" : "")
-      + (when ? " · " + when : ""), true);
-  } else {
-    td(dl, "current activity", null);
-  }
-
-  td(dl, "parent", (p.parent || "") === "" ? "(none)" : p.parent, true);
-
-  const task = state.tasks[p.id] || null;
-  if (task) {
-    td(dl, "task", (task.id || "") + (task.title ? " " + task.title : ""), true);
-    td(dl, "task status", [task.status, task.updatedAt].filter(Boolean).join(" / ") || "unknown");
-  } else {
-    td(dl, "task", null);
-  }
-  renderWorkBlock(dl, p);
-
-  td(dl, "worktree", p.workspace || null, true);
-  td(dl, "branch", p.branch || null, true);
-  td(dl, "base", p.base || null, true);
-
-  // Both counts are stored-message counts; the row badge shows the first.
-  td(dl, "messages awaiting acknowledgement",
-    String(p.pendingCount || 0) + " (actionable task, guidance or recovery)", true);
-  td(dl, "unacknowledged messages",
-    String(p.unacknowledgedCount || 0) + " (includes stopped sessions)", true);
-  if (p.latestReportId) td(dl, "latest report", p.latestReportId, true);
-  if (p.lastTurnId) td(dl, "last turn", p.lastTurnId, true);
-  const sample = pendingItems(p);
-  if (sample.length) {
-    td(dl, "awaiting messages", sample.map((item) => (item.kind || "message") + " " + item.id).join(" / "), true);
-  }
-
-  td(dl, "recorded execution", p.execution
-    ? [p.execution.attempt, p.execution.mode, p.execution.phase, p.execution.status].filter(Boolean).join(" / ")
-    : null, true);
-  td(dl, "observed process", p.actualProcess || null, true);
-
-  const observed = [p.observedHarness, p.observedModel, p.observedEffort].filter(Boolean).join(" / ");
-  td(dl, "observed harness", observed || null, true);
-  const prov = state.providers[p.id] || null;
-  td(dl, "provider", prov ? (prov.name || "unnamed") + " / " + (prov.status || "unknown") : null, true);
-  td(dl, "configured", [p.harness, p.model, p.effort].filter(Boolean).join(" / ") || null, true);
-
-  td(dl, "receiver", p.liveReceiver === true ? "registered" : p.liveReceiver === false ? "none recorded" : null, true);
-  td(dl, "endpoint", p.endpointRegistered === true ? "registered" : p.endpointRegistered === false ? "none recorded" : null, true);
-  td(dl, "reference", p.reference === true ? "reference entry" : p.reference === false ? "not a reference" : null, true);
-  td(dl, "input read", (p.inputRead || []).join(" / ") || null, true);
-  td(dl, "stop", p.stop
-    ? [p.stop.id, p.stop.status, p.stop.attempt, p.stop.reportId].filter(Boolean).join(" / ")
-    : "none recorded", true);
-
-  const ensIds = Array.from(new Set((p.ownedEnsembles || []).concat(p.memberEnsembles || [])));
-  if (ensIds.length) {
-    for (const ensId of ensIds) {
-      const ens = state.ensembles.get(ensId);
-      if (!ens) {
-        td(dl, "ensemble", ensId + " (not in snapshot)", true);
-        continue;
-      }
-      const co = (ens.members || []).filter((m) => m !== p.id);
-      let line = ensId + " " + (ens.coupling || "unknown coupling");
-      line += p.id === ens.owner ? " (owner)" : " (member)";
-      if (co.length) line += " with " + co.join(", ");
-      td(dl, "ensemble", line, true);
-      for (const s of ens.sections || []) {
-        if ((s.members || []).includes(p.id)) {
-          td(dl, "section", ensId + "/" + s.id + " capability " + (s.capability || "unknown"), true);
-        }
-      }
-    }
-  } else {
-    td(dl, "ensemble", "none recorded");
-  }
-
-  el.detail.appendChild(dl);
-  renderKnowledgeBlock(el.detail, p);
-}
 
 const TRANSITION_LIMIT = 50;
 
-function transitionRow(t) {
-  const li = document.createElement("li");
-  li.className = kindClass(t.kind) + (t.arrival ? " arrival" : "");
-  const when = document.createElement("time");
-  text(when, t.at || "time unrecorded");
-  li.appendChild(when);
-  if (t.session) {
-    const go = document.createElement("button");
-    go.className = "go";
-    go.type = "button";
-    text(go, t.session);
-    go.addEventListener("click", () => select(t.session));
-    li.appendChild(go);
-  }
-  const kind = document.createElement("span");
-  text(kind, " " + (t.kind || "unknown") + " ");
-  li.appendChild(kind);
-  const sum = document.createElement("span");
-  sum.className = "muted";
-  const receipt = t.entity === "message" && t.kind === "receipt" && t.counterpart
-    ? " message from " + t.counterpart : "";
-  text(sum, (t.summary || "") + receipt);
-  li.appendChild(sum);
-  t.arrival = false;
-  return li;
-}
 
 // History stays available on demand: the rail opens with the newest batch
 // and a control reads the rest. Row shape and order are unchanged.
-function renderTransitions() {
-  el.transitions.textContent = "";
-  if (!state.transitions.length) {
-    const li = document.createElement("li");
-    text(li, "No committed transitions in this snapshot.");
-    el.transitions.appendChild(li);
-    return;
-  }
-  const expanded = state.showAllTransitions === true;
-  const shown = expanded ? state.transitions : state.transitions.slice(0, TRANSITION_LIMIT);
-  for (const t of shown) el.transitions.appendChild(transitionRow(t));
-  if (!expanded && state.transitions.length > shown.length) {
-    const more = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    text(button, "Show all " + state.transitions.length + " transitions");
-    button.addEventListener("click", () => {
-      state.showAllTransitions = true;
-      renderTransitions();
-    });
-    more.appendChild(button);
-    el.transitions.appendChild(more);
-  }
-}
 
 /* --- knowledge (on demand, read-only) ------------------------------------- */
 
@@ -1001,13 +625,13 @@ async function loadKnowledgeOverview() {
   if (state.fixtureName) {
     state.knowledge = state.fixtureKnowledge || null;
     state.knowledgeNotice = state.fixtureKnowledge ? "" : "A fixture carries no knowledge records.";
-    renderKnowledge();
+    renderDocumentSoon();
     return;
   }
   if (!knowledgeWired()) {
     state.knowledge = null;
     state.knowledgeNotice = "No live endpoint is configured.";
-    renderKnowledge();
+    renderDocumentSoon();
     return;
   }
   try {
@@ -1019,7 +643,7 @@ async function loadKnowledgeOverview() {
     state.knowledge = null;
     state.knowledgeNotice = "Knowledge unavailable: " + (e && e.message ? e.message : e);
   }
-  renderKnowledge();
+  renderDocumentSoon();
 }
 
 async function loadActorKnowledge(id) {
@@ -1029,11 +653,9 @@ async function loadActorKnowledge(id) {
   state.knowledgeActorId = id || "";
   if (state.fixtureName) {
     if (state.fixtureKnowledge && id) state.knowledgeActor = fixtureActorKnowledge(id);
-    renderDetail();
     return;
   }
   if (!knowledgeWired() || !id) {
-    renderDetail();
     return;
   }
   let data;
@@ -1047,157 +669,19 @@ async function loadActorKnowledge(id) {
   }
   if (state.knowledgeActorRequest !== request || state.selectionId !== id) return;
   state.knowledgeActor = data;
-  renderDetail();
 }
 
 // The actor view carries the full record; an overview expansion lists what the
 // overview endpoint actually returned (claim, author, sharing path) so a field the
 // endpoint does not carry is never shown as recorded `unknown`.
-function findingDetail(promotion, finding, full = true) {
-  const ul = document.createElement("ul");
-  ul.className = "knowledge-list";
-  const fields = full ? [
-    ["claim", finding && finding.claim],
-    ["evidence", finding && finding.evidence],
-    ["limits", finding && finding.limits],
-    ["author", (finding && finding.author) || promotion.author],
-    ["sharing path", (promotion.source || "unknown") + " \u2192 " + (promotion.destination || "unknown")
-      + (promotion.promotedBy ? " via " + promotion.promotedBy : "")],
-  ] : [
-    ["claim", finding && finding.claim],
-    ["author", (finding && finding.author) || promotion.author],
-    ["sharing path", (promotion.source || "unknown") + " \u2192 " + (promotion.destination || "unknown")
-      + (promotion.promotedBy ? " via " + promotion.promotedBy : "")],
-  ];
-  for (const [label, value] of fields) {
-    const li = document.createElement("li");
-    const key = document.createElement("span");
-    key.className = "finding-meta";
-    text(key, label + ": ");
-    li.appendChild(key);
-    const body = document.createElement("span");
-    const empty = value === null || value === undefined || value === "";
-    if (empty) {
-      body.className = "unknown";
-      text(body, "unknown");
-    } else if (label === "evidence" || label === "limits") {
-      appendEvidenceRefs(body, String(value), li);
-    } else {
-      text(body, value);
-    }
-    li.appendChild(body);
-    ul.appendChild(li);
-  }
-  return ul;
-}
 
 // Evidence and limits cite supporting records as message: references. Each
 // reference is a button that reads the complete stored message inline,
 // so the supporting record is inspectable without leaving the graph.
-function appendEvidenceRefs(body, value, li) {
-  const parts = String(value).split(/(message:[^\s,;]+)/g);
-  if (parts.length < 2) {
-    text(body, value);
-    return;
-  }
-  const record = document.createElement("div");
-  record.className = "msg-record";
-  record.setAttribute("aria-live", "polite");
-  for (const part of parts) {
-    if (/^message:[^\s,;]+$/.test(part)) {
-      const ref = document.createElement("button");
-      ref.type = "button";
-      ref.className = "msg-ref";
-      text(ref, part);
-      ref.setAttribute("aria-label", "Supporting record " + part);
-      ref.addEventListener("click", () => showMessageRecord(record, part));
-      body.appendChild(ref);
-    } else if (part) {
-      const span = document.createElement("span");
-      text(span, part);
-      body.appendChild(span);
-    }
-  }
-  li.appendChild(record);
-}
 
-function showMessageRecord(record, token) {
-  record.textContent = "";
-  record.dataset.token = token;
-  const id = token.slice("message:".length);
-  const head = document.createElement("span");
-  head.className = "finding-meta";
-  text(head, token + ": ");
-  record.appendChild(head);
-  // The transition summary appears beside the complete message body below.
-  const hit = state.transitions.find((t) => t.entity === "message" && String(t.entityId) === id);
-  const detail = document.createElement("span");
-  if (hit) {
-    text(detail, "recorded transition summary · " + (hit.kind || "unknown") + " · "
-      + (hit.session || "unknown") + " · " + (hit.at || "unknown time")
-      + (hit.summary ? " · " + hit.summary : ""));
-  } else {
-    detail.className = "unknown";
-    text(detail, "no recorded transition carries this reference in the current snapshot");
-  }
-  record.appendChild(detail);
-  if (hit && hit.session) {
-    const go = document.createElement("button");
-    go.type = "button";
-    go.className = "go";
-    text(go, "open " + hit.session);
-    go.addEventListener("click", () => select(hit.session));
-    record.appendChild(go);
-  }
-  const bodyWrap = document.createElement("div");
-  bodyWrap.className = "msg-body";
-  text(bodyWrap, "reading full record…");
-  record.appendChild(bodyWrap);
-  void readMessageBody(record, bodyWrap, id);
-}
 
 // The complete supporting message body is read on demand through the public
 // message route, so older references outside the snapshot resolve too.
-async function readMessageBody(record, bodyWrap, id) {
-  let data;
-  try {
-    const res = await fetch(state.apiBase + "/orchestra/message?id=" + encodeURIComponent(id));
-    const responseBody = await res.text();
-    try {
-      data = JSON.parse(responseBody);
-    } catch {
-      data = { error: responseBody || "the endpoint answered " + res.status };
-    }
-    if (!res.ok && (!data || !data.error)) {
-      data = { error: responseBody || "the endpoint answered " + res.status };
-    }
-  } catch (e) {
-    data = { error: e && e.message ? e.message : String(e) };
-  }
-  if (record.dataset.token !== "message:" + id) return;
-  bodyWrap.textContent = "";
-  // An empty stored body displays its sender header.
-  if (!data || data.error || !data.message) {
-    bodyWrap.className = "msg-body unknown";
-    text(bodyWrap, data && data.message === null
-      ? "no stored message carries this reference"
-      : "full record unavailable"
-        + (data && data.error ? ": " + data.error : " for this reference")
-        + (data && data.cause ? ": " + data.cause : ""));
-    return;
-  }
-  const message = data.message;
-  const who = document.createElement("div");
-  who.className = "finding-meta";
-  text(who, "recorded message"
-    + (message.sender ? " from " + message.sender : "")
-    + (message.recipient ? " to " + message.recipient : "")
-    + (message.kind ? " · " + message.kind : ""));
-  bodyWrap.appendChild(who);
-  const full = document.createElement("div");
-  text(full, typeof message.body === "string" ? message.body : "");
-  bodyWrap.appendChild(full);
-}
 
 // Showing the findings no recorded promotion carries. One place owns the state
 // and its control's pressed state.
@@ -1212,15 +696,6 @@ function setIncludeUnshared(on) {
 // removed node. When focus was lost to the remount, restore it to the same
 // finding node or actor anchor if still present and visible. Focus the user
 // placed elsewhere is never moved.
-function restoreGraphFocus(focusedId, focusedKind) {
-  if (!focusedId || !el.graph || !el.viewKnowledge || el.viewKnowledge.hidden) return;
-  if (document.activeElement !== document.body) return;
-  const node = focusedKind === "anchor"
-    ? el.graph.querySelector('.kg-anchor[data-kg-id="' + CSS.escape(focusedId) + '"]')
-    : [...el.graph.querySelectorAll(".knode")]
-      .find((n) => n.getAttribute("aria-label") === focusedId);
-  if (node && typeof node.focus === "function") node.focus();
-}
 
 // Select the finding author for actor details while keeping the graph visible
 // and keyboard focus on its node.
@@ -1229,7 +704,6 @@ function followGraphAuthor(id) {
   if (!actor || !state.players.has(actor) || actor === state.selectionId) return;
   state.selectionId = actor;
   renderTree();
-  renderDetail();
   void loadActorKnowledge(actor);
   void loadActorWork(actor);
 }
@@ -1249,8 +723,6 @@ function toggleFinding(id) {
     void loadGraphRecord(graphFindingAuthor(state.findingId), state.findingId);
     followGraphAuthor(state.findingId);
   }
-  renderKnowledge();
-  renderDetail();
 }
 
 // Read the finding author from actor knowledge, the overview or a promotion.
@@ -1279,16 +751,13 @@ async function loadGraphRecord(actor, findingId) {
   const current = state.knowledgeActor;
   if (actor && current && state.knowledgeActorId === actor && !current.refused && !current.error) {
     state.graphRecord = { actor, data: current };
-    renderKnowledge();
     return;
   }
   if (state.fixtureName) {
     if (state.fixtureKnowledge && actor) state.graphRecord = { actor, data: fixtureActorKnowledge(actor) };
-    renderKnowledge();
     return;
   }
   if (!knowledgeWired() || !actor) {
-    renderKnowledge();
     return;
   }
   let data;
@@ -1302,367 +771,43 @@ async function loadGraphRecord(actor, findingId) {
   }
   if (state.graphRecordRequest !== request || state.findingId !== findingId) return;
   state.graphRecord = { actor, data };
-  renderKnowledge();
 }
 
 // The complete recorded fields for the selected finding from its author
 // read, shaped like the dossier expansion. Null until that read arrives.
-function graphRecordFinding(id) {
-  const rec = state.graphRecord;
-  const data = rec && rec.data;
-  if (!data || data.refused || data.error) return null;
-  for (const f of data.authored || []) {
-    if (f && f.id === id) return {
-      promo: { author: f.author, source: f.author, destination: "" },
-      finding: f,
-    };
-  }
-  for (const r of data.received || []) {
-    if (r && (r.finding || r.id) === id) return { promo: r, finding: r };
-  }
-  return null;
-}
 
 // The selected record expansion: the complete recorded fields once the
 // on-demand author read arrives; meanwhile only what the overview carries,
 // plus the actual read state. Evidence and limits are never guessed.
-function findingRecordExpansion(parent, findingId, promo, finding) {
-  const full = graphRecordFinding(findingId);
-  if (full) {
-    parent.appendChild(findingDetail(full.promo, full.finding));
-    return;
-  }
-  parent.appendChild(findingDetail(promo, finding, false));
-  const rec = state.graphRecord;
-  if (!rec || !rec.actor) return;
-  const data = rec.data;
-  const note = document.createElement("p");
-  note.className = "muted";
-  if (data && data.refused) text(note, "Findings for this actor are outside the bound reader's scope.");
-  else if (data && data.error) text(note, "Knowledge unavailable: " + data.error);
-  else text(note, "Reading recorded evidence.");
-  parent.appendChild(note);
-}
 
 // One row per finding: the claim once, its author, how many recorded
 // promotions carry it, and every recorded sharing path. Promotion rows
 // repeated the claim per edge; the group shows the finding and its
 // relationships together.
-function findingGroupRow(findingId, group, findings) {
-  const li = document.createElement("li");
-  li.className = "t-promotion";
-  const finding = findings.get(findingId);
-  const id = document.createElement("button");
-  id.type = "button";
-  id.className = "finding-id mono";
-  text(id, findingId || "unrecorded finding");
-  id.addEventListener("click", () => toggleFinding(findingId || ""));
-  li.appendChild(id);
-  const meta = document.createElement("span");
-  meta.className = "finding-meta";
-  const author = (finding && finding.author) || (group[0] && group[0].author) || "unknown";
-  text(meta, " author " + author + " · shared " + group.length
-    + (group.length === 1 ? " time" : " times"));
-  li.appendChild(meta);
-  const path = document.createElement("span");
-  path.className = "share-path";
-  text(path, group.map((p) => (p.source || "unknown") + " → " + (p.destination || "unknown")
-    + (p.promotedBy ? " via " + p.promotedBy : "")).join(" / "));
-  li.appendChild(path);
-  if (finding && finding.claim) {
-    const claim = document.createElement("span");
-    claim.className = "muted";
-    text(claim, " " + finding.claim);
-    li.appendChild(claim);
-  }
-  if (state.findingId && state.findingId === findingId) {
-    findingRecordExpansion(li, findingId, group[0], finding || {});
-  }
-  return li;
-}
 
 // The knowledge band renders the read as seats: every actor that holds a recorded
 // finding sits at its recorded distance from the podium, and each recorded
 // promotion is a line between two seats. A page without the mount, or without the
 // module, keeps the promotion list only.
-function snapshotPlayers() {
-  const out = [];
-  for (const p of state.players.values()) {
-    out.push({
-      id: p.id,
-      parent: p.parent || "",
-      role: p.role || "",
-      model: p.observedModel || p.model || "",
-      status: deriveStatus(p),
-    });
-  }
-  return out;
-}
 
-function renderKnowledgeSeats(overview, emptyText) {
-  const mount = el.knowledgeSurface;
-  if (!mount || !window.KnowledgeSurface) return;
-  state.knowledgeSeatEmpty = emptyText || "";
-  window.KnowledgeSurface.render(mount, overview, {
-    players: snapshotPlayers(),
-    liveOnly: state.knowledgeLiveOnly,
-    query: state.knowledgeSearch,
-    selectedId: state.selectionId,
-    notice: state.knowledgeNotice || (!overview ? "No knowledge read yet." : (emptyText || "")),
-    onSelectActor: (id) => select(id),
-    onSelectFinding: (id) => toggleFinding(id),
-  });
-}
 
 // The seats read the same recorded state as the tree - each seat's liveness, its
 // place in the hierarchy and the selected actor - so a tree refresh refreshes the
 // seats with it. The promotion list is unchanged by that state and stays as it is.
-function refreshKnowledgeSeats() {
-  if (!el.knowledgeSurface || !window.KnowledgeSurface) return;
-  renderKnowledgeSeats(state.knowledge, state.knowledgeSeatEmpty);
-}
 
 // The knowledge graph draws the same overview behind the readout. A page
 // without the graph mount, or without kgraph.js, keeps the readout only.
-function renderKnowledgeGraphState(overview, emptyText) {
-  const mount = el.graph;
-  if (!mount || typeof renderKnowledgeGraph !== "function") return;
-  // The render recreates every node, so capture the actual focused node
-  // first; the wrapper restores that exact identity afterwards.
-  const focusedEl = mount.contains(document.activeElement) ? document.activeElement : null;
-  const focusedKind = focusedEl && focusedEl.classList
-    && focusedEl.classList.contains("kg-anchor") ? "anchor" : "node";
-  const focusedId = focusedEl && focusedEl.getAttribute
-    ? focusedEl.getAttribute(focusedKind === "anchor" ? "data-kg-id" : "aria-label") || "" : "";
-  const roles = {};
-  for (const p of state.players.values()) roles[p.id] = p.role || "";
-  renderKnowledgeGraph(mount, overview, {
-    query: state.knowledgeSearch,
-    includeUnshared: state.includeUnshared,
-    selectedId: state.findingId,
-    notice: state.knowledgeNotice || (!overview ? "No knowledge read yet." : (emptyText || "")),
-    roles,
-    // Recorded roles and parent links place actors in graph rows.
-    actorMeta: (overview && overview.actors) || {},
-    onSelect: (id) => toggleFinding(id),
-  });
-  restoreGraphFocus(focusedId, focusedKind);
-}
 
-function renderKnowledge() {
-  const list = el.knowledgePromotions;
-  const empty = el.knowledgeEmpty;
-  if (!list || !empty) return; // a page without the knowledge section renders nothing
-  // These three nodes persist across renders, and text() appends, so each one is
-  // cleared before this render writes to it.
-  list.textContent = "";
-  empty.textContent = "";
-  el.knowledgeCount.textContent = "";
-  empty.hidden = true;
-  const overview = state.knowledge;
-  if (state.knowledgeNotice) {
-    empty.hidden = false;
-    text(empty, state.knowledgeNotice);
-    renderKnowledgeSeats(overview);
-    renderKnowledgeGraphState(overview);
-    return;
-  }
-  if (!overview) {
-    empty.hidden = false;
-    text(empty, "No knowledge read yet.");
-    renderKnowledgeSeats(overview);
-    renderKnowledgeGraphState(overview);
-    return;
-  }
-  const findings = new Map((overview.findings || []).map((f) => [f.id, f]));
-  const query = state.knowledgeSearch.trim().toLowerCase();
-  const matches = (id, claim, author) => !query
-    || String(id || "").toLowerCase().includes(query)
-    || String(claim || "").toLowerCase().includes(query)
-    || String(author || "").toLowerCase().includes(query);
-  const promotions = (overview.promotions || []).filter((p) => matches(p.finding || p.id,
-    (findings.get(p.finding) || {}).claim, p.author));
-  const unshared = [];
-  if (state.includeUnshared) {
-    const promoted = new Set((overview.promotions || []).map((p) => p.finding));
-    for (const f of overview.findings || []) {
-      if (!promoted.has(f.id) && matches(f.id, f.claim, f.author)) unshared.push(f);
-    }
-  }
-  const parts = [promotions.length + " promotion" + (promotions.length === 1 ? "" : "s")];
-  const findingCount = (overview.findings || []).length;
-  parts.push(findingCount + " finding" + (findingCount === 1 ? "" : "s"));
-  if (state.includeUnshared) parts.push(unshared.length + " not yet shared");
-  text(el.knowledgeCount, parts.join(" \u00b7 "));
-  if (!promotions.length && !unshared.length) {
-    empty.hidden = false;
-    text(empty, query
-      ? "No findings match."
-      : (overview.empty ? "No recorded findings." : "No recorded promotions."));
-    renderKnowledgeSeats(overview, empty.textContent);
-    renderKnowledgeGraphState(overview, empty.textContent);
-    return;
-  }
-  const groups = new Map();
-  for (const promotion of promotions) {
-    const key = promotion.finding || promotion.id || "";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(promotion);
-  }
-  for (const [findingId, group] of groups) {
-    list.appendChild(findingGroupRow(findingId, group, findings));
-  }
-  for (const finding of unshared) {
-    const li = document.createElement("li");
-    li.className = "t-promotion finding-unshared";
-    const id = document.createElement("button");
-    id.type = "button";
-    id.className = "finding-id mono";
-    text(id, finding.id);
-    id.addEventListener("click", () => toggleFinding(finding.id));
-    li.appendChild(id);
-    const meta = document.createElement("span");
-    meta.className = "finding-meta";
-    text(meta, " author " + (finding.author || "unknown") + " \u00b7 not yet shared");
-    li.appendChild(meta);
-    const claim = document.createElement("span");
-    claim.className = "muted";
-    text(claim, " " + (finding.claim || ""));
-    li.appendChild(claim);
-    if (state.findingId === finding.id) {
-      findingRecordExpansion(li, finding.id,
-        { author: finding.author, source: finding.author, destination: "" }, finding);
-    }
-    list.appendChild(li);
-  }
-  renderKnowledgeSeats(overview);
-  renderKnowledgeGraphState(overview);
-}
 
 // The dossier block: authored, received and never-shared counts with the stored
 // findings behind them. A refused actor keeps the reason visible.
-function renderKnowledgeBlock(container, p) {
-  const block = document.createElement("div");
-  block.className = "knowledge";
-  const heading = document.createElement("h3");
-  text(heading, "Knowledge");
-  block.appendChild(heading);
-  const data = state.knowledgeActor;
-  const note = (message) => {
-    const m = document.createElement("p");
-    m.className = "muted";
-    text(m, message);
-    block.appendChild(m);
-    container.appendChild(block);
-  };
-  if (state.knowledgeActorId !== p.id) return note("Reading recorded findings.");
-  if (!data) return note(knowledgeWired() ? "No knowledge read." : "A fixture carries no knowledge records.");
-  if (data.refused) return note("Findings for this actor are outside the bound reader's scope.");
-  if (data.error) return note("Knowledge unavailable: " + data.error);
-  const counts = data.counts || { authored: 0, received: 0, unshared: 0 };
-  const line = document.createElement("p");
-  text(line, counts.authored + " authored / " + counts.received + " received / "
-    + counts.unshared + " not yet shared");
-  block.appendChild(line);
-  const button = document.createElement("button");
-  button.type = "button";
-  button.id = "show-findings";
-  button.setAttribute("aria-expanded", state.knowledgeOpen ? "true" : "false");
-  text(button, "Show findings");
-  button.addEventListener("click", () => {
-    state.knowledgeOpen = !state.knowledgeOpen;
-    renderDetail();
-  });
-  block.appendChild(button);
-  if (state.knowledgeOpen) {
-    const ul = document.createElement("ul");
-    ul.className = "knowledge-list";
-    const authored = data.authored || [];
-    const received = data.received || [];
-    if (!authored.length && !received.length) {
-      const li = document.createElement("li");
-      li.className = "muted";
-      text(li, "No authored findings. No received findings.");
-      ul.appendChild(li);
-    }
-    for (const f of authored) {
-      const li = document.createElement("li");
-      li.className = "finding";
-      const id = document.createElement("button");
-      id.type = "button";
-      id.className = "finding-id mono";
-      text(id, f.id);
-      id.addEventListener("click", () => toggleFinding(f.id));
-      li.appendChild(id);
-      const meta = document.createElement("span");
-      meta.className = "finding-meta";
-      text(meta, " authored");
-      li.appendChild(meta);
-      const claim = document.createElement("span");
-      claim.className = "muted";
-      text(claim, " " + (f.claim || ""));
-      li.appendChild(claim);
-      if (state.findingId === f.id) {
-        li.appendChild(findingDetail({ author: f.author, source: f.author, destination: "" }, f));
-      }
-      ul.appendChild(li);
-    }
-    for (const promotion of received) {
-      const li = document.createElement("li");
-      li.className = "finding";
-      const id = document.createElement("button");
-      id.type = "button";
-      id.className = "finding-id mono";
-      text(id, promotion.finding || promotion.id);
-      id.addEventListener("click", () => toggleFinding(promotion.finding || ""));
-      li.appendChild(id);
-      const meta = document.createElement("span");
-      meta.className = "finding-meta";
-      text(meta, " received from " + (promotion.source || "unknown")
-        + (promotion.promotedBy ? " via " + promotion.promotedBy : ""));
-      li.appendChild(meta);
-      const claim = document.createElement("span");
-      claim.className = "muted";
-      text(claim, " " + (promotion.claim || ""));
-      li.appendChild(claim);
-      if (state.findingId === (promotion.finding || "")) {
-        li.appendChild(findingDetail(promotion, promotion));
-      }
-      ul.appendChild(li);
-    }
-    block.appendChild(ul);
-  }
-  container.appendChild(block);
-}
 
+// Ages belong to the document now: the roster states them, so the timer repaints
+// the document rather than rows of the retired tree.
 function renderAges() {
-  for (const slot of el.tree.querySelectorAll(".node-action")) {
-    const p = state.players.get(slot.dataset.row || "");
-    if (!p) continue;
-    const action = actionFor(p);
-    if (!action) continue;
-    const when = ageText(action.at);
-    slot.textContent = "";
-    text(slot, action.label + (when ? " · " + when : ""));
-  }
+  renderDocumentSoon();
 }
 
-function loadEnsembleOptions() {
-  const keep = state.ensembleFilter;
-  el.ensembleFilter.textContent = "";
-  const all = document.createElement("option");
-  all.value = "all";
-  text(all, "all");
-  el.ensembleFilter.appendChild(all);
-  for (const id of Array.from(state.ensembles.keys()).sort()) {
-    const opt = document.createElement("option");
-    opt.value = id;
-    text(opt, id);
-    el.ensembleFilter.appendChild(opt);
-  }
-  el.ensembleFilter.value = state.ensembles.has(keep) ? keep : "all";
-  state.ensembleFilter = el.ensembleFilter.value;
-}
 
 /* --- snapshot and stream -------------------------------------------------- */
 
@@ -1687,12 +832,9 @@ function applySnapshot(data, label) {
   if (data.selection && data.selection.gap === true) {
     holdGapNotice("Snapshot reports an event history gap. Shown state is authoritative as of the cursor.");
   }
-  loadEnsembleOptions();
   if (state.selectionId && !state.players.has(state.selectionId)) state.selectionId = null;
   if (state.pendingOpen && !state.players.has(state.pendingOpen)) state.pendingOpen = null;
   renderTree();
-  renderDetail();
-  renderTransitions();
   // Knowledge reads are on demand: refresh them with every authoritative snapshot.
   void loadKnowledgeOverview();
   if (state.selectionId) void loadActorKnowledge(state.selectionId);
@@ -1811,7 +953,6 @@ function connectEvents() {
     if (!known || structureSignature() !== state.structure) renderTree();
     else {
       updateRow(p);
-      renderDetail();
     }
     markArrival(p.id);
     clearGapNotice();
@@ -1823,9 +964,7 @@ function connectEvents() {
     if (!e || !e.id) return;
     state.ensembles.set(e.id, e);
     if (ev.lastEventId) setCursor(ev.lastEventId);
-    loadEnsembleOptions();
     renderTree();
-    if (state.selectionId) renderDetail();
     clearGapNotice();
   });
 
@@ -1836,7 +975,6 @@ function connectEvents() {
     t.arrival = true;
     state.transitions.unshift(t);
     if (ev.lastEventId) setCursor(ev.lastEventId);
-    renderTransitions();
     const actor = state.players.get(t.session);
     if (actor) {
       const row = rowElement(actor.id);
@@ -1844,7 +982,6 @@ function connectEvents() {
       // A transition on the selected actor can carry a new report, input,
       // or receipt, so the selected read refreshes with it.
       if (state.selectionId === actor.id) {
-        renderDetail();
         void loadActorWork(actor.id);
       }
     }
@@ -1871,6 +1008,7 @@ function connectEvents() {
       if (state.selectionId) void loadActorKnowledge(state.selectionId);
     }
     clearGapNotice();
+    renderDocumentSoon();
   });
 
   es.addEventListener("pending", (ev) => {
@@ -1884,7 +1022,6 @@ function connectEvents() {
       if (typeof m.lastTurnId === "string") p.lastTurnId = m.lastTurnId;
       if (typeof m.latestReportId === "string") p.latestReportId = m.latestReportId;
       renderTree();
-      if (state.selectionId === m.session) renderDetail();
     }
     if (ev.lastEventId) setCursor(ev.lastEventId);
   });
@@ -1947,23 +1084,6 @@ function scheduleEventsRetry() {
 
 /* --- controls ------------------------------------------------------------- */
 
-function focusedRowId() {
-  const active = document.activeElement;
-  if (!active || !active.closest) return "";
-  const row = active.closest(".node-row");
-  return row && row.dataset ? row.dataset.row || "" : "";
-}
-
-function clearFilters() {
-  state.search = "";
-  state.statusFilter = "all";
-  state.ensembleFilter = "all";
-  el.search.value = "";
-  el.statusFilter.value = "all";
-  el.ensembleFilter.value = "all";
-  renderTree();
-}
-
 function init() {
   const query = new URLSearchParams(location.search);
   state.apiBase = query.get("api") || "";
@@ -1972,45 +1092,29 @@ function init() {
   state.fixtureName = query.get("fixture") || "";
   state.subject = query.get("subject") || "";
 
-  el.search.addEventListener("input", () => {
-    state.search = el.search.value.trim();
-    renderTree();
-  });
-  el.statusFilter.addEventListener("change", () => {
-    state.statusFilter = el.statusFilter.value;
-    renderTree();
-  });
-  el.ensembleFilter.addEventListener("change", () => {
-    state.ensembleFilter = el.ensembleFilter.value;
-    renderTree();
-  });
-  document.getElementById("clear-filters").addEventListener("click", clearFilters);
-  if (el.includeUnshared) {
-    el.includeUnshared.addEventListener("click", () => {
-      setIncludeUnshared(!state.includeUnshared);
-      renderKnowledge();
+  // The reset removes the filter toolbar and the view switch. One query moves the
+  // cursor through the rows and dims the rest in place, and one control reveals
+  // the quiet seats. Nothing here removes an actor from the recorded order.
+  if (el.find) {
+    el.find.addEventListener("input", () => {
+      state.docQuery = el.find.value.trim();
+      renderDocument();
     });
   }
-  if (el.liveOnly) {
-    el.liveOnly.addEventListener("click", () => {
-      state.knowledgeLiveOnly = !state.knowledgeLiveOnly;
-      el.liveOnly.setAttribute("aria-pressed", state.knowledgeLiveOnly ? "true" : "false");
-      renderKnowledge();
+  if (el.showEnded) {
+    el.showEnded.addEventListener("click", () => {
+      state.showEnded = state.showEnded !== true;
+      el.showEnded.setAttribute("aria-pressed", state.showEnded ? "true" : "false");
+      renderDocument();
     });
   }
-  for (const [name, button] of [["now", el.viewNowBtn],
-      ["knowledge", el.viewKnowledgeBtn], ["actors", el.viewActorsBtn]]) {
-    if (!button) continue;
-    button.addEventListener("click", () => setView(name));
+  // The whole-orchestra canvas draws on demand: opening its disclosure repaints,
+  // and the composition draws the canvas only while that disclosure is open, so
+  // it is never the default surface and holds no region while it is closed.
+  const whole = el.knowledgeWhole ? el.knowledgeWhole.parentElement : null;
+  if (whole && whole.tagName === "DETAILS") {
+    whole.addEventListener("toggle", () => renderDocument());
   }
-  if (el.knowledgeSearch) {
-    el.knowledgeSearch.addEventListener("input", () => {
-      state.knowledgeSearch = el.knowledgeSearch.value;
-      renderKnowledge();
-    });
-  }
-  document.getElementById("collapse-all").addEventListener("click", () => setAllCollapsed(true));
-  document.getElementById("expand-all").addEventListener("click", () => setAllCollapsed(false));
   document.getElementById("reconnect").addEventListener("click", async () => {
     try {
       await loadSnapshot();
@@ -2023,60 +1127,14 @@ function init() {
   });
 
   document.addEventListener("keydown", (ev) => {
+    if (ev.defaultPrevented || ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const active = document.activeElement;
-    const inField = active && (active.tagName === "INPUT" || active.tagName === "SELECT");
-
-    if (ev.key === "/" && !inField) {
+    const inField = active && (active.isContentEditable
+      || ["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName));
+    if (ev.key === "/" && !inField && el.find) {
       ev.preventDefault();
-      el.search.focus();
-      return;
+      el.find.focus();
     }
-    if (ev.key === "Escape") {
-      if (inField) {
-        ev.preventDefault();
-        active.blur();
-        if (active === el.knowledgeSearch) {
-          active.value = "";
-          state.knowledgeSearch = "";
-          renderKnowledge();
-        } else if (active === el.search) {
-          active.value = "";
-          state.search = "";
-          renderTree();
-        } else if (active === el.statusFilter) {
-          active.value = "all";
-          state.statusFilter = "all";
-          renderTree();
-        } else if (active === el.ensembleFilter) {
-          active.value = "all";
-          state.ensembleFilter = "all";
-          renderTree();
-        }
-        return;
-      }
-      if (state.pendingOpen) {
-        state.pendingOpen = null;
-        renderTree();
-        return;
-      }
-      clearFilters();
-      return;
-    }
-    if (ev.key === "ArrowRight" || ev.key === "ArrowLeft") {
-      const id = focusedRowId();
-      if (!id || !childrenOf(id).length) return;
-      ev.preventDefault();
-      const wantCollapsed = ev.key === "ArrowLeft";
-      if (state.collapsed.has(id) !== wantCollapsed) toggleCollapse(id);
-      return;
-    }
-    if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
-    if (!active || !active.classList || !active.classList.contains("node-id")) return;
-    ev.preventDefault();
-    const buttons = Array.from(el.tree.querySelectorAll(".node-id"));
-    const i = buttons.indexOf(active);
-    const next = ev.key === "ArrowDown" ? buttons[i + 1] : buttons[i - 1];
-    if (next) next.focus();
   });
 
   setInterval(renderAges, AGE_REFRESH_MS);
@@ -2106,6 +1164,223 @@ function init() {
     // A failed initial snapshot uses the existing endpoint retry path.
     scheduleEndpointRetry(e);
   });
+}
+
+/* --- the document --------------------------------------------------------- */
+
+// Snapshot state becomes the shapes the document and its modules read. Nothing
+// is invented: every field is recorded, or derived from recorded state by the
+// same helpers the retired panels used.
+function documentPlayers() {
+  const out = [];
+  for (const p of state.players.values()) {
+    const action = actionFor(p) || {};
+    const status = deriveStatus(p);
+    const ensembles = [];
+    for (const id of (p.ownedEnsembles || []).concat(p.memberEnsembles || [])) {
+      if (id && ensembles.indexOf(id) === -1) ensembles.push(id);
+    }
+    out.push({
+      id: p.id,
+      parent: p.parent || "",
+      role: p.role || "",
+      model: p.observedModel || p.model || "",
+      status,
+      pendingCount: p.pendingCount || 0,
+      awaitingInput: awaitingInput(p),
+      action: action.label || "",
+      actionAt: action.at || "",
+      stale: action.stale === true,
+      taskTitle: (state.tasks[p.id] && state.tasks[p.id].title) || "",
+      ensembles,
+      live: ["running", "waiting", "pending"].indexOf(status) !== -1,
+    });
+  }
+  return out;
+}
+
+function documentData() {
+  const ensembles = [];
+  for (const e of state.ensembles.values()) {
+    ensembles.push({
+      id: e.id, owner: e.owner || "",
+      coupling: e.coupling || "", members: e.members || [],
+    });
+  }
+  return {
+    players: documentPlayers(),
+    ensembles,
+    events: state.transitions || [],
+    knowledge: state.knowledge || null,
+    // Complete stored bodies already read, keyed by message id, with their read
+    // state; the selection renderer draws a body it holds and asks for one it
+    // does not.
+    messages: state.messages,
+  };
+}
+
+// The complete stored body of one recorded message, read on demand through the
+// read-only message route. The read state is explicit, so the reader can say what
+// it is doing rather than guess a body, and a body once read stays available.
+async function loadMessageBody(id) {
+  const key = String(id || "");
+  if (!key) return;
+  const held = state.messages[key];
+  if (held && held.state === "ok") return;
+  if (held && held.state === "reading") return;
+  if (!knowledgeWired()) {
+    state.messages[key] = { state: "unwired", message: null };
+    renderDocument();
+    return;
+  }
+  state.messages[key] = { state: "reading", message: null };
+  renderDocument();
+  try {
+    const res = await fetch(state.apiBase + "/orchestra/message?id=" + encodeURIComponent(key));
+    const data = await res.json();
+    if (!res.ok) {
+      state.messages[key] = {
+        state: res.status === 403 ? "refused" : res.status === 400 ? "unreadable" : "error",
+        message: null,
+        status: res.status,
+        reason: [data.error, data.cause].filter(Boolean).join(": "),
+      };
+    } else {
+      state.messages[key] = (data && data.message)
+        ? { state: "ok", message: data.message }
+        : { state: "missing", message: null };
+    }
+  } catch (e) {
+    state.messages[key] = {
+      state: "error",
+      message: null,
+      reason: (e && e.message) || String(e),
+    };
+  }
+  renderDocument();
+}
+
+function selectedSeat() {
+  if (!state.selectionId) return null;
+  const p = state.players.get(state.selectionId);
+  if (!p) return null;
+  const action = actionFor(p) || {};
+  return {
+    id: p.id,
+    role: p.role || "",
+    model: p.observedModel || p.model || "",
+    parent: p.parent || "",
+    status: deriveStatus(p),
+    pendingCount: p.pendingCount || 0,
+    action: action.label || "",
+    taskTitle: (state.tasks[p.id] && state.tasks[p.id].title) || "",
+    // The recorded work read for this seat, when the on-demand read has landed
+    // for it: the task body, the current input, the open request and the report.
+    work: state.workActorId === p.id ? state.work : null,
+    // The recorded ids of the messages this seat has not acknowledged. A count
+    // alone says nothing about what they ask, so the ids travel with the seat and
+    // the reader can open the complete stored body of any of them.
+    pending: pendingItems(p).map((m) => ({
+      id: String((m && m.id) || ""),
+      kind: (m && m.kind) || "",
+      at: (m && m.at) || "",
+      seq: (m && m.seq) || 0,
+    })).filter((m) => m.id),
+  };
+}
+
+function selectHistoryEvent(index) {
+  const event = state.transitions[index];
+  state.ribbonSeq = index > 0 && event ? String(event.seq) : null;
+  renderDocument();
+}
+
+function historyPosition() {
+  if (state.ribbonSeq === null) return 0;
+  const index = state.transitions.findIndex((event) => String(event.seq) === state.ribbonSeq);
+  return index < 0 ? 0 : index;
+}
+
+function renderDocument() {
+  if (!window.OversightDocument) return;
+  const active = document.activeElement;
+  const rowFocus = active && active.dataset ? active.dataset.docKey : null;
+  let knowledgeFocus = null;
+  let knowledgeMount = null;
+  if (active && active.closest) {
+    for (const name of ["data-kw-id", "data-kw-node"]) {
+      if (active.hasAttribute(name)) {
+        knowledgeFocus = '[' + name + '="' + CSS.escape(active.getAttribute(name)) + '"]';
+        const row = active.closest(".doc-row");
+        knowledgeMount = row ? row.dataset.docId : "whole";
+      }
+    }
+  }
+  const findings = (state.knowledge && state.knowledge.findings) || [];
+  const promotions = (state.knowledge && state.knowledge.promotions) || [];
+  let selectedFinding = null;
+  if (state.findingId) {
+    const record = findings.find((f) => f && f.id === state.findingId) || null;
+    if (record) {
+      // The recorded sharing steps travel with the record so the selected-record
+      // module can list each one; nothing is inferred when none is recorded.
+      selectedFinding = {
+        id: record.id,
+        author: record.author,
+        claim: record.claim,
+        evidence: record.evidence,
+        limits: record.limits,
+        promotions: promotions.filter((p) => p && (p.finding || p.id) === record.id),
+      };
+    }
+  }
+  const result = window.OversightDocument.render({
+    attention: el.attentionBand,
+    roster: el.roster,
+    selection: el.selection,
+    ribbon: el.ribbon,
+    knowledgeWhole: el.knowledgeWhole,
+    counts: el.counts,
+  }, documentData(), {
+    selectedId: state.selectionId,
+    selectedFindingId: state.findingId || "",
+    selectedSeat: selectedSeat(),
+    selectedFinding,
+    query: state.docQuery || "",
+    position: historyPosition(),
+    showEnded: state.showEnded === true,
+    knowledgeWholeOpen: state.knowledgeWholeOpen === true,
+    knowledgeQuery: state.knowledgeSearch || "",
+    knowledgeNotice: state.knowledgeNotice || "",
+    onSelect: select,
+    onSelectFinding: (id) => { state.findingId = id; renderDocument(); },
+    onReadMessage: (id) => { void loadMessageBody(id); },
+    onScrub: selectHistoryEvent,
+    onSelectEvent: selectHistoryEvent,
+    onListOpen: () => {},
+  });
+  if (knowledgeFocus) {
+    const mount = knowledgeMount === "whole" ? el.knowledgeWhole
+      : el.roster.querySelector('[data-doc-id="' + CSS.escape(knowledgeMount) + '"]');
+    const next = mount && mount.querySelector(knowledgeFocus);
+    if (next) next.focus();
+  }
+  if (rowFocus) {
+    const next = el.roster.querySelector('[data-doc-key="' + CSS.escape(rowFocus) + '"]');
+    if (next) next.focus();
+  }
+  return result;
+}
+
+// One repaint per turn: a snapshot applies, a frame lands and a selection moves
+// in the same task, and the reader sees the result once.
+let documentPending = false;
+function renderDocumentSoon() {
+  if (documentPending) return;
+  documentPending = true;
+  const run = () => { documentPending = false; renderDocument(); };
+  if (typeof queueMicrotask === "function") queueMicrotask(run);
+  else setTimeout(run, 0);
 }
 
 init();

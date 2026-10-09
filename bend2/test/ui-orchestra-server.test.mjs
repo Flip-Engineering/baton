@@ -312,7 +312,7 @@ test('an out-of-scope knowledge change still invalidates the shared overview', a
   };
   await readEntity('knowledge');
   const overview = await (await fetch(`${base}/orchestra/knowledge/overview`)).json();
-  assert.deepEqual(overview.findings, [{ id: 'finding-outside', author: 'sibling', claim: 'Shared outside finding' }]);
+  assert.deepEqual(overview.findings, [{ id: 'finding-outside', author: 'sibling', claim: 'Shared outside finding', evidence: 'Observed source', limits: 'Recorded limits' }]);
   const promotionWriter = new DatabaseSync(f.databasePath);
   promotionWriter.exec(`
     BEGIN;

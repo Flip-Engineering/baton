@@ -1,8 +1,7 @@
 # Orchestra live view
 
-Read-only browser view of live Orchestra structure and status
-(issue #682). Plain HTML, CSS, and JavaScript. No build step,
-no dependencies.
+Read-only browser view of Orchestra activity, agents, messages, and knowledge.
+The server serves the HTML, CSS, and JavaScript directly.
 
 ## Open
 
@@ -23,36 +22,29 @@ then open `http://localhost:8137/index.html`.
   behavior document from `fixtures/` (for example
   `fixture-small`) and turns live updates off; the screen is
   labeled as a fixture. `fixture-knowledge` carries a knowledge
-  block beside its players, so the knowledge band renders
+  block beside its players, so the knowledge graph renders
   without a live endpoint, and `fixture-knowledge-empty` carries
-  an empty block for the band's empty state.
+  an empty block for the graph's empty state.
   `fixtures/README.md` lists what each document covers.
 
-## Scope
+## Interface
 
-The page renders five areas:
+The page shows an attention strip, an agent roster, a selected record, knowledge
+graphs, and a history ribbon. Quiet agents are folded initially; the quiet-agent
+control reveals them. Ensemble labels group adjacent members in the roster.
+The find field marks matching agents in place.
 
-- A running-and-attention band above the tree: one chip per actor that is
-  running, awaiting input, failed or pending, ordered running first, then
-  awaiting input, failed and pending, and by recorded pending count inside a
-  group. A chip selects its actor.
-- The actor tree: the parentage hierarchy, with a search field and status and
-  ensemble filters; each row carries its ensemble and section membership.
-- The selected actor: task, worktree, branch, recorded execution, observed
-  process and provider, pending counts, and the actor's recorded findings.
-- Recent transitions: the snapshot's committed records with their recorded
-  times.
-- The knowledge band: one stand per actor that holds a recorded finding, at
-  that actor's recorded distance from the podium. A stand's height is its
-  authored findings, the filled inner part of that height is the findings
-  shared at least once, the tick below the baseline is the findings it
-  received, and a line is a recorded promotion from its source seat to its
-  destination seat. An actor that holds a finding but is absent from the
-  snapshot sits in a final `recorded outside this view` rank. The promotion
-  readout beside the surface lists the same records as text; its filter field
-  narrows the rows by finding id, claim or author, `Include unshared` adds the
-  findings that no seat has promoted, and `Live only` narrows the surface to
-  running, waiting and pending seats.
+Selecting an agent opens its task, current input, request, report, and pending
+message references. A message reference opens its complete stored body.
+Selecting a finding opens its claim, evidence, limits, author, and sharing steps.
 
-All text renders through `textContent`. The page issues only GET
-snapshot, event-stream and knowledge requests.
+Each author's roster row carries a compact knowledge surface. The whole knowledge
+graph opens from a disclosure and places agents and findings by parent depth.
+Agents with missing parent metadata appear in an unknown-depth group. Directed
+edges show authorship, sharing, delivery, and promotion.
+
+The history ribbon shows committed changes by event kind. Its position selects a
+change for reading; the record list opens from the ribbon.
+
+The page reads snapshot, event-stream, knowledge, work, and message endpoints.
+Text renders through `textContent`.

@@ -4,128 +4,84 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="orchestra-api-base" content="">
-<title>Orchestra live view</title>
+<title>Orchestra</title>
 <link rel="stylesheet" href="styles.css">
-<link rel="stylesheet" href="knowledge-surface.css">
+<link rel="stylesheet" href="knowledge.css">
+<link rel="stylesheet" href="ribbon.css">
+<link rel="stylesheet" href="selection.css">
 </head>
 <body>
 <header class="page-head">
-  <div>
-    <h1>Orchestra live view</h1>
-    <p class="subtitle" id="snapshot-line">No snapshot loaded.</p>
-  </div>
-  <div class="viewswitch" role="group" aria-label="Views">
-    <button type="button" id="view-now-btn" aria-pressed="true">Now</button>
-    <button type="button" id="view-knowledge-btn" aria-pressed="false">Knowledge</button>
-    <button type="button" id="view-actors-btn" aria-pressed="false">Actors</button>
-  </div>
-  <details class="conn-details">
-    <summary>Connection</summary>
-    <dl class="conn" aria-label="Connection state">
-      <div><dt>Stream</dt><dd id="conn-state">idle</dd></div>
-      <div><dt>Cursor</dt><dd id="cursor-state">none</dd></div>
-      <div><dt>Generation</dt><dd id="generation-state">none</dd></div>
-      <div><dt>Contract</dt><dd id="contract-state">want 1</dd></div>
-    </dl>
-  </details>
+  <h1>Orchestra</h1>
+  <p class="subtitle" id="snapshot-line">No snapshot loaded.</p>
 </header>
 
 <div class="notice" id="notice" hidden></div>
 <div class="notice fixture" id="fixture-notice" hidden></div>
 
-<main>
-<section class="view" id="view-now" aria-labelledby="board-title">
-  <section class="lane" aria-labelledby="lane-title">
-    <h2 id="lane-title">Running now</h2>
-    <div id="attention-lane" class="lane-strip"></div>
-  </section>
-  <div class="now-grid">
-    <section class="board" aria-labelledby="board-title">
-      <h2 id="board-title">Working together</h2>
-      <p class="legend">Active members appear here. Tile size follows awaiting messages; bands show status.</p>
-      <div id="ensemble-board"></div>
-    </section>
-    <section class="transitions" aria-labelledby="transitions-title">
-      <h2 id="transitions-title">Latest activity</h2>
-      <ol id="transitions" class="activity"></ol>
-    </section>
-  </div>
-</section>
+<main class="sheet">
 
-<section class="view" id="view-knowledge" aria-labelledby="knowledge-title" hidden>
-  <section class="stage" aria-labelledby="knowledge-title">
-    <div class="stage-head">
-      <h2 id="knowledge-title">Knowledge</h2>
-      <p class="count" id="knowledge-count"></p>
-      <p class="legend">Explore shared findings and their recorded connections. Include unshared findings to browse by author. Select a finding to open its record.</p>
+  <section class="doc-block doc-attention" aria-labelledby="attention-title">
+    <div class="doc-head">
+      <h2 id="attention-title" class="doc-section">Activity</h2>
+      <p class="doc-counts" id="doc-counts"></p>
     </div>
-    <div class="stage-body">
-      <div class="stage-surface">
-        <div id="knowledge-graph"></div>
-      </div>
-      <div class="stage-readout knowledge">
-        <label class="field">Filter findings
-          <input type="search" id="knowledge-search" autocomplete="off">
-        </label>
-        <button type="button" id="include-unshared" aria-pressed="false">Include unshared</button>
-        <ol id="knowledge-promotions" class="activity"></ol>
-        <p class="muted" id="knowledge-empty" hidden></p>
-      </div>
-    </div>
+    <p class="muted doc-note">Live activity, queued messages, and work awaiting a reply.
+      Select an agent to inspect its work.</p>
+    <div id="attention-band" class="lane-strip"></div>
   </section>
 
-</section>
-
-<section class="view" id="view-actors" aria-labelledby="tree-title" hidden>
-  <div class="toolbar" role="search" aria-label="Filter actors">
-    <label class="field">Search
-      <input type="search" id="search" placeholder="id, model, branch, capability" autocomplete="off">
+  <div class="doc-tools">
+    <label class="doc-find">
+      <span class="doc-find-label">Find</span>
+      <input type="search" id="doc-find" autocomplete="off"
+        placeholder="type to move the cursor" aria-controls="roster">
     </label>
-    <label class="field">Status
-      <select id="status-filter">
-        <option value="all">all</option>
-        <option value="running" selected>running</option>
-        <option value="waiting">waiting</option>
-        <option value="completed">completed</option>
-        <option value="failed">failed</option>
-        <option value="stopped">stopped</option>
-        <option value="pending">pending</option>
-        <option value="unknown">unknown</option>
-      </select>
-    </label>
-    <label class="field">Ensemble
-      <select id="ensemble-filter">
-        <option value="all">all</option>
-      </select>
-    </label>
-    <span class="pair" role="group" aria-label="Tree expansion">
-      <button type="button" id="collapse-all">Collapse all</button>
-      <button type="button" id="expand-all">Expand all</button>
-    </span>
-    <button type="button" id="clear-filters">Clear</button>
+    <button type="button" id="doc-ended" aria-pressed="false">Show quiet seats</button>
     <button type="button" id="reconnect">Reconnect</button>
   </div>
 
-  <div class="actors-grid">
-    <section class="tree-pane" aria-labelledby="tree-title">
-      <h2 id="tree-title">Actors</h2>
-      <p class="count" id="tree-count"></p>
-      <p class="legend">Recorded coordinator state. Process liveness appears only where it was observed.</p>
-      <p class="tree-notice" id="tree-notice" hidden></p>
-      <ul class="tree" id="tree" role="tree" aria-label="Orchestra hierarchy"></ul>
+  <div class="doc-body">
+    <section class="doc-roster-wrap" aria-labelledby="roster-title">
+      <h2 id="roster-title" class="doc-section">Every actor, attention first</h2>
+      <ul class="doc-roster" id="roster"></ul>
     </section>
-
-    <section class="detail" aria-labelledby="detail-title">
-      <h2 id="detail-title">Selected actor</h2>
-      <div id="detail"><p class="muted">Select an actor in the hierarchy.</p></div>
+    <section class="doc-side" aria-labelledby="selection-title">
+      <h2 id="selection-title" class="doc-section">Record</h2>
+      <div id="selection" class="doc-selection"></div>
     </section>
   </div>
-</section>
+
+  <section class="doc-block doc-knowledge" aria-labelledby="knowledge-title">
+    <div class="doc-head">
+      <h2 id="knowledge-title" class="doc-section">Knowledge</h2>
+      <p class="muted doc-note">Each recorded finding sits on the row of the actor
+        that authored it, with how many recorded promotions carry it. The
+        whole-orchestra view of the same records opens here.</p>
+    </div>
+    <details class="doc-whole">
+      <summary>Whole-orchestra knowledge</summary>
+      <div id="knowledge-whole" class="doc-whole-mount"></div>
+    </details>
+  </section>
+
+  <section class="doc-block doc-history" aria-labelledby="history-title">
+    <div class="doc-head">
+      <h2 id="history-title" class="doc-section">Recorded history</h2>
+      <p class="muted doc-note">Newest at the right. The reading position names one
+        committed change; the full list opens from the ribbon.</p>
+    </div>
+    <div id="ribbon" class="doc-ribbon"></div>
+  </section>
+
 </main>
 
+<script src="order.js" defer></script>
 <script src="attention.js" defer></script>
-<script src="board.js" defer></script>
-<script src="kgraph.js" defer></script>
+<script src="knowledge.js" defer></script>
+<script src="ribbon.js" defer></script>
+<script src="selection.js" defer></script>
+<script src="document.js" defer></script>
 <script src="app.js" defer></script>
 </body>
 </html>

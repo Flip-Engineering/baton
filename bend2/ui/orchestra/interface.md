@@ -1,10 +1,7 @@
 # Orchestra live view interface
 
-Frontend: `bend2/ui/orchestra/` (Muse frontend seat, issue #682).
-Backend (snapshot and event stream): coordinated lead,
-`codex/ui682-codex-luna-backend-20261006`.
-This document states the boundary the browser consumes.
-The browser implements exactly this boundary and nothing else.
+The browser in `bend2/ui/orchestra/` reads the snapshot, event stream, knowledge,
+work, and message endpoints served by `server.mjs`.
 
 ## Endpoints
 
@@ -16,26 +13,35 @@ The browser implements exactly this boundary and nothing else.
   identity; subject only filters within it. `generation` binds the
   reconnect to the stored owner generation.
 - `GET {apiBase}/orchestra/knowledge/overview` returns the
-  orchestra-wide knowledge map: `findings` as `{id, author, claim}`,
+  orchestra-wide knowledge map: `findings` as `{id, author, claim, evidence, limits}`,
   `promotions` as `{id, finding, author, source, destination,
-  promotedBy}`, and per-actor `authored`/`received` counts. Evidence
-  and limits stay out of the overview.
+  promotedBy}`, per-actor `authored`/`received` counts, and `actors` metadata
+  with each actor's `role` and `parent`. Ancestor metadata supports depth placement.
 - `GET {apiBase}/orchestra/knowledge?actor=<id>` returns one actor's
   authored findings with full `claim`, `evidence`, and `limits`, the
   promotions it received joined to their finding's fields, and
   `counts` including `unshared` (authored, never promoted). The actor
   must be inside the bound reader's subject scope (403
   `reader-scope-denied`); a missing actor is a 400 `actor-required`.
+- `GET {apiBase}/orchestra/work?subject=<id>` returns the selected actor's
+  task, current input, open request, and latest report. A missing actor parameter
+  answers 400 `actor-required`; an actor outside the reader scope answers 403
+  `reader-scope-denied`; a failed read answers 503 `work-unavailable`.
+- `GET {apiBase}/orchestra/message?id=<id>` returns
+  `{contractVersion, message: {id, sender, recipient, kind, body}}` for one
+  complete stored message. A missing row returns `message: null`. A missing
+  parameter answers 400 `message-required`; a message outside the reader scope
+  answers 403 `reader-scope-denied`; a failed read answers 503
+  `message-unavailable` with its cause.
 
-Both knowledge routes are read-only and on demand: the snapshot never
-carries claims. Absent or empty knowledge tables answer the same
+The page reads the knowledge overview after loading its snapshot. Selected actor,
+work, and message reads run on demand. Absent or empty knowledge tables answer the same
 shapes with empty arrays and `empty: true`. A failed database read
 answers 503 `knowledge-unavailable`.
 
 `apiBase` is supplied to the page with `?api=<base>` or the
 `orchestra-api-base` meta tag. A server `/` redirect that carries
-the loopback API base is the normal launch path. The page calls only
-these endpoints, and calls the knowledge routes only on demand.
+the loopback API base is the normal launch path.
 
 ## Snapshot object
 
@@ -123,7 +129,7 @@ from the next event after a reconnect. Event types:
 
 - `hello`: `{"contractVersion": 1, "cursor": "...",
   "generation": "<owner generation>"}`. The page stores the
-  generation, shows it in the header, and sends it back with the
+  generation and sends it back with the
   cursor on every explicit reconnect. A `hello` generation that
   differs from the stored one closes the stream, clears the
   cursor, re-reads a full snapshot immediately, and resubscribes
@@ -198,30 +204,22 @@ Pending counts render as badges next to the status in every case.
 
 ## Rendered areas
 
-The page renders five areas:
+The page contains an attention strip, an agent roster, a selected record,
+knowledge surfaces, and a history ribbon. Quiet actors are folded initially.
+The find field marks matching actors in place. Adjacent ensemble members carry
+their ensemble label.
 
-- A running-and-attention band above the tree: one chip per actor whose
-  derived status is `running`, `failed` or `pending`, and per actor with a
-  recorded execution that ended while its pending count is above zero
-  (`awaiting input`). Running actors come first, then awaiting input, then
-  failed, then pending; within a group the recorded pending count orders the
-  chips. A chip selects its actor.
-- The actor tree: the parentage hierarchy, with a tag line under each row that
-  carries ensemble or section membership.
-- The selected actor: the recorded fields of the Player object below, plus
-  that actor's stored findings.
-- Recent transitions: the snapshot's `transitions`, newest first.
-- The knowledge band: one stand per actor that holds a recorded finding, at
-  that actor's recorded distance from the podium; a stand's height is the
-  actor's authored findings, the filled inner part of that height is the
-  findings promoted at least once, the tick below the baseline is the
-  promotions the actor received, and a line joins the source seat and the
-  destination seat of a recorded promotion. An actor that holds a finding and
-  is absent from the snapshot sits in a final `recorded outside this view`
-  rank. The promotion readout beside the surface lists the same records as
-  text, with a filter field that narrows rows by finding id, claim or author,
-  an `Include unshared` control, and a `Live only` control that narrows the
-  surface to running, waiting and pending seats.
+The selected record reads the actor's work and complete pending message bodies
+on demand. A selected finding shows its claim, evidence, limits, author, and
+recorded promotion steps.
+
+Compact knowledge surfaces attach findings to their authors' rows. The full graph
+opens from a disclosure and places actors by parent depth, including an
+unknown-depth group. Its directed edges represent authorship, sharing, delivery,
+and promotion.
+
+The history ribbon colors committed changes by kind. Selecting a position reads
+that event; a control opens the event list.
 
 ## Fixture documents
 
@@ -232,7 +230,7 @@ fields, a `fixture: true` marker, a `fixtureNote`, and may carry one more key:
 - `knowledge`: an object shaped like `/orchestra/knowledge/overview`
   (`contractVersion`, `findings`, `promotions`, `actors`, and `empty` for a
   document with no records). A fixture that carries it renders the knowledge
-  band from this object in place of an overview request. Its `findings` may
+  graph from this object in place of an overview request. Its `findings` may
   carry the `evidence` and `limits` fields the actor route serves, so the
   selected-actor pane shows a complete record without a live endpoint. A
-  fixture without the key renders the band's notice.
+  fixture without the key renders the notice in the knowledge readout.
