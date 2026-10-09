@@ -179,6 +179,72 @@ jobs:
           repository: Flip-Engineering/baton
           github-token: ${{ github.token }}
           path: ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/retained
+      - name: Stage published assets with the retained Darwin executable
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > "$FINAL_NATIVE_CONTEXT_EVIDENCE/package.stdout" 2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/package.stderr"
+          import datetime
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import tarfile
+
+          source = Path('owned').resolve()
+          evidence = Path(os.environ['FINAL_NATIVE_CONTEXT_EVIDENCE'])
+          retained = evidence / 'retained/package'
+          output = evidence / 'package'
+          output.mkdir()
+
+          def load(name, filename):
+              spec = importlib.util.spec_from_file_location(name, source / 'bend2/scripts' / filename)
+              module = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(module)
+              return module
+
+          package = load('native_package', 'package-native.py')
+          smoke = load('native_smoke', 'smoke-native-artifact.py')
+          archive = next(retained.glob('baton2-development-darwin-arm64-*.tar.gz'))
+          digest = (retained / 'SHA256SUMS').read_text().split()[0]
+          smoke.require(smoke.archive_digest(archive) == digest,
+                        'Archive does not match the advertised SHA256')
+          payload, manifest = smoke.extract(archive, retained / 'manifest.json', output)
+          native_source = manifest['binary'].get('source', manifest['source'])
+          asset_source = {'directory': str(source), **package.source_identity()}
+          shutil.rmtree(payload / 'libexec/baton2')
+          package.stage_adapters(payload)
+          manifest['binary']['source'] = native_source
+          manifest['source'] = asset_source
+          manifest['created_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+          manifest['assets'] = {
+              'path': 'libexec/baton2', 'source': asset_source,
+              'retained_archive': {
+                  'path': str(archive), 'sha256': digest,
+                  'product_run_id': os.environ['PRODUCT_RUN_ID'],
+                  'product_run_attempt': os.environ['PRODUCT_RUN_ATTEMPT'],
+              },
+          }
+          package.write_json(payload / 'manifest.json', manifest)
+          shutil.copyfile(payload / 'manifest.json', output / 'manifest.json')
+          if (retained / 'build').is_dir():
+              shutil.copytree(retained / 'build', output / 'build')
+          destination = output / (manifest['archive_root'] + '-' + asset_source['commit'] + '.tar.gz')
+          with tarfile.open(destination, 'x:gz') as packed:
+              packed.add(payload, arcname=manifest['archive_root'])
+          archive_digest = package.sha256(destination)
+          (output / 'SHA256SUMS').write_text(archive_digest + '  ' + destination.name + '\n')
+          result = {
+              'status': 'packaged', 'source': asset_source, 'native_source': native_source,
+              'archive': {'path': destination.name, 'sha256': archive_digest},
+              'manifest': {'path': 'manifest.json'},
+          }
+          package.write_json(output / 'result.json', result)
+          print(json.dumps(result), flush=True)
+          PY
+          printf 'PACKAGE_DIRECTORY=%s/package\n' "$FINAL_NATIVE_CONTEXT_EVIDENCE" >> "$GITHUB_ENV"
       - name: Download generated production C from this build
         if: ${{ github.event_name == 'push' }}
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
