@@ -1111,7 +1111,7 @@ def turn_present_sql(id: String) -> String:
 
 def player_checked(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String, +harness: String, +lock: U32, missing: Bool) -> IO(Unit):
   match missing:
-    case True{}: IO.die(Unit,2,"Player has no recorded parent and workspace; register it before starting a turn.")
+    case True{}: IO.die(Unit,2,"Player is not registered; register it before starting a turn.")
     case False{}:
       do IO<Unit>:
         supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),String.eq(harness,"muse\n")))))

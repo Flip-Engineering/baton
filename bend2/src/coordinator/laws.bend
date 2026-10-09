@@ -816,7 +816,7 @@ law m8_a_turn_is_admitted_only_for_a_message_the_store_holds:
 def m8_a_turn_is_admitted_only_for_a_message_the_store_holds(id):
   {==}
 
-# M-8: a player with no recorded parent and workspace is refused before any
+# M-8: an unregistered player is refused before any
 # turn work, and the refusal names the registration that would admit it.
 law m8_an_unregistered_player_is_refused_before_any_turn:
   for +db: String
@@ -830,7 +830,7 @@ law m8_an_unregistered_player_is_refused_before_any_turn:
   for +log: String
   for +session: String
   for +harness: String
-  {Turn.player_checked(db, player, id, cmd, model, effort, cwd, task, log, session, harness, True{}) == IO.die(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>,2,"Player has no recorded parent and workspace; register it before starting a turn.") : IO(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>)}
+  {Turn.player_checked(db, player, id, cmd, model, effort, cwd, task, log, session, harness, True{}) == IO.die(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>,2,"Player is not registered; register it before starting a turn.") : IO(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>)}
 
 def m8_an_unregistered_player_is_refused_before_any_turn(db, player, id, cmd, model, effort, cwd, task, log, session, harness):
   {==}
