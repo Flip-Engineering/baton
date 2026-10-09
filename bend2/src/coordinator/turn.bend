@@ -953,10 +953,10 @@ def direct_request_sql(+id: String, +player: String, +harness: String, +cmd: Str
 
 def direct_request_checked(+db: String, +id: String, +player: String, +harness: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +prompt: String, +log: String, +session: String, +directory: String) -> IO(Unit):
   do IO<Unit>:
-    error : String <- IO.try(String,DB.Sql.query(db,direct_request_sql(id,player,harness,cmd,model,effort,cwd,task,prompt,log,session,directory)))
+    +error : String <- IO.try(String,DB.Sql.query(db,direct_request_sql(id,player,harness,cmd,model,effort,cwd,task,prompt,log,session,directory)))
     Stop.error_result(Tx.trim_nl(error),String.is_empty(Tx.trim_nl(error)))
 
-def direct_recovery_checked(+db: String, +player: String, +id: String, +harness: String, directory: String) -> IO(Unit):
+def direct_recovery_checked(+db: String, +player: String, +id: String, +harness: String, +directory: String) -> IO(Unit):
   do IO<Unit>:
     found : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM direct_turn_requests WHERE id=" ++ C.q(id) ++ " AND session=" ++ C.q(player) ++ " AND harness=" ++ C.q(harness) ++ " AND (directory=" ++ C.q(directory) ++ " OR directory || '.fresh'=" ++ C.q(directory) ++ ");"))
     Stop.error_result("Recorded direct recovery arguments differ from the retained request; preserve the attempt and inspect its manifest.",String.eq(found,"1\n"))
@@ -1119,8 +1119,8 @@ def player_checked(+db: String, +player: String, +id: String, +cmd: String, +mod
         supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),String.eq(harness,"muse\n")))))
         foreign : String <- IO.try(String,DB.Sql.query(db,id_owner_sql(id,player)))
         identity : Unit <- matching_turn(String.eq(foreign,"0\n"))
-        prompt : String <- IO.try(String,T.Text.read(task))
-        directory : String <- direct_directory(db,id)
+        +prompt : String <- IO.try(String,T.Text.read(task))
+        +directory : String <- direct_directory(db,id)
         request : Unit <- direct_request_checked(db,id,player,Tx.trim_nl(harness),cmd,model,effort,cwd,task,prompt,log,session,directory)
         found : String <- IO.try(String,DB.Sql.query(db,turn_present_sql(id)))
         choose(db,player,id,cmd,model,effort,cwd,task,log,session,harness,directory,prompt,lock,String.eq(found,"1\n"))
@@ -1180,10 +1180,10 @@ def acquired(+db: String, +player: String, +id: String, cmd: String, model: Stri
 def recover(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +harness: String, +directory: String, +session: String) -> IO(Unit):
   do IO<Unit>:
     checked : Unit <- direct_recovery_checked(db,player,id,harness,directory)
-    recorded_harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+    +recorded_harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     valid_harness : Unit <- Stop.error_result("Recorded direct recovery harness differs from the current session; preserve the attempt and inspect its manifest.",String.eq(Tx.trim_nl(recorded_harness),harness))
     prompt : String <- IO.try(String,T.Text.read(directory ++ "/prompt.txt"))
-    handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
+    +handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
     reconciled : Unit <- Stop.reconcile(db,player,id,directory)
     observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,recorded_harness,directory,handle,"unknown")
     direct_first_observed(db,player,id,cmd,model,effort,cwd,"",log,recorded_harness,directory,session,prompt,handle,None{},observation)
