@@ -12,6 +12,7 @@ import Base
 import ./engines.bend as Eng
 import ./engines-decl.bend as Decl
 import ./engines-select.bend as Sel
+import ./snapshot.bend as Snap
 
 # --- fixtures ----------------------------------------------------------------
 def fx_schemas() -> SS:
@@ -32,11 +33,6 @@ def fx_inv() -> Decl.Inv:
 def fx_inv_other_digest() -> Decl.Inv:
   Decl.Inv{fx_arts(), fx_schemas(),
            Decl.DigsCons{Decl.Dg{"m1", "changed"}, Decl.DigsNil{}}}
-
-def fx_entry(+module_id: String) -> Decl.Entry:
-  Decl.ENative{Decl.Art{"/pkg/" ++ module_id ++ ".bin",
-                        Decl.decl_digest_sentinel(module_id), "entry"},
-               module_id ++ ".export"}
 
 def fx_op_common(+common: String) -> Decl.Op:
   Decl.Op{"definition", common, "sub", "opt", Eng.ss_one("definition"),
@@ -619,4 +615,41 @@ law selection_transfer_of_a_step_keeps_only_its_own_records:
   {Sel.transfer_of_edge(fx_plan_both(), Sel.StepRef{"m1", "d1", "definition"}) == Sel.TransferReady{Sel.StepTransfer{fx_bind(), "sourceAnalysis", Eng.ss_empty(), "res", Sel.StepRefsCons{Sel.StepRef{"m2", "d2", "definition"}, Sel.StepRefsNil{}}, Sel.CapCons{fx_capture(), Sel.CapNil{}}}} : Sel.TransferOutcome}
 
 def selection_transfer_of_a_step_keeps_only_its_own_records():
+  {==}
+
+# --- the per-capture readers --------------------------------------------------
+law selection_capture_lookup_finds_a_present_record:
+  {Sel.capture_lookup(fx_captures(), "/work/a.ts") == Sel.CapturePresent{fx_capture()} : Sel.CaptureState}
+
+def selection_capture_lookup_finds_a_present_record():
+  {==}
+
+law selection_capture_lookup_names_a_missing_name:
+  {Sel.capture_lookup(fx_captures(), "/work/absent.ts") == Sel.CaptureMissing{"/work/absent.ts"} : Sel.CaptureState}
+
+def selection_capture_lookup_names_a_missing_name():
+  {==}
+
+law selection_capture_bytes_carry_the_exact_payload_and_encoding:
+  {Sel.capture_bytes(Sel.capture_lookup(fx_captures(), "/work/a.ts")) == Sel.BytesPresent{"capturedSourceText", "utf8"} : Sel.BytesState}
+
+def selection_capture_bytes_carry_the_exact_payload_and_encoding():
+  {==}
+
+law selection_capture_bytes_of_a_missing_name_are_named_not_empty:
+  {Sel.capture_bytes(Sel.capture_lookup(fx_captures(), "/work/absent.ts")) == Sel.BytesMissing{"/work/absent.ts"} : Sel.BytesState}
+
+def selection_capture_bytes_of_a_missing_name_are_named_not_empty():
+  {==}
+
+law selection_capture_answer_maps_the_record_to_its_identity:
+  {Sel.capture_answer(Sel.capture_lookup(fx_captures(), "/work/a.ts")) == Sel.CaptureKnown{Snap.FpFile{"source", "/work/a.ts", "aa"}} : Sel.CaptureAnswer}
+
+def selection_capture_answer_maps_the_record_to_its_identity():
+  {==}
+
+law selection_capture_answer_of_a_missing_name_is_named:
+  {Sel.capture_answer(Sel.capture_lookup(fx_captures(), "/work/absent.ts")) == Sel.CaptureAbsent{"/work/absent.ts"} : Sel.CaptureAnswer}
+
+def selection_capture_answer_of_a_missing_name_is_named():
   {==}

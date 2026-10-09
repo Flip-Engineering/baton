@@ -24,6 +24,8 @@ import ../../src/context/engines-select-laws.bend as SelLaws
 import ../../src/context/engines-wire.bend as Wire
 import ../../src/context/snapshot-validate-laws.bend as SVLaws
 import ../../src/context/engines-wire-laws.bend as WireLaws
+import ../../src/context/codec-convert.bend as CodecConvert
+import ../../src/context/codec-schema.bend as CodecSchema
 
 def choice_text(c: Eng.EngineChoice) -> String:
   match c:
