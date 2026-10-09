@@ -1543,7 +1543,8 @@ function init() {
       await loadSnapshot();
       setNotice("");
     } catch (e) {
-      setNotice("Snapshot reload failed: " + (e && e.message ? e.message : e));
+      scheduleEndpointRetry(e);
+      return;
     }
     connectEvents();
   });
