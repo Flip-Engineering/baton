@@ -4,6 +4,7 @@ Drives the real `view` command, a fixture Orchestra built through the native
 binary, and headless Chromium over CDP. Skips when Chromium or Node 22 is
 unavailable so the general suite passes on hosts without a browser.
 """
+import os
 import pathlib
 import shutil
 import subprocess
@@ -34,14 +35,20 @@ class OrchestraBrowser(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2') as work:
             out = pathlib.Path(work) / 'evidence'
             out.mkdir()
-            result = subprocess.run(
-                [node, str(DRIVER), str(EXE), work, str(out), chromium],
-                text=True, capture_output=True)
-            sys.stdout.write(result.stdout)
-            sys.stderr.write(result.stderr)
-            self.assertEqual(result.returncode, 0,
-                             result.stdout + result.stderr)
-            self.assertIn('BROWSER_QA_OK', result.stdout)
+            try:
+                result = subprocess.run(
+                    [node, str(DRIVER), str(EXE), work, str(out), chromium],
+                    text=True, capture_output=True)
+                sys.stdout.write(result.stdout)
+                sys.stderr.write(result.stderr)
+                self.assertEqual(result.returncode, 0,
+                                 result.stdout + result.stderr)
+                self.assertIn('BROWSER_QA_OK', result.stdout)
+            finally:
+                evidence = os.environ.get('FINAL_NATIVE_CONTEXT_EVIDENCE')
+                if evidence:
+                    shutil.copytree(out, pathlib.Path(evidence) / 'ui-browser',
+                                    dirs_exist_ok=True)
 
 
 if __name__ == '__main__':
