@@ -72,6 +72,32 @@ class Recruit(unittest.TestCase):
         self.assertNotIn('worker-branch',self.git('branch','--list'))
         self.call('player','worker',ok=False)
 
+    def test_players_join_one_dirty_checkout_and_keep_their_base(self):
+        branches=self.git('branch','--format=%(refname)')
+        worktrees=self.git('worktree','list','--porcelain')
+        unfinished=self.repo/'unfinished.txt'
+        unfinished.write_text('shared unfinished work\n')
+        rows=[self.call('join',player,'root','omp','zai/glm-5.3-flash','high',self.repo)
+              for player in ('shared-one','shared-two')]
+        for row in rows:
+            self.assertEqual(row['workspace'],str(self.repo))
+            self.assertEqual(row['branch'],self.git('branch','--show-current').strip())
+            self.assertEqual(row['base'],self.base)
+        self.assertEqual(self.git('branch','--format=%(refname)'),branches)
+        self.assertEqual(self.git('worktree','list','--porcelain'),worktrees)
+        self.assertEqual(unfinished.read_text(),'shared unfinished work\n')
+        self.git('commit','-q','--allow-empty','-m','shared checkout advances')
+        self.assertEqual(self.call('join','shared-one','root','omp',
+                                   'zai/glm-5.3-flash','high',self.repo),rows[0])
+
+    def test_join_missing_parent_leaves_checkout_and_registration_unchanged(self):
+        before=self.state()
+        worktrees=self.git('worktree','list','--porcelain')
+        self.call('join','shared','missing','omp','zai/glm-5.3-flash','high',
+                  self.repo,ok=False)
+        self.assertEqual(self.state(),before)
+        self.assertEqual(self.git('worktree','list','--porcelain'),worktrees)
+
     def test_missing_parent_and_conflicting_player_id_preserve_existing_work(self):
         self.recruit(parent='missing',ok=False)
         self.assertFalse((self.repo/'work λ').exists())

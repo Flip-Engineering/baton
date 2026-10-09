@@ -1,7 +1,8 @@
 import Base
 import ./control.bend as Control
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./store.bend as Store
+import ./wake.bend as Wake
 import ./delivery.bend as Delivery
 import ./recruit.bend as Recruit
 import ./knowledge.bend as Knowledge
@@ -32,7 +33,7 @@ law principal_startup_checks_assignment_and_operator_scope:
   for +model: String
   for +effort: String
   for +cwd: String
-  {Control.start_admission(session,harness,model,effort,cwd) == ("(" ++ C.q(session) ++ "<>'operator' AND " ++ C.q(session) ++ "<>'' AND " ++ C.q(harness) ++ " IN ('codex','omp') AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ") OR EXISTS(SELECT 1 FROM sessions WHERE " ++ Control.principal_matches(session,harness,model,effort,cwd) ++ ")) AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id='operator') OR EXISTS(SELECT 1 FROM sessions WHERE id='operator' AND parent IS NULL AND ((harness='operator' AND NOT EXISTS(SELECT 1 FROM session_roles WHERE session='operator')) OR " ++ C.assigned_role("sessions.id") ++ "='operator'))))") : String}
+  {Control.start_admission(session,harness,model,effort,cwd) == ("(" ++ C.q(session) ++ "<>'operator' AND " ++ C.q(session) ++ "<>'' AND " ++ C.q(harness) ++ " IN ('codex','omp','muse','claude-code') AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ") OR EXISTS(SELECT 1 FROM sessions WHERE " ++ Control.principal_matches(session,harness,model,effort,cwd) ++ ")) AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id='operator') OR EXISTS(SELECT 1 FROM sessions WHERE id='operator' AND parent IS NULL AND ((harness='operator' AND NOT EXISTS(SELECT 1 FROM session_roles WHERE session='operator')) OR " ++ C.assigned_role("sessions.id") ++ "='operator'))))") : String}
 
 def principal_startup_checks_assignment_and_operator_scope(session,harness,model,effort,cwd):
   {==}
@@ -40,9 +41,25 @@ def principal_startup_checks_assignment_and_operator_scope(session,harness,model
 law native_receiver_checks_harness_stop_and_endpoint_admission:
   for +session: String
   for +endpoint: String
-  {Control.receiver_admitted(session,endpoint) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")") : String}
+  for +cwd: String
+  {Control.receiver_admitted(session,endpoint,cwd) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ Control.receiver_model(session) ++ " AND " ++ Control.receiver_directory(session,cwd) ++ ")") : String}
 
-def native_receiver_checks_harness_stop_and_endpoint_admission(session,endpoint):
+def native_receiver_checks_harness_stop_and_endpoint_admission(session,endpoint,cwd):
+  {==}
+
+law receiver_directory_reads_the_supplied_or_recorded_path:
+  for +session: String
+  for +cwd: String
+  {Control.receiver_directory(session,cwd) == ("(CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN 1 ELSE (SELECT length(coalesce(workspace,''))>0 FROM sessions WHERE id=" ++ C.q(session) ++ ") END)") : String}
+
+def receiver_directory_reads_the_supplied_or_recorded_path(session,cwd):
+  {==}
+
+law receiver_model_requires_a_recorded_model:
+  for +session: String
+  {Control.receiver_model(session) == ("(SELECT length(coalesce(model,''))>0 FROM sessions WHERE id=" ++ C.q(session) ++ ")") : String}
+
+def receiver_model_requires_a_recorded_model(session):
   {==}
 
 law detached_delivery_commits_before_launch_and_checks_refusals:
@@ -54,7 +71,9 @@ law detached_delivery_commits_before_launch_and_checks_refusals:
   for +body: String
   {Control.dispatch_body(db,id,sender,recipient,kind,body) == (do IO<String>:
   +saved : String <- IO.try(String,Store.commit(db,C.Message{id,sender,recipient,kind,body}))
-  Control.dispatch_admitted(db,id,saved,Bool.or(Store.refused(saved),Tx.starts_with(saved,"{\"error\":\"session-stopped\"")))) : IO(String)}
+  launched : String <- Control.dispatch_admitted(db,id,saved,Bool.or(Store.refused(saved),Tx.starts_with(saved,"{\"error\":\"session-stopped\"")))
+  woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_id(db,id)
+  IO.pure(String,launched)) : IO(String)}
 
 def detached_delivery_commits_before_launch_and_checks_refusals(db,id,sender,recipient,kind,body):
   {==}
@@ -138,9 +157,19 @@ law receiver_command_parses_its_native_arguments:
   for session: String
   for cmd: String
   for log: String
-  {C.parse(["receiver",session,cmd,log]) == C.Receiver{session,cmd,log} : C.Command}
+  {C.parse(["receiver",session,cmd,log]) == C.Receiver{session,cmd,log,""} : C.Command}
 
 def receiver_command_parses_its_native_arguments(session,cmd,log):
+  {==}
+
+law receiver_command_parses_its_working_directory:
+  for session: String
+  for cmd: String
+  for log: String
+  for cwd: String
+  {C.parse(["receiver",session,cmd,log,cwd]) == C.Receiver{session,cmd,log,cwd} : C.Command}
+
+def receiver_command_parses_its_working_directory(session,cmd,log,cwd):
   {==}
 
 law dispatch_file_command_parses_its_native_arguments:
@@ -185,7 +214,7 @@ law principal_assignment_mutates_only_configuration_under_admission:
 ++ "INSERT INTO session_roles(session,role) SELECT 'operator','operator' WHERE " ++ admitted ++ " ON CONFLICT(session) DO NOTHING;"
 ++ "INSERT INTO session_roles(session,role) SELECT " ++ C.q(session) ++ ",'conductor' WHERE " ++ admitted ++ " ON CONFLICT(session) DO UPDATE SET role=excluded.role;"
 ++ "UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
-++ "SELECT CASE WHEN " ++ admitted ++ " THEN '' ELSE json_object('error','principal-assignment-conflict','session'," ++ C.q(session) ++ ",'condition','Principal startup requires a compatible parentless Codex or OMP session and the operator role.','next','Inspect the existing session, role and pending input. Retain its work and use the recorded assignment or a new session ID.') END;") : String}
+++ "SELECT CASE WHEN " ++ admitted ++ " THEN '' ELSE json_object('error','principal-assignment-conflict','session'," ++ C.q(session) ++ ",'condition','Principal startup requires a compatible parentless Codex, OMP, Muse or Claude Code session and the operator role.','next','Inspect the existing session, role and pending input. Retain its work and use the recorded assignment or a new session ID.') END;") : String}
 
 def principal_assignment_mutates_only_configuration_under_admission(session,harness,model,effort,cwd,endpoint,admitted):
   {==}
@@ -205,20 +234,22 @@ def principal_assignment_uses_compatible_scope_and_valid_endpoint(session,harnes
 law receiver_update_changes_only_an_admitted_endpoint:
   for +session: String
   for +endpoint: String
+  for +cwd: String
   for +admitted: String
-  {Control.receiver_update_sql(session,endpoint,admitted) == ("UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
-++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered, active Codex or OMP session and valid text argv.','next','Inspect the session and retained inbox. Use turn for Muse or Claude Players; recruit a new session after a terminal stop.') WHERE NOT " ++ admitted ++ ";"
-++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ ")) WHERE " ++ admitted ++ ";") : String}
+  {Control.receiver_update_sql(session,endpoint,cwd,admitted) == ("UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
+++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered, active Codex, OMP, Muse or Claude Code session with a recorded model, a working directory and valid text argv.','next','Record the model and working directory with start SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE when the session records none, or pass the CWD argument when only the directory is missing. Then inspect the session and retained inbox and retry; recruit a new session after a terminal stop.') WHERE NOT " ++ admitted ++ ";"
+++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ "),'workspace',(SELECT workspace FROM sessions WHERE id=" ++ C.q(session) ++ ")) WHERE " ++ admitted ++ ";") : String}
 
-def receiver_update_changes_only_an_admitted_endpoint(session,endpoint,admitted):
+def receiver_update_changes_only_an_admitted_endpoint(session,endpoint,cwd,admitted):
   {==}
 
 law receiver_update_enforces_actual_receiver_admission:
   for +session: String
   for +endpoint: String
-  {Control.receiver_sql(session,endpoint) == (Control.receiver_update_sql(session,endpoint,Control.receiver_admitted(session,endpoint))) : String}
+  for +cwd: String
+  {Control.receiver_sql(session,endpoint,cwd) == (Control.receiver_update_sql(session,endpoint,cwd,Control.receiver_admitted(session,endpoint,cwd))) : String}
 
-def receiver_update_enforces_actual_receiver_admission(session,endpoint):
+def receiver_update_enforces_actual_receiver_admission(session,endpoint,cwd):
   {==}
 
 law configured_identity_wraps_the_actual_receiver_arguments:
@@ -261,14 +292,6 @@ law readable_snapshot_formats_all_stored_fields:
     Control.pretty_saved(db,saved,String.is_empty(saved))) : IO(String)}
 
 def readable_snapshot_formats_all_stored_fields(db,command):
-  {==}
-
-law readable_existing_snapshot_keeps_every_stored_field:
-  for db: String
-  for saved: String
-  {Control.pretty_saved(db,saved,False{}) == IO.try(String,DB.Sql.query(db,"SELECT json_pretty(" ++ C.q(Tx.trim_nl(saved)) ++ ");")) : IO(String)}
-
-def readable_existing_snapshot_keeps_every_stored_field(db,saved):
   {==}
 
 law absent_readable_snapshot_names_the_lookup_refusal:

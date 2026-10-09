@@ -28,14 +28,22 @@ providers. Each provider answers its own capabilities and observed readiness.
 | Engine | Supported subjects and useful results | Provider |
 | --- | --- | --- |
 | `typescript` | TS/JS definitions, types, references, calls, dependencies, flow diagnostics, throw/catch structure, constant-SQL code accesses | TypeScript 5.9.3 language service and public compiler API |
-| `clangd` | C/C++ definitions, references, types, calls and diagnostics | external LLVM clangd 20.1.8, LSP |
-| `clang-analyzer` | C handler types, direct calls, diagnostics, discovered guard/deny/effect relationships, CFG and source-bound constant-SQL SQLite joins; explicit model-scoped predicate queries | LLVM Clang 20.1.8 AST/CFG extraction and analyzer plist, with the fixed Fossil literal-helper summary and SQLite catalog provider for the combined query |
+| `clangd` | C/C++ definitions, references, types, calls and diagnostics | configured `BATON2_CLANGD` executable or `clangd` on `PATH`, using LSP; Linux adapter invocation was exercised with clangd 20.1.2 |
+| `clang-analyzer` | C handler types, direct calls, diagnostics, discovered guard/deny/effect relationships, CFG and source-bound constant-SQL SQLite joins; explicit model-scoped predicate queries | LLVM/Clang 20 AST/CFG extraction and analyzer plist; Linux extractor build and fixture invocation were exercised with LLVM/Clang 20.1.2 |
 | `cdp` | owned Node program, generated/original frames, scopes, values, exceptions and worker state | Node inspector; adapter implements CDP framing and source-map decoding |
 | `sqlite-schema` | entities, columns, keys, constraints and constant-SQL opened objects | fixed Node read-only provider for entity/TS queries; native linked SQLite planner for the C handler composition |
 | `postgres-schema` | PostgreSQL entities, relationships, constraints and admitted constant-SQL plans | external psql 14.18 and PostgreSQL 14.18; other versions require qualification |
 | `data-model` | SQLite migration state/drift; JSON Schema validation; Zod validation/serialization linked to resolved model use | SQLite, Ajv 8.17.1, Zod 4.3.6, TypeScript resolver |
 | `environment` | Node dependency declarations and disk resolution, effective TS configuration, C build configuration and declared service topology | data readers, TypeScript configuration API, fixed version probes |
 | `json-dataset` | document structure, selected values and explicit key relationships | JSON parser and SQLite json1 with fixed queries |
+
+The extractor's CMake configuration accepts LLVM major version 20. The native
+module declarations do not select a Clang minor version. The current Linux results
+cover the adapter and extractor with version 20.1.2. Darwin packaging remains
+unqualified: the extractor is staged only from a supplied, already-built
+runtime package, and the Linux executable and its libraries cannot serve as a
+Darwin runtime. The clangd module resolves the executable at invocation time;
+its Darwin executable and shared-library closure have not been qualified.
 
 The code profile covers TS/JS and C/C++; the security profile covers C. Swift,
 Rust, Objective-C, Python model execution, arbitrary ORM/query builders and
@@ -504,8 +512,8 @@ and returns its own nonempty formal list and variadic status. This qualifies
 selected-function parameters independently of callee expansion. The `view_list`
 result retains its genuine empty formal list in the five-fact combined case.
 
-Retained research report `semantic-security-fossil-qualification-verdict-6`
-qualifies an authentic LLVM20.1.8 GNU89/O0 HTTP-only build, its generated inputs
+Retained historical research report `semantic-security-fossil-qualification-verdict-6`
+qualifies an authentic LLVM 20.1.8 GNU89/O0 HTTP-only build, its generated inputs
 and exact original/generated body correspondence. It returns actual type/call
 facts and compiler diagnostics, adapter-derived CFG reachability, a reviewed
 source-pinned literal helper assumption and compatible catalog-modeled access.
@@ -552,7 +560,7 @@ only listed captured paths resolve in the frontend. Source roots, explicitly
 admitted SDK/resource roots and their directory membership define that input
 view; symlinks resolve before capture and require an admitted destination.
 The same captured view and frontend options supply AST/CFG and clangd analysis.
-The original input manifest is compared after analysis. LLVM20.1.8 documents
+The original input manifest is compared after analysis. LLVM 20.1.8 documents
 this overlay field; the composed clangd/driver boundary requires acceptance
 against an absolute include and an escaping symlink before advertisement.
 [LLVM20.1.8 VFS schema](https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-20.1.8/llvm/include/llvm/Support/VirtualFileSystem.h) If closure completeness
@@ -593,8 +601,8 @@ result uses the same limit shape in `result.limits` when a projection is
 explicitly unsupported. Recovery attaches to the original retained adapter and consumes its
 spool; it does not open another provider session to repeat an uncertain query.
 
-The retained fidelity completion report qualifies versioned publications for
-clangd20.1.8 and rejects the idle barrier. Managed progress, recovery, cancellation
+The retained historical fidelity completion report qualifies versioned publications for
+clangd 20.1.8 and rejects the idle barrier. Managed progress, recovery, cancellation
 and owner delivery are proposed integration behavior requiring the host gates.
 
 Source capture records inputs before provider consumption and verifies after it.
@@ -661,7 +669,8 @@ callback, getter/proxy, dynamic dispatch, `any` and interface-to-implementation
 limits survive expansion. No public TypeScript CFG API is assumed.
 
 clangd supplies types, references, call hierarchy and diagnostics. The separate
-`clang-analyzer` producer uses a first-party LLVM20.1.8 LibTooling executable.
+`clang-analyzer` producer uses a first-party LLVM 20 LibTooling executable.
+Its current Linux build and fixture invocation use LLVM/Clang 20.1.2.
 It constructs the selected function's CFG with `CFG::buildCFG` in the same
 `ASTContext` that resolves its declarations and expressions. It maps
 `CFGStmt::getStmt` elements and terminator statements to those AST nodes by
@@ -676,7 +685,7 @@ successor edges. `getLastCondition` identifies the operand evaluated by an
 individual short-circuit decision. `getTerminatorCondition` can identify a
 larger compound condition and must not imply that every operand was evaluated.
 True/false successor order for admitted IfStmt and logical-operator decisions
-is bound to the LLVM20.1.8 implementation and qualified against actual emitted
+is bound to the LLVM 20 implementation and was exercised against emitted
 edges. Unreachable, alternate and null successor metadata is preserved. Graph
 IDs are local to the extraction and carry no persistent source identity.
 SourceManager spelling/expansion locations and Lexer token/file ranges supply
@@ -941,8 +950,8 @@ Packaging. No migration runs against the target database.
 
 ## Security projections
 
-The initial profile is C in one translation unit analyzed with pinned LLVM
-20.1.8 front-end and Static Analyzer builds and the subject's known build
+The initial profile is C in one translation unit analyzed with LLVM 20
+front-end and Static Analyzer builds and the subject's known build
 options. Supported relationships use direct calls, scalar principal/action/
 resource operands, conditional rejection, and local non-escaping records
 whose field stores, loads and aliases the provider can resolve. Every
@@ -1128,12 +1137,12 @@ and are not evidence of the selected C predicate's outcome.
 **Implementation and acceptance.** Source selection validation, AST/CFG to
 plist mapping, the bounded value-step extractor, and authorization-path
 assembly are new adapter work. The retained probes demonstrate constituent
-compiler mechanisms and falsification cases. They do not demonstrate the
-integrated extractor, LLVM-version portability, automated discovery of
-arbitrary policy, or a solver proof of all-path enforcement. The critic report-2
-probes use Apple Clang 17; LLVM 20.1.8 release acceptance must cite the
-separate LLVM 20 evidence for each promised capability and run the joined
-adapter on a real external C subject.
+compiler mechanisms and falsification cases. Current Linux qualification
+demonstrates the integrated extractor on the `guard-helper.c` fixture. It does
+not establish LLVM-version portability, automated discovery of arbitrary
+policy, or a solver proof of all-path enforcement. The critic report-2 probes
+use Apple Clang 17. Darwin packaging and execution, the Fossil and SQLite
+composition, and broader C/C++ subjects remain unqualified.
 
 Acceptance first uses ordinary source discovery to return actual typed guard
 operands, deny/effect relationships and supported input-to-effect bindings,
@@ -1551,19 +1560,12 @@ A digest/identity disagreement refuses without replacing existing custody or
 records. The digest identifies a lock filename; acquisition establishes current
 exclusion, and the full identity checks separately bind the operation.
 
-`SessionLock.try_acquire` receives this digest string and the existing private
-directory `<canonical-context-log-directory>/g` as its path anchor. Create that
-fixed-name directory with mode 0700 before acquisition; require its canonical
-parent to be the recorded log directory and its canonical basename to remain
-`g`. The host appends `.lock-` and two hexadecimal characters per key byte, so
-the resulting basename is `g.lock-` plus 128 characters, totaling 135 ASCII bytes.
-Its representation is independent of query ID and database-path lengths.
-Actual filesystem path/allocation errors retain their host failure; no additional
-ID/path-length cutoff is introduced. Ordinary Player turn guards keep their
-existing database-file anchor. Actual role guard handles go to the shared
-prepared keeper; ordinary owner turns remain available. Keeper directories use
-the same full-identity digest under the log directory and validate their retained
-identity before reuse. Raw IDs do not become path components.
+`SessionLock.try_acquire` receives the canonical database path and the
+physical-role digest. The host identifies the database by its device and inode,
+then hex-encodes the digest once in the lock filename under its IPC directory.
+Database aliases share this lock. The prepared keeper receives the acquired
+handle. Keeper directories use the full-identity digest under the context log
+directory. Filesystem and allocation failures retain their host causes.
 
 The persisted recovery argv is the absolute installed Baton executable followed
 by `--recover-context-role`, canonical database path, expected database binding,
@@ -1973,7 +1975,7 @@ single dependency pin input; exact versions and integrity hashes are mandatory.
 third-party notices, records payload/source hashes and includes distribution
 entries. No runtime install or ambient `node_modules` resolution is permitted.
 The C combined-query payload includes `libexec/baton2/context-clang-20`, a
-first-party C++ LibTooling extractor built against LLVM/Clang20.1.8, and the
+first-party C++ LibTooling extractor built against LLVM/Clang 20, and the
 fixed Fossil helper summary, with source/build and summary hashes in package
 metadata. Its closure comprises the actual helper definitions and the supported
 literal-copy rule; there is no runtime helper-summary registry or target-supplied
@@ -1981,12 +1983,12 @@ executable plug-in. The summary matcher checks parsed declaration/body inputs
 before adding a modeled SQL edge. Generated frontend inputs are supplied by the
 target's existing authentic build and consumed read-only. Packaging neither runs
 that build nor substitutes preauthored result rows. The extractor links the
-`clang-cpp` target and LLVM dependency selected by the pinned ClangConfig.cmake.
-The initial package uses the explicit external LLVM20.1.8 dependency. Its gate
-checks actual dylib resolution, architecture, resource headers, SDK access and
-provider identities on the installed artifact; an absolute Homebrew link does
-not establish relocation. The source-backed C++ API has not yet been compiled
-as the proposed extractor. The fixed-profile build-association decoder requires
+`clang-cpp` library found through the LLVM package's library directories.
+The package stages the extractor only when given an already-built runtime
+package through `--context-clang-package`. Linux build and fixture execution
+used LLVM/Clang 20.1.2. Darwin binary packaging, dynamic-library closure,
+resource headers, SDK access and installed-provider execution remain
+unqualified. The fixed-profile build-association decoder requires
 implementation and qualification against the closed receipt formats above.
 C SQL joins use the native linked-library planner described under
 Data projections; no Node or CLI fallback is selected. The separate Node
@@ -2089,10 +2091,13 @@ and cannot establish equivalence to the live data state. This policy constrains
 admitted SQLite operations; foreign engine correctness remains a qualified
 assumption.
 
-External providers: Node22.15.0+, LLVM clang/clangd20.1.8, psql14.18 with a
-user-operated PostgreSQL14.18 server. Native SQLite operations qualify the
-actual linked library described above. The initial
-qualified platform is darwin-arm64. `context-engines` reports executable/version,
+External providers: Node22.15.0+, LLVM/Clang 20 for the C/C++ modules, and
+psql14.18 with a user-operated PostgreSQL14.18 server. Linux module execution
+was exercised with LLVM/Clang 20.1.2; Darwin closure qualification remains
+open. Native SQLite operations qualify the
+actual linked library described above. The initial qualified platform for the
+other package behavior is darwin-arm64; that does not qualify the Clang runtime
+closure. `context-engines` reports executable/version,
 prerequisites and per-projection readiness. Upgrades require scoped requalification.
 No Swift/LLDB/OPA binary is bundled. The native binary's existing Node-free
 operation stays distinct from the adapter/helper Node requirement.

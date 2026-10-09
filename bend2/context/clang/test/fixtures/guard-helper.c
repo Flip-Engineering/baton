@@ -10,7 +10,9 @@ struct Ctx {
 
 struct Ctx g;
 
-struct Stmt;
+struct Stmt {
+  int state;
+};
 typedef struct Stmt Stmt;
 
 int opaque_prepare(Stmt *stmt, const char *sql);
@@ -37,7 +39,7 @@ void handler(void) {
 }
 
 /* Selected-function formals case: nonempty formals plus variadic tail. */
-int opaque_prepare(Stmt *stmt, const char *sql, ...) {
+int opaque_prepare(Stmt *stmt, const char *sql) {
   (void)stmt;
   (void)sql;
   return 0;

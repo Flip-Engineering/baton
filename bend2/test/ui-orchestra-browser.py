@@ -1,0 +1,48 @@
+"""Browser qualification for the Orchestra live view (#682).
+
+Drives the real `view` command, a fixture Orchestra built through the native
+binary, and headless Chromium over CDP. Skips when Chromium or Node 22 is
+unavailable so the general suite passes on hosts without a browser.
+"""
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+EXE = ROOT / '.scratch/bend2/baton2'
+DRIVER = ROOT / 'bend2/test/ui-orchestra-browser.mjs'
+
+
+def find_chromium():
+    for name in ('chromium', 'chromium-browser', 'google-chrome'):
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+@unittest.skipUnless(EXE.is_file(), 'the native binary is not built')
+class OrchestraBrowser(unittest.TestCase):
+    def test_live_view_browser_qualification(self):
+        chromium = find_chromium()
+        node = shutil.which('node')
+        if not chromium or not node:
+            self.skipTest('chromium or node unavailable')
+        with tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2') as work:
+            out = pathlib.Path(work) / 'evidence'
+            out.mkdir()
+            result = subprocess.run(
+                [node, str(DRIVER), str(EXE), work, str(out), chromium],
+                text=True, capture_output=True)
+            sys.stdout.write(result.stdout)
+            sys.stderr.write(result.stderr)
+            self.assertEqual(result.returncode, 0,
+                             result.stdout + result.stderr)
+            self.assertIn('BROWSER_QA_OK', result.stdout)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,11 +1,13 @@
 import Base
 
 type Command is Data:
+  Join{id: String, parent: String, harness: String, model: String, effort: String, path: String}
   Recruit{id: String, parent: String, harness: String, model: String, effort: String, repo: String, branch: String, path: String, base: String}
   Worktree{id: String}
   Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String}
   Start{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String, id: String, task: String}
-  Receiver{session: String, cmd: String, log: String}
+  Receiver{session: String, cmd: String, log: String, cwd: String}
+  Configure{id: String, harness: String, model: String, effort: String, cmd: String, log: String, expected_harness: String, expected_model: String, expected_effort: String}
   DispatchFile{id: String, sender: String, recipient: String, kind: String, path: String}
   DispatchTurn{player: String, id: String, cmd: String, log: String, task: String}
   StatusPretty{}
@@ -27,6 +29,7 @@ type Command is Data:
   Observe{id: String, player: String, event: String, sealed: Bool}
   ObserveFile{id: String, player: String, path: String}
   Report{id: String, sender: String, body: String}
+  ReportFile{id: String, sender: String, path: String}
   Ask{id: String, player: String, body: String}
   AskFile{id: String, player: String, path: String}
   NativeReply{parent: String, id: String, response: String}
@@ -37,11 +40,14 @@ type Command is Data:
   Pending{}
   Inbox{id: String}
   Land{player: String, repo: String, target: String}
+  LandAt{player: String, repo: String, target: String, commit: String}
+  LandCheckedAt{player: String, repo: String, target: String, check: String, files: String, commit: String}
   LandChecked{player: String, repo: String, target: String, check: String, files: String}
   Push{repo: String, branch: String, remote: String}
   RemoteTip{repo: String, branch: String, remote: String}
   ObservedUsage{session: String}
-  Logs{session: String, level: String, budget: String, segments: String}
+  Models{session: String}
+  Logs{session: String, level: String}
   LogsStorage{}
   LogsClean{session: String}
   Status{}
@@ -56,6 +62,13 @@ type Command is Data:
   KnowledgeRecord{id: String, author: String, claim: String, evidence: String, limits: String}
   KnowledgeRead{reader: String}
   KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
+  View{subject: String, reader: String, port: String}
+  UiSubscribe{after_cursor: String, generation: String}
+  ContextEngines{}
+  ContextQueryFile{owner: String, query: String, path: String}
+  ContextResult{query: String}
+  Serve{}
+  OwnerStatus{}
   Help{}
   Invalid{}
 
@@ -86,8 +99,19 @@ def messaging_schema() -> String:
 # Stored role families and turn columns retain their existing names. Section
 # membership references the existing Ensemble membership of each Player.
 
+# Wake-claim table for issue #685. The claim records which driver holds a
+# session while it evaluates the pending obligation, so two drivers cannot
+# satisfy one obligation at once and an exit during evaluation does not lose
+# it. States are claimed and unclaimed; the row is deleted when
+# acknowledgement clears the obligation. A separate table keeps existing
+# databases upgrade-safe: every commit runs schema(), so the table
+# self-creates on first commit after upgrade, and readers tolerate absence.
+def wake_claim_schema() -> String:
+  "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);"
+
 def schema() -> String:
-  "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
+  wake_claim_schema()
+  ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
   ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);"
   ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
@@ -103,8 +127,44 @@ def execution_input_sql(kind: String) -> String:
 def input_state_sql(+row: String) -> String:
   "CASE WHEN " ++ stopped_session_sql(row ++ ".recipient") ++ " THEN json_object('stopId',(SELECT id FROM session_stops WHERE session=" ++ row ++ ".recipient),'executionDisposition',CASE WHEN " ++ row ++ ".receipt IS NOT NULL THEN 'accepted' WHEN " ++ execution_input_sql(row ++ ".kind") ++ " THEN 'stopped' ELSE 'retained-for-stopped-session' END) ELSE json('{}') END"
 
-def session_state_sql(session: String) -> String:
-  "coalesce((SELECT json_object('stop',json_object('id',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''))) FROM session_stops WHERE session=" ++ session ++ "),json('{}'))"
+# Session-state cause for a terminal stop, unsupported route, absent receiver,
+# or failed provider attempt.
+def blocked_endpoint_absent_sql(+session: String) -> String:
+  "(" ++ "(SELECT route.endpoint FROM sessions AS route WHERE route.id=" ++ session ++ ")=''"
+  ++ " OR NOT (json_valid((SELECT route.endpoint FROM sessions AS route WHERE route.id=" ++ session ++ "))"
+  ++ " AND json_type((SELECT route.endpoint FROM sessions AS route WHERE route.id=" ++ session ++ "))='array'"
+  ++ " AND json_array_length((SELECT route.endpoint FROM sessions AS route WHERE route.id=" ++ session ++ "))>0"
+  ++ " AND NOT EXISTS(SELECT 1 FROM json_each((SELECT route.endpoint FROM sessions AS route WHERE route.id=" ++ session ++ ")) WHERE type<>'text' OR instr(value,char(0))>0)"
+  ++ " AND coalesce(json_extract((SELECT route.endpoint FROM sessions AS route WHERE route.id=" ++ session ++ "),'$[0]'),'')<>''))"
+
+# A Codex thread with a native identity can receive committed input through the
+# public App queue even when it has no command-line receiver configuration.
+def direct_app_route_sql(+session: String) -> String:
+  "EXISTS(SELECT 1 FROM sessions AS route WHERE route.id=" ++ session ++ " AND route.harness='codex' AND route.native<>'' AND route.endpoint='')"
+
+def blocked_cause_sql(+session: String) -> String:
+  "CASE WHEN " ++ stopped_session_sql(session) ++ " THEN 'terminal-stop'"
+  ++ " WHEN (SELECT route.harness FROM sessions AS route WHERE route.id=" ++ session ++ ") NOT IN ('codex','omp','muse','claude-code') THEN 'harness-unsupported'"
+  ++ " WHEN " ++ blocked_endpoint_absent_sql(session) ++ " AND NOT " ++ direct_app_route_sql(session) ++ " THEN 'endpoint-absent'"
+  ++ " WHEN EXISTS(SELECT 1 FROM executions WHERE session=" ++ session ++ " AND phase='exited' AND status<>'exit 0') THEN 'provider-failure'"
+  ++ " ELSE '' END"
+
+# Wake and ownership projection shared by every session surface. Pending input
+# uses the continuation count: unacknowledged input on an unstopped session.
+# The claim reads the wake_claims table, which every commit creates through
+# schema() before any surface query runs in the same transaction.
+def wake_state_sql(+session: String) -> String:
+  "json_object('pending',(SELECT count(*) FROM messages WHERE recipient=" ++ session ++ " AND receipt IS NULL AND NOT " ++ stopped_session_sql(session) ++ "),'claim',coalesce((SELECT state FROM wake_claims WHERE session=" ++ session ++ "),'') )"
+
+# The accountable owner for blocked input: the recorded parent, else the
+# registered operator. This mirrors report_recipient without naming it, which
+# is defined below; the SQL shape is the same parent-first fallback.
+def blocked_owner_sql(+session: String) -> String:
+  "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN coalesce((SELECT role FROM session_roles WHERE session=report_sender.id),'player')='conductor' THEN (SELECT report_owner.id FROM sessions report_owner WHERE report_owner.id='operator' AND report_owner.parent IS NULL AND coalesce((SELECT role FROM session_roles WHERE session=report_owner.id),'player')='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
+
+def session_state_sql(+session: String) -> String:
+  "json_patch(coalesce((SELECT json_object('stop',json_object('id',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''))) FROM session_stops WHERE session=" ++ session ++ "),json('{}'))"
+  ++ ",json_object('blockedCause'," ++ blocked_cause_sql(session) ++ ",'blockedOwner'," ++ blocked_owner_sql(session) ++ ",'wake'," ++ wake_state_sql(session) ++ "))"
 
 def assigned_role(session: String) -> String:
   "coalesce((SELECT role FROM session_roles WHERE session=" ++ session ++ "),'player')"
@@ -141,7 +201,7 @@ def player_matches(parent: String, harness: String, model: String, effort: Strin
 
 def player_sql(+id: String, +parent: String, +harness: String, +model: String, +effort: String, +workspace: String, +branch: String, +base: String) -> String:
   "INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base) VALUES(" ++ q(id) ++ "," ++ q(parent) ++ "," ++ q(harness) ++ "," ++ q(model) ++ "," ++ q(effort) ++ "," ++ q(workspace) ++ "," ++ q(branch) ++ "," ++ q(base) ++ ") ON CONFLICT(id) DO NOTHING;"
-  ++ "SELECT json_object('error','player-assignment-conflict','session',id,'existing',json_object('parent',parent,'harness',harness,'model',model,'effort',effort,'workspace',workspace,'branch',branch,'base',base),'requested',json_object('parent'," ++ q(parent) ++ ",'harness'," ++ q(harness) ++ ",'model'," ++ q(model) ++ ",'effort'," ++ q(effort) ++ ",'workspace'," ++ q(workspace) ++ ",'branch'," ++ q(branch) ++ ",'base'," ++ q(base) ++ "),'condition','The session ID is already registered with a different assignment.','next','Read session ID and worktree ID. Retry recruit with the recorded assignment, or recruit a new ID with a new branch and unused path; retain the original work.') FROM sessions WHERE id=" ++ q(id) ++ " AND NOT " ++ player_matches(parent,harness,model,effort,workspace,branch,base) ++ ";"
+  ++ "SELECT json_object('error','player-assignment-conflict','session',id,'existing',json_object('parent',parent,'harness',harness,'model',model,'effort',effort,'workspace',workspace,'branch',branch,'base',base),'requested',json_object('parent'," ++ q(parent) ++ ",'harness'," ++ q(harness) ++ ",'model'," ++ q(model) ++ ",'effort'," ++ q(effort) ++ ",'workspace'," ++ q(workspace) ++ ",'branch'," ++ q(branch) ++ ",'base'," ++ q(base) ++ "),'condition','The session ID is already registered with a different assignment.','next','Read session ID and worktree ID and retain the original work. Retry with the recorded assignment. Move a finished Player with receiver ID HARNESS_CMD OUTPUT_LOG CWD. Use join for an additional Player in an existing checkout, or recruit when a separate worktree is needed.') FROM sessions WHERE id=" ++ q(id) ++ " AND NOT " ++ player_matches(parent,harness,model,effort,workspace,branch,base) ++ ";"
   ++ session_result_where("id=" ++ q(id) ++ " AND " ++ player_matches(parent,harness,model,effort,workspace,branch,base))
 
 # Empty endpoints disconnect. Other endpoints are native argv JSON, with one
@@ -153,6 +213,31 @@ def connect_sql(+id: String, native: String, +endpoint: String) -> String:
   "UPDATE sessions SET native=" ++ q(native) ++ ",endpoint=" ++ q(endpoint) ++ " WHERE id=" ++ q(id) ++ " AND " ++ endpoint_admitted(endpoint) ++ ";"
   ++ "SELECT json_object('error','invalid-endpoint','session'," ++ q(id) ++ ",'condition','Use an empty endpoint to disconnect, or a nonempty JSON array of text arguments with a nonempty executable and no NUL characters.','next','Pass the JSON argv array itself as one ENDPOINT argument; inspect session and inbox, then retry retained input after connecting.') WHERE NOT " ++ endpoint_admitted(endpoint) ++ ";"
   ++ session_result_where("id=" ++ q(id) ++ " AND " ++ endpoint_admitted(endpoint))
+
+# A configured-route change moves one registered session's next admitted turn to
+# another provider harness, model and effort. The predicate names the route the
+# caller expected, so a delayed or repeated continuation cannot reconfigure a
+# session whose recorded route already moved. The update writes that session's own
+# row and nothing else: parent, workspace, branch, base, native conversation,
+# messages, turns, attempts and stops all stay as they are.
+# The predicate is a subquery so it also stands in a SELECT with no FROM clause,
+# which is where the refusal answer is built.
+def configure_matches(session: String, harness: String, model: String, effort: String) -> String:
+  "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ " AND harness=" ++ q(harness) ++ " AND model=" ++ q(model) ++ " AND effort=" ++ q(effort) ++ ")"
+
+def configure_admitted(+session: String, +harness: String, +model: String, +endpoint: String, expected_harness: String, expected_model: String, expected_effort: String) -> String:
+  "(" ++ q(harness) ++ " IN ('codex','omp','muse','claude-code') AND " ++ q(model) ++ "<>'' AND " ++ configure_matches(session,expected_harness,expected_model,expected_effort)
+  ++ " AND NOT " ++ stopped_session_sql(q(session))
+  ++ " AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ q(session) ++ " AND phase<>'exited')"
+  ++ " AND " ++ endpoint_admitted(endpoint) ++ ")"
+
+def configure_update_sql(+session: String, +harness: String, +model: String, +effort: String, +endpoint: String, expected_harness: String, expected_model: String, expected_effort: String, +admitted: String) -> String:
+  "UPDATE sessions SET harness=" ++ q(harness) ++ ",model=" ++ q(model) ++ ",effort=" ++ q(effort) ++ ",endpoint=" ++ q(endpoint) ++ " WHERE id=" ++ q(session) ++ " AND " ++ admitted ++ ";"
+  ++ "SELECT json_object('error','configure-refused','session'," ++ q(session) ++ ",'expected',json_object('harness'," ++ q(expected_harness) ++ ",'model'," ++ q(expected_model) ++ ",'effort'," ++ q(expected_effort) ++ "),'requested',json_object('harness'," ++ q(harness) ++ ",'model'," ++ q(model) ++ ",'effort'," ++ q(effort) ++ "),'condition','A route change requires a registered Player whose recorded harness, model and effort are still the expected route, no owned attempt, no terminal stop, and a launchable harness with a resolvable model key.','next','Read session ID and inbox. Pass the recorded harness, model and effort as the expected route; retry after an active attempt exits; use a supported harness; or recruit a new session for a stopped Player.') WHERE changes()=0;"
+  ++ session_result_where("id=" ++ q(session) ++ " AND changes()=1")
+
+def configure_sql(+session: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> String:
+  configure_update_sql(session,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,configure_admitted(session,harness,model,endpoint,expected_harness,expected_model,expected_effort))
 
 def message_result(id: String) -> String:
   "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ input_state_sql("messages") ++ ") FROM messages WHERE id=" ++ q(id) ++ ";"
@@ -172,16 +257,42 @@ def terminal(+event: String) -> String:
 def report_recipient(+session: String) -> String:
   "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN " ++ assigned_role("report_sender.id") ++ "='conductor' THEN (SELECT report_operator.id FROM sessions report_operator WHERE report_operator.id='operator' AND report_operator.parent IS NULL AND " ++ assigned_role("report_operator.id") ++ "='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
 
+# OMP terminal arrays can contain scalar markers and metadata objects.
+def last_assistant_sql(+event: String) -> String:
+  "(SELECT m.value FROM json_each(CASE WHEN json_type(" ++ q(event) ++ ",'$.messages')='array' THEN json_extract(" ++ q(event) ++ ",'$.messages') ELSE '[]' END) m WHERE CASE WHEN m.type='object' THEN json_extract(m.value,'$.role') END='assistant' ORDER BY m.key DESC LIMIT 1)"
+
+# OMP records provider failure on the terminal's latest assistant message.
+def omp_terminal_error_sql(+event: String) -> String:
+  "CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='agent_end' THEN coalesce((SELECT 1 FROM (SELECT " ++ last_assistant_sql(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error'),0) ELSE 0 END"
+
+# The report carries the observed provider status and diagnostic. The native
+# log retains the complete terminal frame.
+def omp_terminal_error_text_sql(+event: String) -> String:
+  "CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='agent_end' THEN (SELECT 'OMP provider failure: stopReason=error, errorStatus=' || coalesce(CAST(json_extract(m.value,'$.errorStatus') AS TEXT),'unknown') || '; ' || coalesce(json_extract(m.value,'$.errorMessage'),'the retained frame carries no provider diagnostic') FROM (SELECT " ++ last_assistant_sql(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error') END"
+
+def assistant_text_sql(+event: String) -> String:
+  "(SELECT group_concat(CASE WHEN c.type='object' THEN json_extract(c.value,'$.text') END,char(10)) FROM json_each(CASE WHEN json_type(" ++ last_assistant_sql(event) ++ ",'$.content')='array' THEN json_extract(" ++ last_assistant_sql(event) ++ ",'$.content') ELSE '[]' END) c WHERE CASE WHEN c.type='object' THEN json_extract(c.value,'$.type') END='text')"
+
 def terminal_body(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ q(event) ++ ",'$.is_error')=1 OR (json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ q(event) ++ ",'$.payload.terminal')<>'completed') THEN " ++ q(event) ++ " ELSE coalesce(json_extract(" ++ q(event) ++ ",'$.result'),CASE WHEN json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ q(event) ++ ",'$.payload.text') END,(SELECT group_concat(json_extract(c.value,'$.text'),char(10)) FROM json_each((SELECT m.value FROM json_each(" ++ q(event) ++ ",'$.messages') m WHERE json_extract(m.value,'$.role')='assistant' ORDER BY m.key DESC LIMIT 1),'$.content') c WHERE json_extract(c.value,'$.type')='text')," ++ q(event) ++ ") END"
+  "coalesce(" ++ omp_terminal_error_text_sql(event) ++ ",CASE WHEN json_extract(" ++ q(event) ++ ",'$.is_error')=1 OR (json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ q(event) ++ ",'$.payload.terminal')<>'completed') THEN " ++ q(event) ++ " ELSE coalesce(json_extract(" ++ q(event) ++ ",'$.result'),CASE WHEN json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ q(event) ++ ",'$.payload.text') END," ++ assistant_text_sql(event) ++ "," ++ q(event) ++ ") END)"
 
 def observe_identity_sql(+player: String, +event: String) -> String:
   "UPDATE sessions SET native=coalesce(CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='response' AND json_extract(" ++ q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ q(event) ++ ",'$.success')=1 THEN json_extract(" ++ q(event) ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='thread.started' THEN json_extract(" ++ q(event) ++ ",'$.thread_id') END,json_extract(" ++ q(event) ++ ",'$.session_id'),CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='session' THEN json_extract(" ++ q(event) ++ ",'$.id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.stream.kind')='session' THEN json_extract(" ++ q(event) ++ ",'$.stream.id') END,native),observed_model=coalesce(CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='response' AND json_extract(" ++ q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ q(event) ++ ",'$.success')=1 THEN json_extract(" ++ q(event) ++ ",'$.data.model.provider') || '/' || json_extract(" ++ q(event) ++ ",'$.data.model.id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.payload_type')='run.model.configured' THEN json_extract(" ++ q(event) ++ ",'$.payload.model_id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.message.provider') IS NOT NULL AND json_extract(" ++ q(event) ++ ",'$.message.model') IS NOT NULL THEN json_extract(" ++ q(event) ++ ",'$.message.provider') || '/' || json_extract(" ++ q(event) ++ ",'$.message.model') END,json_extract(" ++ q(event) ++ ",'$.message.model'),json_extract(" ++ q(event) ++ ",'$.model'),observed_model) WHERE id=" ++ q(player) ++ ";"
 
+# Completion record for issue #685. Every terminal observation records its
+# completion report and turn row. The answer carries the pending-input
+# reconciliation state, counted over unacknowledged input on unstopped
+# sessions.
+def completion_pending_sql(+player: String) -> String:
+  "(SELECT count(*) FROM messages WHERE recipient=" ++ q(player) ++ " AND receipt IS NULL AND NOT " ++ stopped_session_sql(q(player)) ++ ")"
+
+def completion_oldest_sql(+player: String) -> String:
+  "(SELECT id FROM messages WHERE recipient=" ++ q(player) ++ " AND receipt IS NULL AND NOT " ++ stopped_session_sql(q(player)) ++ " ORDER BY seq LIMIT 1)"
+
 def completion_sql(+id: String, +player: String, +event: String) -> String:
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ report_recipient("sessions.id") ++ ",'report'," ++ terminal_body(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal(event) ++ message_upsert()
   ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(player) ++ "," ++ q(event) ++ " WHERE " ++ report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
-  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ q(event) ++ ",'$.type'),json_extract(" ++ q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
+  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ q(event) ++ ",'$.type'),json_extract(" ++ q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ completion_pending_sql(player) ++ ",'oldestPendingId'," ++ completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
 
 def observe_completion_sql(+id: String, +player: String, +event: String, sealed: Bool) -> String:
   Bool.pick(String,sealed,"",completion_sql(id,player,event))
@@ -197,14 +308,11 @@ def ancestors(+session: String) -> String:
 def descendant(+ancestor: String, session: String) -> String:
   "EXISTS(SELECT 1 FROM (" ++ ancestors(session) ++ ") WHERE id=" ++ ancestor ++ ")"
 
-def depth(session: String) -> String:
-  "(SELECT count(*) FROM (" ++ ancestors(session) ++ "))"
-
 def peers(+left: String, +right: String) -> String:
-  "(" ++ left ++ "<>" ++ right ++ " AND NOT " ++ descendant(left,right) ++ " AND NOT " ++ descendant(right,left) ++ " AND NOT (" ++ assigned_role(left) ++ "='conductor' AND " ++ assigned_role(right) ++ "='conductor' AND " ++ depth(left) ++ "<>" ++ depth(right) ++ "))"
+  "(" ++ left ++ "<>" ++ right ++ " AND NOT " ++ descendant(left,right) ++ " AND NOT " ++ descendant(right,left) ++ ")"
 
 def tight_peers(+sender: String, +recipient: String) -> String:
-  "(" ++ peers(sender,recipient) ++ " AND " ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND EXISTS(SELECT 1 FROM ensemble_members a JOIN ensemble_members b ON b.ensemble=a.ensemble JOIN ensembles e ON e.id=a.ensemble WHERE a.session=" ++ sender ++ " AND b.session=" ++ recipient ++ " AND e.coupling='tight' AND " ++ assigned_role("e.owner") ++ "='conductor'))"
+  "(" ++ peers(sender,recipient) ++ " AND " ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND EXISTS(SELECT 1 FROM ensemble_members a JOIN ensemble_members b ON b.ensemble=a.ensemble JOIN ensembles e ON e.id=a.ensemble WHERE a.session=" ++ sender ++ " AND b.session=" ++ recipient ++ " AND e.coupling='tight'))"
 
 def operator_route(+sender: String, +recipient: String) -> String:
   "((" ++ assigned_role(sender) ++ "='operator' AND " ++ assigned_role(recipient) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND parent IS NULL)) OR (" ++ assigned_role(recipient) ++ "='operator' AND " ++ assigned_role(sender) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND parent IS NULL)))"
@@ -228,29 +336,32 @@ def role_sql(+session: String, +role: String) -> String:
   ++ "SELECT json_object('error','invalid-role','session'," ++ q(session) ++ ",'requested'," ++ q(role) ++ ",'condition','Principal Conductors and operators require no parent; Associate Conductors require a parent.','next','Read session ID. Assign player, principal-conductor, associate-conductor or operator to match its recorded parentage; conductor remains a compatible family declaration.') WHERE NOT " ++ role_admitted(session,role) ++ ";"
   ++ "SELECT json_object('session',id,'kind'," ++ session_kind("sessions.id") ++ ",'role'," ++ public_role("sessions.id") ++ ") FROM sessions WHERE id=" ++ q(session) ++ " AND " ++ role_admitted(session,role) ++ ";"
 
+def member_present(+session: String) -> String:
+  "EXISTS(SELECT 1 FROM sessions WHERE sessions.id=" ++ session ++ ")"
+
 def section_row(+row: String) -> String:
-  "json_object('ensemble'," ++ row ++ ".ensemble,'id'," ++ row ++ ".id,'capability'," ++ row ++ ".capability,'members',(SELECT json_group_array(session) FROM (SELECT session FROM section_members WHERE ensemble=" ++ row ++ ".ensemble AND section=" ++ row ++ ".id ORDER BY session)))"
+  "json_object('ensemble'," ++ row ++ ".ensemble,'id'," ++ row ++ ".id,'capability'," ++ row ++ ".capability,'members',(SELECT json_group_array(session) FROM (SELECT session FROM section_members WHERE ensemble=" ++ row ++ ".ensemble AND section=" ++ row ++ ".id AND " ++ member_present("section_members.session") ++ " ORDER BY session)))"
 
 def ensemble_row(+row: String) -> String:
-  "json_object('id'," ++ row ++ ".id,'owner'," ++ row ++ ".owner,'coupling'," ++ row ++ ".coupling,'members',(SELECT json_group_array(session) FROM (SELECT session FROM ensemble_members WHERE ensemble=" ++ row ++ ".id ORDER BY session)),'sections',(SELECT json_group_array(json(item)) FROM (SELECT " ++ section_row("sc") ++ " AS item FROM sections sc WHERE sc.ensemble=" ++ row ++ ".id ORDER BY sc.id)))"
+  "json_object('id'," ++ row ++ ".id,'owner'," ++ row ++ ".owner,'coupling'," ++ row ++ ".coupling,'members',(SELECT json_group_array(session) FROM (SELECT session FROM ensemble_members WHERE ensemble=" ++ row ++ ".id AND " ++ member_present("ensemble_members.session") ++ " ORDER BY session)),'sections',(SELECT json_group_array(json(item)) FROM (SELECT " ++ section_row("sc") ++ " AS item FROM sections sc WHERE sc.ensemble=" ++ row ++ ".id ORDER BY sc.id)))"
 
 def ensemble_sql(+id: String, +owner: String, +coupling: String) -> String:
-  "INSERT INTO ensembles(id,owner,coupling) SELECT " ++ q(id) ++ "," ++ q(owner) ++ "," ++ q(coupling) ++ " WHERE " ++ assigned_role(q(owner)) ++ "='conductor' AND " ++ q(coupling) ++ " IN ('loose','tight') ON CONFLICT(id) DO UPDATE SET id=CASE WHEN ensembles.owner=excluded.owner THEN ensembles.id ELSE NULL END,coupling=excluded.coupling;SELECT " ++ ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ " AND coupling=" ++ q(coupling) ++ ";"
+  "INSERT INTO ensembles(id,owner,coupling) SELECT " ++ q(id) ++ "," ++ q(owner) ++ "," ++ q(coupling) ++ " WHERE " ++ q(coupling) ++ " IN ('loose','tight') ON CONFLICT(id) DO UPDATE SET id=CASE WHEN ensembles.owner=excluded.owner THEN ensembles.id ELSE NULL END,coupling=excluded.coupling;SELECT " ++ ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ " AND coupling=" ++ q(coupling) ++ ";"
 
 def ensemble_member_sql(+id: String, +owner: String, +session: String, +action: String) -> String:
   "DELETE FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ " AND " ++ q(action) ++ "='remove' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ");"
-  ++ "INSERT OR IGNORE INTO ensemble_members(ensemble,session) SELECT " ++ q(id) ++ "," ++ q(session) ++ " WHERE " ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND " ++ assigned_role(q(owner)) ++ "='conductor' AND " ++ assigned_role(q(session)) ++ "<>'operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ ");"
+  ++ "INSERT OR IGNORE INTO ensemble_members(ensemble,session) SELECT " ++ q(id) ++ "," ++ q(session) ++ " WHERE " ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND " ++ assigned_role(q(session)) ++ "<>'operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ ");"
   ++ "SELECT json_object('ensemble'," ++ q(id) ++ ",'owner'," ++ q(owner) ++ ",'session'," ++ q(session) ++ ",'membership'," ++ q(action) ++ ") WHERE EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND ((" ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ ")) OR (" ++ q(action) ++ "='remove' AND NOT EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ ")));"
 
 
 def section_owner(+ensemble: String, +owner: String) -> String:
-  "(EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(ensemble) ++ " AND owner=" ++ q(owner) ++ ") AND " ++ assigned_role(q(owner)) ++ "='conductor')"
+  "EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(ensemble) ++ " AND owner=" ++ q(owner) ++ ")"
 
 def section_admitted(ensemble: String, owner: String, capability: String) -> String:
   "(" ++ section_owner(ensemble,owner) ++ " AND " ++ q(capability) ++ "<>'')"
 
 def section_refusal(ensemble: String, id: String, owner: String, admitted: String) -> String:
-  "SELECT json_object('error','section-refused','ensemble'," ++ q(ensemble) ++ ",'section'," ++ q(id) ++ ",'owner'," ++ q(owner) ++ ",'condition','Use the named Ensemble conductor owner, a nonempty capability, and an existing Ensemble Player for membership.','next','Read ensemble ID and section ENSEMBLE SECTION. Add the Player to that Ensemble before assigning its Section; use add or remove for membership.') WHERE NOT " ++ admitted ++ ";"
+  "SELECT json_object('error','section-refused','ensemble'," ++ q(ensemble) ++ ",'section'," ++ q(id) ++ ",'owner'," ++ q(owner) ++ ",'condition','Use the named Ensemble owner, a nonempty capability, and an existing Ensemble Player for membership.','next','Read ensemble ID and section ENSEMBLE SECTION. Add the Player to that Ensemble before assigning its Section; use add or remove for membership.') WHERE NOT " ++ admitted ++ ";"
 
 def section_sql(+ensemble: String, +id: String, +owner: String, +capability: String) -> String:
   "INSERT INTO sections(ensemble,id,capability) SELECT " ++ q(ensemble) ++ "," ++ q(id) ++ "," ++ q(capability) ++ " WHERE " ++ section_admitted(ensemble,owner,capability) ++ " ON CONFLICT(ensemble,id) DO UPDATE SET capability=excluded.capability;"
@@ -269,8 +380,23 @@ def section_member_sql(+ensemble: String, +id: String, +owner: String, +player: 
 def players_json(condition: String) -> String:
   "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',s.id,'kind'," ++ session_kind("s.id") ++ ",'role'," ++ public_role("s.id") ++ ",'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'native',s.native,'observedHarness',s.observed_harness,'observedModel',s.observed_model,'observedEffort',s.observed_effort,'execution',(SELECT json_object('attempt',id,'mode',mode,'phase',phase,'status',status) FROM executions WHERE session=s.id),'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')) FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")))," ++ session_state_sql("s.id") ++ ") AS item FROM sessions s WHERE " ++ condition ++ " ORDER BY s.id))"
 
+# The per-session orchestra surface, computed once per row. The item JSON is
+# the players surface item over sessions s; role carries the raw assigned
+# role for the players/operators split, and id carries the session identity
+# for ordering. Both role arrays read this one surface through the WITH
+# clause in orchestra_sql, so the enlarged session state is assembled once
+# instead of once per role array.
+def surface_item() -> String:
+  "json_patch(json_object('id',s.id,'kind'," ++ session_kind("s.id") ++ ",'role'," ++ public_role("s.id") ++ ",'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'native',s.native,'observedHarness',s.observed_harness,'observedModel',s.observed_model,'observedEffort',s.observed_effort,'execution',(SELECT json_object('attempt',id,'mode',mode,'phase',phase,'status',status) FROM executions WHERE session=s.id),'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')) FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")))," ++ session_state_sql("s.id") ++ ")"
+
+def orchestra_surface() -> String:
+  String.concat(["(SELECT ", surface_item(), " AS item,", assigned_role("s.id"), " AS role,s.id AS id FROM sessions s)"])
+
+def orchestra_role_array(condition: String) -> String:
+  String.concat(["(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT item FROM surface WHERE role", condition, " ORDER BY id))"])
+
 def orchestra_sql() -> String:
-  "SELECT json_object('players'," ++ players_json(assigned_role("s.id") ++ "<>'operator'") ++ ",'operators'," ++ players_json(assigned_role("s.id") ++ "='operator'") ++ ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT " ++ ensemble_row("e") ++ " AS item FROM ensembles e ORDER BY e.id)));"
+  String.concat(["WITH surface AS ", orchestra_surface(), " SELECT json_object('players',", orchestra_role_array("<>'operator'"), ",'operators',", orchestra_role_array("='operator'"), ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT ", ensemble_row("e"), " AS item FROM ensembles e ORDER BY e.id)));"])
 
 
 def sql(command: Command) -> String:
@@ -297,7 +423,7 @@ def sql(command: Command) -> String:
     case Ask{+id, +player, body}:
       "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(player) ++ ",(SELECT parent FROM sessions WHERE id=" ++ q(player) ++ "),'question'," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
     case Ack{+id, +recipient, receipt}:
-      "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";"
+      "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";DELETE FROM wake_claims WHERE session=" ++ q(recipient) ++ " AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=" ++ q(recipient) ++ " AND receipt IS NULL);SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";"
     case Session{id}: session_result(id)
     case Delivery{id}:
       "SELECT " ++ delivery_row() ++ " FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ q(id) ++ ";"
@@ -318,6 +444,7 @@ def sql(command: Command) -> String:
     case Turns{id}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',t.id,'player',t.worker,'eventType',coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')),'reportBody',m.body,'receipt',m.receipt) AS item FROM turns t JOIN messages m ON m.id=t.id WHERE t.worker=" ++ q(id) ++ " ORDER BY m.seq);"
     case ObserveFile{id,player,path}: ""
+    case ReportFile{id,sender,path}: ""
     case MessageFile{id,sender,recipient,kind,path}: ""
     case AskFile{id,player,path}: ""
     case NativeReply{parent,id,response}: ""
@@ -327,78 +454,192 @@ def sql(command: Command) -> String:
     case RunTurn{player,id,cmd,model,effort,cwd,task,log,session}: ""
     case Receive{session,cmd,model,effort,cwd,log,message}: ""
     case Start{session,harness,cmd,model,effort,cwd,log,id,task}: ""
-    case Receiver{session,cmd,log}: ""
+    case Receiver{session,cmd,log,cwd}: ""
+    case Configure{id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort}: ""
     case DispatchFile{id,sender,recipient,kind,path}: ""
     case DispatchTurn{player,id,cmd,log,task}: ""
     case StatusPretty{}: ""
     case Pretty{read}: ""
     case Land{player,repo,target}: ""
+    case LandAt{player,repo,target,commit}: ""
+    case LandCheckedAt{player,repo,target,check,files,commit}: ""
     case LandChecked{player,repo,target,check,files}: ""
     case Push{repo,branch,remote}: ""
     case RemoteTip{repo,branch,remote}: ""
     case ObservedUsage{session}: ""
-    case Logs{session,level,budget,segments}: ""
+    case Models{session}: ""
+    case Logs{session,level}: ""
     case LogsStorage{}: ""
     case LogsClean{session}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
+    case Join{id,parent,harness,model,effort,path}: ""
     case Worktree{id}: ""
     case KnowledgeRecord{id,author,claim,evidence,limits}: ""
     case KnowledgeRead{reader}: ""
     case KnowledgePromote{id,promoter,source,destination,finding}: ""
+    case View{subject,reader,port}: ""
+    case UiSubscribe{after_cursor,generation}: ""
+    case ContextEngines{}: ""
+    case ContextQueryFile{owner,query,path}: ""
+    case ContextResult{query}: ""
+    case Serve{}: ""
+    case OwnerStatus{}: ""
     case Help{}: ""
     case Invalid{}: ""
 
-def help_verb(+verb: String) -> Bool:
-  Bool.or(String.eq(verb,"help"),String.eq(verb,"--help"))
+def parse_verb_only(+verb: String) -> Command:
+  match verb:
+    case "context-engines": ContextEngines{}
+    case "logs-storage": LogsStorage{}
+    case "help": Help{}
+    case "--help": Help{}
+    case "status": Status{}
+    case "workers": LegacySubordinates{}
+    case "players": Players{}
+    case "orchestra": Orchestra{}
+    case "pending": Pending{}
+    case "serve": Serve{}
+    case "owner-status": OwnerStatus{}
+    case _: Invalid{}
+
+def parse_verb_id(+verb: String, +id: String) -> Command:
+  match verb:
+    case "context-result": ContextResult{id}
+    case "logs": Logs{id,""}
+    case "logs-clean": LogsClean{id}
+    case "players": match id:
+      case "--pretty": Pretty{Players{}}
+      case _: Invalid{}
+    case "orchestra": match id:
+      case "--pretty": Pretty{Orchestra{}}
+      case _: Invalid{}
+    case "pending": match id:
+      case "--pretty": Pretty{Pending{}}
+      case _: Invalid{}
+    case "status": match id:
+      case "--pretty": StatusPretty{}
+      case _: Invalid{}
+    case "player": PlayerRead{id}
+    case "role": RoleRead{id}
+    case "ensemble": EnsembleRead{id}
+    case "inbox": Inbox{id}
+    case "session": Session{id}
+    case "delivery": Delivery{id}
+    case "worktree": Worktree{id}
+    case "turns": Turns{id}
+    case "knowledge": KnowledgeRead{id}
+    case "observed-usage": ObservedUsage{id}
+    case "models": Models{id}
+    case "view": View{id,id,"7682"}
+    case _: Invalid{}
+
+def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Command:
+  match verb:
+    case "ui-subscribe": UiSubscribe{session,id}
+    case "logs": Logs{session,id}
+    case "player": match id:
+      case "--pretty": Pretty{PlayerRead{session}}
+      case _: Invalid{}
+    case "session": match id:
+      case "--pretty": Pretty{Session{session}}
+      case _: Invalid{}
+    case "inbox": match id:
+      case "--pretty": Pretty{Inbox{session}}
+      case _: Invalid{}
+    case "delivery": match id:
+      case "--pretty": Pretty{Delivery{session}}
+      case _: Invalid{}
+    case "turns": match id:
+      case "--pretty": Pretty{Turns{session}}
+      case _: Invalid{}
+    case "knowledge": match id:
+      case "--pretty": Pretty{KnowledgeRead{session}}
+      case _: Invalid{}
+    case "worktree": match id:
+      case "--pretty": Pretty{Worktree{session}}
+      case _: Invalid{}
+    case "section": SectionRead{session,id}
+    case "role": Role{session,id}
+    case "ensemble": Ensemble{session,id,"loose"}
+    case "force-stop": ForceStop{session,id}
+    case "view": View{session,id,"7682"}
+    case _: Invalid{}
+
+def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String) -> Command:
+  match verb:
+    case "context-query-file": ContextQueryFile{id,one,two}
+    case "receiver": Receiver{id,one,two,""}
+    case "ensemble": Ensemble{id,one,two}
+    case "native-reply": NativeReply{id,one,two}
+    case "native-reply-file": NativeReplyFile{id,one,two}
+    case "stop": Stop{id,one,two}
+    case "report": Report{id,one,two}
+    case "report-file": ReportFile{id,one,two}
+    case "ack": Ack{id,one,two}
+    case "observe-file": ObserveFile{id,one,two}
+    case "connect": Connect{id,one,two}
+    case "land": Land{id,one,two}
+    case "push": Push{id,one,two}
+    case "ask": Ask{id,one,two}
+    case "ask-file": AskFile{id,one,two}
+    case "remote-tip": RemoteTip{id,one,two}
+    case "view": View{id,one,two}
+    case _: Invalid{}
+
+def parse_verb_four_args(+verb: String, +id: String, +one: String, +two: String, +three: String) -> Command:
+  match verb:
+    case "receiver": Receiver{id,one,two,three}
+    case "section": Section{id,one,two,three}
+    case "ensemble-member": EnsembleMember{id,one,two,three}
+    case "attach": Attach{id,one,two,three}
+    case _: Invalid{}
+
+def parse_verb_five_args(+verb: String, +id: String, +one: String, +two: String, +three: String, +four: String) -> Command:
+  match verb:
+    case "dispatch-turn": DispatchTurn{id,one,two,three,four}
+    case "dispatch-file": DispatchFile{id,one,two,three,four}
+    case "section-member": SectionMember{id,one,two,three,four}
+    case "land-checked": LandChecked{id,one,two,three,four}
+    case "bind": Bind{id,one,two,three,four}
+    case "message": Message{id,one,two,three,four}
+    case "message-file": MessageFile{id,one,two,three,four}
+    case "record": KnowledgeRecord{id,one,two,three,four}
+    case "promote": KnowledgePromote{id,one,two,three,four}
+    case _: Invalid{}
+
+def parse_receive(+verb: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> Command:
+  match verb:
+    case "receive": Receive{session,cmd,model,effort,cwd,log,message}
+    case _: Invalid{}
+
+def parse_verb_nine_args(+verb: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> Command:
+  match verb:
+    case "configure": Configure{player,id,cmd,model,effort,cwd,task,log,session}
+    case "start": Start{player,id,cmd,model,effort,cwd,task,log,session}
+    case "turn": RunTurn{player,id,cmd,model,effort,cwd,task,log,session}
+    case "recruit": Recruit{player,id,cmd,model,effort,cwd,task,log,session}
+    case _: Invalid{}
 
 def parse(args: List<String>) -> Command:
   match args:
     case +verb <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"logs-storage"),LogsStorage{},
-      Bool.pick(Command,help_verb(verb),Help{},
-      Bool.pick(Command, String.eq(verb,"status"),Status{},
-      Bool.pick(Command, String.eq(verb,"workers"),LegacySubordinates{},
-      Bool.pick(Command, String.eq(verb,"players"),Players{},
-      Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},
-      Bool.pick(Command, String.eq(verb,"pending"),Pending{},Invalid{})))))))
+      parse_verb_only(verb)
     case +verb <> +id <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"logs"),Logs{id,"","",""},
-      Bool.pick(Command,String.eq(verb,"logs-clean"),LogsClean{id},
-      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"players"),Bool.or(String.eq(verb,"orchestra"),String.eq(verb,"pending"))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"players"),Players{},Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},Pending{}))},Bool.pick(Command,Bool.and(String.eq(verb,"status"),String.eq(id,"--pretty")),StatusPretty{},Bool.pick(Command,String.eq(verb,"player"),PlayerRead{id},Bool.pick(Command, String.eq(verb,"role"),RoleRead{id},Bool.pick(Command, String.eq(verb,"ensemble"),EnsembleRead{id},Bool.pick(Command, String.eq(verb,"inbox"),Inbox{id},
-      Bool.pick(Command, String.eq(verb,"session"),Session{id},
-      Bool.pick(Command, String.eq(verb,"delivery"),Delivery{id},
-      Bool.pick(Command, String.eq(verb,"worktree"),Worktree{id},
-      Bool.pick(Command, String.eq(verb,"turns"),Turns{id},
-      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Bool.pick(Command, String.eq(verb,"observed-usage"),ObservedUsage{id},Invalid{}))))))))))))))
+      parse_verb_id(verb,id)
     case +verb <> +session <> +id <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"logs"),Logs{session,id,"",""},
-      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"player"),Bool.or(String.eq(verb,"session"),Bool.or(String.eq(verb,"inbox"),Bool.or(String.eq(verb,"delivery"),Bool.or(String.eq(verb,"turns"),Bool.or(String.eq(verb,"knowledge"),String.eq(verb,"worktree"))))))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"player"),PlayerRead{session},Bool.pick(Command,String.eq(verb,"session"),Session{session},Bool.pick(Command,String.eq(verb,"inbox"),Inbox{session},Bool.pick(Command,String.eq(verb,"delivery"),Delivery{session},Bool.pick(Command,String.eq(verb,"turns"),Turns{session},Bool.pick(Command,String.eq(verb,"knowledge"),KnowledgeRead{session},Worktree{session}))))))},Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Invalid{}))))))
+      parse_verb_session_id(verb,session,id)
     case +verb <> +id <> +one <> +two <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"logs"),Logs{id,one,two,""},
-      Bool.pick(Command,String.eq(verb,"receiver"),Receiver{id,one,two},Bool.pick(Command, String.eq(verb,"ensemble"),Ensemble{id,one,two},Bool.pick(Command, String.eq(verb,"native-reply"),NativeReply{id,one,two},
-      Bool.pick(Command, String.eq(verb,"native-reply-file"),NativeReplyFile{id,one,two},
-      Bool.pick(Command, String.eq(verb,"stop"),Stop{id,one,two},
-      Bool.pick(Command, String.eq(verb,"report"),Report{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ack"),Ack{id,one,two},
-      Bool.pick(Command, String.eq(verb,"observe-file"),ObserveFile{id,one,two},
-      Bool.pick(Command, String.eq(verb,"connect"),Connect{id,one,two},
-      Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},
-      Bool.pick(Command, String.eq(verb,"push"),Push{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ask"),Ask{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Bool.pick(Command, String.eq(verb,"remote-tip"),RemoteTip{id,one,two},Invalid{})))))))))))))))
+      parse_verb_three_args(verb,id,one,two)
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"logs"),Logs{id,one,two,three},
-      Bool.pick(Command,String.eq(verb,"section"),Section{id,one,two,three},Bool.pick(Command, String.eq(verb,"ensemble-member"),EnsembleMember{id,one,two,three},Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{}))))
+      parse_verb_four_args(verb,id,one,two,three)
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"dispatch-turn"),DispatchTurn{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"dispatch-file"),DispatchFile{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"section-member"),SectionMember{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"land-checked"),LandChecked{id,one,two,three,four},
-      Bool.pick(Command, String.eq(verb,"bind"),Bind{id,one,two,three,four},
-      Bool.pick(Command, String.eq(verb,"message"),Message{id,one,two,three,four},
-      Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"record"),KnowledgeRecord{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"promote"),KnowledgePromote{id,one,two,three,four},Invalid{})))))))))
-    case +verb <> session <> cmd <> model <> effort <> cwd <> log <> message <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"receive"),Receive{session,cmd,model,effort,cwd,log,message},Invalid{})
+      Bool.pick(Command, Bool.and(String.eq(verb,"land"),String.eq(three,"--commit")), LandAt{id,one,two,four}, parse_verb_five_args(verb,id,one,two,three,four))
+    case "join" <> +id <> +parent <> +harness <> +model <> +effort <> +path <> Nil{}:
+      Join{id,parent,harness,model,effort,path}
+    case +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
+      Bool.pick(Command, Bool.and(String.eq(verb,"land-checked"),String.eq(log,"--commit")), LandCheckedAt{session,cmd,model,effort,cwd,message}, parse_receive(verb,session,cmd,model,effort,cwd,log,message))
     case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"start"),Start{player,id,cmd,model,effort,cwd,task,log,session},Bool.pick(Command,String.eq(verb,"turn"),RunTurn{player,id,cmd,model,effort,cwd,task,log,session},
-      Bool.pick(Command,String.eq(verb,"recruit"),Recruit{player,id,cmd,model,effort,cwd,task,log,session},Invalid{})))
+      parse_verb_nine_args(verb,player,id,cmd,model,effort,cwd,task,log,session)
     case _: Invalid{}
 
 law help_word_selects_the_help_command:
@@ -411,6 +652,37 @@ law help_flag_selects_the_help_command:
   {parse(["--help"]) == Help{} : Command}
 
 def help_flag_selects_the_help_command():
+  {==}
+
+law context_engines_has_a_single_command_word:
+  {parse(["context-engines"]) == ContextEngines{} : Command}
+
+def context_engines_has_a_single_command_word():
+  {==}
+
+law context_query_file_binds_owner_query_and_path:
+  for +owner: String
+  for +query: String
+  for +path: String
+  {parse(["context-query-file",owner,query,path]) == ContextQueryFile{owner,query,path} : Command}
+
+def context_query_file_binds_owner_query_and_path(owner,query,path):
+  {==}
+
+law context_result_selects_the_retained_query:
+  for +query: String
+  {parse(["context-result",query]) == ContextResult{query} : Command}
+
+def context_result_selects_the_retained_query(query):
+  {==}
+
+law context_query_rejects_surplus_arguments:
+  for +owner: String
+  for +query: String
+  for +path: String
+  {parse(["context-query-file",owner,query,path,"extra"]) == Invalid{} : Command}
+
+def context_query_rejects_surplus_arguments(owner,query,path):
   {==}
 
 law message_parser_preserves_the_complete_body:
@@ -433,4 +705,94 @@ law remote_tip_parser_keeps_the_declared_names:
   {parse(["remote-tip",repo,branch,remote]) == RemoteTip{repo,branch,remote} : Command}
 
 def remote_tip_parser_keeps_the_declared_names(repo,branch,remote):
+  {==}
+
+# The view command parses its subject, optional reader and optional port. The reader defaults to the subject and the port to 7682.
+law view_parser_defaults_reader_and_port:
+  for subject: String
+  {parse(["view",subject]) == View{subject,subject,"7682"} : Command}
+
+def view_parser_defaults_reader_and_port(subject):
+  {==}
+
+law view_parser_keeps_the_declared_reader:
+  for subject: String
+  for reader: String
+  {parse(["view",subject,reader]) == View{subject,reader,"7682"} : Command}
+
+def view_parser_keeps_the_declared_reader(subject,reader):
+  {==}
+
+law view_parser_keeps_the_declared_port:
+  for subject: String
+  for reader: String
+  for port: String
+  {parse(["view",subject,reader,port]) == View{subject,reader,port} : Command}
+
+def view_parser_keeps_the_declared_port(subject,reader,port):
+  {==}
+
+law ui_subscription_parser_keeps_the_cursor_and_generation:
+  for +after_cursor: String
+  for +generation: String
+  {parse(["ui-subscribe",after_cursor,generation]) == UiSubscribe{after_cursor,generation} : Command}
+
+def ui_subscription_parser_keeps_the_cursor_and_generation(after_cursor,generation):
+  {==}
+
+law ui_subscription_parser_rejects_missing_generation:
+  for +after_cursor: String
+  {parse(["ui-subscribe",after_cursor]) == Invalid{} : Command}
+
+def ui_subscription_parser_rejects_missing_generation(after_cursor):
+  {==}
+
+law ui_subscription_parser_rejects_extra_arguments:
+  for +after_cursor: String
+  for +generation: String
+  for +extra: String
+  {parse(["ui-subscribe",after_cursor,generation,extra]) == Invalid{} : Command}
+
+def ui_subscription_parser_rejects_extra_arguments(after_cursor,generation,extra):
+  {==}
+
+law configure_parser_keeps_the_requested_and_expected_route:
+  for +id: String
+  for +harness: String
+  for +model: String
+  for +effort: String
+  for +cmd: String
+  for +log: String
+  for +expected_harness: String
+  for +expected_model: String
+  for +expected_effort: String
+  {parse(["configure",id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort]) == Configure{id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort} : Command}
+
+def configure_parser_keeps_the_requested_and_expected_route(id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort):
+  {==}
+
+law serve_parser_selects_the_fixed_coordinator:
+  {parse(["serve"]) == Serve{} : Command}
+
+def serve_parser_selects_the_fixed_coordinator():
+  {==}
+
+law serve_parser_rejects_extra_arguments:
+  for +extra: String
+  {parse(["serve",extra]) == Invalid{} : Command}
+
+def serve_parser_rejects_extra_arguments(extra):
+  {==}
+
+law owner_status_parser_selects_the_readiness_check:
+  {parse(["owner-status"]) == OwnerStatus{} : Command}
+
+def owner_status_parser_selects_the_readiness_check():
+  {==}
+
+law owner_status_parser_rejects_extra_arguments:
+  for +extra: String
+  {parse(["owner-status",extra]) == Invalid{} : Command}
+
+def owner_status_parser_rejects_extra_arguments(extra):
   {==}

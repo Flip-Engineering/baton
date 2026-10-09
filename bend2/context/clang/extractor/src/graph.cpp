@@ -175,6 +175,66 @@ struct PathEnum {
   }
 };
 
+struct DecisionPrefix {
+  std::vector<int64_t> edges;
+  std::vector<RouteOp> evaluated;
+};
+
+// Find the decision outcomes on each path from the function entry to one
+// decision exit's source block. The exit leaf itself is appended by the
+// caller, so this records only earlier operands evaluated on the path.
+struct DecisionPrefixEnum {
+  const GuardSolveInput &In;
+  int64_t Target;
+  std::map<int64_t, std::string> LeafAtBlock;
+  std::vector<DecisionPrefix> Prefixes;
+
+  DecisionPrefixEnum(const GuardSolveInput &Input, int64_t TargetBlock)
+      : In(Input), Target(TargetBlock) {
+    for (const auto &KV : In.decision.leafBlockOf)
+      LeafAtBlock.emplace(KV.second, KV.first);
+  }
+
+  void walk(int64_t Current, std::vector<int64_t> &Visited,
+            std::vector<int64_t> &Edges, std::vector<RouteOp> &Evaluated) {
+    if (Current == Target) {
+      Prefixes.push_back({Edges, Evaluated});
+      return;
+    }
+    if (std::find(Visited.begin(), Visited.end(), Current) != Visited.end())
+      return;
+    Visited.push_back(Current);
+    for (size_t I = 0; I < In.edges.size(); ++I) {
+      const GraphEdge &E = In.edges[I];
+      if (E.from != Current || E.to < 0)
+        continue;
+      bool AddedOutcome = false;
+      if (In.decision.decisionBlocks.count(Current) &&
+          (E.label == "true" || E.label == "false")) {
+        auto Leaf = LeafAtBlock.find(Current);
+        if (Leaf != LeafAtBlock.end()) {
+          Evaluated.push_back({In.decision.conditionId, Leaf->second,
+                               E.label == "true"});
+          AddedOutcome = true;
+        }
+      }
+      Edges.push_back(static_cast<int64_t>(I));
+      walk(E.to, Visited, Edges, Evaluated);
+      Edges.pop_back();
+      if (AddedOutcome)
+        Evaluated.pop_back();
+    }
+    Visited.pop_back();
+  }
+
+  void enumerate() {
+    std::vector<int64_t> Visited;
+    std::vector<int64_t> Edges;
+    std::vector<RouteOp> Evaluated;
+    walk(In.entryId, Visited, Edges, Evaluated);
+  }
+};
+
 bool reaches(const std::vector<GraphEdge> &Edges, int64_t From, int64_t To,
              const std::set<size_t> *RemovedEdges = nullptr) {
   if (From == To)
@@ -344,6 +404,7 @@ GuardSolveOutput solveGuard(const GuardSolveInput &In) {
   std::set<size_t> AcceptedEdges;
   struct DenialStart {
     int64_t edgeIndex;
+    int64_t source;
     int64_t target;
     std::string leafId;
     bool leafOutcome;
@@ -354,7 +415,8 @@ GuardSolveOutput solveGuard(const GuardSolveInput &In) {
     if (X.conditionValue == In.acceptedValue)
       AcceptedEdges.insert(Index);
     else
-      Denials.push_back({X.edgeIndex, X.toBlock, X.leafId, X.leafOutcome});
+      Denials.push_back(
+          {X.edgeIndex, X.fromBlock, X.toBlock, X.leafId, X.leafOutcome});
   }
   for (size_t I : AcceptedEdges)
     Out.cutEdges.push_back(static_cast<int64_t>(I));
@@ -384,12 +446,17 @@ GuardSolveOutput solveGuard(const GuardSolveInput &In) {
       Out.reason = "denialTargetUnmapped";
       return Out;
     }
-    std::vector<int64_t> Visited;
-    std::vector<int64_t> PathEdges{Start.edgeIndex};
-    std::vector<RouteOp> Evaluated;
-    Evaluated.push_back({D.conditionId, Start.leafId, Start.leafOutcome});
-    std::vector<std::string> Intervening;
-    Enum.walk(Start.target, Visited, PathEdges, Evaluated, Intervening);
+    DecisionPrefixEnum Prefixes(In, Start.source);
+    Prefixes.enumerate();
+    for (const auto &Prefix : Prefixes.Prefixes) {
+      std::vector<int64_t> Visited;
+      std::vector<int64_t> PathEdges = Prefix.edges;
+      PathEdges.push_back(Start.edgeIndex);
+      std::vector<RouteOp> Evaluated = Prefix.evaluated;
+      Evaluated.push_back({D.conditionId, Start.leafId, Start.leafOutcome});
+      std::vector<std::string> Intervening;
+      Enum.walk(Start.target, Visited, PathEdges, Evaluated, Intervening);
+    }
   }
   if (Enum.ReachesCall) {
     Out.reason = "denialReachesCall";

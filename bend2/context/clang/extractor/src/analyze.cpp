@@ -29,6 +29,7 @@
 #include "llvm/Support/SHA256.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstdio>
 #include <functional>
@@ -39,6 +40,9 @@
 #include <vector>
 
 namespace ctxclang {
+
+using namespace clang;
+using namespace clang::tooling;
 
 const char *const ClangVersionString = CLANG_VERSION_STRING;
 
@@ -99,6 +103,12 @@ bool endTokenOffset(SourceLocation TokStart, SourceManager &SM,
   return fileOffsetOf(End, SM, Out);
 }
 
+std::string filePathFor(SourceManager &SM, FileID FID) {
+  if (auto FE = SM.getFileEntryRefForID(FID))
+    return FE->getName().str();
+  return {};
+}
+
 // Byte span of an AST source range in its expansion file, with spelling and
 // expansion qualification. Returns false when the range crosses files or is
 // invalid; such ranges stay unavailable rather than approximated.
@@ -114,23 +124,23 @@ bool spanForRange(SourceRange R, SourceManager &SM, const LangOptions &LO,
   FileID EF1 = SM.getFileID(EB), EF2 = SM.getFileID(EE);
   if (SF1 != SF2 || EF1 != EF2)
     return false;
-  const FileEntry *ExpFE = SM.getFileEntryForID(EF1);
-  if (!ExpFE)
+  Expansion.file = filePathFor(SM, EF1);
+  if (Expansion.file.empty())
     return false;
   int64_t B, E;
   if (!fileOffsetOf(R.getBegin(), SM, B))
     return false;
   if (!endTokenOffset(R.getEnd(), SM, LO, E))
     return false;
-  Expansion.file = ExpFE->getName().str();
   Expansion.byteStart = B;
   Expansion.byteEnd = E;
   Expansion.expanded = false;
   Spelling = Expansion;
   int64_t SB2, SE2;
   if (fileOffsetOf(SB, SM, SB2) && endTokenOffset(SE, SM, LO, SE2)) {
-    const FileEntry *SpFE = SM.getFileEntryForID(SF1);
-    Spelling.file = SpFE ? SpFE->getName().str() : Expansion.file;
+    Spelling.file = filePathFor(SM, SF1);
+    if (Spelling.file.empty())
+      Spelling.file = Expansion.file;
     Spelling.byteStart = SB2;
     Spelling.byteEnd = SE2;
     Spelling.expanded = (SF1 != EF1) || (SB2 != B) || (SE2 != E);
@@ -212,14 +222,10 @@ public:
     if (SM && Loc.isValid()) {
       SourceLocation SL = SM->getSpellingLoc(Loc);
       FileID FID = SM->getFileID(SL);
-      const FileEntry *FE = SM->getFileEntryForID(FID);
-      if (FE) {
-        D.file = FE->getName().str();
+      D.file = filePathFor(*SM, FID);
+      if (!D.file.empty()) {
         D.byteStart = static_cast<int64_t>(SM->getFileOffset(SL));
-        SourceLocation End =
-            Lexer::getLocForEndOfToken(SL, 0, *SM, SM->getLangOpts());
-        if (End.isValid())
-          D.byteEnd = static_cast<int64_t>(SM->getFileOffset(End));
+        D.byteEnd = D.byteStart;
       }
     }
     Diags.push_back(std::move(D));
@@ -277,7 +283,7 @@ public:
 
   bool VisitDeclRefExpr(DeclRefExpr *R) {
     if (auto *VD = dyn_cast<VarDecl>(R->getDecl())) {
-      if (VD->isLocalVarDeclOrParam())
+      if (VD->isLocalVarDeclOrParm())
         LocalUses.push_back(R);
       else
         GlobalReads.insert(VD);
@@ -344,6 +350,8 @@ bool containsUnsupported(const Expr *E, std::string &Reason) {
   }
   if (auto *ME = dyn_cast<MemberExpr>(E))
     return containsUnsupported(ME->getBase(), Reason);
+  if (isa<DeclRefExpr>(E))
+    return false;
   if (isa<IntegerLiteral>(E) || isa<CharacterLiteral>(E) ||
       isa<FloatingLiteral>(E))
     return false;
@@ -479,12 +487,18 @@ struct CondEntry {
   std::string id;
   const Expr *expr = nullptr;
   std::string kind; // "if" | "logicalAnd" | "logicalOr" | "leaf"
-  std::vector<const Expr *> leaves;
+  std::vector<std::pair<const Expr *, bool>> leaves;
   ConditionInfo info;
 };
 
 class ExtractConsumer : public ASTConsumer {
 public:
+  struct CandidateRec {
+    HelperCandidate C;
+    int64_t blockId = -1;
+    const VarDecl *BoundLocal = nullptr;
+  };
+
   ExtractConsumer(const Input &In, Output &Out, HashPPCallbacks *PP)
       : In_(In), Out_(Out), PP_(PP) {}
 
@@ -494,12 +508,11 @@ public:
     Out_.clangVersion = ClangVersionString;
 
     FileID Main = SM.getMainFileID();
-    const FileEntry *MainFE = SM.getFileEntryForID(Main);
-    if (!MainFE) {
+    Out_.translationUnitPath = filePathFor(SM, Main);
+    if (Out_.translationUnitPath.empty()) {
       Out_.error = "mainFileUnavailable";
       return;
     }
-    Out_.translationUnitPath = MainFE->getName().str();
     bool Invalid = false;
     llvm::StringRef MainBytes = SM.getBufferData(Main, &Invalid);
     if (Invalid) {
@@ -512,21 +525,20 @@ public:
     for (FileID FID : PP_->Entered) {
       if (!Seen.insert(FID).second)
         continue;
-      const FileEntry *FE = SM.getFileEntryForID(FID);
-      if (!FE)
+      ConsumedInput C;
+      C.path = filePathFor(SM, FID);
+      if (C.path.empty())
         continue;
       bool Inv = false;
       llvm::StringRef Bytes = SM.getBufferData(FID, &Inv);
       if (Inv)
         continue;
-      ConsumedInput C;
-      C.path = FE->getName().str();
       C.sha256 = sha256Hex(Bytes);
       C.role = FID == Main ? "main" : "header";
       Out_.consumedInputs.push_back(std::move(C));
     }
 
-    runOperation(Ctx, SM, SM.getLangOpts(), MainBytes);
+    runOperation(Ctx, SM, Ctx.getLangOpts(), MainBytes);
   }
 
 private:
@@ -561,7 +573,8 @@ private:
     return Found;
   }
 
-  bool functionInterval(FunctionDecl *FD, SourceManager &SM, int64_t &Start,
+  bool functionInterval(FunctionDecl *FD, SourceManager &SM,
+                        const LangOptions &LO, int64_t &Start,
                         int64_t &End, bool &sameFile) {
     SourceRange R = FD->getSourceRange();
     if (R.getBegin().isInvalid() || R.getEnd().isInvalid())
@@ -570,7 +583,7 @@ private:
     SourceLocation EE = SM.getExpansionLoc(R.getEnd());
     sameFile = SM.getFileID(EB) == SM.getFileID(EE);
     Start = static_cast<int64_t>(SM.getFileOffset(EB));
-    return endTokenOffset(R.getEnd(), SM, SM.getLangOpts(), End);
+    return endTokenOffset(R.getEnd(), SM, LO, End);
   }
 
   int countOriginalOccurrences(llvm::StringRef OrigBytes,
@@ -598,7 +611,7 @@ private:
         Ctx.getPrintingPolicy());
     Sel.variadic = FD->isVariadic();
     for (unsigned I = 0; I < FD->getNumParams(); ++I) {
-      ParmVarDecl *P = FD->getParamDecl(I);
+      const ParmVarDecl *P = FD->getParamDecl(I);
       FormalInfo F;
       F.name = P->getNameAsString();
       F.type = typeText(P->getType(), Ctx);
@@ -652,7 +665,7 @@ private:
           Out_.error = "subjectFileUnreadable";
           return;
         }
-        Bytes = Buf->getBuffer().str();
+        Bytes = (*Buf)->getBuffer().str();
       }
       int64_t Off = -1;
       if (!utf16ToByteOffset(Bytes, In_.subject.line, In_.subject.column,
@@ -674,7 +687,7 @@ private:
             continue;
           int64_t S, E;
           bool Same;
-          if (!functionInterval(FD, SM, S, E, Same) || !Same)
+          if (!functionInterval(FD, SM, Ctx.getLangOpts(), S, E, Same) || !Same)
             continue;
           const FilePair *Pair = pairForGenerated();
           if (!Pair || resolvePath(Pair->original) != SubjectPath)
@@ -686,7 +699,7 @@ private:
               MainBytes.substr(static_cast<size_t>(S),
                                static_cast<size_t>(E - S));
           int64_t Pos = -1;
-          int Count = countOriginalOccurrences(Orig->getBuffer(), Seg, Pos);
+          int Count = countOriginalOccurrences((*Orig)->getBuffer(), Seg, Pos);
           if (Count != 1)
             continue;
           if (Off >= Pos && Off < Pos + (E - S)) {
@@ -713,7 +726,7 @@ private:
     {
       int64_t S = GenStart, E = GenEnd;
       bool Same = false;
-      if (functionInterval(Selected, SM, S, E, Same) && Same) {
+      if (functionInterval(Selected, SM, Ctx.getLangOpts(), S, E, Same) && Same) {
         GenStart = S;
         GenEnd = E;
       }
@@ -741,7 +754,7 @@ private:
                 static_cast<size_t>(GenStart),
                 static_cast<size_t>(GenEnd - GenStart));
             int64_t Pos = -1;
-            int Count = countOriginalOccurrences(Orig->getBuffer(), Seg, Pos);
+            int Count = countOriginalOccurrences((*Orig)->getBuffer(), Seg, Pos);
             if (Count == 0) {
               C.status = "unmapped";
               C.reason = "originalSegmentMissing";
@@ -775,7 +788,7 @@ private:
         continue;
       int64_t S, E;
       bool Same;
-      if (!functionInterval(FD, SM, S, E, Same) || !Same)
+      if (!functionInterval(FD, SM, Ctx.getLangOpts(), S, E, Same) || !Same)
         continue;
       if (Offset >= S && Offset < E) {
         int64_t Size = E - S;
@@ -800,12 +813,11 @@ private:
       bool MatchHere = false;
       if (SubjectIsMain) {
         SourceLocation B = SM.getExpansionLoc(FD->getBeginLoc());
-        const FileEntry *FE = SM.getFileEntryForID(SM.getFileID(B));
-        MatchHere = FE && resolvePath(FE->getName().str()) == SubjectPath;
+        MatchHere = resolvePath(filePathFor(SM, SM.getFileID(B))) == SubjectPath;
       } else {
         int64_t S, E;
         bool Same;
-        if (functionInterval(FD, SM, S, E, Same) && Same) {
+        if (functionInterval(FD, SM, Ctx.getLangOpts(), S, E, Same) && Same) {
           const FilePair *Pair = pairForGenerated();
           MatchHere = Pair && resolvePath(Pair->original) == SubjectPath;
         }
@@ -864,11 +876,16 @@ private:
     };
 
     std::vector<std::string> TopIds;
-    for (const Expr *E : V.TopConditions)
-      TopIds.push_back(idFor(E));
+    std::set<std::string> SeenTopIds;
+    for (const Expr *E : V.TopConditions) {
+      std::string Id = idFor(E);
+      if (SeenTopIds.insert(Id).second)
+        TopIds.push_back(std::move(Id));
+    }
     for (const std::string &Id : TopIds) {
       CondEntry &CE = entryById(Conds, Id);
-      if (auto *B = dyn_cast<BinaryOperator>(CE.expr))
+      if (auto *B = dyn_cast<BinaryOperator>(CE.expr);
+          B && B->isLogicalOp())
         CE.kind = B->getOpcode() == BO_LAnd ? "logicalAnd" : "logicalOr";
       else
         CE.kind = "if";
@@ -879,6 +896,7 @@ private:
     struct BlockDecisionRec {
       std::string topId;
       std::string leafId;
+      bool inverted = false;
     };
     std::map<int64_t, BlockDecisionRec> Decisions;
     const int64_t EntryId = Cfg->getEntry().getBlockID();
@@ -888,9 +906,15 @@ private:
       if (!B->getTerminator().isValid())
         continue;
       const Stmt *Term = B->getTerminator().getStmt();
+      // Clang models short-circuit operators as their own CFG terminators.
+      // getTerminatorCondition() returns the operator's LHS, so use the
+      // terminator node itself as the logical condition identity.
+      const auto *LogicalTerm = dyn_cast<BinaryOperator>(Term);
       const Expr *TC = dyn_cast_or_null<Expr>(
           B->getTerminatorCondition(/*StripParens=*/true));
-      const Expr *TopKey = TC ? TC->IgnoreParens() : nullptr;
+      const Expr *TopKey = LogicalTerm && LogicalTerm->isLogicalOp()
+                               ? LogicalTerm->IgnoreParens()
+                               : (TC ? TC->IgnoreParens() : nullptr);
       if (!TopKey && Term) {
         if (auto *IS = dyn_cast<IfStmt>(Term))
           if (IS->getCond())
@@ -898,18 +922,38 @@ private:
       }
       if (!TopKey)
         continue;
+      std::string TopId;
       auto It = CondIds.find(TopKey);
-      if (It == CondIds.end())
-        continue; // condition outside the selected body
+      if (It != CondIds.end())
+        TopId = It->second;
+      if (TopId.empty())
+        continue; // condition outside the selected body or ambiguous
       const Expr *LC = B->getLastCondition();
       const Expr *LeafKey = LC ? LC->IgnoreParens() : TopKey;
+      // The decision tree represents logical negation as a Not node, so its
+      // leaf identity is the operand below any leading `!` operators.
+      bool Inverted = false;
+      while (true) {
+        if (const auto *IC = dyn_cast<ImplicitCastExpr>(LeafKey)) {
+          LeafKey = IC->getSubExpr()->IgnoreParens();
+          continue;
+        }
+        if (const auto *UO = dyn_cast<UnaryOperator>(LeafKey)) {
+          if (UO->getOpcode() == UO_LNot) {
+            Inverted = !Inverted;
+            LeafKey = UO->getSubExpr()->IgnoreParens();
+            continue;
+          }
+        }
+        break;
+      }
       std::string LeafId = idFor(LeafKey);
       CondEntry &LE = entryById(Conds, LeafId);
       if (LE.kind.empty()) {
         LE.kind = "leaf";
-        LE.leaves.push_back(LeafKey);
+        LE.leaves.push_back({LeafKey, Inverted});
       }
-      Decisions[B->getBlockID()] = {It->second, LeafId};
+      Decisions[B->getBlockID()] = {TopId, LeafId, Inverted};
     }
 
     // Logical trees per top-level condition, with spelled leaves registered.
@@ -944,22 +988,26 @@ private:
       return Node;
     };
     for (const std::string &Id : TopIds) {
-      CondEntry &CE = entryById(Conds, Id);
-      Trees[Id] = buildTree(CE.expr, CE.expr);
+      const Expr *TopExpr = entryById(Conds, Id).expr;
+      Trees.insert_or_assign(Id, buildTree(TopExpr, TopExpr));
       // Register the tree's leaves on the condition entry for operand info.
-      std::vector<const Expr *> Leaves;
-      std::function<void(const LogicTree &)> gather =
-          [&](const LogicTree &N) {
+      std::vector<std::pair<const Expr *, bool>> Leaves;
+      std::function<void(const LogicTree &, bool)> gather =
+          [&](const LogicTree &N, bool Negated) {
             if (N.op == LogicTree::Op::Leaf) {
               CondEntry &LE = entryById(Conds, N.leafId);
-              Leaves.push_back(LE.expr);
+              Leaves.push_back({LE.expr, Negated});
+              return;
+            }
+            if (N.op == LogicTree::Op::Not) {
+              gather(*N.children.front(), !Negated);
               return;
             }
             for (const auto &C : N.children)
-              gather(*C);
+              gather(*C, Negated);
           };
-      gather(*Trees[Id]);
-      CE.leaves = Leaves;
+      gather(*Trees[Id], false);
+      entryById(Conds, Id).leaves = std::move(Leaves);
     }
 
     // Fill and emit condition info.
@@ -967,7 +1015,7 @@ private:
       if (CE.kind.empty()) {
         CE.kind = "leaf";
         if (CE.leaves.empty())
-          CE.leaves.push_back(CE.expr);
+          CE.leaves.push_back({CE.expr, false});
       }
       CE.info.id = CE.id;
       CE.info.exprKind = CE.kind;
@@ -976,8 +1024,9 @@ private:
                    SM, LO, CE.info.spelling, CE.info.expansion);
       bool Supported = true;
       std::string Reason;
-      for (const Expr *L : CE.leaves) {
+      for (const auto &[L, Negated] : CE.leaves) {
         LeafClass LC = classifyLeaf(L, Ctx, SM, LO);
+        LC.Info.negated = LC.Info.negated != Negated;
         if (LC.Supported)
           CE.info.operands.push_back(LC.Info);
         else {
@@ -1028,7 +1077,7 @@ private:
           CallInfo C;
           C.id = "call-" + std::to_string(CallN++);
           C.blockId = Id;
-          const Expr *Callee = CE->getCallee()->IgnoreParens();
+          const Expr *Callee = CE->getCallee()->IgnoreParenImpCasts();
           const FunctionDecl *Direct = nullptr;
           if (auto *DRE = dyn_cast<DeclRefExpr>(Callee))
             Direct = dyn_cast<FunctionDecl>(DRE->getDecl());
@@ -1144,19 +1193,21 @@ private:
           E.to = S->getBlockID();
           if (!Adj.isReachable())
             E.label = "unreachable";
-          else if (Decision && SuccCount == 2)
+          else if (Decision && SuccCount == 2) {
             // Successor order for IfStmt and short-circuit decisions is
-            // bound to the LLVM 20.1.8 implementation and qualified by the
-            // extractor tests against known-shaped fixtures.
+            // bound to the LLVM 20 CFG implementation and exercised by the
+            // extractor fixtures against known-shaped control flow.
             E.label = SuccIdx == 0 ? "true" : "false";
-          else
+            if (DecIt->second.inverted)
+              E.label = E.label == "true" ? "false" : "true";
+          } else
             E.label = "nonDecision";
         } else {
           E.to = -1;
           E.label = "null";
         }
         Edges.push_back(E);
-        Out_.cfg.edges.push_back(E);
+        Out_.cfg.edges.push_back({E.from, E.to, E.label});
         ++SuccIdx;
       }
     }
@@ -1262,9 +1313,13 @@ private:
     for (const std::string &Name : In_.helpers) {
       const FunctionDecl *H = nullptr;
       int Match = 0;
+      std::set<const FunctionDecl *> SeenDefinitions;
       for (auto *D : Ctx.getTranslationUnitDecl()->decls()) {
-        auto *Cand = dyn_cast<FunctionDecl>(D);
-        if (!Cand || !Cand->hasBody() || Cand->getNameAsString() != Name)
+        auto *Declaration = dyn_cast<FunctionDecl>(D);
+        if (!Declaration || Declaration->getNameAsString() != Name)
+          continue;
+        const FunctionDecl *Cand = Declaration->getDefinition();
+        if (!Cand || !SeenDefinitions.insert(Cand).second)
           continue;
         ++Match;
         H = Cand;
@@ -1278,7 +1333,7 @@ private:
       HD.returnType = typeText(H->getReturnType(), Ctx);
       HD.variadic = H->isVariadic();
       for (unsigned I = 0; I < H->getNumParams(); ++I) {
-        ParmVarDecl *P = H->getParamDecl(I);
+        const ParmVarDecl *P = H->getParamDecl(I);
         FormalInfo F;
         F.name = P->getNameAsString();
         F.type = typeText(P->getType(), Ctx);
@@ -1290,11 +1345,6 @@ private:
     }
 
     // Candidate calls inside the selected function.
-    struct CandidateRec {
-      HelperCandidate C;
-      int64_t blockId = -1;
-      const VarDecl *BoundLocal = nullptr;
-    };
     std::vector<CandidateRec> Cands;
     for (const CallInfo &Call : Out_.calls) {
       if (!Call.direct)
@@ -1516,20 +1566,6 @@ private:
 } // namespace
 
 bool runAnalysis(const Input &In, Output &Out) {
-  // Frontend argument refusals before any parse.
-  for (size_t I = 0; I < In.arguments.size(); ++I) {
-    const std::string &A = In.arguments[I];
-    if (A == "-plugin" || A == "-load") {
-      Out.error = "unsupportedCompilerFlag";
-      return false;
-    }
-    if (A == "-Xclang" && I + 1 < In.arguments.size() &&
-        (In.arguments[I + 1] == "-plugin" || In.arguments[I + 1] == "-load")) {
-      Out.error = "unsupportedCompilerFlag";
-      return false;
-    }
-  }
-
   if (In.arguments.size() < 2) {
     Out.error = "argumentsTooShort";
     return false;

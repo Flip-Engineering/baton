@@ -1,10 +1,12 @@
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ../host/sqlite.bend as DB
 import ../host/text.bend as Text
 import ../git/process.bend as Process
 import ../git/text.bend as Tx
 import ../git/types.bend as T
+import ../harness/codex-player.bend as Codex
+import ../json/canonical.bend as J
 
 # The historical .root.log pathname remains the delivery log for existing databases.
 # The endpoint is an argv JSON array. The committed message ID is its last argument.
@@ -23,20 +25,26 @@ def logged(saved: String, log: String, output: String, written: Result<&1,&1,U32
     case Fail{(code,text)}: Fail{(1,"Message delivered; the delivery log " ++ log ++ " could not be written: " ++ U32.show(code) ++ ": " ++ text ++ ". Read the recipient's inbox and the retained native log.")}
     case Done{unit}: result(saved,log,Tx.run_res(Done{output}))
 
+def failed_record(log: String, +code: U32, +detail: String, written: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,String>:
+  match written:
+    case Done{unit}: Fail{(code,"Message committed; session delivery failed: " ++ U32.show(code) ++ ": " ++ detail ++ ". Read " ++ log ++ " and retry delivery from the pending inbox.")}
+    case Fail{(log_code,log_error)}: Fail{(code,"Message committed; session delivery failed: " ++ U32.show(code) ++ ": " ++ detail ++ ". Delivery log " ++ log ++ " could not be written: " ++ U32.show(log_code) ++ ": " ++ log_error)}
+
 def completed(db: String, saved: String, run: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match run:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Fail{(+code,+detail)}: do IO<Result<&1,&1,U32 & String,String>>:
+      +log : String <- IO.pure(String,db ++ ".root.log")
+      written : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(log,"delivery error " ++ U32.show(code) ++ ": " ++ detail ++ "\n")
+      IO.pure(Result<&1,&1,U32 & String,String>,failed_record(log,code,detail,written))
     case Done{+output}: do IO<Result<&1,&1,U32 & String,String>>:
       +log : String <- IO.pure(String,db ++ ".root.log")
       written : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(log,output ++ "\n")
       IO.pure(Result<&1,&1,U32 & String,String>,logged(saved,log,output,written))
 
-def launch(db: String, id: String, saved: String, argv: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,String>):
-  match empty:
-    case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
-    case False{}: do IO<Result<&1,&1,U32 & String,String>>:
-      run : Result<&1,&1,U32 & String,String> <- Process.Process.run(argv ++ Tx.enc_argv(Con{id,Nil{}}),".")
-      completed(db,saved,run)
+def launch(db: String, id: String, saved: String, argv: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(argv ++ Tx.enc_argv(Con{id,Nil{}}),".")
+    completed(db,saved,run)
 
 # A stopped recipient retains its original message and receipt. Its parent gets
 # one ordinary report naming the retained input and work.
@@ -45,7 +53,7 @@ def stopped_kind_sql(id: String, condition: String) -> String:
 
 def handoff_sql(+id: String) -> String:
   "BEGIN IMMEDIATE;INSERT INTO messages(id,sender,recipient,kind,body) SELECT 'stopped-input:' || lower(hex(m.id)),s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','stopped-recipient-input','recipient',s.id,'stopId',st.id,'originalMessage',m.id,'originalSender',m.sender,'originalKind',m.kind,'originalBody',m.body,'retainedWorkSession',m.sender,'disposition','The original message and work remain available. The stopped recipient has not accepted or reviewed this input.') FROM messages m JOIN sessions s ON s.id=m.recipient JOIN session_stops st ON st.session=s.id WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert()
-  ++ "SELECT coalesce((SELECT n.id FROM messages n WHERE n.id='stopped-input:' || lower(hex(" ++ C.q(id) ++ ")) AND (n.receipt IS NOT NULL OR EXISTS(SELECT 1 FROM sessions p WHERE p.id=n.recipient AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=p.id) AND CASE WHEN json_valid(p.endpoint) THEN json_type(p.endpoint)='array' AND json_array_length(p.endpoint)>0 ELSE 0 END))),'');COMMIT;"
+  ++ "SELECT coalesce((SELECT n.id FROM messages n WHERE n.id='stopped-input:' || lower(hex(" ++ C.q(id) ++ ")) AND (n.receipt IS NOT NULL OR EXISTS(SELECT 1 FROM sessions p WHERE p.id=n.recipient AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=p.id) AND (CASE WHEN json_valid(p.endpoint) THEN json_type(p.endpoint)='array' AND json_array_length(p.endpoint)>0 ELSE 0 END OR p.harness='codex')))),'');COMMIT;"
 
 def handoff_selected(id: String, notification: String, next: String -> IO(Result<&1,&1,U32 & String,String>), empty: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match empty:
@@ -63,11 +71,49 @@ def stopped_delivery(db: String, id: String, next: String -> IO(Result<&1,&1,U32
     case True{}: handoff(db,id,next)
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Session is terminally stopped; the retained input will not execute. Inspect its session and inbox.")})
 
-def normal_delivery(+db: String, +id: String, condition: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+def endpointless_harness_sql(id: String, condition: String) -> String:
+  "SELECT coalesce((SELECT s.harness FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ condition ++ "),'');"
+
+def endpointless_native_sql(id: String, condition: String) -> String:
+  "SELECT coalesce((SELECT s.native FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ condition ++ "),'');"
+
+def endpointless_recipient_sql(id: String, condition: String) -> String:
+  "SELECT coalesce((SELECT m.recipient FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ condition ++ "),'');"
+
+def queue_pointer(db: String, id: String, recipient: String) -> String:
+  "Baton input is pending.\n{\"database\":" ++ J.string_literal(db) ++ ",\"message\":" ++ J.string_literal(id) ++ ",\"recipient\":" ++ J.string_literal(recipient) ++ "}\nRead the full input with baton2 DATABASE delivery MESSAGE, or baton2 DATABASE inbox RECIPIENT. Handle the work and acknowledge your own message with baton2 DATABASE ack MESSAGE RECIPIENT RECEIPT."
+
+# Queue output records the submission identity. The recipient's receipt stays pending.
+def queue_launch(+db: String, id: String, saved: String, native: String, recipient: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    pointer : String <- IO.pure(String,queue_pointer(db,id,recipient))
+    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(Codex.queue_admission(native,pointer)),".")
+    completed(db,saved,run)
+
+def codex_queue(+db: String, +id: String, +condition: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    native_row : String <- IO.try(String,DB.Sql.query(db,endpointless_native_sql(id,condition)))
+    +native : String <- IO.pure(String,Tx.trim_nl(native_row))
+    recipient_row : String <- IO.try(String,DB.Sql.query(db,endpointless_recipient_sql(id,condition)))
+    recipient : String <- IO.pure(String,Tx.trim_nl(recipient_row))
+    Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(native),
+      IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Message " ++ id ++ " is addressed to a Codex session that records no native session identity, so the public queue cannot address it. Connect an endpoint or record the session's native identity, then retry delivery from the pending inbox.")}),
+      queue_launch(db,id,saved,native,recipient))
+
+def endpointless(+db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    harness_row : String <- IO.try(String,DB.Sql.query(db,endpointless_harness_sql(id,condition)))
+    +harness : String <- IO.pure(String,Tx.trim_nl(harness_row))
+    Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(harness,"codex"),
+      codex_queue(db,id,condition,saved),
+      IO.pure(Result<&1,&1,U32 & String,String>,Done{saved}))
+
+def normal_delivery(+db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     encoded : String <- IO.try(String,DB.Sql.query(db,endpoint_sql(id,condition)))
     +argv : String <- IO.pure(String,Tx.trim_nl(encoded))
-    launch(db,id,saved,argv,String.is_empty(argv))
+    Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(argv),
+      endpointless(db,id,condition,saved),launch(db,id,saved,argv))
 
 def routed(+db: String, +id: String, condition: String, +saved: String, +kind: String, ordinary: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match ordinary:
@@ -79,20 +125,6 @@ def deliver(+db: String, +id: String, +condition: String, saved: String) -> IO(R
     value : String <- IO.try(String,DB.Sql.query(db,stopped_kind_sql(id,condition)))
     +kind : String <- IO.pure(String,Tx.trim_nl(value))
     routed(db,id,condition,saved,kind,String.is_empty(kind))
-
-# A sealed observation stored no completion, so it invokes no endpoint.
-def observe_delivery(db: String, id: String, +event: String, saved: String, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
-  match sealed:
-    case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
-    case False{}: deliver(db,id,C.terminal(event),saved)
-
-def after(db: String, command: C.Command, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
-  match command:
-    case C.Report{id,sender,body}: deliver(db,id,"1",saved)
-    case C.Ask{id,player,body}: deliver(db,id,"1",saved)
-    case C.Message{id,sender,recipient,kind,body}: deliver(db,id,"1",saved)
-    case C.Observe{id,player,event,sealed}: observe_delivery(db,id,event,saved,sealed)
-    case other: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
 
 def wake_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,Unit>:
   match result:

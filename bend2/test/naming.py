@@ -160,7 +160,7 @@ class Naming(unittest.TestCase):
             self.call('section-member', 'team', 'review', self.principal, ident, 'add')
         self.call('report', 'evidence', self.player, 'Complete finding evidence λ\n')
         self.call('record', 'finding', self.player, 'Reviewed finding', 'message:evidence', 'Fixture scope')
-        self.assertEqual(self.call('knowledge', 'peer'), [])
+        self.assertEqual([row['id'] for row in self.call('knowledge', 'peer')], ['finding'])
         before = self.stored()
         self.call('message', 'denied', self.player, 'peer', 'guidance', 'review',
                   error='message-route-denied')
@@ -169,7 +169,7 @@ class Naming(unittest.TestCase):
         self.call('message', 'accepted', self.player, 'peer', 'guidance', 'review')
         self.call('section-member', 'team', 'review', self.principal, 'peer', 'remove')
         self.call('message', 'still-accepted', self.player, 'peer', 'guidance', 'review')
-        self.assertEqual(self.call('knowledge', 'peer'), [])
+        self.assertEqual([row['id'] for row in self.call('knowledge', 'peer')], ['finding'])
 
     def test_orchestra_is_a_read_only_complete_local_snapshot(self):
         self.call('ensemble', 'team', self.principal)

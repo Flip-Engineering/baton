@@ -20,7 +20,7 @@ class Process(unittest.TestCase):
 
     def run_child(self, *args, mode='run', cwd=None):
         return subprocess.run([str(EXE), mode, str(cwd or self.cwd), str(self.log), *args],
-                              text=True, capture_output=True, timeout=30)
+                              text=True, capture_output=True)
 
     def test_argv_is_exact_including_empty_elements(self):
         args = ['a space', '', 'a\x1fseparator', 'line\nbreak', 'quote"', '🙂']

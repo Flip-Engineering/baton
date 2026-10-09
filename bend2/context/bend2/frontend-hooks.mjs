@@ -8,11 +8,11 @@
 // Upstream files stay intact. The derived copy is an owned artifact under this task, carrying the
 // upstream identity below; nothing here writes to or modifies the upstream originals.
 //
-// Compatible upstream source set, retrieved read-only from the repository's documented pin
-// a49524265bdfa5753a4bf38e25f0574a705dd868 (bendlang/bend), license Apache-2.0,
-// HigherOrderCO 2026:
-//   bend2/bend.ts   SHA256 93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85
-//   bend2/main.ts   SHA256 92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e
+// Frontend sources based on bendlang/bend pin
+// a49524265bdfa5753a4bf38e25f0574a705dd868, with local runtime-control removals.
+// License Apache-2.0, HigherOrderCO 2026; current source identities:
+//   bend2/bend.ts   SHA256 249da82e99067b013e45e221e3b10e224eb615787efb9e86f65f5d169bbffe8f
+//   bend2/main.ts   SHA256 158fda1fd44220d49ad514514dc51a6eaefb2929cbe5a366cdf5a1aa92e81a28
 //   bend2/comp.ts   SHA256 ad8b82137e5decf588d507d008cb8ccf24bd0b94043de8bd6e048d0faedcf959
 //   bend2/base.bend SHA256 e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798
 //   LICENSE         SHA256 0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35
@@ -31,8 +31,8 @@ export const UPSTREAM_PIN = 'a49524265bdfa5753a4bf38e25f0574a705dd868';
 export const UPSTREAM_LICENSE = Object.freeze({ name: 'Apache-2.0', holder: 'HigherOrderCO 2026', sha256: '0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35' });
 
 export const UPSTREAM_INPUTS = Object.freeze({
-  bend: Object.freeze({ path: 'bend2/bend.ts', sha256: '93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85' }),
-  main: Object.freeze({ path: 'bend2/main.ts', sha256: '92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e' }),
+  bend: Object.freeze({ path: 'bend2/bend.ts', sha256: '249da82e99067b013e45e221e3b10e224eb615787efb9e86f65f5d169bbffe8f' }),
+  main: Object.freeze({ path: 'bend2/main.ts', sha256: '158fda1fd44220d49ad514514dc51a6eaefb2929cbe5a366cdf5a1aa92e81a28' }),
   comp: Object.freeze({ path: 'bend2/comp.ts', sha256: 'ad8b82137e5decf588d507d008cb8ccf24bd0b94043de8bd6e048d0faedcf959' }),
   base: Object.freeze({ path: 'bend2/base.bend', sha256: 'e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798' }),
 });
@@ -114,7 +114,7 @@ function bendTermTag(value: unknown): string {
     if (value === null) return "null";
     if (typeof value !== "object") return typeof value;
     const tag = (value as { $?: unknown }).$;
-    return typeof tag === "string" ? tag.slice(0, 48) : "object";
+    return typeof tag === "string" ? tag : "object";
   } catch {
     return "unreadable";
   }
@@ -128,21 +128,19 @@ function bendTermShow(value: unknown, observation: string, definition: string, l
   } catch (error) {
     bendHookState.failures += 1;
     bendHookState.unrendered += 1;
-    if (bendHookState.unrenderedSamples.length < 8) {
-      let errorKind = bendTermTag(error);
-      let message: string | null = null;
-      try {
-        if (error !== null && typeof error === "object") {
-          const name = (error as { name?: unknown }).name;
-          if (typeof name === "string" && name.length > 0) errorKind = name.slice(0, 48);
-          const text = (error as { message?: unknown }).message;
-          if (typeof text === "string") message = text.slice(0, 160);
-        }
-      } catch {
-        errorKind = "unreadable";
+    let errorKind = bendTermTag(error);
+    let message: string | null = null;
+    try {
+      if (error !== null && typeof error === "object") {
+        const name = (error as { name?: unknown }).name;
+        if (typeof name === "string" && name.length > 0) errorKind = name;
+        const text = (error as { message?: unknown }).message;
+        if (typeof text === "string") message = text;
       }
-      bendHookState.unrenderedSamples.push({ observation: observation.slice(0, 32), definition: definition.slice(0, 160), stage, valueKind: bendTermTag(value), errorKind, message });
+    } catch {
+      errorKind = "unreadable";
     }
+    bendHookState.unrenderedSamples.push({ observation, definition, stage, valueKind: bendTermTag(value), errorKind, message });
     return null;
   }
 }
@@ -388,8 +386,8 @@ export const HOOK_OPERATIONS = Object.freeze({
     Object.freeze({
       id: 'bend.checkEntry',
       summary: 'emit the checker entry for one definition',
-      anchor: 'export function def_check(book: Book, k: Name, def: Def, z?: number): LTerm {',
-      replacement: 'export function def_check(book: Book, k: Name, def: Def, z?: number): LTerm {\n  bendEmit({ kind: "checkEntry", phase: "check", definition: k });',
+      anchor: 'export function def_check(book: Book, k: Name, def: Def): LTerm {',
+      replacement: 'export function def_check(book: Book, k: Name, def: Def): LTerm {\n  bendEmit({ kind: "checkEntry", phase: "check", definition: k });',
     }),
     Object.freeze({
       id: 'bend.checkPreRegion',
@@ -400,8 +398,8 @@ export const HOOK_OPERATIONS = Object.freeze({
     Object.freeze({
       id: 'bend.checkOutcome',
       summary: 'emit checker success or failure around the original check, preserving the throw',
-      anchor: '  return term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u, z }, v, Lone(), T, ctx_nil(), 0).tm;',
-      replacement: '  try {\n    const bendChecked = term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u, z }, v, Lone(), T, ctx_nil(), 0).tm;\n    bendEmit({ kind: "checkSuccess", phase: "check", definition: k });\n    const bendCheckedText = bendTermShow(bendChecked, "elaboratedTerm", k, (value) => value as LTerm, "term_show");\n    if (bendCheckedText !== null) {\n      bendEmit({ kind: "typeObservation", phase: "check", status: "elaboratedTerm", qualified: k, definition: k, file: null, text: bendCheckedText, quantities: [], span: null });\n    }\n    return bendChecked;\n  } catch (bendCheckError) {\n    const bendCheckIsErr = bendCheckError !== null && typeof bendCheckError === "object" && (bendCheckError as { $?: string }).$ === "Err";\n    bendEmit({ kind: "checkFailure", phase: "check", definition: k, thrownDiagnostic: bendCheckIsErr });\n    const bendCheckContext = bendThrownContext(bendCheckError);\n    bendEmit({ kind: "diagnostic", phase: "check", form: "thrown", file: null, thrown: bendCheckError, rendered: bendShow(bendCheckError), definition: bendCheckContext.definition === null ? k : bendCheckContext.definition, span: bendCheckContext.span });\n    throw bendCheckError;\n  }',
+      anchor: '  return term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u }, v, Lone(), T, ctx_nil(), 0).tm;',
+      replacement: '  try {\n    const bendChecked = term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u }, v, Lone(), T, ctx_nil(), 0).tm;\n    bendEmit({ kind: "checkSuccess", phase: "check", definition: k });\n    const bendCheckedText = bendTermShow(bendChecked, "elaboratedTerm", k, (value) => value as LTerm, "term_show");\n    if (bendCheckedText !== null) {\n      bendEmit({ kind: "typeObservation", phase: "check", status: "elaboratedTerm", qualified: k, definition: k, file: null, text: bendCheckedText, quantities: [], span: null });\n    }\n    return bendChecked;\n  } catch (bendCheckError) {\n    const bendCheckIsErr = bendCheckError !== null && typeof bendCheckError === "object" && (bendCheckError as { $?: string }).$ === "Err";\n    bendEmit({ kind: "checkFailure", phase: "check", definition: k, thrownDiagnostic: bendCheckIsErr });\n    const bendCheckContext = bendThrownContext(bendCheckError);\n    bendEmit({ kind: "diagnostic", phase: "check", form: "thrown", file: null, thrown: bendCheckError, rendered: bendShow(bendCheckError), definition: bendCheckContext.definition === null ? k : bendCheckContext.definition, span: bendCheckContext.span });\n    throw bendCheckError;\n  }',
     }),
     Object.freeze({
       id: 'bend.validStart',

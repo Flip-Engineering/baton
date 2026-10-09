@@ -1,4 +1,4 @@
-// In-process LLVM/Clang 20.1.8 extraction: parse the admitted translation
+// In-process LLVM/Clang 20 extraction: parse the admitted translation
 // unit, select the requested function, map its CFG through CFGStmt::getStmt
 // in-process identity, and emit snapshot-bound facts. No CFG block numbers,
 // source text parsing or preferred statements participate in any derivation.

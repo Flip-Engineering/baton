@@ -8,16 +8,14 @@ export class LspConnection {
     this.waiters = [];
     this.closed = false;
     this.exit = null;
+    this.stderr = [];
     child.stdout.on('data', (d) => this.onData(d));
     child.on('close', (code, signal) => {
       this.closed = true;
       this.exit = { code, signal };
       for (const w of this.waiters.splice(0)) w();
     });
-    child.stderr.on('data', () => {
-      /* stderr is captured by the caller's process handles; silence here
-         supplies no protocol evidence. */
-    });
+    child.stderr.on('data', (d) => this.stderr.push(d));
   }
 
   onData(d) {
@@ -43,6 +41,7 @@ export class LspConnection {
         return; // malformed body: retained protocol evidence
       }
       this.onMessage?.(message);
+      for (const wake of this.waiters.splice(0)) wake();
     }
   }
 
@@ -61,6 +60,10 @@ export class LspConnection {
 
   nextId = 1;
   onMessage = null;
+
+  stderrText() {
+    return Buffer.concat(this.stderr).toString('utf-8');
+  }
 
   // Resolves when a new message arrives or the connection closes. No timers:
   // silence never resolves to success or failure by itself.

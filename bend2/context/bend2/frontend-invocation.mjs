@@ -86,10 +86,11 @@ function refusalOf(phase, reason, rendered, extra) {
   });
 }
 
-function validateRequest({ frontend, adapter, root, phases, comp }) {
+function validateRequest({ frontend, adapter, root, phases, comp, owner }) {
   if (frontend === null || typeof frontend !== 'object') return rejected('frontendMissing');
   if (adapter === null || typeof adapter !== 'object') return rejected('adapterMissing');
   if (typeof root !== 'string' || root.length === 0) return rejected('rootMissing');
+  if (owner !== undefined && (typeof owner !== 'string' || owner.length === 0)) return rejected('ownerInvalid');
   if (!Array.isArray(phases) || phases.length === 0) return rejected('phasesMissing');
   const unknown = phases.filter((phase) => !PHASES.includes(phase));
   if (unknown.length > 0) return rejected('phaseUnsupported', unknown.join(','));
@@ -255,11 +256,11 @@ async function runOwned({ frontend, adapter, owner, root, phases, comp, seen, st
   });
 }
 
-export async function runFrontendInvocation({ frontend, adapter, root, phases = ['parse'], comp = null, seen } = {}) {
-  const invalid = validateRequest({ frontend, adapter, root, phases, comp });
+export async function runFrontendInvocation({ frontend, adapter, root, phases = ['parse'], comp = null, seen, owner: invocationOwner } = {}) {
+  const invalid = validateRequest({ frontend, adapter, root, phases, comp, owner: invocationOwner });
   if (invalid !== null) return invalid;
 
-  const started = adapter.beginQuery({ identity: root });
+  const started = adapter.beginQuery({ identity: root, ...(invocationOwner === undefined ? {} : { owner: invocationOwner }) });
   if (started.status !== 'started') return rejected(started.reason, started.token);
   const owner = started.token;
   const state = { installed: false, hookBaseline: frontend.bendHookState === undefined || frontend.bendHookState === null ? undefined : { failures: frontend.bendHookState.failures ?? 0, refusals: frontend.bendHookState.refusals ?? 0, unrendered: frontend.bendHookState.unrendered ?? 0 } };

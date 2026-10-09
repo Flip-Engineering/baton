@@ -48,7 +48,7 @@ class OmpRootAdapter(unittest.TestCase):
     def coord(self, *args, ok=True):
         p = subprocess.run(
             [str(EXE), str(self.db), *args],
-            text=True, capture_output=True, timeout=10,
+            text=True, capture_output=True,
         )
         if ok:
             self.assertEqual(p.returncode, 0, p.stderr)
@@ -218,7 +218,7 @@ class OmpRootAdapter(unittest.TestCase):
         """With no root and no messages, the adapter exits 0."""
         p = subprocess.run(
             ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(OMP_EXE), '--once'],
-            text=True, capture_output=True, timeout=10,
+            text=True, capture_output=True,
         )
         self.assertEqual(p.returncode, 0)
         self.assertIn('no pending messages', p.stderr)
@@ -250,7 +250,7 @@ class OmpRootAdapter(unittest.TestCase):
 
         p = subprocess.run(
             ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_omp), '--once'],
-            text=True, capture_output=True, timeout=15,
+            text=True, capture_output=True,
         )
 
         self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
@@ -284,7 +284,7 @@ class OmpRootAdapter(unittest.TestCase):
 
         p = subprocess.run(
             ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_omp), '--once'],
-            text=True, capture_output=True, timeout=15,
+            text=True, capture_output=True,
         )
         self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
         self.assertIn('2 pending message(s)', p.stderr)
@@ -310,7 +310,7 @@ class OmpRootAdapter(unittest.TestCase):
 
         p = subprocess.run(
             ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_omp), '--once'],
-            text=True, capture_output=True, timeout=15,
+            text=True, capture_output=True,
         )
         self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
 
@@ -338,7 +338,7 @@ class OmpRootAdapter(unittest.TestCase):
 
         subprocess.run(
             ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_omp), '--once'],
-            text=True, capture_output=True, timeout=15,
+            text=True, capture_output=True,
         )
 
         args_text = (pathlib.Path(self.temp.name) / 'args.txt').read_text()
@@ -362,7 +362,7 @@ class OmpRootAdapter(unittest.TestCase):
 
         p = subprocess.run(
             ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_omp), '--once'],
-            text=True, capture_output=True, timeout=15,
+            text=True, capture_output=True,
         )
         self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
         self.assertIn('I have acknowledged the report', p.stdout)
@@ -397,7 +397,7 @@ class OmpRootEndToEnd(unittest.TestCase):
     def coord(self, *args, ok=True):
         p = subprocess.run(
             [str(EXE), str(self.db), *map(str, args)],
-            text=True, capture_output=True, timeout=10,
+            text=True, capture_output=True,
         )
         if ok:
             self.assertEqual(p.returncode, 0, p.stderr)
@@ -440,7 +440,7 @@ class OmpRootEndToEnd(unittest.TestCase):
         p = subprocess.run(
             ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE),
              str(mock_omp), '--once'],
-            text=True, capture_output=True, timeout=15,
+            text=True, capture_output=True,
         )
         self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
 

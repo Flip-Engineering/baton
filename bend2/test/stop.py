@@ -18,7 +18,7 @@ FIXTURE = receive.FIXTURE.replace('import json,os,pathlib,re,socket,subprocess,s
                                  'import json,os,pathlib,re,signal,socket,subprocess,sys')
 FIXTURE = FIXTURE.replace('args=sys.argv[1:]', '''args=sys.argv[1:]
 if args[:1]==['tool_fixture']:
-    connection=socket.create_connection(('127.0.0.1',config['port']),timeout=10)
+    connection=socket.create_connection(('127.0.0.1',config['port']))
     stream=connection.makefile('rwb',buffering=0)
     stream.write((json.dumps({'role':'tool','pid':os.getpid(),'ppid':os.getppid(),'pgid':os.getpgrp()})+'\\n').encode())
     stream.readline()
@@ -40,6 +40,33 @@ FIXTURE = FIXTURE.replace("    if action.get('progress'):", """    if action.get
         continue
     if action.get('progress'):""", 1)
 
+# The stop helper runs one turn for each supported retained harness. The shared
+# fixture speaks Codex and OMP; these insertions add the Muse task-file envelope
+# and the Claude user-frame envelope without touching the shared fixture.
+FIXTURE = FIXTURE.replace(r"""omp='--mode' in args""", r"""omp='--mode' in args
+muse='--prompt-file' in args
+claude='--input-format' in args""", 1)
+FIXTURE = FIXTURE.replace(r"""else:
+    prompt=sys.stdin.read()
+    native=resume or native
+    print(json.dumps({'type':'thread.started','thread_id':native}),flush=True)""", r"""elif muse:
+    prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
+    print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'turn.input.user','payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}),flush=True)
+elif claude:
+    prompt=json.loads(sys.stdin.readline())['message']['content']
+    print(json.dumps({'type':'system','subtype':'init','session_id':native}),flush=True)
+else:
+    prompt=sys.stdin.read()
+    native=resume or native
+    print(json.dumps({'type':'thread.started','thread_id':native}),flush=True)""", 1)
+FIXTURE = FIXTURE.replace(r"""        remaining_input=sys.stdin.read()
+    elif failure:""", r"""        remaining_input=sys.stdin.read()
+    elif muse:
+        print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.terminal.completed','payload':{'kind':'run_terminal','terminal':'completed','command_id':'fixture-primary','text':body}}),flush=True)
+    elif claude:
+        print(json.dumps({'type':'result','session_id':native,'result':body,'is_error':failure}),flush=True)
+    elif failure:""", 1)
+
 
 class Stop(unittest.TestCase):
     setUp = receive.Receive.setUp
@@ -52,9 +79,13 @@ class Stop(unittest.TestCase):
     receive_args = receive.Receive.receive_args
     endpoint = receive.Receive.endpoint
     connect = receive.Receive.connect
+    prepare_input = receive.Receive.prepare_input
     message = receive.Receive.message
     accept_any = receive.Receive.accept_any
     accept = receive.Receive.accept
+    accept_or_child_exit = receive.Receive.accept_or_child_exit
+    accept_child = receive.Receive.accept_child
+    shutdown_idle_database_owner = receive.Receive.shutdown_idle_database_owner
     action = receive.Receive.action
     finish = receive.Receive.finish
     native_requests = receive.Receive.native_requests
@@ -78,9 +109,10 @@ class Stop(unittest.TestCase):
     def begin(self, harness='omp', resist=False):
         self.configure()
         self.player(harness=harness)
-        self.coord('message', 'initial', 'root', 'parent', 'task', 'Make useful progress.')
+        self.prepare_input('initial', 'parent', 'Make useful progress.', kind='task')
         observer = self.spawn(*self.receive_args('parent'))
-        stream, started = self.accept('parent')
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Stop observer exited before native startup')
         self.action(stream, ack_only=True)
         self.assertEqual(json.loads(stream.readline()), {'accepted': True})
         self.action(stream, progress='output before terminal stop')
@@ -100,6 +132,9 @@ class Stop(unittest.TestCase):
             state = self.coord('player', 'parent').get('stop', {})
             return state if state.get('status') == 'stopped' and state.get('nativeStatus') else None
         return self.eventually(answer, 'stopped native process was not reaped')
+
+    def output_log(self):
+        return receive.Receive.output_log(self, 'parent')
 
     def test_idle_stop_preserves_input_refuses_new_execution_and_retries(self):
         self.configure()
@@ -151,20 +186,26 @@ class Stop(unittest.TestCase):
         self.assertEqual(self.rows("SELECT id,body,receipt FROM messages WHERE recipient='parent' ORDER BY seq"), original)
         self.assertIn('Progress before stop.', work.read_text())
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
-        self.assertIn('output before terminal stop', (self.directory / 'parent.jsonl').read_text())
+        self.assertIn('output before terminal stop', self.output_log().read_text())
         report = self.rows('SELECT * FROM messages WHERE id=?', [completed['reportId']])[0]
         self.assertEqual(report['receipt'], 'parent-received')
         self.assertEqual(json.loads(report['body'])['nativeStatus'], 'signal 15')
         self.assertEqual(json.loads(report['body'])['workspace'], str(self.checkouts / 'parent'))
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
         self.assertEqual(self.stop()['nativeStatus'], 'signal 15')
-        self.eventually(lambda: not self.owned_processes(), 'stopped processes remained')
+        self.shutdown_idle_database_owner('stopped processes remained')
 
     def test_retained_omp_stop_preserves_work_and_exits_native_and_tool(self):
         self.retained_stop_preserves_work_native_identity_receipts_and_output('omp')
 
     def test_retained_codex_stop_preserves_work_and_exits_native_and_tool(self):
         self.retained_stop_preserves_work_native_identity_receipts_and_output('codex')
+
+    def test_retained_muse_stop_preserves_work_and_exits_native_and_tool(self):
+        self.retained_stop_preserves_work_native_identity_receipts_and_output('muse')
+
+    def test_retained_claude_code_stop_preserves_work_and_exits_native_and_tool(self):
+        self.retained_stop_preserves_work_native_identity_receipts_and_output('claude-code')
 
     def test_explicit_force_reaches_same_term_resistant_attempt_after_observer_loss(self):
         observer, stream, started = self.begin(resist=True)
@@ -176,7 +217,7 @@ class Stop(unittest.TestCase):
         self.finish(observer, ok=False)
         self.action(stream, progress='output after stop and observer loss')
         self.assertEqual(json.loads(stream.readline()), {'progress_written': 'output after stop and observer loss'})
-        self.eventually(lambda: 'output after stop and observer loss' in (self.directory / 'parent.jsonl').read_text(),
+        self.eventually(lambda: 'output after stop and observer loss' in self.output_log().read_text(),
                         'recovery did not retain post-loss output')
         before_force = self.rows('SELECT * FROM session_stops')
         wrong = self.coord('force-stop', 'parent', 'different-stop', ok=False)
@@ -188,7 +229,7 @@ class Stop(unittest.TestCase):
         self.assertEqual(forced['attempt'], requested['attempt'])
         completed = self.completed()
         self.assertEqual(completed['nativeStatus'], 'signal 9')
-        self.eventually(lambda: not self.owned_processes(), 'stopped recovery processes remained')
+        self.shutdown_idle_database_owner('stopped recovery processes remained')
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertEqual(self.coord('force-stop', 'parent', 'operator-stop')['nativeStatus'], 'signal 9')
@@ -201,7 +242,8 @@ class Stop(unittest.TestCase):
         task.write_text('Finish this direct turn.')
         direct = self.spawn('turn', 'parent', 'direct-turn', str(self.fixture), 'parent', 'low',
                             str(self.directory), str(task), str(self.directory / 'direct.jsonl'), '')
-        stream, _ = self.accept('parent')
+        stream, _ = self.accept_child(direct, 'parent',
+                                      'Direct turn exited before native startup')
         refused = self.stop(ok=False)
         self.assertNotEqual(refused.returncode, 0)
         self.assertIn('direct turn is unsupported', refused.stderr)
@@ -270,7 +312,7 @@ class Stop(unittest.TestCase):
         self.action(stream, exit_fixture=True)
         self.finish(observer)
         self.assertEqual(self.completed()['nativeStatus'], 'exit 0')
-        self.eventually(lambda: not self.owned_processes(), 'stopped native question processes remained')
+        self.shutdown_idle_database_owner('stopped native question processes remained')
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertEqual(self.coord('delivery', request['id'])['receipt'], 'parent-received')
         self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])
@@ -279,6 +321,7 @@ class Stop(unittest.TestCase):
         initial = self.coord('native-reply', 'root', 'unknown-request', '{"value":"answer"}', ok=False)
         self.assertNotEqual(initial.returncode, 0)
         self.assertTrue(self.rows("SELECT name FROM sqlite_master WHERE name='native_requests'"))
+        self.shutdown_idle_database_owner('native reply left the fixture database owner active')
         self.assertEqual(self.owned_processes(), [])
         with sqlite3.connect(self.db) as database:
             database.executescript('DROP TABLE executions; DROP TABLE session_stops;')
@@ -289,6 +332,7 @@ class Stop(unittest.TestCase):
         self.assertEqual({row['name'] for row in self.rows(
             "SELECT name FROM sqlite_master WHERE name IN ('executions','session_stops')")},
             {'executions', 'session_stops'})
+        self.shutdown_idle_database_owner('refused native reply left the fixture database owner active')
         self.assertEqual(self.owned_processes(), [])
 
 

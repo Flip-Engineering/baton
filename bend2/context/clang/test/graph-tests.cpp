@@ -121,17 +121,23 @@ void testAndDenyGuard() {
     std::printf("  reason: %s\n", Built.reason.c_str());
     return;
   }
-  // Accepted false (the call runs when the condition is false).
-  GuardSolveOutput R = solve(Built.decision, G, Then, "call-target", false);
+  // The call is on the true side of A && B.
+  GuardSolveOutput R = solve(Built.decision, G, Then, "call-target", true);
   check(R.derived, "and-deny: derived");
-  check(R.cutEdges.size() == 2, "and-deny: cut set is both false exits");
+  check(R.cutEdges.size() == 1, "and-deny: accepted true exit is cut");
   check(R.deniedRoutes.size() == 2, "and-deny: two denial routes");
   if (R.derived) {
     bool ShortRoute = false, LongRoute = false;
     for (const auto &Rt : R.deniedRoutes) {
-      if (Rt.evaluated.size() == 1 && !Rt.evaluated[0].outcome)
+      if (Rt.evaluated.size() == 1 &&
+          Rt.evaluated[0].operandLeafId == "A" &&
+          !Rt.evaluated[0].outcome)
         ShortRoute = true; // only A evaluated, outcome false
-      if (Rt.evaluated.size() == 2)
+      if (Rt.evaluated.size() == 2 &&
+          Rt.evaluated[0].operandLeafId == "A" &&
+          Rt.evaluated[0].outcome &&
+          Rt.evaluated[1].operandLeafId == "B" &&
+          !Rt.evaluated[1].outcome)
         LongRoute = true;  // A true then B false
     }
     check(ShortRoute, "and-deny: short route evaluates only A");
@@ -139,8 +145,8 @@ void testAndDenyGuard() {
     check(R.acceptedInterveningCalls.empty(),
           "and-deny: no accepted-side opaque calls");
   }
-  // Accepted true must fail: denial side (condition true) reaches the call.
-  GuardSolveOutput Wrong = solve(Built.decision, G, Then, "call-target", true);
+  // Accepted false must fail: the false side reaches the call.
+  GuardSolveOutput Wrong = solve(Built.decision, G, Then, "call-target", false);
   check(!Wrong.derived, "and-deny: inverted polarity refuses");
   check(Wrong.reason == "denialReachesCall" ||
             Wrong.reason == "acceptedCutSetDoesNotDisconnectCall",
@@ -162,7 +168,7 @@ void testBypassRefuses() {
   G.edge(B, Deny, "false");
   int64_t Exit = G.block(false, true);
   G.edge(Deny, Exit, "nonDecision");
-  G.edge(A, Then, "nonDecision"); // bypass edge
+  G.edge(A, Then, "null"); // unmapped bypass remains visible to reachability
 
   std::map<std::string, int64_t> LeafBlocks{{"A", A}, {"B", B}};
   DecisionBuildResult Built =
@@ -218,8 +224,8 @@ void testNegationOverAnd() {
   G.entry = A;
   G.edge(A, B, "true");     // internal (condition still undetermined)
   G.edge(A, Then, "false"); // !false = true -> accepted side
-  G.edge(B, Then, "true");  // !(true) = false -> accepted side
-  G.edge(B, Deny, "false"); // !(false) = true -> denial
+  G.edge(B, Deny, "true");  // !(true) = false -> denial
+  G.edge(B, Then, "false"); // !(false) = true -> accepted side
   int64_t Exit = G.block(false, true);
   G.edge(Deny, Exit, "nonDecision");
 
@@ -235,7 +241,7 @@ void testNegationOverAnd() {
   int ExitsTrue = 0, ExitsFalse = 0;
   for (const auto &X : Built.decision.exits)
     X.conditionValue ? ++ExitsTrue : ++ExitsFalse;
-  check(ExitsTrue == 1 && ExitsFalse == 1,
+  check(ExitsTrue == 2 && ExitsFalse == 1,
         "neg-and: inverted exit values");
   GuardSolveOutput R = solve(Built.decision, G, Then, "call-target", true);
   check(R.derived, "neg-and: derived with accepted true");
@@ -331,6 +337,7 @@ void testTwoRouteCallAccumulation() {
   // them separate, and per-path intervening stacks restore across siblings.
   GraphBuilder G;
   int64_t X = G.block();
+  int64_t Split = G.block();
   int64_t Mid1 = G.block();
   int64_t Mid2 = G.block();
   int64_t Deny = G.block(true, false, "ret-0");
@@ -339,8 +346,10 @@ void testTwoRouteCallAccumulation() {
   G.nodes[Mid2].callIds = {"call-opaque-2"};
   G.nodes[Then].callIds = {"call-target"};
   G.entry = X;
-  G.edge(X, Mid1, "true");
-  G.edge(X, Mid2, "false");
+  G.edge(X, Split, "true");
+  G.edge(X, Then, "false");
+  G.edge(Split, Mid1, "nonDecision");
+  G.edge(Split, Mid2, "nonDecision");
   G.edge(Mid1, Deny, "nonDecision");
   G.edge(Mid2, Deny, "nonDecision");
   int64_t Exit = G.block(false, true);

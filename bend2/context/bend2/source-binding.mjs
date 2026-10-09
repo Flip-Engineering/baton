@@ -26,9 +26,7 @@
 //   exact correspondence. The loader's own import span is zero-width at the specifier start
 //   (1065), so a caller needing a width must compute it from captured text.
 //
-// Representation limits are exported in REPRESENTATION_LIMITS and repeated in the README.
-
-import { createHash } from 'node:crypto';
+const VIEW_CAPTURE = Symbol('view capture');
 
 export const FRONTEND_PINS = Object.freeze({
   version: '2.0.25',
@@ -43,49 +41,6 @@ export const FRONTEND_PINS = Object.freeze({
     sha256: '92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e',
   }),
 });
-
-export const REPRESENTATION_LIMITS = Object.freeze([
-  Object.freeze({
-    code: 'utf16CodeUnits',
-    detail: 'indices, columns and frontend Loc are UTF-16 code units of the captured source',
-  }),
-  Object.freeze({
-    code: 'lineZeroBasedColumnFollowsParseCol',
-    detail: 'line is zero-based; column is pos - src.lastIndexOf("\\n", pos - 1) exactly as parse_col, which yields 1 at an ordinary line start and 0 at index 0 of text that begins with a line feed',
-  }),
-  Object.freeze({
-    code: 'junctionRightAffinity',
-    detail: 'a zero-length point at a join between two segments maps to the later segment; that is a mapping convention for a frontend position, not evidence of which side an arbitrary span originated on',
-  }),
-  Object.freeze({
-    code: 'bytesNotRetained',
-    detail: 'the capture retains the digest and the derived text and maps; the private byte snapshot taken for decoding and hashing is discarded',
-  }),
-  Object.freeze({
-    code: 'codePointBoundaries',
-    detail: 'a byte offset is defined only at a code-point boundary; an interior continuation byte or a trailing surrogate index is refused',
-  }),
-  Object.freeze({
-    code: 'callerSuppliedTransformation',
-    detail: 'a transformed view exists only for the segments the caller supplies; removed or substituted text yields unavailable, never a guessed offset',
-  }),
-  Object.freeze({
-    code: 'noFilenameInference',
-    detail: 'a frontend Span.src is checked against the supplied view; it never names the file, which comes only from the caller identity',
-  }),
-  Object.freeze({
-    code: 'noViewAuthority',
-    detail: 'a view carries no consumed-byte authority; every identity claim names the capture digest of the captured bytes',
-  }),
-  Object.freeze({
-    code: 'loaderImportSpanWidth',
-    detail: 'the pinned loader records zero-width import spans at the specifier start; a width requires caller computation from captured text',
-  }),
-  Object.freeze({
-    code: 'noImportScanNoResolution',
-    detail: 'this component does not scan imports, resolve names, check types or verify capture consistency',
-  }),
-]);
 
 function unavailable(reason, detail) {
   if (detail === undefined) return Object.freeze({ status: 'unavailable', reason });
@@ -110,9 +65,6 @@ function isContinuation(byte) {
 export function decodeStrictUtf8(bytes) {
   if (!(bytes instanceof Uint8Array)) {
     return unavailable('bytesMissing', { detail: 'exact captured bytes are required' });
-  }
-  if (typeof SharedArrayBuffer !== 'undefined' && bytes.buffer instanceof SharedArrayBuffer) {
-    return unavailable('sharedBufferUnsupported', { detail: 'shared memory has no qualified synchronization contract' });
   }
   const codePoints = [];
   const codePointByteOffsets = [];
@@ -171,9 +123,7 @@ export function decodeStrictUtf8(bytes) {
   });
 }
 
-// Capture the exact bytes a caller read from admission. One private snapshot is copied before any
-// derivation, decoded strictly and hashed; the snapshot is then discarded, so no caller can mutate
-// the identity after capture and no byte array is retained. The decoded text retains a byte order
+// Capture and decode the exact bytes a caller read from admission. The decoded text retains a byte order
 // mark, carriage returns and every other code point.
 export function captureSource({ identity, bytes } = {}) {
   if (typeof identity !== 'string' || identity.length === 0) {
@@ -182,18 +132,10 @@ export function captureSource({ identity, bytes } = {}) {
   if (!(bytes instanceof Uint8Array)) {
     return unavailable('bytesMissing', { detail: 'exact captured bytes are required' });
   }
-  if (typeof SharedArrayBuffer !== 'undefined' && bytes.buffer instanceof SharedArrayBuffer) {
-    return unavailable('sharedBufferUnsupported', { detail: 'shared memory has no qualified synchronization contract' });
-  }
-  // One private snapshot is taken before any derivation, so a caller that keeps writing to its own
-  // view cannot mix the decoded text with the digest. Every derived field reads that snapshot, and
-  // the snapshot is discarded once the capture is built.
-  const snapshot = new Uint8Array(bytes.length);
-  snapshot.set(bytes);
-  const decoded = decodeStrictUtf8(snapshot);
+  const decoded = decodeStrictUtf8(bytes);
   if (decoded.status !== 'decoded') return decoded;
 
-  const byteLength = snapshot.length;
+  const byteLength = bytes.length;
   let utf16Length = 0;
   for (const codePoint of decoded.codePoints) utf16Length += codePoint > 0xffff ? 2 : 1;
 
@@ -232,7 +174,6 @@ export function captureSource({ identity, bytes } = {}) {
   flush();
   const text = parts.join('');
 
-  const digest = createHash('sha256').update(snapshot).digest('hex');
   const byteOffsetForUtf16 = (index) => {
     if (!Number.isInteger(index)) return unavailable('notInteger');
     if (index < 0 || index > utf16Length) return unavailable('outOfRange');
@@ -251,7 +192,6 @@ export function captureSource({ identity, bytes } = {}) {
   return Object.freeze({
     status: 'captured',
     identity,
-    digest,
     byteLength,
     utf16Length,
     text,
@@ -401,12 +341,11 @@ export function createView(capture, { segments } = {}) {
   }
   const text = pieces.join('');
   const identity = capture.identity;
-  const digest = capture.digest;
   const utf16Length = built.transformedLength;
   return Object.freeze({
     status: 'view',
     identity,
-    digest,
+    [VIEW_CAPTURE]: capture,
     text,
     utf16Length,
     segments: table,
@@ -473,7 +412,7 @@ export function locationOf(capture, index) {
 export function locateSpan(capture, view, span) {
   if (!isCapture(capture)) return unavailable('captureUnavailable');
   if (!isView(view)) return unavailable('viewUnavailable');
-  if (view.identity !== capture.identity || view.digest !== capture.digest) {
+  if (view.identity !== capture.identity || view[VIEW_CAPTURE] !== capture) {
     return unavailable('viewCaptureMismatch');
   }
   if (span === null || typeof span !== 'object') return unavailable('spanMissing');
@@ -491,13 +430,11 @@ export function locateSpan(capture, view, span) {
     status: 'mapped',
     claim: 'source-identity',
     identity: capture.identity,
-    digest: capture.digest,
     text: capture.text.slice(mapped.originalStart, mapped.originalEnd),
     original: Object.freeze({
       start: Object.freeze({ index: start.index, line: start.line, column: start.column }),
       end: Object.freeze({ index: end.index, line: end.line, column: end.column }),
     }),
     byteRange: Object.freeze({ start: start.byteOffset, end: end.byteOffset }),
-    limits: REPRESENTATION_LIMITS,
   });
 }

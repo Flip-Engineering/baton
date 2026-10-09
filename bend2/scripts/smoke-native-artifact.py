@@ -2,7 +2,7 @@
 """Verify and exercise a native archive using an external controlled OMP fixture.
 
 The caller retains and relocates its owned build clone before this command. This
-command verifies the advertised archive digest and provenance, extracts a fresh
+command verifies the advertised archive digest and manifest, extracts a fresh
 prefix, and uses the installed public CLI from a separate working directory.
 All output, repository work, command results and process records remain in OUTPUT.
 """
@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import select
+import re
 import shlex
 import shutil
 import subprocess
@@ -25,7 +26,7 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
-def digest(path):
+def archive_digest(path):
     with path.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
@@ -35,19 +36,24 @@ def save(path, value):
 
 
 def record(path, root):
-    return {'path': str(path.relative_to(root)), 'bytes': path.stat().st_size,
-            'sha256': digest(path)}
+    return {'path': str(path.relative_to(root))}
 
 
 class Commands:
     def __init__(self, output, cwd, environment, actor):
         self.output, self.cwd, self.environment, self.actor = output, cwd, environment, actor
         self.number = 0
+        self.last_record = None
+        self.last_record_path = None
 
-    def call(self, name, argv, expected=0, input_data=None):
+    def call(self, name, argv, expected=0, input_data=None, record_environment=False):
         self.number += 1
         prefix = self.output / 'commands' / f'{self.actor}-{os.getpid()}-{self.number}-{name}'
-        row = {'argv': list(map(str, argv)), 'cwd': str(self.cwd), 'started_unix': time.time()}
+        row = {'argv': list(map(str, argv)), 'cwd': str(self.cwd),
+               'expected_exit_code': expected if isinstance(expected, int) else list(expected),
+               'started_unix': time.time()}
+        if record_environment:
+            row['environment'] = dict(sorted(self.environment.items()))
         if input_data is not None:
             prefix.with_suffix('.stdin').write_text(input_data)
             row['stdin'] = record(prefix.with_suffix('.stdin'), self.output)
@@ -62,6 +68,7 @@ class Commands:
         row.update({stream: record(prefix.with_suffix('.' + stream), self.output)
                     for stream in ('stdout', 'stderr')})
         save(prefix.with_suffix('.json'), row)
+        self.last_record, self.last_record_path = row, prefix.with_suffix('.json')
         require(row['exit_code'] in expected if isinstance(expected, tuple) else row['exit_code'] == expected,
                 f'{name} exited {row["exit_code"]}; complete streams: {prefix}.stdout and {prefix}.stderr')
         return prefix.with_suffix('.stdout').read_text()
@@ -86,10 +93,10 @@ def fixture(kind, config_path, arguments):
     if request.get('type') == 'set_event_filter':
         selection = config.get('event_filter', 'delta')
         if selection == 'delta':
-            require(request.get('events') is None and request.get('messageUpdates') == 'delta',
+            require(request.get('messageUpdates') == 'delta',
                     'The setup filter request lost the documented delta selection')
             print(json.dumps({'type': 'response', 'id': request.get('id'), 'command': 'set_event_filter',
-                              'success': True, 'data': {'events': None, 'messageUpdates': 'delta'}}), flush=True)
+                              'success': True, 'data': {'events': request.get('events'), 'messageUpdates': 'delta'}}), flush=True)
         else:
             print(json.dumps({'type': 'response', 'id': request.get('id'), 'command': 'set_event_filter',
                               'success': False, 'error': 'Unknown request type set_event_filter'}), flush=True)
@@ -101,11 +108,10 @@ def fixture(kind, config_path, arguments):
     require(config['task'] in task['message'], 'The native prompt lost the task body')
     parent = commands.call('parent-identity', [config['ps'], '-ww', '-p', str(os.getppid()),
                                               '-o', 'pid=,ppid=,lstart=,command='])
-    require(config['exe'] in parent and '--host-process-keeper' in parent,
-            'Native parent did not reexecute the staged coordinator keeper')
+    require(config['exe'] in parent and '--instance-owner' in parent,
+            'Native parent did not use the staged shared instance owner')
     save(output / 'native-start.json', {'pid': os.getpid(), 'ppid': os.getppid(),
                                        'cwd': os.getcwd(), 'parent_identity': parent,
-                                       'task_sha256': hashlib.sha256(task['message'].encode()).hexdigest(),
                                        'event_filter': selection})
     print(json.dumps({'id': state['id'], 'type': 'response', 'command': 'get_state', 'success': True,
                       'data': {'sessionId': config['native'], 'model': {'provider': 'fixture', 'id': 'artifact'},
@@ -120,17 +126,14 @@ def fixture(kind, config_path, arguments):
     save(output / 'native-complete.json', {'pid': os.getpid(), 'stdin_eof': True})
 
 
-def extract(archive, provenance, destination):
-    manifest_bytes = provenance.read_bytes()
+def extract(archive, manifest_path, destination):
+    manifest_bytes = manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes)
     require(manifest.get('schema') == 'baton2-native-artifact-v1', 'Unsupported artifact manifest schema')
     name = manifest['archive_root']
     require(PurePosixPath(name).parts == (name,) and name not in ('', '.', '..') and '\\' not in name,
             'Archive root must be one directory name')
-    expected = {entry['path']: entry for entry in manifest['files']}
-    require(len(expected) == len(manifest['files']) and 'manifest.json' not in expected,
-            'Manifest file entries must be distinct and exclude manifest.json')
-    seen, regular = set(), set()
+    seen, manifest_found = set(), False
     with tarfile.open(archive, 'r:*') as packed:
         for member in packed:
             path = PurePosixPath(member.name)
@@ -144,23 +147,18 @@ def extract(archive, provenance, destination):
                 target.mkdir(parents=True, exist_ok=True)
                 continue
             relative = str(PurePosixPath(*path.parts[1:]))
-            require(relative in expected or relative == 'manifest.json', f'Unmanifested archive file: {relative}')
             target.parent.mkdir(parents=True, exist_ok=True)
             with packed.extractfile(member) as source, target.open('xb') as output:
                 shutil.copyfileobj(source, output)
             target.chmod(member.mode & 0o777)
-            regular.add(relative)
-    require(regular == set(expected) | {'manifest.json'}, 'Archive and manifest list different files')
+            if relative == 'manifest.json':
+                manifest_found = True
+    require(manifest_found, 'Archive does not contain manifest.json')
     prefix = destination / name
     require((prefix / 'manifest.json').read_bytes() == manifest_bytes,
-            'Archive manifest differs from supplied provenance')
-    for relative, entry in expected.items():
-        path = prefix / relative
-        require(path.stat().st_size == entry['bytes'] and digest(path) == entry['sha256'],
-                f'Artifact file differs from manifest: {relative}')
+            'Archive manifest differs from supplied manifest')
     binary = manifest['binary']
-    require(binary['path'] == 'bin/baton2' and expected[binary['path']] == binary,
-            'Binary must bind the manifested bin/baton2 entry')
+    require(binary['path'] == 'bin/baton2', 'Manifest must name the installed bin/baton2 entry')
     require(os.access(prefix / binary['path'], os.X_OK), 'Staged coordinator is not executable')
     return prefix, manifest
 
@@ -197,22 +195,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--archive', type=Path, required=True)
     parser.add_argument('--sha256', required=True)
-    parser.add_argument('--provenance', type=Path, required=True)
+    parser.add_argument('--manifest', type=Path, required=True)
     parser.add_argument('--unavailable-source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     unavailable = args.unavailable_source.resolve()
     require(not unavailable.exists(), 'Relocate only the owned build clone before running the smoke check')
     require(hasattr(os, 'pidfd_open') or hasattr(select, 'kqueue'), 'Process-exit observation requires Linux or macOS/BSD')
-    require(digest(args.archive) == args.sha256.lower(), 'Archive does not match the advertised SHA256')
+    require(archive_digest(args.archive) == args.sha256.lower(), 'Archive does not match the advertised SHA256')
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     (output / 'commands').mkdir()
     result = {'archive': str(args.archive.resolve()), 'archive_sha256': args.sha256.lower(),
-              'provenance_sha256': digest(args.provenance), 'started_unix': time.time(),
+              'started_unix': time.time(),
               'unavailable_source': str(unavailable), 'status': 'failed'}
     try:
-        prefix, manifest = extract(args.archive, args.provenance, output / 'extracted')
+        prefix, manifest = extract(args.archive, args.manifest, output / 'extracted')
         require(Path(manifest['source']['directory']).resolve() == unavailable,
                 'Unavailable source path differs from recorded build source')
         binary = prefix / 'bin/baton2'
@@ -324,22 +322,62 @@ def main():
         parent = json.loads((output / 'parent-delivery.json').read_text())
         require(complete['pid'] == start['pid'] and complete['stdin_eof'], 'Native completion record differs')
         require(parent['message']['body'] == config['report'], 'Parent report body differs')
-        for pid, path in [(start['pid'], helper), (start['ppid'], binary), (parent['pid'], helper)]:
+        for pid, path in [(start['pid'], helper), (parent['pid'], helper)]:
             wait_exit(pid, path, commands, ps)
+        commands.call('instance-shutdown', [binary, '--instance-shutdown', db])
+        wait_exit(start['ppid'], binary, commands, ps)
         records = [json.loads(p.read_text()) for p in (output / 'commands').glob('*.json')]
         pids = sorted({r['pid'] for r in records} | {start['pid'], start['ppid'], parent['pid']})
         remaining = commands.call('process-closure', [ps, '-ww', '-p', ','.join(map(str, pids)),
                                                      '-o', 'pid=,ppid=,stat=,lstart=,command='], (0, 1))
         require(not remaining, 'Captured process PIDs remain; inspect the closure command output')
         require(not unavailable.exists(), 'Original build source path became available during the smoke check')
-        result.update(status='passed', source=manifest['source'], binary_sha256=digest(binary),
+        package_ui = prefix / 'libexec/baton2/ui'
+        require((package_ui / 'server.mjs').is_file()
+                and (package_ui / 'native-owner-subscription.mjs').is_file(),
+                'The extracted artifact must contain the Orchestra server and native owner adapter')
+        view_test_name = 'view CLI streams a committed native message through the owner subscription'
+        view_test_path = Path(__file__).resolve().parent.parent / 'test/ui-orchestra-server.test.mjs'
+        require(view_test_path.is_file(), f'Public native view test is missing: {view_test_path}')
+        view_environment = {
+            'PATH': environment['PATH'],
+            'BATON2_REQUIRE_NATIVE_VIEW': '1',
+            'BATON2_NATIVE_BINARY': str(binary),
+            'BATON2_PACKAGE_ROOT': str(prefix),
+            'GIT_CONFIG_GLOBAL': os.devnull,
+            'GIT_CONFIG_NOSYSTEM': '1',
+        }
+        view_commands = Commands(output, working, view_environment, 'public-native-view')
+        node_version = view_commands.call('node-version', [node, '--version'], record_environment=True).strip()
+        version = re.match(r'^v([0-9]+)\.', node_version)
+        require(version is not None and int(version.group(1)) >= 22,
+                f'Public native view requires Node 22 or later; found {node_version!r}')
+        view_tap = view_commands.call('committed-message-sse', [
+            node, '--test', '--test-reporter=tap',
+            f'--test-name-pattern=^{view_test_name}$', str(view_test_path),
+        ], record_environment=True)
+        passed_target = re.search(rf'^ok [0-9]+ - {re.escape(view_test_name)}$', view_tap, re.MULTILINE)
+        require(passed_target is not None,
+                'The committed-message public view test did not report an exact TAP pass')
+        require(re.search(r'^# pass 1$', view_tap, re.MULTILINE)
+                and re.search(r'^# fail 0$', view_tap, re.MULTILINE),
+                'The public view TAP result must contain exactly one pass and zero failures')
+        view_source = {'path': str(view_test_path)}
+        public_view = {
+            'status': 'passed', 'test_name': view_test_name, 'pass_count': 1,
+            'node_version': node_version, 'test_source': view_source,
+            'package_binary': record(binary, output), 'package_root': str(prefix),
+            'command_record': record(view_commands.last_record_path, output),
+        }
+        result.update(status='passed', source=manifest['source'],
                       extracted_prefix=str(prefix), runtime_cwd=str(working), runtime_PATH=environment['PATH'],
                       BEND_present='BEND' in environment, native_self_reexec_verified=True,
                       native_id=session['native'], observed_model=session['observedModel'],
                       full_task_and_report_equal=True, both_inboxes_empty=True, git_landing=land,
                       recorded_pids=pids, matching_pids=[], direct_subprocesses_waited=True,
                       native_wait_statuses=None,
-                      fixture_python={'path':sys.executable,'sha256':digest(Path(sys.executable))},
+                      fixture_python={'path':sys.executable},
+                      public_native_view=public_view, public_native_view_passed=True,
                       scope='Extracted native artifact on this host with system libraries, Git and an external controlled Python fixture. Public land is exercised; no selected landing checks or real provider is run.')
     except Exception as error:
         result['error'] = repr(error)

@@ -1,16 +1,18 @@
-# The observed-usage read: a read-only projection of the usage the session's own
-# recorded native conversation states. The source is the conversation file the
-# launch path recorded for that session. The projection sums distinct recorded
-# assistant-message observations under that contract; it does not price tokens,
-# enforce a budget or keep accounting state.
+# The observed-usage command projects recorded assistant-message usage and
+# queries the session's harness for provider account observations.
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
 import ../host/text.bend as Text
 import ../host/files.bend as F
 import ../git/text.bend as Tx
+import ../git/process.bend as Process
+import ../git/types.bend as T
 import ../json/canonical.bend as J
+import ../harness/codex-player.bend as Codex
+import ../harness/omp-player.bend as Omp
+import ../harness/muse-player.bend as Muse
 
 # --- the recorded source ----------------------------------------------------
 
@@ -235,6 +237,135 @@ def projection_select() -> String:
 def project_sql(malformed: String, entries_json: String, session: String, harness: String, native: String, source: String) -> String:
   projection_entries_cte(entries_json) ++ projection_rows_cte() ++ projection_summary_cte(malformed) ++ projection_answer_cte(session,harness,native,source) ++ projection_select()
 
+# --- the provider usage observation -----------------------------------------
+# The provider answer comes from the session's recorded harness command.
+
+# Control.receiver_args places the harness command at index 4 of the nine-element
+# receiver form; Control.identity_args prepends eight elements, so the
+# identity-prefixed form carries it at index 12. An endpoint of another shape
+# records no command.
+def harness_command_sql(+session: String) -> String:
+  "SELECT CASE WHEN json_valid(endpoint) THEN CASE json_array_length(endpoint) WHEN 9 THEN coalesce(json_extract(endpoint,'$[4]'),'') WHEN 17 THEN coalesce(json_extract(endpoint,'$[12]'),'') ELSE '' END ELSE '' END FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+
+def provider_usage_args(command: String) -> List<String>:
+  [command,"usage","--json"]
+
+# Missing commands and unsupported harnesses report their conditions.
+def provider_usage_absent(harness: String, command: String, condition: String) -> String:
+  "{\"state\":\"unknown\",\"harness\":" ++ J.string_literal(harness) ++ ",\"observedAt\":null,\"command\":" ++ J.string_literal(command) ++ ",\"argv\":[\"usage\",\"--json\"],\"condition\":" ++ J.string_literal(condition) ++ "}"
+
+# Exit and signal outcomes retain the process status and stdout.
+def provider_usage_failed(harness: String, command: String, observedAt: String, status: String, code: U32, stdout: String) -> String:
+  "{\"state\":\"unknown\",\"harness\":" ++ J.string_literal(harness) ++ ",\"observedAt\":" ++ observedAt ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":[\"usage\",\"--json\"],\"condition\":\"usageCommandFailed\",\"process\":{\"status\":" ++ J.string_literal(status) ++ ",\"code\":" ++ U32.show(code) ++ "},\"stdout\":" ++ J.string_literal(stdout) ++ "}"
+
+def provider_usage_unknown(harness: String, command: String, observedAt: String, condition: String, code: String, detail: String) -> String:
+  "{\"state\":\"unknown\",\"harness\":" ++ J.string_literal(harness) ++ ",\"observedAt\":" ++ observedAt ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":[\"usage\",\"--json\"],\"condition\":" ++ J.string_literal(condition) ++ ",\"code\":" ++ code ++ ",\"detail\":" ++ J.string_literal(detail) ++ "}"
+
+# A JSON answer is copied whole. Unparsable output remains available as detail.
+def provider_usage_answer_sql(harness: String, command: String, observedAt: String, stdout: String) -> String:
+  "WITH answer(t) AS (SELECT " ++ C.q(stdout) ++ ")"
+  ++ " SELECT json_object('state',CASE WHEN json_valid(t) THEN 'reported' ELSE 'unknown' END,'harness'," ++ C.q(harness)
+  ++ ",'observedAt'," ++ observedAt ++ ",'command'," ++ C.q(command) ++ ",'argv',json('[\"usage\",\"--json\"]'),"
+  ++ "'condition',CASE WHEN json_valid(t) THEN NULL ELSE 'malformedUsageJson' END,"
+  ++ "'detail',CASE WHEN json_valid(t) THEN NULL ELSE t END,"
+  ++ "'answer',CASE WHEN json_valid(t) THEN json(t) ELSE NULL END) FROM answer;"
+
+def provider_usage_outcome(+db: String, harness: String, command: String, observedAt: String, outcome: T.RunRes) -> IO(String):
+  match outcome:
+    case T.RRun{T.SExit{0},out}: IO.try(String,DB.Sql.query(db,provider_usage_answer_sql(harness,command,observedAt,out)))
+    case T.RRun{T.SExit{code},out}: IO.pure(String,provider_usage_failed(harness,command,observedAt,"exit",code,out))
+    case T.RRun{T.SSignal{num},out}: IO.pure(String,provider_usage_failed(harness,command,observedAt,"signal",num,out))
+    case T.RSpawn{detail}: IO.pure(String,provider_usage_unknown(harness,command,observedAt,"unreadableProcessStatus","null",detail))
+
+# Preserve the host error code before decoding a completed process answer.
+def provider_usage_result(+db: String, harness: String, command: String, observedAt: String, run: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match run:
+    case Fail{(code,detail)}: IO.pure(String,provider_usage_unknown(harness,command,observedAt,"usageCommandHostFailure",U32.show(code),detail))
+    case Done{raw}: provider_usage_outcome(db,harness,command,observedAt,Tx.run_res(Done{raw}))
+
+# Each explicit usage read runs one supported harness query in its workspace.
+def provider_usage_query(+db: String, harness: String, +command: String, +cwd: String) -> IO(String):
+  do IO<String>:
+    observedAt : String <- IO.try(String,DB.Sql.query(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000;"))
+    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(provider_usage_args(command)),Bool.pick(String,String.is_empty(cwd),".",cwd))
+    provider_usage_result(db,harness,command,Tx.trim_nl(observedAt),run)
+
+def provider_usage_command(+db: String, +harness: String, +command: String, cwd: String) -> IO(String):
+  Bool.pick(IO(String),String.is_empty(command),IO.pure(String,provider_usage_absent(harness,command,"noRecordedHarnessCommand")),provider_usage_query(db,harness,command,cwd))
+
+def provider_usage(+db: String, +harness: String, +command: String, cwd: String) -> IO(String):
+  Bool.pick(IO(String),String.eq(harness,"omp"),provider_usage_command(db,harness,command,cwd),IO.pure(String,provider_usage_absent(harness,command,"unsupportedHarness")))
+
+# The conversation projection prints with the provider observation beside it, so
+# conversation token usage keeps its own members.
+def print_with_provider(+db: String, conversation: String, +provider: String) -> IO(Unit):
+  do IO<Unit>:
+    spliced : String <- IO.try(String,DB.Sql.query(db,"SELECT json_set(" ++ C.q(conversation) ++ ",'$.providerUsage',json(" ++ C.q(provider) ++ "));"))
+    IO.print(spliced)
+
+# --- the model discovery read ------------------------------------------------
+
+# The model read reports the configured harness's current catalog or profile.
+def models_args(+harness: String, +command: String, model: String) -> List<String>:
+  Bool.pick(List<String>,String.eq(harness,"codex"),Codex.models_args(command),
+  Bool.pick(List<String>,String.eq(harness,"omp"),Omp.models_args(command),
+  Bool.pick(List<String>,String.eq(harness,"muse"),Muse.models_args(command,model),Nil{})))
+
+def models_argv(+harness: String, model: String) -> String:
+  Bool.pick(String,String.eq(harness,"codex"),lines_array(["debug","models"]),
+  Bool.pick(String,String.eq(harness,"omp"),lines_array(["models","--json"]),
+  Bool.pick(String,String.eq(harness,"muse"),lines_array(["model-profile","show",model]),"[]")))
+
+def models_unknown(+session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, reason: String) -> String:
+  "{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"unknown\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":" ++ argv ++ ",\"workspace\":" ++ J.string_literal(cwd) ++ ",\"requestedModel\":" ++ J.string_literal(model) ++ ",\"reason\":" ++ J.string_literal(reason) ++ "}"
+
+def models_raw_failure(+session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, status: String, code: U32, +stdout: String) -> String:
+  "{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"unknown\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":" ++ argv ++ ",\"workspace\":" ++ J.string_literal(cwd) ++ ",\"requestedModel\":" ++ J.string_literal(model) ++ ",\"process\":{\"status\":" ++ J.string_literal(status) ++ ",\"code\":" ++ U32.show(code) ++ "},\"raw\":" ++ J.string_literal(stdout) ++ "}"
+
+def models_json_answer(+session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, +stdout: String) -> String:
+  "WITH answer(text) AS (SELECT " ++ C.q(stdout) ++ ") SELECT json_object('schema','baton2-model-discovery-v1','state',CASE WHEN json_valid(text) THEN 'reported' ELSE 'unknown' END,'session'," ++ C.q(session) ++ ",'harness'," ++ C.q(harness) ++ ",'command'," ++ C.q(command) ++ ",'argv',json(" ++ C.q(argv) ++ "),'workspace'," ++ C.q(cwd) ++ ",'requestedModel',nullif(" ++ C.q(model) ++ ",''),'response',CASE WHEN json_valid(text) THEN json(text) END,'raw',text,'reason',CASE WHEN json_valid(text) THEN NULL ELSE 'providerOutputNotJson' END) FROM answer;"
+
+def models_text_answer(+session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, +stdout: String) -> String:
+  "{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"reported\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":" ++ argv ++ ",\"workspace\":" ++ J.string_literal(cwd) ++ ",\"requestedModel\":" ++ J.string_literal(model) ++ ",\"modelExistence\":\"unknown\",\"profileText\":" ++ J.string_literal(stdout) ++ "}"
+
+def models_outcome(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, outcome: T.RunRes) -> IO(String):
+  match outcome:
+    case T.RSpawn{detail}: IO.pure(String,models_unknown(session,harness,command,model,cwd,argv,"processStatusUnavailable: " ++ detail))
+    case T.RRun{T.SExit{0},+out}:
+      Bool.pick(IO(String),String.eq(harness,"muse"),IO.pure(String,models_text_answer(session,harness,command,model,cwd,argv,out)),IO.try(String,DB.Sql.query(db,models_json_answer(session,harness,command,model,cwd,argv,out))))
+    case T.RRun{T.SExit{code},out}: IO.pure(String,models_raw_failure(session,harness,command,model,cwd,argv,"exit",code,out))
+    case T.RRun{T.SSignal{num},out}: IO.pure(String,models_raw_failure(session,harness,command,model,cwd,argv,"signal",num,out))
+
+def models_result(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, run: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match run:
+    case Fail{(code,detail)}:
+      IO.pure(String,"{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"unknown\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":" ++ argv ++ ",\"workspace\":" ++ J.string_literal(cwd) ++ ",\"requestedModel\":" ++ J.string_literal(model) ++ ",\"reason\":\"providerCommandHostFailure\",\"code\":" ++ U32.show(code) ++ ",\"detail\":" ++ J.string_literal(detail) ++ "}")
+    case Done{raw}: models_outcome(db,session,harness,command,model,cwd,argv,Tx.run_res(Done{raw}))
+
+def models_supported(+harness: String) -> Bool:
+  Bool.or(String.eq(harness,"codex"),Bool.or(String.eq(harness,"omp"),String.eq(harness,"muse")))
+
+def models_print(db: String, answer: String) -> IO(Unit):
+  do IO<Unit>:
+    observed : String <- IO.try(String,DB.Sql.query(db,"SELECT json_set(" ++ C.q(answer) ++ ",'$.observedAt',CAST(strftime('%s','now') AS INTEGER)*1000);"))
+    IO.print(observed)
+
+def models_query(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String) -> IO(Unit):
+  do IO<Unit>:
+    +argv : String <- IO.pure(String,models_argv(harness,model))
+    args : List<String> <- IO.pure(List<String>,models_args(harness,command,model))
+    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(args),Bool.pick(String,String.is_empty(cwd),".",cwd))
+    answer : String <- models_result(db,session,harness,command,model,cwd,argv,run)
+    models_print(db,answer)
+
+def models_command(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String) -> IO(Unit):
+  do IO<Unit>:
+    +argv : String <- IO.pure(String,models_argv(harness,model))
+    +answer : String <- IO.pure(String,Bool.pick(String,models_supported(harness),
+      Bool.pick(String,String.is_empty(command),models_unknown(session,harness,command,model,cwd,argv,"noRecordedHarnessCommand"),""),
+      models_unknown(session,harness,command,model,cwd,argv,"unsupportedHarness")))
+    Bool.pick(IO(Unit),String.is_empty(answer),models_query(db,session,harness,command,model,cwd),models_print(db,answer))
+
 # --- the command ------------------------------------------------------------
 
 def usage_registered(saved: String) -> IO(Unit):
@@ -249,14 +380,14 @@ def usage_lines_json(file: String) -> IO(String):
     text : String <- IO.try(String,Text.Text.read(file))
     IO.pure(String,lines_array(Tx.split_lines(text)))
 
-def usage_unavailable(db: String, session: String, native: String, harness: String) -> IO(Unit):
+def usage_unavailable(+db: String, session: String, native: String, harness: String, +provider: String) -> IO(Unit):
   do IO<Unit>:
     projection : String <- IO.try(String,DB.Sql.query(db,project_sql("0","[]",session,Tx.trim_nl(harness),native,"")))
-    IO.print(projection)
+    print_with_provider(db,projection,provider)
 
 # A selected file is projected only after its recorded identity matches the
 # session's, and only the distinct entries it records are summed.
-def usage_selected(+db: String, +session: String, +native: String, harness: String, +file: String) -> IO(Unit):
+def usage_selected(+db: String, +session: String, +native: String, harness: String, +file: String, +provider: String) -> IO(Unit):
   do IO<Unit>:
     +lines_json : String <- usage_lines_json(file)
     malformed : String <- IO.try(String,DB.Sql.query(db,malformed_sql(lines_json)))
@@ -264,7 +395,7 @@ def usage_selected(+db: String, +session: String, +native: String, harness: Stri
     checked : Unit <- usage_recorded_conversation(Tx.trim_nl(recorded),native,String.eq(Tx.trim_nl(recorded),native))
     entries : String <- IO.try(String,DB.Sql.query(db,extract_sql(lines_json)))
     projection : String <- IO.try(String,DB.Sql.query(db,project_sql(Tx.trim_nl(malformed),entries,session,Tx.trim_nl(harness),native,file)))
-    IO.print(projection)
+    print_with_provider(db,projection,provider)
 
 def observed_usage(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:
@@ -274,319 +405,19 @@ def observed_usage(+db: String, +session: String) -> IO(Unit):
     +native : String <- IO.try(String,DB.Sql.query(db,"SELECT native FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     storage : String <- IO.try(String,DB.Sql.query(db,storage_sql(db,session)))
     +file : String <- usage_source(Tx.trim_nl(storage),db ++ ".sessions",Tx.trim_nl(native))
+    command : String <- IO.try(String,DB.Sql.query(db,harness_command_sql(session)))
+    cwd : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(workspace,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +provider : String <- provider_usage(db,Tx.trim_nl(harness),Tx.trim_nl(command),Tx.trim_nl(cwd))
     empty : Bool <- IO.pure(Bool,String.is_empty(file))
-    picked : Unit <- Bool.pick(IO(Unit),empty,usage_unavailable(db,session,Tx.trim_nl(native),Tx.trim_nl(harness)),usage_selected(db,session,Tx.trim_nl(native),Tx.trim_nl(harness),file))
+    picked : Unit <- Bool.pick(IO(Unit),empty,usage_unavailable(db,session,Tx.trim_nl(native),Tx.trim_nl(harness),provider),usage_selected(db,session,Tx.trim_nl(native),Tx.trim_nl(harness),file,provider))
     IO.pure(Unit,Unit{})
 
-# --- the operative laws -----------------------------------------------------
-# Each law restates the builder, projection or decision the read runs, so a mutation in
-# that function fails the compile of this entry.
-
-law observed_usage_reads_the_recorded_session_storage:
-  for +db: String
-  for +session: String
-  {storage_sql(db, session) ==   "SELECT CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END FROM sessions WHERE id=" ++ C.q(session) ++ ";" : String}
-
-def observed_usage_reads_the_recorded_session_storage(db, session):
-  {==}
-
-law observed_usage_names_the_file_of_the_native_identity:
-  for +native: String
-  {source_suffix(native) ==   "_" ++ native ++ ".jsonl" : String}
-
-def observed_usage_names_the_file_of_the_native_identity(native):
-  {==}
-
-law two_matching_conversations_are_named_and_refused:
-  for first: String
-  for second: String
-  for +native: String
-  {source_ambiguous(first, second, native) ==   "Two recorded conversations match the native identity " ++ native ++ ": " ++ first ++ " and " ++ second ++ "; the read does not choose one. Both conversations stay preserved; inspect them and repair the recorded source identity, then retry." : String}
-
-def two_matching_conversations_are_named_and_refused(first, second, native):
-  {==}
-
-law the_recorded_conversation_is_searched_in_both_stores:
-  for primary: String
-  for alternate: String
-  for +native: String
-  {usage_source(primary, alternate, native) == (do IO<String>:
-    +suffix : String <- IO.pure(String,source_suffix(native))
-    +first : String <- IO.try(String,F.Files.find_suffix(primary,suffix))
-    +second : String <- IO.try(String,F.Files.find_suffix(alternate,suffix))
-    source_decide(first,second,native,Bool.not(String.is_empty(first)),Bool.not(String.is_empty(second)))) : IO(String)}
-
-def the_recorded_conversation_is_searched_in_both_stores(primary, alternate, native):
-  {==}
-
-law unreadable_lines_are_counted:
-  for lines_json: String
-  {malformed_sql(lines_json) ==   "WITH raw AS (SELECT value AS line FROM json_each(" ++ C.q(lines_json) ++ ")) "
-  ++ "SELECT count(*) FROM raw WHERE trim(line) <> '' AND NOT json_valid(line);" : String}
-
-def unreadable_lines_are_counted(lines_json):
-  {==}
-
-law the_files_recorded_identity_is_read:
-  for lines_json: String
-  {header_sql(lines_json) ==   "WITH raw AS (SELECT value AS line FROM json_each(" ++ C.q(lines_json) ++ ") WHERE json_valid(value)) "
-  ++ "SELECT coalesce((SELECT json_extract(line,'$.id') FROM raw WHERE json_extract(line,'$.type')='session' LIMIT 1),'');" : String}
-
-def the_files_recorded_identity_is_read(lines_json):
-  {==}
-
-law an_absent_recorded_identity_is_named:
-  for +recorded: String
-  {usage_recorded_name(recorded) ==   Bool.pick(String,String.is_empty(recorded),"(no recorded session header)",recorded) : String}
-
-def an_absent_recorded_identity_is_named(recorded):
-  {==}
-
-law entries_come_from_persisted_assistant_usage_records:
-  for lines_json: String
-  {extract_sql(lines_json) ==   "WITH lines AS (SELECT key AS seq, value AS line FROM json_each(" ++ C.q(lines_json) ++ ") WHERE json_valid(value)) "
-  ++ "SELECT coalesce(json_group_array(json_object("
-  ++ "'identity',coalesce(json_extract(line,'$.id'),'seq:' || seq),"
-  ++ "'provider',json_extract(line,'$.message.provider'),"
-  ++ "'model',json_extract(line,'$.message.model'),"
-  ++ "'api',json_extract(line,'$.message.api'),"
-  ++ "'usage',json_extract(line,'$.message.usage'))),json('[]')) "
-  ++ "FROM (SELECT seq, line FROM lines WHERE json_extract(line,'$.type')='message'"
-  ++ " AND json_extract(line,'$.message.role')='assistant'"
-  ++ " AND json_type(line,'$.message.usage')='object' ORDER BY seq);" : String}
-
-def entries_come_from_persisted_assistant_usage_records(lines_json):
-  {==}
-
-law the_shape_names_the_recorded_contract:
-
-  {shape_sql() ==   "CASE WHEN observations = 0 THEN 'unavailable' ELSE 'message-usage' END" : String}
-
-def the_shape_names_the_recorded_contract():
-  {==}
-
-law entries_are_read_from_the_embedded_array:
-  for entries_json: String
-  {projection_entries_cte(entries_json) ==   "WITH entries AS (SELECT key AS seq, value AS entry FROM json_each(" ++ C.q(entries_json) ++ ") WHERE json_valid(value))," : String}
-
-def entries_are_read_from_the_embedded_array(entries_json):
-  {==}
-
-law rows_keep_the_route_signature_and_the_recorded_numbers:
-
-  {projection_rows_cte() ==   "keyed AS (SELECT seq, entry,"
-  ++ " json_extract(entry,'$.identity') AS identity,"
-  ++ " json_extract(entry,'$.provider') AS provider,"
-  ++ " json_extract(entry,'$.model') AS model,"
-  ++ " json_extract(entry,'$.api') AS api,"
-  ++ " CASE WHEN json_type(entry,'$.usage.input') IN ('integer','real') THEN json_extract(entry,'$.usage.input') END AS input,"
-  ++ " CASE WHEN json_type(entry,'$.usage.output') IN ('integer','real') THEN json_extract(entry,'$.usage.output') END AS output,"
-  ++ " CASE WHEN json_type(entry,'$.usage.cacheRead') IN ('integer','real') THEN json_extract(entry,'$.usage.cacheRead') END AS cache_read,"
-  ++ " CASE WHEN json_type(entry,'$.usage.cacheWrite') IN ('integer','real') THEN json_extract(entry,'$.usage.cacheWrite') END AS cache_write,"
-  ++ " CASE WHEN json_type(entry,'$.usage.totalTokens') IN ('integer','real') THEN json_extract(entry,'$.usage.totalTokens') END AS total_tokens,"
-  ++ " CASE WHEN json_type(entry,'$.usage.reasoningTokens') IN ('integer','real') THEN json_extract(entry,'$.usage.reasoningTokens') END AS reasoning,"
-  ++ " CASE WHEN json_type(entry,'$.usage.cost.input') IN ('integer','real') THEN json_extract(entry,'$.usage.cost.input') END AS cost_input,"
-  ++ " CASE WHEN json_type(entry,'$.usage.cost.output') IN ('integer','real') THEN json_extract(entry,'$.usage.cost.output') END AS cost_output,"
-  ++ " CASE WHEN json_type(entry,'$.usage.cost.cacheRead') IN ('integer','real') THEN json_extract(entry,'$.usage.cost.cacheRead') END AS cost_cache_read,"
-  ++ " CASE WHEN json_type(entry,'$.usage.cost.cacheWrite') IN ('integer','real') THEN json_extract(entry,'$.usage.cost.cacheWrite') END AS cost_cache_write,"
-  ++ " CASE WHEN json_type(entry,'$.usage.cost.total') IN ('integer','real') THEN json_extract(entry,'$.usage.cost.total') END AS cost_total,"
-  ++ " json_extract(entry,'$.usage') AS usage_text,"
-  ++ " coalesce(json_extract(entry,'$.provider'),'') || char(31) || coalesce(json_extract(entry,'$.model'),'') || char(31)"
-  ++ " || coalesce(json_extract(entry,'$.api'),'') || char(31) || coalesce(json_extract(entry,'$.usage'),'') AS signature"
-  ++ " FROM entries),"
-  ++ "ranked AS (SELECT *, row_number() OVER (PARTITION BY identity ORDER BY seq) AS rank FROM keyed),"
-  ++ "firsts AS (SELECT * FROM ranked WHERE rank = 1)," : String}
-
-def rows_keep_the_route_signature_and_the_recorded_numbers():
-  {==}
-
-law the_summary_keeps_unknown_components_unknown:
-  for malformed: String
-  {projection_summary_cte(malformed) ==   "counts AS (SELECT (SELECT count(*) FROM keyed) AS records, (SELECT count(*) FROM firsts) AS observations,"
-  ++ " (SELECT count(*) FROM (SELECT identity FROM keyed GROUP BY identity HAVING count(DISTINCT signature) > 1)) AS conflicts,"
-  ++ " (" ++ malformed ++ ") AS malformed),"
-  ++ "shape AS (SELECT " ++ shape_sql() ++ " AS shape FROM counts),"
-  ++ "totals AS (SELECT"
-  ++ " CASE WHEN count(*) = count(input) THEN sum(input) END AS input,"
-  ++ " CASE WHEN count(*) = count(output) THEN sum(output) END AS output,"
-  ++ " CASE WHEN count(*) = count(cache_read) THEN sum(cache_read) END AS cache_read,"
-  ++ " CASE WHEN count(*) = count(cache_write) THEN sum(cache_write) END AS cache_write,"
-  ++ " CASE WHEN count(*) = count(total_tokens) THEN sum(total_tokens) END AS total_tokens,"
-  ++ " CASE WHEN count(*) = count(reasoning) THEN sum(reasoning) END AS reasoning,"
-  ++ " CASE WHEN count(*) = count(cost_input) THEN sum(cost_input) END AS cost_input,"
-  ++ " CASE WHEN count(*) = count(cost_output) THEN sum(cost_output) END AS cost_output,"
-  ++ " CASE WHEN count(*) = count(cost_cache_read) THEN sum(cost_cache_read) END AS cost_cache_read,"
-  ++ " CASE WHEN count(*) = count(cost_cache_write) THEN sum(cost_cache_write) END AS cost_cache_write,"
-  ++ " CASE WHEN count(*) = count(cost_total) THEN sum(cost_total) END AS cost_total,"
-  ++ " (SELECT count(*) FROM firsts) AS observations FROM firsts),"
-  ++ "absent AS (SELECT coalesce(json_group_array(name),json('[]')) AS names FROM ("
-  ++ " SELECT 'input' AS name, (SELECT count(*) FROM firsts) AS total, (SELECT count(input) FROM firsts) AS present"
-  ++ " UNION ALL SELECT 'output', (SELECT count(*) FROM firsts), (SELECT count(output) FROM firsts)"
-  ++ " UNION ALL SELECT 'cacheRead', (SELECT count(*) FROM firsts), (SELECT count(cache_read) FROM firsts)"
-  ++ " UNION ALL SELECT 'cacheWrite', (SELECT count(*) FROM firsts), (SELECT count(cache_write) FROM firsts)"
-  ++ " UNION ALL SELECT 'totalTokens', (SELECT count(*) FROM firsts), (SELECT count(total_tokens) FROM firsts)"
-  ++ " UNION ALL SELECT 'reasoningTokens', (SELECT count(*) FROM firsts), (SELECT count(reasoning) FROM firsts)"
-  ++ " UNION ALL SELECT 'cost.input', (SELECT count(*) FROM firsts), (SELECT count(cost_input) FROM firsts)"
-  ++ " UNION ALL SELECT 'cost.output', (SELECT count(*) FROM firsts), (SELECT count(cost_output) FROM firsts)"
-  ++ " UNION ALL SELECT 'cost.cacheRead', (SELECT count(*) FROM firsts), (SELECT count(cost_cache_read) FROM firsts)"
-  ++ " UNION ALL SELECT 'cost.cacheWrite', (SELECT count(*) FROM firsts), (SELECT count(cost_cache_write) FROM firsts)"
-  ++ " UNION ALL SELECT 'cost.total', (SELECT count(*) FROM firsts), (SELECT count(cost_total) FROM firsts)) WHERE present < total),"
-  ++ "invalid AS (SELECT coalesce(json_group_array(name),json('[]')) AS names FROM ("
-  ++ " SELECT 'input' AS name, (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.input') IS NOT NULL AND json_type(entry,'$.usage.input') NOT IN ('integer','real')) AS n"
-  ++ " UNION ALL SELECT 'output', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.output') IS NOT NULL AND json_type(entry,'$.usage.output') NOT IN ('integer','real'))"
-  ++ " UNION ALL SELECT 'cacheRead', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cacheRead') IS NOT NULL AND json_type(entry,'$.usage.cacheRead') NOT IN ('integer','real'))"
-  ++ " UNION ALL SELECT 'cacheWrite', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cacheWrite') IS NOT NULL AND json_type(entry,'$.usage.cacheWrite') NOT IN ('integer','real'))"
-  ++ " UNION ALL SELECT 'totalTokens', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.totalTokens') IS NOT NULL AND json_type(entry,'$.usage.totalTokens') NOT IN ('integer','real'))"
-  ++ " UNION ALL SELECT 'reasoningTokens', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.reasoningTokens') IS NOT NULL AND json_type(entry,'$.usage.reasoningTokens') NOT IN ('integer','real'))"
-  ++ " UNION ALL SELECT 'cost', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost') IS NOT NULL AND json_type(entry,'$.usage.cost') <> 'object')"
-  ++ " UNION ALL SELECT 'cost.input', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.input') IS NOT NULL AND json_type(entry,'$.usage.cost.input') NOT IN ('integer','real'))"
-  ++ " UNION ALL SELECT 'cost.output', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.output') IS NOT NULL AND json_type(entry,'$.usage.cost.output') NOT IN ('integer','real'))"
-  ++ " UNION ALL SELECT 'cost.cacheRead', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.cacheRead') IS NOT NULL AND json_type(entry,'$.usage.cost.cacheRead') NOT IN ('integer','real'))"
-  ++ " UNION ALL SELECT 'cost.cacheWrite', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.cacheWrite') IS NOT NULL AND json_type(entry,'$.usage.cost.cacheWrite') NOT IN ('integer','real'))"
-  ++ " UNION ALL SELECT 'cost.total', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.total') IS NOT NULL AND json_type(entry,'$.usage.cost.total') NOT IN ('integer','real'))) WHERE n > 0),"
-  ++ "routes AS (SELECT coalesce(json_group_array(json_object('provider',provider,'model',model,'api',api,'observations',n)),json('[]')) AS routes"
-  ++ " FROM (SELECT provider, model, api, count(*) AS n FROM firsts GROUP BY provider, model, api ORDER BY provider, model, api))," : String}
-
-def the_summary_keeps_unknown_components_unknown(malformed):
-  {==}
-
-law the_answer_names_the_declared_conversation:
-  for session: String
-  for harness: String
-  for native: String
-  for source: String
-  {projection_answer_cte(session, harness, native, source) ==   "answer AS (SELECT json_object("
-  ++ "'session'," ++ C.q(session) ++ ",'harness'," ++ C.q(harness) ++ ",'native'," ++ C.q(native) ++ ",'source'," ++ C.q(source) ++ ","
-  ++ "'shape',(SELECT shape FROM shape),"
-  ++ "'records',(SELECT records FROM counts),"
-  ++ "'observations',(SELECT observations FROM counts),"
-  ++ "'duplicates',(SELECT records - observations FROM counts),"
-  ++ "'conflicts',(SELECT conflicts FROM counts),"
-  ++ "'malformed',(SELECT malformed FROM counts),"
-  ++ "'routes',json((SELECT routes FROM routes)),"
-  ++ "'observed',CASE WHEN (SELECT count(input) + count(output) + count(cache_read) + count(cache_write) + count(total_tokens) + count(reasoning) FROM firsts) > 0 THEN"
-  ++ " (SELECT json_group_object(name,value) FROM ("
-  ++ "  SELECT 'input' AS name, input AS value FROM totals"
-  ++ "  UNION ALL SELECT 'output', output FROM totals"
-  ++ "  UNION ALL SELECT 'cacheRead', cache_read FROM totals"
-  ++ "  UNION ALL SELECT 'cacheWrite', cache_write FROM totals"
-  ++ "  UNION ALL SELECT 'totalTokens', total_tokens FROM totals"
-  ++ "  UNION ALL SELECT 'reasoningTokens', reasoning FROM totals) WHERE value IS NOT NULL) END,"
-  ++ "'cost',CASE WHEN (SELECT count(cost_input) + count(cost_output) + count(cost_cache_read) + count(cost_cache_write) + count(cost_total) FROM firsts) > 0 THEN"
-  ++ " (SELECT json_group_object(name,value) FROM ("
-  ++ "  SELECT 'input' AS name, cost_input AS value FROM totals"
-  ++ "  UNION ALL SELECT 'output', cost_output FROM totals"
-  ++ "  UNION ALL SELECT 'cacheRead', cost_cache_read FROM totals"
-  ++ "  UNION ALL SELECT 'cacheWrite', cost_cache_write FROM totals"
-  ++ "  UNION ALL SELECT 'total', cost_total FROM totals) WHERE value IS NOT NULL) END,"
-  ++ "'absent',json((SELECT names FROM absent)),"
-  ++ "'invalid',json((SELECT names FROM invalid))) AS document,"
-  ++ " (SELECT count(input) + count(output) + count(cache_read) + count(cache_write) + count(total_tokens) + count(reasoning) FROM firsts) > 0 AS observed_stated,"
-  ++ " (SELECT count(cost_input) + count(cost_output) + count(cost_cache_read) + count(cost_cache_write) + count(cost_total) FROM firsts) > 0 AS cost_stated,"
-  ++ " ((SELECT malformed FROM counts) = 0 AND (SELECT conflicts FROM counts) = 0) AS sums_qualified)" : String}
-
-def the_answer_names_the_declared_conversation(session, harness, native, source):
-  {==}
-
-law unstated_or_unqualified_sums_leave_the_answer:
-
-  {projection_select() ==   " SELECT CASE WHEN observed_stated AND sums_qualified AND cost_stated THEN document"
-  ++ " WHEN observed_stated AND sums_qualified THEN json_remove(document,'$.cost')"
-  ++ " WHEN cost_stated AND sums_qualified THEN json_remove(document,'$.observed')"
-  ++ " ELSE json_remove(document,'$.observed','$.cost') END FROM answer;" : String}
-
-def unstated_or_unqualified_sums_leave_the_answer():
-  {==}
-
-law the_projection_composes_its_parts:
-  for malformed: String
-  for entries_json: String
-  for session: String
-  for harness: String
-  for native: String
-  for source: String
-  {project_sql(malformed, entries_json, session, harness, native, source) ==   projection_entries_cte(entries_json) ++ projection_rows_cte() ++ projection_summary_cte(malformed) ++ projection_answer_cte(session,harness,native,source) ++ projection_select() : String}
-
-def the_projection_composes_its_parts(malformed, entries_json, session, harness, native, source):
-  {==}
-
-# The match-bodied decisions are stated over their concrete cases.
-
-law a_second_matching_conversation_is_refused:
-  for first: String
-  for second: String
-  for native: String
-  {source_first_case(first, second, native, True{}) == IO.die(String,2,source_ambiguous(first,second,native)) : IO(String)}
-
-def a_second_matching_conversation_is_refused(first, second, native):
-  {==}
-
-law a_lone_first_conversation_is_used:
-  for first: String
-  for second: String
-  for native: String
-  {source_first_case(first, second, native, False{}) == IO.pure(String,first) : IO(String)}
-
-def a_lone_first_conversation_is_used(first, second, native):
-  {==}
-
-law the_first_store_is_read_when_its_file_matches:
-  for first: String
-  for second: String
-  for native: String
-  {source_decide(first, second, native, True{}, True{}) == source_first_case(first,second,native,True{}) : IO(String)}
-
-def the_first_store_is_read_when_its_file_matches(first, second, native):
-  {==}
-
-law a_missing_first_file_leaves_the_second:
-  for first: String
-  for second: String
-  for native: String
-  for second_present: Bool
-  {source_decide(first, second, native, False{}, second_present) == IO.pure(String,second) : IO(String)}
-
-def a_missing_first_file_leaves_the_second(first, second, native, second_present):
-  {==}
-
-law a_matching_recorded_identity_is_accepted:
-  for recorded: String
-  for +native: String
-  {usage_recorded_conversation(recorded, native, True{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
-
-def a_matching_recorded_identity_is_accepted(recorded, native):
-  {==}
-
-law another_recorded_identity_is_refused:
-  for recorded: String
-  for +native: String
-  {usage_recorded_conversation(recorded, native, False{}) == IO.die(Unit,2,"The selected conversation file records " ++ usage_recorded_name(recorded) ++ " rather than " ++ native ++ "; inspect the session's recorded identity and its conversation files.") : IO(Unit)}
-
-def another_recorded_identity_is_refused(recorded, native):
-  {==}
-
-law no_lines_form_an_empty_entry_array:
-  {lines_array(Nil{}) == "[]" : String}
-
-def no_lines_form_an_empty_entry_array():
-  {==}
-
-law a_line_forms_one_escaped_entry:
-  for +line: String
-  {lines_array(Con{line, Nil{}}) == "[" ++ J.string_literal(line) ++ lines_array_tail(Nil{}) : String}
-
-def a_line_forms_one_escaped_entry(line):
-  {==}
-
-law no_remaining_lines_close_the_entry_array:
-  {lines_array_tail(Nil{}) == "]" : String}
-
-def no_remaining_lines_close_the_entry_array():
-  {==}
-
-law a_remaining_line_extends_the_entry_array:
-  for +line: String
-  {lines_array_tail(Con{line, Nil{}}) == "," ++ J.string_literal(line) ++ lines_array_tail(Nil{}) : String}
-
-def a_remaining_line_extends_the_entry_array(line):
-  {==}
+def models(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    found : String <- IO.try(String,Store.apply(db,C.Session{session}))
+    present : Unit <- usage_registered(found)
+    +harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +model : String <- IO.try(String,DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +cwd : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(workspace,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +command : String <- IO.try(String,DB.Sql.query(db,harness_command_sql(session)))
+    models_command(db,session,Tx.trim_nl(harness),Tx.trim_nl(command),Tx.trim_nl(model),Tx.trim_nl(cwd))

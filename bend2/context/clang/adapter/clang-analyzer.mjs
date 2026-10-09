@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 // clang-analyzer provider adapter. Installed argv:
 //   <absolute node> <package>/libexec/baton2/context/clang/adapter/clang-analyzer.mjs -
-// The single stdin document selects the command. providerEngines performs the
-// fixed linked-version probe (extractor --probe plus binary hash) and reports
-// capability without loading any target project. analyze runs one extraction
-// through the context-clang-20 binary and forwards its result document.
+// The single stdin document selects the command. providerEngines runs the
+// extractor's linked-version probe and reports its availability. analyze runs
+// one extraction through the context-clang-20 binary and forwards its result.
 // Floor: Node 22.15.0.
 import {
   parseJsonBytes,
@@ -13,9 +12,9 @@ import {
   refuse,
   resolveExtractorPath,
   runProcess,
-  sha256File,
   writeJsonDoc,
 } from './common.mjs';
+import { fileURLToPath } from 'node:url';
 
 const PROJECTIONS = [
   'type',
@@ -33,7 +32,6 @@ function engineEntry(extractorPath, probe) {
       provider: 'clang-analyzer',
       version: null,
       executable: extractorPath,
-      sha256: null,
       linkedIdentity: null,
       projections: PROJECTIONS,
       effects: [],
@@ -55,7 +53,6 @@ function engineEntry(extractorPath, probe) {
       provider: 'clang-analyzer',
       version: null,
       executable: extractorPath,
-      sha256: null,
       linkedIdentity: null,
       projections: PROJECTIONS,
       effects: [],
@@ -68,7 +65,6 @@ function engineEntry(extractorPath, probe) {
     provider: 'clang-analyzer',
     version: identity.version,
     executable: extractorPath,
-    sha256: sha256File(extractorPath),
     linkedIdentity: {
       clangVersion: identity.clangVersion,
       inProcessParse: identity.inProcessParse === true,
@@ -93,7 +89,6 @@ async function providerEngines() {
           provider: 'clang-analyzer',
           version: null,
           executable: extractorPath,
-          sha256: null,
           linkedIdentity: null,
           projections: PROJECTIONS,
           effects: [],
@@ -112,25 +107,17 @@ async function providerEngines() {
 }
 
 async function analyze(request) {
-  // Closed request: exactly the extractor's private contract members.
-  const allowed = new Set([
-    'version',
-    'operation',
-    'directory',
-    'file',
-    'arguments',
-    'subject',
-    'pairs',
-    'helpers',
-  ]);
-  for (const key of Object.keys(request)) {
-    if (!allowed.has(key)) refuse('analyze', `unknownMember:${key}`);
-  }
   if (request.version !== 1) refuse('analyze', 'versionMustEqual1');
   const extractorPath = resolveExtractorPath();
   const real = realPath(extractorPath);
   if (!real) refuse('analyze', 'extractorMissing');
+  const runtimeLib = new URL('../runtime/lib/', import.meta.url);
+  const libraryPath = fileURLToPath(runtimeLib);
+  const libraryVariable = process.platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH';
+  const env = { ...process.env,
+    [libraryVariable]: [libraryPath, process.env[libraryVariable]].filter(Boolean).join(':') };
   const result = await runProcess([real, '-'], {
+    env,
     input: Buffer.from(JSON.stringify(request), 'utf-8'),
   });
   if (result.code === 2) {
@@ -146,7 +133,6 @@ async function analyze(request) {
   }
   doc.adapterIdentity = {
     executable: real,
-    sha256: sha256File(real),
   };
   writeJsonDoc(doc);
   process.exit(0);

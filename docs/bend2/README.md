@@ -9,10 +9,8 @@ stored responsibilities and retained delivery.
 [Target architecture](target-architecture.md) and [rewrite plan](rewrite-plan.md)
 record the earlier proposal and first working slice.
 
-The coordinator entry imports its operative law modules. Every native build checks
-the proofs over the called functions. [Law trace](laws-trace.md) identifies those
-functions and their host assumptions; `bend2/scripts/laws-check.mjs` checks proof
-removal and implementation mutations. Native tests and real runs measure host effects.
+Native tests and real runs exercise coordination, host effects and Git operations.
+[Contributing](../../CONTRIBUTING.md) describes remote validation and publication.
 
 [Shared findings](knowledge-context-2026-09-29.md) describes recording, retrieval,
 promotion and destination-owner notification.

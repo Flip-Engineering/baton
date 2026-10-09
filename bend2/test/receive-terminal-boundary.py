@@ -38,7 +38,8 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.player(harness='omp')
         self.coord('message', task, 'root', 'parent', 'task', 'Task before the settled terminal.')
         observer = self.spawn(*self.receive_args('parent'))
-        stream, started = self.accept('parent')
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Boundary receive exited before native startup')
         self.assertIn('[id: ' + task + ']', started['prompt'])
         self.action(stream, body=body, hold_exit=True)
         self.assertEqual(json.loads(stream.readline()), {'terminal_written': True})
@@ -53,9 +54,9 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.action(stream, native_request=value)
         self.assertEqual(json.loads(stream.readline()), {'request_written': value})
 
-    def arrivals(self, timeout=10):
+    def arrivals(self):
         found = []
-        while select.select([self.server], [], [], timeout)[0]:
+        while select.select([self.server], [], [], 0)[0]:
             found.append(self.accept_any())
         return found
 
@@ -88,7 +89,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertEqual(self.coord('delivery', 'boundary-guidance')['receipt'], 'native-reviewed')
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
-        self.eventually(lambda: not self.owned_processes(), 'boundary fixtures did not exit')
+        self.shutdown_idle_database_owner('boundary fixtures did not exit')
 
     def test_plain_output_after_the_seal_keeps_the_report_and_the_drain(self):
         observer, stream, started, sealed = self.sealed_attempt(
@@ -101,25 +102,26 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.finish(observer)
         self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
                          ['Report before plain native output.'])
-        log = (self.directory / 'parent.jsonl').read_text()
+        log = self.output_log('parent').read_text()
         self.assertIn(line, log)
         notes = [report for report in self.coord('inbox', 'root')
                  if report['id'] == sealed + ':deferred']
         self.assertEqual([note['body'] for note in notes], [deferred_body(sealed, None)])
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
-        self.eventually(lambda: not self.owned_processes(), 'boundary fixtures did not exit')
+        self.shutdown_idle_database_owner('boundary fixtures did not exit')
 
     def test_replayed_response_before_the_first_terminal_records_acceptance(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
         self.player(harness='omp')
         self.coord('message', 'replay-task', 'root', 'parent', 'task', 'Work before the replay.')
         observer = self.spawn(*self.receive_args('parent'))
-        original, started = self.accept('parent')
+        original, started = self.accept_child(observer, 'parent',
+                                              'Replay receive exited before native startup')
         self.coord('message', 'replay-guidance', 'root', 'parent', 'guidance',
                    'Guidance accepted before the first terminal.')
         self.frame(original, {'type': 'message_end', 'message': {'role': 'user', 'content': []}})
         observer.kill()
-        observer.wait(timeout=5)
+        observer.wait()
         self.action(original, read_steer=True)
         accepted = json.loads(original.readline())
         self.assertEqual(accepted['steer_received']['id'], 'replay-guidance')
@@ -132,7 +134,8 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertEqual(json.loads(original.readline()), {'terminal_written': True})
         self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
         self.action(original, exit_fixture=True)
-        arrivals = self.arrivals()
+        arrivals = [self.accept('root'), *self.arrivals()]
+        self.assertEqual(len(arrivals), 1, 'one root report produced one native call')
         self.assertEqual({event['session'] for _, event in arrivals}, {'root'})
         stream, event = arrivals[0]
         self.assertIn(report, event['prompt'])
@@ -143,7 +146,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
                         'replayed steer response did not record acceptance')
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
-        self.eventually(lambda: not self.owned_processes(), 'replay fixtures did not exit')
+        self.shutdown_idle_database_owner('replay fixtures did not exit')
 
     def test_late_terminals_without_outstanding_guidance_keep_one_truthful_note(self):
         observer, stream, started, sealed = self.sealed_attempt(
@@ -158,7 +161,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
                  if report['id'] == sealed + ':deferred']
         self.assertEqual([note['body'] for note in notes], [deferred_body(sealed, None)])
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
-        self.eventually(lambda: not self.owned_processes(), 'boundary fixtures did not exit')
+        self.shutdown_idle_database_owner('boundary fixtures did not exit')
 
     def test_pending_guidance_named_like_the_note_still_produces_it(self):
         observer, stream, started, sealed = self.sealed_attempt(
@@ -180,7 +183,12 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
                           'Continuation report after the recorded guidance.'])
         self.assertEqual(self.coord('delivery', 'recorded')['receipt'], 'native-reviewed')
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
-        self.eventually(lambda: not self.owned_processes(), 'boundary fixtures did not exit')
+        self.shutdown_idle_database_owner('boundary fixtures did not exit')
+
+
+def load_tests(loader, tests, pattern):
+    declared = sorted(name for name in vars(ReceiveTerminalBoundary) if name.startswith('test_'))
+    return loader.loadTestsFromNames(declared, ReceiveTerminalBoundary)
 
 
 if __name__ == '__main__':

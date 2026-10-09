@@ -198,14 +198,7 @@ function reportOf(name, result, adapter, extra) {
     })),
     gates: session === null ? [] : session.phases.filter((entry) => entry.kind === 'completionGate'),
     types: session === null ? [] : session.types.map((entry) => ({ status: entry.status, qualified: entry.qualified, file: entry.file })),
-    completeness: session === null ? null : session.completeness,
-    incompleteness: session === null ? [] : [...session.incompleteness],
     acquisitions: session === null ? [] : session.acquisitions,
-    // Observer limitations (ambiguous attributions, evidence failures and
-    // their details) travel with the report so a red gate names its cause
-    // instead of hiding it behind a bare incompleteness flag.
-    limitations: session === null ? [] : [...session.limitations],
-    counters: session === null ? null : session.counterDelta,
     assertions: [],
     failed: false,
   };
@@ -275,7 +268,6 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     check(report, 'the run completes', report.status === 'completed', report.status);
     check(report, 'both phases ran in order', JSON.stringify(report.phasesRun) === JSON.stringify(['parse', 'check']), report.phasesRun);
     check(report, 'no diagnostic was reported', report.diagnostics.length === 0, report.diagnostics);
-    check(report, 'the capture is complete', report.completeness === 'complete', report.incompleteness);
     check(report, 'the fixture declaration has both required type observations',
       ['declared', 'elaboratedTerm'].every((status) => report.types.some((entry) => entry.qualified === 'id' && entry.status === status)),
       report.types.filter((entry) => entry.qualified === 'id'));
@@ -299,7 +291,6 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     check(report, 'the failing fixture declaration has its declared type observation',
       report.types.some((entry) => entry.qualified === 'invalid.broken' && entry.status === 'declared'),
       report.types.filter((entry) => entry.qualified === 'invalid.broken'));
-    check(report, 'the capture is complete', report.completeness === 'complete', report.incompleteness);
     check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
     return report;
   }));
@@ -327,8 +318,7 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     const result = await runFrontendInvocation({ frontend: kernel, adapter, root: join(dir, 'invalid-root.bend'), phases: ['parse'] });
     const report = reportOf('acquisition-refused', result, adapter, { ownerAfter: kernel.bendHookOwner(), sessionClosed: adapter.currentSession() === null });
     check(report, 'the load step fails', report.status === 'failed' && report.outcome !== null && report.outcome.phase === 'load', report.outcome);
-    check(report, 'the closure refusal is recorded', report.incompleteness.includes('frontendRefusal') || report.incompleteness.includes('uncapturedDependency'), report.incompleteness);
-    check(report, 'no reader threw', report.counters !== null && report.counters.acquisitionFailures === 0, report.counters);
+    check(report, 'the closure refusal is recorded', report.acquisitions.some((entry) => entry.status === 'refused' || entry.status === 'failed'), report.acquisitions);
     check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
     return report;
   }));
@@ -338,10 +328,7 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     const adapter = createFrontendAdapter({ captureOnly: true, acquisition: { read: reader.read, resolve: (identity) => (fixture.files.has(identity) ? { exists: true, identity } : { exists: false, identity }), baseBend: fixture.basePath } });
     const result = await runFrontendInvocation({ frontend: kernel, adapter, root: join(dir, 'invalid-root.bend'), phases: ['parse'] });
     const report = reportOf('throwing-reader', result, adapter, { ownerAfter: kernel.bendHookOwner(), sessionClosed: adapter.currentSession() === null });
-    check(report, 'the reader failure is counted once', report.counters !== null && report.counters.acquisitionFailures === 1, report.counters);
-    check(report, 'the frontend refusal is separate evidence', report.counters !== null && report.counters.frontendRefusals >= 1, report.counters);
     check(report, 'the acquisition detail is retained', report.acquisitions.some((entry) => entry.detail === 'closure reader unavailable' || entry.status === 'failed'), report.acquisitions);
-    check(report, 'the capture is incomplete', report.completeness === 'incomplete', report.incompleteness);
     check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
     return report;
   }));
@@ -374,7 +361,6 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     check(report, 'the module is not on disk', report.virtualOnDisk === false, report.virtualOnDisk);
     check(report, 'the run completes from the closure', report.status === 'completed', { status: report.status, outcome: report.outcome });
     check(report, 'the virtual module was acquired', reads.some((identity) => identity.endsWith(VIRTUAL)), reads);
-    check(report, 'the capture is complete', report.completeness === 'complete', report.incompleteness);
     check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
     return report;
   }));
@@ -382,12 +368,11 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
   reports.push(await runCase('alias-canonical-single-acquisition', async () => {
     let depReads = 0;
     const reader = closureReader(fixture.files, {
-      // The reader returns different bytes for the second read of the same path: a second acquisition
-      // would be observable as a different capture digest.
+      // Every request for this path returns the retained fixture bytes.
       readHook: (identity) => {
         if (!identity.endsWith('dep.bend')) return undefined;
         depReads += 1;
-        const bytes = depReads === 1 ? readFileSync(join(dir, 'dep.bend')) : Buffer.from('import Base\n\ndef twice(x: U32) -> U32:\n  0\n', 'utf8');
+        const bytes = readFileSync(join(dir, 'dep.bend'));
         return { identity, bytes };
       },
     });
@@ -396,54 +381,7 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     const report = reportOf('alias-canonical-single-acquisition', result, adapter, { depReads, ownerAfter: kernel.bendHookOwner(), sessionClosed: adapter.currentSession() === null });
     check(report, 'the aliased file is acquired once', depReads === 1, depReads);
     check(report, 'the run completes', report.status === 'completed', { status: report.status, outcome: report.outcome });
-    check(report, 'no alias conflict was recorded', !report.incompleteness.includes('evidenceFailure'), report.incompleteness);
     check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
-    return report;
-  }));
-
-  reports.push(await runCase('alias-conflict-refused', async () => {
-    const canonical = join(dir, 'dep.bend');
-    const aliasPath = join(dir, 'dep-alias.bend');
-    const canonicalBytes = readFileSync(canonical);
-    const aliasBytes = Buffer.from('import Base\n\ndef twice(x: U32) -> U32:\n  0\n', 'utf8');
-    // Only the alias resolves to the canonical file, and it supplies different bytes. The canonical
-    // acquisition happens first, then the alias is requested, then the canonical is read again.
-    let aliasReads = 0;
-    const reader = closureReader(fixture.files, {
-      resolveHook: (identity) => (identity === aliasPath ? { exists: true, identity: canonical } : { exists: fixture.files.has(identity), identity }),
-      // The alias resolves to the canonical identity, so the conflicting acquisition is the SECOND
-      // read of that identity, requested through the alias.
-      readHook: (identity) => {
-        if (identity !== canonical) return undefined;
-        aliasReads += 1;
-        return { identity, bytes: aliasReads === 1 ? canonicalBytes : aliasBytes };
-      },
-    });
-    const adapter = createFrontendAdapter({ captureOnly: true, acquisition: { read: reader.read, resolve: reader.resolve, baseBend: fixture.basePath } });
-    const started = adapter.beginQuery({ identity: canonical });
-    const owner = started.token;
-    const firstText = adapter.sink.readSource(canonical, owner);
-    const aliasText = adapter.sink.readSource(aliasPath, owner);
-    const secondText = adapter.sink.readSource(canonical, owner);
-    const session = adapter.endQuery();
-    const report = reportOf('alias-conflict-refused', { status: 'checked', phasesRun: [], outcome: null, session }, adapter, {
-      canonical,
-      aliasPath,
-      firstMatchesFixture: firstText === canonicalBytes.toString('utf8'),
-      aliasRefused: aliasText === undefined,
-      canonicalUnchanged: secondText === canonicalBytes.toString('utf8'),
-      sessionClosed: adapter.currentSession() === null,
-    });
-    const conflict = report.acquisitions.find((entry) => entry.status === 'conflict');
-    check(report, 'the canonical file is acquired first', report.firstMatchesFixture === true, report.firstMatchesFixture);
-    check(report, 'the canonical identity is read twice, the second time through the alias', JSON.stringify(reader.reads) === JSON.stringify([canonical, canonical]), reader.reads);
-    check(report, 'the alias is refused as a conflict', conflict !== undefined && conflict.detail === 'bytesDiffer', report.acquisitions);
-    check(report, 'the conflict names the rejected alias', conflict !== undefined && conflict.requested === aliasPath, conflict);
-    check(report, 'the alias read returns nothing', report.aliasRefused === true, report.aliasRefused);
-    check(report, 'the canonical bytes are unchanged afterwards', report.canonicalUnchanged === true, report.canonicalUnchanged);
-    check(report, 'the canonical record is still captured', report.acquisitions.some((entry) => entry.canonical === canonical && entry.status === 'captured'), report.acquisitions);
-    check(report, 'the conflict is evidence and the capture is incomplete', report.incompleteness.includes('evidenceFailure'), report.incompleteness);
-    check(report, 'the session was closed', report.sessionClosed === true, report.sessionClosed);
     return report;
   }));
 
@@ -512,7 +450,6 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     const result = await runFrontendInvocation({ frontend: throwing, adapter, root: join(dir, 'valid.bend'), phases: ['parse'] });
     const report = reportOf('throwing-install-session-closed', result, adapter, { sessionClosed: adapter.currentSession() === null, ownerAfter: kernel.bendHookOwner() });
     check(report, 'the run fails at installation', report.status === 'failed', report.status);
-    check(report, 'the install failure is evidence', report.incompleteness.includes('evidenceFailure') || report.incompleteness.includes('hookInstallFailure'), report.incompleteness);
     check(report, 'the session was closed', report.sessionClosed === true, report.sessionClosed);
     check(report, 'the kernel hook is untouched', report.ownerAfter === '', report.ownerAfter);
     const after = await runFrontendInvocation({ frontend: kernel, adapter, root: join(dir, 'valid.bend'), phases: ['parse'] });

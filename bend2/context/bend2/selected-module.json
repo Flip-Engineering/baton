@@ -1,0 +1,20 @@
+{
+  "schema": "baton2-selected-context-payload-v1",
+  "moduleId": "bend2",
+  "protocolVersion": "2",
+  "files": [
+    { "path": "frontend-adapter.mjs" },
+    { "path": "frontend-hook-events.mjs" },
+    { "path": "frontend-hooks.mjs" },
+    { "path": "frontend-invocation.mjs" },
+    { "path": "native-provider.declaration.json" },
+    { "path": "native-provider.mjs" },
+    { "path": "source-binding.mjs" },
+    { "path": "upstream/LICENSE" },
+    { "path": "upstream/base.bend" },
+    { "path": "upstream/bend.ts" },
+    { "path": "upstream/comp.ts" },
+    { "path": "upstream/main.ts" },
+    { "path": "worktree-capture.mjs" }
+  ]
+}

@@ -97,6 +97,10 @@ def main():
         parser.error(f'executable does not exist: {exe}')
     directory=args.output.resolve()
     directory.mkdir(parents=True)
+    try:
+        driver_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True,stderr=subprocess.DEVNULL).strip()
+    except (subprocess.CalledProcessError,OSError):
+        driver_head=None
     db=directory/'state.db'
     log=directory/'native.jsonl'
     fixture=directory/'fixture'
@@ -177,7 +181,8 @@ def main():
     stderr.close()
     evidence={'exe':str(exe),'exe_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),
               'exe_source_revision_supplied':args.source_revision,'pid':child.pid,
-              'driver_source_head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
+              'driver_source_head':driver_head,
+              'driver_source_sha256':hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
               'parameters':vars(args)|{'exe':str(exe),'output':str(directory)},
               'measurements':measures,'semantics':semantics,'returncode':child.returncode,
               'retained_log_bytes':log.stat().st_size}

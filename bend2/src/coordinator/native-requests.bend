@@ -1,17 +1,20 @@
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../git/text.bend as Tx
 import ../host/text.bend as Text
 
-def with_observation(-A: Type, observation: List<Chan(Result<&1,&1,U32 & String,String>)> & String, next: List<Chan(Result<&1,&1,U32 & String,String>)> -> String -> IO(A)) -> IO(A):
-  (tasks,error)=observation
-  next(tasks,error)
+def with_observation(-A: Type, observation: List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool, next: List<Chan(Result<&1,&1,U32 & String,String>)> -> String -> Bool -> IO(A)) -> IO(A):
+  (tasks,(error,incomplete))=observation
+  next(tasks,error,incomplete)
 
 def schema() -> String:
   "CREATE TABLE IF NOT EXISTS native_requests (id TEXT PRIMARY KEY NOT NULL,worker TEXT NOT NULL REFERENCES sessions(id),parent TEXT NOT NULL REFERENCES sessions(id),attempt TEXT NOT NULL,native_id TEXT NOT NULL,method TEXT NOT NULL,event TEXT NOT NULL,reply TEXT,written INTEGER NOT NULL DEFAULT 0,closed TEXT,UNIQUE(attempt,native_id));"
+  ++ "CREATE TRIGGER IF NOT EXISTS native_changes_requests_insert AFTER INSERT ON native_requests BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('native-request',NEW.id,NEW.worker,'insert','native-request',NEW.method || ' request recorded'); END;"
+  ++ "CREATE TRIGGER IF NOT EXISTS native_changes_requests_update AFTER UPDATE ON native_requests WHEN OLD.reply IS NOT NEW.reply OR OLD.written IS NOT NEW.written OR OLD.closed IS NOT NEW.closed BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('native-request',NEW.id,NEW.worker,'update','native-request',NEW.method || CASE WHEN NEW.reply IS NOT OLD.reply THEN ' response stored' WHEN NEW.written IS NOT OLD.written THEN ' response written' WHEN NEW.closed IS NOT OLD.closed THEN ' request closed' ELSE ' request updated' END); END;"
+  ++ "CREATE TRIGGER IF NOT EXISTS native_changes_requests_delete AFTER DELETE ON native_requests BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('native-request',OLD.id,OLD.worker,'delete','native-request',OLD.method || ' request removed'); END;"
 
 def request_sql(+player: String, +turn: String, +attempt: String, +event: String) -> String:
   "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) INSERT INTO native_requests(id,worker,parent,attempt,native_id,method,event) SELECT " ++ C.q(turn ++ ":native:") ++ " || lower(hex(json_extract(value,'$.id'))),s.id,s.parent," ++ C.q(attempt) ++ ",json_extract(value,'$.id'),json_extract(value,'$.method'),value FROM frame,sessions s WHERE s.id=" ++ C.q(player) ++ " AND s.harness='omp' AND json_type(value,'$.id')='text' AND json_extract(value,'$.method') IN ('input','select','confirm','editor') ON CONFLICT(attempt,native_id) DO UPDATE SET id=CASE WHEN native_requests.worker=excluded.worker AND native_requests.parent=excluded.parent AND native_requests.event=excluded.event THEN native_requests.id ELSE NULL END;"
@@ -24,10 +27,15 @@ def dispatch(attempt: String, frame: String, allowed: Bool) -> IO(Result<&1,&1,U
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(1,"Native request is closed, unavailable, or belongs to another parent.")})
     case True{}: P.ProcessChild.control_write(attempt,frame)
 
-def written(db: String, +id: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,String>):
+def prepare_projection(db: String) -> IO(Result<&1,&1,U32 & String,String>):
+  DB.Sql.ensure_projection(db,C.schema())
+
+def written(+db: String, +id: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
-    case Done{unit}: DB.Sql.query(db,"UPDATE native_requests SET written=1 WHERE id=" ++ C.q(id) ++ ";SELECT json_object('request'," ++ C.q(id) ++ ",'status','stdin-written');")
+    case Done{unit}: do IO<Result<&1,&1,U32 & String,String>>:
+      ready : String <- IO.try(String,prepare_projection(db))
+      DB.Sql.query(db,"UPDATE native_requests SET written=1 WHERE id=" ++ C.q(id) ++ ";SELECT json_object('request'," ++ C.q(id) ++ ",'status','stdin-written');")
 
 def send(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
@@ -56,33 +64,36 @@ def fork_saved(db: String, id: String, tasks: List<Chan(Result<&1,&1,U32 & Strin
       IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)>,task <> tasks)
 
 # A failed transaction cannot publish a parent wake or send a stored answer.
-def saved(db: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,String>) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
+def saved(db: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,String>) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool):
   match result:
-    case Fail{(code,text)}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,U32.show(code) ++ ": " ++ text))
-    case Done{+id}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
+    case Fail{(code,text)}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,(U32.show(code) ++ ": " ++ text,True{})))
+    case Done{+id}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
       next : List<Chan(Result<&1,&1,U32 & String,String>)> <- fork_saved(db,Tx.trim_nl(id),tasks,String.is_empty(id))
-      IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(next,""))
+      IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(next,("",False{})))
 
-def record(+db: String, player: String, turn: String, attempt: String, event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, parent: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
+def record(+db: String, player: String, turn: String, attempt: String, event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, parent: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool):
   match parent:
-    case False{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
+    case False{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
       shown : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output("Native OMP UI request is unsupported for a session without a registered parent; its full frame remains in the native log.\n")
-      IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,"Native OMP UI request has no registered parent; interaction requires a registered parent."))
-    case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
+      IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,("Native OMP UI request has no registered parent; interaction requires a registered parent.",False{})))
+    case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
+      ready : String <- IO.try(String,prepare_projection(db))
       result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ request_sql(player,turn,attempt,event) ++ "COMMIT;")
       saved(db,tasks,result)
 
-def observe(+db: String, +player: String, turn: String, attempt: String, +event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, enabled: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
+def observe(+db: String, +player: String, turn: String, attempt: String, +event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, enabled: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool):
   match enabled:
-    case False{}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,""))
-    case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
+    case False{}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,("",False{})))
+    case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
       parent : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN parent IS NULL AND json_extract(" ++ C.q(event) ++ ",'$.method') IN ('input','select','confirm','editor') THEN 0 ELSE 1 END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
       record(db,player,turn,attempt,event,tasks,String.eq(parent,"1\n"))
 
-def closed(db: String, attempt: String, enabled: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def closed(+db: String, attempt: String, enabled: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match enabled:
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
-    case True{}: DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ "UPDATE native_requests SET closed=coalesce(closed,'native-exited') WHERE attempt=" ++ C.q(attempt) ++ ";COMMIT;")
+    case True{}: do IO<Result<&1,&1,U32 & String,String>>:
+      ready : String <- IO.try(String,prepare_projection(db))
+      DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ "UPDATE native_requests SET closed=coalesce(closed,'native-exited') WHERE attempt=" ++ C.q(attempt) ++ ";COMMIT;")
 
 def combine(first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,Unit>:
   match first:
@@ -118,6 +129,7 @@ def reply_result(db: String, id: String, accepted: Bool, already: Bool) -> IO(Re
 
 def reply(+db: String, +parent: String, +id: String, +response: String) -> IO(Unit):
   do IO<Unit>:
+    ready : String <- IO.try(String,prepare_projection(db))
     accepted : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ schema() ++ response_sql(parent,id,response) ++ "SELECT changes();COMMIT;"))
     written : String <- IO.try(String,DB.Sql.query(db,"SELECT written FROM native_requests WHERE id=" ++ C.q(id) ++ ";"))
     result : String <- IO.try(String,reply_result(db,id,String.eq(accepted,"1\n"),String.eq(written,"1\n")))

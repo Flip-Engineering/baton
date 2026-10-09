@@ -3,7 +3,7 @@ import ./native-requests.bend as Requests
 import ../host/process.bend as P
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ../host/text.bend as Text
 
 law parentless_request_preserves_its_error_after_control_output:
@@ -13,9 +13,9 @@ law parentless_request_preserves_its_error_after_control_output:
   for attempt: String
   for event: String
   for -tasks: List<Chan(Result<&1,&1,U32 & String,String>)>
-  {Requests.record(db,player,turn,attempt,event,tasks,False{}) == (do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
+  {Requests.record(db,player,turn,attempt,event,tasks,False{}) == (do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
     shown : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output("Native OMP UI request is unsupported for a session without a registered parent; its full frame remains in the native log.\n")
-    IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,"Native OMP UI request has no registered parent; interaction requires a registered parent."))) : IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String)}
+    IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,("Native OMP UI request has no registered parent; interaction requires a registered parent.",False{})))) : IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool)}
 
 def parentless_request_preserves_its_error_after_control_output(db,player,turn,attempt,event,tasks):
   {==}
@@ -43,7 +43,7 @@ law native_question_failed_record_cannot_wake:
   for +code: U32
   for +text: String
   for -tasks: List<Chan(Result<&1,&1,U32 & String,String>)>
-  {Requests.saved(db,tasks,Fail{(code,text)}) == IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,U32.show(code) ++ ": " ++ text)) : IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String)}
+  {Requests.saved(db,tasks,Fail{(code,text)}) == IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,(U32.show(code) ++ ": " ++ text,True{}))) : IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool)}
 
 def native_question_failed_record_cannot_wake(db,code,text,tasks):
   {==}
@@ -78,6 +78,7 @@ def native_reply_failed_write_has_no_success_marker(db,id,code,text):
 
 def admitted_reply(+db: String, +parent: String, +id: String, +response: String) -> IO(Unit):
   do IO<Unit>:
+    ready : String <- IO.try(String,Requests.prepare_projection(db))
     accepted : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ Requests.schema() ++ Requests.response_sql(parent,id,response) ++ "SELECT changes();COMMIT;"))
     written : String <- IO.try(String,DB.Sql.query(db,"SELECT written FROM native_requests WHERE id=" ++ C.q(id) ++ ";"))
     result : String <- IO.try(String,Requests.reply_result(db,id,String.eq(accepted,"1\n"),String.eq(written,"1\n")))

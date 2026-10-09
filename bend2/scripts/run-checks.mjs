@@ -31,7 +31,7 @@ function resolveBend() {
 
 const BEND = resolveBend();
 
-const version = execFileSync(BEND, ['version'], { env: ENV, cwd: ROOT, encoding: 'utf8' }).trim();
+const version = execFileSync(BEND, ['version'], { env: ENV, cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity }).trim();
 if (version !== 'bend 2.0.25') {
   console.error(`expected bend 2.0.25, got: ${version}`);
   process.exit(1);
@@ -55,7 +55,7 @@ function moduleName(path) {
 }
 
 function run(args, opts = {}) {
-  return execFileSync(BEND, args, { env: ENV, cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts });
+  return execFileSync(BEND, args, { env: ENV, cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity, ...opts });
 }
 
 const modules = discoverModules(SRC);
@@ -119,7 +119,7 @@ for (const mod of modules) {
   let nativeOut;
   try {
     run([mod, '-o', binaryPath]);
-    nativeOut = execFileSync(binaryPath, [], { env: ENV, cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    nativeOut = execFileSync(binaryPath, [], { env: ENV, cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity });
     totalRuns++;
     if (nativeOut === expected) {
       result.native = 'pass';

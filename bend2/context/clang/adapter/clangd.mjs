@@ -1,7 +1,7 @@
 // clangd protocol adapter (one-shot). Installed argv:
 //   <absolute node> <package>/libexec/baton2/context/clang/adapter/clangd.mjs -
 // Commands over the single stdin document:
-//   providerEngines: fixed executable probe (realpath, version, sha256).
+//   providerEngines: executable probe and version.
 //   diagnose: one managed-free one-shot language service capture. Completion
 //     of the diagnostics projection requires textDocument/publishDiagnostics
 //     for the exact URI carrying the exact recorded integer version; an
@@ -12,13 +12,13 @@
 //     structured protocol errors are their own failure evidence.
 // Floor: Node 22.15.0.
 import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import {
   parseJsonBytes,
   readStdinBytes,
   realPath,
   refuse,
   runProcess,
-  sha256File,
   writeJsonDoc,
 } from './common.mjs';
 import { LspConnection } from './lsp.mjs';
@@ -32,19 +32,6 @@ const PROJECTIONS = [
   'dependencies',
   'diagnostics',
 ];
-
-function refusedFlag(args) {
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '-plugin' || args[i] === '-load') return true;
-    if (
-      args[i] === '-Xclang' &&
-      (args[i + 1] === '-plugin' || args[i + 1] === '-load')
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
 
 async function providerEngines(doc) {
   const exe = doc.executable;
@@ -62,7 +49,6 @@ async function providerEngines(doc) {
           provider: 'clangd',
           version: null,
           executable: exe,
-          sha256: null,
           linkedIdentity: null,
           projections: PROJECTIONS,
           effects: [],
@@ -85,7 +71,6 @@ async function providerEngines(doc) {
         provider: 'clangd',
         version: available ? match[1] : null,
         executable: real,
-        sha256: available ? sha256File(real) : null,
         linkedIdentity: available ? { versionOutput: text.trim() } : null,
         projections: PROJECTIONS,
         effects: [],
@@ -103,46 +88,14 @@ async function providerEngines(doc) {
 //   docVersion:<integer>, languageId:<string>, text:<captured bytes string>,
 //   compileArguments:[...], methods:[{method, params}]
 async function diagnose(doc) {
-  for (const key of [
-    'version',
-    'command',
-    'executable',
-    'root',
-    'file',
-    'uriFile',
-    'docVersion',
-    'languageId',
-    'text',
-    'compileArguments',
-    'methods',
-  ]) {
-    // every member must be one of these (closed check below)
-  }
-  const allowed = new Set([
-    'version',
-    'command',
-    'executable',
-    'root',
-    'file',
-    'uriFile',
-    'docVersion',
-    'languageId',
-    'text',
-    'compileArguments',
-    'methods',
-  ]);
-  for (const key of Object.keys(doc)) {
-    if (!allowed.has(key)) refuse('diagnose', `unknownMember:${key}`);
-  }
   if (doc.version !== 1) refuse('diagnose', 'versionMustEqual1');
   if (!Number.isInteger(doc.docVersion)) refuse('diagnose', 'docVersionMustBeInteger');
   if (!Array.isArray(doc.methods)) refuse('diagnose', 'methodsMustBeArray');
   if (!Array.isArray(doc.compileArguments)) refuse('diagnose', 'compileArgumentsMustBeArray');
-  if (refusedFlag(doc.compileArguments)) refuse('diagnose', 'unsupportedCompilerFlag');
   const real = realPath(doc.executable);
   if (!real) refuse('diagnose', 'executableMissing');
 
-  const uriOf = (p) => 'file://' + p;
+  const uriOf = (p) => pathToFileURL(p).href;
   const targetUri = uriOf(doc.uriFile);
 
   const child = spawn(real, [
@@ -160,6 +113,7 @@ async function diagnose(doc) {
   let serverInfo = null;
   let failure = null;
   let publicationMatched = false;
+  let initialized = false;
 
   function baseHandler(msg) {
     if (msg.method === 'textDocument/publishDiagnostics') {
@@ -225,6 +179,7 @@ async function diagnose(doc) {
       failure = {
         code: 'providerExit',
         detail: `exit ${lsp.exit?.code ?? 'null'} signal ${lsp.exit?.signal ?? 'null'}`,
+        stderr: lsp.stderrText(),
       };
       break;
     }
@@ -244,6 +199,38 @@ async function diagnose(doc) {
     }
     if (failure) break;
     await lsp.nextEvent();
+  }
+
+  const prepareIndex = doc.methods.findIndex((method) => method.method === 'textDocument/prepareCallHierarchy');
+  const prepared = prepareIndex >= 0 ? responses.get(requestedIds[prepareIndex])?.result : null;
+  const callItems = Array.isArray(prepared) ? prepared : [];
+  const callRequests = [];
+  for (const item of callItems) {
+    for (const followup of doc.methods[prepareIndex]?.followups ?? []) {
+      const method = followup === 'outgoingCalls' ? 'callHierarchy/outgoingCalls' : 'callHierarchy/incomingCalls';
+      const id = lsp.send(method, { item });
+      callRequests.push({ item, followup, id });
+    }
+  }
+  while (callRequests.some(({ id }) => !responses.has(id))) {
+    if (lsp.closed) {
+      failure = { code: 'providerExit',
+        detail: `exit ${lsp.exit?.code ?? 'null'} signal ${lsp.exit?.signal ?? 'null'}`,
+        stderr: lsp.stderrText() };
+      break;
+    }
+    for (const { id } of callRequests) {
+      const response = responses.get(id);
+      if (response?.error) failure = { code: 'protocolError', detail: `${response.error.code}: ${response.error.message ?? ''}` };
+    }
+    if (failure) break;
+    await lsp.nextEvent();
+  }
+  for (const { id } of callRequests) {
+    const response = responses.get(id);
+    if (response?.error) failure = { code: 'protocolError',
+      detail: `${response.error.code}: ${response.error.message ?? ''}`,
+      stderr: lsp.stderrText() };
   }
 
   // Map responses back onto the requested methods in order.
@@ -270,8 +257,14 @@ async function diagnose(doc) {
       publications,
     },
     responses: outResponses,
+    callHierarchy: callRequests.map(({ item, followup, id }) => ({
+      direction: followup,
+      name: item.name,
+      response: responses.get(id)?.result ?? null,
+      error: responses.get(id)?.error ?? null,
+    })),
     failure,
-    executable: { path: real, sha256: sha256File(real) },
+    executable: { path: real },
     limits: publicationMatched
       ? []
       : [

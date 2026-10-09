@@ -100,15 +100,16 @@ function systemPrompt(session) {
     `  ${command} section ENSEMBLE SECTION [OWNER CAPABILITY] — inspect or declare a capability subgroup`,
     `  ${command} section-member ENSEMBLE SECTION OWNER PLAYER add|remove — configure Section members`,
     `  ${command} orchestra — inspect the coordinated system`,
-    `  ${command} land PLAYER REPO TARGET — fast-forward land a player's branch`,
-    `  ${command} land-checked PLAYER REPO TARGET CHECK FILES — gated landing`,
+    `  ${command} land PLAYER REPO TARGET [--commit COMMIT] — fast-forward land a player's branch`,
+    `  ${command} land-checked PLAYER REPO TARGET CHECK FILES [--commit COMMIT] — gated landing`,
     `  ${command} push REPO BRANCH REMOTE — push a branch to a remote after landing`,
     `  ${command} worktree PLAYER — show a player's Git state`,
-    `  ${command} record FINDING_ID ${recipient} CLAIM message:MESSAGE_ID LIMITS — record your finding`,
+    `  ${command} record FINDING_ID ${recipient} CLAIM EVIDENCE LIMITS — record your finding`,
     `  ${command} knowledge ${recipient} — list all findings visible to you with evidence and promotion history`,
     `  ${command} promote PROMOTION_ID ${recipient} SOURCE ${recipient} FINDING_ID — promote from SOURCE into your scope`,
     '',
-    'Author findings from reviewed evidence. Cite an existing retained message you sent or received and state the claim\'s limits.',
+    'Landing defaults to the recorded branch tip; --commit selects a reviewed ancestor while later work remains on the branch.',
+    'Author findings from reviewed evidence. Cite the source of the finding and state the claim\'s limits. A message:MESSAGE_ID reference includes the retained message body.',
     'Review a finding before explicitly promoting it from its recorded source scope. Its original author remains recorded.',
     'A promotion notice names a finding shared into your scope. Retrieve it with knowledge, review its evidence and decide which players should receive a message about it.',
     'When you receive a player report, review it and acknowledge it.',
@@ -207,7 +208,7 @@ function runOmpTurn(prompt, sessionDir, session) {
       process.stderr.write(`omp-conductor: ${event.type}\n`);
       const native = event.type === 'session' ? event.id : null;
       if (native) {
-        execFileSync(COORD, [DB, 'bind', sessionId, native, 'omp', '', '']);
+        execFileSync(COORD, [DB, 'bind', sessionId, native, 'omp', '', ''], { maxBuffer: Infinity });
       }
     });
 

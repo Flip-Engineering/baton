@@ -1,13 +1,12 @@
 // Shared adapter helpers for the Baton2 clang providers. Package-relative:
 // no ambient resolution, no CWD dependence. The extractor resolves from this
-// module's URL exactly three levels up plus context-clang-20.
+// module's URL one level up plus context-clang-20.
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export function resolveExtractorUrl() {
-  return new URL('../../../context-clang-20', import.meta.url);
+  return new URL('../runtime/context-clang-20', import.meta.url);
 }
 
 export function resolveExtractorPath() {
@@ -56,16 +55,11 @@ export function refuse(command, condition) {
   process.exit(2);
 }
 
-export function sha256File(path) {
-  const h = createHash('sha256');
-  h.update(readFileSync(path));
-  return h.digest('hex');
-}
-
-export function runProcess(argv, { input } = {}) {
+export function runProcess(argv, { input, env = process.env } = {}) {
   return new Promise((resolvePromise) => {
     const child = spawn(argv[0], argv.slice(1), {
       stdio: ['pipe', 'pipe', 'pipe'],
+      env,
     });
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);

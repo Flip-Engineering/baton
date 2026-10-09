@@ -39,7 +39,7 @@
 # The scratch worktrees one attempt prepares, the candidate and the target tree
 # named by appending "-target", are removed when the landing answers landed or
 # already. A refused or conflicted attempt keeps them for the requester, and
-# that worker's next attempt drops them.
+# later attempts leave those retained trees available to the requester.
 
 import Base
 import ./types.bend as T
@@ -69,10 +69,13 @@ def wt_path_go(line: String, label: String) -> String:
 def wt_path(line: String) -> String:
   wt_path_go(line, "worktree ")
 
+# The symbolic ref a worktree must hold for the target branch.
+def ld_hold_ref(target: String) -> String:
+  Tx.str_cat("refs/heads/", target)
+
 # The branch line a worktree report carries when it holds the target.
 def ld_hold_branch(target: String) -> String:
-  Tx.str_cat("branch refs/heads/", target)
-
+  Tx.str_cat("branch ", ld_hold_ref(target))
 # The holder's block in a `git worktree list --porcelain` report: each block is
 # one "worktree <path>" line and the state lines that follow it, and the block
 # whose branch line names the target branch is the worktree that holds it. The
@@ -133,9 +136,17 @@ def ld_hold_read(g: T.GitOut, target: String) -> LdHold:
         HoldBlocked{"the worktree listing could not be read"})
     case T.GBroken{detail}: HoldBlocked{detail}
 
-# The target commit as the read names it.
+# The target commit lookup used by the existing unheld compare-and-swap path.
 def ld_tip_argv(target: String) -> List<String>:
   ["rev-parse", "--verify", Tx.str_cat(target, "^{commit}")]
+
+# The exact local target branch commit used to validate a held worktree.
+def ld_target_ref_argv(target: String) -> List<String>:
+  ["rev-parse", "--verify", Tx.str_cat(ld_hold_ref(target), "^{commit}")]
+
+# The attached branch name of a worktree, or a nonzero result when detached.
+def ld_head_argv() -> List<String>:
+  ["symbolic-ref", "--quiet", "HEAD"]
 
 # The update-ref argv: the target ref, the candidate and the basis it advanced
 # from, so the branch moves only while it still reads as that basis.
@@ -147,6 +158,7 @@ type LAdv is Data:
   AdvLanded{}
   AdvMoved{}
   AdvHeld{path: String}
+  AdvHolderChanged{path: String}
   AdvRefused{}
   AdvBroken{detail: String}
 
@@ -186,19 +198,121 @@ def ld_adv_wt_refused(path: String, repo: String, target: String, basis: String)
   +r2 = repo
   +b2 = basis
   do IO<LAdv>:
-    g : T.GitOut <- Git.runGit(r2, ld_tip_argv(target))
+    g : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(target))
     IO.pure(LAdv, ld_adv_refused_pick(g, p2, b2))
 
-# The fast-forward through the worktree that holds the target. Git moves the
-# branch, the index and the files together in one two-way update, and it keeps
-# the worktree's uncommitted changes wherever they do not overlap the advance.
-def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, basis: String) -> IO(LAdv):
+# A successful held merge is observed at the local target ref and at the
+# worktree's current symbolic HEAD before it can answer landed. The preflight
+# checks both again after worktree discovery, so an already-visible branch
+# change does not reuse a stale holder path. Git provides no atomic CLI
+# operation that pins symbolic HEAD across the final identity check and merge.
+# A switch in that interval can still direct Git's merge to another branch;
+# post-operation reads refuse a landed answer if the holder or target changed,
+# but they cannot roll back that concurrent side effect.
+def ld_adv_wt_observed(target_matches: Bool, holder_matches: Bool, path: String) -> LAdv:
+  match target_matches:
+    case False{}: AdvMoved{}
+    case True{}:
+      match holder_matches:
+        case True{}: AdvLanded{}
+        case False{}: AdvHolderChanged{path}
+
+def ld_adv_wt_observed_holder_pick(g: T.GitOut, path: String, target: String) -> IO(LAdv):
   match g:
     case T.GRun{code, out}:
-      Bool.pick(IO(LAdv), U32.is_eq(code, 0),
-        IO.pure(LAdv, AdvLanded{}),
-        ld_adv_wt_refused(path, repo, target, basis))
+      +status_ok = U32.is_eq(code, 0)
+      +same = Bool.pick(Bool, status_ok,
+        Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)), False{})
+      IO.pure(LAdv, ld_adv_wt_observed(True{}, same, path))
     case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
+
+def ld_adv_wt_observed_target_same(same: Bool, path: String, target: String) -> IO(LAdv):
+  match same:
+    case False{}: IO.pure(LAdv, AdvMoved{})
+    case True{}:
+      +p2 = path
+      +t2 = target
+      do IO<LAdv>:
+        holder : T.GitOut <- Git.runGit(p2, ld_head_argv())
+        ld_adv_wt_observed_holder_pick(holder, p2, t2)
+
+def ld_adv_wt_observed_target_pick(g: T.GitOut, path: String, target: String, cand: String) -> IO(LAdv):
+  match g:
+    case T.GRun{code, out}:
+      +status_ok = U32.is_eq(code, 0)
+      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})
+      ld_adv_wt_observed_target_same(same, path, target)
+    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
+
+# Read the exact target ref after the held fast-forward and require its tip to
+# remain the source candidate before checking which branch the holder has now.
+def ld_adv_wt_observe(path: String, repo: String, target: String, cand: String) -> IO(LAdv):
+  +p2 = path
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  do IO<LAdv>:
+    target_tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
+    ld_adv_wt_observed_target_pick(target_tip, p2, t2, c2)
+
+def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+  match g:
+    case T.GRun{code, out}:
+      +p2 = path
+      +r2 = repo
+      +t2 = target
+      +c2 = cand
+      +b2 = basis
+      Bool.pick(IO(LAdv), U32.is_eq(code, 0),
+        ld_adv_wt_observe(p2, r2, t2, c2),
+        ld_adv_wt_refused(p2, r2, t2, b2))
+    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
+
+def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+  match same:
+    case False{}: IO.pure(LAdv, AdvHolderChanged{path})
+    case True{}:
+      +p2 = path
+      +r2 = repo
+      +t2 = target
+      +c2 = cand
+      +b2 = basis
+      do IO<LAdv>:
+        merged : T.GitOut <- Git.runGit(p2, ["merge", "--ff-only", c2])
+        ld_adv_wt_pick(merged, p2, r2, t2, c2, b2)
+
+def ld_adv_wt_head_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+  match g:
+    case T.GRun{code, out}:
+      +t2 = target
+      +status_ok = U32.is_eq(code, 0)
+      +same = Bool.pick(Bool, status_ok,
+        Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(t2)), False{})
+      ld_adv_wt_head_same(same, path, repo, t2, cand, basis)
+    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
+
+def ld_adv_wt_target_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+  match same:
+    case False{}: IO.pure(LAdv, AdvMoved{})
+    case True{}:
+      +p2 = path
+      +r2 = repo
+      +t2 = target
+      +c2 = cand
+      +b2 = basis
+      do IO<LAdv>:
+        holder : T.GitOut <- Git.runGit(p2, ld_head_argv())
+        ld_adv_wt_head_pick(holder, p2, r2, t2, c2, b2)
+
+def ld_adv_wt_target_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+  match g:
+    case T.GRun{code, out}:
+      +b2 = basis
+      +status_ok = U32.is_eq(code, 0)
+      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), b2), False{})
+      ld_adv_wt_target_same(same, path, repo, target, cand, b2)
+    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
+
 
 def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
   +p2 = path
@@ -207,15 +321,17 @@ def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: S
   +c2 = cand
   +b2 = basis
   do IO<LAdv>:
-    g : T.GitOut <- Git.runGit(p2, ["merge", "--ff-only", c2])
-    ld_adv_wt_pick(g, p2, r2, t2, b2)
-
+    target_tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
+    ld_adv_wt_target_pick(target_tip, p2, r2, t2, c2, b2)
 # The advance of a target no worktree holds, and of one a worktree holds.
 def ld_adv_holder(hold: LdHold, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
   match hold:
     case HoldNone{}: ld_adv_cas_run(repo, target, cand, basis)
     case HoldPath{path}: ld_adv_wt(path, repo, target, cand, basis)
     case HoldBlocked{detail}: IO.pure(LAdv, AdvBroken{detail})
+
+def ld_adv_holder_changed_text(target: String, path: String) -> String:
+  "the worktree at " ++ path ++ " changed away from target branch " ++ target ++ " during landing; inspect the target and worktree before retrying"
 
 # The holder is read only for a target that still reads as the basis, so a
 # moved target answers the movement before any worktree is touched.
@@ -367,6 +483,7 @@ def ff_adv_answer(a: LAdv, wc: String, target: String) -> FFLD:
     case AdvMoved{}: FFDone{T.LBlocked{"target moved during landing; retry"}}
     case AdvRefused{}: FFDone{T.LBlocked{"target moved during landing; retry"}}
     case AdvHeld{path}: FFDone{T.LBlocked{ld_adv_held_text(target, path) ++ "rerun land"}}
+    case AdvHolderChanged{path}: FFDone{T.LBlocked{ld_adv_holder_changed_text(target, path)}}
     case AdvBroken{detail}: FFDone{T.LBlocked{detail}}
 
 def ff_stage5(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
@@ -389,6 +506,18 @@ def land_fast_forward(repo: String, workerBranch: String, target: String) -> IO(
   do IO<T.LandOutcome>:
     r1 : FFLD <- ff_stage1(rp, workerBranch)
     r2 : FFLD <- ff_go2(r1, rp, tg)
+    r3 : FFLD <- ff_go3(r2, rp, tg)
+    r4 : FFLD <- ff_go4(r3, rp, tg)
+    r5 : FFLD <- ff_go5(r4, rp, tg)
+    ff_answer(r5)
+
+# Lands a resolved commit through the target checks and compare-and-swap update.
+def land_fast_forward_at(repo: String, +workerCommit: String, target: String) -> IO(T.LandOutcome):
+  +rp = repo
+  +tg = target
+  +wc = workerCommit
+  do IO<T.LandOutcome>:
+    r2 : FFLD <- ff_go2(FFNext{wc, ""}, rp, tg)
     r3 : FFLD <- ff_go3(r2, rp, tg)
     r4 : FFLD <- ff_go4(r3, rp, tg)
     r5 : FFLD <- ff_go5(r4, rp, tg)
@@ -644,6 +773,7 @@ def ld_adv_answer(a: LAdv, target: String, cand: String) -> Ld:
     case AdvLanded{}: LdDone{T.LLanded{target, cand}}
     case AdvMoved{}: LdDone{T.LBlocked{"target moved during checked landing; rerun land-checked to prepare and check against the current target"}}
     case AdvHeld{path}: LdDone{T.LBlocked{ld_adv_held_text(target, path) ++ "rerun land-checked to prepare and check against the current target"}}
+    case AdvHolderChanged{path}: LdDone{T.LBlocked{ld_adv_holder_changed_text(target, path)}}
     case AdvRefused{}: LdFail{T.FCmd{"land", "git update-ref failed; inspect the target and rerun land-checked to prepare and check a new candidate"}}
     case AdvBroken{detail}: LdFail{T.FCmd{"land", detail}}
 
@@ -968,11 +1098,7 @@ def settle_paths(scratch: String) -> List<String>:
 
 def drop_list(repo: String, dirs: List<String>) -> IO(Unit):
   match dirs:
-    case Nil{}:
-      +r2 = repo
-      do IO<Unit>:
-        _p : T.GitOut <- Git.runGit(r2, ["worktree", "prune"])
-        IO.pure(Unit, Unit{})
+    case Nil{}: IO.pure(Unit, Unit{})
     case Con{d, rest}:
       +r2 = repo
       do IO<Unit>:
@@ -985,49 +1111,13 @@ def drop_scratch(repo: String, scratch: String) -> IO(Unit):
   +s2 = scratch
   drop_list(r2, settle_paths(s2))
 
-# One worktree-list line: a registered tree under the worker's prefix belongs
-# to an earlier attempt the worker has now replaced.
-def sweep_one(prefix: String, repo: String, line: String) -> IO(Unit):
-  +p2 = prefix
-  +r2 = repo
-  +path = wt_path(line)
-  Bool.pick(IO(Unit), Tx.starts_with(path, p2), scratch_remove1(r2, path), IO.pure(Unit, Unit{}))
-
-def sweep_lines(prefix: String, repo: String, lines: List<String>) -> IO(Unit):
-  match lines:
-    case Nil{}: IO.pure(Unit, Unit{})
-    case Con{h, rest}:
-      +p2 = prefix
-      +r2 = repo
-      do IO<Unit>:
-        _s : Unit <- sweep_one(p2, r2, h)
-        sweep_lines(p2, r2, rest)
-
-def sweep_out(g: T.GitOut, prefix: String, repo: String) -> IO(Unit):
-  match g:
-    case T.GRun{code, out}: sweep_lines(prefix, repo, Tx.split_lines(out))
-    case T.GBroken{detail}: IO.pure(Unit, Unit{})
-
-# The trees a refused or conflicted attempt of this worker kept: a landed
-# attempt's are already gone, so every registered tree under PREFIX is one the
-# worker's next attempt supersedes.
-def sweep_scratch(repo: String, prefix: String) -> IO(Unit):
-  +r2 = repo
-  +p2 = prefix
-  do IO<Unit>:
-    gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
-    sweep_out(gl, p2, r2)
-
-# The scratch path one attempt prepares: the trees the worker's earlier attempt
-# kept are dropped first, so a refused or conflicted attempt's trees live only
-# until the worker tries again.
+# Each attempt gets a distinct scratch path. Refused and conflicted attempts
+# keep their worktrees when later attempts start.
 def open_scratch(repo: String, worker: String, ts: String) -> IO(String):
   +r2 = repo
   +w2 = worker
   +p2 = scratch_prefix(r2, w2)
-  do IO<String>:
-    _sweep : Unit <- sweep_scratch(r2, p2)
-    IO.pure(String, Tx.str_cat(p2, ts))
+  IO.pure(String, Tx.str_cat(p2, ts))
 
 # The landing's own trees settle with its answer: a landed or already-merged
 # attempt needs them no longer, and a refused, conflicted or failed attempt

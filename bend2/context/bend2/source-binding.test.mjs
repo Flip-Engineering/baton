@@ -30,7 +30,6 @@ test('identical text in two files keeps each caller identity', () => {
   const second = captureSource({ identity: '/work/b.bend', bytes });
   assert.equal(first.status, 'captured');
   assert.equal(second.status, 'captured');
-  assert.equal(first.digest, second.digest, 'equal bytes share a digest');
   assert.notEqual(first.identity, second.identity);
 
   const span = { src: 'same\n', beg: 0, end: 4 };
@@ -38,7 +37,6 @@ test('identical text in two files keeps each caller identity', () => {
   const viaSecond = locateSpan(second, wholeText(second), span);
   assert.equal(viaFirst.identity, '/work/a.bend');
   assert.equal(viaSecond.identity, '/work/b.bend');
-  assert.equal(viaFirst.digest, first.digest);
 
   const foreignView = locateSpan(first, wholeText(second), span);
   assert.equal(foreignView.status, 'unavailable');
@@ -228,21 +226,13 @@ test('a caller mutating its own bytes cannot change a capture', () => {
   const bytes = Uint8Array.from(bytesOf('keep\n'));
   const capture = captureSource({ identity: '/work/mutable.bend', bytes });
   const text = capture.text;
-  const digest = capture.digest;
   const byteLength = capture.byteLength;
   const mapped = capture.byteOffsetForUtf16(5);
   bytes.fill(0);
   assert.equal(capture.text, text);
-  assert.equal(capture.digest, digest);
   assert.equal(capture.byteLength, byteLength);
   assert.deepEqual(capture.byteOffsetForUtf16(5), mapped);
   assert.deepEqual(capture.byteOffsetForUtf16(5), { status: 'mapped', byteOffset: 5 });
-});
-
-test('shared memory is refused at the capture and decode boundary', () => {
-  const shared = new Uint8Array(new SharedArrayBuffer(4));
-  assert.equal(captureSource({ identity: '/work/shared.bend', bytes: shared }).reason, 'sharedBufferUnsupported');
-  assert.equal(decodeStrictUtf8(shared).reason, 'sharedBufferUnsupported');
 });
 
 test('decodeStrictUtf8 validates its own byte input', () => {

@@ -323,14 +323,14 @@ def run_res_fields(fs: List<String>, rest: String) -> T.RunRes:
 def run_res_line(line: String, rest: String) -> T.RunRes:
   run_res_fields(split_spaces(line), rest)
 
-def run_res_lines(ls: List<String>, out: String) -> T.RunRes:
-  match ls:
-    case Nil{}: T.RSpawn{"process answered nothing"}
-    case Con{first, rest}: run_res_line(first, join("\n", rest))
-
-def run_res_done(out: String) -> T.RunRes:
-  +out2 = out
-  run_res_lines(split_lines(out2), out2)
+# Read only through the first newline and preserve the remaining output.
+def run_res_scan(out: String, +line: String) -> T.RunRes:
+  match out:
+    case SNil{}: T.RSpawn{"process answered no status line"}
+    case SCon{+c, +rest}:
+      Bool.pick(Unit -> T.RunRes, is_nl(c),
+        u => run_res_line(str_rev(line), rest),
+        u => run_res_scan(rest, SCon{c, line}))(Unit{})
 
 # A run answer "exit 3\nrest" or "signal 9\nrest": the status and the output
 # that followed the status line.
@@ -339,4 +339,4 @@ def run_res(r: Result<&1, &1, U32 & String, String>) -> T.RunRes:
     case Fail{error}:
       (code, text) = error
       T.RSpawn{text}
-    case Done{value}: run_res_done(value)
+    case Done{value}: run_res_scan(value, SNil{})
