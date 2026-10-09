@@ -2,6 +2,10 @@
 import { realpathSync } from 'node:fs';
 import { runQuery } from './lib/query.mjs';
 import { resolveTypeScript } from './lib/resolve.mjs';
+import { suppliedCaptures } from './lib/supplied.mjs';
+// The producer side is exported beside the consumer: a context caller invokes captureInputs before the
+// plan freezes, and executeInvocation consumes what the plan carries.
+export { captureInputs } from './lib/produce.mjs';
 
 const RESULT_SCHEMA = 'baton2.context.typescript.source-analysis.result.v1';
 
@@ -34,15 +38,22 @@ function analysisRequest(request) {
   };
 }
 
-export async function executeInvocation(invocation) {
+export async function executeInvocation(invocation, options = {}) {
   try {
-    const resolved = resolveTypeScript();
+    // The plan may already carry this step's captured inputs. When it does, those accepted bytes are
+    // what the analysis consumes; when it does not, the ordinary filesystem path runs unchanged.
+    const supplied = suppliedCaptures(invocation);
+    if (supplied.status === 'refused') {
+      return eventFrame(invocation, { status: 'unavailable', engine: 'typescript',
+        reason: supplied.reason, detail: supplied.detail ?? null });
+    }
+    const resolved = resolveTypeScript({ compilerPath: options.compilerPath ?? null });
     if (!resolved.ok) {
       return eventFrame(invocation, { status: 'unavailable', engine: 'typescript',
         reason: resolved.reason, detail: resolved.detail });
     }
     const result = runQuery({ resolved, request: analysisRequest(invocation.request),
-      queryId: invocation.query });
+      queryId: invocation.query, supplied: supplied.status === 'none' ? null : supplied.entries });
     return eventFrame(invocation, { status: 'completed', ...result });
   } catch (error) {
     return eventFrame(invocation, { status: 'unavailable', engine: 'typescript',

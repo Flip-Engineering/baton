@@ -41,12 +41,62 @@ function listingDigest(names) {
   return sha256Hex(Buffer.from([...names].sort().join('\n'), 'utf8'));
 }
 
-export function createCapture({ cwd, readRoots = [], providerRoots = [] }) {
+// A supplied set is either absent or present. `null` means no managed capture set, so the ordinary
+// filesystem path runs; an array means a managed set is present, and then a path outside it is refused
+// rather than read from the host, because the accepted bytes for this analysis are the supplied ones.
+// An empty array is a present set with no inputs, which is not the same as no set at all.
+export function createCapture({ cwd, readRoots = [], providerRoots = [], supplied = null }) {
   const restricted = readRoots.length > 0;
+  const managed = Array.isArray(supplied) || supplied === true;
+  const suppliedPaths = new Set();
   const admitted = restricted
     ? [...readRoots, ...providerRoots].map((root) => realpathSync(resolve(cwd, root)))
     : [];
   const entries = new Map();
+
+  // Entries the plan already captured are seeded before any read, so the provider consumes the
+  // accepted bytes and makes no filesystem call for them: a supplied file is served from its own
+  // bytes, a supplied absence is never probed, and no post-capture probe runs: the accepted bytes are
+  // the inputs this analysis consumed.
+  for (const entry of Array.isArray(supplied) ? supplied : []) {
+    if (entry === null || typeof entry !== 'object') continue;
+    if (typeof entry.path !== 'string' || entry.path.length === 0) continue;
+    if (entry.kind === 'absent') {
+      entries.set(entry.path, { kind: 'absent', path: entry.path, supplied: true });
+      suppliedPaths.add(entry.path);
+      continue;
+    }
+    // A directory answer is seeded with the membership its record carried, so a listing replays exactly
+    // the names the producing host recorded. A record without names describes existence only, and the
+    // listing then refuses rather than reporting an empty directory.
+    if (entry.kind === 'dir' || entry.kind === 'directory') {
+      entries.set(entry.path, {
+        kind: 'directory',
+        path: entry.path,
+        real: entry.path,
+        supplied: true,
+        membership: 'unavailable',
+        marker: typeof entry.marker === 'string' ? entry.marker : null,
+        names: Array.isArray(entry.names) ? Object.freeze([...entry.names]) : null,
+      });
+      suppliedPaths.add(entry.path);
+      suppliedPaths.add(resolve(entry.path));
+      continue;
+    }
+    if (!(entry.bytes instanceof Uint8Array)) continue;
+    entries.set(entry.path, {
+      kind: entry.kind === 'config' ? 'config' : 'file',
+      path: entry.path,
+      real: entry.path,
+      sha256: typeof entry.sha256 === 'string' ? entry.sha256 : sha256Hex(entry.bytes),
+      bytes: Buffer.from(entry.bytes),
+      supplied: true,
+    });
+    // A supplied input is known under the identity the plan recorded and under its resolved path, so a
+    // lexical difference between the two cannot look like an input that was never supplied.
+    suppliedPaths.add(entry.path);
+    suppliedPaths.add(resolve(entry.path));
+  }
 
   function admit(path) {
     let real;
@@ -74,6 +124,9 @@ export function createCapture({ cwd, readRoots = [], providerRoots = [] }) {
     const existing = entries.get(key);
     if (existing) {
       return existing.kind === 'file' || existing.kind === 'config' ? existing.bytes : undefined;
+    }
+    if (outsideSupplied(key)) {
+      throw new CaptureRefusal('context-input-outside-supplied-set', `${key} is not in the supplied capture set`);
     }
     const real = admit(key);
     if (real === null) return recordAbsent(key);
@@ -110,6 +163,9 @@ export function createCapture({ cwd, readRoots = [], providerRoots = [] }) {
 
   function fileExists(path) {
     if (entries.has(path)) return entries.get(path).kind === 'file' || entries.get(path).kind === 'config';
+    if (outsideSupplied(path)) {
+      throw new CaptureRefusal('context-input-outside-supplied-set', `${path} is not in the supplied capture set`);
+    }
     const real = admit(path);
     if (real === null) {
       recordAbsent(path);
@@ -133,6 +189,9 @@ export function createCapture({ cwd, readRoots = [], providerRoots = [] }) {
   function directoryExists(path) {
     const existing = entries.get(path);
     if (existing) return existing.kind === 'directory';
+    if (outsideSupplied(path)) {
+      throw new CaptureRefusal('context-input-outside-supplied-set', `${path} is not in the supplied capture set`);
+    }
     const real = admit(path);
     if (real === null) {
       recordAbsent(path);
@@ -155,7 +214,21 @@ export function createCapture({ cwd, readRoots = [], providerRoots = [] }) {
 
   function readDirectory(path) {
     const existing = entries.get(path);
-    if (existing && existing.kind === 'directory') return [...existing.names];
+    if (existing && existing.kind === 'directory') {
+      // A supplied directory answer covers existence, and its membership is derived from the supplied
+      // set: the producer captured every member it listed, so the children of this directory are
+      // exactly the supplied names directly under it. An empty result is served only when the record's
+      // own digest is the digest of an empty listing, so an uncaptured membership refuses instead of
+      // reporting a directory as empty.
+      if (existing.membership === 'unavailable') {
+        // The record carries the names the producing host recorded, and those are served exactly. Without
+        // them the answer is existence only, so a listing refuses rather than being inferred from
+        // captured descendants, which could silently omit a sibling the host never consulted.
+        if (Array.isArray(existing.names)) return [...existing.names];
+        throw new CaptureRefusal('context-input-membership-unavailable', `${path} membership was not captured`);
+      }
+      return [...existing.names];
+    }
     directoryExists(path);
     const recorded = entries.get(path);
     return recorded && recorded.kind === 'directory' ? [...recorded.names] : [];
@@ -180,56 +253,6 @@ export function createCapture({ cwd, readRoots = [], providerRoots = [] }) {
       });
   }
 
-  // Read-time revalidation: re-probe the recorded closure and report every input that no longer
-  // matches. A probe that raises yields a failed descriptor, which never counts as unchanged.
-  function revalidate() {
-    const changed = [];
-    const failed = [];
-    for (const entry of [...entries.values()]) {
-      if (entry.fileLookup === true) continue;
-      let real = null;
-      try {
-        real = realpathSync(entry.path);
-      } catch {
-        real = null;
-      }
-      if (entry.kind === 'absent') {
-        if (real === null) continue;
-        // A recorded missing directory appearing, or a recorded missing file appearing, both
-        // change the resolution closure; a directory that is still absent stays unchanged.
-        if (entry.directoryLookup === true) {
-          let nowDirectory = false;
-          try {
-            nowDirectory = statSync(real).isDirectory();
-          } catch {
-            nowDirectory = false;
-          }
-          if (nowDirectory) changed.push({ path: entry.path, reason: 'directoryAppeared' });
-          continue;
-        }
-        changed.push({ path: entry.path, reason: 'appeared' });
-        continue;
-      }
-      if (real === null) {
-        changed.push({ path: entry.path, reason: 'missing' });
-        continue;
-      }
-      try {
-        if (entry.kind === 'directory') {
-          const digest = listingDigest(readdirSync(real));
-          if (digest !== entry.sha256) changed.push({ path: entry.path, reason: 'membershipChanged' });
-          continue;
-        }
-        const digest = sha256Hex(readFileSync(real));
-        if (digest !== entry.sha256) changed.push({ path: entry.path, reason: 'bytesChanged' });
-        if (entry.real !== real) changed.push({ path: entry.path, reason: 'resolutionChanged' });
-      } catch (error) {
-        failed.push({ path: entry.path, reason: String(error && error.message) });
-      }
-    }
-    return { changed, failed };
-  }
-
   // The recorded digest of a file, reading and recording it when the compiler asks first.
   function digest(path) {
     const bytes = readBytes(path);
@@ -238,17 +261,36 @@ export function createCapture({ cwd, readRoots = [], providerRoots = [] }) {
     return entry && entry.sha256 !== undefined ? entry.sha256 : sha256Hex(bytes);
   }
 
+  // Everything this host was asked, in a stable order: the closure as the host saw it. A caller that
+  // must reproduce these inputs elsewhere uses exactly this list, including the absences it observed and
+  // the membership of every directory it listed.
+  function answers() {
+    return [...entries.values()]
+      .filter((entry) => entry.fileLookup !== true)
+      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+      .map((entry) => {
+        if (entry.kind === 'file' || entry.kind === 'config') {
+          return Object.freeze({ kind: entry.kind, path: entry.path, sha256: entry.sha256, bytes: entry.bytes });
+        }
+        if (entry.kind === 'directory') {
+          return Object.freeze({ kind: 'directory', path: entry.path, names: Object.freeze([...(entry.names ?? [])]) });
+        }
+        if (entry.kind === 'absent') return Object.freeze({ kind: 'absent', path: entry.path });
+        return Object.freeze({ kind: 'failed', path: entry.path, detail: entry.detail ?? null });
+      });
+  }
+
   return {
     cwd,
     admitted: [...admitted],
     digest,
+    answers,
     readBytes,
     readText,
     fileExists,
     directoryExists,
     readDirectory,
     descriptors,
-    revalidate,
     configPathFor: (path) => path,
     realpath: (path) => {
       const real = admit(path);

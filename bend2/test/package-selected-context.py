@@ -96,6 +96,11 @@ class SelectedContextPackageTest(unittest.TestCase):
         wrapper.parent.mkdir(parents=True)
         shutil.copyfile(SCRIPT.parent / 'context-provider.mjs', wrapper)
         binding = {'id': 'typescript', 'revision': declaration['revision'],
+                   'protocolVersion': declaration['protocolVersion'],
+                   'declarationDigest': PACKAGE.sha256(module_root / 'native-provider.declaration.json'),
+                   'operation': 'sourceAnalysis',
+                   'artifactIdentities': declaration['artifactIdentities'],
+                   'schemaIdentities': declaration['schemaIdentities'],
                    'packageIdentity': declaration['packageIdentity']}
         invocation = {
             'version': 2, 'query': 'selected-typescript', 'owner': 'typescript-owner',
@@ -106,10 +111,20 @@ class SelectedContextPackageTest(unittest.TestCase):
                 'select': ['definition', 'type', 'references', 'diagnostics'],
                 'cwd': str(project), 'options': {'project': 'tsconfig.json'},
             },
-            'inputIdentities': [],
-            'operationPlan': [{'common': 'sourceAnalysis', 'operation': 'sourceAnalysis'}],
+            'operationPlan': [{'binding': binding, 'common': 'sourceAnalysis', 'dependencies': []}],
             'role': 'starter', 'incarnation': '7',
         }
+        acquired = subprocess.run(['node', str(wrapper), '--capture-inputs'],
+                                  input=json.dumps(invocation), cwd=project,
+                                  capture_output=True, text=True)
+        self.assertEqual(acquired.returncode, 0, acquired.stdout + acquired.stderr)
+        capture = json.loads(acquired.stdout)
+        self.assertEqual(capture['status'], 'captured', acquired.stdout)
+        self.assertEqual((capture['query'], capture['owner']),
+                         (invocation['query'], invocation['owner']))
+        self.assertTrue(any(row['path'] == str(entry) for row in capture['captures']), acquired.stdout)
+        self.assertTrue(any(row['path'] == str(shared_type) for row in capture['captures']), acquired.stdout)
+        invocation['inputIdentities'] = capture['captures']
         result = subprocess.run(['node', str(wrapper)], input=json.dumps(invocation),
                                 cwd=project, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -132,6 +147,14 @@ class SelectedContextPackageTest(unittest.TestCase):
         self.assertTrue(all(ref['snapshotId'] == payload['snapshot']['snapshotId']
                             for ref in payload['refs']), result.stdout)
         invocation['request']['subject']['path'] = 'src/missing.ts'
+        del invocation['inputIdentities']
+        missing_capture = subprocess.run(['node', str(wrapper), '--capture-inputs'],
+                                         input=json.dumps(invocation), cwd=project,
+                                         capture_output=True, text=True)
+        self.assertEqual(missing_capture.returncode, 2, missing_capture.stdout + missing_capture.stderr)
+        missing_answer = json.loads(missing_capture.stdout)
+        self.assertEqual(missing_answer['status'], 'refused', missing_capture.stdout)
+        self.assertEqual(missing_answer['reason'], 'context-subject-not-in-program', missing_capture.stdout)
         failed = subprocess.run(['node', str(wrapper)], input=json.dumps(invocation),
                                 cwd=project, capture_output=True, text=True)
         self.assertEqual(failed.returncode, 0, failed.stdout + failed.stderr)
@@ -141,6 +164,22 @@ class SelectedContextPackageTest(unittest.TestCase):
         self.assertEqual(failure['payload']['status'], 'unavailable', failed.stdout)
         self.assertEqual(failure['payload']['reason'], 'context-subject-not-in-program', failed.stdout)
         self.assertTrue(failure['payload']['detail'], failed.stdout)
+
+    def test_typescript_retained_closure_from_source_and_installed_module(self):
+        compiler = os.environ.get('BATON2_CONTEXT_TYPESCRIPT')
+        if compiler is None:
+            self.skipTest('Selected TypeScript runtime requires BATON2_CONTEXT_TYPESCRIPT')
+        shutil.copytree(TYPESCRIPT_SOURCE, self.root / 'bend2/context/typescript')
+        compiler_root = Path(compiler).resolve()
+        selected = PACKAGE.stage_typescript_context_module(self.payload, compiler_root)
+        repository = Path(__file__).resolve().parents[2]
+        environment = {**os.environ,
+                       'BATON2_CONTEXT_TYPESCRIPT': str(compiler_root),
+                       'BATON_TYPESCRIPT_MODULE_ROOT': str(self.payload / selected['path'])}
+        result = subprocess.run([
+            'node', '--test', str(repository / 'bend2/test/typescript-retained-closure.test.mjs'),
+        ], cwd=repository, env=environment, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_installed_native_cli_completes_a_selected_source_analysis(self):
         repository = Path(__file__).resolve().parents[2]

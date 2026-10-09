@@ -146,10 +146,29 @@ def stage_selected_context_payload(payload, module_name='bend2'):
         require(name not in seen, 'Duplicate selected ' + module_label + ' artifact: ' + name)
         seen.add(name)
         source = source_root.joinpath(*relative.parts)
-        resolved = source.resolve()
-        require(resolved.is_relative_to(source_root.resolve()) and source.is_file()
-                and not source.is_symlink(),
-                'Selected ' + module_label + ' artifact is missing or outside its module root: ' + name)
+        # A declared entry may carry the one original source it is copied from, which keeps a helper
+        # defined once while each installed module stays self-contained: the copied bytes are hashed
+        # into the module's artifact identities like any other artifact.
+        from_entry = entry.get('from')
+        if from_entry is not None:
+            require(isinstance(from_entry, str) and from_entry, 'Selected ' + module_label
+                    + ' artifact needs a source path: ' + name)
+            shared_relative = PurePosixPath(from_entry)
+            require(not shared_relative.is_absolute() and shared_relative.parts
+                    and '..' not in shared_relative.parts and '.' not in shared_relative.parts,
+                    'Unsafe shared artifact path: ' + from_entry)
+            context_root = (ROOT / 'bend2/context').resolve()
+            source = ROOT.joinpath('bend2/context', *shared_relative.parts)
+            resolved = source.resolve()
+            require(resolved.is_relative_to(context_root) and source.is_file()
+                    and not source.is_symlink(),
+                    'Shared ' + module_label + ' artifact is missing or outside the context tree: '
+                    + from_entry)
+        else:
+            resolved = source.resolve()
+            require(resolved.is_relative_to(source_root.resolve()) and source.is_file()
+                    and not source.is_symlink(),
+                    'Selected ' + module_label + ' artifact is missing or outside its module root: ' + name)
         destination = module_root.joinpath(*relative.parts)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)

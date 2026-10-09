@@ -23,33 +23,57 @@ export function contextRootFor(adapterUrl) {
   return resolve(dirname(adapterPathFor(adapterUrl)), '..');
 }
 
-export function resolveTypeScript({ adapterUrl = import.meta.url } = {}) {
-  const adapterPath = adapterPathFor(adapterUrl);
-  const contextRoot = contextRootFor(adapterPath);
+// Resolve the compiler the module will use, and record which resolution supplied it.
+//
+// Installed, the compiler sits beside the module in `node_modules/typescript`; run from source, it is
+// reached from the checkout or given explicitly by the caller. Both paths are ordinary resolutions of the
+// same package, and the answer names which one was used so a qualification records the actual origin.
+function loadCompiler(adapterPath, contextRoot, compilerPath) {
+  const candidates = [];
+  if (typeof compilerPath === 'string' && compilerPath.length > 0) {
+    candidates.push({ source: 'option', path: resolve(compilerPath) });
+  }
+  const local = join(contextRoot, 'node_modules/typescript/lib/typescript.js');
+  candidates.push({ source: 'module', path: local });
   const require = createRequire(adapterPath);
   try {
-    const libraryPath = realpathSync(require.resolve('typescript'));
-    const libraryDir = dirname(libraryPath);
-    const version = readJson(join(dirname(libraryDir), 'package.json')).version;
-    const librarySha = sha256Hex(readFileSync(libraryPath));
-    return {
-      ok: true,
-      module: require(libraryPath),
-      version,
-      libraryPath,
-      libraryDir,
-      librarySha,
-      node: process.execPath,
-      runtime: process.version,
-      contextRoot,
-    };
+    candidates.push({ source: 'require', path: require.resolve('typescript') });
   } catch (error) {
-    return {
-      ok: false,
-      reason: error.code ?? error.name,
-      detail: error.stack ?? error.message,
-      contextRoot,
-    };
+    void error;
   }
+  let lastFailure = null;
+  for (const candidate of candidates) {
+    try {
+      const libraryPath = realpathSync(candidate.path);
+      const libraryDir = dirname(libraryPath);
+      const version = readJson(join(dirname(libraryDir), 'package.json')).version;
+      const librarySha = sha256Hex(readFileSync(libraryPath));
+      return {
+        ok: true,
+        module: createRequire(adapterPath)(libraryPath),
+        version,
+        libraryPath,
+        libraryDir,
+        librarySha,
+        source: candidate.source,
+        node: process.execPath,
+        runtime: process.version,
+        contextRoot,
+      };
+    } catch (error) {
+      lastFailure = error;
+    }
+  }
+  return {
+    ok: false,
+    reason: lastFailure === null ? 'typescriptUnavailable' : lastFailure.code ?? lastFailure.name,
+    detail: lastFailure === null ? 'no compiler candidate was available' : lastFailure.message,
+    contextRoot,
+  };
+}
+
+export function resolveTypeScript({ adapterUrl = import.meta.url, compilerPath = null } = {}) {
+  const adapterPath = adapterPathFor(adapterUrl);
+  return loadCompiler(adapterPath, contextRootFor(adapterPath), compilerPath);
 }
 

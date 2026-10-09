@@ -8,11 +8,15 @@
     { "path": "lib/diagnostics.mjs" },
     { "path": "lib/flow.mjs" },
     { "path": "lib/protocol.mjs" },
+    { "path": "lib/capture-records.mjs", "from": "bend2/capture-records.mjs" },
+    { "path": "lib/encoder.mjs" },
+    { "path": "lib/produce.mjs" },
     { "path": "lib/query.mjs" },
     { "path": "lib/records.mjs" },
     { "path": "lib/refs.mjs" },
     { "path": "lib/resolve.mjs" },
     { "path": "lib/service.mjs" },
-    { "path": "lib/sql.mjs" }
+    { "path": "lib/sql.mjs" },
+    { "path": "lib/supplied.mjs" }
   ]
 }

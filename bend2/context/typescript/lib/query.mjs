@@ -10,7 +10,6 @@ import { produceDiagnostics } from './diagnostics.mjs';
 import { produceExceptions, produceFlow } from './flow.mjs';
 import { produceDatabaseAccesses, produceModuleUses } from './sql.mjs';
 import { providerRecord } from './refs.mjs';
-import { Refusal } from './protocol.mjs';
 
 const SNAPSHOT_PENDING = 'pending';
 
@@ -36,25 +35,12 @@ function bindSnapshotId(node, snapshotId) {
   }
 }
 
-function assertSnapshotBound(node) {
-  if (Array.isArray(node)) {
-    node.forEach(assertSnapshotBound);
-    return;
-  }
-  if (node === null || typeof node !== 'object') return;
-  for (const [key, value] of Object.entries(node)) {
-    if (key === 'snapshotId' && value === SNAPSHOT_PENDING) {
-      throw new Error('snapshot identity was not bound to every published object');
-    }
-    assertSnapshotBound(value);
-  }
-}
-
-export function runQuery({ resolved, request, queryId = null }) {
-  const capture = createCapture({
+export function runQuery({ resolved, request, queryId = null, supplied = null, capture: injectedCapture = null }) {
+  const capture = injectedCapture ?? createCapture({
     cwd: request.cwd,
     readRoots: request.options.readRoots,
     providerRoots: [resolved.contextRoot],
+    supplied,
   });
   const service = createService({ resolved, capture, request });
 
@@ -98,15 +84,8 @@ export function runQuery({ resolved, request, queryId = null }) {
   if (projections.has('exceptions')) collect(produceExceptions(context));
   if (projections.has('databaseAccesses')) collect(produceDatabaseAccesses(context));
 
-  // Pre/post verification: the published result is a claim about one immutable input closure.
-  const revalidation = capture.revalidate();
-  if (revalidation.failed.length > 0) {
-    throw new Refusal('context-capture-probe-failed');
-  }
-  if (revalidation.changed.length > 0) {
-    throw new Refusal('changedDuringCapture');
-  }
-
+  // The captured bytes and answers are the query inputs: no post-capture probe runs, because a later
+  // host write does not change what this result describes.
   const uniqueRefs = [];
   const seenRefs = new Set();
   for (const ref of refs) {
@@ -155,7 +134,6 @@ export function runQuery({ resolved, request, queryId = null }) {
     changedInputs: [],
   };
   bindSnapshotId(envelope, snapshotId);
-  assertSnapshotBound(envelope);
   return envelope;
 }
 
