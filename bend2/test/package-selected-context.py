@@ -286,6 +286,98 @@ class SelectedContextPackageTest(unittest.TestCase):
         ], cwd=repository, env=environment, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_selected_clang_invocation_joins_helper_statements_to_sqlite_catalog(self):
+        runtime = os.environ.get('BATON2_CONTEXT_CLANG')
+        if runtime is None:
+            self.skipTest('Selected Clang runtime requires BATON2_CONTEXT_CLANG')
+        repository = Path(__file__).resolve().parents[2]
+        for directory in ('clang', 'catalogs'):
+            shutil.copytree(repository / 'bend2/context' / directory,
+                            self.root / 'bend2/context' / directory)
+        selected = PACKAGE.stage_clang_module(
+            self.payload, 'clang-analyzer', ['databaseAccesses'], Path(runtime))
+        module_root = self.payload / selected['path']
+        declaration = json.loads((module_root / 'native-provider.declaration.json').read_text())
+        project = self.root / 'c project'
+        project.mkdir()
+        source = project / 'handler.c'
+        source.write_text('''static int query_sql(const char *sql) { return sql != 0; }
+void handler(const char *dynamic) {
+  query_sql("SELECT value " "FROM records WHERE value LIKE 'a%'");
+  query_sql("INSERT INTO records(value) VALUES ('z')");
+  query_sql(dynamic);
+  query_sql("SELECT 1; SELECT 2");
+  query_sql("SELECT value FROM missing_table");
+}
+''')
+        (project / 'compile_commands.json').write_text(json.dumps([{
+            'directory': str(project), 'file': source.name,
+            'arguments': ['clang', '-std=c11', '-fsyntax-only', source.name],
+        }]))
+        database = project / 'catalog.db'
+        with sqlite3.connect(database) as connection:
+            connection.execute('CREATE TABLE records(value TEXT)')
+            connection.execute("INSERT INTO records VALUES ('alpha')")
+        wrapper = self.payload / 'libexec/baton2/context-provider.mjs'
+        wrapper.parent.mkdir(parents=True)
+        shutil.copyfile(SCRIPT.parent / 'context-provider.mjs', wrapper)
+        binding = {'id': 'clang-analyzer', 'revision': declaration['revision'],
+                   'protocolVersion': '2', 'operation': 'sourceAnalysis',
+                   'artifactIdentities': declaration['artifactIdentities'],
+                   'schemaIdentities': declaration['schemaIdentities'],
+                   'packageIdentity': declaration['packageIdentity']}
+        invocation = {
+            'version': 2, 'query': 'clang-handler-catalog', 'owner': 'clang-owner',
+            'moduleBinding': binding,
+            'request': {'version': 1, 'engine': 'clang-analyzer',
+                        'subject': {'kind': 'symbol', 'path': source.name, 'name': 'handler'},
+                        'select': ['databaseAccesses'], 'cwd': str(project),
+                        'options': {'client': 'query_sql', 'database': database.name}},
+            'operationPlan': [{'binding': binding, 'common': 'sourceAnalysis', 'dependencies': []}],
+            'role': 'starter', 'incarnation': '1',
+        }
+        result = subprocess.run(['node', str(wrapper)], input=json.dumps(invocation),
+                                cwd=project, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        frame = json.loads(result.stdout)
+        self.assertEqual((frame['query'], frame['owner'], frame['moduleBinding']),
+                         (invocation['query'], invocation['owner'], binding))
+        self.assertEqual(frame['payload']['status'], 'complete', result.stdout)
+        output = frame['payload']['result']
+        accesses = output['databaseAccesses']
+        self.assertEqual(accesses['status'], 'complete', result.stdout)
+        self.assertEqual(accesses['database']['path'], str(database), result.stdout)
+        relations = accesses['relations']
+        self.assertTrue(any(relation['value']['statementKind'] == 'read' and
+                            relation['value']['object']['name'] == 'records' and
+                            "LIKE 'a%'" in relation['value']['statementText']
+                            for relation in relations), result.stdout)
+        self.assertTrue(any(relation['value']['statementKind'] == 'write' and
+                            relation['value']['object']['name'] == 'records'
+                            for relation in relations), result.stdout)
+        calls = {call['id'] for call in output['calls']}
+        refs = {ref['id']: ref for ref in accesses['refs']}
+        for relation in relations:
+            statement = relation['value']['statement']
+            self.assertIn(statement['callId'], calls, result.stdout)
+            self.assertEqual(statement['helperName'], 'query_sql', result.stdout)
+            self.assertTrue(statement['helperUsr'], result.stdout)
+            span = refs[relation['from']]['subject']
+            self.assertEqual(span['path'], str(source), result.stdout)
+            literal = source.read_bytes()[span['byteStart']:span['byteEnd']]
+            self.assertIn(b'"', literal, result.stdout)
+            self.assertEqual(refs[relation['to']]['subject']['name'], 'records', result.stdout)
+        reasons = {finding['code'] for finding in accesses['unresolved']}
+        self.assertTrue({'dynamicStatement', 'multipleStatements', 'engineParseRefused'}
+                        .issubset(reasons), result.stdout)
+        for finding in accesses['unresolved']:
+            statement = finding['statement']
+            self.assertIn(statement['callId'], calls, result.stdout)
+            self.assertEqual(statement['callSource']['file'], str(source), result.stdout)
+        with sqlite3.connect(database) as connection:
+            self.assertEqual(connection.execute('SELECT value FROM records').fetchall(),
+                             [('alpha',)])
+
     def test_installed_native_cli_completes_a_selected_source_analysis(self):
         repository = Path(__file__).resolve().parents[2]
         coordinator = repository / '.scratch/bend2/baton2'

@@ -167,6 +167,7 @@ struct HelperDefinition {
 
 struct SqlLiteralInfo {
   int64_t argumentIndex = 0;
+  std::string valueText;
   std::string valueSha256; // sha256 of the processed literal bytes
   int64_t valueLength = 0;
   bool hasPercent = false;

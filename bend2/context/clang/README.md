@@ -7,6 +7,8 @@ The Clang source contains two selected native modules:
 
 Both modules implement the native `sourceAnalysis` invocation and return a protocol-version-2 event frame. They read the request's source path and `compile_commands.json` selected by `options.project`; the default is `compile_commands.json` in the request working directory. The extractor receives the matching compile command and the request's position or symbol subject. Provider startup, compiler-database, executable, protocol, and compiler failures remain in the returned result.
 
+For `databaseAccesses`, `options.client` names the SQL helper function and `options.database` selects a SQLite file relative to the request working directory. The extractor emits each helper call's decoded string literals and source positions. The selected provider prepares their EXPLAIN programs on a read-only connection and joins the programs' object accesses to the catalog on that connection. The result records source and catalog references, call and helper identities, read or write plans, and unresolved dynamic statements or engine errors. Write statements are analyzed without executing them.
+
 The `clangd` module is included in the package and resolves its executable when invoked. The extractor module is staged only when packaging receives an already-built runtime package with this layout:
 
 ```text

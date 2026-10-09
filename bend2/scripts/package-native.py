@@ -248,6 +248,9 @@ def stage_clang_module(payload, module_id, projections, runtime_package=None):
         source_file = source / 'adapter' / name
         destination = adapter_dir / name
         shutil.copyfile(source_file, destination)
+    if module_id == 'clang-analyzer':
+        for name in ('clang-join.mjs', 'sqlite-statement.mjs', 'sql-scan.mjs'):
+            shutil.copyfile(ROOT / 'bend2/context/catalogs' / name, module_root / name)
     if runtime_package is not None:
         runtime_root = module_root / 'runtime'
         shutil.copytree(runtime_package, runtime_root)

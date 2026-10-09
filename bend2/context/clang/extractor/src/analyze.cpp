@@ -1377,10 +1377,11 @@ private:
           continue;
         unsigned Index = 0;
         for (auto *Arg : CE->arguments()) {
-          if (auto *SL = dyn_cast<StringLiteral>(Arg->IgnoreParens())) {
+          if (auto *SL = dyn_cast<StringLiteral>(Arg->IgnoreParenImpCasts())) {
             SqlLiteralInfo L;
             L.argumentIndex = Index;
             llvm::StringRef Val = SL->getString();
+            L.valueText = Val.str();
             L.valueSha256 = sha256Hex(Val);
             L.valueLength = static_cast<int64_t>(Val.size());
             L.hasPercent = Val.contains('%');

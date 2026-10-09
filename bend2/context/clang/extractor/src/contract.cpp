@@ -412,6 +412,7 @@ Json Output::toJson() const {
     for (const auto &L : C.sqlLiterals) {
       JsonObject Lj;
       Lj.push_back({"argumentIndex", Json::integer(L.argumentIndex)});
+      Lj.push_back({"valueText", Json::str(L.valueText)});
       Lj.push_back({"valueSha256", Json::str(L.valueSha256)});
       Lj.push_back({"valueLength", Json::integer(L.valueLength)});
       Lj.push_back({"hasPercent", Json::boolean(L.hasPercent)});

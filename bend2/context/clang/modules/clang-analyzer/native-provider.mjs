@@ -1,5 +1,6 @@
 import { eventFrame, sourceRequest, compilation, runAdapter, parsedOutput, failure } from './shared.mjs';
 import { join, resolve } from 'node:path';
+import { databaseAccesses } from './clang-join.mjs';
 
 export async function executeInvocation(invocation, { packageRoot }) {
   try {
@@ -13,6 +14,7 @@ export async function executeInvocation(invocation, { packageRoot }) {
       compile.file,
     ];
     const kind = subject.kind;
+    const joinsDatabase = request.select.includes('databaseAccesses');
     const extractorSubject = kind === 'position'
       ? { kind: 'position', path: subject.path, line: subject.line, column: subject.column }
       : kind === 'symbol'
@@ -24,11 +26,12 @@ export async function executeInvocation(invocation, { packageRoot }) {
       command: 'analyze',
       request: {
         version: 1,
-        operation: kind === 'symbol' ? 'functionSignature' : 'handlerAnalysis',
+        operation: kind === 'symbol' && !joinsDatabase ? 'functionSignature' : 'handlerAnalysis',
         directory: compile.directory,
         file: compile.file,
         arguments: argumentsWithTranslationUnitLast,
         subject: extractorSubject,
+        helpers: request.options?.client ? [request.options.client] : [],
       },
     };
     const adapter = join(packageRoot, 'adapter/clang-analyzer.mjs');
@@ -37,6 +40,11 @@ export async function executeInvocation(invocation, { packageRoot }) {
     if (result.code !== 0 || output === null) {
       return eventFrame(invocation, { status: 'unavailable', engine: 'clang-analyzer',
         error: failure(result, output), source: { path: file } });
+    }
+    if (!output.error && joinsDatabase) {
+      output.databaseAccesses = await databaseAccesses(output, {
+        cwd, database: request.options?.database,
+      });
     }
     return eventFrame(invocation, { status: output.error ? 'unavailable' : 'complete',
       engine: 'clang-analyzer', source: { path: file }, result: output });
