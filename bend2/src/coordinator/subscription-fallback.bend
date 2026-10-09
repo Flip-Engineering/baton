@@ -25,8 +25,13 @@ def drop_last(parts: List<String>) -> List<String>:
     case part <> Nil{}: Nil{}
     case part <> rest: Con{part,drop_last(rest)}
 
+def split_parts(parts: List<&2,String>) -> List<String>:
+  match parts:
+    case Nil{}: Nil{}
+    case part <> rest: Con{part,split_parts(rest)}
+
 def directory_of(path: String) -> String:
-  Tx.join("/",drop_last(String.split(path,Char.from_u32(47))))
+  Tx.join("/",drop_last(split_parts(String.split(path,Char.from_u32(47)))))
 
 # One three-field line: the third field is the rest of the line, so a store path with
 # spaces survives. A line whose fields are empty is skipped rather than guessed at.
@@ -42,7 +47,7 @@ def profile_of(fields: List<String>) -> Maybe<Profile>:
 def profile_lines(lines: List<String>) -> List<Profile>:
   match lines:
     case Nil{}: Nil{}
-    case line <> rest: profile_line(profile_of(String.split(Tx.trim_nl(line),Char.from_u32(32))),rest)
+    case line <> rest: profile_line(profile_of(split_parts(String.split(Tx.trim_nl(line),Char.from_u32(32)))),rest)
 
 def profile_line(parsed: Maybe<Profile>, rest: List<String>) -> List<Profile>:
   match parsed:
@@ -99,7 +104,7 @@ def started_or_next(+profiles: List<Profile>, +harness: String, +current: String
 # use, so advancing it needs no rewrite and no lock. Its fields are the label and the
 # rest of the line as the store.
 def record_of(line: String) -> Maybe<Profile>:
-  record_parts(String.split(Tx.trim_nl(line),Char.from_u32(32)))
+  record_parts(split_parts(String.split(Tx.trim_nl(line),Char.from_u32(32))))
 
 def record_parts(fields: List<String>) -> Maybe<Profile>:
   match fields:
