@@ -113,7 +113,12 @@ try {
     operationPlan: [...invocation().operationPlan, optionalStep],
   }), { wrapperPath: installedWrapper });
   assert.equal(mixedCapture.status, 'captured');
-  assert.deepEqual(mixedCapture.captures, installedCaptures.captures);
+  assert.deepEqual(mixedCapture.captures.filter((record) => record.role !== 'base'),
+    installedCaptures.captures.filter((record) => record.role !== 'base'));
+  // Each compiler invocation materializes Base in its own temporary directory.
+  const { path: mixedBasePath, ...mixedBase } = mixedCapture.captures.find((record) => record.role === 'base');
+  const { path: installedBasePath, ...installedBase } = installedCaptures.captures.find((record) => record.role === 'base');
+  assert.deepEqual(mixedBase, installedBase);
   const optionalInvocation = invocation({ moduleBinding: optionalBinding, operationPlan: [optionalStep] });
   const optionalCapture = await captureSelectedInputs(optionalInvocation, { wrapperPath: installedWrapper });
   assert.equal(optionalCapture.status, 'captured');

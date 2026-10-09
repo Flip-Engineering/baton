@@ -27,10 +27,8 @@ function listingDigest(names) {
   return sha256Hex(Buffer.from([...names].sort().join('\n'), 'utf8'));
 }
 
-// A supplied set is either absent or present. `null` means no managed capture set, so the ordinary
-// filesystem path runs; an array means a managed set is present, and then a path outside it is refused
-// rather than read from the host, because the accepted bytes for this analysis are the supplied ones.
-// An empty array is a present set with no inputs, which is not the same as no set at all.
+// `null` captures live filesystem answers. An array replays its recorded answers,
+// including a supplied empty set.
 export function createCapture({ cwd, readRoots = [], providerRoots = [], supplied = null }) {
   const restricted = readRoots.length > 0;
   const managed = Array.isArray(supplied) || supplied === true;
@@ -82,6 +80,10 @@ export function createCapture({ cwd, readRoots = [], providerRoots = [], supplie
     // lexical difference between the two cannot look like an input that was never supplied.
     suppliedPaths.add(entry.path);
     suppliedPaths.add(resolve(entry.path));
+  }
+
+  function outsideSupplied(path) {
+    return managed && !suppliedPaths.has(path) && !suppliedPaths.has(resolve(cwd, path));
   }
 
   function admit(path) {
