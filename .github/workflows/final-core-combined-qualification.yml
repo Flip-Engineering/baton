@@ -22,7 +22,7 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: 3cb3d5e89f81657ece6537765b2de7d0a35ce234
+  PRODUCT_SOURCE_SHA: bd4cd9b85391d4ae21303403cfba004014e2461e
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
 
@@ -328,10 +328,17 @@ jobs:
                 python3 -u bend2/test/ui-orchestra-browser.py -v
               ;;
             node-provider-ui)
+              trap 'if test -d .scratch/cdp-lane; then cp -R .scratch/cdp-lane "$FINAL_NATIVE_CONTEXT_EVIDENCE/runtime-cdp"; fi' EXIT
               "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" node-provider-ui \
                 env BATON2_REQUIRE_NATIVE_VIEW=1 BATON2_NATIVE_BINARY="$PWD/.scratch/bend2/baton2" \
                 node --test bend2/test/context-provider.test.mjs bend2/test/provider-availability.mjs \
                   bend2/test/ui-orchestra-server.test.mjs bend2/test/context-project-policy.test.mjs
+              "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" runtime-cdp \
+                node bend2/context/runtime/cdp-tests.mjs
+              "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" runtime-values \
+                env BATON_RUNTIME_EVIDENCE_DIR="$FINAL_NATIVE_CONTEXT_EVIDENCE/runtime-values" \
+                node --test bend2/tests/runtime/values.test.mjs bend2/tests/runtime/observations.test.mjs \
+                  bend2/tests/runtime/source-maps.test.mjs bend2/tests/runtime/cdp-composition.test.mjs
               ;;
             selected-context-package)
               "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" selected-typescript-install \
