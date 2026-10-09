@@ -147,10 +147,13 @@ if 'app-server' in args:
     sys.exit(0)
 omp='--mode' in args
 claude='--input-format' in args
+muse='--prompt-file' in args
 model=args[args.index('--model')+1]
 native_args=args[:]
 while native_args[:1]==['-c'] and len(native_args)>1: native_args=native_args[2:]
-resume=args[args.index('--resume')+1] if '--resume' in args else (native_args[2] if native_args[:2]==['exec','resume'] else '')
+resume=(args[args.index('--session-id')+1] if '--session-id' in args else
+        args[args.index('--resume')+1] if '--resume' in args else
+        native_args[2] if native_args[:2]==['exec','resume'] else '')
 if config.get('record_launches'):
     with (home/'native-launches.jsonl').open('a') as launches:
         launches.write(json.dumps({'pid':os.getpid(),'ppid':os.getppid(),'resume':resume,'args':args})+'\n')
@@ -173,6 +176,13 @@ if omp:
     else:
         (storage/('2026-09-28_'+native+'.jsonl')).write_text(json.dumps({'type':'session','id':native})+'\n')
     print(json.dumps({'type':'response','command':'get_state','success':True,'id':state['id'],'data':{'sessionId':native,'model':{'provider':'fixture','id':model}}}),flush=True)
+elif muse:
+    prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
+    native=resume or native
+    print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.model.configured',
+                      'payload':{'kind':'run_model_configured','model_id':model}}),flush=True)
+    print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'turn.input.user',
+                      'payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}),flush=True)
 else:
     prompt=sys.stdin.read()
     if claude: prompt=json.loads(prompt)['message']['content']
@@ -294,6 +304,12 @@ while True:
         print(json.dumps({'type':'result','subtype':'error_during_execution' if failure else 'success',
                           'session_id':native,'is_error':failure,
                           'result':action.get('fail_message','fixture provider failed') if failure else body}),flush=True)
+    elif muse:
+        print(json.dumps({'stream':{'kind':'session','id':native},
+                          'payload_type':'run.terminal.failed' if failure else 'run.terminal.completed',
+                          'payload':{'kind':'run_terminal','terminal':'failed' if failure else 'completed',
+                                     'command_id':'fixture-primary',
+                                     'text':action.get('fail_message','fixture provider failed') if failure else body}}),flush=True)
     elif failure:
         print(json.dumps({'type':'turn.failed','error':{'message':action.get('fail_message','fixture provider failed')}}),flush=True)
     else:
@@ -2710,28 +2726,32 @@ class Receive(unittest.TestCase):
         """A successful turn continues its unacknowledged initial input in the
         same native conversation. The recipient accepts it in the next turn.
         """
-        self.player(harness='omp')
-        self.prepare_input('owed', 'parent')
-        first = self.spawn(*self.receive_args('parent'))
-        control, original = self.accept('parent')
-        self.assertIn('[id: owed]', original['prompt'])
-        directory = pathlib.Path(self.execution('parent')[2])
-        self.action(control, ack=False)
-        continued, resumed = self.accept_or_child_exit(
-            first, 'successful turn closed with original input still pending')
-        self.assertEqual(resumed['session'], 'parent')
-        self.assertEqual(resumed['native'], original['native'])
-        self.assertTrue(resumed['resume'])
-        self.assertIn('[id: owed]', resumed['prompt'])
-        self.assertIsNone(self.coord('delivery', 'owed')['receipt'])
-        self.action(continued)
-        self.finish(first)
-        self.assertEqual(self.coord('inbox', 'parent'), [])
-        self.assertEqual(self.coord('delivery', 'owed')['receipt'], 'native-reviewed')
-        self.assertEqual(len(self.coord('turns', 'parent')), 2)
-        self.assertEqual(self.coord('player', 'parent')['native'], original['native'])
-        self.assertTrue((directory / 'acknowledged').exists())
-        self.assert_no_start()
+        for harness in ('codex', 'omp', 'muse', 'claude-code'):
+            with self.subTest(harness=harness):
+                session = 'owed-' + harness
+                ident = session + '-input'
+                self.player(session, harness=harness)
+                self.prepare_input(ident, session)
+                first = self.spawn(*self.receive_args(session))
+                control, original = self.accept(session)
+                self.assertIn('[id: ' + ident + ']', original['prompt'])
+                directory = pathlib.Path(self.execution(session)[2])
+                self.action(control, ack=False)
+                continued, resumed = self.accept_or_child_exit(
+                    first, 'successful turn closed with original input still pending')
+                self.assertEqual(resumed['session'], session)
+                self.assertEqual(resumed['native'], original['native'])
+                self.assertTrue(resumed['resume'])
+                self.assertIn('[id: ' + ident + ']', resumed['prompt'])
+                self.assertIsNone(self.coord('delivery', ident)['receipt'])
+                self.action(continued)
+                self.finish(first)
+                self.assertEqual(self.coord('inbox', session), [])
+                self.assertEqual(self.coord('delivery', ident)['receipt'], 'native-reviewed')
+                self.assertEqual(len(self.coord('turns', session)), 2)
+                self.assertEqual(self.coord('player', session)['native'], original['native'])
+                self.assertTrue((directory / 'acknowledged').exists())
+                self.assert_no_start()
 
     def test_failed_continuation_retains_original_input_for_retry(self):
         """A provider failure in the continuation retains the original input

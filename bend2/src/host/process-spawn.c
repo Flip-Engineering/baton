@@ -4685,7 +4685,7 @@ BP_EFFECT(baton_instance_publish_commit,CID_INSTANCE_PUBLISH_COMMIT,BP_INSTANCE_
 static void __attribute__((constructor)) baton_process_signals(void){signal(SIGPIPE,SIG_IGN);}
 
 /* Session locks use the physical database key and the owner IPC namespace. */
-#if defined(CID_SESSIONLOCK_CANONICAL) || defined(CID_SESSIONLOCK_TRY_ACQUIRE) || defined(CID_SESSIONLOCK_RELEASE) || defined(CID_SESSIONLOCK_EXECUTABLE) || defined(CID_SESSIONLOCK_RECOVER_OBSERVER)
+#if defined(CID_SESSIONLOCK_CANONICAL) || defined(CID_SESSIONLOCK_TRY_ACQUIRE) || defined(CID_SESSIONLOCK_WAIT_ACQUIRE) || defined(CID_SESSIONLOCK_RELEASE) || defined(CID_SESSIONLOCK_EXECUTABLE) || defined(CID_SESSIONLOCK_RECOVER_OBSERVER)
 typedef struct {
   char *database, *session, *path, *directory;
   const char *detail;
@@ -4833,7 +4833,7 @@ static void baton_session_lock_call(IoWork *w) {
     return;
   }
   int result;
-  do {result=flock(call->handle,LOCK_EX|LOCK_NB);} while(result<0 && errno==EINTR);
+  do {result=flock(call->handle,LOCK_EX|(call->kind==6?0:LOCK_NB));} while(result<0 && errno==EINTR);
   if(result<0) {call->error=errno;close(call->handle);}
 }
 
@@ -4875,7 +4875,7 @@ static Term baton_session_lock_begin(Env e, Term *f, IoWork *w, int kind) {
   BatonSessionLock *call=calloc(1,sizeof(*call));
   if(!call) return io_fail(e,ENOMEM,NULL);
   call->kind=kind;
-  if(kind==3 || kind==5) {
+  if(kind==3 || kind==5 || kind==6) {
     u64 dn=0,sn=0;
     call->database=io_cstr(e,f[0],&dn);
     call->session=io_cstr(e,f[1],&sn);
@@ -4911,6 +4911,10 @@ static void __attribute__((constructor)) baton_session_lock_use_canonical(void) 
 #ifdef CID_SESSIONLOCK_TRY_ACQUIRE
 static Term baton_session_lock_try_acquire(Env e,Term *f,IoWork *w) {return baton_session_lock_begin(e,f,w,3);}
 static void __attribute__((constructor)) baton_session_lock_use_try_acquire(void) {io_eff(CID_SESSIONLOCK_TRY_ACQUIRE,baton_session_lock_try_acquire,0);}
+#endif
+#ifdef CID_SESSIONLOCK_WAIT_ACQUIRE
+static Term baton_session_lock_wait_acquire(Env e,Term *f,IoWork *w) {return baton_session_lock_begin(e,f,w,6);}
+static void __attribute__((constructor)) baton_session_lock_use_wait_acquire(void) {io_eff(CID_SESSIONLOCK_WAIT_ACQUIRE,baton_session_lock_wait_acquire,0);}
 #endif
 
 #ifdef CID_SESSIONLOCK_RECOVER_OBSERVER

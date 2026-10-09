@@ -2,6 +2,7 @@
 // Deliver a committed inbox pointer through the public managed Codex lifecycle.
 import { spawn } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
+import { createInterface } from 'node:readline';
 
 function record(value) {
   process.stdout.write(JSON.stringify(value) + '\n');
@@ -19,6 +20,8 @@ class PublicProxy {
     this.child.once('error', error => { this.spawnError = error; });
     this.child.stdin.on('error', error => { this.writeError = error; });
     this.closed = new Promise(resolve => this.child.once('close', (code, signal) => resolve({ code, signal })));
+    this.responses = new Map();
+    this.onNotification = () => {};
   }
 
   async bytes(length) {
@@ -48,9 +51,15 @@ class PublicProxy {
     const expected = createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
     if (!/^HTTP\/1\.1 101(?: |\r|$)/.test(text) || accept !== expected) throw new Error('Public Codex proxy did not complete its WebSocket upgrade: ' + text);
     this.upgraded = true;
+    this.reader = this.readMessages();
     await this.rpc('initialize', {
       clientInfo: { name: 'baton_inbox_wake', title: 'Baton inbox wake', version: '1' },
-      capabilities: { experimentalApi: true },
+      capabilities: { experimentalApi: true, optOutNotificationMethods: [
+        'item/started', 'item/completed', 'item/agentMessage/delta', 'item/plan/delta',
+        'item/reasoning/summaryTextDelta', 'item/reasoning/summaryPartAdded',
+        'item/reasoning/textDelta', 'item/commandExecution/outputDelta',
+        'turn/diff/updated', 'turn/plan/updated', 'thread/tokenUsage/updated',
+      ] },
     });
     this.send({ method: 'initialized', params: {} });
   }
@@ -114,35 +123,57 @@ class PublicProxy {
   }
 
   async rpc(method, params) {
+    if (this.readerError) throw this.readerError;
     const id = ++this.sequence;
-    this.send({ id, method, params });
-    for (;;) {
-      const message = await this.message();
-      if (message.id !== id || message.method) continue;
-      if (message.error) throw new Error('Public Codex ' + method + ' refused input: ' + JSON.stringify(message));
-      if (!Object.hasOwn(message, 'result')) throw new Error('Public Codex ' + method + ' returned no result: ' + JSON.stringify(message));
-      return message.result;
+    const response = new Promise((resolve, reject) => this.responses.set(id, { resolve, reject }));
+    try { this.send({ id, method, params }); }
+    catch (error) { this.responses.delete(id); throw error; }
+    const message = await response;
+    if (message.error) throw new Error('Public Codex ' + method + ' refused input: ' + JSON.stringify(message));
+    if (!Object.hasOwn(message, 'result')) throw new Error('Public Codex ' + method + ' returned no result: ' + JSON.stringify(message));
+    return message.result;
+  }
+
+  async readMessages() {
+    try {
+      for (;;) {
+        const message = await this.message();
+        if (message.method) this.onNotification(message);
+        else {
+          const response = this.responses.get(message.id);
+          if (response) {
+            this.responses.delete(message.id);
+            response.resolve(message);
+          }
+        }
+      }
+    } catch (error) {
+      if (!this.closing) {
+        this.readerError = error;
+        this.onNotification({ error });
+      }
+      for (const response of this.responses.values()) response.reject(error);
+      this.responses.clear();
     }
   }
 
   async close() {
     let closeError;
+    this.closing = true;
     try {
       try {
         if (this.upgraded && !this.child.stdin.destroyed) this.frame(Buffer.alloc(0), 8);
       } finally {
         this.child.stdin.end();
       }
-      for (;;) {
-        const next = await this.stream.next();
-        if (next.done) break;
-      }
+      if (this.reader) await this.reader;
+      else for (;;) { if ((await this.stream.next()).done) break; }
     } catch (error) {
       closeError = error;
     }
     const exit = await this.closed;
     record({ type: 'codexProxyExit', ...exit });
-    const causes = [closeError, this.spawnError, this.writeError].filter(Boolean).map(error => String(error.stack || error));
+    const causes = [closeError, this.spawnError, this.writeError, this.readerError].filter(Boolean).map(error => String(error.stack || error));
     if (exit.code !== 0 || exit.signal) causes.push('Public Codex proxy exited: ' + JSON.stringify(exit));
     if (causes.length) throw new Error(causes.join('\n'));
   }
@@ -175,30 +206,218 @@ async function deliver(proxy, threadId, text) {
     result = await proxy.rpc(method, { threadId, input });
   }
   record({ type: 'codexInboxAdmission', threadId, method, result });
+  return result;
 }
 
-const [threadId, pointer] = process.argv.slice(2);
-if (!threadId || pointer === undefined) {
-  process.stderr.write('usage: codex-inbox-wake.mjs THREAD INBOX_POINTER\n');
+class Events {
+  constructor() { this.values = []; }
+  push(value) {
+    if (this.waiter) { const resolve = this.waiter; this.waiter = null; resolve(value); }
+    else if (!value.change || !this.values.some(event => event.change)) this.values.push(value);
+  }
+  next() {
+    if (this.values.length) return Promise.resolve(this.values.shift());
+    return new Promise(resolve => { this.waiter = resolve; });
+  }
+}
+
+async function reportFailure(executable, database, session, threadId, error) {
+  const body = { type: 'codex-inbox-continuation-failed', session, threadId, cause: String(error.stack || error) };
+  record(body);
+  const child = spawn(executable, [database, 'report-file', 'codex-inbox-failure:' + randomBytes(16).toString('hex'), session, '-'],
+    { stdio: ['pipe', 'pipe', 'inherit'] });
+  let output = '', writeError;
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', text => { output += text; });
+  child.stdin.on('error', error => { writeError = error; });
+  const exit = await new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => resolve({ code, signal }));
+    child.stdin.end(JSON.stringify(body));
+  });
+  record({ type: 'codexInboxFailureReport', session, threadId, ...exit, output, ...(writeError ? { writeError: String(writeError) } : {}) });
+  if (writeError || exit.code !== 0 || exit.signal) {
+    throw new Error(body.cause + '\nBaton parent/operator failure notification failed: ' + JSON.stringify({ ...exit, output }), { cause: writeError });
+  }
+}
+
+async function openInbox(database, session, threadId) {
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(database, { readOnly: true });
+  const state = db.prepare(`SELECT s.native,
+    EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) AS stopped,
+    (SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL) AS pendingCount,
+    (SELECT max(seq) FROM messages WHERE recipient=s.id) AS inputSeq,
+    (SELECT id FROM messages WHERE recipient=s.id AND receipt IS NULL ORDER BY seq LIMIT 1) AS message
+    FROM sessions s WHERE s.id=?`);
+  return {
+    read() {
+      const row = state.get(session);
+      if (!row) throw new Error('Baton session is not recorded: ' + session);
+      if (row.native !== threadId) throw new Error('Baton session now records another native conversation: ' + JSON.stringify({ session, native: row.native }));
+      return row;
+    },
+    close() { db.close(); },
+    pointer(row) {
+      return 'Baton input is pending.\n' + JSON.stringify({ database, recipient: session, message: row.message, pendingCount: row.pendingCount }) +
+        '\nRead all owed input with baton2 DATABASE inbox RECIPIENT. Read complete stored bodies with baton2 DATABASE delivery MESSAGE. ' +
+        'Handle the work in this continuation. Acknowledge each handled own message with baton2 DATABASE ack MESSAGE RECIPIENT RECEIPT. ' +
+        'Read your inbox again before ending the turn. Admission is separate from handling and acknowledgement.';
+    },
+  };
+}
+
+async function follow(proxy, executable, database, session, threadId, inbox) {
+  const events = new Events();
+  let notificationFailure;
+  const notifyFailure = async error => {
+    try { await reportFailure(executable, database, session, threadId, error); }
+    catch (error) { notificationFailure = error; throw error; }
+  };
+  proxy.onNotification = message => {
+    if (message.error) events.push(message);
+    else if (message.params?.threadId === threadId && message.method === 'turn/completed') {
+      const { id, status, error } = message.params.turn;
+      events.push({ method: message.method, params: { threadId, turn: { id, status, ...(error ? { error } : {}) } } });
+    } else if (message.params?.threadId === threadId && message.method === 'thread/status/changed' &&
+      message.params.status.type !== 'active') events.push({ method: message.method, params: message.params });
+  };
+  const changes = spawn(executable, [database, 'ui-subscribe', '0', '0'], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const exited = new Promise(resolve => changes.once('close', (code, signal) => resolve({ code, signal })));
+  const lines = createInterface({ input: changes.stdout });
+  let ready = false, closing = false, failure;
+  const readiness = new Promise((resolve, reject) => {
+    changes.once('error', error => { reject(error); events.push({ error }); });
+    lines.on('line', line => {
+      try {
+        const notice = JSON.parse(line);
+        if (!ready) { ready = true; resolve(); }
+        else events.push({ change: notice });
+      } catch (error) { reject(error); events.push({ error }); }
+    });
+    changes.once('close', (code, signal) => {
+      if (!closing) {
+        const error = new Error('Baton inbox change subscription ended: ' + JSON.stringify({ code, signal }));
+        reject(error); events.push({ error });
+      }
+    });
+  });
+  try {
+    await readiness;
+    await proxy.connect();
+    let row = inbox.read();
+    if (row.stopped || !row.pendingCount) return;
+    await proxy.rpc('thread/resume', { threadId });
+    record({ type: 'codexInboxSubscribed', session, threadId });
+    let lastAdmission, lastInput = row.inputSeq;
+    let event = { initial: true };
+    for (;;) {
+      if (event.error) throw event.error;
+      row = inbox.read();
+      if (row.stopped || !row.pendingCount) {
+        record({ type: 'codexInboxReleased', session, threadId, stopped: Boolean(row.stopped), pendingCount: row.pendingCount });
+        return;
+      }
+      if (event.change && row.inputSeq === lastInput) { event = await events.next(); continue; }
+      lastInput = row.inputSeq;
+      if (event.method === 'turn/completed') {
+        record({ type: 'codexInboxTurnSettled', session, threadId, turnId: event.params.turn.id,
+          status: event.params.turn.status, ...(event.params.turn.error ? { error: event.params.turn.error } : {}) });
+        if (event.params.turn.status !== 'completed') {
+          lastAdmission = JSON.stringify([event.params.turn.id, row.inputSeq]);
+          await notifyFailure(new Error('Managed Codex turn settled with unfinished input: ' + JSON.stringify(event.params.turn)));
+          event = await events.next();
+          continue;
+        }
+      }
+      const { thread } = await proxy.rpc('thread/read', { threadId, includeTurns: false });
+      if (thread.status.type === 'idle') {
+        const turns = await proxy.rpc('thread/turns/list', { threadId, sortDirection: 'desc', itemsView: 'notLoaded' });
+        const settlement = JSON.stringify([turns.data[0]?.id ?? null, row.inputSeq]);
+        if (settlement !== lastAdmission) {
+          row = inbox.read();
+          if (!row.stopped && row.pendingCount) {
+            lastAdmission = settlement;
+            try { await deliver(proxy, threadId, inbox.pointer(row)); }
+            catch (error) {
+              if (proxy.readerError) throw error;
+              await notifyFailure(error);
+            }
+          }
+        }
+      } else if (thread.status.type === 'active' && event.method === 'turn/completed') {
+        row = inbox.read();
+        if (!row.stopped && row.pendingCount) {
+          try { await deliver(proxy, threadId, inbox.pointer(row)); }
+          catch (error) {
+            if (proxy.readerError) throw error;
+            await notifyFailure(error);
+          }
+        }
+      } else if (thread.status.type === 'systemError' || thread.status.type === 'notLoaded') {
+        throw new Error('Managed Codex inbox continuation cannot run: ' + JSON.stringify(thread.status));
+      }
+      event = await events.next();
+    }
+  } catch (error) {
+    failure = error;
+    try { if (error !== notificationFailure) await notifyFailure(error); }
+    catch (error) { failure = error; }
+    throw failure;
+  } finally {
+    closing = true;
+    lines.close();
+    changes.kill('SIGTERM');
+    const exit = await exited;
+    if (exit.code !== 0 && exit.signal !== 'SIGTERM') {
+      throw new Error((failure ? String(failure.stack || failure) + '\n' : '') + 'Baton inbox change subscription exit: ' + JSON.stringify(exit));
+    }
+  }
+}
+
+const args = process.argv.slice(2);
+const managed = args[0] === '--session' || args[0] === '--follow';
+const [mode, executable, database, session, native, message] = managed ? args : [];
+const [threadId, pointer] = managed ? [native, undefined] : args;
+if (!threadId || (managed ? !executable || !database || !session || (mode === '--session' && message === undefined) : pointer === undefined)) {
+  process.stderr.write('usage: codex-inbox-wake.mjs THREAD INBOX_POINTER\n       codex-inbox-wake.mjs --session EXE DATABASE PLAYER THREAD MESSAGE\n       codex-inbox-wake.mjs --follow EXE DATABASE PLAYER THREAD\n');
   process.exitCode = 2;
 } else {
-  const proxy = new PublicProxy();
+  let proxy;
+  let inbox;
   const cancel = signal => {
     record({ type: 'codexProxyCancellation', signal });
-    proxy.child.kill(signal);
+    proxy?.child.kill(signal);
   };
   const interrupt = () => cancel('SIGINT');
   const terminate = () => cancel('SIGTERM');
   process.once('SIGINT', interrupt);
   process.once('SIGTERM', terminate);
   try {
-    await proxy.connect();
-    await deliver(proxy, threadId, pointer);
+    if (managed) {
+      inbox = await openInbox(database, session, threadId);
+      const row = inbox.read();
+      if (row.stopped || !row.pendingCount) {
+        record({ type: 'codexInboxRetained', session, threadId, stopped: Boolean(row.stopped), pendingCount: row.pendingCount });
+      } else {
+        proxy = new PublicProxy();
+        if (mode === '--follow') await follow(proxy, executable, database, session, threadId, inbox);
+        else {
+          await proxy.connect();
+          await deliver(proxy, threadId, inbox.pointer(row));
+        }
+      }
+    } else {
+      proxy = new PublicProxy();
+      await proxy.connect();
+      await deliver(proxy, threadId, pointer);
+    }
   } catch (error) {
     process.stderr.write(String(error.stack || error) + '\n');
     process.exitCode = 1;
   } finally {
-    try { await proxy.close(); }
+    inbox?.close();
+    try { if (proxy) await proxy.close(); }
     catch (error) { process.stderr.write(String(error.stack || error) + '\n'); process.exitCode = 1; }
     process.removeListener('SIGINT', interrupt);
     process.removeListener('SIGTERM', terminate);

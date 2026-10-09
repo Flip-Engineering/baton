@@ -5,6 +5,8 @@ import ../host/session-lock.bend as Lock
 import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
 import ../git/text.bend as Tx
+import ../harness/codex-player.bend as Codex
+import ./delivery.bend as Delivery
 
 # The fixed coordinator drives every session with actionable pending input as
 # concurrent native tasks under the elected database owner. One serve process
@@ -19,7 +21,7 @@ import ../git/text.bend as Tx
 # IDs replay after any restart. The owner publishes the high-water; this loop
 # only reads rows and never publishes.
 type Event is Data:
-  TaskDone{session: String, ok: Bool}
+  TaskDone{session: String, result: Result<&1,&1,U32 & String,Unit>}
   Committed{}
   Gap{}
   Closed{}
@@ -46,8 +48,14 @@ def recorded_endpoint(+db: String, +session: String, index: String) -> IO(String
     saved : String <- IO.try(String, DB.Sql.query(db, endpoint_field_sql(session, index)))
     IO.pure(String, Tx.trim_nl(saved))
 
+def managed_receiver_sql() -> String:
+  "CASE WHEN json_valid(s.endpoint) THEN s.harness='codex' AND s.native<>'' AND json_extract(s.endpoint,'$[1]') LIKE '%/codex-inbox-wake.mjs' AND json_extract(s.endpoint,'$[#-5]')='--session' AND json_extract(s.endpoint,'$[#-2]')=s.id AND json_extract(s.endpoint,'$[#-1]')=s.native ELSE 0 END"
+
+def native_receiver_sql() -> String:
+  "CASE WHEN json_valid(s.endpoint) THEN s.harness IN ('codex','omp','muse','claude-code') AND json_extract(s.endpoint,'$[#-7]')='receive' AND json_extract(s.endpoint,'$[#-6]')=s.id ELSE 0 END"
+
 def dirty_session_sql() -> String:
-  "SELECT DISTINCT m.recipient || '|' || s.harness || '|' || CASE WHEN s.harness IN ('codex','omp') AND s.endpoint <> '' THEN 'serve' ELSE 'refuse' END FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " AND s.harness IN ('codex','omp','muse','claude-code') ORDER BY m.recipient;"
+  "SELECT DISTINCT m.recipient || '|' || s.harness || '|' || CASE WHEN (" ++ native_receiver_sql() ++ ") OR (" ++ managed_receiver_sql() ++ ") THEN 'serve' ELSE 'refuse' END FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " AND s.harness IN ('codex','omp','muse','claude-code') ORDER BY m.recipient;"
 
 def split_triple_parts(parts: List<&2,String>, +line: String) -> (String & String) & String:
   match parts:
@@ -57,12 +65,9 @@ def split_triple_parts(parts: List<&2,String>, +line: String) -> (String & Strin
 def split_triple(+line: String) -> (String & String) & String:
   split_triple_parts(String.split(line, Char.from_u32(124)), line)
 
-# The snapshot already marks the serving route: Codex and OMP sessions with a
-# recorded receiver endpoint run through receive, which admits them through
-# the session lock and consumes the inbox on completion. Every other
-# actionable session keeps its conductor-driven Turn route; the loop refuses
-# those explicitly instead of attempting a receive that cannot admit them.
-# An unparsable row refuses, never forks: the safe direction is loud, not new.
+# Generated receivers use Receive for Codex, OMP, Muse and Claude Code.
+# A configured managed Codex App helper subscribes to its existing conversation.
+# Other routes retain their recorded endpoint and report their required setup.
 def parse_fit(fit: Bool, session: String, harness: String, serve: List<(String & String)>, refuse: List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
   match fit:
     case True{}: (Con{(session, harness), serve}, refuse)
@@ -154,19 +159,36 @@ def stripped_kept(stripped: List<(String & String)> & List<String>) -> List<Stri
   match stripped:
     case (fresh, kept): kept
 
-# One session task runs the recorded receive entry with the recorded harness
-# executable and log resolved within its receiver command. A raw command starts
-# at index zero; a wrapped command starts after the wrapper's -- separator.
-# Model, effort and workspace stay empty so the entry selects the recorded route. The
-# session lock inside Receive refuses a second task for the same session with
-# queued, so the in-flight set plus the lock agree on admission. Stop
-# admission, native conversation identity, pending-input recovery and parent
-# notification run in that path unchanged.
-def serve_task(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+# Each session task uses its recorded native receiver or managed App helper.
+# The coordinator keeps that task in its in-flight set through turn settlement.
+def managed_result(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+    case Done{saved}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+
+def serve_managed(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    row : String <- IO.try(String,DB.Sql.query(db,"SELECT native FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    executable : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.executable()
+    run : Result<&1,&1,U32 & String,String> <- Codex.inbox_follow(executable,db,session,Tx.trim_nl(row))
+    logged : Result<&1,&1,U32 & String,String> <- Delivery.completed(db,"",run)
+    managed_result(logged)
+
+def serve_native(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     cmd : String <- recorded_endpoint(db, session, "4")
     log : String <- recorded_endpoint(db, session, "8")
-    Receive.run(db, session, cmd, "", "", "", log, "")
+    Receive.serve(db, session, cmd, "", "", "", log)
+
+def serve_selected(db: String, session: String, managed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match managed:
+    case True{}: serve_managed(db,session)
+    case False{}: serve_native(db,session)
+
+def serve_task(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    row : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ managed_receiver_sql() ++ " FROM sessions s WHERE s.id=" ++ C.q(session) ++ ";"))
+    serve_selected(db,session,String.eq(Tx.trim_nl(row),"1"))
 
 def report_send(sent: Bool) -> IO(Event):
   match sent:
@@ -183,13 +205,9 @@ def send_or_die(chan: Chan(Event), event: Event) -> IO(Event):
     sent : Bool <- Chan.send(Event, chan, event)
     report_send(sent)
 
-# Each relay joins only its own native task, then queues one TaskDone carrying
-# whether the task succeeded. The returned event is never observed: no task
-# joins a relay, so the relay result only satisfies the fork type.
+# Each relay sends its task's actual result through the shared event channel.
 def relay_done(+session: String, +chan: Chan(Event), done: Result<&1,&1,U32 & String,Unit>) -> IO(Event):
-  match done:
-    case Done{unit}: send_or_die(chan, TaskDone{session, True{}})
-    case Fail{error}: send_or_die(chan, TaskDone{session, False{}})
+  send_or_die(chan, TaskDone{session,done})
 
 @unsafe
 def relay(task: Chan(Result<&1,&1,U32 & String,Unit>), +session: String, +chan: Chan(Event)) -> IO(Event):
@@ -227,15 +245,6 @@ def waiter(db: String, handle: U32, chan: Chan(Event)) -> IO(Event):
     result : Result<&1,&1,U32 & String,String> <- Custody.Instance.notice(handle)
     await_notice(db, result, chan)
 
-# A failed task carries its failure to the shutdown exit. A stop racing the
-# snapshot can fail a task whose input the stop retained; the next serve
-# excludes that stopped input, so the exit stays truthful while the input
-# stays pending.
-def note_task(failed: Bool, ok: Bool) -> IO(Bool):
-  match ok:
-    case True{}: IO.pure(Bool, failed)
-    case False{}: IO.pure(Bool, True{})
-
 def drop_chan(chan: Chan(Event)) -> IO(Unit):
   IO.pure(Unit, Unit{})
 
@@ -257,8 +266,8 @@ def fork_each(+db: String, +chan: Chan(Event), pairs: List<(String & String)>, f
 # spin the loop.
 def refusal_route(+session: String, +harness: String, turn: Bool) -> String:
   match turn:
-    case True{}: "serve-refused " ++ session ++ " " ++ harness ++ ": this loop serves Codex and OMP sessions with recorded receivers through receive; serve " ++ harness ++ " sessions with dispatch-turn.\n"
-    case False{}: "serve-refused " ++ session ++ " " ++ harness ++ ": this loop serves Codex and OMP sessions with recorded receivers through receive; register a receiver for " ++ session ++ " before it can run.\n"
+    case True{}: "serve-refused " ++ session ++ " " ++ harness ++ ": register a native receiver or run this session with dispatch-turn.\n"
+    case False{}: "serve-refused " ++ session ++ " " ++ harness ++ ": register a native receiver or a managed Codex App helper endpoint for this session.\n"
 
 def refusal_text(+session: String, +harness: String) -> String:
   refusal_route(session, harness, Bool.or(String.eq(harness, "muse"), String.eq(harness, "claude-code")))
@@ -327,18 +336,31 @@ def close_guarded(handle: U32, guard: U32, failed: Bool) -> IO(Result<&1,&1,U32 
     failed_now : Bool <- release_guard(guard, failed)
     close_subscription(handle, failed_now)
 
-# One event advances the loop. TaskDone drops the session from the in-flight
-# set and replays the snapshot without re-probing refusals. Committed and Gap
-# re-arm the notice waiter first, clear the refused set for a fresh probe,
-# and replay the same full snapshot. Closed releases the coordinator role,
-# closes the subscription and exits carrying the swept status.
+def task_cleanup(code: U32, cause: String, closed: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match closed:
+    case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,cause)})
+    case Fail{(cleanup_code,cleanup_cause)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      logged : Unit <- IO.write("Serve cleanup failed: " ++ U32.show(cleanup_code) ++ ": " ++ cleanup_cause ++ "\n")
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,cause)})
+
+def task_completed(+db: String, handle: U32, guard: U32, +chan: Chan(Event), +session: String, result: Result<&1,&1,U32 & String,Unit>, failed: Bool, flying: List<String>, refused: List<String>, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match result:
+    case Fail{(+code,+cause)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      logged : Unit <- IO.write("Serve task " ++ session ++ " failed: " ++ U32.show(code) ++ ": " ++ cause ++ "\n")
+      closed : Result<&1,&1,U32 & String,Unit> <- close_guarded(handle,guard,failed)
+      task_cleanup(code,cause,closed)
+    case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      fresh : List<(String & String)> & List<(String & String)> <- snapshot(db)
+      fork_fresh(db,chan,fresh,without_id(flying,session),refused,failed,again)
+
+# Successful TaskDone releases the in-flight entry and replays pending input.
+# A failed task prints its actual cause and closes the coordinator with failure.
+# Committed and Gap re-arm the notice waiter and replay the current snapshot.
+# Closed releases the coordinator role and closes its subscription.
 @unsafe
 def on_event(+db: String, handle: U32, guard: U32, +chan: Chan(Event), event: Event, failed: Bool, flying: List<String>, refused: List<String>, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match event:
-    case TaskDone{session, ok}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      failed_now : Bool <- note_task(failed, ok)
-      fresh : List<(String & String)> & List<(String & String)> <- snapshot(db)
-      fork_fresh(db, chan, fresh, without_id(flying, session), refused, failed_now, again)
+    case TaskDone{session, result}: task_completed(db,handle,guard,chan,session,result,failed,flying,refused,again)
     case Committed{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       waiter_task : Chan(Event) <- IO.fork(Event, waiter(db, handle, chan))
       dropped : Unit <- drop_chan(waiter_task)

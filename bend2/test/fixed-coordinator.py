@@ -311,6 +311,102 @@ class FixedCoordinator(unittest.TestCase):
             stdout, stderr = self.serve_proc.communicate()
             self.assertEqual(self.serve_proc.returncode, expect_serve, stderr)
 
+    def managed_app_proxy(self):
+        state = self.directory / 'managed-app.json'
+        state.write_text(json.dumps({'status': 'active', 'turn': 'app-initial', 'number': 0}))
+        command = self.directory / 'codex'
+        command.write_text('#!' + sys.executable + '\n' + r'''
+import base64,hashlib,json,os,pathlib,socket,struct,sys,threading
+assert sys.argv[1:]==['app-server','proxy'], sys.argv
+state=pathlib.Path(__STATE__)
+calls=pathlib.Path(__CALLS__)
+write_lock=threading.Lock()
+control=None
+def read_state():
+    return json.loads(state.read_text())
+def save_state(value):
+    temporary=state.with_name(state.name+'.'+str(os.getpid()))
+    temporary.write_text(json.dumps(value))
+    temporary.replace(state)
+def exact(n):
+    data=b''
+    while len(data)<n:
+        part=sys.stdin.buffer.read(n-len(data))
+        if not part:raise EOFError('fixture input closed')
+        data+=part
+    return data
+def reply(value):
+    payload=json.dumps(value).encode()
+    n=len(payload)
+    size=bytes([n]) if n<126 else bytes([126])+struct.pack('!H',n) if n<65536 else bytes([127])+struct.pack('!Q',n)
+    with write_lock:
+        sys.stdout.buffer.write(bytes([129])+size+payload)
+        sys.stdout.buffer.flush()
+def completion_events(stream):
+    for line in stream:
+        action=json.loads(line)
+        if action.get('settle'):
+            current=read_state()
+            save_state({**current,'status':'idle'})
+            reply({'method':'turn/completed','params':{'threadId':'native-w1','turn':{'id':current['turn'],'status':'completed','error':None}}})
+            reply({'method':'thread/status/changed','params':{'threadId':'native-w1','status':{'type':'idle'}}})
+            stream.write((json.dumps({'settled':current['turn']})+'\n').encode())
+header=b''
+while not header.endswith(b'\r\n\r\n'):header+=exact(1)
+key=next(line.split(b':',1)[1].strip() for line in header.split(b'\r\n') if line.lower().startswith(b'sec-websocket-key:'))
+accept=base64.b64encode(hashlib.sha1(key+b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())
+sys.stdout.buffer.write(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: '+accept+b'\r\n\r\n')
+sys.stdout.buffer.flush()
+try:
+    while True:
+        a,b=exact(2)
+        n=b&127
+        if n==126:n=struct.unpack('!H',exact(2))[0]
+        elif n==127:n=struct.unpack('!Q',exact(8))[0]
+        mask=exact(4) if b&128 else None
+        data=exact(n)
+        if mask:data=bytes(v^mask[i%4] for i,v in enumerate(data))
+        if a&15==8:break
+        request=json.loads(data)
+        method=request['method']
+        if 'id' not in request:
+            with calls.open('a') as output:output.write(json.dumps(request)+'\n')
+            continue
+        thread=request.get('params',{}).get('threadId')
+        current=read_state() if thread=='native-w1' else {'status':'active','turn':'fixture-turn'}
+        if method=='initialize':result={}
+        elif method in ('thread/read','thread/resume'):
+            result={'thread':{'id':thread,'status':{'type':current['status']},'turns':[]}}
+            if method=='thread/resume' and thread=='native-w1':
+                connection=socket.create_connection(('127.0.0.1',__PORT__))
+                control=connection.makefile('rwb',buffering=0)
+                control.write((json.dumps({'session':'w1-app','thread':thread,'pid':os.getpid()})+'\n').encode())
+                assert json.loads(control.readline())=={'controlReady':True}
+                threading.Thread(target=completion_events,args=(control,),daemon=True).start()
+        elif method=='thread/turns/list':
+            result={'data':[{'id':current['turn'],'status':'inProgress' if current['status']=='active' else 'completed'}],'nextCursor':None}
+        elif method=='turn/steer':
+            assert current['status']=='active' and request['params']['expectedTurnId']==current['turn'], request
+            result={'turnId':current['turn']}
+        elif method=='turn/start':
+            assert thread=='native-w1' and current['status']=='idle', request
+            current={**current,'number':current['number']+1,'status':'active'}
+            current['turn']='app-turn-'+str(current['number'])
+            save_state(current)
+            result={'turn':{'id':current['turn'],'status':'inProgress','items':[],'error':None}}
+        else:raise AssertionError(request)
+        reply({'id':request['id'],'result':result})
+        with calls.open('a') as output:output.write(json.dumps(request)+'\n')
+finally:
+    if control is not None:
+        connection.shutdown(socket.SHUT_RDWR)
+        control.close()
+        connection.close()
+'''.replace('__STATE__', repr(str(state)))
+           .replace('__CALLS__', repr(str(self.codex_calls)))
+           .replace('__PORT__', str(self.server.getsockname()[1])))
+        command.chmod(0o700)
+
     def test_01_serve_drives_concurrent_sessions_with_guidance(self):
         self.recruit('w1', 'codex')
         self.recruit('w2', 'omp')
@@ -626,32 +722,35 @@ class FixedCoordinator(unittest.TestCase):
             'serve on the alias never serviced the database after release')
         self.shutdown()
 
-    def test_09_muse_session_is_refused_with_its_turn_route(self):
+    def test_09_muse_receiver_continues_owed_input_in_the_same_session(self):
         self.recruit('m1', 'muse')
         self.dispatch('tm1', 'm1', 'Task for a Muse session.')
+        self.queue('m1', {'body': 'Muse first completed turn', 'ack': False, 'hold_exit': True},
+                   {'body': 'Muse resumed handled input'})
+        self.receiver('m1')
         self.start_owner()
         self.start_serve()
-        self._serve_lines = []
-
-        def _drain():
-            try:
-                for line in self.serve_proc.stdout:
-                    self._serve_lines.append(line)
-            except (OSError, ValueError):
-                pass
-        drain = threading.Thread(target=_drain, daemon=True)
-        drain.start()
-
-        def refusal():
-            log = ''.join(self._serve_lines)
-            return log if 'serve-refused m1 muse' in log else None
-        log = self.eventually(refusal, 'serve never refused the Muse session')
-        self.assertIn('dispatch-turn', log, 'refusal names no Turn route')
-        self.assertEqual(self.connections('m1'), [],
-                         'the serve started a native for a refused session')
-        self.assertIsNone(self.serve_proc.poll(), 'serve died on a refused session')
-        row = self.query("SELECT receipt FROM messages WHERE id='tm1'")
-        self.assertEqual(row, [(None,)], 'refused input was consumed or lost')
+        first, _ = self.stream_for('m1')
+        self.assertEqual(json.loads(first.readline()), {'terminal_written': True})
+        original = self.connections('m1')[0]
+        self.assertIn('[id: tm1]', original['prompt'])
+        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='tm1'"), [(None,)])
+        self.dispatch('gm1', 'm1', 'Complete the owed task and this new guidance.', kind='guidance')
+        self.assertEqual(len(self.connections('m1')), 1, 'guidance started a second live Muse process')
+        self.release('m1')
+        self.stream_for('m1', 1)
+        resumed = self.connections('m1')[1]
+        self.assertEqual(resumed['native'], original['native'])
+        self.assertEqual(resumed['resume'], original['native'])
+        self.assertIn('[id: tm1]', resumed['prompt'])
+        self.assertIn('[id: gm1]', resumed['prompt'])
+        self.await_inbox('root', lambda messages: (
+            messages if any('Muse resumed handled input' in message['body'] for message in messages)
+            else None), 'the resumed Muse report never reached its conductor')
+        self.assertEqual(self.inbox('m1'), [])
+        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id IN ('tm1','gm1') ORDER BY id"),
+                         [('native-reviewed',), ('native-reviewed',)])
+        self.assertEqual(len(self.connections('m1')), 2, 'Muse input was executed more than once')
         self.shutdown()
 
     def test_10_completed_session_serves_later_dispatch(self):
@@ -681,18 +780,66 @@ class FixedCoordinator(unittest.TestCase):
             'later dispatch for a completed session never ran')
         row = self.query("SELECT receipt FROM messages WHERE id='t2'")
         self.assertNotEqual(row, [(None,)], 't2 was not acknowledged')
+
+        self.managed_app_proxy()
+        previous_calls = len(self.codex_calls.read_text().splitlines()) if self.codex_calls.exists() else 0
+        self.queue('w1-app', {'controlReady': True})
+        self.coord('connect', 'w1', 'native-w1', json.dumps([
+            'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
+            str(EXE), str(self.db), 'w1', 'native-w1']))
+
+        def app_calls(method):
+            lines = self.codex_calls.read_text().splitlines(keepends=True)
+            rows = [json.loads(line) for line in lines[previous_calls:] if line.endswith('\n')]
+            return [row for row in rows if row['method'] == method
+                    and row.get('params', {}).get('threadId') == 'native-w1']
+
+        self.dispatch('t3', 'w1', 'Handle the remaining input when this App turn settles.')
+        self.stream_for('w1-app')
+        self.assertTrue(app_calls('turn/steer'), 'the short sender admitted input to the active App turn')
+        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='t3'"), [(None,)])
+        self.release('w1-app', settle=True)
+        self.eventually(lambda: app_calls('turn/start'), 'App completion did not prompt its remaining inbox')
+        self.assertIn('"recipient":"w1"', app_calls('turn/start')[0]['params']['input'][0]['text'])
+        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='t3'"), [(None,)],
+                         'the lifecycle watcher acknowledged input')
+        self.dispatch('g3', 'w1', 'New input while the same App watcher remains active.', kind='guidance')
+        self.coord('ack', 't3', 'w1', 'w1-app-handled-t3')
+        self.dispatch('g4', 'w1', 'Later guidance after the recipient handled its earlier input.', kind='guidance')
+        self.assertEqual(len(self.connections('w1-app')), 1, 'own ACK or new input duplicated the App watcher')
+        self.release('w1-app', settle=True)
+        self.eventually(lambda: len(app_calls('turn/start')) >= 2,
+                        'the next actual App completion did not prompt still-owed guidance')
+        self.assertEqual(len(app_calls('turn/start')), 2, 'one actual continuation follows each observed settlement')
+        self.assertEqual(len(self.connections('w1-app')), 1, 'settlement duplicated the App watcher')
+        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id IN ('g3','g4') ORDER BY id"),
+                         [(None,), (None,)], 'App input admission changed recipient receipts')
+        self.coord('stop', 'w1', 'app-operator-stop', 'Retain the remaining App guidance.')
+        self.eventually(lambda: not any('--follow' in process['command'] and str(self.db) in process['command']
+                                       for process in self.owned_processes()),
+                        'the managed watcher remained live after the explicit stop')
+        self.assertEqual([message['id'] for message in self.inbox('w1')], ['g3', 'g4'])
+        self.assertEqual(self.query("SELECT id,reason FROM session_stops WHERE session='w1'"),
+                         [('app-operator-stop', 'Retain the remaining App guidance.')])
         self.shutdown()
 
     def test_11_owner_drain_leaves_no_duplicate_serve_admission(self):
-        # The actual owner/native topology: the owner/Receive drain runs
-        # queued guidance inside the open call while the serve must not
-        # fork a duplicate native nor refuse aloud what the drain consumes.
+        # An ordinary Receive owns the native attempt before the serve starts.
         self.recruit('w1', 'codex')
         self.queue('w1', {'body': 'w1 turn one complete', 'hold_exit': True},
                    {'body': 'w1 guidance turn complete'})
         self.dispatch('t1', 'w1', 'First task.')
         self.receiver('w1')
         self.start_owner()
+        original_receive = subprocess.Popen([
+            str(EXE), str(self.db), 'receive', 'w1', str(self.fixture), 'w1', 'low',
+            str(self.checkouts / 'w1'), str(self.co_dir / 'w1.jsonl'), ''],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.children.append(original_receive)
+        first_w1, _ = self.stream_for('w1')
+        self.assertEqual(json.loads(first_w1.readline()), {'terminal_written': True})
+        held_attempt = self.query("SELECT id FROM executions WHERE session='w1'")
+        self.dispatch('g1', 'w1', 'Guidance issued while turn one is held.', kind='guidance')
         self.start_serve()
         self._serve_lines = []
 
@@ -704,9 +851,11 @@ class FixedCoordinator(unittest.TestCase):
                 pass
         drain = threading.Thread(target=_drain, daemon=True)
         drain.start()
-        first_w1, _ = self.stream_for('w1')
-        self.assertEqual(json.loads(first_w1.readline()), {'terminal_written': True})
-        self.dispatch('g1', 'w1', 'Guidance issued while turn one is held.', kind='guidance')
+        queued = self.coord('receive', 'w1', str(self.fixture), 'w1', 'low',
+                            str(self.checkouts / 'w1'), str(self.co_dir / 'w1.jsonl'), '')
+        self.assertEqual(queued['status'], 'queued', 'ordinary receive waited for the active native turn')
+        self.assertEqual(self.query("SELECT id FROM executions WHERE session='w1'"), held_attempt,
+                         'the queued receive replaced the original native attempt')
         self.assertEqual(len(self.connections('w1')), 1,
                          'guidance forked a second native while the turn is held')
         self.release('w1')
@@ -726,6 +875,8 @@ class FixedCoordinator(unittest.TestCase):
         for ident in ('t1', 'g1'):
             row = self.query(f"SELECT receipt FROM messages WHERE id='{ident}'")
             self.assertNotEqual(row, [(None,)], f'{ident} was not acknowledged')
+        stdout, stderr = original_receive.communicate()
+        self.assertEqual(original_receive.returncode, 0, stdout + stderr)
         self.shutdown()
 
 

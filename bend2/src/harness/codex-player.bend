@@ -2,6 +2,7 @@ import Base
 import ../host/process.bend as P
 import ../host/session-lock.bend as Lock
 import ../json/canonical.bend as J
+import ../git/process.bend as Process
 
 def models_args(cmd: String) -> List<String>:
   [cmd,"debug","models"]
@@ -60,6 +61,18 @@ def inbox_admission(executable: Result<&1,&1,U32 & String,String>, thread: Strin
     case Done{path}: do IO<Result<&1,&1,U32 & String,U32>>:
       script : Result<&1,&1,U32 & String,String> <- wake_path(path)
       wake_start(script,thread,pointer,stderr)
+
+def inbox_follow_source(executable: String, db: String, session: String, native: String, source: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match source:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{script}: Process.Process.run(P.argv(["node",script,"--follow",executable,db,session,native]),".")
+
+def inbox_follow(executable: Result<&1,&1,U32 & String,String>, db: String, session: String, native: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match executable:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{+path}: do IO<Result<&1,&1,U32 & String,String>>:
+      source : Result<&1,&1,U32 & String,String> <- wake_path(path)
+      inbox_follow_source(path,db,session,native,source)
 
 # The profile variant keeps the existing key unbinds first, then the profile's store
 # assignment, then the command: env parses its options before its operands, so a

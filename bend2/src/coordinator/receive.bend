@@ -380,9 +380,9 @@ def ack_then_retire(+handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(acked,retired))
 
 def completed_wake(+db: String, session: String, cursor: String, finished: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match finished:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
-    case Done{unit}: wake_due(db,session,cursor,target => wake_launch(db,target))
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    woke : Result<&1,&1,U32 & String,Unit> <- wake_due(db,session,cursor,target => wake_launch(db,target))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,woke))
 
 # The wake follows a completion that recorded no advance: an advance's own continuation
 # drains the owed input, and a completion failure keeps its own result from here.
@@ -818,6 +818,26 @@ def run(+db: String, +session: String, +cmd: String, +model: String, +effort: St
     closed : Bool <- Stop.stopped(db,session)
     result : Result<&1,&1,U32 & String,Unit> <- available(db,session,cmd,model,effort,cwd,log,u => run(db,session,cmd,model,effort,cwd,log,""),closed)
     settled : Unit <- claim_left(db,session)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,result)
+
+def serve_acquired(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, lock: U32, closed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match closed:
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+      receive_status(db,session,"stopped")
+    case False{}: acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,u => run(db,session,cmd,model,effort,cwd,log,""))
+
+# The coordinator waits for physical ownership, then reads stops and pending input.
+@unsafe
+def serve(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    recorded : String <- IO.try(String,Store.commit(canonical,C.Session{session}))
+    exists : Unit <- registered(Bool.not(String.is_empty(recorded)))
+    lock : U32 <- IO.try(U32,Lock.SessionLock.wait_acquire(canonical,session))
+    closed : Bool <- Stop.stopped(canonical,session)
+    result : Result<&1,&1,U32 & String,Unit> <- serve_acquired(canonical,session,cmd,model,effort,cwd,log,lock,closed)
+    settled : Unit <- claim_left(canonical,session)
     IO.pure(Result<&1,&1,U32 & String,Unit>,result)
 
 def recover_observer_acquired(+db: String, +session: String, id: String, cursor: String, +cmd: String, model: String, effort: String, cwd: String, +log: String, harness: String, directory: String, native: String, acquired: U32 & U32) -> IO(Result<&1,&1,U32 & String,Unit>):

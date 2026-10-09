@@ -166,6 +166,21 @@ admissions share the notification until recipient acknowledgement permits a
 new one. A failed submission retains the daemon's output and owed messages;
 `resume` retries that submission through the public queue.
 
+For a managed Codex App session, `connect` accepts the installed helper endpoint
+`["node","/absolute/libexec/baton2/codex-inbox-wake.mjs","--session","/absolute/bin/baton2","/absolute/database","PLAYER","THREAD"]`.
+`serve` owns one lifecycle subscription for each configured session with pending
+input. When its App turn settles, the helper checks its pending inbox and
+prompts the same conversation to handle it. The helper retains actual
+turn failures and public input admission results. Recipient acknowledgements
+clear handled input; an explicit stop closes the subscription and preserves
+the remaining messages.
+
+The same coordinator serves recorded native receivers for Codex, OMP, Muse and
+Claude Code. A receiver checks its owed inbox when a turn settles and continues
+the pending work in its recorded session. An existing native turn keeps its
+session lock until it releases observation; the coordinator's task then reads
+the current stops and pending input under that lock.
+
 ## Status and report inspection
 
 The native read commands format complete JSON with `--pretty`:
