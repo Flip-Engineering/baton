@@ -1016,11 +1016,11 @@ def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +d
     wake : Result<&1,&1,U32 & String,Unit> <- Delivery.wake_pending(db,player,"0")
     IO.pass(Unit,combine(finished,wake))
 
-def direct_second_started(+db: String, +player: String, +id: String, +log: String, +directory: String, +harness: String, lock: Maybe<U32>, start: P.RetainedStart) -> IO(Unit):
+def direct_second_started(+db: String, +player: String, +id: String, +log: String, +directory: String, +harness: String, +requested: String, lock: Maybe<U32>, start: P.RetainedStart) -> IO(Unit):
   match start:
     case P.Retained{+handle}: do IO<Unit>:
       reconciled : Unit <- Stop.started(db,player,id,directory)
-      observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,harness,directory,handle,"unknown")
+      observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,harness,directory,handle,requested)
       direct_completed(db,player,id,log,directory,handle,lock,observation)
     case P.Unstarted{error}: direct_unstarted(db,player,id,log,directory,lock,error)
 
@@ -1037,7 +1037,7 @@ def direct_restart_with_lock(+db: String, +player: String, +id: String, +cmd: St
     +policy : Logs.Policy <- Logs.policy(db,player)
     +level : String <- IO.pure(String,policy_level(policy))
     start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,fresh,cmd,model,effort,cwd,"",harness,db ++ ".sessions",note,lock,recovery,level))
-    direct_second_started(db,player,id,log,fresh,harness,Some{lock},start)
+    direct_second_started(db,player,id,log,fresh,harness,Omp.filter_events(level),Some{lock},start)
 
 def direct_restart_acquired(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +outcome: Outcome, lock: Maybe<U32>) -> IO(Unit):
   match lock:
@@ -1065,11 +1065,11 @@ def direct_first_observed(+db: String, +player: String, +id: String, +cmd: Strin
     gone : Bool <- refusal(directory ++ "/native.stderr",Bool.not(String.is_empty(session)),outcome)
     direct_first_checked(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,handle,lock,deliveries,outcome,gone)
 
-def direct_first_started(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +session: String, +prompt: String, lock: Maybe<U32>, start: P.RetainedStart) -> IO(Unit):
+def direct_first_started(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +session: String, +prompt: String, +requested: String, lock: Maybe<U32>, start: P.RetainedStart) -> IO(Unit):
   match start:
     case P.Retained{+handle}: do IO<Unit>:
       reconciled : Unit <- Stop.started(db,player,id,directory)
-      observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,harness,directory,handle,"unknown")
+      observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,harness,directory,handle,requested)
       direct_first_observed(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,session,prompt,handle,lock,observation)
     case P.Unstarted{error}: direct_unstarted(db,player,id,log,directory,lock,error)
 
@@ -1090,7 +1090,7 @@ def choose(+db: String, +player: String, +id: String, +cmd: String, +model: Stri
       +policy : Logs.Policy <- Logs.policy(db,player)
       +level : String <- IO.pure(String,policy_level(policy))
       start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,directory,cmd,model,effort,cwd,session,harness,db ++ ".sessions",prompt,lock,recovery,level))
-      direct_first_started(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,session,prompt,Some{lock},start)
+      direct_first_started(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,session,prompt,Omp.filter_events(level),Some{lock},start)
 
 def supported_harness(supported: Bool) -> IO(Unit):
   match supported:

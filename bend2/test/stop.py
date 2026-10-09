@@ -271,7 +271,7 @@ class Stop(unittest.TestCase):
         requested = self.stop()
         self.assertEqual(requested['attempt'], 'direct-turn')
         self.assertEqual(requested['requestedSignal'], 15)
-        self.finish(direct, ok=False)
+        self.finish(direct)
         self.assertEqual(stream.readline(), b'')
         completed = self.completed()
         self.assertEqual(completed['nativeStatus'], 'signal 15')

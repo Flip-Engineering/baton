@@ -126,10 +126,11 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.assertTrue(any('exit 7' in m['body'] for m in inbox))
         self.assertEqual(self.generation('turn-1').read_text(),'unframed startup failure\n')
         with sqlite3.connect(self.db) as connection:
-            stderr = connection.execute(
-                'SELECT stderr FROM log_stderr_runs WHERE session=? AND attempt=? ORDER BY run DESC LIMIT 1',
+            directory = connection.execute(
+                'SELECT directory FROM executions WHERE session=? AND attempt=?',
                 ('worker', 'turn-1')).fetchone()[0]
-        self.assertEqual(pathlib.Path(stderr).read_text(),'diagnosis')
+        self.assertTrue(directory)
+        self.assertEqual((pathlib.Path(directory) / 'native.stderr').read_text(),'diagnosis')
 
     def test_omp_prompt_session_route_and_terminal_report(self):
         self.register('omp-worker','root','omp','requested-model','high',str(self.cwd),'omp-branch','base')
