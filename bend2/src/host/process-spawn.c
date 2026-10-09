@@ -1039,7 +1039,7 @@ static void br_disconnected(BrKeeper *keeper) {
   if(!keeper->finishing && keeper->native_pid) br_recover(keeper);
 }
 static int br_native_exited(BrKeeper *keeper) {
-  if(!keeper->ready || !keeper->native_waiting)return 0;
+  if(!keeper->ready || !keeper->native_waiting || !keeper->native_pid)return 0;
   pid_t reaped;int status;
   do {reaped=waitpid(keeper->native_pid,&status,0);}while(reaped<0 && errno==EINTR);
   if(reaped<0)return errno;
@@ -1416,6 +1416,18 @@ static int br_keeper_prepare(BrKeeper *keeper,const char *directory,int lock) {
   keeper->prepared=1;
   return 0;
 }
+/* Disposes of a child whose setup failed after a successful spawn. Pid and birth
+   persistence, waiter setup and the initial input queue all run after the child
+   exists, and a failure in any of them must not leave a live child no attempt
+   tracks. The child is its own process group, so one signal covers it; a
+   waiter thread that already started observes the reap and exits. */
+static void br_keeper_reap_spawned(BrKeeper *keeper) {
+  if(!keeper->native_pid)return;
+  kill(-keeper->native_pid,SIGKILL);
+  int status=0;pid_t reaped;
+  do {reaped=waitpid(keeper->native_pid,&status,0);}while(reaped<0 && errno==EINTR);
+  keeper->native_pid=0;
+}
 static int br_keeper_spawn(BrKeeper *keeper,const unsigned char *expected_digest,
                            const unsigned char *grant_digest) {
   if(!keeper->prepared || keeper->cancelled)return EPERM;
@@ -1437,17 +1449,21 @@ static int br_keeper_spawn(BrKeeper *keeper,const unsigned char *expected_digest
   if(error){close(input[1]);return error;}
   keeper->input=input[1];br_nonblock(keeper->input);
   char pid[64];int n=snprintf(pid,sizeof(pid),"%d\n",keeper->native_pid);
-  if((error=br_file(keeper->directory,"native.pid",pid,(size_t)n,1)))return error;
-  BrBirth birth;if((error=br_birth(keeper->native_pid,&birth)))return error;
-  if((error=br_file(keeper->directory,"native.birth",&birth,sizeof(birth),1)))return error;
-  if((error=br_wait_start(keeper,keeper->native_pid,'N')))return error;
+  BrBirth birth;
+  if((error=br_file(keeper->directory,"native.pid",pid,(size_t)n,1)))goto spawned_failed;
+  if((error=br_birth(keeper->native_pid,&birth)))goto spawned_failed;
+  if((error=br_file(keeper->directory,"native.birth",&birth,sizeof(birth),1)))goto spawned_failed;
+  if((error=br_wait_start(keeper,keeper->native_pid,'N')))goto spawned_failed;
   if((error=br_queue(&keeper->writes,&keeper->writes_tail,keeper->manifest.field[3],
-                    (size_t)keeper->manifest.header.lengths[3],0,0,0)))return error;
+                    (size_t)keeper->manifest.header.lengths[3],0,0,0)))goto spawned_failed;
   if(!keeper->manifest.header.keep_stdin) {
-    if((error=br_queue(&keeper->writes,&keeper->writes_tail,NULL,0,0,0,1)))return error;
+    if((error=br_queue(&keeper->writes,&keeper->writes_tail,NULL,0,0,0,1)))goto spawned_failed;
     keeper->input_closed=1;
   }
   return 0;
+spawned_failed:
+  br_keeper_reap_spawned(keeper);
+  return error;
 }
 static int br_keeper_start(BrKeeper *keeper,const char *directory,int lock) {
   int error=br_keeper_prepare(keeper,directory,lock);
