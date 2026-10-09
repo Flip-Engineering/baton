@@ -762,10 +762,15 @@ def current_history(+db: String, player: String) -> IO(String):
 # the preserved provider history home carried as an ordinary config argument; an empty
 # binding keeps today's argv through retained_arguments, so a session with no record
 # spawns exactly as before.
-def retained_profile_arguments(omp: Bool, claude: Bool, +binding: List<String>, +override: List<String>, +cmd: String, +model: String, +effort: String, sessions: String, +native: String) -> String:
-  Bool.pick(String,claude,
-    Claude.argv_profile(binding,cmd,model,effort,native,String.is_empty(native)),
-  Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv_profile(binding,override,cmd,model,effort,native,String.is_empty(native))))
+def retained_profile_other(omp: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, +native: String) -> String:
+  match omp:
+    case True{}: Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native))
+    case False{}: Codex.argv_profile(binding,override,cmd,model,effort,native,String.is_empty(native))
+
+def retained_profile_arguments(omp: Bool, claude: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, +native: String) -> String:
+  match claude:
+    case True{}: Claude.argv_profile(binding,cmd,model,effort,native,String.is_empty(native))
+    case False{}: retained_profile_other(omp,binding,override,cmd,model,effort,sessions,native)
 
 def retained_identity_prefix(model: String, identity: String & String) -> String:
   (registry,helper)=identity

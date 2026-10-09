@@ -96,17 +96,8 @@ def native_observation_failed(outcome: Turn.Outcome) -> Bool:
 # observation completed and recorded no error, so an incomplete observation or a real
 # observation or logging failure keeps its own aggregate native failure.
 def superseding(superseded: Bool, outcome: Turn.Outcome) -> Bool:
-  (+status,+event,+error,+incomplete)=outcome
-  Bool.and(superseded,Bool.and(Bool.not(incomplete),String.is_empty(error)))
-
-# A clean completion of the whole observed path: observation, delivery, question
-# settlement, acknowledgment and retirement each returned their own success. A failure
-# there keeps its own result and runs no continuation, so a real cleanup failure never
-# launches the next profile.
-def finished_clean(result: Result<&1,&1,U32 & String,Unit>) -> Bool:
-  match result:
-    case Done{unit}: True{}
-    case Fail{error}: False{}
+  match outcome:
+    case Turn.Ended{status,event,error,incomplete}: Bool.and(superseded,Bool.and(Bool.not(incomplete),String.is_empty(error)))
 
 def continue_if(again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), present: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match present:
@@ -492,12 +483,8 @@ def profile_record_path(db: String, session: String) -> IO(String):
     IO.pure(String,Tx.trim_nl(saved))
 
 def terminal_event(outcome: Turn.Outcome) -> String:
-  (+status,+event,+error,+incomplete)=outcome
-  event
-
-def current_outcome(observation: Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> Turn.Outcome:
-  (outcome,deliveries)=observation
-  outcome
+  match outcome:
+    case Turn.Ended{status,event,error,incomplete}: event
 
 def exhaustion_stated(+db: String, +event: String) -> IO(String):
   do IO<String>:
@@ -620,17 +607,6 @@ def prepare_history(+db: String, +session: String, +id: String, +harness: String
 # names the account change and keeps the provider's own cause. Nothing here touches a
 # message receipt, so the original task input stays owed and the same actor's own wake
 # driver fires it against the new binding.
-def append_ok(result: Result<&1,&1,U32 & String,Unit>) -> Bool:
-  match result:
-    case Done{unit}: True{}
-    case Fail{error}: False{}
-
-def append_error(result: Result<&1,&1,U32 & String,Unit>) -> String:
-  match result:
-    case Done{unit}: ""
-    case Fail{error}: match error:
-      case (code,detail): U32.show(code) ++ ": " ++ detail
-
 def record_handoff(db: String, session: String, id: String, harness: String, from_label: String, +profile: Subs.Profile, cause: String) -> IO(Bool):
   do IO<Bool>:
     noted : Unit <- report_body(db,session,id,"profile-handoff",Subs.handoff_body(harness,from_label,Subs.profile_label(profile),Subs.profile_store(profile),cause))
@@ -641,14 +617,18 @@ def record_append_failure(db: String, session: String, id: String, record_path: 
     noted : Unit <- report_body(db,session,id,"profile-append-failed","subscription profile record append failed at " ++ record_path ++ ": " ++ detail ++ "; the provider cause stands and no profile was advanced.")
     IO.pure(Bool,False{})
 
+def record_append_observed(db: String, session: String, id: String, record_path: String, harness: String, from_label: String, profile: Subs.Profile, cause: String, appended: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
+  match appended:
+    case Done{unit}: record_handoff(db,session,id,harness,from_label,profile,cause)
+    case Fail{(code,detail)}: record_append_failure(db,session,id,record_path,U32.show(code) ++ ": " ++ detail)
+
 # The append is observed: the advance proceeds only on success. A failed append reports
 # the IO failure against this attempt and returns false, so no continuation runs and the
 # attempt's own outcome, cause and owed input stay exactly as the failure path leaves them.
 def record_and_report(+db: String, +session: String, +id: String, +record_path: String, harness: String, from_label: String, +profile: Subs.Profile, cause: String) -> IO(Bool):
   do IO<Bool>:
-    +appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(record_path,Subs.record_line(profile) ++ "\n")
-    advanced : Bool <- Bool.pick(IO(Bool),append_ok(appended),record_handoff(db,session,id,harness,from_label,profile,cause),record_append_failure(db,session,id,record_path,append_error(appended)))
-    IO.pure(Bool,advanced)
+    appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(record_path,Subs.record_line(profile) ++ "\n")
+    record_append_observed(db,session,id,record_path,harness,from_label,profile,cause,appended)
 
 def report_all_refused(db: String, session: String, id: String, harness: String, from_label: String, cause: String) -> IO(Bool):
   do IO<Bool>:
@@ -707,12 +687,23 @@ def continue_after_advance(+db: String, +session: String, id: String, attempt: S
 # is suppressed. The advance's continuation runs exactly once and only after the observed
 # path completed cleanly, so a real delivery, settlement, acknowledgment or retirement
 # failure keeps its own result and launches nothing.
-def completed_observation(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, +cwd: String, +attempt: String, +handle: U32, lock: Maybe<U32>, +observation: Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, +again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, cmd: String) -> IO<Result<&1,&1,U32 & String,Unit>>:
+def advanced_completed(db: String, session: String, id: String, attempt: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), observed: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match observed:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+    case Done{unit}: continue_after_advance(db,session,id,attempt,again)
+
+def completed_profile(+db: String, +session: String, +id: String, log: String, cursor: String, native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match superseded:
+    case False{}: observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,lock,(outcome,deliveries),again,adopted,False{})
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      observed : Result<&1,&1,U32 & String,Unit> <- observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,lock,(outcome,deliveries),u => IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),adopted,True{})
+      advanced_completed(db,session,id,attempt,again,observed)
+
+def completed_observation(+db: String, +session: String, +id: String, log: String, cursor: String, +native: String, +cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, observation: Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, cmd: String) -> IO<Result<&1,&1,U32 & String,Unit>>:
+  (+outcome,deliveries)=observation
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +superseded : Bool <- profile_handoff(db,session,id,current_outcome(observation),native,cmd,cwd)
-    +observed : Result<&1,&1,U32 & String,Unit> <- observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,lock,observation,again,adopted,superseded)
-    continued : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),Bool.and(superseded,finished_clean(observed)),continue_after_advance(db,session,id,attempt,again),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(observed,continued))
+    superseded : Bool <- profile_handoff(db,session,id,outcome,native,cmd,cwd)
+    completed_profile(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,adopted,superseded)
 
 def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, level: String, lock: U32, start: P.RetainedStart, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match start:
