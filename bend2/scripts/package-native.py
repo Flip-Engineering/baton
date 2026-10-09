@@ -120,41 +120,86 @@ def stage_adapters(payload):
     shutil.copyfile(ROOT / 'bend2/scripts/context-worktree-capture.mjs', directory / 'context-worktree-capture.mjs')
 
 
-def stage_selected_context_payload(payload):
-    source_root = ROOT / 'bend2/context/bend2'
+def stage_selected_context_payload(payload, module_name='bend2'):
+    source_root = ROOT / 'bend2/context' / module_name
+    module_label = 'Bend2' if module_name == 'bend2' else module_name
     declaration_path = source_root / 'selected-module.json'
     require(declaration_path.is_file() and not declaration_path.is_symlink(),
-            'The selected Bend2 module file list is unavailable')
+            'The selected ' + module_label + ' module file list is unavailable')
     declaration = json.loads(declaration_path.read_text())
     require(isinstance(declaration, dict) and isinstance(declaration.get('moduleId'), str)
             and declaration['moduleId'] and isinstance(declaration.get('protocolVersion'), str)
             and isinstance(declaration.get('files'), list)
-            and declaration['files'], 'The selected Bend2 module has no files')
+            and declaration['files'], 'The selected ' + module_label + ' module has no files')
 
     module_root = payload / 'lib/context/modules' / module_directory_name(declaration['moduleId'])
     module_root.mkdir(parents=True)
     seen = set()
     for entry in declaration['files']:
         require(isinstance(entry, dict) and isinstance(entry.get('path'), str),
-                'A selected Bend2 artifact needs a path')
+                'A selected ' + module_label + ' artifact needs a path')
         relative = PurePosixPath(entry['path'])
         require(not relative.is_absolute() and relative.parts
                 and '..' not in relative.parts and '.' not in relative.parts,
-                'Unsafe selected Bend2 artifact path: ' + str(relative))
+                'Unsafe selected ' + module_label + ' artifact path: ' + str(relative))
         name = relative.as_posix()
-        require(name not in seen, 'Duplicate selected Bend2 artifact: ' + name)
+        require(name not in seen, 'Duplicate selected ' + module_label + ' artifact: ' + name)
         seen.add(name)
         source = source_root.joinpath(*relative.parts)
         resolved = source.resolve()
         require(resolved.is_relative_to(source_root.resolve()) and source.is_file()
                 and not source.is_symlink(),
-                'Selected Bend2 artifact is missing or outside its module root: ' + name)
+                'Selected ' + module_label + ' artifact is missing or outside its module root: ' + name)
         destination = module_root.joinpath(*relative.parts)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
     return {'moduleId': declaration['moduleId'],
             'protocolVersion': declaration['protocolVersion'],
             'path': module_root.relative_to(payload).as_posix()}
+
+
+def stage_typescript_context_module(payload, runtime_package):
+    selected = stage_selected_context_payload(payload, 'typescript')
+    module_root = payload / selected['path']
+    compiler_root = module_root / 'node_modules/typescript'
+    shutil.copytree(runtime_package, compiler_root)
+    compiler = json.loads((compiler_root / 'package.json').read_text())
+    artifacts = [{'packagePath': path.relative_to(module_root).as_posix(),
+                  'sha256': sha256(path), 'role': 'provider' if path.name == 'native-provider.mjs'
+                  else 'provider-library'}
+                 for path in sorted(module_root.rglob('*.mjs'))]
+    dependencies = [{'packagePath': 'node_modules/typescript/' + name,
+                     'sha256': sha256(compiler_root / name), 'role': 'typescript-compiler'}
+                    for name in ('package.json', 'lib/typescript.js')]
+    operation = {
+        'schema': 'baton2-native-operation-v1', 'operation': 'sourceAnalysis',
+        'implements': 'sourceAnalysis', 'subjectSchema': 'baton2.context.typescript.subject.v1',
+        'optionsSchema': 'baton2.context.typescript.options.v1',
+        'projections': ['definition', 'type', 'references', 'calls', 'callers',
+                        'dependencies', 'diagnostics', 'flow', 'exceptions'],
+        'effects': [], 'dependencies': [], 'execution': 'managed',
+        'resultSchema': 'baton2.context.typescript.source-analysis.result.v1',
+        'referenceSchema': 'baton2.context.typescript.reference.v1',
+        'eventSchema': 'baton2.context.typescript.source-analysis.event.v1',
+        'lifetimeProfile': '',
+    }
+    identity = hashlib.sha256(json.dumps(artifacts + dependencies, sort_keys=True).encode()).hexdigest()
+    declaration = {
+        'schema': 'baton2-native-module-declaration-v1', 'moduleId': 'typescript',
+        'revision': compiler['version'], 'protocolVersion': '2',
+        'packageIdentity': 'sha256:' + identity,
+        'entry': {'artifact': 'native-provider.mjs', 'argv': []},
+        'artifactIdentities': artifacts, 'dependencies': dependencies,
+        'schemaIdentities': [operation['subjectSchema'], operation['optionsSchema'],
+                             operation['resultSchema'], operation['referenceSchema'],
+                             operation['eventSchema']],
+        'applicability': [{'kind': 'pathSuffixAny',
+                           'values': ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.json']}],
+        'operations': [operation],
+        'runtime': {'name': 'node', 'minimumVersion': '22.15'},
+    }
+    write_json(module_root / 'native-provider.declaration.json', declaration)
+    return selected
 
 
 def stage_clang_module(payload, module_id, projections, runtime_package=None):
@@ -309,6 +354,8 @@ def package(args):
         stage_adapters(payload)
         selected_context = [stage_selected_context_payload(payload)]
         selected_context.extend(stage_clang_context_modules(payload, args.context_clang_package))
+        if args.context_typescript_package is not None:
+            selected_context.append(stage_typescript_context_module(payload, args.context_typescript_package))
         terms = stage_notices(payload, compiler_notices, identity['kind'])
         manifest = {
             'schema': 'baton2-native-artifact-v1', **identity,
@@ -349,6 +396,8 @@ def main():
                         help='compile a generated production C file on the package host')
     parser.add_argument('--context-clang-package', type=Path,
                         help='already-built context-clang-20 runtime package, including the executable and linked libraries')
+    parser.add_argument('--context-typescript-package', type=Path,
+                        help='installed TypeScript package to copy into the selected TypeScript module')
     parser.add_argument('--release-version', help='version identifier for a release archive; requires the project root LICENSE')
     args = parser.parse_args()
     package(args)

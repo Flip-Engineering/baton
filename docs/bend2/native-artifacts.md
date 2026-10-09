@@ -28,6 +28,8 @@ python3 "$BATON2_SOURCE/bend2/scripts/package-native.py" \
 
 The package command runs [build-native.sh](../../bend2/scripts/build-native.sh) once. `--generated-c /path/to/baton2.c` compiles an existing production C translation unit with the package host's compiler and links its native entry point. The build record includes the supplied C path, command, status, and stdout and stderr paths.
 
+`--context-typescript-package /path/to/node_modules/typescript` includes an installed TypeScript package and its source analysis provider. Packaging copies the compiler package into the selected module. Installed module discovery reads its declaration; a selected invocation uses Node module resolution to load the available compiler and records its actual version, path and digest. The provider analyzes TypeScript or JavaScript source and returns definitions, types, references, calls, callers, dependencies, diagnostics, flow and exceptions with captured source identities. Node.js 22.15 or newer runs the provider. The selected-context package fixture exercises TypeScript 5.9.3; `BATON2_CONTEXT_TYPESCRIPT` supplies its installed compiler package.
+
 For direct native builds, `BEND_GENERATED_C=/path/to/baton2.c` selects this input. Native runtime checks are available through `check-native.sh`:
 
 ~~~sh

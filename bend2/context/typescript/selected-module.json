@@ -1,0 +1,18 @@
+{
+  "moduleId": "typescript",
+  "protocolVersion": "2",
+  "files": [
+    { "path": "native-provider.mjs" },
+    { "path": "lib/bindings.mjs" },
+    { "path": "lib/capture.mjs" },
+    { "path": "lib/diagnostics.mjs" },
+    { "path": "lib/flow.mjs" },
+    { "path": "lib/protocol.mjs" },
+    { "path": "lib/query.mjs" },
+    { "path": "lib/records.mjs" },
+    { "path": "lib/refs.mjs" },
+    { "path": "lib/resolve.mjs" },
+    { "path": "lib/service.mjs" },
+    { "path": "lib/sql.mjs" }
+  ]
+}

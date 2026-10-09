@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -9,6 +10,7 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/package-native.py'
 SOURCE = Path(__file__).resolve().parents[1] / 'context/bend2'
+TYPESCRIPT_SOURCE = Path(__file__).resolve().parents[1] / 'context/typescript'
 SPEC = importlib.util.spec_from_file_location('package_native', SCRIPT)
 PACKAGE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PACKAGE)
@@ -59,6 +61,82 @@ class SelectedContextPackageTest(unittest.TestCase):
         ], cwd=repository, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(json.loads(result.stdout)['status'], 'passed', result.stdout)
+
+    def test_selected_typescript_invocation_preserves_native_identity_and_source_results(self):
+        compiler = os.environ.get('BATON2_CONTEXT_TYPESCRIPT')
+        if compiler is None:
+            self.skipTest('Selected TypeScript runtime requires BATON2_CONTEXT_TYPESCRIPT')
+        source = self.root / 'bend2/context/typescript'
+        shutil.copytree(TYPESCRIPT_SOURCE, source)
+        fixture_compiler = self.root / 'installed compiler'
+        shutil.copytree(Path(compiler), fixture_compiler)
+        compiler_metadata_path = fixture_compiler / 'package.json'
+        compiler_metadata = json.loads(compiler_metadata_path.read_text())
+        compiler_metadata['version'] += '+selected-fixture'
+        compiler_metadata_path.write_text(json.dumps(compiler_metadata))
+        selected = PACKAGE.stage_typescript_context_module(self.payload, fixture_compiler)
+        module_root = self.payload / selected['path']
+        declaration = json.loads((module_root / 'native-provider.declaration.json').read_text())
+        self.assertEqual(declaration['protocolVersion'], '2')
+
+        project = self.root / 'typescript project'
+        (project / 'src').mkdir(parents=True)
+        (project / 'tsconfig.json').write_text(json.dumps({
+            'compilerOptions': {'strict': True, 'noEmit': True, 'types': [], 'typeRoots': []},
+            'include': ['src/**/*.ts'],
+        }))
+        entry = project / 'src/app.ts'
+        entry.write_text('export function double(value: number): number { return value * 2; }\n'
+                         'export const result = double(21);\n'
+                         'export const wrong: string = 3;\n')
+        wrapper = self.payload / 'libexec/baton2/context-provider.mjs'
+        wrapper.parent.mkdir(parents=True)
+        shutil.copyfile(SCRIPT.parent / 'context-provider.mjs', wrapper)
+        binding = {'id': 'typescript', 'revision': declaration['revision'],
+                   'packageIdentity': declaration['packageIdentity']}
+        invocation = {
+            'version': 2, 'query': 'selected-typescript', 'owner': 'typescript-owner',
+            'moduleBinding': binding,
+            'request': {
+                'version': 1, 'engine': 'typescript',
+                'subject': {'kind': 'symbol', 'path': 'src/app.ts', 'name': 'double'},
+                'select': ['definition', 'type', 'references', 'diagnostics'],
+                'cwd': str(project), 'options': {'project': 'tsconfig.json'},
+            },
+            'inputIdentities': [],
+            'operationPlan': [{'common': 'sourceAnalysis', 'operation': 'sourceAnalysis'}],
+            'role': 'starter', 'incarnation': '7',
+        }
+        result = subprocess.run(['node', str(wrapper)], input=json.dumps(invocation),
+                                cwd=project, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        frame = json.loads(result.stdout)
+        self.assertEqual((frame['version'], frame['query'], frame['owner']),
+                         (2, invocation['query'], invocation['owner']))
+        self.assertEqual(frame['moduleBinding'], binding)
+        self.assertEqual((frame['role'], frame['incarnation'], frame['sequence']), ('starter', '7', '1'))
+        payload = frame['payload']
+        self.assertEqual(payload['status'], 'completed', result.stdout)
+        self.assertEqual(payload['schema'], 'baton2.context.typescript.source-analysis.result.v1')
+        self.assertEqual(payload['query'], invocation['query'])
+        self.assertEqual(payload['provider']['version'], compiler_metadata['version'])
+        self.assertTrue({'definition', 'type', 'diagnostic'}.issubset(
+            {fact['kind'] for fact in payload['facts']}), result.stdout)
+        inputs = payload['snapshot']['inputs']
+        self.assertTrue(any(row['path'] == str(entry) and row['sha256'] for row in inputs), result.stdout)
+        self.assertTrue(payload['refs'], result.stdout)
+        self.assertTrue(all(ref['snapshotId'] == payload['snapshot']['snapshotId']
+                            for ref in payload['refs']), result.stdout)
+        invocation['request']['subject']['path'] = 'src/missing.ts'
+        failed = subprocess.run(['node', str(wrapper)], input=json.dumps(invocation),
+                                cwd=project, capture_output=True, text=True)
+        self.assertEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+        failure = json.loads(failed.stdout)
+        self.assertEqual((failure['query'], failure['owner'], failure['moduleBinding']),
+                         (invocation['query'], invocation['owner'], binding))
+        self.assertEqual(failure['payload']['status'], 'unavailable', failed.stdout)
+        self.assertEqual(failure['payload']['reason'], 'context-subject-not-in-program', failed.stdout)
+        self.assertTrue(failure['payload']['detail'], failed.stdout)
 
     def test_installed_native_cli_completes_a_selected_source_analysis(self):
         repository = Path(__file__).resolve().parents[2]
@@ -144,6 +222,33 @@ class SelectedContextPackageTest(unittest.TestCase):
         self.assertEqual(payload['schema'],
                          'baton2.context.bend2.source-analysis.result.v1', retained.stdout)
         self.assertEqual(payload['status'], 'completed', retained.stdout)
+
+        compiler = os.environ.get('BATON2_CONTEXT_TYPESCRIPT')
+        if compiler is not None:
+            previous_root = PACKAGE.ROOT
+            PACKAGE.ROOT = repository
+            try:
+                PACKAGE.stage_typescript_context_module(self.payload, Path(compiler))
+            finally:
+                PACKAGE.ROOT = previous_root
+            (worktree / 'analysis.ts').write_text('export const answer: number = 42;\n')
+            request.write_text(json.dumps({
+                'version': 1, 'engine': 'typescript',
+                'subject': {'kind': 'symbol', 'path': 'analysis.ts', 'name': 'answer'},
+                'select': ['definition', 'type'], 'cwd': str(worktree),
+            }) + '\n')
+            submitted = invoke('context-query-file', 'validation-owner', 'installed-typescript',
+                               str(request), cwd=worktree)
+            self.assertEqual(submitted.returncode, 0, submitted.stdout + submitted.stderr)
+            retained = invoke('context-result', 'installed-typescript', cwd=worktree)
+            self.assertEqual(retained.returncode, 0, retained.stdout + retained.stderr)
+            envelope = json.loads(retained.stdout)
+            self.assertEqual(envelope['state'], 'complete', retained.stdout)
+            payload = envelope['result']['payload']
+            self.assertEqual(payload['schema'], 'baton2.context.typescript.source-analysis.result.v1')
+            self.assertEqual(payload['status'], 'completed', retained.stdout)
+            self.assertTrue({'definition', 'type'}.issubset(
+                {fact['kind'] for fact in payload['facts']}), retained.stdout)
 
 if __name__ == '__main__':
     unittest.main()
