@@ -673,6 +673,7 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
 
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
+@unsafe
 def retained_output(+db: String, +player: String, +id: String, +log: String, +harness: String, attempt: String, +handle: U32, +supplied_requested: String) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
     +generation : String <- IO.pure(String,generation_log(log,id))
