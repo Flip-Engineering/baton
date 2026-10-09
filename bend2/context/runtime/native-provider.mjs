@@ -2,13 +2,15 @@
 // One adapter keeps the CDP connection and reference state across query invocations.
 import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { pathToFileURL } from 'node:url';
+import { isAbsolute } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createAdapterSession } from './cdp-session.mjs';
 import { CdpTransport } from './cdp-transport.mjs';
 import { watchTargetStderr } from './cdp-endpoint.mjs';
 import { encodeRefId, requireAdmittedRef } from './cdp-refs.mjs';
 import { captureException, mapStackFrames } from './observations.mjs';
 import { assembleTargetObservation } from './session-observations.mjs';
+import { loadSourceMap, mapGeneratedPosition } from './source-maps.mjs';
 
 const OPERATIONS = Object.freeze({ launch: 'runtimeLaunch', observe: 'runtimeObserve',
   pause: 'runtimePause', 'resume-step': 'runtimeResume', evaluate: 'runtimeEvaluate',
@@ -140,8 +142,23 @@ export function createRuntimeProvider({ setup, write }) {
       : frames.find((frame) => frame.callFrameId === admittedHandle(subject.frame, 'frame').handle);
     if (subject.frame !== undefined && selected === undefined) throw failure('runtimeFrameUnavailable');
     if (select.includes('frames')) {
+      const maps = new Map();
+      const resolveOriginal = (scriptId, line, column) => {
+        const script = session.scripts().get(scriptId);
+        if (script === null) return { condition: 'unknownScript' };
+        let loaded = maps.get(scriptId);
+        if (loaded === undefined) {
+          const generatedPath = script.url.startsWith('file://') ? fileURLToPath(script.url)
+            : isAbsolute(script.url) ? script.url : null;
+          loaded = loadSourceMap({ sourceMapURL: script.sourceMapURL, generatedPath });
+          maps.set(scriptId, loaded);
+        }
+        if (loaded.condition) return { condition: loaded.condition, detail: loaded.detail ?? null };
+        return mapGeneratedPosition(loaded.map, { line, column },
+          { mapPath: loaded.path ?? null, generatedPath: script.url || null });
+      };
       const mapped = mapStackFrames({ callFrames: frames, asyncStackTrace: paused?.asyncStackTrace,
-        asyncCaptureEnabled: true, thread });
+        asyncCaptureEnabled: true, thread, resolveOriginal });
       result.frames = mapped.frames.map((frame) => ({ ...frame,
         ref: reference('frame', frame.callFrameId, thread) }));
       result.async = mapped.async;

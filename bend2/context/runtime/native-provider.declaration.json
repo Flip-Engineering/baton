@@ -3,7 +3,7 @@
   "moduleId": "runtime",
   "revision": "development",
   "protocolVersion": "2",
-  "packageIdentity": "sha256:ab2cf408bb1bac8e3f0babec8b3c21aaf858fb01ef046f739b79052530881655",
+  "packageIdentity": "sha256:964d4daecaf7c20a097ecb63c20f62d1e5df8c67c2bc413c79cd3649dd9db181",
   "entry": {
     "artifact": "native-provider.mjs",
     "argv": []
@@ -11,7 +11,7 @@
   "artifactIdentities": [
     {
       "packagePath": "native-provider.mjs",
-      "sha256": "b19ec54add93302647d1ecea73bfe872745b41e6ca30ccf44f79a13f54abd042",
+      "sha256": "ba6f7126d37f69b45d22ca6aa03e3e92dda4a2146004821945ad02f9332a6a79",
       "role": "provider"
     },
     {
@@ -66,12 +66,12 @@
     },
     {
       "packagePath": "cdp-transport.mjs",
-      "sha256": "b147efcd0fdf5e9d3452e203d7ab241da708b945d991ab9061e68557d850592b",
+      "sha256": "3f0ab6f06b2a95788b0bf3da1125ae02bae544d66f4f26908aa595a21c18d18b",
       "role": "runtime-support"
     },
     {
       "packagePath": "observations.mjs",
-      "sha256": "0a8b0bda3d99a3c3724ce6e1f9c939333cf10d0f29e4495c2c6b12e61142675c",
+      "sha256": "779d6f15da0e8d0ac31f7d6c55dee937d2ded3aeb7c5e8423b8f8c22fba590ea",
       "role": "runtime-support"
     },
     {
@@ -82,6 +82,11 @@
     {
       "packagePath": "session-observations.mjs",
       "sha256": "692cdb32524a68e71870bd03b2a0a93e3e44a08c768e97f277d4f08cb57861ca",
+      "role": "runtime-support"
+    },
+    {
+      "packagePath": "source-maps.mjs",
+      "sha256": "ba5af632d42b0767f54b44053367bb03ce7ee067c6d44e3d58b6922a51473fd3",
       "role": "runtime-support"
     }
   ],

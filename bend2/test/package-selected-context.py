@@ -528,6 +528,16 @@ class SelectedContextPackageTest(unittest.TestCase):
 
         target = worktree / 'runtime-target.mjs'
         shutil.copyfile(repository / 'bend2/context/runtime/cdp-fixture-longrun.mjs', target)
+        target_source = target.read_text()
+        original = worktree / 'runtime-original.ts'
+        original.write_text('\n\n\n' + target_source)
+        source_map = worktree / 'runtime-target.mjs.map'
+        source_map.write_text(json.dumps({
+            'version': 3, 'file': target.name, 'sources': [original.name],
+            'sourcesContent': [original.read_text()], 'names': [],
+            'mappings': ';'.join(['AAGA'] + ['AACA'] * (len(target_source.splitlines()) - 1)),
+        }) + '\n')
+        target.write_text(target_source + '\n//# sourceMappingURL=runtime-target.mjs.map\n')
         runtime = 'rt:installed-runtime-launch'
         evidence_root = Path(os.environ.get('FINAL_NATIVE_CONTEXT_EVIDENCE', str(self.root)))
         evidence = evidence_root / 'installed-runtime'
@@ -628,6 +638,14 @@ class SelectedContextPackageTest(unittest.TestCase):
             self.assertEqual((observed['intent'], observed['state']),
                              ('observe', 'paused'), json.dumps(observed))
             self.assertTrue(observed['frames'], json.dumps(observed))
+            mapped_frames = [frame for frame in observed['frames']
+                             if frame['original'] is not None
+                             and frame['original']['path'] == str(original.resolve())]
+            self.assertTrue(mapped_frames, json.dumps(observed))
+            for frame in mapped_frames:
+                self.assertEqual(frame['provenance'], 'mapped', json.dumps(frame))
+                self.assertEqual((frame['original']['line'], frame['original']['column']),
+                                 (frame['generated']['line'] + 3, 0), json.dumps(frame))
             self.assertTrue(observed['threads'], json.dumps(observed))
             self.assertTrue(observed['scopes'], json.dumps(observed))
             self.assertTrue(observed['records'], json.dumps(observed))
@@ -636,6 +654,15 @@ class SelectedContextPackageTest(unittest.TestCase):
             self.assertEqual(observed['capture']['epoch'], observed['epoch'], json.dumps(observed))
             self.assertTrue(all(isinstance(row['response']['result'], list)
                                 for row in observed['records']), json.dumps(observed))
+            source_map.unlink()
+            runtime_submit('installed-runtime-missing-map',
+                           {'intent': 'observe', 'session': runtime}, ['frames'], [])
+            missing_map = runtime_result('installed-runtime-missing-map')
+            missing_frames = [frame for frame in missing_map['frames']
+                              if frame.get('mapping', {}).get('condition') == 'missingMap']
+            self.assertTrue(missing_frames, json.dumps(missing_map))
+            self.assertTrue(all(frame['original'] is None and frame['provenance'] == 'unmapped'
+                                for frame in missing_frames), json.dumps(missing_map))
         finally:
             try:
                 runtime_submit('installed-runtime-release',

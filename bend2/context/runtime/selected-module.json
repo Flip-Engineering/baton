@@ -50,6 +50,9 @@
     },
     {
       "path": "session-observations.mjs"
+    },
+    {
+      "path": "source-maps.mjs"
     }
   ]
 }

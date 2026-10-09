@@ -137,6 +137,7 @@ function mapFrameList(callFrames, thread, resolveOriginal, asyncChainDepth = nul
     const generated = mapFrameLocation(frame);
     let original = null;
     let provenance = 'unknownScript';
+    let mapping = null;
     if (
       typeof generated.scriptId === 'string' &&
       Number.isSafeInteger(generated.line) &&
@@ -144,7 +145,10 @@ function mapFrameList(callFrames, thread, resolveOriginal, asyncChainDepth = nul
       typeof resolveOriginal === 'function'
     ) {
       const mapped = resolveOriginal(generated.scriptId, generated.line, generated.column);
-      if (mapped) {
+      if (mapped?.condition) {
+        provenance = mapped.condition === 'unknownScript' ? 'unknownScript' : 'unmapped';
+        mapping = mapped;
+      } else if (mapped) {
         original = {
           path: mapped.path,
           line: mapped.line,
@@ -165,6 +169,7 @@ function mapFrameList(callFrames, thread, resolveOriginal, asyncChainDepth = nul
       original,
       provenance,
     };
+    if (mapping !== null) record.mapping = mapping;
     if (asyncChainDepth !== null) {
       record.async = true;
       record.asyncDepth = asyncChainDepth;

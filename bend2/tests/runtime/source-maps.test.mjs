@@ -5,10 +5,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   SourceMapError,
@@ -16,7 +16,6 @@ import {
   decodeMappings,
   parseSourceMapV3,
   loadSourceMap,
-  createAdmittedFileReader,
   originalPositionFor,
   resolveSourcePath,
   mapGeneratedPosition,
@@ -73,7 +72,7 @@ test('VLQ decoding refuses unknown characters, truncated continuations and bad f
   assert.equal(conditionOf(() => decodeVlqSegment('AAAAAA')), 'badVLQ');
 });
 
-test('VLQ accumulation is bounded by the safe-integer domain, not a U32 rule', () => {
+test('VLQ accumulation stays inside the exact safe-integer domain', () => {
   const huge = encodeVlqNumber(2 ** 54);
   assert.equal(conditionOf(() => decodeVlqSegment(huge)), 'coordinateRangeExceeded');
   // Values inside the exact safe-integer domain decode exactly.
@@ -145,8 +144,7 @@ test('sources, names and sourcesContent element domains are checked', () => {
   assert.equal(conditionOf(() => parseSourceMapV3(badName)), 'malformedMap');
   const badContent = JSON.stringify({ version: 3, sources: ['a.ts'], sourcesContent: [7], mappings: '' });
   assert.equal(conditionOf(() => parseSourceMapV3(badContent)), 'malformedMap');
-  // The admitted domains still hold: null source entries and null content
-  // entries are legal.
+  // Null source and source-content entries are legal.
   const legal = parseSourceMapV3(JSON.stringify({ version: 3, sources: [null], sourcesContent: [null], names: [], mappings: '' }));
   assert.deepEqual(legal.sources, [null]);
 });
@@ -211,24 +209,21 @@ test('resolveSourcePath keeps URL bases in URL space and file bases on the files
   assert.equal(resolveSourcePath(nullEntry, 0, null), null);
 });
 
-test('loadSourceMap reads a local map through the enforced reader with its read identity', () => {
+test('loadSourceMap reads relative, absolute and file-URL local maps', () => {
   const dir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
   try {
     const mapPath = join(dir, 'fixture-ts.js.map');
     writeFileSync(mapPath, MAP_JSON);
-    const loaded = loadSourceMap({
-      sourceMapURL: 'fixture-ts.js.map',
-      generatedPath: join(dir, 'fixture-ts.js'),
-      admittedRoots: [dir],
-    });
-    assert.equal(loaded.condition, undefined);
-    assert.equal(loaded.origin, 'file');
-    assert.equal(loaded.path, realpathSync(mapPath));
-    assert.equal(loaded.input.realPath, realpathSync(mapPath));
-    assert.equal(loaded.input.size, String(MAP_TEXT_BYTES.length), 'identity sizes are exact decimal text of the bigint stats');
-    assert.notEqual(loaded.input.ino, undefined);
-    assert.equal(loaded.digest, createHash('sha256').update(MAP_TEXT_BYTES).digest('hex'));
-    assert.equal(loaded.map.sources[0], 'fixture-ts.ts');
+    for (const sourceMapURL of ['fixture-ts.js.map', mapPath, pathToFileURL(mapPath).href]) {
+      const loaded = loadSourceMap({ sourceMapURL, generatedPath: join(dir, 'fixture-ts.js') });
+      assert.equal(loaded.condition, undefined);
+      assert.equal(loaded.origin, 'file');
+      assert.equal(loaded.path, mapPath);
+      assert.equal(loaded.map.sources[0], 'fixture-ts.ts');
+      assert.deepEqual(originalPositionFor(loaded.map, { line: 1, column: 6 }), {
+        source: 'fixture-ts.ts', sourceIndex: 0, line: 3, column: 8,
+      });
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -242,11 +237,10 @@ test('loadSourceMap resolves relative references against the generated script di
     const loaded = loadSourceMap({
       sourceMapURL: 'maps/m.map',
       generatedPath: join(dir, 'build', 'gen.js'),
-      admittedRoots: [dir],
     });
     assert.equal(loaded.condition, undefined);
     assert.equal(loaded.origin, 'file');
-    assert.equal(loaded.path, realpathSync(join(dir, 'build', 'maps', 'm.map')));
+    assert.equal(loaded.path, join(dir, 'build', 'maps', 'm.map'));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -254,13 +248,13 @@ test('loadSourceMap resolves relative references against the generated script di
 
 test('loadSourceMap accepts embedded base64 and percent-encoded data URLs', () => {
   const base64 = `data:application/json;base64,${MAP_TEXT_BYTES.toString('base64')}`;
-  const embedded = loadSourceMap({ sourceMapURL: base64, generatedPath: null, admittedRoots: [] });
+  const embedded = loadSourceMap({ sourceMapURL: base64, generatedPath: null });
   assert.equal(embedded.condition, undefined);
   assert.equal(embedded.origin, 'embedded');
-  assert.equal(embedded.digest, createHash('sha256').update(MAP_TEXT_BYTES).digest('hex'));
+  assert.deepEqual(embedded.map.sources, ['fixture-ts.ts']);
 
   const percent = `data:application/json,${encodeURIComponent(MAP_JSON)}`;
-  const decoded = loadSourceMap({ sourceMapURL: percent, generatedPath: null, admittedRoots: [] });
+  const decoded = loadSourceMap({ sourceMapURL: percent, generatedPath: null });
   assert.equal(decoded.condition, undefined);
   assert.equal(decoded.origin, 'embedded');
   assert.equal(decoded.map.segments.length, 2);
@@ -275,62 +269,21 @@ test('loadSourceMap refuses remote and unknown schemes before any path resolutio
   assert.equal(loadSourceMap({ sourceMapURL: 'data:application/json;base64,!!!!' }).condition, 'malformedDataUrl');
 });
 
-test('a symlink inside an admitted root may not point outside the closure', () => {
+test('loadSourceMap follows a local symlink to a map in another directory', () => {
   const dir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
+  const mapDir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-map-'));
   try {
-    const outsideDir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-out-'));
-    const outsideMap = join(outsideDir, 'secret.map');
-    writeFileSync(outsideMap, MAP_JSON);
+    const mapPath = join(mapDir, 'm.map');
+    writeFileSync(mapPath, MAP_JSON);
     const link = join(dir, 'link.map');
-    symlinkSync(outsideMap, link);
-    const refusal = loadSourceMap({
-      sourceMapURL: 'link.map',
-      generatedPath: join(dir, 'gen.js'),
-      admittedRoots: [dir],
-    });
-    assert.equal(refusal.condition, 'mapOutsideAdmittedRoots');
-    assert.ok(String(refusal.detail).includes(realpathSync(outsideMap)));
-    rmSync(outsideDir, { recursive: true, force: true });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('a symlink chain that stays inside the admitted closure reads with its real identity', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
-  try {
-    const realMap = join(dir, 'real.map');
-    writeFileSync(realMap, MAP_JSON);
-    symlinkSync('real.map', join(dir, 'alias.map'));
-    const loaded = loadSourceMap({
-      sourceMapURL: 'alias.map',
-      generatedPath: join(dir, 'gen.js'),
-      admittedRoots: [dir],
-    });
+    symlinkSync(mapPath, link);
+    const loaded = loadSourceMap({ sourceMapURL: 'link.map', generatedPath: join(dir, 'gen.js') });
     assert.equal(loaded.condition, undefined);
-    assert.equal(loaded.input.realPath, realpathSync(realMap));
-    assert.equal(loaded.digest, createHash('sha256').update(MAP_TEXT_BYTES).digest('hex'));
+    assert.equal(loaded.path, link);
+    assert.equal(resolveSourcePath(loaded.map, 0, { mapPath: loaded.path }), join(dir, 'fixture-ts.ts'));
   } finally {
     rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('a requested path that never resolves inside the closure refuses by name', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
-  const other = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
-  try {
-    writeFileSync(join(dir, 'm.map'), MAP_JSON);
-    const refusal = loadSourceMap({
-      sourceMapURL: 'm.map',
-      generatedPath: join(dir, 'gen.js'),
-      admittedRoots: [other],
-    });
-    assert.equal(refusal.condition, 'mapOutsideAdmittedRoots');
-    const rel = relative(realpathSync(other), realpathSync(join(dir, 'm.map')));
-    assert.ok(rel.startsWith('..'));
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-    rmSync(other, { recursive: true, force: true });
+    rmSync(mapDir, { recursive: true, force: true });
   }
 });
 
@@ -338,22 +291,22 @@ test('loadSourceMap reports missing, unreadable and malformed local maps with di
   const dir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
   try {
     assert.equal(
-      loadSourceMap({ sourceMapURL: 'absent.map', generatedPath: join(dir, 'gen.js'), admittedRoots: [dir] }).condition,
+      loadSourceMap({ sourceMapURL: 'absent.map', generatedPath: join(dir, 'gen.js') }).condition,
       'missingMap',
     );
     writeFileSync(join(dir, 'broken.map'), '{not json');
     assert.equal(
-      loadSourceMap({ sourceMapURL: 'broken.map', generatedPath: join(dir, 'gen.js'), admittedRoots: [dir] }).condition,
+      loadSourceMap({ sourceMapURL: 'broken.map', generatedPath: join(dir, 'gen.js') }).condition,
       'malformedMap',
     );
     writeFileSync(join(dir, 'v2.map'), JSON.stringify({ version: 2, sources: [], mappings: '' }));
     assert.equal(
-      loadSourceMap({ sourceMapURL: 'v2.map', generatedPath: join(dir, 'gen.js'), admittedRoots: [dir] }).condition,
+      loadSourceMap({ sourceMapURL: 'v2.map', generatedPath: join(dir, 'gen.js') }).condition,
       'unsupportedVersion',
     );
     mkdirSync(join(dir, 'adirectory.map'));
     assert.equal(
-      loadSourceMap({ sourceMapURL: 'adirectory.map', generatedPath: join(dir, 'gen.js'), admittedRoots: [dir] }).condition,
+      loadSourceMap({ sourceMapURL: 'adirectory.map', generatedPath: join(dir, 'gen.js') }).condition,
       'mapReadFailed',
     );
   } finally {
@@ -361,115 +314,18 @@ test('loadSourceMap reports missing, unreadable and malformed local maps with di
   }
 });
 
-test('the injected read capability owns enforcement and its refusal renders verbatim; an accepted override is the capability contract', () => {
-  // The composer capability contract: a readAdmitted injection owns the
-  // enforcement, so loadSourceMap calls it verbatim and surfaces its
-  // conditions unchanged.
-  const dir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
-  try {
-    writeFileSync(join(dir, 'm.map'), MAP_JSON);
-    const accepted = loadSourceMap({
-      sourceMapURL: 'm.map',
-      generatedPath: join(dir, 'gen.js'),
-      admittedRoots: [],
-      readAdmitted: () => ({
-        bytes: MAP_TEXT_BYTES,
-        identity: { path: 'injected', realPath: 'injected', dev: '0', ino: '0', size: String(MAP_TEXT_BYTES.length) },
-      }),
-    });
-    // The injected capability answered with the complete decimal-string
-    // identity, so the map loads; the identity shown is the injected one and
-    // the path evidence carries it.
-    assert.equal(accepted.condition, undefined);
-    assert.equal(accepted.input.path, 'injected');
-    const missingPath = loadSourceMap({
-      sourceMapURL: 'm.map',
-      generatedPath: join(dir, 'gen.js'),
-      admittedRoots: [],
-      readAdmitted: () => ({ bytes: MAP_TEXT_BYTES, identity: { realPath: 'injected', dev: '0', ino: '0', size: '1' } }),
-    });
-    assert.equal(missingPath.condition, 'readCapabilityIdentityMissing');
-    const numericIdentity = loadSourceMap({
-      sourceMapURL: 'm.map',
-      generatedPath: join(dir, 'gen.js'),
-      admittedRoots: [],
-      readAdmitted: () => ({ bytes: MAP_TEXT_BYTES, identity: { path: 'injected', realPath: 'injected', dev: 0, ino: 0, size: MAP_TEXT_BYTES.length } }),
-    });
-    assert.equal(numericIdentity.condition, 'readCapabilityIdentityMissing', 'the identity fields are decimal strings, not numbers');
-    const refusing = loadSourceMap({
-      sourceMapURL: 'm.map',
-      generatedPath: join(dir, 'gen.js'),
-      admittedRoots: [],
-      readAdmitted: () => {
-        throw new SourceMapError('mapOutsideAdmittedRoots', 'injected capability refused');
-      },
-    });
-    assert.equal(refusing.condition, 'mapOutsideAdmittedRoots');
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('a relative local reference without a recorded base refuses instead of using the cwd', () => {
+test('a relative local reference requires the generated script base', () => {
   const dir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
   try {
     writeFileSync(join(dir, 'm.map'), MAP_JSON);
     const previousCwd = process.cwd();
     process.chdir(dir);
     try {
-      const refusal = loadSourceMap({ sourceMapURL: 'm.map', generatedPath: null, admittedRoots: [dir] });
+      const refusal = loadSourceMap({ sourceMapURL: 'm.map', generatedPath: null });
       assert.equal(refusal.condition, 'mapBaseUnrecorded');
     } finally {
       process.chdir(previousCwd);
     }
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('an expected digest verifies the recorded bytes; mismatch refuses by name', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
-  try {
-    writeFileSync(join(dir, 'm.map'), MAP_JSON);
-    const digest = createHash('sha256').update(MAP_TEXT_BYTES).digest('hex');
-    const verified = loadSourceMap({
-      sourceMapURL: 'm.map',
-      generatedPath: join(dir, 'gen.js'),
-      admittedRoots: [dir],
-      expectedDigest: digest,
-    });
-    assert.equal(verified.condition, undefined);
-    assert.equal(verified.digestVerified, true);
-    const mismatch = loadSourceMap({
-      sourceMapURL: 'm.map',
-      generatedPath: join(dir, 'gen.js'),
-      admittedRoots: [dir],
-      expectedDigest: '00'.repeat(32),
-    });
-    assert.equal(mismatch.condition, 'mapDigestMismatch');
-    const provenanceOnly = loadSourceMap({
-      sourceMapURL: 'm.map',
-      generatedPath: join(dir, 'gen.js'),
-      admittedRoots: [dir],
-    });
-    assert.equal(provenanceOnly.condition, undefined);
-    assert.equal(provenanceOnly.digestVerified, false, 'without an expected digest the recorded digest is provenance only');
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('a missing admitted root refuses through the reader instead of throwing at construction', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
-  try {
-    writeFileSync(join(dir, 'm.map'), MAP_JSON);
-    const missingRoot = join(dir, 'does-not-exist');
-    const refusal = loadSourceMap({
-      sourceMapURL: 'm.map',
-      generatedPath: join(dir, 'gen.js'),
-      admittedRoots: [missingRoot],
-    });
-    assert.equal(refusal.condition, 'mapReadFailed');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
