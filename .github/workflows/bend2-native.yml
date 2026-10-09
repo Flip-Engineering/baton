@@ -19,10 +19,6 @@ name: bend2-native-development
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   darwin-arm64:
     runs-on: macos-15
