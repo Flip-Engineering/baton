@@ -1078,12 +1078,126 @@ function findingDetail(promotion, finding, full = true) {
     li.appendChild(key);
     const body = document.createElement("span");
     const empty = value === null || value === undefined || value === "";
-    if (empty) body.className = "unknown";
-    text(body, empty ? "unknown" : value);
+    if (empty) {
+      body.className = "unknown";
+      text(body, "unknown");
+    } else if (label === "evidence" || label === "limits") {
+      appendEvidenceRefs(body, String(value), li);
+    } else {
+      text(body, value);
+    }
     li.appendChild(body);
     ul.appendChild(li);
   }
   return ul;
+}
+
+// Evidence and limits cite supporting records as message: references. Each
+// reference is a button that reads the complete stored message inline,
+// so the supporting record is inspectable without leaving the graph.
+function appendEvidenceRefs(body, value, li) {
+  const parts = String(value).split(/(message:[^\s,;]+)/g);
+  if (parts.length < 2) {
+    text(body, value);
+    return;
+  }
+  const record = document.createElement("div");
+  record.className = "msg-record";
+  record.setAttribute("aria-live", "polite");
+  for (const part of parts) {
+    if (/^message:[^\s,;]+$/.test(part)) {
+      const ref = document.createElement("button");
+      ref.type = "button";
+      ref.className = "msg-ref";
+      text(ref, part);
+      ref.setAttribute("aria-label", "Supporting record " + part);
+      ref.addEventListener("click", () => showMessageRecord(record, part));
+      body.appendChild(ref);
+    } else if (part) {
+      const span = document.createElement("span");
+      text(span, part);
+      body.appendChild(span);
+    }
+  }
+  li.appendChild(record);
+}
+
+function showMessageRecord(record, token) {
+  record.textContent = "";
+  record.dataset.token = token;
+  const id = token.slice("message:".length);
+  const head = document.createElement("span");
+  head.className = "finding-meta";
+  text(head, token + ": ");
+  record.appendChild(head);
+  // The transition summary appears beside the complete message body below.
+  const hit = state.transitions.find((t) => t.entity === "message" && String(t.entityId) === id);
+  const detail = document.createElement("span");
+  if (hit) {
+    text(detail, "recorded transition summary · " + (hit.kind || "unknown") + " · "
+      + (hit.session || "unknown") + " · " + (hit.at || "unknown time")
+      + (hit.summary ? " · " + hit.summary : ""));
+  } else {
+    detail.className = "unknown";
+    text(detail, "no recorded transition carries this reference in the current snapshot");
+  }
+  record.appendChild(detail);
+  if (hit && hit.session) {
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "go";
+    text(go, "open " + hit.session);
+    go.addEventListener("click", () => select(hit.session));
+    record.appendChild(go);
+  }
+  const bodyWrap = document.createElement("div");
+  bodyWrap.className = "msg-body";
+  text(bodyWrap, "reading full record…");
+  record.appendChild(bodyWrap);
+  void readMessageBody(record, bodyWrap, id);
+}
+
+// The complete supporting message body is read on demand through the public
+// message route, so older references outside the snapshot resolve too.
+async function readMessageBody(record, bodyWrap, id) {
+  let data;
+  try {
+    const res = await fetch(state.apiBase + "/orchestra/message?id=" + encodeURIComponent(id));
+    const responseBody = await res.text();
+    try {
+      data = JSON.parse(responseBody);
+    } catch {
+      data = { error: responseBody || "the endpoint answered " + res.status };
+    }
+    if (!res.ok && (!data || !data.error)) {
+      data = { error: responseBody || "the endpoint answered " + res.status };
+    }
+  } catch (e) {
+    data = { error: e && e.message ? e.message : String(e) };
+  }
+  if (record.dataset.token !== "message:" + id) return;
+  bodyWrap.textContent = "";
+  // An empty stored body displays its sender header.
+  if (!data || data.error || !data.message) {
+    bodyWrap.className = "msg-body unknown";
+    text(bodyWrap, data && data.message === null
+      ? "no stored message carries this reference"
+      : "full record unavailable"
+        + (data && data.error ? ": " + data.error : " for this reference")
+        + (data && data.cause ? ": " + data.cause : ""));
+    return;
+  }
+  const message = data.message;
+  const who = document.createElement("div");
+  who.className = "finding-meta";
+  text(who, "recorded message"
+    + (message.sender ? " from " + message.sender : "")
+    + (message.recipient ? " to " + message.recipient : "")
+    + (message.kind ? " · " + message.kind : ""));
+  bodyWrap.appendChild(who);
+  const full = document.createElement("div");
+  text(full, typeof message.body === "string" ? message.body : "");
+  bodyWrap.appendChild(full);
 }
 
 // Showing the findings no recorded promotion carries. One place owns the state

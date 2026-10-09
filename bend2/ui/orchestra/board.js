@@ -2,8 +2,8 @@
    Renders each ensemble as one card so the reader grasps a working unit
    at a glance: the header names the shared current work with its count,
    and every live member is a tile carrying status, purpose and identity.
-   Ended or stopped members stay listed on their card with truthful
-   status so ensemble membership survives activity changes.
+   Ended or stopped members stay on their card as selectable tiles with
+   truthful status so ensemble membership survives activity changes.
    Renders from snapshot players and ensembles the page forwards; this
    module starts no request. options: {selectedId, onSelect}. */
 
@@ -172,7 +172,11 @@ function renderEnsembleBoard(container, data, options) {
       head.appendChild(line);
     }
   };
-  const card = (title, metaText, members, ended, barText) => {
+  // Fully ended ensembles stay discoverable but start folded so the
+  // default view serves current activity. Expansion survives re-renders.
+  const unfolded = renderEnsembleBoard.unfolded
+    || (renderEnsembleBoard.unfolded = new Set());
+  const card = (title, metaText, members, ended, barText, foldable) => {
     const section = document.createElement("section");
     section.className = "board-card";
     section.setAttribute("aria-label", title);
@@ -200,16 +204,37 @@ function renderEnsembleBoard(container, data, options) {
       head.appendChild(bar);
     }
     section.appendChild(head);
-    const tiles = document.createElement("div");
-    tiles.className = "board-tiles";
-    for (const m of members) tile(tiles, m);
-    section.appendChild(tiles);
-    if (ended && ended.length) {
-      const done = document.createElement("p");
-      done.className = "muted board-ended";
-      done.textContent = "Ended (" + ended.length + "): "
-        + ended.map((m) => String(m.id) + " " + String(m.status || "unknown")).join(", ");
-      section.appendChild(done);
+    const open = !foldable || unfolded.has(title);
+    if (foldable) {
+      const fold = document.createElement("button");
+      fold.type = "button";
+      fold.className = "board-fold";
+      fold.dataset.focus = "fold:" + title;
+      fold.setAttribute("aria-expanded", open ? "true" : "false");
+      fold.textContent = open ? "Hide " + ended.length + " ended members"
+        : "Show " + ended.length + " ended members";
+      fold.addEventListener("click", () => {
+        if (unfolded.has(title)) unfolded.delete(title);
+        else unfolded.add(title);
+        renderEnsembleBoard(container, data, opts);
+      });
+      section.appendChild(fold);
+    }
+    if (open) {
+      const tiles = document.createElement("div");
+      tiles.className = "board-tiles";
+      for (const m of members) tile(tiles, m);
+      section.appendChild(tiles);
+      if (ended && ended.length) {
+        const done = document.createElement("p");
+        done.className = "muted board-ended";
+        done.textContent = "Ended (" + ended.length + ")";
+        section.appendChild(done);
+        const doneTiles = document.createElement("div");
+        doneTiles.className = "board-tiles";
+        for (const m of ended) tile(doneTiles, m);
+        section.appendChild(doneTiles);
+      }
     }
     container.appendChild(section);
     summary.groups += 1;
@@ -220,10 +245,10 @@ function renderEnsembleBoard(container, data, options) {
       + (g.coupling ? " · " + g.coupling : ""), g.members, g.ended, {
       label: g.live + " of " + g.total + " live",
       width: Math.round((100 * g.live) / Math.max(1, g.total)) + "%",
-    });
+    }, g.live === 0);
   }
   if (others.length) {
-    card("Outside ensembles", " · " + others.length + " live", others, [], null);
+    card("Outside ensembles", " · " + others.length + " live", others, [], null, false);
   }
   if (focused) {
     const next = container.querySelector("[data-focus=\"" + CSS.escape(focused) + "\"]");

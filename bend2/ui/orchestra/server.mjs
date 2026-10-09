@@ -864,6 +864,27 @@ function knowledgeForActor(db, session) {
         return json(response, 503, { error: 'knowledge-unavailable' });
       }
     }
+    // A selected supporting record reads one complete stored message body on
+    // demand. A missing id answers null; a message outside the bound reader
+    // scope is refused like the other selected reads.
+    if (url.pathname === '/orchestra/message') {
+      const id = url.searchParams.get('id') || '';
+      if (!id) return json(response, 400, { error: 'message-required' });
+      try {
+        const scope = visibleScope(db, reader, subject);
+        const row = one(db, 'SELECT id, sender, recipient, kind, body FROM messages WHERE id = ?', id);
+        if (!row) return json(response, 200, { contractVersion: CONTRACT_VERSION, message: null });
+        if (!scope || (!scope.includes(row.sender) && !scope.includes(row.recipient))) {
+          return json(response, 403, { error: 'reader-scope-denied' });
+        }
+        return json(response, 200, { contractVersion: CONTRACT_VERSION,
+          message: { id: row.id, sender: row.sender, recipient: row.recipient,
+            kind: row.kind, body: row.body ?? '' } });
+      } catch (error) {
+        return json(response, 503, { error: 'message-unavailable',
+          cause: error instanceof Error ? error.message : String(error) });
+      }
+    }
     if (url.pathname.startsWith('/orchestra/')) return json(response, 404, { error: 'not-found' });
     if (url.pathname === '/' && !url.searchParams.has('api') && !url.searchParams.has('fixture')) {
       const address = server.address();

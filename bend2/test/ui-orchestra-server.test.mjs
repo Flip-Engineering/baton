@@ -1026,3 +1026,34 @@ test('selected work reads the recorded cursors and complete bodies', async (t) =
   assert.ok(!after.players.find((player) => player.id === 'child')
     .pendingSample.some((row) => row.id === 'pending-1'));
 });
+
+test('selected message reads the complete stored body on demand', async (t) => {
+  const space = fixture();
+  t.after(() => rmSync(space.directory, { recursive: true, force: true }));
+  const server = createOrchestraServer({ databasePath: space.databasePath, reader: 'root' });
+  const base = await listen(server);
+  t.after(() => close(server));
+  const db = new DatabaseSync(space.databasePath);
+  t.after(() => db.close());
+  db.prepare(`INSERT INTO messages(id,sender,recipient,kind,body)
+    VALUES ('support-1','child','root','report','Full supporting body with message:trailing reference.')`).run();
+  db.prepare(`INSERT INTO messages(id,sender,recipient,kind,body)
+    VALUES ('empty-1','child','root','report','')`).run();
+
+  const found = await (await fetch(`${base}/orchestra/message?id=support-1`)).json();
+  assert.equal(found.message.id, 'support-1');
+  assert.equal(found.message.sender, 'child');
+  assert.equal(found.message.kind, 'report');
+  assert.equal(found.message.body, 'Full supporting body with message:trailing reference.');
+
+  // An empty string remains a stored message body.
+  const empty = await (await fetch(`${base}/orchestra/message?id=empty-1`)).json();
+  assert.ok(empty.message);
+  assert.equal(empty.message.body, '');
+
+  const missing = await (await fetch(`${base}/orchestra/message?id=no-such-message`)).json();
+  assert.equal(missing.message, null);
+
+  const unnamed = await fetch(`${base}/orchestra/message`);
+  assert.equal(unnamed.status, 400);
+});

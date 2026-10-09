@@ -234,6 +234,17 @@ button:active { background: var(--wash); }
   font-size: var(--step0);
 }
 
+.board-fold {
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  font: inherit;
+  font-size: var(--step0);
+  color: var(--selection);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .board-tiles {
   display: flex;
   flex-wrap: wrap;
@@ -963,6 +974,18 @@ button.pend-badge:hover { color: var(--selection); border-color: currentColor; }
 
 .knowledge .finding-meta { color: var(--muted); font-size: var(--step0); }
 .knowledge .share-path { color: var(--ink); font-size: var(--step0); }
+.knowledge .msg-ref {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--selection);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.knowledge .msg-record { margin-top: 6px; font-size: var(--step0); }
+.knowledge .msg-record .go { margin-left: 8px; }
+.knowledge .msg-body { margin-top: 6px; }
 
 .knowledge ul.knowledge-list {
   width: 100%;
