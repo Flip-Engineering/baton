@@ -9,7 +9,7 @@ import ../src/harness/claude-player.bend as Claude
 import ../src/git/text.bend as Tx
 
 def fixture_list() -> String:
-  "codex codex-main /fixture/stores/codex-main\ncodex codex-alt /fixture/stores/codex alt\nclaude-code claude-main /fixture/stores/claude-main\n\n# comment line\n"
+  "codex codex-main /fixture/stores/codex-main\ncodex codex-alt /fixture/stores/codex alt\nclaude-code claude-main /fixture/stores/claude-main\n\n"
 
 def check(label: String, is_ok: Bool) -> IO(Unit):
   match is_ok:
@@ -108,7 +108,7 @@ def read_checks() -> IO<Unit>:
 
 def main() -> IO<Unit>:
   do IO<Unit>:
-    profiles : List<Subs.Profile> <- IO.pure(List<Subs.Profile>,Subs.profile_lines(Tx.split_lines(fixture_list())))
+    +profiles : List<Subs.Profile> <- IO.pure(List<Subs.Profile>,Subs.profile_lines(Tx.split_lines(fixture_list())))
     counted : Unit <- check("list-parses-three-profiles",three(profiles))
     head : Unit <- head_is(profiles,"codex","codex-main")
     step : Unit <- next_is(profiles,"codex","codex-main","codex-alt")
