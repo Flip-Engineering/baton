@@ -151,7 +151,7 @@ def receiver(+db: String, +session: String, cmd: String, log: String, +cwd: Stri
     model : String <- IO.try(String,DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +workspace : String <- Bool.pick(IO(String),String.is_empty(cwd),IO.pure(String,""),IO.try(String,Host.Control.workspace(cwd)))
     branch : Maybe<String> <- receiver_branch(workspace)
-    endpoint : String <- configured_endpoint(db,session,cmd,log,Tx.trim_nl(model))
+    +endpoint : String <- configured_endpoint(db,session,cmd,log,Tx.trim_nl(model))
     +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_branch_sql(session,endpoint,workspace,branch) ++ receiver_sql(session,endpoint,workspace) ++ "COMMIT;"))
     receiver_result(saved,Tx.starts_with(saved,"{\"error\":\"receiver-refused\""))
 
