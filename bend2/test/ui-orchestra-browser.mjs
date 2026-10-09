@@ -239,6 +239,7 @@ const urlA = firstViewLine.value.slice('Orchestra live view: '.length).trim();
 check('view URL uses the loopback HTTP listener', urlA.startsWith('http://127.0.0.1:'));
 
 await openPage(urlA);
+await send(pageWs, 'Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 const earlyShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'initial.png'), Buffer.from(earlyShot.result.data, 'base64'));
 await until('snapshot line leaves its unloaded state',
@@ -322,6 +323,9 @@ check('fit returns the whole drawing to view', await evalJs(`(() => {
       && r.top >= bounds.top - 2 && r.bottom <= bounds.bottom + 2;
   });
 })()`));
+await evalJs(`document.querySelector('.map-frame').scrollIntoView({ block: 'center' })`);
+const mapShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
+writeFileSync(join(OUT, 'knowledge-map.png'), Buffer.from(mapShot.result.data, 'base64'));
 check('drag pans the map view', await evalJs(`(() => {
   const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
   const node = svg.querySelector('.kw-anchor');
@@ -335,17 +339,19 @@ check('drag pans the map view', await evalJs(`(() => {
   return Math.abs(after.left - before.left - 60) < 2
     && Math.abs(after.top - before.top - 20) < 2;
 })()`));
-check('wheel zooms the map view', await evalJs(`(() => {
+const wheelZoom = await evalJs(`(() => {
   const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
-  const g = document.querySelector('#knowledge-whole g.kw-view');
-  const before = /scale\(([^)]+)\)/.exec(g.getAttribute('transform') || '');
+  const node = svg.querySelector('.kw-anchor');
+  const before = node.getBoundingClientRect().width;
+  const beforeLevel = parseFloat(document.querySelector('#knowledge-whole .kw-zoom-level').textContent);
   const r = svg.getBoundingClientRect();
   svg.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -100, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
-  const after = /scale\(([^)]+)\)/.exec(g.getAttribute('transform') || '');
-  const level = document.querySelector('#knowledge-whole .kw-zoom-level').textContent;
-  return before !== null && after !== null && Number(after[1]) !== Number(before[1])
-    && level === Math.round(Number(after[1]) * 100) + '%';
-})()`));
+  const after = node.getBoundingClientRect().width;
+  const afterLevel = parseFloat(document.querySelector('#knowledge-whole .kw-zoom-level').textContent);
+  return { before, after, beforeLevel, afterLevel };
+})()`);
+check('wheel zooms the map view', wheelZoom.after > wheelZoom.before && wheelZoom.afterLevel > wheelZoom.beforeLevel,
+  JSON.stringify(wheelZoom));
 await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'qa-aide-finding'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
 await until('map search centres and pins its hit',
   `document.querySelector('#knowledge-whole g.kw-view').getAttribute('transform') !== 'translate(0,0) scale(1)' && !!document.querySelector('#knowledge-whole .kw-card')`);
