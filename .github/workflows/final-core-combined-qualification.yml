@@ -73,7 +73,7 @@ jobs:
             ulimit -S -s
             printf 'inherited-hard-stack-kib='
             ulimit -H -s
-            ulimit -S -s unlimited
+            ulimit -S -s 65536
             printf 'compiler-soft-stack-kib='
             ulimit -S -s
             printf 'BUN_JSC_maxPerThreadStackUsage=67108864\n'
