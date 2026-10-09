@@ -23,6 +23,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 TESTDIR = pathlib.Path(__file__).resolve().parent
 ROOT = TESTDIR.parent.parent
@@ -353,6 +354,72 @@ class FixedCoordinator(unittest.TestCase):
             row = self.query(f"SELECT receipt FROM messages WHERE id='{ident}'")
             self.assertNotEqual(row, [(None,)], f'{ident} was not acknowledged')
         self.shutdown()
+
+    def test_01_wrapped_receivers_use_the_recorded_harness_and_log(self):
+        binary = self.directory / 'installed/bin/baton2'
+        helper = self.directory / 'installed/libexec/baton2/git-series.mjs'
+        binary.parent.mkdir(parents=True)
+        helper.parent.mkdir(parents=True)
+        shutil.copy2(EXE, binary)
+        shutil.copy2(ROOT / 'bend2/harness/git-series.mjs', helper)
+        profile = self.directory / 'gpt'
+        profile.mkdir()
+        slug = 'fixture-series-gpt'
+        metadata = profile / 'identity-series.json'
+        metadata.write_text(json.dumps({
+            'seriesKey': 'gpt', 'displaySeries': 'GPT',
+            'github': {
+                'appId': 20000, 'clientId': 'fixture-client-gpt', 'slug': slug,
+                'botLogin': slug + '[bot]', 'botId': 10000,
+                'commitEmail': f'10000+{slug}[bot]@users.noreply.github.com',
+                'installationId': 30000, 'repositoryFullName': 'Flip-Engineering/baton',
+                'repositoryId': 40000,
+                'permissions': {'contents': 'write', 'pull_requests': 'write', 'metadata': 'read'},
+            },
+        }))
+        metadata.chmod(0o600)
+        registry = self.directory / 'series.json'
+        registry.write_text(json.dumps({
+            'models': {'wrapped-codex': 'gpt', 'wrapped-omp': 'gpt'},
+            'series': {'gpt': str(profile)},
+        }))
+        registry.chmod(0o600)
+        binary_digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+        with patch(__name__ + '.EXE', binary), patch.dict(
+                os.environ, {'BATON2_GIT_REGISTRY': str(registry)}):
+            assignments = {}
+            for name, harness in (('wrapped-codex', 'codex'), ('wrapped-omp', 'omp')):
+                assignments[name] = self.recruit(name, harness)
+                self.dispatch(name + '-task', name, 'Task for the wrapped receiver.')
+                configured = self.receiver(name)
+                self.assertEqual(configured['endpoint'], [
+                    'node', str(helper.resolve()),
+                    'launch', '--registry', str(registry.resolve()), '--model-key', name, '--',
+                    str(EXE.resolve()), str(self.db.resolve()), 'receive', name,
+                    str(self.fixture.resolve()), '', '', '',
+                    str((self.co_dir / (name + '.jsonl')).resolve()),
+                ])
+            self.start_owner()
+            self.start_serve()
+            for name in assignments:
+                reports = self.await_inbox('root', lambda messages: [
+                    message for message in messages if message['sender'] == name
+                ], f'{name} report never reached the root inbox')
+                self.assertTrue(any(name + ' fixed default completion' in report['body']
+                                    for report in reports), reports)
+                native = self.connections(name)[0]
+                self.assertEqual(native['args'][native['args'].index('--model') + 1], name)
+                self.assertEqual(native['cwd'], assignments[name]['workspace'])
+                saved = self.coord('player', name)
+                self.assertEqual(saved['native'], native['native'])
+                self.assertEqual(saved['model'], name)
+                self.assertEqual(saved['workspace'], assignments[name]['workspace'])
+                self.assertNotEqual(self.query(
+                    f"SELECT receipt FROM messages WHERE id='{name}-task'"), [(None,)])
+                log = self.co_dir / (name + '.jsonl')
+                self.assertIn(name + ' fixed default completion', log.read_text())
+            self.shutdown()
+        self.assertEqual(hashlib.sha256(binary.read_bytes()).hexdigest(), binary_digest)
 
     def test_02_stopped_session_keeps_input_unexecuted(self):
         self.recruit('w4', 'codex')

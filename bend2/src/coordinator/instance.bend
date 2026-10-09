@@ -36,7 +36,10 @@ def coordinator_role_key() -> String:
 # sessions like the wake path. The harness travels with the session so every
 # task keeps its native identity down to the route.
 def endpoint_field_sql(+session: String, index: String) -> String:
-  "SELECT COALESCE(CASE WHEN json_valid(endpoint) THEN json_extract(endpoint,'$[" ++ index ++ "]') ELSE '' END,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+  "SELECT COALESCE(CASE WHEN json_valid(endpoint) THEN json_extract(endpoint,'$[' || ("
+  ++ "CASE WHEN json_extract(endpoint,'$[2]')='receive' THEN 0 ELSE "
+  ++ "(SELECT key+1 FROM json_each(endpoint) WHERE value='--' AND json_extract(endpoint,'$[' || (key+3) || ']')='receive' LIMIT 1) END"
+  ++ " + " ++ index ++ ") || ']') ELSE '' END,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"
 
 def recorded_endpoint(+db: String, +session: String, index: String) -> IO(String):
   do IO<String>:
@@ -152,8 +155,9 @@ def stripped_kept(stripped: List<(String & String)> & List<String>) -> List<Stri
     case (fresh, kept): kept
 
 # One session task runs the recorded receive entry with the recorded harness
-# executable and log resolved from the receiver endpoint array. Model, effort
-# and workspace stay empty so the entry selects the recorded route. The
+# executable and log resolved within its receiver command. A raw command starts
+# at index zero; a wrapped command starts after the wrapper's -- separator.
+# Model, effort and workspace stay empty so the entry selects the recorded route. The
 # session lock inside Receive refuses a second task for the same session with
 # queued, so the in-flight set plus the lock agree on admission. Stop
 # admission, native conversation identity, pending-input recovery and parent
