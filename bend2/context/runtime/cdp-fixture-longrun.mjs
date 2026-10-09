@@ -27,4 +27,3 @@ process.on('SIGTERM', () => {
   process.stdout.write(`${JSON.stringify({ signal: 'SIGTERM', pid: process.pid })}\n`);
   process.exit(0);
 });
-
