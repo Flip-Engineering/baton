@@ -542,7 +542,7 @@ def runtime_keeper_release(+db: String, +binding: String, +owner: String,
       IO.die(Unit, 3, "runtimeKeeperReleaseIdentityMismatch"))
     runtime_checkpoint(bridge, frame)
 
-type RuntimeObserve is Data:
+type RuntimeObserve is Type:
   RuntimeObserveNext{}
   RuntimeObserveLine{line: Maybe<String>}
   RuntimeObserveFrame{frame: RuntimeRead}
