@@ -3,6 +3,8 @@ import ../coordinator/commands.bend as C
 import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
 import ../git/text.bend as Tx
+import ../context/text.bend as ContextText
+import ../context/request.bend as Request
 
 # Reducer state committed with the host spool cursor for one retained native
 # attempt. The host binds the encoded value to its attempt identity and byte
@@ -101,8 +103,10 @@ def valid_sql(+value: String) -> String:
   +valid = valid_fields_sql()
   "WITH checkpoint(value) AS (VALUES(" ++ quoted ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN " ++ valid ++ " THEN '1' ELSE '0' END ELSE '0' END FROM checkpoint;"
 
-def field_sql(+value: String, +field: String) -> String:
-  "SELECT CASE WHEN json_valid(" ++ C.q(value) ++ ") THEN json_extract(" ++ C.q(value) ++ "," ++ C.q("$." ++ field) ++ ") ELSE '' END;"
+# Quote the complete checkpoint once. Hex columns preserve UTF-8, tabs,
+# newlines and empty fields in the SQL row, including the optional activity.
+def decode_fields_sql(+value: String) -> String:
+  "WITH checkpoint(value) AS (VALUES(" ++ C.q(value) ++ ")) SELECT hex(json_extract(value,'$.guidance_cursor')),hex(json_extract(value,'$.last_message')),hex(json_extract(value,'$.muse_primary')),hex(json_extract(value,'$.muse_current')),hex(json_extract(value,'$.terminal')),hex(json_extract(value,'$.filter_mode')),hex(json_extract(value,'$.codex_log')),hex(json_extract(value,'$.held')),hex(coalesce(json_extract(value,'$.omp_activity'),'')) FROM checkpoint;"
 
 def without_query_newline_reversed(+reversed: String, +raw: String) -> String:
   match reversed:
@@ -112,18 +116,47 @@ def without_query_newline_reversed(+reversed: String, +raw: String) -> String:
 def without_query_newline(+raw: String) -> String:
   without_query_newline_reversed(Tx.str_rev(raw),raw)
 
-def decode_valid(+db: String, +value: String) -> IO(State):
+# Checkpoint fields retain NUL code points. Other bytes use the existing UTF-8
+# decoder, including its pending multi-byte state.
+def decode_byte(state: Request.DState, +byte: U32) -> Request.DState:
+  match state:
+    case Request.DStart{+acc}:
+      Bool.pick(Request.DState,U32.is_eq(byte,0),Request.DStart{SCon{Char.from_u32(0),acc}},Request.step_state(Request.DStart{acc},byte))
+    case other: Request.step_state(other,byte)
+
+def decode_bytes(bytes: String, +state: Request.DState) -> Request.DState:
+  match bytes:
+    case SNil{}: state
+    case SCon{+head,+tail}: decode_bytes(tail,decode_byte(state,Char.to_u32(head)))
+
+def decode_scalar(scalar: Request.Scalar) -> IO(String):
+  match scalar:
+    case Request.ScalarText{value}: IO.pure(String,value)
+    case other: IO.die(String,3,"Native observer checkpoint field decode failed: " ++ Request.scalar_reason(other))
+
+def decode_field(hex: String) -> IO(String):
+  decode_scalar(Request.state_scalar(decode_bytes(ContextText.hex_decode(hex),Request.DStart{SNil{}})))
+
+def decode_fields(fields: List<String>) -> IO(State):
+  match fields:
+    case guidance_hex <> message_hex <> primary_hex <> current_hex <> terminal_hex <> filter_hex <> codex_hex <> held_hex <> activity_hex <> Nil{}:
+      do IO<State>:
+        guidance_cursor : String <- decode_field(guidance_hex)
+        last_message : String <- decode_field(message_hex)
+        muse_primary : String <- decode_field(primary_hex)
+        muse_current : String <- decode_field(current_hex)
+        terminal : String <- decode_field(terminal_hex)
+        filter_mode : String <- decode_field(filter_hex)
+        codex_log : String <- decode_field(codex_hex)
+        held : String <- decode_field(held_hex)
+        omp_activity : String <- decode_field(activity_hex)
+        IO.pure(State,State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity})
+    case other: IO.die(State,3,"Native observer checkpoint field row is malformed.")
+
+def decode_valid(db: String, value: String) -> IO(State):
   do IO<State>:
-    guidance_cursor : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"guidance_cursor")))
-    last_message : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"last_message")))
-    muse_primary : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"muse_primary")))
-    muse_current : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"muse_current")))
-    terminal : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"terminal")))
-    filter_mode : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"filter_mode")))
-    codex_log : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"codex_log")))
-    held : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"held")))
-    omp_activity : String <- IO.try(String,DB.Sql.query(db,field_sql(value,"omp_activity")))
-    IO.pure(State,State{without_query_newline(guidance_cursor),without_query_newline(last_message),without_query_newline(muse_primary),without_query_newline(muse_current),without_query_newline(terminal),without_query_newline(filter_mode),without_query_newline(codex_log),without_query_newline(held),without_query_newline(omp_activity)})
+    row : String <- IO.try(String,DB.Sql.query(db,decode_fields_sql(value)))
+    decode_fields(ContextText.split_tabs(without_query_newline(row)))
 
 def reset_empty(handle: U32) -> IO(State):
   do IO<State>:

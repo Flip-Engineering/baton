@@ -178,11 +178,13 @@ class NativeObservation(RECEIVE.Receive):
         stream, started = self.accept_child(observer, 'parent',
                                             'Observation receive exited before native startup')
 
+        text = "Recovered from the saved assistant message: café 🧪.\nApostrophe: '; tab: \t; final newline.\n"
         assistant = {'type': 'message_end', 'message': {
             'id': 'checkpoint-assistant', 'role': 'assistant', 'provider': 'fixture',
-            'content': [{'type': 'text', 'text': 'Recovered from the saved assistant message.'}]}}
-        self.action(stream, native_frame=assistant)
-        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+            'content': [{'type': 'text', 'text': text}]}}
+        frame_line = json.dumps(assistant, ensure_ascii=False)
+        self.action(stream, native_line=frame_line)
+        self.assertEqual(json.loads(stream.readline()), {'line_written': frame_line})
         self.eventually(lambda: self.output_log('parent').exists() and
                         'checkpoint-assistant' in self.output_log('parent').read_text(),
                         'the assistant frame was not durably observed')
@@ -205,8 +207,7 @@ class NativeObservation(RECEIVE.Receive):
 
         turns = self.eventually(lambda: self.coord('turns', 'parent'),
                                 'reattached observer did not store its terminal report')
-        self.assertEqual([row['reportBody'] for row in turns],
-                         ['Recovered from the saved assistant message.'])
+        self.assertEqual([row['reportBody'] for row in turns], [text])
         log = self.output_log('parent').read_text()
         self.assertEqual(log.count('checkpoint-assistant'), 1)
         self.assertIn('agent_end', log)
