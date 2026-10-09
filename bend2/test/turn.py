@@ -271,7 +271,7 @@ assert sys.stdin.read()==''
         self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
         body='Change focus now: report the guidance label indigo λ.'
         self.call('message','guidance-1','root','omp-worker','guidance',body)
-        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib,sqlite3
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib,sqlite3,subprocess
 json.loads(sys.stdin.readline())
 state=json.loads(sys.stdin.readline())
 prompt=json.loads(sys.stdin.readline())
@@ -283,10 +283,12 @@ db=sys.argv[sys.argv.index('--session-dir')+1].removesuffix('.sessions')
 with sqlite3.connect(db) as conn:
     assert conn.execute('SELECT receipt FROM messages WHERE id=?',(guide['id'],)).fetchone()[0] is None
 pathlib.Path('guidance.json').write_text(json.dumps(guide))
-print(json.dumps({'type':'response','command':'steer','success':True,'id':guide['id']}),flush=True)
+response={'type':'response','command':'steer','success':True,'id':guide['id']}
+print(json.dumps(response),flush=True)
+subprocess.run([BATON_EXE,db,'ack',guide['id'],'omp-worker',json.dumps(response)],check=True,stdout=subprocess.DEVNULL)
 print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','content':[{'type':'text','text':guide['message']}]}]}),flush=True)
 assert sys.stdin.read()==''
-''')
+'''.replace('BATON_EXE',repr(str(EXE))))
         self.call('turn','omp-worker','guided-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
         self.assertEqual(json.loads((self.cwd/'guidance.json').read_text())['message'],body)
         receipt=json.loads(json.loads(self.call('delivery','guidance-1'))['receipt'])
