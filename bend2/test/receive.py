@@ -115,9 +115,18 @@ while True:
         with pathlib.Path(name).open('a') as target: target.write(text)
         reply({'appended':name})
         continue
+    if action.get('stdout_fragment'):
+        print(action['stdout_fragment'],end='',flush=True)
+        reply({'fragment_written':action['stdout_fragment']})
+        continue
     if action.get('read_steer'):
+        if action.get('signal_steer_wait'): reply({'waiting_for_steer':True})
         frame=json.loads(sys.stdin.readline())
         assert frame['type']=='steer',frame
+        if action.get('check_steer_receipt'):
+            delivery=json.loads(subprocess.check_output([config['exe'],config['db'],'delivery',frame['id']],text=True))
+            assert delivery['receipt'] is None,delivery
+        if action.get('finish_fragment'): print(action['finish_fragment'],flush=True)
         print(json.dumps({'type':'response','command':'steer','success':True,'id':frame['id']}),flush=True)
         reply({'steer_received':frame})
         continue
@@ -2202,6 +2211,45 @@ class Receive(unittest.TestCase):
         self.finish(delivery)
         self.assert_no_start()
         self.assertEqual(len(self.coord('turns', 'parent')), 1)
+
+    def test_guidance_arrives_while_retained_native_is_silent(self):
+        """A retained OMP reader forwards committed guidance during a silent
+        native wait and preserves a stdout line split across the notice.
+        """
+        self.player(harness='omp')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
+        self.prepare_input('original', 'parent', kind='task')
+        observer = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.eventually(lambda: self.coord('player', 'parent')['native'] == started['native'],
+                        'The retained startup frame was not observed.')
+        fragment = '{"type":"fixture_progress","marker":"silent-λ'
+        self.action(control, stdout_fragment=fragment)
+        self.assertEqual(json.loads(control.readline()), {'fragment_written': fragment})
+        self.action(control, read_steer=True, signal_steer_wait=True,
+                    check_steer_receipt=True, finish_fragment='-completed"}')
+        self.assertEqual(json.loads(control.readline()), {'waiting_for_steer': True})
+        body = 'Guidance received during the silent wait λ.'
+        self.message('silent-guidance', 'parent', body)
+        accepted = json.loads(control.readline())['steer_received']
+        self.assertEqual((accepted['type'], accepted['id'], accepted['message']),
+                         ('steer', 'silent-guidance', body))
+        self.assert_no_start()
+        self.action(control, body=body)
+        self.finish(observer)
+        receipt = json.loads(self.coord('delivery', 'silent-guidance')['receipt'])
+        self.assertEqual(receipt, {'type': 'response', 'command': 'steer',
+                                   'success': True, 'id': 'silent-guidance'})
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
+        frames = [json.loads(line) for line in self.output_log('parent').read_text().splitlines()]
+        self.assertEqual([frame for frame in frames if frame.get('type') == 'fixture_progress'],
+                         [{'type': 'fixture_progress', 'marker': 'silent-λ-completed'}])
+        self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
+        self.assert_no_start()
 
     def test_successful_turn_continues_original_unacknowledged_input(self):
         """A successful turn continues its unacknowledged initial input in the

@@ -26,6 +26,9 @@ typedef struct {
   size_t initial_length, recovery_length, artifact_name_length, artifact_length, identity_length;
   u32 keep_stdin, lock;
   char *cursor, *generation;
+  char *notice;
+  size_t notice_length;
+  int awake_alive;
 } BatonProcessCall;
 static int br_instance_decision(BatonProcessCall *call);
 static void br_instance_state_call(BatonProcessCall *call);
@@ -42,7 +45,7 @@ static uint32_t *baton_child_free;
 static size_t baton_child_free_count, baton_child_free_capacity;
 static uint32_t baton_child_next_generation=1;
 
-enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_WAIT, BP_SIGNAL, BP_PID,
+enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_READ_AWAKE, BP_WAIT, BP_SIGNAL, BP_PID,
        BP_RETAIN, BP_ATTACH, BP_RELEASE, BP_ACK, BP_KEEPER, BP_INPUT_CLOSED,
        BP_CONTROL_WRITE, BP_CONTROL_SIGNAL, BP_ATTACH_OWNED, BP_RECOVERY,
        BP_INSTANCE_OWNER, BP_INSTANCE_ADMIT, BP_INSTANCE_ATTACH,
@@ -3855,6 +3858,177 @@ static void br_subscription_free(BatonRetained *retained) {
   free(retained->directory);free(retained->database);
   free(retained);
 }
+/* Woken-read design note: every wait round below blocks in poll with no
+   timeout. The watcher thread only watches the spool condition and pokes a
+   pipe; it never reads the subscription socket, so unreported notices stay
+   buffered. The owner joins the watcher on every path before returning. A
+   consumed notice always returns; only a silent spool with no notice
+   re-waits, so the loop cannot spin. */
+/* Bounded spool probe: returns 1 with one full line committed, 0 when the
+   spool holds no full line and the child still runs, or -1 on error or end
+   of output. Only a complete returned line or a real end of output commits
+   spool bytes: a silent or failed probe leaves the offset and the call text
+   exactly as found, so partial bytes survive notice-only returns and the
+   next call re-scans from the same offset. Mirrors br_read_line byte
+   handling but never blocks, so the caller can multiplex the wait. */
+static int br_spool_try_line(BatonRetained *retained,BatonProcessCall *call) {
+  size_t base=call->length;
+  size_t staged=0;
+  for(;;) {
+    pthread_mutex_lock(&retained->state);
+    int exited=retained->exited;
+    call->error=retained->error;pthread_mutex_unlock(&retained->state);
+    if(call->error) break;
+    char chunk[8192];
+    ssize_t n=pread(retained->spool,chunk,sizeof(chunk),retained->offset+(off_t)staged);
+    if(n<0 && errno==EINTR) continue;
+    if(n<0) {call->error=errno;break;}
+    if(n==0) {
+      pthread_mutex_lock(&retained->state);
+      if(retained->error) call->error=retained->error;
+      else if(exited) {
+        /* End of output commits the tail, even partial, mirroring
+           br_read_line; an empty tail reads as end of output. */
+        retained->offset+=(off_t)staged;
+        call->eof=call->length==0;
+      }
+      pthread_mutex_unlock(&retained->state);
+      if(call->error || exited) return -1;
+      break;
+    }
+    char *newline=memchr(chunk,'\n',(size_t)n);
+    size_t count=newline?(size_t)(newline-chunk)+1:(size_t)n;
+    if(count>SIZE_MAX-call->length-1) {call->error=EOVERFLOW;break;}
+    char *buffer=realloc(call->text,call->length+count+1);
+    if(!buffer) {call->error=ENOMEM;break;}
+    call->text=buffer;
+    memcpy(call->text+call->length,chunk,count);call->length+=count;
+    call->text[call->length]=0;staged+=count;
+    if(newline) {call->length--;retained->offset+=(off_t)staged;return 1;}
+  }
+  if(staged) {call->length=base;call->text[base]=0;}
+  return call->error?-1:0;
+}
+typedef struct { BatonRetained *retained;uint64_t version;int wake;int done; } BrAwakeWatch;
+/* Single-shot spool watcher: waits for spool progress, child exit or failure,
+   then writes one byte so the owner's poll returns. Never reads the
+   subscription socket, so buffered notices survive. The owner always joins
+   this thread before returning, and stops it with done plus broadcast. */
+static void *br_awake_watch(void *raw) {
+  BrAwakeWatch *watch=(BrAwakeWatch *)raw;
+  BatonRetained *retained=watch->retained;
+  pthread_mutex_lock(&retained->state);
+  while(!watch->done && watch->version==retained->version &&
+        !retained->exited && !retained->error)
+    pthread_cond_wait(&retained->changed,&retained->state);
+  int progress=!watch->done &&
+    (watch->version!=retained->version||retained->exited||retained->error);
+  pthread_mutex_unlock(&retained->state);
+  if(progress) {
+    char byte=0;
+    ssize_t written=write(watch->wake,&byte,1);
+    (void)written;
+  }
+  return NULL;
+}
+/* read_awake: multiplexed read of a retained child spool with an instance
+   subscription socket. Reports a spooled line when one is available; when
+   the child is silent, blocks until a line arrives or a commit notice lands
+   and reports both sides honestly: a full line wins, otherwise the
+   notice-only wake returns with no spool bytes consumed. The subscription
+   socket is only consumed through br_instance_notice after poll reports it
+   readable, so unreported notices stay buffered for later calls. A dead
+   subscription fails the call so the caller unsubscribes and falls back to
+   a plain blocking read. The second effect argument carries the subscription
+   child handle in call->signal; its table generation is verified, and the
+   subscription outlives the call because the owner unsubscribes only after
+   this call returns. A consumed notice is always reported, including at end
+   of output; the Turn layer drains it and terminates on the following
+   notice-free round. */
+static void br_read_awake(BatonProcessCall *call) {
+  BatonChild *child=call->child;
+  BatonRetained *retained=child?child->retained:NULL;
+  if(!retained || retained->spool<0) {call->error=EBADF;return;}
+  /* Resolve the subscription child once: the owner unsubscribes only after
+     this call returns, so the socket outlives the wait. The table slot is
+     verified by generation, mirroring baton_process_begin. */
+  u32 sub=call->signal;
+  u32 index=sub&BATCHILD_INDEX_MASK;
+  BatonChild *watch_child=index<baton_child_count?baton_children[index]:NULL;
+  int sub_socket=-1;
+  pthread_mutex_lock(&retained->reader);
+  if(!watch_child) call->error=EBADF;
+  else if(watch_child->generation!=(sub>>16)) call->error=ESTALE;
+  else if(!watch_child->retained || watch_child->retained->socket<0) call->error=EBADF;
+  else sub_socket=watch_child->retained->socket;
+  if(call->error) {pthread_mutex_unlock(&retained->reader);return;}
+  /* Loop invariant: retained->reader is held at the top. The spool version
+     is captured before each scan, so output arriving between the scan and
+     the watcher setup still advances past the watched version and fires
+     instead of hanging. A consumed notice always returns; only a silent
+     spool with no notice re-waits, and every re-wait blocks in poll, so the
+     loop cannot spin. */
+  int noticed=0;
+  for(;;) {
+    pthread_mutex_lock(&retained->state);
+    uint64_t version=retained->version;
+    pthread_mutex_unlock(&retained->state);
+    int line=br_spool_try_line(retained,call);
+    if(line!=0 || call->error || call->eof || noticed) {
+      if(noticed && line==0) call->eof=1;
+      if(!call->error) call->awake_alive=1;
+      pthread_mutex_unlock(&retained->reader);return;
+    }
+    int wake[2]={-1,-1};
+    if(baton_pipe(wake)) {call->error=errno;pthread_mutex_unlock(&retained->reader);return;}
+    pthread_mutex_lock(&retained->state);
+    BrAwakeWatch watch={retained,version,wake[1],0};
+    pthread_t watcher;
+    int spawned=pthread_create(&watcher,NULL,br_awake_watch,&watch);
+    pthread_mutex_unlock(&retained->state);
+    if(spawned) {close(wake[0]);close(wake[1]);call->error=spawned;pthread_mutex_unlock(&retained->reader);return;}
+    pthread_mutex_unlock(&retained->reader);
+    struct pollfd waits[2];
+    waits[0].fd=sub_socket;waits[0].events=POLLIN;waits[0].revents=0;
+    waits[1].fd=wake[0];waits[1].events=POLLIN;waits[1].revents=0;
+    int ready;
+    do { ready=poll(waits,2,-1); } while(ready<0 && errno==EINTR);
+    int sub_event=ready>0 && (waits[0].revents&(POLLIN|POLLHUP));
+    int error=0;
+    if(ready<0) error=errno;
+    else if(waits[0].revents&POLLNVAL) error=EBADF;
+    else if((waits[0].revents&POLLERR) && !sub_event) error=EPIPE;
+    /* Exactly one join on every path: stop a still-waiting watcher, reap
+       an exited one. */
+    pthread_mutex_lock(&retained->state);
+    watch.done=1;
+    pthread_cond_broadcast(&retained->changed);
+    pthread_mutex_unlock(&retained->state);
+    pthread_join(watcher,NULL);
+    if(waits[1].revents&POLLIN) {
+      char drained=0;
+      ssize_t kept=read(wake[0],&drained,1);
+      (void)kept;
+    }
+    close(wake[0]);close(wake[1]);
+    pthread_mutex_lock(&retained->reader);
+    if(error) {call->error=error;pthread_mutex_unlock(&retained->reader);return;}
+    if(sub_event && !noticed) {
+      BrInstanceNotice notice={0};uint64_t generation=0;
+      int seen=br_instance_notice(sub_socket,&notice,&generation);
+      if(seen) {call->error=seen;pthread_mutex_unlock(&retained->reader);return;}
+      const char *kind=notice.kind==BN_COMMIT?"commit":notice.kind==BN_GAP?"gap":"unknown";
+      char text[224];
+      int written=snprintf(text,sizeof(text),
+        "{\"kind\":\"%s\",\"cursor\":%llu,\"generation\":%llu}",kind,
+        (unsigned long long)notice.cursor,(unsigned long long)generation);
+      call->notice=malloc((size_t)written+1);
+      if(!call->notice) {call->error=ENOMEM;pthread_mutex_unlock(&retained->reader);return;}
+      memcpy(call->notice,text,(size_t)written+1);call->notice_length=(size_t)written;
+      noticed=1;
+    }
+  }
+}
 static void br_instance_subscribe_call(BatonProcessCall *call) {
   uint64_t generation=0,after_cursor=0;
   int error=br_parse_u64(call->generation,call->generation?strlen(call->generation):0,&generation);
@@ -4094,6 +4268,7 @@ static void baton_process_call(IoWork *w) {
      call->kind==BP_RETAIN_WITH_FILE || call->kind==BP_INSTANCE_ADMIT_WITH_FILE) {
     baton_retained_begin_call(call);return;
   }
+  if(call->kind==BP_READ_AWAKE && child->retained) {br_read_awake(call);return;}
   if(child->retained) { baton_retained_call(call);return; }
   if(call->kind==BP_RELEASE || call->kind==BP_ACK || call->kind==BP_INSTANCE_COMMIT ||
      call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_REPLAY) { call->error=EINVAL;return; }
@@ -4111,7 +4286,7 @@ static void baton_process_call(IoWork *w) {
       if(close(child->input)) call->error=errno;
       child->input=-1;
     }
-  } else if(call->kind==BP_READ) {
+  } else if(call->kind==BP_READ || call->kind==BP_READ_AWAKE) {
     if(!child->output) { call->error=EBADF;return; }
     size_t capacity=0;
     ssize_t n;
@@ -4166,6 +4341,15 @@ static Term baton_process_pack(Env e, IoWork *w) {
     else if(call->kind==BP_READ || call->kind==BP_RECOVERY) value=call->eof ? term_pak(CID_NONE,0)
       : io_box(e,CID_SOME,io_str(e,call->text,call->length));
 #endif
+#ifdef CID_PROCESSCHILD_READ_AWAKE
+#ifdef CID_SOME
+    else if(call->kind==BP_READ_AWAKE)
+      value=io_tup(e,
+        call->eof ? term_pak(CID_NONE,0)
+        : io_box(e,CID_SOME,io_str(e,call->text?call->text:"",call->length)),
+        io_tup(e,io_str(e,call->notice?call->notice:"",call->notice_length),(Term)call->awake_alive));
+#endif
+#endif
   }
 #ifdef CID_PROCESSCHILD_RETAIN_WITH_FILE
   if(call->kind==BP_RETAIN_WITH_FILE && (!call->error || call->unstarted)) {
@@ -4211,7 +4395,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
     free(call->child);call->child=NULL;
   }
   free(call->args);free(call->cwd);free(call->log);free(call->text);
-  free(call->directory);free(call->initial);free(call->recovery);free(call->detail);free(call->database);
+  free(call->directory);free(call->initial);free(call->recovery);free(call->detail);free(call->database);free(call->notice);
   free(call->artifact_name);free(call->artifact);free(call->identity);free(call->owner_witness);free(call->cursor);free(call->generation);free(call);
   w->data=NULL;
   return result;
@@ -4332,6 +4516,7 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
     }
     if(kind==BP_INSTANCE_RESTORE) call->signal=(u32)f[1];
     if(kind==BP_SIGNAL) call->signal=(u32)f[1];
+    if(kind==BP_READ_AWAKE) call->signal=(u32)f[1];
   }
   w->data=(char *)call;
   if(call->error) return baton_process_pack(e,w);
@@ -4352,6 +4537,9 @@ BP_EFFECT(baton_process_close,CID_PROCESSCHILD_CLOSE_STDIN,BP_CLOSE)
 #endif
 #ifdef CID_PROCESSCHILD_READ_LINE
 BP_EFFECT(baton_process_read,CID_PROCESSCHILD_READ_LINE,BP_READ)
+#endif
+#ifdef CID_PROCESSCHILD_READ_AWAKE
+BP_EFFECT(baton_process_read_awake,CID_PROCESSCHILD_READ_AWAKE,BP_READ_AWAKE)
 #endif
 #ifdef CID_PROCESSCHILD_WAIT
 BP_EFFECT(baton_process_wait,CID_PROCESSCHILD_WAIT,BP_WAIT)

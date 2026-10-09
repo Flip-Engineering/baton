@@ -45,6 +45,15 @@ def continued(db: String, player: String, +handle: U32, cursor: String, ended: B
       closed : U32 <- IO.try(U32,P.ProcessChild.input_closed(handle))
       pending_live(db,player,handle,cursor,closed)
 
+# A commit notice drains guidance while this native attempt accepts input.
+def drain_pending(+db: String, +player: String, +handle: U32, +cursor: String) -> IO(String):
+  do IO<String>:
+    +next : String <- continued(db,player,handle,cursor,False{})
+    Bool.pick(IO(String),String.eq(next,cursor),IO.pure(String,cursor),drain_pending(db,player,handle,next))
+
+def awake_pending(db: String, player: String, handle: U32, +cursor: String, woke: Bool) -> IO(String):
+  Bool.pick(IO(String),woke,drain_pending(db,player,handle,cursor),IO.pure(String,cursor))
+
 def accepted_sql(+player: String, +event: String) -> String:
   "UPDATE messages SET receipt=coalesce(receipt," ++ C.q(event) ++ ") WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND id=json_extract(" ++ C.q(event) ++ ",'$.id') AND json_extract(" ++ C.q(event) ++ ",'$.type')='response' AND json_extract(" ++ C.q(event) ++ ",'$.command')='steer' AND json_extract(" ++ C.q(event) ++ ",'$.success')=1;"
 
