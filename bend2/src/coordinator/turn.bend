@@ -824,8 +824,8 @@ def retained_mode(+db: String, +player: String, +directory: String, +cmd: String
     +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
     +store : String <- current_store(db,player)
     history : String <- current_history(db,player)
-    args : String <- IO.pure(String,prefix ++ Bool.pick(String,String.is_empty(store),retained_arguments(omp,claude,cmd,model,effort,sessions,native),retained_profile_arguments(omp,claude,Subs.store_binding(Tx.trim_nl(harness),store),Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)))
-    input : String <- IO.pure(String,retained_input(False{},omp,claude,prompt,level))
+    +args : String <- IO.pure(String,prefix ++ Bool.pick(String,String.is_empty(store),retained_arguments(omp,claude,cmd,model,effort,sessions,native),retained_profile_arguments(omp,claude,Subs.store_binding(Tx.trim_nl(harness),store),Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)))
+    +input : String <- IO.pure(String,retained_input(False{},omp,claude,prompt,level))
     Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),String.eq(harness,"muse\n"),Custody.Instance.admit_with_file(db,directory,muse_args,cwd,directory ++ "/native.stderr","prompt.txt",prompt,retained_input(True{},omp,claude,prompt,level),retained_keep_stdin(True{},omp,claude),Some{lock},recovery),Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),seal_prompt,Custody.Instance.admit_with_file(db,directory,args,cwd,directory ++ "/native.stderr","prompt.txt",prompt,input,retained_keep_stdin(False{},omp,claude),Some{lock},recovery),Custody.Instance.admit(db,directory,args,cwd,directory ++ "/native.stderr",input,retained_keep_stdin(False{},omp,claude),Some{lock},recovery)))
 
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String, +level: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
