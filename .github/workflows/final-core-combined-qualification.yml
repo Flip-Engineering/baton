@@ -26,7 +26,7 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: ${{ inputs.fixture_source_sha || '30ebd4e53ae5dc81f9a9cd4c85a9a2794e5d4849' }}
+  PRODUCT_SOURCE_SHA: ${{ inputs.fixture_source_sha || '250e0f9ad787c3eef3d35b75362d9c44c2a7dedf' }}
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
 
@@ -364,6 +364,15 @@ jobs:
                 env PYTHONUNBUFFERED=1 \
                 BATON2_CONTEXT_TYPESCRIPT="$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-runtime/node_modules/typescript" \
                 python3 -u bend2/test/package-selected-context.py -v
+              ;;
+            receive)
+              "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive \
+                env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
+                python3 -u bend2/test/receive.py -v \
+                  Receive.test_completed_orphan_observer_recovers_original_and_pending_input \
+                  Receive.test_completed_orphan_observer_recovery_preserves_explicit_stop \
+                  Receive.test_completed_live_keeper_observer_handoff_recovers_original_and_pending_input \
+                  Receive
               ;;
             *)
               "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" '${{ matrix.suite }}' \
