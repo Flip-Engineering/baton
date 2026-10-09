@@ -148,9 +148,40 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  darwin:
-    if: ${{ !cancelled() && !inputs.runtime_suite && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') }}
+  darwin_publication:
+    if: ${{ !cancelled() && !inputs.runtime_suite && github.event_name == 'push' && needs.build.result == 'success' }}
     needs: build
+    runs-on: ubuntu-24.04
+    outputs:
+      original_run_json: ${{ steps.publication.outputs.original_run_json }}
+    steps:
+      - name: Await the original Darwin package publication
+        id: publication
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CANONICAL_DARWIN_RUN_ID" ]]; then
+            exit 0
+          fi
+          original_run="$RUNNER_TEMP/original-darwin-run.json"
+          while :; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANONICAL_DARWIN_RUN_ID" \
+              > "$original_run"
+            status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' \
+              "$original_run")
+            if [[ "$status" == completed ]]; then
+              break
+            fi
+            sleep 60
+          done
+          original_run_json=$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])),separators=(",",":")))' "$original_run")
+          printf 'original_run_json=%s\n' "$original_run_json" >> "$GITHUB_OUTPUT"
+
+  darwin:
+    if: ${{ !cancelled() && !inputs.runtime_suite && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') && (github.event_name == 'workflow_dispatch' || needs.darwin_publication.result == 'success') }}
+    needs: [build, darwin_publication]
     runs-on: macos-15
     steps:
       - name: Check out product source
@@ -164,6 +195,8 @@ jobs:
           node-version: '22'
       - name: Prepare Darwin output
         shell: bash
+        env:
+          ORIGINAL_DARWIN_RUN_JSON: ${{ needs.darwin_publication.outputs.original_run_json }}
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/final-native-context-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-darwin"
@@ -176,23 +209,9 @@ jobs:
           fi
           git -C owned rev-parse HEAD > "$evidence/source-commit.txt"
           uname -a > "$evidence/platform.txt"
-      - name: Await the original Darwin package publication
-        if: ${{ github.event_name == 'push' && env.CANONICAL_DARWIN_RUN_ID }}
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          while :; do
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANONICAL_DARWIN_RUN_ID" \
-              > "$FINAL_NATIVE_CONTEXT_EVIDENCE/original-darwin-run.json"
-            status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' \
-              "$FINAL_NATIVE_CONTEXT_EVIDENCE/original-darwin-run.json")
-            if [[ "$status" == completed ]]; then
-              break
-            fi
-            sleep 60
-          done
+          if [[ -n "$ORIGINAL_DARWIN_RUN_JSON" ]]; then
+            printf '%s\n' "$ORIGINAL_DARWIN_RUN_JSON" > "$evidence/original-darwin-run.json"
+          fi
       - name: Download the original Darwin package
         if: ${{ github.event_name == 'workflow_dispatch' || env.CANONICAL_DARWIN_RUN_ID }}
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
