@@ -210,7 +210,10 @@ def codex_frame_id(db: String, line: String) -> IO(String):
 
 # The identity is read only for a frame the policy holds or closes.
 def frame_identity(db: String, line: String, +kind: String, +omp: Bool) -> IO(String):
-  match codex_kind(kind):
+  frame_identity_kind(db,line,kind,omp,codex_kind(kind))
+
+def frame_identity_kind(db: String, line: String, +kind: String, omp: Bool, codex: Bool) -> IO(String):
+  match codex:
     case True{}: codex_frame_id(db,line)
     case False{}: frame_id(db,line,Bool.and(omp,Bool.or(prefix_kind(kind),close_kind(kind))))
 
