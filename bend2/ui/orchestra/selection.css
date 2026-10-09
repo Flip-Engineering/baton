@@ -4,7 +4,14 @@
 .sel-block { margin: 0 0 12px; }
 .sel-block > h2 { overflow-wrap: anywhere; }
 .sel-body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 2px 0 8px; }
-.sel-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
+.sel-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 10px; flex: none; }
+.sel-state { display: flex; align-items: center; margin: 2px 0 6px; }
+.sel-status { font-size: 20px; font-weight: 600; line-height: 1.2; }
+.sel-owed { font-size: 20px; line-height: 1.2; color: var(--muted); margin-left: 12px; }
+.doc-facts.sel-ref { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 1px 8px; font-size: var(--step0, 12px); color: var(--muted); margin: 4px 0 8px; }
+.doc-facts.sel-ref dt { font-weight: 400; }
+.doc-facts.sel-ref dd { margin: 0; overflow-wrap: anywhere; }
+.sel-warning > p:first-child { color: var(--failed); font-weight: 600; }
 .sel-claim { font-weight: 600; }
 .sel-group { font-weight: 600; margin: 6px 0 2px; }
 .sel-origin { fill: none; stroke: var(--ink, #141a26); stroke-width: 1.5px; }

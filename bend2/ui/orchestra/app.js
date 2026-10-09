@@ -203,6 +203,29 @@ function setConn(word) {
   text(el.connState, word);
 }
 
+// Keep the count and its label in separate elements, with a text separator.
+function fact(label, value, tone) {
+  const span = document.createElement("span");
+  span.className = "fact" + (tone ? " " + tone : "");
+  const figure = document.createElement("b");
+  text(figure, String(value));
+  span.appendChild(figure);
+  const name = document.createElement("span");
+  text(name, " " + label);
+  span.appendChild(name);
+  return span;
+}
+
+// The separator between two figures on the plate line. It carries the space
+// before it, and the label's own leading space carries the one after, so the
+// line still reads as prose: "read just now · 14 need a person".
+function factSeparator() {
+  const span = document.createElement("span");
+  span.className = "fact-sep";
+  text(span, " ·");
+  return span;
+}
+
 // The visible header line: what this snapshot is, and the counts no region
 // states. The three counts are exclusive, in this precedence: a seat that needs
 // a person, then a seat that owes work to its own inbox, then a quiet seat. The
@@ -223,20 +246,22 @@ function renderHeaderLine() {
     const tone = (typeof stateMark === "function" ? stateMark(p) : null);
     if (tone && (tone.tone === "ended" || tone.tone === "unknown")) quiet += 1;
   }
-  const parts = [state.snapshotLabel || "No snapshot loaded."];
-  if (state.capturedAt) {
-    parts.push("read " + (ageText(state.capturedAt) || "just now"));
-  }
-  if (state.players.size) {
-    parts.push(people + (people === 1 ? " needs a person" : " need a person"));
-    parts.push(owing + (owing === 1 ? " owes work" : " owe work"));
-    parts.push(quiet + " quiet");
-  }
   el.snapshotLine.textContent = "";
-  text(el.snapshotLine, parts.join(" · "));
+  const snapshot = document.createElement("span");
+  snapshot.className = "fact";
+  text(snapshot, (state.snapshotLabel || "No snapshot loaded.")
+    + (state.capturedAt ? " · read " + (ageText(state.capturedAt) || "just now") : ""));
+  el.snapshotLine.appendChild(snapshot);
+  if (state.players.size) {
+    el.snapshotLine.appendChild(factSeparator());
+    el.snapshotLine.appendChild(fact("need a person", people, people > 0 ? "attention" : ""));
+    el.snapshotLine.appendChild(factSeparator());
+    el.snapshotLine.appendChild(fact("owe work", owing, ""));
+    el.snapshotLine.appendChild(factSeparator());
+    el.snapshotLine.appendChild(fact("quiet", quiet, ""));
+  }
   el.snapshotLine.title = state.capturedAt ? "snapshot captured " + state.capturedAt : "";
 }
-
 function setCursor(cursor) {
   state.cursor = cursor || "";
   el.cursorState.textContent = "";

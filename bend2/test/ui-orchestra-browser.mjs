@@ -300,6 +300,21 @@ const knowledgeShot = await send(pageWs, 'Page.captureScreenshot', { format: 'pn
 writeFileSync(join(OUT, 'knowledge.png'), Buffer.from(knowledgeShot.result.data, 'base64'));
 await until('the map draws on the page without a disclosure',
   `document.querySelector('#knowledge-whole svg.kw-canvas') && document.querySelectorAll('#knowledge-whole .kw-tier').length > 1`);
+check('map publishes its natural height for the frame', await evalJs(
+  `Number(document.querySelector('#knowledge-whole').getAttribute('data-kw-natural-height')) > 0`));
+check('tiers read as ruled bands', await evalJs(
+  `document.querySelectorAll('#knowledge-whole .kw-tier-rule').length >= 2`));
+check('tier members span the band', await evalJs(`(() => {
+  const xs = [...document.querySelectorAll('#knowledge-whole .kw-anchor rect')]
+    .map((r) => Number(r.getAttribute('x')) + Number(r.getAttribute('width')) / 2);
+  return xs.length >= 2 && Math.max(...xs) - Math.min(...xs) > 300;
+})()`));
+check('findings sit under their author', await evalJs(`(() => {
+  const a = document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"] rect');
+  const c = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"] circle');
+  return !!a && !!c && Math.abs((Number(a.getAttribute('x')) + Number(a.getAttribute('width')) / 2)
+    - Number(c.getAttribute('cx'))) < 0.000001;
+})()`));
 check('map frame bounds the canvas', await evalJs(`(() => {
   const frame = document.querySelector('.map-frame');
   return !!frame && !!frame.querySelector('#knowledge-whole')
@@ -392,6 +407,8 @@ await until('search reaches an actor inside a collapsed ensemble',
   `!document.querySelector('#knowledge-whole .kw-lozenge[data-kw-hull="qa-ensemble"]') && !!document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="lead"]')`);
 await until('selecting the actor pins its card on the map',
   `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'lead'`);
+check('actor card states the shell status word', await evalJs(
+  `!!document.querySelector('#knowledge-whole .kw-card .kw-card-status')`));
 await evalJs(`document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
 await until('selecting an actor pins its card and neighborhood', `(() => {
   const card = document.querySelector('#knowledge-whole .kw-card .kw-card-title');
@@ -418,11 +435,6 @@ check('whole-orchestra nodes stay inside the drawn surface', await evalJs(`(() =
     const r = Number(node.getAttribute('r'));
     return x - r >= 0 && y - r >= 0 && x + r <= width && y + r <= height;
   });
-})()`));
-check('a finding carries its recorded degree as a fact', await evalJs(`(() => {
-  const shared = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]');
-  const unshared = document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"]');
-  return !!shared && !!unshared && /2 promotions/.test(shared.textContent || '');
 })()`));
 check('shared findings carry a halo and unshared ones do not', await evalJs(
   `!!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"] .kw-halo') && !document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"] .kw-halo')`));
@@ -910,6 +922,12 @@ for (let i = 0; i < 11; i += 1) {
 committed();
 await until('prolific author collapses to a count badge',
   `document.querySelector('#knowledge-whole .kw-cluster[data-kw-cluster="worker"] .kw-cluster-count')?.textContent === '13'`);
+check('cluster badge sits at its author', await evalJs(`(() => {
+  const a = document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"] rect');
+  const b = document.querySelector('#knowledge-whole .kw-cluster[data-kw-cluster="worker"] rect');
+  return !!a && !!b && Math.abs((Number(a.getAttribute('x')) + Number(a.getAttribute('width')) / 2)
+    - (Number(b.getAttribute('x')) + Number(b.getAttribute('width')) / 2)) < 0.000001;
+})()`));
 await evalJs(`document.querySelector('#knowledge-whole .kw-cluster[data-kw-cluster="worker"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
 await until('activating the badge expands the author fan',
   `!document.querySelector('#knowledge-whole .kw-cluster[data-kw-cluster="worker"]') && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-cluster-0"]')`);

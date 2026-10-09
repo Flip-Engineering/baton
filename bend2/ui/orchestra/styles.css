@@ -105,24 +105,24 @@ a { color: var(--selection); }
 
 .skip:focus { left: 10px; top: 10px; }
 
-/* ── the plate line: the title page of the score ───────────────────────── */
+/* Page header, navigation and summary counts. */
 
 .plate {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 2px 16px;
-  padding: 20px 28px 12px;
+  gap: 0 14px;
+  padding: 12px 28px 8px;
   border-bottom: 2px solid var(--ink);
 }
 
 .plate-title {
   margin: 0;
   font-family: var(--display);
-  font-size: 34px;
+  font-size: 19px;
   font-weight: 700;
   line-height: 1;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.24em;
   text-transform: uppercase;
 }
 
@@ -130,7 +130,7 @@ a { color: var(--selection); }
   margin: 0;
   font-family: var(--serif);
   font-style: italic;
-  font-size: var(--step2);
+  font-size: var(--step1);
   color: var(--muted);
 }
 
@@ -144,20 +144,46 @@ a { color: var(--selection); }
   letter-spacing: 0.02em;
 }
 
+/* Summary counts use separate number and label elements. */
 .plate-facts {
   flex: 1 1 100%;
-  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 16px;
+  margin: 4px 0 0;
   font-family: var(--mono);
   font-size: var(--step0);
   color: var(--muted);
 }
 
+.plate-facts .fact {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.plate-facts .fact b {
+  font-size: var(--step2);
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1;
+}
+
+.plate-facts .fact.attention b { color: var(--attention); }
+.plate-facts .fact.failed b { color: var(--failed); }
+.plate-facts .fact.running b { color: var(--running); }
+
+/* The separator between two figures: quiet ink, the flex gap does the spacing. */
+.plate-facts .fact-sep { color: var(--hairline); }
+
 /* The movements the page holds, reachable by keyboard from the title. */
 .plate-nav {
+  flex: 1 1 100%;
   display: flex;
   flex-wrap: wrap;
-  gap: 2px 14px;
-  margin: 0;
+  gap: 2px 16px;
+  margin: 2px 0 0;
   font-size: var(--step0);
 }
 
@@ -180,21 +206,25 @@ a { color: var(--selection); }
 #staves,
 #record { scroll-margin-top: 12px; }
 
-/* ── movement headings ─────────────────────────────────────────────────── */
+/* Section labels and separators. */
 
 .movement {
   font-family: var(--display);
-  font-size: var(--step4);
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .movement-row {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px 18px;
+  gap: 4px 16px;
   margin: 0 0 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
 }
 
 /* ── notices ───────────────────────────────────────────────────────────── */
@@ -332,15 +362,46 @@ button:active { background: var(--wash); }
   margin: 0 0 10px;
 }
 
-.pit .movement { color: #f2f1ea; letter-spacing: 0.04em; }
+.pit .movement { color: #f2f1ea; letter-spacing: 0.18em; }
 
-.pit .doc-counts { font-family: var(--mono); color: var(--graphite-lit); }
+/* Stage summary counts. */
+.pit .doc-counts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 18px;
+  font-family: var(--mono);
+  font-size: var(--step0);
+  color: var(--graphite-lit);
+}
 
-/* The stage draws its own tiers and owns its height; the strip's scroll clamp
-   belongs to a chip list, not to this drawing. */
+.pit .doc-counts .stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.pit .doc-counts .stat b {
+  font-size: var(--step3);
+  font-weight: 600;
+  line-height: 1;
+  color: #f2f1ea;
+}
+
+.pit .doc-counts .stat.running b { color: var(--running-lit); }
+.pit .doc-counts .stat.attention b { color: var(--attention-lit); }
+.pit .doc-counts .stat.failed b { color: var(--failed-lit); }
+
+.pit .doc-counts .stat-sep { color: var(--hall-edge); }
+
+/* The stage draws to the height its own content needs; the hall shows a bounded
+   slice of that and scrolls, so a large run keeps a presence a reader can take in
+   while every actor stays reachable. A small run draws under the bound and no
+   scrollbar appears. */
 .pit .lane-strip {
-  max-height: none;
-  overflow: visible;
+  max-height: min(62vh, 520px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 /* The paper: the written score. Staves left, the record beside them. */
@@ -371,12 +432,16 @@ button:active { background: var(--wash); }
 
 .map { padding: 20px 28px 32px; }
 
-/* The canvas box: the graph pans and zooms inside its own frame, so the page
-   height does not follow the number of recorded nodes. */
+/* The canvas box: the graph pans and zooms inside its own frame. The layer
+   publishes the height its drawing needs and the shell sets it within these
+   bounds, so a small recorded ensemble does not sit in a tall empty box. */
 .map-frame {
   position: relative;
   height: min(64vh, 620px);
-  min-height: 380px;
+  min-height: 320px;
+  /* The layer's published height is set inline; this keeps it bounded when the
+     window is small or shrinks after the fact. */
+  max-height: 78vh;
   border: 1px solid var(--hairline);
   background: var(--surface);
   overflow: hidden;
@@ -398,9 +463,9 @@ button:active { background: var(--wash); }
 .rail .rail-label {
   font-family: var(--serif);
   font-style: italic;
-  font-size: var(--step2);
+  font-size: var(--step1);
   color: var(--attention-lit);
-  margin-right: 4px;
+  margin-right: 2px;
 }
 
 .rail .rail-count {
@@ -460,10 +525,13 @@ button:active { background: var(--wash); }
 /* ── the sections ──────────────────────────────────────────────────────── */
 
 .doc-section {
-  margin: 0;
+  margin: 0 0 6px;
   font-family: var(--display);
-  font-size: var(--step3);
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .doc-counts,
@@ -617,7 +685,7 @@ button:active { background: var(--wash); }
 /* A row's state reads as the rule down its left edge, the way a marked bar
    reads in a score: red for a failed turn, amber for a seat held by a recorded
    stop or a seat whose inbox is behind, green for a seat playing now, hairline
-   for a quiet one. */
+   for a quiet one. Quiet rows recede; a seat playing now holds its ink. */
 .doc-row {
   border-left: 3px solid transparent;
   padding-left: 2px;
@@ -628,6 +696,15 @@ button:active { background: var(--wash); }
 .doc-row.state-queued { border-left-color: var(--attention); }
 .doc-row.state-working { border-left-color: var(--running); }
 .doc-row.state-quiet { border-left-color: var(--staff); }
+
+.doc-row.state-quiet .doc-name,
+.doc-row.state-quiet .doc-lead { color: var(--muted); }
+
+.doc-row.state-working .doc-name { color: var(--ink); font-weight: 600; }
+
+.doc-row.state-working .staff-note.kind-run {
+  box-shadow: 0 0 0 2px rgba(30, 126, 52, 0.18);
+}
 
 /* The state reads in the row: failed for a failed attempt, stopped for a seat the
    record holds at an explicit stop. */

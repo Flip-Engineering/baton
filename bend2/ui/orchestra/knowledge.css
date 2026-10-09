@@ -67,6 +67,26 @@
   white-space: nowrap;
 }
 
+/* Search result count and label. */
+.kw-search-status.has-count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace);
+}
+
+.kw-search-count {
+  font-size: var(--step2, 15px);
+  font-weight: 600;
+  color: var(--ink, #141a26);
+  line-height: 1;
+}
+
+.kw-search-word {
+  font-size: var(--step0, 12px);
+  color: var(--muted, #5b6478);
+}
+
 .kw-card {
   position: absolute;
   top: 8px;
@@ -78,15 +98,35 @@
   border-radius: 6px;
 }
 
-.kw-card-title {
+/* The pinned card reads in three layers: the node's identity and its
+   state word lead, one line states the fact that matters, and the
+   reference rows sit quiet underneath. */
+.kw-card-lead,
+.kw-card-title,
+.kw-card-state,
+.kw-card-status {
   margin: 0;
-  font-size: var(--step1, 13px);
+  font-size: 17px;
   color: var(--ink, #141a26);
 }
 
+.kw-card-state {
+  margin-top: 2px;
+}
+
 .kw-card-fact {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
+  font-size: 14px;
+}
+
+.kw-card-refs {
+  margin: 6px 0 0;
+}
+
+.kw-card-ref {
+  margin: 2px 0 0;
   font-size: var(--step0, 12px);
+  color: var(--muted, #5b6478);
 }
 
 .kw-hull-line {
@@ -99,9 +139,33 @@
 
 .kw-hull, .kw-lozenge { cursor: pointer; }
 
-.kw-hull-label, .kw-lozenge-label {
-  font-size: var(--step0, 12px);
+.kw-hull-label {
+  font-size: var(--step2, 15px);
   fill: var(--muted, #5b6478);
+}
+
+/* Depth labels and full-width tier separators. */
+.kw-tier {
+  font-size: 11px;
+  fill: var(--muted, #5b6478);
+}
+
+.kw-tier-rule {
+  stroke: var(--hairline, #d8dce6);
+  stroke-width: 1px;
+}
+
+/* A collapsed hull's lozenge is a key: the name stays quiet and the
+   seat count reads as a figure. */
+.kw-lozenge-name {
+  font-size: 11px;
+  fill: var(--muted, #5b6478);
+}
+
+.kw-lozenge-count {
+  font-size: var(--step2, 15px);
+  font-weight: 600;
+  fill: var(--ink, #141a26);
 }
 
 .kw-lozenge-box {
@@ -128,6 +192,14 @@
 }
 
 .kw-canvas .kw-word {
+  font-size: 14px;
+}
+
+.kw-canvas .kw-name {
+  font-size: 13px;
+}
+
+.kw-canvas .kw-word {
   paint-order: stroke;
   stroke: var(--paper, #fbfcfe);
   stroke-width: 3px;
@@ -145,6 +217,13 @@
 .kw-actor.role-conductor { fill: var(--ink, #141a26); }
 
 .kw-actor.role-operator { fill: var(--selection, #2a3e6b); }
+
+/* A seat that needs a person holds the attention ink, the same read
+   the pit's fermata ring uses. */
+.kw-actor.kw-needs-person {
+  stroke: var(--attention, #a2611f);
+  stroke-width: 2px;
+}
 
 .knode.selected .kw-finding { stroke: var(--selection, #2a3e6b); stroke-width: 2px; }
 
@@ -208,17 +287,25 @@
 
 .kw-row-arrival { fill: var(--attention, #a2611f); }
 
-.kw-legend {
-  font-size: var(--step0, 12px);
-  max-width: 78ch;
-}
-
 .kw-legend-keys {
   list-style: none;
   margin: 2px 0 0;
   padding: 0;
-  font-size: var(--step0, 12px);
+  font-size: 11px;
   max-width: 78ch;
+}
+
+.kw-legend-keys li {
+  display: inline;
+  margin-right: 14px;
+}
+
+.kw-legend-swatch {
+  display: inline-block;
+  width: 20px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 2px;
 }
 
 :focus-visible { outline: 2px solid var(--selection, #2a3e6b); }

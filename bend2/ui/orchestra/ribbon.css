@@ -43,10 +43,27 @@
 
 .ribbon-summary {
   font-family: var(--mono);
-  font-size: var(--step0, 12px);
-  color: var(--muted);
+  font-size: 14px;
+  color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
+
+/* A kind named in the figures line carries the ink its bars carry. */
+.ribbon-kind-word { color: var(--ink); }
+.ribbon-kind-word[class*="ribbon-kind-message-"] { color: var(--ink); }
+.ribbon-kind-word.ribbon-kind-message-task,
+.ribbon-kind-word.ribbon-kind-message-guidance,
+.ribbon-kind-word.ribbon-kind-message-recovery { color: var(--rib-waiting); }
+.ribbon-kind-word.ribbon-kind-message-report,
+.ribbon-kind-word.ribbon-kind-message-receipt,
+.ribbon-kind-word.ribbon-kind-report { color: var(--rib-report); }
+.ribbon-kind-word.ribbon-kind-execution,
+.ribbon-kind-word.ribbon-kind-native-request { color: var(--running); }
+.ribbon-kind-word.ribbon-kind-stop { color: var(--failed); }
+.ribbon-kind-word[class*="ribbon-kind-ensemble"],
+.ribbon-kind-word[class*="ribbon-kind-membership"],
+.ribbon-kind-word[class*="ribbon-kind-section"],
+.ribbon-kind-word.ribbon-kind-role { color: var(--rib-structure); }
 
 .ribbon-pulse {
   width: 8px;
@@ -87,7 +104,7 @@
   align-items: flex-end;
   gap: 1px;
   width: 100%;
-  height: 58px;
+  height: 104px;
   border-bottom: 1px solid var(--rib-grid);
   background: var(--wash);
 }
@@ -151,14 +168,6 @@
   height: 8px;
   border-radius: 50%;
   background: var(--rib-needle);
-}
-
-.ribbon-readout {
-  margin: 8px 0 0;
-  font-family: var(--mono);
-  font-size: var(--step0, 12px);
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
 }
 
 .ribbon-seats {
@@ -225,13 +234,6 @@
   cursor: default;
 }
 
-.ribbon-legend {
-  margin: 8px 0 0;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--muted);
-}
-
 .ribbon-list {
   margin: 8px 0 0;
   padding: 0;
@@ -288,7 +290,7 @@
 }
 
 @media (max-width: 720px) {
-  .ribbon-axis { height: 42px; }
+  .ribbon-axis { height: 72px; }
   .ribbon-tempo { font-size: 17px; }
   .ribbon-row { grid-template-columns: max-content minmax(0, 1fr); }
   .ribbon-row-who,

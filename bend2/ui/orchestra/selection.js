@@ -6,7 +6,10 @@
    attempt) and reads seat.needsPerson; queued messages never take it.
    Changes read as a vertical timeline and the sharing path as a node
    chain, both drawn from the same recorded fields as the prose they
-   replace. All labels arrive through textContent. */
+   replace. All labels arrive through textContent.
+   The seat block leads with state: the status word set large beside
+   its tone dot with the owed figure next to it. Reference facts sit
+   in a small muted grid below; the failure line reads as a warning. */
 
 var SEL_EVENT_LIMIT = 8;
 var selEventsOpen = false;
@@ -20,8 +23,16 @@ function selEl(tag, className, text) {
   return node;
 }
 
-function selFacts(parent, facts) {
-  var dl = selEl("dl", "doc-facts");
+function selOwed(seat) {
+  if (!seat) return 0;
+  if (seat.owedTotal !== null && seat.owedTotal !== undefined && seat.owedTotal !== "") {
+    return Number(seat.owedTotal) || 0;
+  }
+  return Math.max(Number(seat.pendingCount || 0), Number(seat.unacknowledgedCount || 0));
+}
+
+function selFacts(parent, facts, cls) {
+  var dl = selEl("dl", "doc-facts" + (cls ? " " + cls : ""));
   facts.forEach(function (fact) {
     dl.appendChild(selEl("dt", null, fact[0]));
     var empty = fact[1] === "" || fact[1] === null || fact[1] === undefined;
@@ -39,8 +50,8 @@ function selEventAge(at) {
   return at || "";
 }
 
-function selBodyBlock(parent, heading, meta, body) {
-  var block = selEl("div", null);
+function selBodyBlock(parent, heading, meta, body, cls) {
+  var block = selEl("div", cls || null);
   if (heading) block.appendChild(selEl("p", null, heading));
   if (meta) block.appendChild(selEl("p", "muted", meta));
   if (typeof body === "string") block.appendChild(selEl("p", "sel-body", body));
@@ -191,20 +202,18 @@ function renderSelection(mount, data, options) {
   }
   if (seat) {
     var seatBlock = selEl("div", "sel-block");
-    var seatTitle = selEl("h2", "doc-section", seat.id);
+    seatBlock.appendChild(selEl("h2", "doc-section", seat.id));
+    var owed = selOwed(seat);
+    var state = selEl("p", "sel-state");
     var dot = selEl("span", "sel-dot");
     dot.style.background = selDot(seat.status, seat.needsPerson);
     dot.setAttribute("aria-hidden", "true");
-    seatTitle.insertBefore(dot, seatTitle.firstChild);
-    seatBlock.appendChild(seatTitle);
-    selFacts(seatBlock, [
-      ["role", seat.role],
-      ["status", seat.status],
-      ["action", seat.action],
-      ["task", seat.taskTitle],
-      ["model", seat.model],
-      ["parent", seat.parent],
-    ]);
+    state.appendChild(dot);
+    state.appendChild(selEl("span", "sel-status", seat.status || "unknown"));
+    if (owed > 0) {
+      state.appendChild(selEl("span", "sel-owed", owed + " owed"));
+    }
+    seatBlock.appendChild(state);
     var failure = seat.failure || null;
     if (failure) {
       selBodyBlock(seatBlock,
@@ -212,8 +221,16 @@ function renderSelection(mount, data, options) {
         [failure.errorStatus, failure.stopReason, failure.eventType]
           .filter(Boolean).join(" · "),
         typeof failure.errorMessage === "string" && failure.errorMessage
-          ? failure.errorMessage : undefined);
+          ? failure.errorMessage : undefined,
+        "sel-warning");
     }
+    selFacts(seatBlock, [
+      ["role", seat.role],
+      ["model", seat.model],
+      ["parent", seat.parent],
+      ["task", seat.taskTitle],
+      ["action", seat.action],
+    ], "sel-ref");
     mount.appendChild(seatBlock);
   }
   if (finding) {
@@ -234,7 +251,7 @@ function renderSelection(mount, data, options) {
   }
   var stubs = seat && Array.isArray(seat.pending) ? seat.pending : [];
   var messages = input.messages || {};
-  var pendingTotal = seat ? Math.max(Number(seat.pendingCount || 0), Number(seat.unacknowledgedCount || 0)) : 0;
+  var pendingTotal = selOwed(seat);
   if (pendingTotal > 0 || stubs.length) {
     var waiting = selEl("div", "sel-block");
     waiting.appendChild(selEl("h2", "doc-section", "Awaiting " + pendingTotal));

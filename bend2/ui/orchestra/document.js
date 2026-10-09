@@ -47,6 +47,18 @@
     return node;
   }
 
+  // Separate the count and label while preserving readable textContent.
+  function stat(label, value, tone) {
+    var wrap = el("span", "stat" + (tone ? " " + tone : ""));
+    wrap.appendChild(el("b", null, value));
+    wrap.appendChild(el("span", null, " " + label));
+    return wrap;
+  }
+
+  function statSeparator() {
+    return el("span", "stat-sep", " ·");
+  }
+
   function ageText(at) {
     if (!at) return "";
     var then = Date.parse(at);
@@ -346,7 +358,22 @@
   }
 
   /* The map: the whole recorded ensemble on the paper ground. It is a main view,
-     so it draws whenever its mount is in the page. */
+     so it draws whenever its mount is in the page. It is the recorded ensemble,
+     but a reader still asks how a seat is doing; the shell holds those reads, so
+     they travel with the map's payload keyed by actor id. */
+  function actorReads(players) {
+    var out = {};
+    (players || []).forEach(function (p) {
+      out[p.id] = {
+        status: p.status || "unknown",
+        needsPerson: p.needsPerson === true,
+        owesWork: p.owesWork === true,
+        owedTotal: p.owedTotal || 0,
+      };
+    });
+    return out;
+  }
+
   function renderWhole(wholeMount, data, opts) {
     if (!wholeMount) return;
     if (window.KnowledgeLayer && window.KnowledgeLayer.renderKnowledge) {
@@ -355,6 +382,9 @@
         // The recorded ensembles with their members: the map groups the tiers
         // its members occupy without reading the roster rows.
         ensembles: data.ensembles || [],
+        // The per-actor reads, so the map's card states how a seat is doing and
+        // not only what it holds.
+        actorReads: actorReads(data.players),
       }, {
         mode: "whole",
         selectedId: opts.selectedFindingId,
@@ -366,6 +396,15 @@
         onSelectFinding: opts.onSelectFinding,
         onSelectActor: opts.onSelect,
       });
+      // The map publishes the height its own drawing needs; the frame takes that
+      // height within bounds, so a small recorded ensemble does not sit in a tall
+      // empty box. Without the published number the frame keeps its own size.
+      var frame = wholeMount.closest(".map-frame");
+      var natural = Number(wholeMount.getAttribute("data-kw-natural-height"));
+      if (frame && isFinite(natural) && natural > 0) {
+        var ceiling = Math.round((window.innerHeight || 900) * 0.78);
+        frame.style.height = Math.max(320, Math.min(ceiling, Math.round(natural))) + "px";
+      }
     } else {
       wholeMount.textContent = "";
     }
@@ -471,8 +510,10 @@
       mounts.counts.textContent = "";
       var counts = (reading && reading.counts) || null;
       if (counts) {
-        mounts.counts.appendChild(el("span", null,
-          (counts.running || 0) + " running · " + (players.length) + " actors recorded"));
+        // Use the same count markup as the page header.
+        mounts.counts.appendChild(stat("running", counts.running || 0, "running"));
+        mounts.counts.appendChild(statSeparator());
+        mounts.counts.appendChild(stat("actors recorded", players.length, ""));
       }
     }
     return { ordered: ordered, reading: reading };

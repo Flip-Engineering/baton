@@ -125,7 +125,7 @@ function ribbonTempo(busiest, uniqueSeats, recent, shellCounts) {
   return { word: word, title: meaning + (shellCounts ? " \u00b7 " + shellCounts : "") };
 }
 
-// The counts the shell already computed, quoted in the mark's readout.
+// The counts the shell already computed, quoted in the mark's title.
 function ribbonShellCounts() {
   const node = document.getElementById("doc-counts");
   return node && node.textContent ? node.textContent.trim() : "";
@@ -229,7 +229,7 @@ function renderRibbon(container, data, options) {
 
   if (!total) {
     const empty = document.createElement("p");
-    empty.className = "ribbon-readout";
+    empty.className = "ribbon-summary";
     empty.textContent = "No recorded change is in this snapshot.";
     container.appendChild(empty);
     return { events: 0, position: 0 };
@@ -328,15 +328,45 @@ function renderRibbon(container, data, options) {
   const summary = document.createElement("span");
   summary.className = "ribbon-summary";
   const spanWord = ribbonSpan(firstAt, lastAt);
-  const topKinds = ribbonKindTally(events, 3);
   const rateWord = ribbonRate(total, spanMs);
-  summary.textContent = ribbonCount(total) + " recorded entries"
+  const allKinds = ribbonKindTally(events, 8);
+  const topKinds = allKinds.slice(0, 2);
+  head.appendChild(summary);
+
+  // The window stated in one line: the figure, the span, and the two kinds that
+  // dominate, each word in the ink its bars carry. The full breakdown is the
+  // line's title, so nothing is explained by a sentence under the chart.
+  summary.title = ribbonCount(total) + " recorded entries"
     + (spanWord ? " over " + spanWord : "")
     + (rateWord ? " \u00b7 " + rateWord : "")
-    + (topKinds.length
-      ? " \u00b7 mostly " + topKinds.map((entry) => entry[0] + " " + ribbonCount(entry[1])).join(", ")
+    + (allKinds.length
+      ? " \u00b7 " + allKinds.map((entry) => entry[0] + " " + ribbonCount(entry[1])).join(", ")
       : "");
-  head.appendChild(summary);
+
+  function lineText() {
+    if (position !== 0) {
+      return ribbonEventText(current, position, total)
+        + (current && current.at ? " \u00b7 " + ribbonAge(current.at) : "");
+    }
+    return ribbonCount(total) + " recorded entries" + (spanWord ? " over " + spanWord : "");
+  }
+
+  // One line for the figures, the scrub position or a hovered stretch: the line
+  // never grows into a second one.
+  function renderLine(extra) {
+    summary.textContent = "";
+    summary.appendChild(document.createTextNode((extra || lineText()) + " "));
+    if (extra || position !== 0 || !topKinds.length) return;
+    summary.appendChild(document.createTextNode("\u00b7 mostly "));
+    topKinds.forEach((entry, index) => {
+      const word = document.createElement("span");
+      word.className = "ribbon-kind-word " + ribbonKindClass(entry[0]);
+      word.textContent = entry[0];
+      summary.appendChild(word);
+      if (index < topKinds.length - 1) summary.appendChild(document.createTextNode(", "));
+    });
+  }
+  renderLine();
 
   const liveWord = document.createElement("span");
   liveWord.className = "ribbon-pulse";
@@ -386,20 +416,19 @@ function renderRibbon(container, data, options) {
         .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1))
         .slice(0, 2);
       bar.dataset.stretch = String(column);
-      bar.addEventListener("pointerenter", () => {
-        readout.textContent = ribbonCount(counted) + (counted === 1 ? " recorded change" : " recorded changes")
-          + (stretchKinds.length
-            ? " \u00b7 " + stretchKinds.map((entry) => entry[0] + " " + entry[1]).join(", ")
-            : "")
-          + (seatNames.length ? " \u00b7 " + seatNames.join(", ") : "");
-      });
+      const stretchText = ribbonCount(counted) + (counted === 1 ? " recorded entry" : " recorded entries")
+        + (stretchKinds.length
+          ? " \u00b7 " + stretchKinds.map((entry) => entry[0] + " " + entry[1]).join(", ")
+          : "")
+        + (seatNames.length ? " \u00b7 " + seatNames.join(", ") : "");
+      bar.addEventListener("pointerenter", () => renderLine(stretchText));
     }
     if (column === here) bar.classList.add("ribbon-here");
     if (arriving && column === bars - 1) bar.classList.add("ribbon-arrival");
     axis.appendChild(bar);
   }
   axis.addEventListener("pointerleave", () => {
-    readout.textContent = readoutText();
+    renderLine();
   });
 
   const needle = document.createElement("span");
@@ -437,14 +466,6 @@ function renderRibbon(container, data, options) {
     else if (event.key === "ArrowLeft" || event.key === "ArrowUp") setPosition(position + 1);
     else setPosition(position - 1);
   });
-
-  const readout = document.createElement("p");
-  readout.className = "ribbon-readout";
-  function readoutText() {
-    return ribbonEventText(current, position, total)
-      + (current && current.at ? " \u00b7 " + ribbonAge(current.at) : "");
-  }
-  readout.textContent = readoutText();
 
   // The seats that moved most in this window; a chip jumps to that seat's
   // newest recorded change.
@@ -514,20 +535,10 @@ function renderRibbon(container, data, options) {
   });
   actions.appendChild(toggle);
 
-  const legend = document.createElement("p");
-  legend.className = "ribbon-legend";
-  const legendKinds = ribbonKindTally(events, 6);
-  legend.textContent = legendKinds.length
-    ? "Bar height follows the busiest stretch; the ink is the recorded kind that dominates it: "
-      + legendKinds.map((entry) => entry[0]).join(", ") + "."
-    : "Bar height follows the busiest stretch.";
-
   container.appendChild(head);
   container.appendChild(slider);
-  container.appendChild(readout);
   container.appendChild(seatRow);
   container.appendChild(actions);
-  container.appendChild(legend);
 
   if (listOpen) {
     const list = document.createElement("ol");

@@ -42,36 +42,42 @@
   /* ── geometry ─────────────────────────────────────────────────────────── */
 
   var GUTTER = 132;       // the tier labels' column
-  var EDGE_PAD = 16;      // keeps a seat's pointer target inside the box
-  var MIN_PITCH = 17;     // seat width plus a gap; below this a tier wraps
   var SEAT_TOP = 26;      // room above the top tier for a halo and a label
-  var TIER_GAP_MIN = 18;
-  var TIER_GAP_MAX = 34;
-  var MAX_STAGE_H = 470;  // the height the drawing is kept inside
-  var SEAT_R = 5.5;
-  var HIT_R = 12;
+  var R_MIN = 5.5;        // the mark's radius at the largest run
+  var R_MAX = 18;         // the mark's radius at the smallest run
+  // The shell bounds the hall's visible height and scrolls it, so the drawing
+  // compresses toward this bound and past it the reader scrolls. The SVG's own
+  // height is never clamped: it equals what the drawing covers, so no seat can
+  // end up outside the viewBox.
+  var SHELL_BOUND = 520;
   var BOW = 14;
-  var MARK_PAD = 10;
   var STRIP_LIMIT = 12;
   var ID_SHOWN = 30;
+  var TIER_LABEL_SHOWN = 16;
 
   // Readings, worst first. The index is the document order and it follows the
   // meanings: a recorded failure first, then live work, then the seats that owe
   // work or hold it under a stop, then quiet.
   var READINGS = ["failed", "running", "waiting", "stalled", "queued", "ended", "unobserved"];
 
-  // One paint per reading. A queue is an outline, so routine work never takes the
-  // accent that marks a seat needing a person. The fills name page tokens, which
-  // the pit remaps to their lit variants.
+  // Each state uses a filled mark. The stage maps page colour tokens to its
+  // local palette. A ring identifies actors that need operator attention.
   var PAINT = {
     failed: { fill: "var(--failed, #b3261e)", ring: "var(--failed, #b3261e)" },
     stalled: { fill: "var(--attention, #a2611f)", ring: "var(--attention, #a2611f)" },
     running: { fill: "var(--running, #1e7e34)", ring: "var(--running, #1e7e34)" },
     waiting: { fill: "var(--stage-starting, #d7b45a)", ring: "var(--stage-starting, #d7b45a)" },
-    queued: { fill: "var(--wash, #eef1f6)", stroke: "var(--muted, #5b6478)" },
-    ended: { fill: "var(--hairline, #d7dce5)" },
-    unobserved: { fill: "none", stroke: "var(--hairline, #d7dce5)" },
+    queued: { fill: "var(--muted, #5b6478)", ring: "var(--muted, #5b6478)" },
+    ended: { fill: "var(--staff, #39404b)" },
+    unobserved: { fill: "var(--staff, #39404b)", dim: true },
   };
+
+  // A mark reads at any count: few actors get large filled marks, a large run gets
+  // smaller ones, and the tier's pitch follows the radius so the marks never touch.
+  function radiusFor(count) {
+    var radius = 20 - 1.6 * Math.sqrt(Math.max(1, count));
+    return Math.max(R_MIN, Math.min(R_MAX, radius));
+  }
 
   var SVG_NS = "http://www.w3.org/2000/svg";
   var expandedByContainer = new WeakMap();
@@ -110,9 +116,10 @@
     return reading === "running" || reading === "waiting";
   }
 
-  function shortId(id) {
+  function shortId(id, max) {
     var full = String(id === undefined || id === null ? "" : id);
-    return full.length > ID_SHOWN ? full.slice(0, ID_SHOWN - 1) + "\u2026" : full;
+    var limit = typeof max === "number" && max > 4 ? max : ID_SHOWN;
+    return full.length > limit ? full.slice(0, limit - 1) + "\u2026" : full;
   }
 
   // Everything the seat owes, whatever the kind: queued inputs it has not
@@ -346,12 +353,22 @@
   // returned so the shell and the reader both know it.
   function layoutStage(plan, width) {
     var w = Math.max(width || 0, 320);
-    var usable = Math.max(40, w - GUTTER - EDGE_PAD);
+    var total = 0;
     var widest = 0;
     for (var t = 0; t < plan.tiers.length; t += 1) {
+      total += plan.tiers[t].rows.length;
       if (plan.tiers[t].rows.length > widest) widest = plan.tiers[t].rows.length;
     }
-    var perRow = widest > 1 ? Math.max(2, Math.floor(usable / MIN_PITCH)) : 1;
+
+    // The mark's size follows the run's size, and the tier's pitch follows the
+    // mark, so a tier never crowds and never paints outside the box.
+    var radius = radiusFor(total);
+    // The pointer target is the outermost thing a seat draws, so the box's inset
+    // is derived from it rather than fixed: a large mark keeps its target inside.
+    var hitRadius = Math.max(12, radius + 5);
+    var usable = Math.max(40, w - GUTTER - hitRadius - 2);
+    var pitchMin = 2 * radius + 7;
+    var perRow = widest > 1 ? Math.max(2, Math.floor(usable / pitchMin)) : 1;
     if (widest && perRow > widest) perRow = widest;
 
     var totalRows = 0;
@@ -359,11 +376,15 @@
       totalRows += Math.max(1, Math.ceil(plan.tiers[s].rows.length / perRow));
     }
 
-    var budget = MAX_STAGE_H - SEAT_TOP - 30 - BOW;
-    var gap = totalRows > 0
-      ? Math.floor(budget / totalRows)
-      : TIER_GAP_MAX;
-    gap = Math.max(TIER_GAP_MIN, Math.min(TIER_GAP_MAX, gap));
+    // The hall compresses toward the shell's bound, and the SVG's height is the
+    // height the drawing covers: a small run draws short with no scrollbar, a
+    // large one keeps its bound and scrolls, and every mark stays inside.
+    var pad = radius + 8;
+    var gapMin = 2 * radius + 10;
+    var gapMax = 2 * radius + 30;
+    var budget = SHELL_BOUND - SEAT_TOP - (BOW + pad);
+    var gap = totalRows > 0 ? Math.floor(budget / totalRows) : gapMax;
+    gap = Math.max(gapMin, Math.min(gapMax, gap));
 
     var seats = [];
     var order = [];
@@ -372,7 +393,6 @@
       var tier = plan.tiers[i];
       var count = tier.rows.length;
       var rowsOfTier = Math.max(1, Math.ceil(count / perRow));
-      tier.label = tier.label;
       tier.y = y;
       tier.rowsOnTier = rowsOfTier;
       var inRow = Math.min(count, perRow);
@@ -392,8 +412,20 @@
       y += rowsOfTier * gap;
     }
 
-    var height = Math.round(y + BOW + MARK_PAD);
-    return { seats: seats, order: order, height: height, gap: gap, perRow: perRow, width: w };
+    var content = Math.round(y + BOW + pad);
+    return {
+      seats: seats,
+      order: order,
+      // The height the drawing covers. The SVG, its viewBox and the published
+      // height all take this value, so nothing a seat draws can fall outside.
+      height: content,
+      content: content,
+      radius: radius,
+      gap: gap,
+      perRow: perRow,
+      rows: totalRows,
+      width: w,
+    };
   }
 
   /* ── drawing ──────────────────────────────────────────────────────────── */
@@ -431,7 +463,7 @@
     return Math.max(0.08, Math.min(1, spent / longest));
   }
 
-  function seatNode(seat, options, fresh, fraction, cursor) {
+  function seatNode(seat, options, fresh, fraction, cursor, radius) {
     var paint = PAINT[seat.reading] || PAINT.unobserved;
     var group = svgEl("g", {
       "class": "att-seat"
@@ -445,10 +477,10 @@
     });
 
     if (fraction > 0) {
-      var radius = SEAT_R + 3.5;
-      var circumference = 2 * Math.PI * radius;
+      var spentRadius = radius + 3.5;
+      var circumference = 2 * Math.PI * spentRadius;
       var spent = svgEl("circle", {
-        "class": "att-elapsed", r: radius, cx: 0, cy: 0, transform: "rotate(-90)",
+        "class": "att-elapsed", r: spentRadius, cx: 0, cy: 0, transform: "rotate(-90)",
       });
       spent.style.fill = "none";
       spent.style.stroke = paint.ring || "var(--running, #1e7e34)";
@@ -458,41 +490,40 @@
     }
 
     if (seat.live) {
-      var halo = svgEl("circle", { "class": "att-halo", r: SEAT_R + 5, cx: 0, cy: 0 });
+      var halo = svgEl("circle", { "class": "att-halo", r: radius + 5, cx: 0, cy: 0 });
       halo.style.fill = paint.ring || "none";
       group.appendChild(halo);
     }
 
     // The fermata ring: the one accent, on a seat a person must act on.
     if (seat.needsPerson) {
-      var alarm = svgEl("circle", { "class": "att-ring", r: SEAT_R + 4, cx: 0, cy: 0 });
+      var alarm = svgEl("circle", { "class": "att-ring", r: radius + 4, cx: 0, cy: 0 });
       alarm.style.fill = "none";
       alarm.style.stroke = paint.ring || "none";
       group.appendChild(alarm);
     }
 
-    var core = svgEl("circle", { "class": "att-core", r: SEAT_R, cx: 0, cy: 0 });
+    // Fill the mark with the actor's state colour.
+    var core = svgEl("circle", { "class": "att-core", r: radius, cx: 0, cy: 0 });
     core.style.fill = paint.fill || "none";
-    if (paint.stroke) {
-      core.style.stroke = paint.stroke;
-      core.style.strokeWidth = "1.2";
-    }
+    if (paint.dim) core.style.opacity = "0.45";
     group.appendChild(core);
 
-    if (seat.queued) {
+    if (seat.owed > 0) {
+      var ticks = Math.min(seat.owed, 6);
       var tick = svgEl("rect", {
-        "class": "att-tick", x: -(2 + Math.min(seat.owed, 6)), y: SEAT_R + 3,
-        width: 4 + Math.min(seat.owed, 6) * 2, height: 2.5, rx: 1,
+        "class": "att-tick", x: -(radius * 0.5 + ticks), y: radius + 3,
+        width: radius + ticks * 2, height: 2.5, rx: 1,
       });
       tick.style.fill = "var(--muted, #5b6478)";
       group.appendChild(tick);
     }
 
-    var ring = svgEl("circle", { "class": "att-seat-ring", r: SEAT_R + 2.5, cx: 0, cy: 0 });
+    var ring = svgEl("circle", { "class": "att-seat-ring", r: radius + 3, cx: 0, cy: 0 });
     ring.style.fill = "none";
     group.appendChild(ring);
 
-    var hit = svgEl("circle", { "class": "att-hit", r: HIT_R, cx: 0, cy: 0 });
+    var hit = svgEl("circle", { "class": "att-hit", r: Math.max(12, radius + 5), cx: 0, cy: 0 });
     group.appendChild(hit);
 
     var title = svgEl("title");
@@ -615,7 +646,7 @@
     svg.appendChild(line);
     for (var t = 0; t < plan.tiers.length; t += 1) {
       var label = svgEl("text", { "class": "att-section", x: 2, y: plan.tiers[t].y + 3 });
-      setText(label, plan.tiers[t].label);
+      setText(label, shortId(plan.tiers[t].label, TIER_LABEL_SHOWN));
       svg.appendChild(label);
     }
 
@@ -654,13 +685,16 @@
 
     for (var i = 0; i < laid.seats.length; i += 1) {
       var node = seatNode(laid.seats[i].seat, options, fresh[laid.seats[i].seat.id] === true,
-        elapsedOf(laid.seats[i].seat, now, longest), laid.seats[i].seat.id === cursorId);
+        elapsedOf(laid.seats[i].seat, now, longest), laid.seats[i].seat.id === cursorId, laid.radius);
       node.setAttribute("transform", "translate(" + laid.seats[i].x + " " + laid.seats[i].y + ")");
       svg.appendChild(node);
     }
 
     svg.dataset.attHeight = String(laid.height);
+    svg.dataset.attContent = String(laid.content);
+    svg.dataset.attRadius = String(laid.radius);
     svg.dataset.attGap = String(laid.gap);
+    svg.dataset.attRows = String(laid.rows);
     svg.dataset.attPerRow = String(laid.perRow);
     return svg;
   }
@@ -674,9 +708,9 @@
     var keys = [
       ["var(--running, #1e7e34)", "", "playing"],
       ["var(--stage-starting, #d7b45a)", "", "starting"],
-      ["var(--muted, #5b6478)", "var(--muted, #5b6478)", "owes work"],
-      ["var(--attention, #a2611f)", "", "needs a person"],
-      ["var(--hairline, #23272f)", "var(--muted, #5b6478)", "quiet"],
+      ["var(--muted, #5b6478)", "", "owes work"],
+      ["var(--attention, #a2611f)", "", "needs you"],
+      ["var(--staff, #39404b)", "", "quiet"],
     ];
     for (var i = 0; i < keys.length; i += 1) {
       var key = document.createElement("span");
@@ -721,6 +755,26 @@
     return String(value).replace(/["\\]/g, "\\$&");
   }
 
+  // Keep the keyboard-selected actor visible by scrolling the stage container.
+  function revealSeat(container, svg, seatY, radius) {
+    var view = container.clientHeight;
+    if (!view || !svg) return;
+    var margin = radius + 14;
+    var svgTop = svg.getBoundingClientRect().top
+      - container.getBoundingClientRect().top + container.scrollTop;
+    var y = svgTop + seatY;
+    var top = container.scrollTop;
+    if (y - margin < top) container.scrollTop = Math.max(0, y - margin);
+    else if (y + margin > top + view) container.scrollTop = y + margin - view;
+  }
+
+  function seatYOf(laid, id) {
+    for (var i = 0; i < laid.seats.length; i += 1) {
+      if (laid.seats[i].seat.id === id) return laid.seats[i].y;
+    }
+    return null;
+  }
+
   /* ── the entry ────────────────────────────────────────────────────────── */
 
   function renderAttention(container, data, options) {
@@ -751,6 +805,8 @@
       restore = active.dataset.attKey || null;
     }
 
+    var keptScroll = 0;
+    if (typeof container.scrollTop === "number") keptScroll = container.scrollTop;
     container.textContent = "";
     dataByContainer.set(container, data);
 
@@ -867,10 +923,19 @@
       container.appendChild(fold);
     }
 
+    // The container keeps the reader's place across the rebuild, and while the
+    // stage holds focus the cursor's seat is brought into the visible slice, so
+    // what the status region announces is what the reader can see.
+    if (typeof container.scrollTop === "number") container.scrollTop = keptScroll;
     if (restore) {
       var back = container.querySelector('[data-att-key="' + cssEscape(restore) + '"]');
       if (back && typeof back.focus === "function") back.focus();
     }
+    if (cursorId && document.activeElement === stage.svg) {
+      var cursorY = seatYOf(laid, cursorId);
+      if (cursorY !== null) revealSeat(container, stage.svg, cursorY, laid.radius);
+    }
+    result.revealed = document.activeElement === stage.svg;
     return result;
   }
 
