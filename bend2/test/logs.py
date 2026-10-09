@@ -540,12 +540,18 @@ assert sys.stdin.read()==''
 
     def test_existing_policy_migrates_and_preserves_registered_logs(self):
         with sqlite3.connect(self.db) as connection:
-            connection.executescript("CREATE TABLE log_policies(session TEXT PRIMARY KEY,level TEXT NOT NULL,budget_bytes INTEGER NOT NULL,keep_segments INTEGER NOT NULL CHECK(keep_segments BETWEEN 1 AND 4));"
+            connection.executescript("DROP TABLE log_policies;DROP TABLE log_files;"
+                                     "CREATE TABLE log_policies(session TEXT PRIMARY KEY,level TEXT NOT NULL,budget_bytes INTEGER NOT NULL,keep_segments INTEGER NOT NULL CHECK(keep_segments BETWEEN 1 AND 4));"
                                      "CREATE TABLE log_files(session TEXT NOT NULL,log TEXT NOT NULL,PRIMARY KEY(session,log));")
             connection.execute('INSERT INTO log_policies VALUES(?,?,?,?)',
                                ('omp-worker', 'diagnostic', 1048576, 3))
             connection.execute('INSERT INTO log_files VALUES(?,?)', ('omp-worker', str(self.log)))
-        after = json.loads(self.call('logs', 'omp-worker'))
+        before = json.loads(self.call('logs', 'omp-worker'))
+        self.assertEqual((before['level'], before['registeredLogs']), ('diagnostic', 1))
+        with sqlite3.connect(self.db) as connection:
+            self.assertEqual({row[1] for row in connection.execute('PRAGMA table_info(log_policies)')},
+                             {'session', 'level', 'budget_bytes', 'keep_segments'})
+        after = json.loads(self.call('logs', 'omp-worker', 'diagnostic'))
         self.assertEqual((after['level'], after['registeredLogs']), ('diagnostic', 1))
         with sqlite3.connect(self.db) as connection:
             columns = {row[1] for row in connection.execute('PRAGMA table_info(log_policies)')}
@@ -569,10 +575,15 @@ assert sys.stdin.read()==''
     def test_failed_migration_preserves_original_rows_and_refuses_success(self):
         import sqlite3
         with sqlite3.connect(self.db) as connection:
-            connection.executescript('CREATE TABLE log_policies(session TEXT PRIMARY KEY,level TEXT NOT NULL,budget_bytes INTEGER NOT NULL,keep_segments INTEGER NOT NULL CHECK(keep_segments BETWEEN 1 AND 4));')
+            connection.executescript('DROP TABLE log_policies;CREATE TABLE log_policies(session TEXT PRIMARY KEY,level TEXT NOT NULL,budget_bytes INTEGER NOT NULL,keep_segments INTEGER NOT NULL CHECK(keep_segments BETWEEN 1 AND 4));')
             connection.execute('INSERT INTO log_policies VALUES(?,?,?,?)',
                                ('omp-worker', 'invalid-legacy-level', 1048576, 3))
-        result = subprocess.run([str(EXE), str(self.db), 'logs', 'omp-worker'],
+        before = json.loads(self.call('logs', 'omp-worker'))
+        self.assertEqual(before['level'], 'invalid-legacy-level')
+        with sqlite3.connect(self.db) as connection:
+            self.assertIn('keep_segments',
+                          {row[1] for row in connection.execute('PRAGMA table_info(log_policies)')})
+        result = subprocess.run([str(EXE), str(self.db), 'logs', 'omp-worker', 'default'],
                                 text=True, capture_output=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('CHECK constraint failed', result.stderr)
