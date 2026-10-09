@@ -579,7 +579,7 @@ def prepare_history_variable(+db: String, +session: String, id: String, harness:
 # The helper's own answer is the sidecar line: it carries the provider history home, the
 # source and selected stores, the native identity and the rollout and history paths, and the
 # continuation reads its home from it. An answer that names no home is not a usable one.
-def history_from_helper(db: String, session: String, id: String, harness: String, variable: String, from_store: String, path: String, profile: Subs.Profile, script: String, cmd: String, +cwd: String, native: String, existing: String) -> IO(Bool):
+def history_from_helper(db: String, session: String, id: String, +harness: String, variable: String, +from_store: String, path: String, profile: Subs.Profile, script: String, cmd: String, +cwd: String, native: String, existing: String) -> IO(Bool):
   do IO<Bool>:
     run : T.RunRes <- Proc.runFull(Subs.history_prepare_args(script,harness,cmd,cwd,native,from_store,profile.store,existing),cwd)
     history_helper_result(db,session,id,harness,variable,from_store,path,run)
