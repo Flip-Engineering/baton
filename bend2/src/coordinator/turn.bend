@@ -432,13 +432,21 @@ def append_frame(log: String, line: String, keep: Bool) -> IO(Result<&1,&1,U32 &
     case True{}: T.Text.append(log,line ++ "\n")
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
-# Read the OMP frame type once for level filtering and event observation. A
-# frame outside the classification keeps an empty kind and remains at every
-# level.
-def frame_kind(db: String, line: String, omp: Bool) -> IO(String):
+# Read the OMP frame type once for level filtering and event observation.
+def omp_frame_kind(db: String, line: String, omp: Bool) -> IO(String):
   match omp:
     case False{}: IO.pure(String,"")
     case True{}: IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE json_extract(value,'$.type') WHEN 'message_update' THEN 'message_update' WHEN 'tool_execution_update' THEN 'tool_execution_update' WHEN 'message_start' THEN 'message_start' WHEN 'response' THEN 'response' WHEN 'message_end' THEN 'message_end' WHEN 'tool_execution_start' THEN 'tool_execution_start' WHEN 'tool_execution_end' THEN 'tool_execution_end' WHEN 'turn_end' THEN 'turn_end' WHEN 'agent_end' THEN 'agent_end' WHEN 'extension_ui_request' THEN 'extension_ui_request' ELSE '' END ELSE '' END FROM frame;"))
+
+# Codex command pairs use the text identifier at item.id. Unidentified and
+# unrelated frames keep an empty kind and remain at every level.
+def codex_frame_kind(db: String, line: String) -> IO(String):
+  IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.item.type')='command_execution' AND json_type(value,'$.item.id')='text' AND json_extract(value,'$.item.id')<>'' THEN CASE json_extract(value,'$.type') WHEN 'item.started' THEN 'codex_command_start' WHEN 'item.completed' THEN 'codex_command_end' ELSE '' END ELSE '' END ELSE '' END FROM frame;"))
+
+def frame_kind(db: String, line: String, +harness: String) -> IO(String):
+  match String.eq(harness,"codex\n"):
+    case True{}: codex_frame_kind(db,line)
+    case False{}: omp_frame_kind(db,line,String.eq(harness,"omp\n"))
 
 # The requested selection is active only when the server answered the
 # set_event_filter request successfully with that exact selection: the echoed
@@ -605,7 +613,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
         +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
         +current_policy : Logs.Policy <- Logs.policy(db,player)
-        +kind : String <- frame_kind(db,line,String.eq(harness,"omp\n"))
+        +kind : String <- frame_kind(db,line,harness)
         +frame_key : String <- Logs.frame_identity(db,line,Tx.trim_nl(kind),String.eq(harness,"omp\n"))
         +message_frame : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"message_end")))
         +message : String <- omp_message(db,line,last_message,message_frame)

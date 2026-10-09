@@ -205,7 +205,7 @@ sys.exit(%d)
         self.assertEqual(self.refusal('logs', 'absent-session', 'default')['error'], 'unknown-session')
         self.assertEqual(json.loads(self.call('logs', 'omp-worker'))['level'], 'diagnostic')
 
-    def test_unclassified_command_frames_keep_verbatim(self):
+    def test_omp_keeps_unclassified_codex_command_frames_verbatim(self):
         self.call('logs', 'omp-worker', 'default')
         started = json.dumps({'type': 'item.started', 'item': {'type': 'command_execution',
                              'id': 'cmd-1', 'command': 'probe', 'status': 'in_progress'}})

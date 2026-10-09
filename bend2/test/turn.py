@@ -430,6 +430,59 @@ print(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'run.t
         self.assertEqual(reports[-1]['body'],self.task.read_text())
         self.assertEqual(json.loads(self.call('player','muse-worker'))['native'],native)
 
+    def test_codex_command_pairs_keep_completed_and_unfinished_commands_at_each_level(self):
+        self.register('codex-worker','root','codex','gpt-6-astra','low')
+        self.player.write_text('#!'+sys.executable+'\n'+'''import pathlib,sys
+sys.stdin.read()
+print(pathlib.Path('codex-events.jsonl').read_text(),end='',flush=True)
+''')
+        native=''
+        for level in ('default','quiet','diagnostic'):
+            with self.subTest(level=level):
+                self.call('logs','codex-worker',level)
+                started=json.dumps({'type':'item.started','item':{'type':'command_execution',
+                                   'id':'cmd-paired','command':'paired '+level,'status':'in_progress'}})
+                completed=json.dumps({'type':'item.completed','item':{'type':'command_execution',
+                                     'id':'cmd-paired','command':'paired '+level,'status':'completed',
+                                     'exit_code':0,'aggregated_output':'full output λ '+level}})
+                unpaired=json.dumps({'type':'item.completed','item':{'type':'command_execution',
+                                    'id':'cmd-unpaired','command':'unpaired '+level,'status':'completed',
+                                    'exit_code':1,'aggregated_output':'retained failure '+level}})
+                unfinished=json.dumps({'type':'item.started','item':{'type':'command_execution',
+                                      'id':'cmd-unfinished','command':'unfinished '+level,'status':'in_progress'}})
+                raw=[
+                    json.dumps({'type':'item.started','item':{'type':'command_execution','command':'id-less one'}}),
+                    json.dumps({'type':'item.started','item':{'type':'command_execution','command':'id-less two'}}),
+                    json.dumps({'type':'item.started','item':{'type':'command_execution','id':'','command':'empty id'}}),
+                    json.dumps({'type':'item.started','item':{'type':'command_execution','id':7,'command':'non-text id'}}),
+                    json.dumps({'type':'item.completed','item':{'type':'command_execution','aggregated_output':'id-less output'}}),
+                    json.dumps({'type':'item.started','item':{'type':'file_change','id':'cmd-paired','changes':[]}}),
+                    '{"type":"item.started","item":',
+                    '{"probe":"after completed command"}',
+                ]
+                frames=[json.dumps({'type':'thread.started','thread_id':'native-codex-pairs'}),
+                        started,completed,unpaired,*raw,unfinished,
+                        json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'Done '+level}}),
+                        json.dumps({'type':'turn.completed','usage':{'input_tokens':1,'output_tokens':1}})]
+                (self.cwd/'codex-events.jsonl').write_text('\n'.join(frames)+'\n')
+                turn='codex-pairs-'+level
+                self.call('turn','codex-worker',turn,str(self.player),'gpt-6-astra','low',
+                          str(self.cwd),str(self.task),str(self.log),native)
+                lines=self.generation(turn).read_text().splitlines()
+                self.assertEqual(lines.count(completed),1)
+                self.assertEqual(lines.count(unpaired),1)
+                self.assertEqual(lines.count(unfinished),1)
+                self.assertLess(lines.index(completed),lines.index(raw[-1]))
+                for line in raw:
+                    self.assertIn(line,lines)
+                if level=='diagnostic':
+                    self.assertEqual(lines,frames)
+                else:
+                    self.assertNotIn(started,lines)
+                native=json.loads(self.call('player','codex-worker'))['native']
+                self.assertEqual(native,'native-codex-pairs')
+                self.assertEqual(json.loads(self.call('inbox','root'))[-1]['body'],'Done '+level)
+
     def test_codex_terminal_report_uses_final_message_and_resumes_native_thread(self):
         self.register('codex-worker','root','codex','gpt-6-astra','low',str(self.cwd),'codex-branch','base')
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib,os
@@ -445,6 +498,8 @@ with pathlib.Path('native-launches.jsonl').open('a') as launches:
                               'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ]})+'\\n')
 print(json.dumps({'type':'thread.started','thread_id':'native-codex'}))
 print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'Working on it.'}}))
+print(json.dumps({'type':'item.started','item':{'type':'command_execution','id':'cmd-reused','command':prompt,'status':'in_progress'}}))
+print(json.dumps({'type':'item.completed','item':{'type':'command_execution','id':'cmd-reused','command':prompt,'status':'completed','exit_code':0,'aggregated_output':'Output '+prompt}}))
 print(json.dumps({'type':'item.completed','item':{'type':'command_execution','aggregated_output':'tool output'}}))
 print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':prompt}}))
 print(json.dumps({'type':'turn.completed','usage':{'input_tokens':42,'output_tokens':7}}))
@@ -471,6 +526,13 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':42,'output_tok
             self.assertEqual(launch['cwd'],str(self.cwd))
             self.assertEqual(launch['prompt'],prompt)
         self.assertEqual(len(launches),2)
+        for turn,base_log,prompt in (('codex-1',self.log,initial_prompt),
+                                    ('codex-2',self.cwd/'second.jsonl',self.task.read_text())):
+            frames=[json.loads(line) for line in pathlib.Path(str(base_log)+'.attempt-'+turn).read_text().splitlines()]
+            commands=[frame for frame in frames if frame.get('item',{}).get('id')=='cmd-reused']
+            self.assertEqual(commands,[{'type':'item.completed','item':{'type':'command_execution',
+                                        'id':'cmd-reused','command':prompt,'status':'completed',
+                                        'exit_code':0,'aggregated_output':'Output '+prompt}}])
         self.assertEqual(json.loads(self.call('player','codex-worker'))['native'],session['native'])
         self.assertEqual(args[-1],'-')
         self.assertEqual(json.loads(self.call('inbox','root'))[-1]['body'],self.task.read_text())
@@ -483,11 +545,15 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':42,'output_tok
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys
 sys.stdin.read()
 print(json.dumps({'type':'thread.started','thread_id':'failed-codex'}))
+print(json.dumps({'type':'item.started','item':{'type':'command_execution','id':'unfinished','command':'still running','status':'in_progress'}}))
 print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'Unfinished work.'}}))
 print(json.dumps({'type':'turn.failed','error':{'message':'Provider refused request'}}))
 sys.exit(1)
 ''')
         self.call('turn','codex-worker','codex-failed',str(self.player),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.log),'')
+        frames=[json.loads(line) for line in self.generation('codex-failed').read_text().splitlines()]
+        self.assertIn({'type':'item.started','item':{'type':'command_execution','id':'unfinished',
+                       'command':'still running','status':'in_progress'}},frames)
         report=json.loads(self.call('delivery','codex-failed'))
         event=json.loads(report['body'])
         self.assertEqual(event['nativeEvent']['type'],'turn.failed')

@@ -188,6 +188,9 @@ def prefix_kind(+kind: String) -> Bool:
 def close_kind(+kind: String) -> Bool:
   Bool.or(String.eq(kind,"tool_execution_end"),String.eq(kind,"message_end"))
 
+def codex_kind(+kind: String) -> Bool:
+  Bool.or(String.eq(kind,"codex_command_start"),String.eq(kind,"codex_command_end"))
+
 def frame_id_sql(+line: String) -> String:
   "WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT coalesce(json_extract(value,'$.toolCallId'),json_extract(value,'$.messageId'),json_extract(value,'$.message.id'),'') FROM frame;"
 
@@ -198,9 +201,18 @@ def frame_id(db: String, line: String, omp: Bool) -> IO(String):
       found : String <- IO.try(String,DB.Sql.query(db,frame_id_sql(line)))
       IO.pure(String,Tx.trim_nl(found))
 
+# Codex command identities live in item.id; held entries use the separate
+# codex_command_start kind and persist through the existing checkpoint path.
+def codex_frame_id(db: String, line: String) -> IO(String):
+  do IO<String>:
+    found : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT json_extract(value,'$.item.id') FROM frame;"))
+    IO.pure(String,Tx.trim_nl(found))
+
 # The identity is read only for a frame the policy holds or closes.
 def frame_identity(db: String, line: String, +kind: String, +omp: Bool) -> IO(String):
-  Bool.pick(IO(String),Bool.and(omp,Bool.or(prefix_kind(kind),close_kind(kind))),frame_id(db,line,omp),IO.pure(String,""))
+  match codex_kind(kind):
+    case True{}: codex_frame_id(db,line)
+    case False{}: frame_id(db,line,Bool.and(omp,Bool.or(prefix_kind(kind),close_kind(kind))))
 
 # Public terminal projections retain identifiers, status, completion text and
 # raw size accounting. Turn supplies the normalized event and streamed-message
@@ -355,10 +367,22 @@ def step_quiet_or_default(quiet: Bool, +kind: String, +id: String, +line: String
     case True{}: step_quiet(kind,line,held)
     case False{}: step_default(kind,id,line,held)
 
+def step_codex_start(start: Bool, +level: String, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
+  match start:
+    case True{}: step_prefix(Bool.not(String.is_empty(id)),"codex_command_start",id,line,held)
+    case False{}: step_quiet_or_default(String.eq(level,"quiet"),kind,id,line,held)
+
+# The completed command is written immediately. Its held start is removed;
+# unfinished starts remain available to flush and checkpoint restoration.
+def step_codex_end(end: Bool, +level: String, +kind: String, +id: String, +line: String, +held: String) -> List<String> & String:
+  match end:
+    case True{}: (Con{line,Nil{}},held_drop(held,"codex_command_start",id))
+    case False{}: step_codex_start(String.eq(kind,"codex_command_start"),level,kind,id,line,held)
+
 def step_choose_step(diagnostic: Bool, +level: String, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
   match diagnostic:
     case True{}: (Con{line,Nil{}},held)
-    case False{}: step_quiet_or_default(String.eq(level,"quiet"),kind,id,line,held)
+    case False{}: step_codex_end(String.eq(kind,"codex_command_end"),level,kind,id,line,held)
 
 # The lines one frame contributes to the live log and the prefix frames the turn
 # still holds.
