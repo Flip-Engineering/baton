@@ -820,7 +820,7 @@ def run(+db: String, +session: String, +cmd: String, +model: String, +effort: St
     settled : Unit <- claim_left(db,session)
     IO.pure(Result<&1,&1,U32 & String,Unit>,result)
 
-def serve_acquired(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, lock: U32, closed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def serve_acquired(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, lock: U32, closed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match closed:
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
