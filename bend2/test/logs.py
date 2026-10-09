@@ -831,6 +831,7 @@ assert sys.stdin.read()==''
         self.assertEqual(len(failures), 1, bodies)
         self.assertIn(str(blocked_generation), failures[0])
         self.assertIn('Is a directory', failures[0])
+        self.assertEqual(failures[0].count('Is a directory'), 1)
         event = json.loads(failures[0].split('\nNative event: ', 1)[1])
         self.assertEqual(event, json.loads(self.terminal('Answer despite an unwritable log')))
         self.assertEqual(json.loads(self.call('turns', 'omp-worker')), [])
