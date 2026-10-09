@@ -12,6 +12,8 @@ import tempfile
 import time
 import unittest
 
+from receive import install_public_queue_codex
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
@@ -27,28 +29,6 @@ def shutdown_fixture_owner(case):
                                  'stdout': result.stdout, 'stderr': result.stderr,
                                  'direct_wait_completed': True}) + '\n')
     case.assertEqual(result.returncode, 0, result.stderr)
-
-
-def install_public_queue_codex(testcase, directory):
-    directory = pathlib.Path(directory)
-    calls = directory / 'public-queue-calls.jsonl'
-    executable = directory / 'codex'
-    executable.write_text(
-        '#!' + sys.executable + '\n'
-        + 'import json,pathlib,sys\n'
-        + f'args=sys.argv[1:]\nwith pathlib.Path({str(calls)!r}).open("a") as output:\n'
-        + '    output.write(json.dumps(args) + chr(10))\n'
-        + "thread=args[args.index('--thread')+1]\n"
-        + 'print("Queued message fixture-submission for thread " + thread, flush=True)\n')
-    executable.chmod(0o700)
-    previous = os.environ.get('PATH')
-    if previous is None:
-        testcase.addCleanup(os.environ.pop, 'PATH', None)
-        os.environ['PATH'] = str(directory)
-    else:
-        testcase.addCleanup(os.environ.__setitem__, 'PATH', previous)
-        os.environ['PATH'] = str(directory) + os.pathsep + previous
-    return calls
 
 
 FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys
@@ -1048,8 +1028,9 @@ else:
                                      'result': body, 'is_error': False}))
         self.call('observe-file', 'review-report', 'leaf', event)
         queued = [json.loads(line) for line in self.public_queue_calls.read_text().splitlines()]
-        self.assertTrue(any(args[args.index('--thread') + 1] == 'saved-root'
-                            for args in queued if '--thread' in args))
+        self.assertTrue(any(request['method'] == 'turn/steer'
+                            and request['params']['threadId'] == 'saved-root'
+                            for request in queued))
         for args in (('status',), ('players',), ('orchestra',), ('pending',), ('player', 'leaf'),
                      ('session', 'leaf'), ('inbox', 'root'), ('delivery', 'review-report'), ('turns', 'leaf')):
             with self.subTest(args=args):

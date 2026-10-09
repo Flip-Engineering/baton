@@ -31,7 +31,7 @@ EXE = ROOT / '.scratch/bend2/baton2'
 MCP = ROOT / 'bend2/scripts/mcp-conductor.mjs'
 
 sys.path.insert(0, str(TESTDIR))
-from receive import FIXTURE
+from receive import FIXTURE, write_public_queue_codex
 
 
 class FixedCoordinator(unittest.TestCase):
@@ -58,14 +58,7 @@ class FixedCoordinator(unittest.TestCase):
                                    check=True, capture_output=True, text=True).stdout.strip()
         self.db = self.directory / 'state.db'
         self.codex_calls = self.directory / 'codex-calls.jsonl'
-        codex = self.directory / 'codex'
-        codex.write_text(
-            '#!' + sys.executable + '\n'
-            + 'import json,pathlib,sys\n'
-            + f'with pathlib.Path({str(self.codex_calls)!r}).open("a") as calls:\n'
-            + '    calls.write(json.dumps(sys.argv[1:]) + chr(10))\n'
-            + 'print("Queued message fixture-submission for thread native-root", flush=True)\n')
-        codex.chmod(0o700)
+        write_public_queue_codex(self.directory, self.codex_calls)
         os.environ['PATH'] = str(self.directory) + os.pathsep + (self.original_path or '')
         self.co_dir = self.directory / 'co'
         self.co_dir.mkdir()
@@ -362,6 +355,8 @@ class FixedCoordinator(unittest.TestCase):
         helper.parent.mkdir(parents=True)
         shutil.copy2(EXE, binary)
         shutil.copy2(ROOT / 'bend2/harness/git-series.mjs', helper)
+        shutil.copy2(ROOT / 'bend2/scripts/codex-inbox-wake.mjs',
+                     helper.parent / 'codex-inbox-wake.mjs')
         profile = self.directory / 'gpt'
         profile.mkdir()
         slug = 'fixture-series-gpt'

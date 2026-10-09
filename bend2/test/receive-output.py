@@ -242,17 +242,27 @@ class NativeFailureOutput(unittest.TestCase):
         self.addCleanup(fixture.doCleanups)
         fixture.coord('connect', 'root', 'native-root', json.dumps([str(fixture.fixture), 'parent_endpoint']))
         fixture.player()
-        fixture.coord('report', 'completed-direct', 'parent', 'Stored direct report.')
+        task = fixture.directory / 'direct-task.txt'
+        task.write_text('Complete the original direct task.')
+        direct_args = ['turn', 'parent', 'completed-direct', str(fixture.fixture),
+                       'parent', 'low', str(fixture.directory), str(task),
+                       str(fixture.directory / 'direct.jsonl'), 'native-parent']
+        original = fixture.spawn(*direct_args)
+        started, request = fixture.accept_child(original, 'parent')
+        self.assertEqual(request['prompt'], task.read_text())
+        self.assertEqual(request['native'], 'native-parent')
+        fixture.action(started, body='Stored direct report.')
+        self.assertEqual(started.readline(), b'')
+        fixture.finish(original)
+        self.assertEqual(fixture.coord('delivery', 'completed-direct')['body'], 'Stored direct report.')
+        fixture.coord('connect', 'parent', 'native-parent', '')
         fixture.prepare_input('queued-direct', 'parent', 'Queued after direct completion.',
                               kind='task')
         fixture.coord('connect', 'parent', 'native-parent', fixture.endpoint('parent'))
         read_fd, write_fd = os.pipe()
         os.close(read_fd)
         try:
-            child = subprocess.Popen([str(EXE), str(fixture.db), 'turn', 'parent', 'completed-direct',
-                                      str(fixture.fixture), 'parent', 'low', str(fixture.directory),
-                                      str(fixture.directory / 'unused-task'),
-                                      str(fixture.directory / 'direct.jsonl'), 'native-parent'],
+            child = subprocess.Popen([str(EXE), str(fixture.db), *direct_args],
                                      stdout=write_fd, stderr=subprocess.PIPE, text=True)
         finally:
             os.close(write_fd)

@@ -21,6 +21,69 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
 
 
+def write_public_queue_codex(directory, calls):
+    executable = pathlib.Path(directory) / 'codex'
+    executable.write_text('#!' + sys.executable + '\n' + r'''
+import base64,hashlib,json,pathlib,struct,sys
+assert sys.argv[1:]==['app-server','proxy'], sys.argv
+def exact(n):
+    data=b''
+    while len(data)<n:
+        part=sys.stdin.buffer.read(n-len(data))
+        if not part: raise EOFError('fixture input closed')
+        data+=part
+    return data
+def reply(value):
+    payload=json.dumps(value).encode()
+    n=len(payload)
+    size=bytes([n]) if n<126 else bytes([126])+struct.pack('!H',n) if n<65536 else bytes([127])+struct.pack('!Q',n)
+    sys.stdout.buffer.write(bytes([129])+size+payload)
+    sys.stdout.buffer.flush()
+header=b''
+while not header.endswith(b'\r\n\r\n'):header+=exact(1)
+key=next(line.split(b':',1)[1].strip() for line in header.split(b'\r\n') if line.lower().startswith(b'sec-websocket-key:'))
+accept=base64.b64encode(hashlib.sha1(key+b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())
+sys.stdout.buffer.write(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: '+accept+b'\r\n\r\n')
+sys.stdout.buffer.flush()
+while True:
+    a,b=exact(2)
+    n=b&127
+    if n==126:n=struct.unpack('!H',exact(2))[0]
+    elif n==127:n=struct.unpack('!Q',exact(8))[0]
+    mask=exact(4) if b&128 else None
+    data=exact(n)
+    if mask:data=bytes(v^mask[i%4] for i,v in enumerate(data))
+    if a&15==8:break
+    request=json.loads(data)
+    method=request['method']
+    if 'id' not in request:continue
+    if method=='initialize':result={}
+    elif method=='thread/read':result={'thread':{'id':request['params']['threadId'],'status':{'type':'active'}}}
+    elif method=='thread/turns/list':result={'data':[{'id':'fixture-turn','status':'inProgress'}],'nextCursor':None}
+    elif method=='turn/steer':
+        with pathlib.Path(__CALLS__).open('a') as output:
+            output.write(json.dumps(request)+chr(10))
+        result={'turnId':'fixture-turn'}
+    else:raise AssertionError(request)
+    reply({'id':request['id'],'result':result})
+'''.replace('__CALLS__', repr(str(calls))))
+    executable.chmod(0o700)
+
+
+def install_public_queue_codex(testcase, directory):
+    directory = pathlib.Path(directory)
+    calls = directory / 'public-queue-calls.jsonl'
+    write_public_queue_codex(directory, calls)
+    previous = os.environ.get('PATH')
+    if previous is None:
+        testcase.addCleanup(os.environ.pop, 'PATH', None)
+        os.environ['PATH'] = str(directory)
+    else:
+        testcase.addCleanup(os.environ.__setitem__, 'PATH', previous)
+        os.environ['PATH'] = str(directory) + os.pathsep + previous
+    return calls
+
+
 def _session_lock_path(db, session):
     info = os.stat(db)
     key = 'owner-%x-%x' % (info.st_dev, info.st_ino)
@@ -296,14 +359,7 @@ class Receive(unittest.TestCase):
                                    check=True, capture_output=True, text=True).stdout.strip()
         self.db = self.directory / 'state.db'
         self.codex_calls = self.directory / 'codex-calls.jsonl'
-        codex = self.directory / 'codex'
-        codex.write_text(
-            '#!' + sys.executable + '\n'
-            + 'import json,pathlib,sys\n'
-            + f'with pathlib.Path({str(self.codex_calls)!r}).open("a") as calls:\n'
-            + '    calls.write(json.dumps(sys.argv[1:]) + chr(10))\n'
-            + 'print("Queued message fixture-submission for thread native-root", flush=True)\n')
-        codex.chmod(0o700)
+        write_public_queue_codex(self.directory, self.codex_calls)
         os.environ['PATH'] = str(self.directory) + os.pathsep + (self.original_path or '')
         self.fixture = self.directory / 'native fixture'
         self.fixture.write_text('#!' + sys.executable + '\n' + FIXTURE)
