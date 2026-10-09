@@ -102,6 +102,8 @@ function playerSupport(db, sessionIds) {
     unacknowledged: new Map(),
     pending: new Map(),
     pendingSample: new Map(),
+    latestTask: new Map(),
+    executionInput: new Map(),
     messageAt: new Map(),
     ownedEnsembles: new Map(),
     memberEnsembles: new Map(),
@@ -132,6 +134,27 @@ function playerSupport(db, sessionIds) {
                                WHERE sender IN (${placeholders}) AND kind = 'report'
                                ORDER BY seq`, ...ids)) {
     support.latestReport.set(row.sender, row.id);
+  }
+  // Read the newest assignment's first-line preview for each recipient.
+  // The selected work read returns the complete recorded body.
+  for (const row of rows(db, `SELECT recipient, id, receipt,
+                                    substr(ltrim(body, char(9) || char(10) || char(13) || ' '), 1, 161) AS preview
+                               FROM messages WHERE seq IN (
+                                 SELECT max(seq) FROM messages
+                                  WHERE recipient IN (${placeholders}) AND kind = 'task'
+                                  GROUP BY recipient)`, ...ids)) {
+    support.latestTask.set(row.recipient, row);
+  }
+  // Receive records the launch input cursor in receive:SESSION:SEQ:IDENTITY.
+  // Direct attempts can name their input message. Read that exact input.
+  for (const row of rows(db, `SELECT e.session, m.id, m.kind,
+                                    substr(ltrim(m.body, char(9) || char(10) || char(13) || ' '), 1, 161) AS preview
+                               FROM executions e JOIN messages m ON m.recipient = e.session
+                                AND (m.id = e.id OR (
+                                  substr(e.id, 1, length('receive:' || e.session || ':')) = 'receive:' || e.session || ':'
+                                  AND m.seq = CAST(substr(e.id, length('receive:' || e.session || ':') + 1) AS INTEGER)))
+                              WHERE e.session IN (${placeholders}) AND e.phase IN ('starting', 'running')`, ...ids)) {
+    support.executionInput.set(row.session, row);
   }
   for (const row of rows(db, `SELECT recipient, count(*) AS n FROM messages
                                WHERE recipient IN (${placeholders}) AND receipt IS NULL
@@ -169,11 +192,12 @@ function playerSupport(db, sessionIds) {
     list.push(row);
     support.pendingSample.set(row.recipient, list);
   }
-  if (support.pendingSample.size) {
+  if (support.pendingSample.size || support.latestTask.size) {
     const wanted = new Set();
     for (const list of support.pendingSample.values()) {
       for (const row of list) wanted.add(row.id);
     }
+    for (const row of support.latestTask.values()) wanted.add(row.id);
     // The recorded time of a message's first insert, as the sample reports it.
     for (const row of rows(db, `SELECT entity_id AS id, recorded_at AS at FROM native_changes
                                  WHERE entity = 'message' AND operation = 'insert'
@@ -197,7 +221,9 @@ function playerSupport(db, sessionIds) {
   const hasRequests = Boolean(one(db,
     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'native_requests'"));
   if (hasRequests) {
-    for (const row of rows(db, `SELECT worker, id, method, reply, written FROM native_requests
+    for (const row of rows(db, `SELECT worker, id, method, reply IS NOT NULL AND reply <> '' AS responded, written,
+                                      substr(coalesce(json_extract(event, '$.title'), json_extract(event, '$.message'), ''), 1, 161) AS preview
+                                 FROM native_requests
                                  WHERE worker IN (${placeholders}) AND closed IS NULL
                                  ORDER BY rowid`, ...ids)) {
       support.openRequest.set(row.worker, row);
@@ -223,30 +249,93 @@ function playerSupport(db, sessionIds) {
   return support;
 }
 
-// What the actor is doing now, from recorded state only: an open native request
-// it waits on, then its recorded execution phase. Null when nothing is recorded,
-// and then the page falls back to the actor's latest transition.
+// Show the recorded native request or the input included in the current launch.
+// The execution phase describes recorded state; actualProcess remains unknown.
 function currentAction(support, session, execution) {
   const open = support.openRequest.get(session);
   if (open) {
-    const stage = open.reply === null || open.reply === ''
+    const stage = !open.responded
       ? 'awaiting response'
       : (Number(open.written) === 1 ? 'response written' : 'response stored');
+    const title = taskTitle(open.preview);
     return {
       kind: 'native-request',
-      label: `${open.method || 'native'} request ${stage}`,
+      label: `${open.method || 'native'} request ${stage}${title ? ': ' + title : ''}`,
       at: support.changeAt.get('native-request\u0000' + open.id) || '',
     };
   }
   const phase = execution?.phase || '';
   if (phase === 'running' || phase === 'starting') {
+    const input = support.executionInput.get(session);
+    const title = input ? taskTitle(input.preview) : '';
     return {
       kind: 'execution',
-      label: phase,
+      label: title ? `${phase} · ${input.kind} input: ${title}` : phase,
       at: support.changeAt.get('execution\u0000' + session) || '',
     };
   }
   return null;
+}
+
+// Task titles show the first non-empty recorded line. Long titles end with
+// an ellipsis; selected work details carry the complete description.
+function taskTitle(body) {
+  const line = String(body || '').split('\n').map((part) => part.trim()).find((part) => part !== '') || '';
+  return line.length > 160 ? line.slice(0, 159) + '…' : line;
+}
+
+// The tasks map carries one entry per actor with a recorded task message:
+// the message id, the title excerpt, the recorded receipt state, and the
+// recorded insert time. Actors with no task message stay absent.
+function snapshotTasks(support) {
+  const tasks = {};
+  for (const recipient of support.latestTask.keys()) {
+    tasks[recipient] = taskSnapshot(support, recipient);
+  }
+  return tasks;
+}
+
+function taskSnapshot(support, session) {
+  const row = support.latestTask.get(session);
+  return row ? {
+    id: row.id,
+    title: taskTitle(row.preview),
+    status: row.receipt == null ? 'pending' : 'acknowledged',
+    updatedAt: support.messageAt.get(row.id) || '',
+  } : null;
+}
+
+// Complete recorded content is read when an actor is selected.
+function workForActor(db, session) {
+  const support = playerSupport(db, [session]);
+  const task = taskSnapshot(support, session);
+  if (task) {
+    const recorded = one(db, 'SELECT body, receipt FROM messages WHERE id = ?', task.id);
+    task.description = recorded.body;
+    task.receipt = recorded.receipt;
+  }
+  const inputId = support.executionInput.get(session)?.id;
+  const input = inputId ? one(db,
+    'SELECT id, sender, kind, body, receipt FROM messages WHERE id = ?', inputId) : null;
+  const requestId = support.openRequest.get(session)?.id;
+  const request = requestId ? one(db,
+    'SELECT id, method, event, reply, written, closed FROM native_requests WHERE id = ?', requestId) : null;
+  const reportId = support.latestReport.get(session);
+  const report = reportId ? one(db,
+    'SELECT id, recipient, body, receipt FROM messages WHERE id = ?', reportId) : null;
+  return { contractVersion: CONTRACT_VERSION, actor: session,
+    task, input, request, report, execution: support.execution.get(session) || null };
+}
+
+// The providers map names each actor's reported or configured model.
+function snapshotProviders(players) {
+  const providers = {};
+  for (const player of players) {
+    const name = player.observedModel || player.model || '';
+    if (!name) continue;
+    providers[player.id] = { name, status: player.observedModel ? 'reported' : 'configured' };
+  }
+  return providers;
 }
 
 // A message moves between two recorded actors; the projection names the far side
@@ -295,6 +384,7 @@ function playerSnapshot(db, session, support) {
     actualProcess: 'unknown',
     lastTurnId: support.lastTurn.get(session) || '',
     latestReportId: support.latestReport.get(session) || '',
+    task: taskSnapshot(support, session),
     pendingCount: support.pending.get(session) || 0,
     unacknowledgedCount: support.unacknowledged.get(session) || 0,
     ownedEnsembles: support.ownedEnsembles.get(session) || [],
@@ -383,8 +473,8 @@ function snapshot(db, reader, subject, since) {
       players,
       ensembles,
       transitions,
-      tasks: {},
-      providers: {},
+      tasks: snapshotTasks(support),
+      providers: snapshotProviders(players),
     };
   });
 }
@@ -746,6 +836,21 @@ function knowledgeForActor(db, session) {
         return json(response, 200, knowledgeOverview(db));
       } catch (error) {
         return json(response, 503, { error: 'knowledge-unavailable' });
+      }
+    }
+    if (url.pathname === '/orchestra/work') {
+      const actor = url.searchParams.get('subject') || '';
+      if (!actor) return json(response, 400, { error: 'actor-required' });
+      try {
+        const value = inTransaction(db, () => {
+          const scope = visibleScope(db, reader, subject);
+          if (!scope || !scope.includes(actor)) return { refused: true };
+          return workForActor(db, actor);
+        });
+        if (value.refused) return json(response, 403, { error: 'reader-scope-denied' });
+        return json(response, 200, value);
+      } catch (error) {
+        return json(response, 503, { error: 'work-unavailable' });
       }
     }
     if (url.pathname === '/orchestra/knowledge') {
