@@ -240,19 +240,21 @@ def wake_decided(+db: String, +session: String, +cursor: String, launch: String 
       +found : String <- wake_found(db,session,cursor)
       wake_target(db,session,found,launch,lock,String.eq(found,""))
 
-# A held obligation keeps the wake from launching or rewriting the row. Any
-# other admission proceeds to decide under the same held lock.
+# A claimed retained attempt with an available session lock is adopted through
+# detached public delivery. Adoption preserves its claim and native process.
 def wake_stand(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, owned: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match owned:
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      +found : String <- wake_found(db,session,cursor)
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
-      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+      Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(found),
+        IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),wake_launch(db,found))
     case False{}: wake_decided(db,session,cursor,launch,lock,True{})
 
 # The obligation is held exactly when the claim row names an owner while host
 # custody cannot observe its death. A finished attempt, a missing directory,
 # and a session with no attempt on record are all observed dead; anything else
-# may still hold a live child, so the wake defers to it.
+# may still hold a live child, which public receive adopts under its session lock.
 def wake_held(+state: String, +dead: Bool) -> Bool:
   Bool.and(String.eq(Tx.trim_nl(state),"claimed"),Bool.not(dead))
 
@@ -264,12 +266,9 @@ def recover_if_dead(+db: String, +session: String, dead: Bool) -> IO(Unit):
 def wake_admit(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, state: String, +dead: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   wake_stand(db,session,cursor,launch,lock,wake_held(state,dead))
 
-# Owner-fenced admission under the lock. The wake reads the claim row and the
-# host custody of the recorded attempt, repairs stale execution metadata when
-# custody observes death, and only then decides: a held obligation stands down
-# without launching and without rewriting the row, while any other state
-# proceeds to claim under the lock, which fences the generation past a dead
-# owner's row before the lock is released and the message launches.
+# The wake reads the claim and retained attempt under the session lock. A
+# retained attempt with unknown native status keeps its claim for public receive
+# adoption. Observed native death updates the execution and admits the message.
 def wake_fenced(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, owed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match owed:
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:

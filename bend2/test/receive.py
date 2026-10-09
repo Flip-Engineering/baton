@@ -1869,18 +1869,24 @@ class Receive(unittest.TestCase):
         self.finish(child)
         self.assertEqual(self.claim_rows('parent'), [])
 
-    def test_wake_behind_an_unreaped_attempt_stands_down_without_reclaiming(self):
-        """Two-driver launch handoff: with a claimed obligation whose recorded
-        attempt was never reaped, host custody stays ambiguous — launch
-        markers without terminal marks — so a second admission's wake stands
-        down even though the execution phase still reads running. The row
-        keeps its owner and generation and no second launch rewrites the
-        obligation. A bare phase value never proves custody."""
+    def test_message_adopts_an_unreaped_dead_attempt_and_continues_same_native(self):
+        """Message admission adopts the retained attempt after observer and
+        native loss, then continues both owed inputs in the same conversation.
+        The original unknown exit and recipient-owned receipts remain recorded.
+        """
         self.player()
+        fixture_config_path = self.directory / 'fixture.json'
+        fixture_config = json.loads(fixture_config_path.read_text())
+        fixture_config['record_launches'] = True
+        fixture_config_path.write_text(json.dumps(fixture_config))
         self.prepare_input('first', 'parent')
+        self.connect('parent')
         first = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
         self.assertIn('[id: first]', started['prompt'])
+        native = self.eventually(lambda: self.coord('player', 'parent')['native'],
+                                 'The original native identity was not recorded.')
+        self.assertEqual(native, started['native'])
         before = self.claim_rows('parent')
         self.assertEqual(len(before), 1)
         self.assertEqual(before[0][2], 'first')
@@ -1897,11 +1903,33 @@ class Receive(unittest.TestCase):
                          'keeper recovered the killed observer before it died')
         self.assertFalse(os.path.exists(os.path.join(directory, 'status')),
                          'keeper reaped the killed native before it died')
-        self.message('second', 'parent')
-        self.assert_no_start()
         self.assertEqual(self.claim_rows('parent'), before)
+        self.message('second', 'parent')
+        continued, resumed = self.accept('parent')
+        self.assertEqual(resumed['native'], native)
+        self.assertEqual(resumed['resume'], native)
+        self.assertIn('[id: first]', resumed['prompt'])
+        self.assertIn('[id: second]', resumed['prompt'])
         self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')],
                          ['first', 'second'])
+        self.assertIsNone(self.coord('delivery', 'first')['receipt'])
+        self.assertIsNone(self.coord('delivery', 'second')['receipt'])
+        self.action(continued)
+        self.assertEqual(continued.readline(), b'')
+        self.eventually(lambda: not self.coord('inbox', 'parent')
+                        and self.execution('parent')[0] == 'exited'
+                        and os.path.exists(os.path.join(directory, 'released')),
+                        'Public delivery did not finish the retained continuation.')
+        self.assertEqual(self.coord('delivery', 'first')['receipt'], 'native-reviewed')
+        self.assertEqual(self.coord('delivery', 'second')['receipt'], 'native-reviewed')
+        self.assertEqual(self.coord('player', 'parent')['native'], native)
+        exits = [row for row in self.coord('inbox', 'root') if row['id'].endswith(':exit')]
+        self.assertTrue(any('unknown after keeper loss' in row['body'] for row in exits))
+        self.assertTrue(os.path.exists(os.path.join(directory, 'acknowledged')))
+        self.assertFalse(os.path.exists(os.path.join(directory, 'status')))
+        launches = (self.directory / 'native-launches.jsonl').read_text().splitlines()
+        self.assertEqual(len(launches), 2)
+        self.assert_no_start()
 
     def kill_fixture(self):
         """Kill the fixture native processes of this run, leaving keepers."""
