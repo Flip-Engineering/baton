@@ -88,31 +88,52 @@ first-use `status` command creates its database outside the immutable prefix.
 subscription wrapper. Retain existing native profiles and credentials at their
 configured paths.
 
-## Source build and staging
+## Install a qualified development archive
 
-Build dependencies are an installed Bend 2.0.25 compiler with its library files,
-clang, and SQLite development headers and libraries. From the source checkout:
+Use the complete archive from a remote qualification of the selected source
+commit and host platform. The [native artifact procedure](native-artifacts.md)
+describes packaging and extracted-artifact execution. Retain the downloaded
+package and its qualification results.
 
-```sh
-BEND=/path/to/bend/bin/bend sh bend2/scripts/build-native.sh
-```
-
-The script compiles `bend2/src/coordinator/main.bend` to C and links the native
-entry point against SQLite and the system libraries. It creates
-`.scratch/bend2/baton2`. The [build and check instructions](../../bend2/README.md#build-and-check)
-describe the standalone native checks and runtime fixtures.
-
-Stage the executable and current Git identity helper in an unused prefix you own:
+Extract the archive into an unused version prefix, then select its executable
+through the existing command symlink:
 
 ```sh
-BATON2_PREFIX=/absolute/path/to/unused-prefix
-test ! -e "$BATON2_PREFIX"
-mkdir -p "$BATON2_PREFIX/bin" "$BATON2_PREFIX/libexec/baton2"
-cp .scratch/bend2/baton2 "$BATON2_PREFIX/bin/baton2"
-cp bend2/harness/git-series.mjs "$BATON2_PREFIX/libexec/baton2/git-series.mjs"
-chmod 755 "$BATON2_PREFIX/bin/baton2"
-export PATH="$BATON2_PREFIX/bin:$PATH"
+set -eu
+BATON2_PACKAGE=/absolute/path/to/qualified/package
+BATON2_SOURCE='<qualified-commit>'
+BATON2_ARCHIVE="$BATON2_PACKAGE/baton2-development-darwin-arm64-$BATON2_SOURCE.tar.gz"
+BATON2_PREFIX="$HOME/.local/share/baton2/releases/development-$BATON2_SOURCE"
+BATON2_COMMAND="$HOME/.local/bin/baton2"
+mkdir -p "$HOME/.local/share/baton2/releases" "$HOME/.local/bin"
+mkdir "$BATON2_PREFIX"
+tar -xzpf "$BATON2_ARCHIVE" -C "$BATON2_PREFIX" --strip-components=1
+chmod 755 "$BATON2_PREFIX"
+ln -s "$BATON2_PREFIX/bin/baton2" "$BATON2_COMMAND.next"
+mv -f "$BATON2_COMMAND.next" "$BATON2_COMMAND"
+export PATH="$HOME/.local/bin:$PATH"
 ```
+
+Keep the complete extracted prefix, including `lib/context/modules` and
+`libexec/baton2`. The executable resolves its Codex inbox helper, Conductor
+adapters and selected context providers there. Keep the earlier prefix available
+for receivers and recovery commands that still reference it.
+
+The command symlink selects the executable for subsequent CLI invocations.
+The shared database owner and running observers retain their existing processes
+and custody. Recorded receiver endpoints retain their executable paths. After
+an actor's owned turn completes, register its receiver with the newly selected
+CLI and its recorded harness executable and output log:
+
+```sh
+baton2 /absolute/path/state.db receiver SESSION /recorded/harness /recorded/output.jsonl
+```
+
+Omitting CWD retains the actor's workspace and branch. `receiver` retains its
+native conversation, parent, model, effort, pending input and explicit stops;
+stopped actors refuse receiver registration. An accepted registration can
+continue pending input through the recorded actor. Existing observers and
+attempt recovery commands finish under their admitted executable.
 
 The [historical installation qualification](native-installation-2026-10-02/README.md)
 measured an earlier source build and staged only `bin/baton2`. Its original build
@@ -125,7 +146,7 @@ systems and architectures need their own build and execution qualification.
 
 Commands use `baton2 DATABASE COMMAND ARGS`. Use an absolute database path and
 absolute paths for registered receive endpoints, native harness executables,
-workspaces and logs. The retained owner reexecutes the selected coordinator.
+workspaces and logs. The shared owner retains the executable that started it.
 
 ```sh
 baton2 /absolute/path/state.db status
@@ -146,7 +167,7 @@ retains its original control interface. Save the task in a file and run:
 
 ```sh
 baton2 /absolute/path/state.db start principal codex /absolute/path/to/codex \
-  gpt-6-astra high /absolute/path/repository /absolute/path/principal.jsonl \
+  gpt-6-sol high /absolute/path/repository /absolute/path/principal.jsonl \
   initial-task /absolute/path/task.md
 baton2 /absolute/path/state.db status --pretty
 baton2 /absolute/path/state.db inbox operator --pretty
