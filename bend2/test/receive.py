@@ -238,6 +238,7 @@ reply({'pid':os.getpid(),'ppid':os.getppid(),'session':model,'native':native,'re
        'cwd':os.getcwd(),'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ],
        'claudeAuthVariablesPresent':[key for key in ('ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN') if key in os.environ],
        'sessionGuardDescriptors':guard_descriptors})
+steered_inputs=[]
 while True:
     line=stream.readline()
     if not line: break
@@ -264,6 +265,7 @@ while True:
             assert delivery['receipt'] is None,delivery
         if action.get('finish_fragment'): print(action['finish_fragment'],flush=True)
         print(json.dumps({'type':'response','command':'steer','success':True,'id':frame['id']}),flush=True)
+        steered_inputs.append(frame['id'])
         reply({'steer_received':frame})
         continue
     if action.get('native_request'):
@@ -293,7 +295,8 @@ while True:
         reply({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
         continue
     if action.get('ack',True):
-        for ident in re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M):
+        handled_inputs=re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M)+steered_inputs
+        for ident in dict.fromkeys(handled_inputs):
             subprocess.run([config['exe'],config['db'],'ack',ident,model,'native-reviewed'],check=True,stdout=subprocess.DEVNULL)
     failure=action.get('fail',False)
     body=action.get('body','native review complete')
@@ -1501,8 +1504,12 @@ class Receive(unittest.TestCase):
         accepted = json.loads(current.readline())['steer_received']
         self.assertEqual(accepted['id'], 'later-guidance')
         self.assertEqual(accepted['message'], 'Guidance belongs to the current native process.')
-        self.eventually(lambda: 'later-guidance' not in [m['id'] for m in self.coord('inbox', 'parent')],
-                        'native steer response did not record guidance acceptance')
+        marker = 'guidance accepted before recipient handling'
+        self.action(current, progress=marker)
+        self.assertEqual(json.loads(current.readline()), {'progress_written': marker})
+        self.eventually(lambda: marker in log.read_text(),
+                        'the observer did not read past the steer response')
+        self.assertIsNone(self.coord('delivery', 'later-guidance')['receipt'])
         self.action(current, body='Current task completed after accepting guidance.')
         self.assertEqual(current.readline(), b'')
         self.action(parent)
@@ -2708,17 +2715,22 @@ class Receive(unittest.TestCase):
         accepted = json.loads(control.readline())['steer_received']
         self.assertEqual((accepted['type'], accepted['id'], accepted['message']),
                          ('steer', 'silent-guidance', body))
+        marker = 'silent guidance accepted before recipient handling'
+        self.action(control, progress=marker)
+        self.assertEqual(json.loads(control.readline()), {'progress_written': marker})
+        self.eventually(lambda: marker in self.output_log('parent').read_text(),
+                        'the observer did not read past the steer response')
+        self.assertIsNone(self.coord('delivery', 'silent-guidance')['receipt'])
         self.assert_no_start()
         self.action(control, body=body)
         self.finish(observer)
-        receipt = json.loads(self.coord('delivery', 'silent-guidance')['receipt'])
-        self.assertEqual(receipt, {'type': 'response', 'command': 'steer',
-                                   'success': True, 'id': 'silent-guidance'})
+        self.assertEqual(self.coord('delivery', 'silent-guidance')['receipt'], 'native-reviewed')
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         frames = [json.loads(line) for line in self.output_log('parent').read_text().splitlines()]
         self.assertEqual([frame for frame in frames if frame.get('type') == 'fixture_progress'],
-                         [{'type': 'fixture_progress', 'marker': 'silent-λ-completed'}])
+                         [{'type': 'fixture_progress', 'marker': 'silent-λ-completed'},
+                          {'type': 'fixture_progress', 'marker': marker, 'native_pid': started['pid']}])
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
         self.assert_no_start()
 
@@ -2754,8 +2766,8 @@ class Receive(unittest.TestCase):
                 self.assert_no_start()
 
     def test_failed_continuation_retains_original_input_for_retry(self):
-        """A provider failure in the continuation retains the original input
-        and returns the failure to the delivery caller.
+        """Accepted steering remains owed through a provider failure, and the
+        same actor handles it during an explicit retry.
         """
         self.player(harness='omp')
         self.prepare_input('owed', 'parent')
@@ -2766,11 +2778,30 @@ class Receive(unittest.TestCase):
             first, 'successful turn did not continue original input')
         self.assertEqual(resumed['native'], original['native'])
         self.assertIn('[id: owed]', resumed['prompt'])
+        self.action(continued, read_steer=True, check_steer_receipt=True)
+        accepted = json.loads(continued.readline())['steer_received']
+        self.assertEqual(accepted['id'], 'owed')
+        marker = 'steer accepted before provider failure'
+        self.action(continued, progress=marker)
+        self.assertEqual(json.loads(continued.readline()), {'progress_written': marker})
+        self.eventually(lambda: marker in self.output_log('parent').read_text(),
+                        'the observer did not read past the accepted steer')
+        self.assertIsNone(self.coord('delivery', 'owed')['receipt'])
         self.action(continued, fail=True, ack=False)
         self.finish(first, ok=False)
         self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
         self.assertIsNone(self.coord('delivery', 'owed')['receipt'])
         self.assertEqual(len(self.coord('turns', 'parent')), 2)
+        self.assert_no_start()
+        retry = self.spawn(*self.receive_args('parent'))
+        retried, replay = self.accept('parent')
+        self.assertEqual(replay['native'], original['native'])
+        self.assertIn('[id: owed]', replay['prompt'])
+        self.action(retried, body='Original guidance handled after provider recovery.')
+        self.finish(retry)
+        self.assertEqual(self.coord('delivery', 'owed')['receipt'], 'native-reviewed')
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.assertEqual(len(self.coord('turns', 'parent')), 3)
         self.assert_no_start()
 
     def test_concurrent_sends_preserve_both_inputs_and_start_one_continuation(self):

@@ -1165,24 +1165,6 @@ law an_absent_deferred_note_names_the_outstanding_guidance:
 def an_absent_deferred_note_names_the_outstanding_guidance(db,player,id):
   {==}
 
-law a_response_before_the_first_terminal_records_guidance_acceptance:
-  for +db: String
-  for +player: String
-  for +event: String
-  {Guidance.accepted(db,player,event,False{}) == IO.try(String,DB.Sql.query(db,Guidance.accepted_sql(player,event) ++ Guidance.terminal_sql(event))) : IO(String)}
-
-def a_response_before_the_first_terminal_records_guidance_acceptance(db,player,event):
-  {==}
-
-law a_response_after_the_first_terminal_leaves_guidance_pending:
-  for +db: String
-  for +player: String
-  for +event: String
-  {Guidance.accepted(db,player,event,True{}) == IO.try(String,DB.Sql.query(db,Guidance.terminal_sql(event))) : IO(String)}
-
-def a_response_after_the_first_terminal_leaves_guidance_pending(db,player,event):
-  {==}
-
 law completion_preparation_checks_the_upstream_recipient:
   for +db: String
   for +player: String

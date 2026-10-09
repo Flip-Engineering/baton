@@ -661,7 +661,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,written))
         +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
         +sealed : Bool <- IO.pure(Bool,Bool.not(String.is_empty(terminal)))
-        +next_cursor : String <- Guidance.observe(db,player,handle,line,drained,Bool.and(String.eq(harness,"omp\n"),relevant),sealed)
+        +next_cursor : String <- Guidance.observe(db,player,handle,line,drained,Bool.and(String.eq(harness,"omp\n"),relevant))
         +next_primary : String <- primary_command(db,event,primary,String.eq(harness,"muse\n"))
         +next_current : String <- current_command(db,event,current,String.eq(harness,"muse\n"))
         +terminal_frame : Bool <- primary_terminal(db,event,"",False{})

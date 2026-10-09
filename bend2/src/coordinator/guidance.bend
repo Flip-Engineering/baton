@@ -16,9 +16,8 @@ def send(+db: String, handle: U32, cursor: String, +next: String, same: Bool) ->
       sent : Unit <- IO.try(Unit,P.ProcessChild.write(handle,frame))
       IO.pure(String,next)
 
-# The guidance that no attempt has accepted, independent of any send cursor: a
-# steer response that arrives after the input closed leaves no receipt, so the
-# guidance stays here for the next receive.
+# Guidance stays owed until its recipient records handling it. The send cursor
+# records which messages this attempt has already forwarded.
 def outstanding_sql(+player: String) -> String:
   "coalesce((SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " ORDER BY seq)),'')"
 
@@ -30,7 +29,7 @@ def pending(+db: String, +player: String, handle: U32, +cursor: String) -> IO(St
     +next : String <- IO.try(String,DB.Sql.query(db,pending_sql(player,cursor)))
     send(db,handle,cursor,next,String.eq(cursor,next))
 
-# Replay observes receipts after this attempt stops accepting input.
+# An attempt with closed input keeps its current forwarding cursor.
 def pending_live(db: String, player: String, handle: U32, cursor: String, closed: U32) -> IO(String):
   match closed:
     case 0: pending(db,player,handle,cursor)
@@ -55,25 +54,14 @@ def drain_pending(+db: String, +player: String, +handle: U32, +cursor: String) -
 def awake_pending(db: String, player: String, handle: U32, +cursor: String, woke: Bool) -> IO(String):
   Bool.pick(IO(String),woke,drain_pending(db,player,handle,cursor),IO.pure(String,cursor))
 
-def accepted_sql(+player: String, +event: String) -> String:
-  "UPDATE messages SET receipt=coalesce(receipt," ++ C.q(event) ++ ") WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND id=json_extract(" ++ C.q(event) ++ ",'$.id') AND json_extract(" ++ C.q(event) ++ ",'$.type')='response' AND json_extract(" ++ C.q(event) ++ ",'$.command')='steer' AND json_extract(" ++ C.q(event) ++ ",'$.success')=1;"
-
 def terminal_sql(+event: String) -> String:
   "SELECT CASE WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END;"
 
-# A native steer response records acceptance while this reader has seen no
-# terminal for the attempt, including a replay of an attempt whose native input
-# the host already closed. A response that arrives after the first terminal
-# leaves the guidance for the next receive.
-def accepted(db: String, player: String, +event: String, sealed: Bool) -> IO(String):
-  match sealed:
-    case True{}: IO.try(String,DB.Sql.query(db,terminal_sql(event)))
-    case False{}: IO.try(String,DB.Sql.query(db,accepted_sql(player,event) ++ terminal_sql(event)))
-
-# The receipt records native acceptance; the cursor covers this process's sends.
-def observe(+db: String, +player: String, handle: U32, +event: String, cursor: String, enabled: Bool, sealed: Bool) -> IO(String):
+# Native responses remain in the observed stream. The recipient's ack records
+# handled guidance; this observer only forwards input and closes it at terminal.
+def observe(+db: String, +player: String, handle: U32, +event: String, cursor: String, enabled: Bool) -> IO(String):
   match enabled:
     case False{}: IO.pure(String,cursor)
     case True{}: do IO<String>:
-      ended : String <- accepted(db,player,event,sealed)
+      ended : String <- IO.try(String,DB.Sql.query(db,terminal_sql(event)))
       continued(db,player,handle,cursor,String.eq(ended,"1\n"))

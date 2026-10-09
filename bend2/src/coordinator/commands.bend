@@ -158,7 +158,7 @@ def last_assistant_sql_expr(+event: String) -> String:
 
 # OMP records provider failure on the terminal's latest assistant message.
 def omp_terminal_error_sql_expr(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce((SELECT 1 FROM (SELECT " ++ last_assistant_sql_expr(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error'),0) ELSE 0 END"
+  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce(json_extract(" ++ last_assistant_sql_expr(event) ++ ",'$.stopReason')='error',0) ELSE 0 END"
 
 def blocked_cause_sql(+session: String) -> String:
   "CASE WHEN " ++ stopped_session_sql(session) ++ " THEN 'terminal-stop'"

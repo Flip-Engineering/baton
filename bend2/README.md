@@ -233,9 +233,9 @@ During an OMP turn, send guidance with:
 ```
 
 The supervisor listens for newly committed guidance throughout an active OMP
-turn and forwards it through OMP's `steer` command. The native response records
-the delivery receipt. Guidance with no receipt remains in the Player's inbox
-for a later delivery attempt.
+turn and forwards it through OMP's `steer` command. The native response remains
+in the observed stream. The Player records a receipt with `ack` after handling
+the guidance. Guidance with no receipt remains in its inbox for continuation.
 
 `join ID PARENT HARNESS MODEL EFFORT WORKSPACE` registers a Player in an
 existing checkout. The recorded workspace is absolute; branch and base come
