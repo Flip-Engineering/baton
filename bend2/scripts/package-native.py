@@ -213,6 +213,23 @@ def stage_typescript_context_module(payload, runtime_package):
     return selected
 
 
+def stage_runtime_context_module(payload):
+    selected = stage_selected_context_payload(payload, 'runtime')
+    module_root = payload / selected['path']
+    declaration_path = module_root / 'native-provider.declaration.json'
+    declaration = json.loads(declaration_path.read_text())
+    files = json.loads((ROOT / 'bend2/context/runtime/selected-module.json').read_text())['files']
+    artifacts = [{'packagePath': entry['path'],
+                  'sha256': sha256(module_root / entry['path']),
+                  'role': 'provider' if entry['path'] == 'native-provider.mjs' else 'runtime-support'}
+                 for entry in files if entry['path'] != 'native-provider.declaration.json']
+    declaration['artifactIdentities'] = artifacts
+    declaration['packageIdentity'] = 'sha256:' + hashlib.sha256(
+        json.dumps(artifacts, sort_keys=True).encode()).hexdigest()
+    write_json(declaration_path, declaration)
+    return selected
+
+
 def stage_clang_module(payload, module_id, projections, runtime_package=None):
     source = ROOT / 'bend2/context/clang'
     module_source = source / 'modules' / module_id
@@ -363,7 +380,7 @@ def package(args):
         shutil.copyfile(binary, payload / 'bin/baton2')
         (payload / 'bin/baton2').chmod(0o755)
         stage_adapters(payload)
-        selected_context = [stage_selected_context_payload(payload)]
+        selected_context = [stage_selected_context_payload(payload), stage_runtime_context_module(payload)]
         selected_context.extend(stage_clang_context_modules(payload, args.context_clang_package))
         if args.context_typescript_package is not None:
             selected_context.append(stage_typescript_context_module(payload, args.context_typescript_package))

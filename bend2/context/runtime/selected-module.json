@@ -1,0 +1,55 @@
+{
+  "schema": "baton2-selected-context-payload-v1",
+  "moduleId": "runtime",
+  "protocolVersion": "2",
+  "files": [
+    {
+      "path": "native-provider.mjs"
+    },
+    {
+      "path": "native-provider.declaration.json"
+    },
+    {
+      "path": "bootstrap.mjs"
+    },
+    {
+      "path": "bootstrap-admission.mjs"
+    },
+    {
+      "path": "cdp-counter.mjs"
+    },
+    {
+      "path": "cdp-endpoint.mjs"
+    },
+    {
+      "path": "cdp-intents.mjs"
+    },
+    {
+      "path": "cdp-protocol.mjs"
+    },
+    {
+      "path": "cdp-refs.mjs"
+    },
+    {
+      "path": "cdp-scripts.mjs"
+    },
+    {
+      "path": "cdp-session.mjs"
+    },
+    {
+      "path": "cdp-state.mjs"
+    },
+    {
+      "path": "cdp-transport.mjs"
+    },
+    {
+      "path": "observations.mjs"
+    },
+    {
+      "path": "values.mjs"
+    },
+    {
+      "path": "session-observations.mjs"
+    }
+  ]
+}

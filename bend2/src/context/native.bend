@@ -12,6 +12,8 @@ import ./native-request.bend as NativeRequest
 import ./native-catalog.bend as NativeCatalog
 import ./native-captures.bend as NativeCaptures
 import ./native-project-policy.bend as NativePolicy
+import ./native-runtime.bend as NativeRuntime
+import ./text.bend as ContextText
 import ./service.bend as ContextService
 import ./native-managed-query.bend as ManagedQuery
 import ./bound-admission.bend as ContextAdmit
@@ -1542,6 +1544,381 @@ def selected_plan_frame(+plan: Sel.Plan, +query: String, +owner: String,
         Sel.bind_digest(primary), Sel.bind_operation(primary), query, owner,
         canonical, "starter", "0")
 
+# Runtime launch starts retained target and adapter roles. Later intents
+# submit their frozen invocation to the retained adapter.
+def launch_runtime_module_dirname() -> String:
+  "m-72756e74696d65"
+
+def launch_runtime_bootstrap_path(executable: String) -> String:
+  executable_directory(executable) ++ "../lib/context/modules/"
+  ++ launch_runtime_module_dirname() ++ "/bootstrap.mjs"
+
+def launch_runtime_setup_text(+owner: String, +query: String, +stderr_path: String,
+                              +invocation_text: String) -> String:
+  NativeRuntime.runtime_setup(owner, query, stderr_path, invocation_text)
+
+def launch_frame_is_runtime(+plan: Sel.Plan) -> Bool:
+  match plan:
+    case Sel.Plan{primary, common, steps, effective_effects, inputs, available,
+        policy_identity}:
+      String.eq(Sel.bind_module(primary), "runtime")
+
+# The target launch document carries the launch subject's program, args and
+# env members (request.bend launch intent words) into the bootstrap document
+# shape {version, node, argv, env} (bootstrap-admission.mjs LAUNCH_KEYS).
+# The node is the runtime binary; argv starts it with the inspector flag,
+# then the program head with the declared args members unchanged. An empty
+# args array yields the short argv so no trailing comma is produced. The
+# frame text enters once through the CTE; both result columns are hex
+# encoded so arbitrary request bytes survive the tab-split read.
+def launch_runtime_doc_sql(+invocation_text: String, +node: String) -> String:
+  "WITH frame(text) AS (SELECT " ++ ContextCommands.q(invocation_text) ++ "),"
+  ++ "params(node, program, args, env) AS (SELECT " ++ ContextCommands.q(node) ++ ","
+  ++ "coalesce(json_extract(frame.text,'$.request.subject.program'),''),"
+  ++ "coalesce(json_extract(frame.text,'$.request.subject.args'),'[]'),"
+  ++ "coalesce(json_extract(frame.text,'$.request.subject.env'),'{}') FROM frame)"
+  ++ "SELECT hex('{\"version\":1,\"node\":' || json_quote(params.node) || ',\"argv\":['"
+  ++ " || json_quote(params.node) || ',\"--inspect-brk=127.0.0.1:0\",' || json_quote(params.program)"
+  ++ " || CASE WHEN params.args='[]' THEN ']' ELSE ',' || substr((SELECT json_group_array(value) FROM json_each(params.args)),2) END"
+  ++ " || ',\"env\":' || params.env || '}'), hex(params.program) FROM params;"
+
+# Retained role rows for the runtime recovery check in native-runtime.bend,
+# which joins semantic_runtimes to target and adapter rows at incarnation 0.
+# guard_identity_json carries the canonical identity text itself; the argv
+# cell carries the argv as a JSON string so the json_valid check holds;
+# database_binding_json carries the binding value the recovery check compares.
+# Anchor is the guard directory beside the log directory; phase, cursor and
+# cleanup record the initial open state.
+def launch_runtime_roles_sql(+query: String, +target_dir: String, +adapter_dir: String,
+                             +anchor: String, +target_key: String, +adapter_key: String,
+                             +target_identity: String, +adapter_identity: String,
+                             +target_recovery: String, +adapter_recovery: String,
+                             +database_binding: String) -> String:
+  "BEGIN IMMEDIATE;"
+  ++ "INSERT INTO semantic_roles(query_id,role,incarnation,keeper_path,guard_anchor,guard_key,guard_identity_json,recovery_argv_json,database_binding_json,phase,observer_cursor,cleanup_phase) SELECT "
+  ++ ContextCommands.q(query) ++ ",'target','0'," ++ ContextCommands.q(target_dir) ++ ","
+  ++ ContextCommands.q(anchor) ++ "," ++ ContextCommands.q(target_key) ++ ","
+  ++ ContextCommands.q(target_identity) ++ "," ++ ContextCommands.q(J.json_text(J.Jstr{target_recovery})) ++ ","
+  ++ ContextCommands.q(database_binding) ++ ",'open','0','pending';"
+  ++ "INSERT INTO semantic_roles(query_id,role,incarnation,keeper_path,guard_anchor,guard_key,guard_identity_json,recovery_argv_json,database_binding_json,phase,observer_cursor,cleanup_phase) SELECT "
+  ++ ContextCommands.q(query) ++ ",'adapter','0'," ++ ContextCommands.q(adapter_dir) ++ ","
+  ++ ContextCommands.q(anchor) ++ "," ++ ContextCommands.q(adapter_key) ++ ","
+  ++ ContextCommands.q(adapter_identity) ++ "," ++ ContextCommands.q(J.json_text(J.Jstr{adapter_recovery})) ++ ","
+  ++ ContextCommands.q(database_binding) ++ ",'open','0','pending';"
+  ++ "COMMIT;"
+
+def launch_runtime_id_sql(+query: String, +runtime_id: String) -> String:
+  "UPDATE semantic_queries SET runtime_id=" ++ ContextCommands.q(runtime_id)
+  ++ " WHERE id=" ++ ContextCommands.q(query) ++ ";"
+
+# The public caller returns the retained query envelope. The envelope row is
+# read back and printed; the retained owner and the public recovery observer
+# publish completion later.
+def launch_runtime_envelope_text(result: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match result:
+    case Fail{error}: IO.die(String, 3, "runtimeEnvelopeUnreadable")
+    case Done{+text}:
+      match Tx.split_tabs(Tx.trim_nl(text)):
+        case +envelope <> Nil{}: IO.pure(String, envelope)
+        case other: IO.die(String, 3, "runtimeEnvelopeMissing")
+
+def launch_runtime_envelope(+db: String, +binding: String, +query: String) -> IO(Unit):
+  do IO<Unit>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+      ContextStore.envelope_sql(query))
+    envelope : String <- launch_runtime_envelope_text(result)
+    written : Unit <- IO.write(envelope ++ "\n")
+    IO.pure(Unit, Unit{})
+
+# A created admission starts both roles and returns the retained query envelope.
+# The public recovery observer consumes the adapter stream.
+def launch_runtime_created(+db: String, +binding: String, +owner: String,
+                           +query: String, +cwd: String, +executable: String,
+                           +runtime_path: String, +invocation_text: String,
+                           +doc: String, +target_guard: String,
+                           +adapter_guard: String, +origin_attempt: String) -> IO(Unit):
+  do IO<Unit>:
+    +canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
+    +log_directory : String = database_parent(canonical_database)
+    +keeper_path : String = ContextIdentity.role_directory(log_directory, target_guard)
+    +target_dir : String = keeper_path ++ "/runtime-target"
+    +adapter_dir : String = keeper_path ++ "/runtime-adapter"
+    +target_stderr : String = target_dir ++ "/target.stderr"
+    +adapter_stderr : String = adapter_dir ++ "/adapter.stderr"
+    +bootstrap : String = launch_runtime_bootstrap_path(executable)
+    +provider : String = installed_provider_path(executable)
+    +target_argv : String = NativeRuntime.runtime_target_argv(runtime_path, bootstrap)
+    +adapter_argv : String = NativeRuntime.runtime_adapter_argv(runtime_path, provider,
+      adapter_dir)
+    +setup : String = launch_runtime_setup_text(owner, query, target_stderr,
+      invocation_text)
+    +recovery : String = Process.argv([executable, "--observe-context-runtime",
+      canonical_database, owner, query, target_dir, adapter_dir])
+    associated : String <- IO.try(String, DB.Sql.query_bound(db, binding,
+      launch_runtime_id_sql(query, "rt:" ++ query)))
+    persisted : String <- IO.try(String, DB.Sql.query_bound(db, binding,
+      ContextStore.runtime_row_sql("rt:" ++ query, owner, origin_attempt, query,
+        "adapter:" ++ query, "starting", "0")))
+    roles : String <- IO.try(String, DB.Sql.query_bound(db, binding,
+      launch_runtime_roles_sql(query, target_dir, adapter_dir,
+        ContextIdentity.guard_anchor(log_directory),
+        target_guard, adapter_guard,
+        ContextIdentity.guard_identity(binding, ContextIdentity.SubjectRuntime{query},
+          ContextIdentity.RoleTarget{}, "0"),
+        ContextIdentity.guard_identity(binding, ContextIdentity.SubjectRuntime{query},
+          ContextIdentity.RoleAdapter{}, "0"),
+        recovery, recovery, binding)))
+    +bridge : NativeRuntime.RuntimeBridge <- NativeRuntime.runtime_retained_open(db,
+      target_dir, target_argv, target_stderr, doc, recovery,
+      adapter_dir, adapter_argv, adapter_stderr, setup, recovery, cwd)
+    returned : Unit <- launch_runtime_envelope(db, binding, query)
+    IO.pure(Unit, Unit{})
+
+def launch_runtime_submitted(+db: String, +binding: String, +owner: String,
+                             +query: String, +cwd: String, +executable: String,
+                             +runtime_path: String, +invocation_text: String,
+                             +doc: String, +target_guard: String,
+                             +adapter_guard: String,
+                             submission: ContextService.Submission) -> IO(Unit):
+  match submission:
+    case ContextService.SubmissionManaged{admission, planValue, planIdentity, resultSchema, artifactSha256, bootstrapText, answersText}:
+      IO.die(Unit, 3, "runtimeAdmissionUnexpectedManaged")
+    case ContextService.SubmissionAdmitted{admission, proposedPlan, proposedSchema}:
+      match admission:
+        case ContextAdmit.AdmissionCreated{admission_owner, admission_request,
+            admission_decision, admission_state, +admission_attempt,
+            admission_keeper, admission_cwd, admission_artifact}:
+          launch_runtime_created(db, binding, owner, query, cwd, executable,
+            runtime_path, invocation_text, doc, target_guard, adapter_guard,
+            admission_attempt)
+        case other: IO.die(Unit, 3, "runtimeAdmissionUnexpectedCreated")
+    case ContextService.SubmissionRetainedVerified{admission, planValue, resultSchema}:
+      launch_runtime_envelope(db, binding, query)
+    case ContextService.SubmissionPlanRefused{stage, reason}:
+      IO.die(Unit, 3, "runtimeAdmissionRefused:" ++ stage ++ ":" ++ reason)
+    case ContextService.SubmissionRetainedRejected{admission, decision, state, owner, request}:
+      IO.die(Unit, 3, "runtimeAdmissionRejected:" ++ decision)
+    case ContextService.SubmissionForeign{owner, request}:
+      IO.die(Unit, 3, "runtimeAdmissionForeign")
+    case ContextService.SubmissionRetainedUnverified{admission, planValue, resultSchema}:
+      IO.die(Unit, 3, "runtimeAdmissionUnverified")
+    case ContextService.SubmissionManagedUncertain{stage, answer}:
+      IO.die(Unit, 3, "runtimeAdmissionUncertain:" ++ stage)
+    case ContextService.SubmissionAbsent{}:
+      IO.die(Unit, 3, "runtimeAdmissionAbsent")
+    case ContextService.SubmissionRefused{code, detail}:
+      IO.die(Unit, 3, "runtimeAdmissionReadFailed:" ++ detail)
+    case ContextService.SubmissionUncertain{stage, answer}:
+      IO.die(Unit, 3, "runtimeAdmissionUncertain:" ++ stage)
+
+# Core stores the query and complete selected plan before either role starts.
+def launch_runtime_submit(+db: String, +binding: String, +owner: String,
+                          +query: String, +cwd: String, +executable: String,
+                          +runtime_path: String, +invocation_text: String,
+                          +plan_value: String, +plan_identity: String,
+                          +canonical: String, +artifact_path: String,
+                          +result_schema: String, +doc: String,
+                          +target_guard: String, +adapter_guard: String) -> IO(Unit):
+  do IO<Unit>:
+    canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
+    origin_attempt : String <- owner_origin_attempt(db, binding, owner)
+    +keeper_path : String = ContextIdentity.role_directory(
+      database_parent(canonical_database), target_guard)
+    submission : ContextService.Submission <- ContextService.admitted_associated(db,
+      binding, query, owner, canonical, keeper_path, cwd, origin_attempt,
+      artifact_path, plan_value, plan_identity, result_schema)
+    launch_runtime_submitted(db, binding, owner, query, cwd, executable,
+      runtime_path, invocation_text, doc, target_guard, adapter_guard,
+      submission)
+
+def launch_runtime_doc_fields(+db: String, +binding: String, +owner: String,
+                              +query: String, +cwd: String, +executable: String,
+                              +runtime_path: String, +invocation_text: String,
+                              +plan_value: String, +plan_identity: String,
+                              +canonical: String, +artifact_path: String,
+                              +result_schema: String,
+                              +target_guard: String, +adapter_guard: String,
+                              fields: List<String>) -> IO(Unit):
+  match fields:
+    case +doc <> +program <> Nil{}:
+      +doc_field : CoreCodec.FieldText = CoreCodec.text_field(doc)
+      +program_field : CoreCodec.FieldText = CoreCodec.text_field(program)
+      match doc_field:
+        case CoreCodec.FtBad{condition}: IO.die(Unit, 3, "runtimeLaunchDocument:" ++ condition)
+        case CoreCodec.FtText{+text}:
+          match program_field:
+            case CoreCodec.FtBad{condition}: IO.die(Unit, 3, "runtimeLaunchDocument:" ++ condition)
+            case CoreCodec.FtText{+plain}:
+              Bool.pick(IO(Unit), String.is_empty(plain),
+                IO.die(Unit, 3, "runtimeLaunchProgramMissing"),
+                launch_runtime_submit(db, binding, owner, query, cwd, executable,
+                  runtime_path, invocation_text, plan_value, plan_identity,
+                  canonical, artifact_path, result_schema, text, target_guard,
+                  adapter_guard))
+    case other: IO.die(Unit, 3, "runtimeLaunchDocument")
+
+def launch_runtime_doc_result(+db: String, +binding: String, +owner: String,
+                              +query: String, +cwd: String, +executable: String,
+                              +runtime_path: String, +invocation_text: String,
+                              +plan_value: String, +plan_identity: String,
+                              +canonical: String, +artifact_path: String,
+                              +result_schema: String,
+                              +target_guard: String, +adapter_guard: String,
+                              result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Fail{error}: IO.die(Unit, 3, "runtimeLaunchDocument")
+    case Done{+text}:
+      launch_runtime_doc_fields(db, binding, owner, query, cwd, executable,
+        runtime_path, invocation_text, plan_value, plan_identity, canonical,
+        artifact_path, result_schema, target_guard,
+        adapter_guard, ContextText.split_tabs(Tx.trim_nl(text)))
+
+def launch_runtime_launch(+db: String, +binding: String, +owner: String,
+                          +query: String, +cwd: String, +executable: String,
+                          +runtime_path: String, +invocation_text: String,
+                          +plan_value: String, +plan_identity: String,
+                          +canonical: String, +artifact_path: String,
+                          +result_schema: String) -> IO(Unit):
+  do IO<Unit>:
+    target_guard : String <- IO.try(String, ContextIdentity.role_guard_key(
+      ContextIdentity.guard_identity(binding, ContextIdentity.SubjectRuntime{query},
+        ContextIdentity.RoleTarget{}, "0")))
+    adapter_guard : String <- IO.try(String, ContextIdentity.role_guard_key(
+      ContextIdentity.guard_identity(binding, ContextIdentity.SubjectRuntime{query},
+        ContextIdentity.RoleAdapter{}, "0")))
+    rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+      launch_runtime_doc_sql(invocation_text, runtime_path))
+    launch_runtime_doc_result(db, binding, owner, query, cwd, executable,
+      runtime_path, invocation_text, plan_value, plan_identity, canonical,
+      artifact_path, result_schema, target_guard,
+      adapter_guard, rows)
+
+def launch_frame_intent_sql(+invocation_text: String) -> String:
+  "WITH runtime_invocation(value) AS (SELECT " ++ ContextCommands.q(invocation_text)
+  ++ ") SELECT hex(coalesce(json_extract(value,'$.request.subject.intent'),'')),"
+  ++ "hex(coalesce(json_extract(value,'$.request.subject.session'),'')) FROM runtime_invocation;"
+
+# A later intent runs under the runtime named by its own session, which is
+# already the "rt:<launch query>" identity the observer checks. The query
+# is admitted with its own plan first, then associated to that runtime,
+# then handed to that module's submit entry with the frozen frame.
+def launch_runtime_session_submitted(+db: String, +binding: String, +owner: String,
+                                     +query: String, +invocation_text: String,
+                                     +session: String,
+                                     submission: ContextService.Submission) -> IO(Unit):
+  match submission:
+    case ContextService.SubmissionManaged{admission, planValue, planIdentity, resultSchema, artifactSha256, bootstrapText, answersText}:
+      IO.die(Unit, 3, "runtimeAdmissionUnexpectedManaged")
+    case ContextService.SubmissionAdmitted{admission, proposedPlan, proposedSchema}:
+      do IO<Unit>:
+        associated : String <- IO.try(String, DB.Sql.query_bound(db, binding,
+          launch_runtime_id_sql(query, session)))
+        submitted : Unit <- NativeRuntime.runtime_submit(db, binding, owner, query,
+          invocation_text)
+        returned : Unit <- launch_runtime_envelope(db, binding, query)
+        IO.pure(Unit, Unit{})
+    case ContextService.SubmissionRetainedVerified{admission, planValue, resultSchema}:
+      launch_runtime_envelope(db, binding, query)
+    case ContextService.SubmissionPlanRefused{stage, reason}:
+      IO.die(Unit, 3, "runtimeAdmissionRefused:" ++ stage ++ ":" ++ reason)
+    case ContextService.SubmissionRetainedRejected{admission, decision, state, owner, request}:
+      IO.die(Unit, 3, "runtimeAdmissionRejected:" ++ decision)
+    case ContextService.SubmissionForeign{owner, request}:
+      IO.die(Unit, 3, "runtimeAdmissionForeign")
+    case ContextService.SubmissionRetainedUnverified{admission, planValue, resultSchema}:
+      IO.die(Unit, 3, "runtimeAdmissionUnverified")
+    case ContextService.SubmissionManagedUncertain{stage, answer}:
+      IO.die(Unit, 3, "runtimeAdmissionUncertain:" ++ stage)
+    case ContextService.SubmissionAbsent{}:
+      IO.die(Unit, 3, "runtimeAdmissionAbsent")
+    case ContextService.SubmissionRefused{code, detail}:
+      IO.die(Unit, 3, "runtimeAdmissionReadFailed:" ++ detail)
+    case ContextService.SubmissionUncertain{stage, answer}:
+      IO.die(Unit, 3, "runtimeAdmissionUncertain:" ++ stage)
+
+def launch_runtime_session(+db: String, +binding: String, +owner: String,
+                           +query: String, +cwd: String, +invocation_text: String,
+                           +plan_value: String, +plan_identity: String,
+                           +canonical: String, +artifact_path: String,
+                           +result_schema: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
+    origin_attempt : String <- owner_origin_attempt(db, binding, owner)
+    target_guard : String <- IO.try(String, ContextIdentity.role_guard_key(
+      ContextIdentity.guard_identity(binding, ContextIdentity.SubjectRuntime{query},
+        ContextIdentity.RoleTarget{}, "0")))
+    +keeper_path : String = ContextIdentity.role_directory(
+      database_parent(canonical_database), target_guard)
+    submission : ContextService.Submission <- ContextService.admitted_associated(db,
+      binding, query, owner, canonical, keeper_path, cwd, origin_attempt,
+      artifact_path, plan_value, plan_identity, result_schema)
+    launch_runtime_session_submitted(db, binding, owner, query,
+      invocation_text, session, submission)
+
+def launch_frame_intent_fields(+db: String, +binding: String, +owner: String,
+                               +query: String, +cwd: String, +executable: String,
+                               +runtime_path: String, +invocation_text: String,
+                               +plan_value: String, +plan_identity: String,
+                               +canonical: String, +artifact_path: String,
+                               +result_schema: String,
+                               fields: List<String>) -> IO(Unit):
+  match fields:
+    case +intent_hex <> +session_hex <> Nil{}:
+      +intent_field : CoreCodec.FieldText = CoreCodec.text_field(intent_hex)
+      +session_field : CoreCodec.FieldText = CoreCodec.text_field(session_hex)
+      match intent_field:
+        case CoreCodec.FtBad{condition}: IO.die(Unit, 3, "runtimeLaunchIntent:" ++ condition)
+        case CoreCodec.FtText{+intent}:
+          match session_field:
+            case CoreCodec.FtBad{condition}: IO.die(Unit, 3, "runtimeLaunchIntent:" ++ condition)
+            case CoreCodec.FtText{+session}:
+              Bool.pick(IO(Unit), String.eq(intent, "launch"),
+                launch_runtime_launch(db, binding, owner, query, cwd, executable,
+                  runtime_path, invocation_text, plan_value, plan_identity, canonical,
+                  artifact_path, result_schema),
+                launch_runtime_session(db, binding, owner, query, cwd, invocation_text,
+                  plan_value, plan_identity, canonical, artifact_path, result_schema,
+                  session))
+    case other: IO.die(Unit, 3, "runtimeLaunchIntent")
+
+def launch_frame_intent(+db: String, +binding: String, +owner: String,
+                        +query: String, +cwd: String, +executable: String,
+                        +runtime_path: String, +invocation_text: String,
+                        +plan_value: String, +plan_identity: String,
+                        +canonical: String, +artifact_path: String,
+                        +result_schema: String,
+                        result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Fail{error}: IO.die(Unit, 3, "runtimeLaunchIntent")
+    case Done{+text}:
+      launch_frame_intent_fields(db, binding, owner, query, cwd, executable,
+        runtime_path, invocation_text, plan_value, plan_identity, canonical,
+        artifact_path, result_schema, ContextText.split_tabs(Tx.trim_nl(text)))
+
+# Only a launch intent builds a new target. Later intents already carry
+# their session in the frozen frame (request.bend requires subject.session
+# off launch): each is admitted with its own plan, associated to that
+# session identity, then handed to that module's submit entry, which looks
+# up the retained bridge and writes through the single adapter reader.
+def launch_frame_route(+plan: Sel.Plan, +result_schema: String,
+                       +db: String, +binding: String, +owner: String,
+                       +query: String, +canonical: String, +cwd: String,
+                       +source_identity: String, +artifact_path: String,
+                       +invocation_text: String, +executable: String,
+                       +runtime_path: String) -> IO(Unit):
+  Bool.pick(IO(Unit), launch_frame_is_runtime(plan),
+    do IO<Unit>:
+      +plan_value : String = EnginesWire.plan_value(plan)
+      +plan_identity : String = EnginesWire.plan_identity(plan)
+      intent_rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+        launch_frame_intent_sql(invocation_text))
+      launch_frame_intent(db, binding, owner, query, cwd, executable,
+        runtime_path, invocation_text, plan_value, plan_identity, canonical,
+        artifact_path, result_schema, intent_rows),
+    managed_query_selected(plan, result_schema, db, binding, owner, query,
+      canonical, cwd, source_identity, artifact_path, invocation_text,
+      executable, runtime_path))
+
 def launch_selected_plan_frame(+plan: Sel.Plan, +result_schema: String,
                                +db: String, +binding: String, +owner: String,
                                +query: String, +canonical: String, +cwd: String,
@@ -1558,7 +1935,7 @@ def launch_selected_plan_frame(+plan: Sel.Plan, +result_schema: String,
           match frame:
             case NativeFrameRefused{reason}: IO.die(Unit, 3, reason)
             case NativeFrameReady{+value}:
-              managed_query_selected(plan, result_schema, db, binding, owner, query,
+              launch_frame_route(plan, result_schema, db, binding, owner, query,
                 canonical, cwd, source_identity, artifact_path, value,
                 executable, runtime_path)
 
@@ -1771,6 +2148,56 @@ def query_catalog_result(+db: String, +binding: String, +owner: String, +query: 
     case ProviderOutput{value, status}: query_catalog_output(db, binding, owner,
       query, request, policy, status, value, source, artifact, executable, runtime_path)
 
+# A later runtime intent carries a session and no program path. Its source
+# is the retained launch's program: the session is extracted from the
+# admitted canonical request, then read off the launch query row the
+# runtime row names, scoped to the calling owner throughout. Program bytes
+# travel hex framed and decode through the shared field framer. A database
+# failure keeps its code and detail; a launch the owner does not own, or
+# one with no program, refuses as an absent session source.
+def launch_source_program_sql(+canonical: String, +owner: String) -> String:
+  "SELECT hex(json_extract(q.request_json,'$.subject.program'))"
+  ++ " FROM semantic_queries q JOIN semantic_runtimes r ON r.launch_query=q.id"
+  ++ " WHERE r.owner=" ++ ContextCommands.q(owner)
+  ++ " AND q.owner=r.owner"
+  ++ " AND json_extract(q.request_json,'$.subject.program') IS NOT NULL"
+  ++ " AND r.id=json_extract(" ++ ContextCommands.q(canonical)
+  ++ ",'$.subject.session');"
+
+def launch_source_program_field(+hex: String) -> IO(String):
+  +field : CoreCodec.FieldText = CoreCodec.text_field(hex)
+  match field:
+    case CoreCodec.FtBad{condition}: IO.die(String, 3, "runtimeSessionSource:" ++ condition)
+    case CoreCodec.FtText{+program}: IO.pure(String, program)
+
+def launch_source_program_result(result: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.die(String, code, "runtimeSessionSource:" ++ detail)
+    case Done{+text}:
+      match Tx.split_tabs(Tx.trim_nl(text)):
+        case +hex <> Nil{}:
+          Bool.pick(IO(String), String.is_empty(hex),
+            IO.die(String, 3, "runtimeSessionLaunchAbsent"),
+            launch_source_program_field(hex))
+        case other: IO.die(String, 3, "runtimeSessionLaunchAbsent")
+
+def launch_source_program(+db: String, +binding: String, +canonical: String,
+                          +owner: String) -> IO(String):
+  do IO<String>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+      launch_source_program_sql(canonical, owner))
+    launch_source_program_result(result)
+
+def query_runtime_source_path(+db: String, +binding: String, +owner: String,
+                              +request: NativeRequest.RequestDecode) -> IO(String):
+  +subject_path : String = NativeRequest.decoded_subject_path(request)
+  +canonical : String = NativeRequest.decoded_canonical(request)
+  Bool.pick(IO(String), String.is_empty(subject_path),
+    launch_source_program(db, binding, canonical, owner),
+    IO.pure(String, subject_path))
+
 def query_environment_runtime(+db: String, +binding: String, +owner: String,
                               +query: String, +cwd: String, +worktree: String,
                               +request: NativeRequest.RequestDecode,
@@ -1784,10 +2211,11 @@ def query_environment_runtime(+db: String, +binding: String, +owner: String,
           ProviderRuntime{path, version})
         policy : ProjectPolicyAnswer <- observe_project_policy(db, binding,
           executable, cwd, owner, worktree, ProviderRuntime{path, version})
+        source_path : String <- query_runtime_source_path(db, binding, owner, request)
         source : BoundaryPath <- query_boundary(db, binding, executable, cwd,
           owner, worktree, query, True{},
           query_source_request(owner, worktree, NativeRequest.decoded_cwd(request),
-            NativeRequest.decoded_subject_path(request)), ProviderRuntime{path, version})
+            source_path), ProviderRuntime{path, version})
         artifact : BoundaryPath <- query_boundary(db, binding, executable, cwd,
           owner, worktree, query, False{},
           query_artifact_request(owner, worktree, query), ProviderRuntime{path, version})

@@ -232,6 +232,11 @@ def decoded_subject_path(decoded: RequestDecode) -> String:
     case RequestDecoded{canonical, operands, operation_chain, cwd, source_path}: source_path
     case RequestDecodeRefused{condition}: SNil{}
 
+def decoded_canonical(decoded: RequestDecode) -> String:
+  match decoded:
+    case RequestDecoded{canonical, operands, operation_chain, cwd, source_path}: canonical
+    case RequestDecodeRefused{condition}: SNil{}
+
 def decoded_cwd(decoded: RequestDecode) -> String:
   match decoded:
     case RequestDecoded{canonical, operands, operation_chain, cwd, source_path}: cwd

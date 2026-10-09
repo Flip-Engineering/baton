@@ -4,6 +4,7 @@ import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../git/text.bend as Tx
+import ../context/native-runtime.bend as ContextRuntime
 
 # The session lock owner publishes one current attempt before it launches.
 # Stop and attempt admission use the same database transaction order.
@@ -128,5 +129,6 @@ def run(+db: String, +session: String, +id: String, +reason: String, force: Bool
     error : String <- IO.try(String,request(db,session,id,reason,force))
     checked : Unit <- validate(error)
     reconciled : Unit <- reconcile_request(db,session)
+    runtime_stopped : Unit <- ContextRuntime.runtime_stop_owner(db,session)
     result : String <- IO.try(String,DB.Sql.query(db,result_sql(session)))
     IO.write(result)

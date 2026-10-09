@@ -112,6 +112,14 @@ export async function runSelectedInvocation(invocation, { wrapperPath = fileURLT
   }
 }
 
+export async function runSelectedRuntimeAdapterFile(path, { wrapperPath = fileURLToPath(import.meta.url) } = {}) {
+  const setup = JSON.parse(readFileSync(path, 'utf8'));
+  const selected = resolveSelectedPackageRoot(wrapperPath, setup.invocation?.moduleBinding?.id);
+  if (selected.status !== 'resolved') throw new Error(selected.reason);
+  const provider = await import(pathToFileURL(realpathSync(join(selected.root, 'native-provider.mjs'))).href);
+  await provider.runRuntimeAdapter({ setup });
+}
+
 // Selected producers with capture support contribute their own records.
 // Acquisition failures propagate; providers without this capability contribute none.
 export async function captureSelectedInputs(invocation, { wrapperPath = fileURLToPath(import.meta.url) } = {}) {
@@ -170,7 +178,9 @@ export function verifyInvocationArtifact(path, options = {}) {
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  if (process.argv[2] === '--inventory') {
+  if (process.argv[2] === '--runtime-adapter-file') {
+    await runSelectedRuntimeAdapterFile(process.argv[3]);
+  } else if (process.argv[2] === '--inventory') {
     const result = installedModuleInventory();
     process.stdout.write(`${JSON.stringify(result)}\n`);
     if (result.status === 'refused') process.exitCode = 2;

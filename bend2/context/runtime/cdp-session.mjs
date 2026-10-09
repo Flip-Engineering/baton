@@ -422,6 +422,9 @@ export function createAdapterSession({
       const admitted = admitControlRequest(record, method, params, effects, workerSessions());
       if (!admitted.ok) throw new SessionRefusal(admitted.condition, admitted.detail);
       const connection = requireTransport();
+      if (method === 'Runtime.runIfWaitingForDebugger' && record.state === 'waitingForStart') {
+        apply({ type: 'startReleaseSent' });
+      }
       publish({ query, type: 'accepted', payload: { state: record.state } });
       try {
         const result = await connection.send(method, params);

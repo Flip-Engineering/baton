@@ -1,0 +1,252 @@
+{
+  "schema": "baton2-native-module-declaration-v1",
+  "moduleId": "runtime",
+  "revision": "development",
+  "protocolVersion": "2",
+  "packageIdentity": "sha256:ab2cf408bb1bac8e3f0babec8b3c21aaf858fb01ef046f739b79052530881655",
+  "entry": {
+    "artifact": "native-provider.mjs",
+    "argv": []
+  },
+  "artifactIdentities": [
+    {
+      "packagePath": "native-provider.mjs",
+      "sha256": "b19ec54add93302647d1ecea73bfe872745b41e6ca30ccf44f79a13f54abd042",
+      "role": "provider"
+    },
+    {
+      "packagePath": "bootstrap.mjs",
+      "sha256": "27de77d699d921e4b6c16c7ec5265eb64578494f0c4410d0dc2180e46c9a0b6f",
+      "role": "runtime-support"
+    },
+    {
+      "packagePath": "bootstrap-admission.mjs",
+      "sha256": "843f84e13f9ba960bf0a44bc2cce9fcc1f66fa00023be4f73c7f3cf876b1f35c",
+      "role": "runtime-support"
+    },
+    {
+      "packagePath": "cdp-counter.mjs",
+      "sha256": "8b90a4f180a46f72bf40bde80f7710988a0a61c7a40aff946eb40e98b114dee0",
+      "role": "runtime-support"
+    },
+    {
+      "packagePath": "cdp-endpoint.mjs",
+      "sha256": "921b23c525c85acd3599e25352d6d52e3001e4849066b0541e4dc61a0faf033d",
+      "role": "runtime-support"
+    },
+    {
+      "packagePath": "cdp-intents.mjs",
+      "sha256": "b0ace58e32604d044f6c132e8d3f1a3d5889aa36321c42b4b0a830f814152462",
+      "role": "runtime-support"
+    },
+    {
+      "packagePath": "cdp-protocol.mjs",
+      "sha256": "91cdea3d7726f9065f6dcc4512dbae02f7cc134c6081b39d1286ea43a437be6f",
+      "role": "runtime-support"
+    },
+    {
+      "packagePath": "cdp-refs.mjs",
+      "sha256": "f033f1742b8800de44021278ff4bd0bb5a37fd50746a16357d122f49a84fb0fc",
+      "role": "runtime-support"
+    },
+    {
+      "packagePath": "cdp-scripts.mjs",
+      "sha256": "fb6945438741b7f54c8b7fda8025e430ea312a12c6218b7a7bd0a6053999a8c2",
+      "role": "runtime-support"
+    },
+    {
+      "packagePath": "cdp-session.mjs",
+      "sha256": "1158ccfbac98863449abee69fcdd94e85bb348a53c6908fc43eb077c8f58c43a",
+      "role": "runtime-support"
+    },
+    {
+      "packagePath": "cdp-state.mjs",
+      "sha256": "4c0c26a5241bc58c783baff2732fa21b21230144095996fb8256f691f79f10bc",
+      "role": "runtime-support"
+    },
+    {
+      "packagePath": "cdp-transport.mjs",
+      "sha256": "b147efcd0fdf5e9d3452e203d7ab241da708b945d991ab9061e68557d850592b",
+      "role": "runtime-support"
+    },
+    {
+      "packagePath": "observations.mjs",
+      "sha256": "0a8b0bda3d99a3c3724ce6e1f9c939333cf10d0f29e4495c2c6b12e61142675c",
+      "role": "runtime-support"
+    },
+    {
+      "packagePath": "values.mjs",
+      "sha256": "f862f17190a6cf9a19df1b06008880b35a94e7949547f8cde70c097f879b7154",
+      "role": "runtime-support"
+    },
+    {
+      "packagePath": "session-observations.mjs",
+      "sha256": "692cdb32524a68e71870bd03b2a0a93e3e44a08c768e97f277d4f08cb57861ca",
+      "role": "runtime-support"
+    }
+  ],
+  "dependencies": [],
+  "schemaIdentities": [
+    "baton2.context.runtime.subject.v1",
+    "baton2.context.runtime.options.v1",
+    "baton2.context.runtime.result.v1",
+    "baton2.context.runtime.reference.v1",
+    "baton2.context.runtime.event.v1"
+  ],
+  "applicability": [
+    {
+      "kind": "subject",
+      "value": "runtime"
+    }
+  ],
+  "operations": [
+    {
+      "schema": "baton2-native-operation-v1",
+      "operation": "runtimeLaunch",
+      "implements": "runtimeLaunch",
+      "subjectSchema": "baton2.context.runtime.subject.v1",
+      "optionsSchema": "baton2.context.runtime.options.v1",
+      "projections": [
+        "state",
+        "frames",
+        "scopes",
+        "values",
+        "threads",
+        "exception"
+      ],
+      "effects": [
+        "controlRuntime"
+      ],
+      "execution": "runtime",
+      "resultSchema": "baton2.context.runtime.result.v1",
+      "referenceSchema": "baton2.context.runtime.reference.v1",
+      "eventSchema": "baton2.context.runtime.event.v1",
+      "lifetimeProfile": "session-owned-target",
+      "dependencies": []
+    },
+    {
+      "schema": "baton2-native-operation-v1",
+      "operation": "runtimeObserve",
+      "implements": "runtimeObserve",
+      "subjectSchema": "baton2.context.runtime.subject.v1",
+      "optionsSchema": "baton2.context.runtime.options.v1",
+      "projections": [
+        "state",
+        "frames",
+        "scopes",
+        "values",
+        "threads",
+        "exception"
+      ],
+      "effects": [],
+      "execution": "runtime",
+      "resultSchema": "baton2.context.runtime.result.v1",
+      "referenceSchema": "baton2.context.runtime.reference.v1",
+      "eventSchema": "baton2.context.runtime.event.v1",
+      "lifetimeProfile": "session-owned-target",
+      "dependencies": []
+    },
+    {
+      "schema": "baton2-native-operation-v1",
+      "operation": "runtimePause",
+      "implements": "runtimePause",
+      "subjectSchema": "baton2.context.runtime.subject.v1",
+      "optionsSchema": "baton2.context.runtime.options.v1",
+      "projections": [
+        "state",
+        "frames",
+        "scopes",
+        "values",
+        "threads",
+        "exception"
+      ],
+      "effects": [
+        "controlRuntime"
+      ],
+      "execution": "runtime",
+      "resultSchema": "baton2.context.runtime.result.v1",
+      "referenceSchema": "baton2.context.runtime.reference.v1",
+      "eventSchema": "baton2.context.runtime.event.v1",
+      "lifetimeProfile": "session-owned-target",
+      "dependencies": []
+    },
+    {
+      "schema": "baton2-native-operation-v1",
+      "operation": "runtimeResume",
+      "implements": "runtimeResume",
+      "subjectSchema": "baton2.context.runtime.subject.v1",
+      "optionsSchema": "baton2.context.runtime.options.v1",
+      "projections": [
+        "state",
+        "frames",
+        "scopes",
+        "values",
+        "threads",
+        "exception"
+      ],
+      "effects": [
+        "controlRuntime"
+      ],
+      "execution": "runtime",
+      "resultSchema": "baton2.context.runtime.result.v1",
+      "referenceSchema": "baton2.context.runtime.reference.v1",
+      "eventSchema": "baton2.context.runtime.event.v1",
+      "lifetimeProfile": "session-owned-target",
+      "dependencies": []
+    },
+    {
+      "schema": "baton2-native-operation-v1",
+      "operation": "runtimeEvaluate",
+      "implements": "runtimeEvaluate",
+      "subjectSchema": "baton2.context.runtime.subject.v1",
+      "optionsSchema": "baton2.context.runtime.options.v1",
+      "projections": [
+        "state",
+        "frames",
+        "scopes",
+        "values",
+        "threads",
+        "exception",
+        "value"
+      ],
+      "effects": [
+        "controlRuntime",
+        "evaluateRuntime"
+      ],
+      "execution": "runtime",
+      "resultSchema": "baton2.context.runtime.result.v1",
+      "referenceSchema": "baton2.context.runtime.reference.v1",
+      "eventSchema": "baton2.context.runtime.event.v1",
+      "lifetimeProfile": "session-owned-target",
+      "dependencies": []
+    },
+    {
+      "schema": "baton2-native-operation-v1",
+      "operation": "runtimeRelease",
+      "implements": "runtimeRelease",
+      "subjectSchema": "baton2.context.runtime.subject.v1",
+      "optionsSchema": "baton2.context.runtime.options.v1",
+      "projections": [
+        "state",
+        "frames",
+        "scopes",
+        "values",
+        "threads",
+        "exception"
+      ],
+      "effects": [
+        "controlRuntime"
+      ],
+      "execution": "runtime",
+      "resultSchema": "baton2.context.runtime.result.v1",
+      "referenceSchema": "baton2.context.runtime.reference.v1",
+      "eventSchema": "baton2.context.runtime.event.v1",
+      "lifetimeProfile": "session-owned-target",
+      "dependencies": []
+    }
+  ],
+  "runtime": {
+    "name": "node",
+    "minimumVersion": "22.15"
+  }
+}

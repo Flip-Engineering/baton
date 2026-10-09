@@ -14,6 +14,7 @@ import ./usage.bend as Usage
 import ./../coordinator/logs.bend as Logs
 import ../coordinator/commands.bend as C
 import ../context/native.bend as ContextNative
+import ../context/native-runtime.bend as ContextRuntime
 import ./ui-view.bend as UiView
 import ./control.bend as Control
 import ./wake.bend as Wake
@@ -223,6 +224,8 @@ def cli(args: List<String>) -> IO(Unit):
   match args:
     case "--project" <> path <> rest: normal_cli(Con{"--project",Con{path,rest}})
     case flag <> database <> Nil{}: instance_owner_cli(database,flag)
+    case "--observe-context-runtime" <> db <> owner <> launch_query <> target_dir <> adapter_dir <> Nil{}:
+      ContextRuntime.runtime_recover(db, owner, launch_query, target_dir, adapter_dir)
     case flag <> db <> owner <> query <> directory <> worktree <> bootstrap_file <> Nil{}:
       recover_context_query_cli(flag, db, owner, query, directory, worktree,
         bootstrap_file)

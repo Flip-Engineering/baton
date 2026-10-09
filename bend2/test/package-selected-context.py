@@ -2,8 +2,10 @@ import importlib.util
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -29,7 +31,11 @@ class SelectedContextPackageTest(unittest.TestCase):
 
     def tearDown(self):
         PACKAGE.ROOT = self.previous_root
-        self.temp.cleanup()
+        if getattr(self, 'keep_runtime_workspace', False):
+            self.temp._finalizer.detach()
+            print(f'Runtime workspace retains cleanup evidence: {self.root}', flush=True)
+        else:
+            self.temp.cleanup()
 
     def test_stages_the_selected_provider_and_frontend_files(self):
         declaration = json.loads((self.root / 'bend2/context/bend2/selected-module.json').read_text())
@@ -200,6 +206,7 @@ class SelectedContextPackageTest(unittest.TestCase):
         try:
             PACKAGE.stage_adapters(self.payload)
             PACKAGE.stage_selected_context_payload(self.payload)
+            PACKAGE.stage_runtime_context_module(self.payload)
         finally:
             PACKAGE.ROOT = previous_root
 
@@ -292,6 +299,131 @@ class SelectedContextPackageTest(unittest.TestCase):
             self.assertEqual(payload['status'], 'completed', retained.stdout)
             self.assertTrue({'definition', 'type'}.issubset(
                 {fact['kind'] for fact in payload['facts']}), retained.stdout)
+
+        target = worktree / 'runtime-target.mjs'
+        shutil.copyfile(repository / 'bend2/context/runtime/cdp-fixture-longrun.mjs', target)
+        runtime = 'rt:installed-runtime-launch'
+        evidence_root = Path(os.environ.get('FINAL_NATIVE_CONTEXT_EVIDENCE', str(self.root)))
+        evidence = evidence_root / 'installed-runtime'
+        evidence.mkdir(parents=True, exist_ok=True)
+        transcript = evidence / 'commands.jsonl'
+
+        def retain_runtime_database():
+            with sqlite3.connect(database) as source, sqlite3.connect(evidence / 'state.db') as retained:
+                source.backup(retained)
+
+        def runtime_invoke(*args):
+            result = invoke(*args, cwd=worktree)
+            with transcript.open('a') as output:
+                output.write(json.dumps({'argv': [str(installed), str(database), *args],
+                                         'cwd': str(worktree), 'returncode': result.returncode,
+                                         'stdout': result.stdout, 'stderr': result.stderr}) + '\n')
+            if result.returncode != 0:
+                retain_runtime_database()
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return result
+
+        def runtime_result(query):
+            while True:
+                result = runtime_invoke('context-result', query)
+                envelope = json.loads(result.stdout)
+                self.assertEqual((envelope['query'], envelope['owner']),
+                                 (query, 'validation-owner'), result.stdout)
+                if envelope['state'] in ('accepted', 'running'):
+                    time.sleep(0.1)
+                    continue
+                self.assertEqual(envelope['state'], 'complete', result.stdout)
+                frame = envelope['result']
+                self.assertEqual((frame['version'], frame['query'], frame['owner']),
+                                 (2, query, 'validation-owner'), result.stdout)
+                self.assertEqual(frame['moduleBinding']['id'], 'runtime', result.stdout)
+                answer = frame['payload']
+                self.assertEqual(answer['schema'], 'baton2.context.runtime.result.v1', result.stdout)
+                self.assertEqual(answer['runtime'], runtime, result.stdout)
+                self.assertNotIn('refusal', answer, result.stdout)
+                return answer
+
+        def runtime_submit(query, subject, select, effects):
+            document = {'version': 1, 'engine': 'runtime', 'cwd': str(worktree),
+                        'subject': {'kind': 'runtime', **subject},
+                        'select': select, 'effects': effects}
+            path = evidence / f'{query}.json'
+            path.write_text(json.dumps(document) + '\n')
+            return runtime_invoke('context-query-file', 'validation-owner', query, str(path))
+
+        def runtime_cleanup():
+            while True:
+                with sqlite3.connect(database) as connection:
+                    connection.row_factory = sqlite3.Row
+                    rows = [dict(row) for row in connection.execute(
+                        "SELECT r.*,q.artifact_path FROM semantic_roles r "
+                        "JOIN semantic_queries q ON q.id=r.query_id "
+                        "WHERE r.query_id=? AND r.role IN ('target','adapter') ORDER BY r.role",
+                        ('installed-runtime-launch',))]
+                (evidence / 'roles.json').write_text(json.dumps(rows, indent=2) + '\n')
+                self.assertEqual(len(rows), 2, json.dumps(rows))
+                for row in rows:
+                    capture = json.loads(row['capture_json'] or '{}').get('stdout', {})
+                    copied = capture.get('copy', {})
+                    stderr_path = capture.get('stderrPath')
+                    if stderr_path and Path(stderr_path).is_file():
+                        shutil.copyfile(stderr_path, evidence / f"{row['role']}-copy.stderr")
+                    copy_failed = (copied.get('nativeStatus') not in (None, 'exit 0')
+                                   or any(copied.get(field) is not None for field in
+                                          ('spawnError', 'closeError', 'readError', 'waitError')))
+                    self.assertFalse(row['cleanup_phase'] == 'failed' or copy_failed, json.dumps(rows))
+                if all(row['cleanup_phase'] == 'released' for row in rows):
+                    for row in rows:
+                        output = Path(row['artifact_path']) / f"{row['role']}.stdout"
+                        self.assertTrue(output.is_file(), json.dumps(rows))
+                        shutil.copyfile(output, evidence / output.name)
+                    self.keep_runtime_workspace = False
+                    return
+                time.sleep(0.1)
+
+        self.keep_runtime_workspace = True
+        runtime_submit('installed-runtime-launch',
+                       {'intent': 'launch', 'program': str(target), 'args': [],
+                        'env': {'BATON_CDP_FIXTURE_MARKER': 'installed-runtime'},
+                        'onOwnerStop': 'terminate'}, ['state'], ['controlRuntime'])
+        try:
+            launched = runtime_result('installed-runtime-launch')
+            self.assertEqual(launched['intent'], 'launch', json.dumps(launched))
+            if launched['state'] != 'paused':
+                runtime_submit('installed-runtime-pause',
+                               {'intent': 'pause', 'session': runtime},
+                               ['state'], ['controlRuntime'])
+                paused = runtime_result('installed-runtime-pause')
+                self.assertEqual(paused['state'], 'paused', json.dumps(paused))
+            runtime_submit('installed-runtime-observe',
+                           {'intent': 'observe', 'session': runtime},
+                           ['state', 'frames', 'scopes', 'values', 'threads', 'exception'], [])
+            observed = runtime_result('installed-runtime-observe')
+            self.assertEqual((observed['intent'], observed['state']),
+                             ('observe', 'paused'), json.dumps(observed))
+            self.assertTrue(observed['frames'], json.dumps(observed))
+            self.assertTrue(observed['threads'], json.dumps(observed))
+            self.assertTrue(observed['scopes'], json.dumps(observed))
+            self.assertTrue(observed['records'], json.dumps(observed))
+            self.assertEqual(observed['identity']['runtime'], runtime, json.dumps(observed))
+            self.assertEqual(observed['identity']['epoch'], observed['epoch'], json.dumps(observed))
+            self.assertEqual(observed['capture']['epoch'], observed['epoch'], json.dumps(observed))
+            self.assertTrue(all(isinstance(row['response']['result'], list)
+                                for row in observed['records']), json.dumps(observed))
+        finally:
+            try:
+                runtime_submit('installed-runtime-release',
+                               {'intent': 'release', 'session': runtime,
+                                'onRelease': 'terminate', 'signal': 'SIGTERM'},
+                               ['state'], ['controlRuntime'])
+                released = runtime_result('installed-runtime-release')
+                self.assertEqual((released['intent'], released['state']),
+                                 ('release', 'exited'), json.dumps(released))
+                self.assertTrue(released['exit']['code'] is not None
+                                or released['exit']['signal'] is not None, json.dumps(released))
+                runtime_cleanup()
+            finally:
+                retain_runtime_database()
 
 if __name__ == '__main__':
     unittest.main()
