@@ -153,6 +153,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
         // about the requested file.
         return { status: 'absent', canonical: decoded.path };
       }
+      if (decoded.status === 'descriptor') return { status: 'undecodable', detail: `sourceInputKindUnsupported: ${decoded.kind}` };
       if (decoded.status !== 'bytes') return { status: 'undecodable', detail: decoded.detail === undefined ? decoded.reason : `${decoded.reason}: ${decoded.detail}` };
       // A source input is a file record carrying a content marker and the admitted canonical path. A
       // link record names a target and is not source bytes; a directory or configuration record

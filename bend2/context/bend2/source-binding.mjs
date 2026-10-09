@@ -434,11 +434,14 @@ export function decodeCoreCapture(record) {
   const path = typeof record.path === 'string' && record.path.length > 0 ? record.path : null;
   if (kind === 'absent') return Object.freeze({ status: 'absent', producer, path });
   if (kind !== 'file' && kind !== 'dir' && kind !== 'link' && kind !== 'config') return unavailable('captureKindUnsupported', kind);
+  const marker = typeof record.marker === 'string' && record.marker.length > 0 ? record.marker : null;
+  const role = typeof record.role === 'string' && record.role.length > 0 ? record.role : null;
+  // A link or directory record describes an identity, not bytes: its payload is not decoded, so a
+  // descriptor can never be mistaken for source content.
+  if (kind === 'link' || kind === 'dir') return Object.freeze({ status: 'descriptor', kind, path, marker, role, producer });
   const payload = record.payload;
   const encoding = record.payloadEncoding;
   if (typeof payload !== 'string') return unavailable('payloadMissing');
-  const marker = typeof record.marker === 'string' && record.marker.length > 0 ? record.marker : null;
-  const role = typeof record.role === 'string' && record.role.length > 0 ? record.role : null;
   if (encoding === 'base64') {
     if (payload.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) return unavailable('payloadEncodingInvalid', 'base64');
     const bytes = Buffer.from(payload, 'base64');

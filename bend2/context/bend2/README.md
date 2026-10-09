@@ -41,11 +41,13 @@ frontend read them.
 | `frontend-hook-events.mjs` | none |
 | `frontend-adapter.mjs` | `./source-binding.mjs`, `./frontend-hook-events.mjs` |
 | `frontend-hooks.mjs` | `node:crypto` |
+| `capture-records.mjs` | `node:crypto` |
 | `frontend-invocation.mjs` | `node:path` |
 | `frontend-invocation.harness.mjs` | `node:fs`, `node:crypto`, `node:os`, `node:path`, `node:url`, `./frontend-adapter.mjs`, `./frontend-hooks.mjs`, `./frontend-invocation.mjs` |
 | `fixtures/*.bend` | none |
 | `source-binding.test.mjs` | `node:test`, `node:assert/strict`, `./source-binding.mjs` |
 | `frontend-adapter.test.mjs` | `node:test`, `node:assert/strict`, `./frontend-adapter.mjs`, `./frontend-hook-events.mjs`, `./frontend-hooks.mjs` |
+| `capture-records.test.mjs` | `node:test`, `node:assert/strict`, `node:crypto`, `./capture-records.mjs`, `./source-binding.mjs`, `./frontend-adapter.mjs` |
 | `README.md` | none |
 
 ## API
@@ -257,6 +259,34 @@ conflict, both PROOF/LAWS outcomes, the hole refusal, a second adapter refused w
 hook, a throwing installation, and an ownerless installation. Each case asserts its own intended
 status, phase, diagnostic identity and mapped span, completeness, preserved hook owner and closed
 session; the run exits non-zero and names the failed claim. Its stdout is one JSON report.
+
+`capture-records.mjs` is the producer counterpart of that consumer. It turns exact accepted bytes and an
+admitted canonical identity into the nine rendered capture-record fields, so a caller can carry the
+captures into a plan without losing bytes:
+
+```text
+captureRecord({ identity, bytes, role, kind, target, marker, producer, encoding })
+  -> frozen {captureKind, role, path, marker, payload, payloadEncoding,
+             producerModule, producerDigest, producerOperation}, or an unavailable outcome
+encodeExactBytes(bytes, encoding)   -> {status: "encoded", payload, payloadEncoding}; base64 or hex,
+                                       each verified to reproduce the bytes, others refused
+producerOf(producer)                -> unclaimed, or a complete claimed triple, or producerIncomplete
+createCaptureRecords({ acquisition, encoding, role })
+  .acquire(identity) -> {status: "captured"|"absent"} or an unavailable outcome with its reason
+  .claim(identity, producer) -> a new record carrying the producing triple
+  .records() -> the immutable records produced so far
+```
+
+A file or configuration record carries the content digest as its marker and the exact bytes in a
+lossless encoding; a link record carries its resolved target and no payload; a directory record carries
+the admitted digest the caller supplies; an absent record carries the literal marker `absent` and names
+the input it is an absence of. Absent, unavailable and conflict stay distinct and are values rather than
+thrown exceptions, one acquisition is made per requested name, and a reader that throws is counted once
+with its reason. There is no filesystem fallback and no custody claim: the producing triple is attached
+only from the frozen step the caller holds, so a capture made before selection stays unclaimed and its
+stored record is never mutated. The intended order is acquire with the producer fields unclaimed, then
+select, then attach the frozen step's binding and result schema at plan freeze, whose comparison must
+refuse a record whose claimed binding is no longer the frozen one.
 
 The same command with `target: 'main'` derives the main-side hooks. In source, every hook path consults
 the installed sink before it does anything, a declining or absent sink leaves the pre-existing path in
