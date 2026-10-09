@@ -22,7 +22,7 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: e9ac5cabc7bca4e9fd9cbed82c8190a9bb2315cd
+  PRODUCT_SOURCE_SHA: 3a36a5425fdb126f7a3648376c5602c5938f3c02
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
 
@@ -180,6 +180,15 @@ jobs:
           curl --proto '=https' --tlsv1.2 -fsSL \
             https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
             -o "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/compiler.tar.gz"
+      - name: Install the selected TypeScript compiler
+        if: ${{ github.event_name == 'push' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-runtime" \
+            --ignore-scripts --no-audit --no-fund typescript@5.9.3 \
+            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-install.stdout" \
+            2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-install.stderr"
       - name: Compile and package Darwin executable
         if: ${{ github.event_name == 'push' }}
         shell: bash
@@ -191,6 +200,7 @@ jobs:
             --output "$FINAL_NATIVE_CONTEXT_EVIDENCE/package" \
             --bend "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" \
             --compiler-archive "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/compiler.tar.gz" \
+            --context-typescript-package "$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-runtime/node_modules/typescript" \
             --generated-c "$GITHUB_WORKSPACE/generated/baton2.c" \
             > "$FINAL_NATIVE_CONTEXT_EVIDENCE/package.stdout" \
             2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/package.stderr"
@@ -324,8 +334,13 @@ jobs:
                   bend2/test/ui-orchestra-server.test.mjs bend2/test/context-project-policy.test.mjs
               ;;
             selected-context-package)
+              "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" selected-typescript-install \
+                npm install --prefix "$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-runtime" \
+                  --ignore-scripts --no-audit --no-fund typescript@5.9.3
               "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" selected-context-package \
-                env PYTHONUNBUFFERED=1 python3 -u bend2/test/package-selected-context.py -v
+                env PYTHONUNBUFFERED=1 \
+                BATON2_CONTEXT_TYPESCRIPT="$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-runtime/node_modules/typescript" \
+                python3 -u bend2/test/package-selected-context.py -v
               ;;
             *)
               "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" '${{ matrix.suite }}' \
