@@ -2,7 +2,7 @@
 
 The coordinator returns the delivery result for an admitted message. Registered CLI
 sessions receive through their endpoint; an endpointless Codex thread uses the public
-daemon queue. Fixtures cover receipt ownership, parent reports and continued input.
+managed lifecycle. Fixtures cover receipt ownership, parent reports and continued input.
 """
 import importlib.util
 import json
@@ -225,24 +225,63 @@ class RootWake(unittest.TestCase):
             self.assertTrue(all(stored[ident]['recipient'] == session for ident in own),
                             f'{session} consumed a row addressed to another session')
 
-    def public_queue(self):
+    def public_proxy(self):
         queued = self.directory / 'queue-arguments.json'
         refused = self.directory / 'queue-refused'
         command = self.directory / 'codex'
-        command.write_text('#!' + sys.executable + '\n'
-                           + 'import json,pathlib,sys\n'
-                           + f'with pathlib.Path({str(queued)!r}).open("a") as calls:\n'
-                           + '    calls.write(json.dumps(sys.argv[1:]) + chr(10))\n'
-                           + f'if pathlib.Path({str(refused)!r}).exists():\n'
-                           + '    print(\'Error: {"code":-32600,"message":"Queue is full (100 queued messages)"}\', file=sys.stderr, flush=True)\n'
-                           + '    sys.exit(23)\n'
-                           + 'print("Queued message fixture-submission for thread native-app-root", flush=True)\n')
+        command.write_text('#!' + sys.executable + '\n' + '''
+import base64,hashlib,json,pathlib,struct,sys
+assert sys.argv[1:]==['app-server','proxy'], sys.argv
+def exact(n):
+    data=b''
+    while len(data)<n:
+        part=sys.stdin.buffer.read(n-len(data))
+        if not part: raise EOFError('fixture input closed')
+        data+=part
+    return data
+def reply(value):
+    payload=json.dumps(value).encode()
+    n=len(payload)
+    size=bytes([n]) if n<126 else bytes([126])+struct.pack('!H',n) if n<65536 else bytes([127])+struct.pack('!Q',n)
+    sys.stdout.buffer.write(bytes([129])+size+payload)
+    sys.stdout.buffer.flush()
+header=b''
+while not header.endswith(b'\\r\\n\\r\\n'):header+=exact(1)
+key=next(line.split(b':',1)[1].strip() for line in header.split(b'\\r\\n') if line.lower().startswith(b'sec-websocket-key:'))
+accept=base64.b64encode(hashlib.sha1(key+b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())
+sys.stdout.buffer.write(b'HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: '+accept+b'\\r\\n\\r\\n')
+sys.stdout.buffer.flush()
+while True:
+    a,b=exact(2)
+    n=b&127
+    if n==126:n=struct.unpack('!H',exact(2))[0]
+    elif n==127:n=struct.unpack('!Q',exact(8))[0]
+    mask=exact(4) if b&128 else None
+    data=exact(n)
+    if mask:data=bytes(v^mask[i%4] for i,v in enumerate(data))
+    if a&15==8:break
+    request=json.loads(data)
+    method=request['method']
+    if 'id' not in request:continue
+    if method=='initialize':result={}
+    elif method=='thread/read':result={'thread':{'id':'native-app-root','status':{'type':'active'}}}
+    elif method=='thread/turns/list':result={'data':[{'id':'fixture-turn','status':'inProgress'}],'nextCursor':None}
+    elif method=='turn/steer':
+        with pathlib.Path(__QUEUED__).open('a') as calls:
+            calls.write(json.dumps(request)+chr(10))
+        if pathlib.Path(__REFUSED__).exists():
+            reply({'id':request['id'],'error':{'code':-32600,'message':'Queue is full (100 queued messages)'}})
+            continue
+        result={'turnId':'fixture-turn'}
+    else:raise AssertionError(request)
+    reply({'id':request['id'],'result':result})
+'''.replace('__QUEUED__', repr(str(queued))).replace('__REFUSED__', repr(str(refused))))
         command.chmod(0o700)
         self.environment['PATH'] = str(self.directory) + os.pathsep + self.environment.get('PATH', '')
         return queued, refused
 
     def test_endpointless_codex_root_coalesces_owed_input_until_recipient_progress(self):
-        queued, _ = self.public_queue()
+        queued, _ = self.public_proxy()
         self.coord('attach', 'root', 'codex', '', '')
         self.recruit('child', 'root', 'omp')
         owed = {'app-root-early-' + str(index): 'Earlier child work ' + str(index)
@@ -266,20 +305,22 @@ class RootWake(unittest.TestCase):
             self.assertEqual(child.returncode, 0, stderr)
         owed.update(additions)
         delivery_log = pathlib.Path(str(self.db) + '.root.log')
-        self.eventually(lambda: delivery_log.exists() and 'fixture-submission' in delivery_log.read_text(),
-                        'the queue submission result was not retained')
+        self.eventually(lambda: delivery_log.exists() and 'codexInboxAdmission' in delivery_log.read_text(),
+                        'the public input admission result was not retained')
         self.eventually(lambda: not any('--dispatch-message' in process['command']
                                         for process in self.owned_processes()),
-                        'the queue delivery process did not finish')
+                        'the public delivery process did not finish')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
         self.assertEqual(len(calls), 1, calls)
-        arguments = calls[0]
-        self.assertEqual(arguments[:6], ['queue', '--remote', 'unix://', '--thread',
-                                         'native-app-root', '--message'])
-        pointer = json.loads(arguments[6].splitlines()[1])
+        request = calls[0]
+        self.assertEqual(request['method'], 'turn/steer')
+        self.assertEqual(request['params']['threadId'], 'native-app-root')
+        self.assertEqual(request['params']['expectedTurnId'], 'fixture-turn')
+        text = request['params']['input'][0]['text']
+        pointer = json.loads(text.splitlines()[1])
         self.assertEqual(pointer, {'database': str(self.db), 'message': 'app-root-report',
                                    'recipient': 'root', 'pendingCount': 4})
-        self.assertIn('Read all owed input with baton2 DATABASE inbox RECIPIENT', arguments[6])
+        self.assertIn('Read all owed input with baton2 DATABASE inbox RECIPIENT', text)
         inbox = {message['id']: message for message in json.loads(self.coord('inbox', 'root'))}
         self.assertEqual(set(inbox), set(owed))
         for ident, body in owed.items():
@@ -294,14 +335,14 @@ class RootWake(unittest.TestCase):
         self.coord('report', 'app-root-after-progress', 'child', 'Continue after root progress.')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
         self.assertEqual(len(calls), 2, calls)
-        self.assertEqual(json.loads(calls[1][6].splitlines()[1])['pendingCount'], len(owed))
+        self.assertEqual(json.loads(calls[1]['params']['input'][0]['text'].splitlines()[1])['pendingCount'], len(owed))
         self.assertEqual(json.loads(self.coord('delivery', accepted))['receipt'],
                          'root reviewed this input')
         for ident in set(owed) - {accepted}:
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
 
-    def test_refused_codex_queue_preserves_pending_input_and_failure(self):
-        queued, refused_queue = self.public_queue()
+    def test_refused_codex_input_preserves_pending_input_and_failure(self):
+        queued, refused_queue = self.public_proxy()
         refused_queue.write_text('The public daemon queue is full.\n')
         self.coord('attach', 'root', 'codex', 'native-app-root', '')
         self.recruit('child', 'root', 'omp')
@@ -315,8 +356,8 @@ class RootWake(unittest.TestCase):
         self.assertIsNone(retained['receipt'])
         self.assertEqual(json.loads(self.coord('turns', 'root')), [])
         log = pathlib.Path(str(self.db) + '.root.log').read_text()
-        self.assertIn('exit 23', log)
-        cause = 'Error: {"code":-32600,"message":"Queue is full (100 queued messages)"}'
+        self.assertIn('exit 1', log)
+        cause = '{"code":-32600,"message":"Queue is full (100 queued messages)"}'
         self.assertIn(cause, log)
         self.assertTrue(any(cause in path.read_text()
                             for path in self.directory.glob('state.db.queue-*.stderr')))
@@ -335,11 +376,11 @@ class RootWake(unittest.TestCase):
         self.coord('resume', 'root')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
         self.assertEqual(len(calls), 2, calls)
-        self.assertEqual(calls[1][:6], ['queue', '--remote', 'unix://', '--thread',
-                                       'native-app-root', '--message'])
-        self.assertEqual(json.loads(calls[1][6].splitlines()[1])['message'],
+        self.assertEqual(calls[1]['method'], 'turn/steer')
+        self.assertEqual(calls[1]['params']['threadId'], 'native-app-root')
+        self.assertEqual(json.loads(calls[1]['params']['input'][0]['text'].splitlines()[1])['message'],
                          'refused-app-input')
-        self.assertEqual(json.loads(calls[1][6].splitlines()[1])['pendingCount'], 4)
+        self.assertEqual(json.loads(calls[1]['params']['input'][0]['text'].splitlines()[1])['pendingCount'], 4)
         owed = ['refused-app-input'] + ['refused-app-more-' + str(index) for index in range(3)]
         for ident in owed:
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
@@ -350,7 +391,7 @@ class RootWake(unittest.TestCase):
         self.coord('report', 'retry-after-root-progress', 'child', 'Read the remaining inbox.')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
         self.assertEqual(len(calls), 3, calls)
-        self.assertEqual(json.loads(calls[2][6].splitlines()[1])['pendingCount'], 4)
+        self.assertEqual(json.loads(calls[2]['params']['input'][0]['text'].splitlines()[1])['pendingCount'], 4)
         for ident in ['refused-app-more-' + str(index) for index in range(3)] + ['retry-after-root-progress']:
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
 

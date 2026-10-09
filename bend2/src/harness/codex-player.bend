@@ -1,5 +1,6 @@
 import Base
 import ../host/process.bend as P
+import ../host/session-lock.bend as Lock
 import ../json/canonical.bend as J
 
 def models_args(cmd: String) -> List<String>:
@@ -19,9 +20,46 @@ def start_player(cmd: String, model: String, effort: String, cwd: String, stderr
 def input(handle: U32, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.ProcessChild.write(handle,text)
 
-# The public Unix daemon queues input for the recorded Codex thread.
-def queue_admission(thread: String, pointer: String) -> List<String>:
-  ["codex","queue","--remote","unix://","--thread",thread,"--message",pointer]
+def wake_directory_step(+rest: String, +current: String, +last: String) -> String:
+  match rest:
+    case SNil{}: last
+    case SCon{+head,+tail}:
+      +next = current ++ SCon{head,SNil{}}
+      wake_directory_step(tail,next,Bool.pick(String,Char.is_eq(head,Char.from_u32(47)),next,last))
+
+def wake_directory(executable: String) -> String:
+  wake_directory_step(executable,"","")
+
+def wake_source_result(code: U32, detail: String, source: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,String>:
+  match source:
+    case Done{path}: Done{path}
+    case Fail{(source_code,source_detail)}:
+      Fail{(source_code,"Installed Codex inbox helper: " ++ U32.show(code) ++ ": " ++ detail ++ "\nSource Codex inbox helper: " ++ U32.show(source_code) ++ ": " ++ source_detail)}
+
+def wake_source_path(installed: Result<&1,&1,U32 & String,String>, source: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match installed:
+    case Done{path}: IO.pure(Result<&1,&1,U32 & String,String>,Done{path})
+    case Fail{(code,detail)}: do IO<Result<&1,&1,U32 & String,String>>:
+      resolved : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(source)
+      IO.pure(Result<&1,&1,U32 & String,String>,wake_source_result(code,detail,resolved))
+
+def wake_path(+executable: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    +directory : String = wake_directory(executable)
+    installed : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(directory ++ "../libexec/baton2/codex-inbox-wake.mjs")
+    wake_source_path(installed,directory ++ "../../bend2/scripts/codex-inbox-wake.mjs")
+
+def wake_start(path: Result<&1,&1,U32 & String,String>, thread: String, pointer: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  match path:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
+    case Done{script}: P.ProcessChild.spawn(P.argv(["node",script,thread,pointer]),".",stderr)
+
+def inbox_admission(executable: Result<&1,&1,U32 & String,String>, thread: String, pointer: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  match executable:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
+    case Done{path}: do IO<Result<&1,&1,U32 & String,U32>>:
+      script : Result<&1,&1,U32 & String,String> <- wake_path(path)
+      wake_start(script,thread,pointer,stderr)
 
 # The profile variant keeps the existing key unbinds first, then the profile's store
 # assignment, then the command: env parses its options before its operands, so a

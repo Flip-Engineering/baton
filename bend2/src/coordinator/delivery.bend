@@ -3,6 +3,7 @@ import ../coordinator/commands.bend as C
 import ../host/sqlite.bend as DB
 import ../host/text.bend as Text
 import ../host/process.bend as Child
+import ../host/session-lock.bend as Lock
 import ../git/process.bend as Process
 import ../git/text.bend as Tx
 import ../git/types.bend as T
@@ -100,7 +101,7 @@ def queue_claim_sql(+id: String, +condition: String, +recipient: String, +native
   ++ "SELECT CASE WHEN changes()=1 THEN (SELECT token FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ ") ELSE '' END;COMMIT;"
 
 def queue_pointer(db: String, id: String, recipient: String, pending: String) -> String:
-  "Baton input is pending.\n{\"database\":" ++ J.string_literal(db) ++ ",\"message\":" ++ J.string_literal(id) ++ ",\"recipient\":" ++ J.string_literal(recipient) ++ ",\"pendingCount\":" ++ pending ++ "}\nRead all owed input with baton2 DATABASE inbox RECIPIENT. Read any complete message with baton2 DATABASE delivery MESSAGE. Handle the work and acknowledge each of your own messages with baton2 DATABASE ack MESSAGE RECIPIENT RECEIPT. This notification records queue admission; Baton receipts remain pending until you accept the input."
+  "Baton input is pending.\n{\"database\":" ++ J.string_literal(db) ++ ",\"message\":" ++ J.string_literal(id) ++ ",\"recipient\":" ++ J.string_literal(recipient) ++ ",\"pendingCount\":" ++ pending ++ "}\nRead all owed input with baton2 DATABASE inbox RECIPIENT. Read any complete message with baton2 DATABASE delivery MESSAGE. Handle the work and acknowledge each of your own messages with baton2 DATABASE ack MESSAGE RECIPIENT RECEIPT. This notification records public input admission; Baton receipts remain pending until you accept the input."
 
 def queue_waited(output: String, result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,String>:
   match result:
@@ -155,14 +156,15 @@ def queue_recorded(+db: String, recipient: String, token: String, result: Result
       recorded : String <- IO.try(String,DB.Sql.query(db,"UPDATE codex_inbox_wakes SET cause=" ++ C.q(cause) ++ " WHERE session=" ++ C.q(recipient) ++ " AND token=" ++ C.q(token) ++ ";"))
       IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,cause)})
 
-# Queue stderr and stdout are retained with the submission result. Ordinary
+# Public lifecycle stderr and stdout are retained with the admission result. Ordinary
 # admissions share the notification; explicit resume retries a failed attempt.
 def queue_launch(+db: String, id: String, saved: String, native: String, +recipient: String, +token: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     pending : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE recipient=" ++ C.q(recipient) ++ " AND receipt IS NULL;"))
     pointer : String <- IO.pure(String,queue_pointer(db,id,recipient,Tx.trim_nl(pending)))
     +stderr : String <- IO.pure(String,db ++ ".queue-" ++ token ++ ".stderr")
-    spawned : Result<&1,&1,U32 & String,U32> <- Child.ProcessChild.spawn(Child.argv(Codex.queue_admission(native,pointer)),".",stderr)
+    executable : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.executable()
+    spawned : Result<&1,&1,U32 & String,U32> <- Codex.inbox_admission(executable,native,pointer,stderr)
     run : Result<&1,&1,U32 & String,String> <- queue_spawned(spawned)
     result : Result<&1,&1,U32 & String,String> <- queue_captured(db,saved,stderr,run)
     queue_recorded(db,recipient,token,result)
@@ -188,7 +190,7 @@ def queue_claimed(+db: String, +id: String, condition: String, saved: String, +n
 
 def queue_native(db: String, id: String, condition: String, saved: String, native: String, recipient: String, retry: Bool, absent: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match absent:
-    case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Message " ++ id ++ " is addressed to a Codex session that records no native session identity, so the public queue cannot address it. Connect an endpoint or record the session's native identity, then retry delivery from the pending inbox.")})
+    case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Message " ++ id ++ " is addressed to a Codex session that records no native session identity. Public Codex input requires that recorded identity. Connect an endpoint or record the session's native identity, then retry delivery from the pending inbox.")})
     case False{}: queue_claimed(db,id,condition,saved,native,recipient,retry)
 
 def codex_queue_mode(+db: String, +id: String, +condition: String, saved: String, retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
