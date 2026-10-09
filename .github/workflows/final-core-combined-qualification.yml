@@ -26,9 +26,11 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: ${{ inputs.fixture_source_sha || '250e0f9ad787c3eef3d35b75362d9c44c2a7dedf' }}
+  PRODUCT_SOURCE_SHA: ${{ inputs.fixture_source_sha || '5007e5369b4c3a5af60d0229af0bd55fd8071ef2' }}
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
+  CANONICAL_DARWIN_RUN_ID: '37979728140'
+  CANONICAL_DARWIN_SOURCE_SHA: '5007e5369b4c3a5af60d0229af0bd55fd8071ef2'
 
 jobs:
   build:
@@ -170,17 +172,42 @@ jobs:
           fi
           git -C owned rev-parse HEAD > "$evidence/source-commit.txt"
           uname -a > "$evidence/platform.txt"
-      - name: Download retained Darwin package for fixture recheck
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+      - name: Await the original Darwin package publication
+        if: ${{ github.event_name == 'push' && env.CANONICAL_DARWIN_RUN_ID }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          while :; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANONICAL_DARWIN_RUN_ID" \
+              > "$FINAL_NATIVE_CONTEXT_EVIDENCE/original-darwin-run.json"
+            status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' \
+              "$FINAL_NATIVE_CONTEXT_EVIDENCE/original-darwin-run.json")
+            if [[ "$status" == completed ]]; then
+              break
+            fi
+            sleep 60
+          done
+      - name: Download the original Darwin package
+        if: ${{ github.event_name == 'workflow_dispatch' || env.CANONICAL_DARWIN_RUN_ID }}
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          name: final-native-context-darwin-${{ env.PRODUCT_RUN_ID }}-${{ env.PRODUCT_RUN_ATTEMPT }}
-          run-id: ${{ env.PRODUCT_RUN_ID }}
+          name: ${{ github.event_name == 'workflow_dispatch' && format('final-native-context-darwin-{0}-{1}', env.PRODUCT_RUN_ID, env.PRODUCT_RUN_ATTEMPT) || format('baton2-development-darwin-arm64-{0}-1', env.CANONICAL_DARWIN_SOURCE_SHA) }}
+          run-id: ${{ github.event_name == 'workflow_dispatch' && env.PRODUCT_RUN_ID || env.CANONICAL_DARWIN_RUN_ID }}
           repository: Flip-Engineering/baton
           github-token: ${{ github.token }}
           path: ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/retained
+      - name: Install the selected TypeScript compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-runtime" \
+            --ignore-scripts --no-audit --no-fund typescript@5.9.3 \
+            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-install.stdout" \
+            2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-install.stderr"
       - name: Stage published assets with the retained Darwin executable
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event_name == 'workflow_dispatch' || env.CANONICAL_DARWIN_RUN_ID }}
         shell: bash
         run: |
           set -euo pipefail
@@ -216,6 +243,15 @@ jobs:
           asset_source = {'directory': str(source), **package.source_identity()}
           shutil.rmtree(payload / 'libexec/baton2')
           package.stage_adapters(payload)
+          typescript = source / 'bend2/context/typescript/selected-module.json'
+          declaration = json.loads(typescript.read_text())
+          module_root = payload / 'lib/context/modules' / package.module_directory_name(declaration['moduleId'])
+          if module_root.exists():
+              shutil.rmtree(module_root)
+          selected = package.stage_typescript_context_module(
+              payload, evidence / 'typescript-runtime/node_modules/typescript')
+          manifest['selected_modules'] = [item for item in manifest['selected_modules']
+                                          if item['path'] != selected['path']] + [selected]
           manifest['binary']['source'] = native_source
           manifest['source'] = asset_source
           manifest['created_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -223,8 +259,10 @@ jobs:
               'path': 'libexec/baton2', 'source': asset_source,
               'retained_archive': {
                   'path': str(archive), 'sha256': digest,
-                  'product_run_id': os.environ['PRODUCT_RUN_ID'],
-                  'product_run_attempt': os.environ['PRODUCT_RUN_ATTEMPT'],
+                  'product_run_id': (os.environ['PRODUCT_RUN_ID'] if os.environ['GITHUB_EVENT_NAME'] == 'workflow_dispatch'
+                                     else os.environ['CANONICAL_DARWIN_RUN_ID']),
+                  'product_run_attempt': (os.environ['PRODUCT_RUN_ATTEMPT'] if os.environ['GITHUB_EVENT_NAME'] == 'workflow_dispatch'
+                                         else '1'),
               },
           }
           package.write_json(payload / 'manifest.json', manifest)
@@ -246,13 +284,13 @@ jobs:
           PY
           printf 'PACKAGE_DIRECTORY=%s/package\n' "$FINAL_NATIVE_CONTEXT_EVIDENCE" >> "$GITHUB_ENV"
       - name: Download generated production C from this build
-        if: ${{ github.event_name == 'push' }}
+        if: ${{ github.event_name == 'push' && !env.CANONICAL_DARWIN_RUN_ID }}
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: final-native-context-binaries-${{ github.run_id }}-${{ github.run_attempt }}
           path: generated
       - name: Install Bend package notices
-        if: ${{ github.event_name == 'push' }}
+        if: ${{ github.event_name == 'push' && !env.CANONICAL_DARWIN_RUN_ID }}
         shell: bash
         run: |
           set -euo pipefail
@@ -262,17 +300,8 @@ jobs:
           curl --proto '=https' --tlsv1.2 -fsSL \
             https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
             -o "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/compiler.tar.gz"
-      - name: Install the selected TypeScript compiler
-        if: ${{ github.event_name == 'push' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install --prefix "$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-runtime" \
-            --ignore-scripts --no-audit --no-fund typescript@5.9.3 \
-            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-install.stdout" \
-            2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-install.stderr"
       - name: Compile and package Darwin executable
-        if: ${{ github.event_name == 'push' }}
+        if: ${{ github.event_name == 'push' && !env.CANONICAL_DARWIN_RUN_ID }}
         shell: bash
         run: |
           set -euo pipefail
