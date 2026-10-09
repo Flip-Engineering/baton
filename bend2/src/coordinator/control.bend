@@ -98,9 +98,9 @@ def configured_endpoint(+db: String, session: String, +cmd: String, log: String,
     checked : String & String <- identity_checked(identity,model)
     IO.pure(String,identity_endpoint(executable,database,session,native,output,model,checked))
 
-# A receiver starts a turn, so the session must be able to run one: a recorded
-# model for the adapter argv and a working directory for the child. A supplied
-# directory is recorded by the update below; otherwise the recorded one is read.
+# A receiver records the adapter argv and working directory for later delivery.
+# A supplied directory updates the assignment; an empty value keeps the recorded one.
+# Registration preserves explicit stops; the wake path reads them before delivery.
 def receiver_directory(+session: String, +cwd: String) -> String:
   "(CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN 1 ELSE (SELECT length(coalesce(workspace,''))>0 FROM sessions WHERE id=" ++ C.q(session) ++ ") END)"
 
@@ -108,11 +108,11 @@ def receiver_model(+session: String) -> String:
   "(SELECT length(coalesce(model,''))>0 FROM sessions WHERE id=" ++ C.q(session) ++ ")"
 
 def receiver_admitted(+session: String, +endpoint: String, +cwd: String) -> String:
-  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ receiver_model(session) ++ " AND " ++ receiver_directory(session,cwd) ++ ")"
+  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code')) AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ receiver_model(session) ++ " AND " ++ receiver_directory(session,cwd) ++ ")"
 
 def receiver_update_sql(+session: String, +endpoint: String, +cwd: String, +admitted: String) -> String:
   "UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
-  ++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered, active Codex, OMP, Muse or Claude Code session with a recorded model, a working directory and valid text argv.','next','Record the model and working directory with start SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE when the session records none, or pass the CWD argument when only the directory is missing. Then inspect the session and retained inbox and retry; recruit a new session after a terminal stop.') WHERE NOT " ++ admitted ++ ";"
+  ++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered Codex, OMP, Muse or Claude Code session with a recorded model, a working directory and valid text argv.','next','Record the model and working directory with start SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE when the session records none, or pass the CWD argument when only the directory is missing. Inspect the session and retained inbox and retry. Receiver registration preserves an explicit stop; resume SESSION --lift-stop explicitly lifts it and continues pending work.') WHERE NOT " ++ admitted ++ ";"
   ++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ "),'workspace',(SELECT workspace FROM sessions WHERE id=" ++ C.q(session) ++ ")) WHERE " ++ admitted ++ ";"
 
 def receiver_sql(+session: String, +endpoint: String, +cwd: String) -> String:

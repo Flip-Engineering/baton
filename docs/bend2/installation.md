@@ -131,8 +131,10 @@ baton2 /absolute/path/state.db receiver SESSION /recorded/harness /recorded/outp
 
 Omitting CWD retains the actor's workspace and branch. `receiver` retains its
 native conversation, parent, model, effort, pending input and explicit stops;
-stopped actors refuse receiver registration. An accepted registration can
-continue pending input through the recorded actor. Existing observers and
+stopped actors can refresh their receiver while the stop remains recorded.
+`resume SESSION --lift-stop` explicitly lifts the stop and continues pending
+input through the same conversation. An accepted registration for an unstopped
+actor can continue its pending input. Existing observers and
 attempt recovery commands finish under their admitted executable.
 
 The [historical installation qualification](native-installation-2026-10-02/README.md)

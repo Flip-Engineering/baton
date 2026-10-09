@@ -378,7 +378,7 @@ class Control(unittest.TestCase):
         self.assertFalse(self.dispatch_log('conflicting-task').exists())
         self.assertIsNone(self.call('delivery', 'pending-task')['receipt'])
 
-    def test_receiver_refuses_unsupported_stopped_and_missing_sessions(self):
+    def test_receiver_refreshes_stopped_and_refuses_unsupported_or_missing_sessions(self):
         self.root()
         harness = 'unsupported-harness'
         self.call('attach', harness, harness, 'saved-' + harness, '')
@@ -386,15 +386,26 @@ class Control(unittest.TestCase):
         self.call('receiver', harness, self.fixture, self.directory / (harness + '.jsonl'), ok=False)
         self.assertEqual(self.call('player', harness), before)
         self.recruit('stopped')
+        self.call('connect', 'stopped', 'saved-stopped-native', '')
         self.call('message', 'retained', 'root', 'stopped', 'task', self.task.read_text())
         self.call('stop', 'stopped', 'idle-stop', 'Controlled idle stop.')
         before = self.call('player', 'stopped')
-        self.call('receiver', 'stopped', self.fixture, self.directory / 'stopped.jsonl', ok=False)
+        stops = self.rows('SELECT * FROM session_stops WHERE session=?', ('stopped',))
+        self.receiver('stopped')
+        refreshed = self.call('player', 'stopped')
+        for field in ('id', 'parent', 'native', 'harness', 'model', 'effort',
+                      'workspace', 'branch', 'base', 'stop'):
+            self.assertEqual(refreshed[field], before[field])
         self.call('receiver', 'stopped', self.fixture, self.directory / 'stopped.jsonl',
-                  self.repo, ok=False)
+                  self.repo)
+        moved = self.call('player', 'stopped')
+        self.assertEqual(moved['workspace'], str(self.repo.resolve()))
+        for field in ('id', 'parent', 'native', 'harness', 'model', 'effort', 'base', 'stop'):
+            self.assertEqual(moved[field], before[field])
         self.call('dispatch-turn', 'stopped', 'refused-turn', self.fixture,
                   self.directory / 'stopped.jsonl', self.task, ok=False)
-        self.assertEqual(self.call('player', 'stopped'), before)
+        self.assertEqual(self.call('player', 'stopped'), moved)
+        self.assertEqual(self.rows('SELECT * FROM session_stops WHERE session=?', ('stopped',)), stops)
         self.assertIsNone(self.call('delivery', 'retained')['receipt'])
         self.call('receiver', 'missing', self.fixture, self.directory / 'missing.jsonl', ok=False)
         self.assertEqual(self.rows('SELECT * FROM executions'), [])
@@ -571,6 +582,17 @@ class Control(unittest.TestCase):
         self.assertEqual(self.call('session', stopped)['native'], 'saved-stopped-project-native')
         self.assertEqual(self.rows('SELECT id FROM session_stops WHERE session=?',
                                    (stopped,)), [{'id': 'project-stop'}])
+        refreshed_log = self.directory / 'project-stopped-refreshed.jsonl'
+        refreshed = self.call('receiver', stopped, self.fixture, refreshed_log)
+        self.assertEqual(refreshed['endpoint'], [str(EXE.resolve()), str(self.db.resolve()),
+                                                'receive', stopped, str(self.fixture.resolve()),
+                                                '', '', '', str(refreshed_log.resolve())])
+        self.assertEqual(self.rows('SELECT id,status FROM executions WHERE session=?', (stopped,)),
+                         [{'id': 'project-stopped-turn', 'status': 'exit 143'}])
+        self.assertEqual(self.rows('SELECT id FROM session_stops WHERE session=?',
+                                   (stopped,)), [{'id': 'project-stop'}])
+        self.assertIsNone(self.call('delivery', 'project-stopped-task')['receipt'])
+        self.assertEqual(self.call('session', stopped)['native'], stopped_native['native'])
         lifted = subprocess.Popen([str(EXE), '--project', stopped_assignment['workspace'],
                                    'resume', stopped, '--lift-stop'], env=self.environment,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

@@ -28,7 +28,7 @@ def stopped(+db: String, +session: String) -> IO(Bool):
 
 def lift_completed(saved: Result<&1,&1,U32 & String,String>, released: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match saved:
-    case Done{output}: IO.try(Unit,released)
+    case Done{output}: IO.pass(Unit,released)
     case Fail{(code,cause)}: match released:
       case Done{unit}: IO.die(Unit,code,cause)
       case Fail{(release_code,release_cause)}: IO.die(Unit,code,cause ++ "\nSession lock release failed: " ++ U32.show(release_code) ++ ": " ++ release_cause)
