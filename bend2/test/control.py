@@ -545,18 +545,49 @@ class Control(unittest.TestCase):
         self.assertEqual(self.call('inbox', session), [])
 
         stopped = 'project-stopped-muse'
-        self.recruit(stopped, 'muse')
+        stopped_assignment = self.recruit(stopped, 'muse')
         self.call('connect', stopped, 'saved-stopped-project-native', '')
         self.call('message', 'project-stopped-task', 'root', stopped, 'task',
                   'This input remains recorded under the operator stop.')
+        stopped_log = self.receiver(stopped)
+        self.dispatch('dispatch-turn', stopped, 'project-stopped-turn',
+                      self.fixture, stopped_log, self.task)
+        stopped_stream, stopped_native = self.accept(stopped)
+        unfinished = pathlib.Path(stopped_assignment['workspace']) / 'unfinished.txt'
+        unfinished.write_text('Preserved work from the stopped conversation.\n')
         self.call('stop', stopped, 'project-stop', 'Operator stopped this project session.')
+        stopped_attempt = self.eventually(lambda: next((row for row in self.rows(
+            'SELECT * FROM executions WHERE session=?', (stopped,))
+            if row['phase'] == 'exited'), None))
+        self.assertEqual(stopped_attempt['status'], 'exit 143')
+        self.eventually(lambda: (pathlib.Path(stopped_attempt['directory']) / 'acknowledged').exists())
+        report_id = 'stop-result:' + 'project-stop'.encode().hex()
+        stop_report = self.call('delivery', report_id)
         refusal = self.project_call(self.repo, 'resume', stopped, ok=False)
         self.assertIn('terminally stopped', refusal['stderr'])
-        self.assertEqual(self.rows('SELECT * FROM executions WHERE session=?', (stopped,)), [])
+        self.assertEqual(self.rows('SELECT id,status FROM executions WHERE session=?', (stopped,)),
+                         [{'id': 'project-stopped-turn', 'status': 'exit 143'}])
         self.assertIsNone(self.call('delivery', 'project-stopped-task')['receipt'])
         self.assertEqual(self.call('session', stopped)['native'], 'saved-stopped-project-native')
         self.assertEqual(self.rows('SELECT id FROM session_stops WHERE session=?',
                                    (stopped,)), [{'id': 'project-stop'}])
+        lifted = subprocess.Popen([str(EXE), '--project', stopped_assignment['workspace'],
+                                   'resume', stopped, '--lift-stop'], env=self.environment,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        continued, lifted_native = self.accept(stopped)
+        self.assertEqual(lifted_native['native'], stopped_native['native'])
+        self.assertEqual(lifted_native['resume'], stopped_native['native'])
+        self.assertEqual(lifted_native['cwd'], stopped_assignment['workspace'])
+        self.assertIn('[id: project-stopped-task]', lifted_native['prompt'])
+        self.finish(continued, 'Explicitly resumed stopped project work.')
+        stdout, stderr = lifted.communicate()
+        self.assertEqual(lifted.returncode, 0, stdout + stderr)
+        self.assertEqual(json.loads(stdout)['delivery']['receipt'], 'fixture-native-reviewed')
+        self.assertEqual(self.rows('SELECT * FROM session_stops WHERE session=?', (stopped,)), [])
+        self.assertEqual(self.call('delivery', report_id)['body'], stop_report['body'])
+        self.assertEqual(self.call('session', stopped)['native'], stopped_native['native'])
+        self.assertEqual(unfinished.read_text(), 'Preserved work from the stopped conversation.\n')
+        self.assertEqual(self.call('inbox', stopped), [])
 
     def test_completed_player_moves_to_shared_checkout_and_resumes_after_task_retirement(self):
         self.root()

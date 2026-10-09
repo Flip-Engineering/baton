@@ -138,7 +138,8 @@ const TOOLS = [
   {
     name: 'baton2_resume',
     description: 'Continue a recorded session through its registered receiver using its oldest pending input.',
-    inputSchema: { type: 'object', properties: { session: { type: 'string' } },
+    inputSchema: { type: 'object', properties: { session: { type: 'string' },
+      liftStop: { type: 'boolean', description: 'Explicitly lift the current stop before resuming the same conversation.' } },
       required: ['session'], additionalProperties: false },
   },
   {
@@ -587,7 +588,7 @@ function handleToolCall(msg) {
         result = coord('project-sessions', args.path);
         break;
       case 'baton2_resume':
-        result = coord('resume', args.session);
+        result = coord('resume', args.session, ...(args.liftStop === true ? ['--lift-stop'] : []));
         break;
       case 'baton2_context_query_file':
         result = coord('context-query-file', sessionId, args.query, args.path);

@@ -159,7 +159,10 @@ and latest reports. `resume` requests delivery of the oldest owed message
 through the agent's registered receiver or supported Codex queue. It returns
 that message's current receipt and the latest retained report in separate
 fields. A queued request keeps its receipt pending until the recipient handles
-it. Explicit stops remain in effect.
+it. `resume SESSION` preserves an explicit stop. `resume SESSION --lift-stop`
+clears the current stop and delivers pending input to the same native conversation.
+Stored stop reports and turn history remain available. The MCP tool
+`baton2_resume` accepts `liftStop: true` for this explicit operation.
 
 Codex App notifications name the recipient's whole pending inbox. Additional
 admissions share the notification until recipient acknowledgement permits a

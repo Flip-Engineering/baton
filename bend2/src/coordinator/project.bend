@@ -1,10 +1,11 @@
 # Linked worktrees share a database-path pointer under their canonical Git
 # common directory. Project session reads include retained reports and input.
-# Resume requests delivery to the selected session and preserves explicit stops.
+# Resume delivers owed input to the selected session; --lift-stop clears its current stop.
 import Base
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./delivery.bend as Delivery
+import ./stop.bend as Stop
 import ../host/sqlite.bend as DB
 import ../host/control.bend as Host
 import ../host/files.bend as Files
@@ -207,7 +208,7 @@ def project_sessions_sql(input: String, canonical: String, key: String, ok: Bool
 
 # Every refusal carries the rule and the next action.
 def stopped_refusal() -> String:
-  "Session is terminally stopped; queued input will not execute. Read its session and retained inbox."
+  "Session is terminally stopped; queued input will not execute. Read its session and retained inbox; resume SESSION --lift-stop explicitly lifts the stop and continues the same conversation."
 
 def missing_refusal(session: String) -> String:
   "No recorded session carries that identity. Recruit a new session; pass the project checkout as its workspace."
@@ -287,10 +288,16 @@ def resume_stopped(+db: String, +session: String, stopped: Bool) -> IO(Unit):
         +trimmed : String <- field(oldest)
         resume_oldest(db, session, trimmed, String.is_empty(trimmed))
 
-def resume_present(+db: String, +session: String, present: Bool) -> IO(Unit):
+def resume_lift(db: String, session: String, lift_stop: Bool) -> IO(Unit):
+  match lift_stop:
+    case True{}: Stop.lift(db,session)
+    case False{}: IO.pure(Unit,Unit{})
+
+def resume_present(+db: String, +session: String, present: Bool, lift_stop: Bool) -> IO(Unit):
   match present:
     case True{}:
       do IO<Unit>:
+        lifted : Unit <- resume_lift(db,session,lift_stop)
         stopped : String <- IO.try(String, DB.Sql.query(db, "SELECT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ");"))
         resume_stopped(db, session, String.eq(stopped, "1\n"))
     case False{}: IO.die(Unit, 2, missing_refusal(session))
@@ -329,12 +336,10 @@ def sessions(+db: String, +path: String) -> IO(Unit):
     saved : String <- IO.try(String,DB.Sql.query(db,project_sessions_sql(path,canonical,key,keyed,common_cause(resolved),rule_of(keyed),database,membership_condition(members))))
     IO.write(saved)
 
-# Continue the selected session through its registered receiver: refuse an
-# unknown identity, a terminal stop or an empty inbox with the rule, else
-# deliver the oldest owed input on the supported route and answer the
-# delivery outcome with the latest retained report named separately.
-def resume(+db: String, +session: String) -> IO(Unit):
+# Continue through the recorded receiver and return the delivery with retained reports.
+# An explicit lift waits for the current owner before clearing the stop.
+def resume(+db: String, +session: String, lift_stop: Bool) -> IO(Unit):
   do IO<Unit>:
     ensured : Unit <- Store.ensure_before_begin(db)
     present : String <- IO.try(String, DB.Sql.query(db, "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ");"))
-    resume_present(db, session, String.eq(present, "1\n"))
+    resume_present(db, session, String.eq(present, "1\n"),lift_stop)

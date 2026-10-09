@@ -241,8 +241,12 @@ class McpCommand(unittest.TestCase):
                 self.assertNotIn('isError', result)
                 schema = self.tools[tool]['inputSchema']
                 self.assertEqual(set(schema.get('required', [])), set(arguments))
-                self.assertEqual(set(schema['properties']), set(arguments))
+                expected_properties = set(arguments) | ({'liftStop'} if tool == 'baton2_resume' else set())
+                self.assertEqual(set(schema['properties']), expected_properties)
                 self.assertFalse(schema['additionalProperties'])
+        self.command(stdout='{"session":"recorded consumer"}\n', tool='baton2_resume',
+                     arguments={'session': 'recorded consumer', 'liftStop': True}, session=session,
+                     expected_args=['resume', 'recorded consumer', '--lift-stop'])
 
     def test_context_query_uses_attached_identity_and_consumer_reads_same_query(self):
         query = 'shared-query'

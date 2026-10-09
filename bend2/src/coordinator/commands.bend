@@ -63,7 +63,7 @@ type Command is Data:
   Turns{id: String}
   Project{path: String}
   ProjectSessions{path: String}
-  Resume{session: String}
+  Resume{session: String, lift_stop: Bool}
   KnowledgeRecord{id: String, author: String, claim: String, evidence: String, limits: String}
   KnowledgeRead{reader: String}
   KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
@@ -477,7 +477,7 @@ def sql(command: Command) -> String:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',t.id,'player',t.worker,'eventType',coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')),'reportBody',m.body,'receipt',m.receipt) AS item FROM turns t JOIN messages m ON m.id=t.id WHERE t.worker=" ++ q(id) ++ " ORDER BY m.seq);"
     case Project{path}: ""
     case ProjectSessions{path}: ""
-    case Resume{session}: ""
+    case Resume{session,lift_stop}: ""
     case ObserveFile{id,player,path}: ""
     case ReportFile{id,sender,path}: ""
     case MessageFile{id,sender,recipient,kind,path}: ""
@@ -565,7 +565,7 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "turns": Turns{id}
     case "project": Project{id}
     case "project-sessions": ProjectSessions{id}
-    case "resume": Resume{id}
+    case "resume": Resume{id,False{}}
     case "knowledge": KnowledgeRead{id}
     case "observed-usage": ObservedUsage{id}
     case "models": Models{id}
@@ -574,6 +574,9 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
 
 def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Command:
   match verb:
+    case "resume": match id:
+      case "--lift-stop": Resume{session,True{}}
+      case _: Invalid{}
     case "ui-subscribe": UiSubscribe{session,id}
     case "logs": Logs{session,id}
     case "player": match id:

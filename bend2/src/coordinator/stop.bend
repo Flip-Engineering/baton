@@ -1,6 +1,8 @@
 import Base
 import ../coordinator/commands.bend as C
 import ./delivery.bend as Delivery
+import ./store.bend as Store
+import ../host/session-lock.bend as Lock
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../git/text.bend as Tx
@@ -24,10 +26,26 @@ def stopped(+db: String, +session: String) -> IO(Bool):
     value : String <- IO.try(String,DB.Sql.query(db,stopped_sql(session)))
     IO.pure(Bool,String.eq(value,"1\n"))
 
+def lift_completed(saved: Result<&1,&1,U32 & String,String>, released: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match saved:
+    case Done{output}: IO.try(Unit,released)
+    case Fail{(code,cause)}: match released:
+      case Done{unit}: IO.die(Unit,code,cause)
+      case Fail{(release_code,release_cause)}: IO.die(Unit,code,cause ++ "\nSession lock release failed: " ++ U32.show(release_code) ++ ": " ++ release_cause)
+
+# Explicit resume waits for the current owner's stop report, then removes the stop.
+def lift(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    lock : U32 <- IO.try(U32,Lock.SessionLock.wait_acquire(canonical,session))
+    lifted : Result<&1,&1,U32 & String,String> <- Store.transact_sql(canonical,"BEGIN IMMEDIATE;DELETE FROM session_stops WHERE session=" ++ C.q(session) ++ ";COMMIT;")
+    released : Result<&1,&1,U32 & String,Unit> <- Lock.SessionLock.release(lock)
+    lift_completed(lifted,released)
+
 def require_open(closed: Bool) -> IO(Unit):
   match closed:
     case False{}: IO.pure(Unit,Unit{})
-    case True{}: IO.die(Unit,2,"Session is terminally stopped. Read its session and retained inbox; recruit a new session for new work.")
+    case True{}: IO.die(Unit,2,"Session is terminally stopped. Read its session and retained inbox; resume SESSION --lift-stop explicitly lifts the stop and continues the same conversation.")
 
 def admitted(allowed: Bool) -> IO(Unit):
   require_open(Bool.not(allowed))
@@ -111,7 +129,7 @@ def exited(+db: String, +session: String, +attempt: String, +status: String, +ev
 
 def deliver(+db: String, +session: String, +attempt: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    id : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT report_id FROM session_stops WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ "),'');"))
+    id : String <- IO.try(String,DB.Sql.query(db,"WITH reports AS (SELECT id,seq,CASE WHEN json_valid(body) THEN body ELSE '{}' END AS document FROM messages WHERE sender=" ++ C.q(session) ++ " AND kind='report') SELECT coalesce((SELECT id FROM reports WHERE json_extract(document,'$.type')='session-stopped' AND json_extract(document,'$.attempt')=" ++ C.q(attempt) ++ " ORDER BY seq DESC LIMIT 1),'');"))
     result : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,Tx.trim_nl(id),"1","")
     IO.pure(Result<&1,&1,U32 & String,Unit>,Delivery.wake_result(result))
 
