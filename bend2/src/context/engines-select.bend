@@ -1354,3 +1354,55 @@ def dependency_inputs(+p: Plan, +ref: StepRef) -> Captures:
 # The records of every step one step declares as its dependencies.
 def dependency_inputs_of_step(+p: Plan, +step: Step) -> Captures:
   dependency_captures(step_dependencies(step), p, plan_inputs(p))
+
+# --- the per-capture readers an IO composition asks for ----------------------
+# A caller holding a capture name asks three questions of the admitted records:
+# whether the plan holds a record for that name, what canonical identity that
+# record has, and which exact bytes it carries. A name the plan does not hold is
+# named in the answer rather than answered with an empty record, because a caller
+# that cannot tell an absent input from an empty one cannot decide. The name is the
+# record's canonical admitted path, which is the identity the capture was recorded
+# under.
+type CaptureState is Data:
+  CapturePresent{capture: Capture}
+  CaptureMissing{name: String}
+
+def captures_lookup(+xs: Captures, +name: String) -> CaptureState:
+  match xs:
+    case CapNil{}: CaptureMissing{name}
+    case CapCons{head, rest}:
+      Bool.pick(CaptureState, String.eq(cap_path(head), name),
+                CapturePresent{head}, captures_lookup(rest, name))
+
+def capture_lookup(+xs: Captures, +name: String) -> CaptureState:
+  captures_lookup(xs, name)
+
+type BytesState is Data:
+  BytesPresent{payload: String, payload_encoding: String}
+  BytesMissing{name: String}
+
+# The exact accepted bytes of one capture, in the encoding the record names. This
+# module neither decodes nor re-encodes them.
+def capture_bytes(+st: CaptureState) -> BytesState:
+  match st:
+    case CaptureMissing{name}: BytesMissing{name}
+    case CapturePresent{capture}:
+      BytesPresent{cap_payload(capture), cap_encoding(capture)}
+
+# One answer per name: the canonical identity in snapshot's vocabulary, an unknown
+# kind named, or the absent name. It reuses the one identity mapping rather than
+# spelling a second one.
+type CaptureAnswer is Data:
+  CaptureKnown{fp: Snap.Fp}
+  CaptureUnknownKind{kind: String}
+  CaptureAbsent{name: String}
+
+def capture_fp_answer(+fs: FcState) -> CaptureAnswer:
+  match fs:
+    case FcMapped{fp}: CaptureKnown{fp}
+    case FcUnknownKind{kind}: CaptureUnknownKind{kind}
+
+def capture_answer(+st: CaptureState) -> CaptureAnswer:
+  match st:
+    case CaptureMissing{name}: CaptureAbsent{name}
+    case CapturePresent{capture}: capture_fp_answer(capture_fp(capture))
