@@ -820,19 +820,19 @@ def run(+db: String, +session: String, +cmd: String, +model: String, +effort: St
     settled : Unit <- claim_left(db,session)
     IO.pure(Result<&1,&1,U32 & String,Unit>,result)
 
-def recover_observer_arguments(+db: String, +session: String, directory: String, lock: U32, args: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def recover_observer_arguments(+db: String, +session: String, +directory: String, observer: U32, args: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match args:
     case executable <> flag <> saved_db <> saved_session <> id <> cursor <> +cmd <> model <> effort <> cwd <> +log <> harness <> saved_directory <> native <> Nil{}:
-      recover_owned(db,session,directory,lock,[executable,flag,saved_db,saved_session,id,cursor,cmd,model,effort,cwd,log,harness,saved_directory,native],u => run(db,session,cmd,"","","",log,""))
-    case other: do IO<Result<&1,&1,U32 & String,Unit>>:
-      released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
-      IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Recorded native recovery arguments are invalid; retain the attempt and inspect its manifest.")})
+      do IO<Result<&1,&1,U32 & String,Unit>>:
+        valid : Unit <- Stop.error_result("Recorded native recovery arguments differ from the current session; retain the attempt and inspect its manifest.",Bool.and(String.eq(flag,"--recover-receive"),Bool.and(String.eq(session,saved_session),String.eq(directory,saved_directory))))
+        acquired : U32 & U32 <- IO.try(U32 & U32,Lock.SessionLock.recover_observer(db,session,directory,observer))
+        match acquired:
+          case (lock,handle): observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},u => run(db,session,cmd,"","","",log,""),True{})
+    case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Recorded native recovery arguments are invalid; retain the attempt and inspect its manifest.")})
 
 def recover_observer_recorded(+db: String, +session: String, +directory: String, observer: U32, recovery: Maybe<String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match recovery:
-    case Some{args}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      lock : U32 <- IO.try(U32,Lock.SessionLock.recover_observer(db,session,directory,observer))
-      recover_observer_arguments(db,session,directory,lock,String.split(args,Char.from_u32(0)))
+    case Some{args}: recover_observer_arguments(db,session,directory,observer,String.split(args,Char.from_u32(0)))
     case None{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"The session has no unfinished retained receive attempt.")})
 
 def recover_observer_pid(+db: String, +session: String, observer: Maybe<&2,U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -846,7 +846,7 @@ def recover_observer_pid(+db: String, +session: String, observer: Maybe<&2,U32>)
       settled : Unit <- claim_left(db,session)
       IO.pure(Result<&1,&1,U32 & String,Unit>,result)
 
-# The selected observer holds a completed native attempt after keeper loss.
+# The selected observer holds a completed native attempt.
 # Adoption reads its recorded recovery arguments and restores its checkpoint.
 def recover_observer(+db: String, +session: String, observer: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:

@@ -1353,7 +1353,7 @@ class Receive(unittest.TestCase):
                 finally:
                     fixture.doCleanups()
 
-    def exercise_completed_orphan_observer(self, stopped):
+    def exercise_completed_observer(self, stopped, keeper_loss=True):
         self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
         self.player(harness='omp')
         config_path = self.directory / 'fixture.json'
@@ -1379,7 +1379,7 @@ class Receive(unittest.TestCase):
         selected_observer = self.selected_process(observer.pid)
         selected_owner = self.selected_process(owner[0]['pid'])
         self.signal_selected(selected_observer, signal.SIGSTOP)
-        body = 'Original result after native exit and keeper loss.'
+        body = 'Original result after native exit.'
         self.action(original, body=body, exit_after_terminal=True)
         self.assertEqual(original.readline(), b'')
         self.eventually(lambda: (attempt / 'status').exists(),
@@ -1387,9 +1387,10 @@ class Receive(unittest.TestCase):
         self.assertEqual((attempt / 'status').read_text(), '0\n')
         if stopped:
             self.coord('stop', 'parent', 'operator-stop', 'Preserve the operator stop.')
-        self.signal_selected(selected_owner, signal.SIGKILL)
-        self.eventually(lambda: (self.selected_process(selected_owner['pid']) or {}).get('state', 'Z').startswith('Z'),
-                        'The selected keeper did not exit.')
+        if keeper_loss:
+            self.signal_selected(selected_owner, signal.SIGKILL)
+            self.eventually(lambda: (self.selected_process(selected_owner['pid']) or {}).get('state', 'Z').startswith('Z'),
+                            'The selected keeper did not exit.')
         retained = {name: (attempt / name).read_bytes() for name in ('manifest', 'native.birth', 'status')}
         self.assertFalse(self.session_guard_available('parent'))
         if not stopped:
@@ -1408,6 +1409,11 @@ class Receive(unittest.TestCase):
             self.assert_no_start()
         else:
             continuation, resumed = self.accept('parent')
+            if not keeper_loss:
+                current_owner = self.selected_process(selected_owner['pid'])
+                self.assertIsNotNone(current_owner, 'The original keeper exited during observer handoff.')
+                self.assertEqual(current_owner['start'], selected_owner['start'])
+                self.assertEqual(current_owner['command'], selected_owner['command'])
             self.assertEqual(resumed['native'], native_id)
             self.assertIn('[id: second]', resumed['prompt'])
             self.assertIn('Retain this queued input.', resumed['prompt'])
@@ -1428,10 +1434,13 @@ class Receive(unittest.TestCase):
         self.assertTrue(self.session_guard_available('parent'))
 
     def test_completed_orphan_observer_recovers_original_and_pending_input(self):
-        self.exercise_completed_orphan_observer(stopped=False)
+        self.exercise_completed_observer(stopped=False)
 
     def test_completed_orphan_observer_recovery_preserves_explicit_stop(self):
-        self.exercise_completed_orphan_observer(stopped=True)
+        self.exercise_completed_observer(stopped=True)
+
+    def test_completed_live_keeper_observer_handoff_recovers_original_and_pending_input(self):
+        self.exercise_completed_observer(stopped=False, keeper_loss=False)
 
     def test_completed_omp_attempt_replay_leaves_guidance_for_current_native(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))

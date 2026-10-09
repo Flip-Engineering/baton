@@ -539,16 +539,18 @@ Live native input and stop control require an available keeper socket. The earli
 [observer-loss measurement](../docs/bend2/receive-recovery-2026-09-28.md#recovery-boundary)
 retains its recorded scope.
 
-`recover-observer SESSION OBSERVER_PID` recovers an orphan receive observer after
+`recover-observer SESSION OBSERVER_PID` replaces a receive observer after
 its native process has a recorded exit status. The operator supplies the PID of
-that receive process. The command sends TERM and CONT to that observer, acquires
-its existing session lock, and adopts the retained attempt using the running
-executable. It restores the recorded observation checkpoint, retains the
-original report and inbox cutoff, and continues pending input in the recorded
-conversation.
+that receive process. An available keeper transfers the completed attempt's
+observation socket and session lock to the running executable. The command sends
+TERM and CONT to the selected observer and waits for its exit. An orphan attempt
+is adopted under its existing session lock. Recovery restores the recorded
+observation checkpoint, retains the original report and inbox cutoff, and
+continues pending input in the recorded conversation.
 Explicit stops remain in effect. The retained native process, manifest, output,
-messages and receipts remain recorded. A keeper that still answers its control
-socket remains responsible for the attempt's observation.
+messages and receipts remain recorded. Older keepers use ordinary attachment
+after observer exit. If another recovery process attaches first, the command
+reports that the attempt has an observer.
 
 Recovery after loss of all coordinator and harness processes is described in
 the [process-loss record](../docs/bend2/host-restart-2026-09-28.md); that run
