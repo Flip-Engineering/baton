@@ -5,9 +5,13 @@
    nodes have the same size. Layout is deterministic; newly
    arrived nodes pulse once. Renders from a knowledge overview shaped
    like the `orchestra/knowledge/overview` route; starts no request.
-   options: {query, includeUnshared, selectedId, notice, onSelect}.
+   options: {query, includeUnshared, selectedId, notice, roles, onSelect}.
    onSelect receives the finding id. Author anchors wrap into rows so the
-   actor labels stay inside the surface; edges run from every row. */
+   actor labels stay inside the surface; edges run from every row.
+   roles maps actor id to recorded role for anchor fill. Edge types:
+   authorship (author to finding), share (promotion source to finding),
+   deliver (finding to promotion destination); share and deliver carry
+   arrowheads along the recorded flow. */
 
 const KG_ACTOR_SLOT = 150;
 const KG_ACTORS_PER_ROW = 10;
@@ -156,20 +160,42 @@ function renderKnowledgeGraph(container, overview, options) {
     "aria-label": "Knowledge graph",
   }, wrap);
   svg.setAttribute("class", "kg");
+  const defs = kgEl("svg", "defs", {}, svg);
+  const marker = (mid, color) => {
+    const m = kgEl("svg", "marker", {
+      id: mid,
+      viewBox: "0 0 8 8",
+      refX: "7",
+      refY: "4",
+      markerWidth: "7",
+      markerHeight: "7",
+      orient: "auto-start-reverse",
+    }, defs);
+    kgEl("svg", "path", { d: "M0,0 L8,4 L0,8 Z", fill: color }, m);
+  };
+  marker("kg-arrow-share", "var(--attention)");
+  marker("kg-arrow-deliver", "var(--muted)");
   const edgeLayer = kgEl("svg", "g", { class: "kg-edges" }, svg);
 
+  const roles = (opts && opts.roles) || {};
+  const roleFrag = (id) => String(roles[id] || "").toLowerCase().replace(/[^a-z-]/g, "") || "unknown";
   const actorPos = new Map();
   actors.forEach((id, i) => {
     const x = KG_PAD + (i % KG_ACTORS_PER_ROW) * KG_ACTOR_SLOT + KG_ACTOR_SLOT / 2;
     const y = KG_TOP + Math.floor(i / KG_ACTORS_PER_ROW) * KG_ANCHOR_PITCH_Y;
     actorPos.set(id, { x, y });
     const n = String(id).length > 18 ? String(id).slice(0, 17) + "…" : String(id);
+    const role = roleFrag(id);
+    const anchor = kgEl("svg", "g", { class: "kg-anchor" }, svg);
     // The last column labels run left so every label stays inside the surface.
     const lastCol = (i % KG_ACTORS_PER_ROW) === KG_ACTORS_PER_ROW - 1 || i === actors.length - 1;
     kgEl("svg", "rect", {
-      x: String(x - 4), y: String(y - 4), width: "8", height: "8", class: "kg-actor",
-    }, svg);
-    kgText(svg, n, {
+      x: String(x - 4), y: String(y - 4), width: "8", height: "8",
+      class: "kg-actor role-" + role,
+    }, anchor);
+    const heading = kgEl("svg", "title", {}, anchor);
+    heading.textContent = String(id) + (roles[id] ? ", " + String(roles[id]) : "");
+    kgText(anchor, n, {
       x: String(x + (lastCol ? -10 : 10)),
       y: String(y + 4),
       class: "kg-label mono",
@@ -266,6 +292,7 @@ function renderKnowledgeGraph(container, overview, options) {
         x1: String(from.x), y1: String(from.y + 6),
         x2: String(to.x), y2: String(to.y - 6),
         class: "kg-edge-share",
+        "marker-end": "url(#kg-arrow-share)",
         "aria-label": "promotion from " + String(p.source) + " to " + String(p.destination),
       }, edgeLayer);
       summary.edges += 1;
@@ -275,17 +302,36 @@ function renderKnowledgeGraph(container, overview, options) {
       kgEl("svg", "line", {
         x1: String(to.x), y1: String(to.y + 6),
         x2: String(dest.x), y2: String(dest.y - 6),
-        class: "kg-edge-authored",
+        class: "kg-edge-deliver",
+        "marker-end": "url(#kg-arrow-deliver)",
+        "aria-label": "delivery of " + String(p.finding) + " to " + String(p.destination),
       }, edgeLayer);
       summary.edges += 1;
     }
+  }
+  for (const [fid, finding] of findings) {
+    if (!findingPos.has(fid)) continue;
+    const author = finding.author ? String(finding.author) : "";
+    if (!author || !actorPos.has(author)) continue;
+    if (!kgMatches(opts.query, fid, finding.claim, author)) continue;
+    const from = actorPos.get(author);
+    const to = findingPos.get(fid);
+    kgEl("svg", "line", {
+      x1: String(from.x), y1: String(from.y + 6),
+      x2: String(to.x), y2: String(to.y - 6),
+      class: "kg-edge-authorship",
+      "aria-label": "authored by " + author,
+    }, edgeLayer);
+    summary.edges += 1;
   }
   kgSeenByMount.set(container, now);
 
   const legend = kgEl(null, "p", { class: "kg-legend muted" }, container);
   legend.textContent = "Shared findings are grouped by sharing activity; "
     + "unshared findings appear below them by author. "
-    + "Lines run from the sharing source through the finding to its destination. "
+    + "Thin lines run author to finding. Ochre arrows run sharing source to "
+    + "finding; hairlines with arrowheads run finding to destination. "
+    + "Dark anchors are conductors, blue is the operator, gray are players and other roles. "
     + "Select a finding to open its record.";
   return summary;
 }

@@ -229,6 +229,11 @@ button:active { background: var(--wash); }
 
 .board-card .board-grouphead { margin-top: 0; }
 
+.board-ended {
+  margin: 8px 0 0;
+  font-size: var(--step0);
+}
+
 .board-tiles {
   display: flex;
   flex-wrap: wrap;
@@ -347,9 +352,16 @@ button:active { background: var(--wash); }
   stroke-width: 1.5px;
 }
 
+.kg-actor.role-principal-conductor,
+.kg-actor.role-associate-conductor { fill: var(--ink); }
+
+.kg-actor.role-operator { fill: var(--selection); }
+
 .kg-edge-share { stroke: var(--attention); stroke-width: 1.5px; }
 
-.kg-edge-authored { stroke: var(--hairline); stroke-width: 1.5px; }
+.kg-edge-deliver { stroke: var(--muted); stroke-width: 1px; }
+
+.kg-edge-authorship { stroke: var(--hairline); stroke-width: 1px; }
 
 .knode { cursor: pointer; }
 

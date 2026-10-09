@@ -2,6 +2,8 @@
    Renders each ensemble as one card so the reader grasps a working unit
    at a glance: the header names the shared current work with its count,
    and every live member is a tile carrying status, purpose and identity.
+   Ended or stopped members stay listed on their card with truthful
+   status so ensemble membership survives activity changes.
    Renders from snapshot players and ensembles the page forwards; this
    module starts no request. options: {selectedId, onSelect}. */
 
@@ -27,16 +29,18 @@ function renderEnsembleBoard(container, data, options) {
   for (const e of ensembles) {
     if (!e || !e.id) continue;
     const allMembers = (e.members || []).map((id) => byId.get(id)).filter(Boolean);
+    if (!allMembers.length) continue;
     const members = allMembers.filter((m) => isLive(m.status));
+    const ended = allMembers.filter((m) => !isLive(m.status));
+    ended.sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1));
     const live = members.length;
-    if (!live) continue;
     members.sort(byActivity);
-    groups.push({ id: e.id, owner: e.owner || "", coupling: e.coupling || "", members, live, total: allMembers.length });
+    groups.push({ id: e.id, owner: e.owner || "", coupling: e.coupling || "", members, ended, live, total: allMembers.length });
   }
   groups.sort((a, b) => (b.live - a.live) || (a.id < b.id ? -1 : 1));
   const grouped = new Set();
   for (const g of groups) {
-    for (const m of g.members) grouped.add(m.id);
+    for (const m of g.members.concat(g.ended)) grouped.add(m.id);
   }
   const others = actors.filter((a) => a && a.id && !grouped.has(a.id) && isLive(a.status));
   others.sort(byActivity);
@@ -168,7 +172,7 @@ function renderEnsembleBoard(container, data, options) {
       head.appendChild(line);
     }
   };
-  const card = (title, metaText, members, barText) => {
+  const card = (title, metaText, members, ended, barText) => {
     const section = document.createElement("section");
     section.className = "board-card";
     section.setAttribute("aria-label", title);
@@ -200,19 +204,26 @@ function renderEnsembleBoard(container, data, options) {
     tiles.className = "board-tiles";
     for (const m of members) tile(tiles, m);
     section.appendChild(tiles);
+    if (ended && ended.length) {
+      const done = document.createElement("p");
+      done.className = "muted board-ended";
+      done.textContent = "Ended (" + ended.length + "): "
+        + ended.map((m) => String(m.id) + " " + String(m.status || "unknown")).join(", ");
+      section.appendChild(done);
+    }
     container.appendChild(section);
     summary.groups += 1;
   };
   for (const g of groups) {
     card(String(g.id), " · " + g.live + " of " + g.total + " live"
       + (g.owner ? " · owner " + g.owner : "")
-      + (g.coupling ? " · " + g.coupling : ""), g.members, {
+      + (g.coupling ? " · " + g.coupling : ""), g.members, g.ended, {
       label: g.live + " of " + g.total + " live",
       width: Math.round((100 * g.live) / Math.max(1, g.total)) + "%",
     });
   }
   if (others.length) {
-    card("Outside ensembles", " · " + others.length + " live", others, null);
+    card("Outside ensembles", " · " + others.length + " live", others, [], null);
   }
   if (focused) {
     const next = container.querySelector("[data-focus=\"" + CSS.escape(focused) + "\"]");

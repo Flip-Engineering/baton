@@ -1309,11 +1309,14 @@ function renderKnowledgeGraphState(overview, emptyText) {
   // first; the wrapper restores that exact identity afterwards.
   const focusedId = mount.contains(document.activeElement)
     ? document.activeElement.getAttribute("aria-label") || "" : "";
+  const roles = {};
+  for (const p of state.players.values()) roles[p.id] = p.role || "";
   renderKnowledgeGraph(mount, overview, {
     query: state.knowledgeSearch,
     includeUnshared: state.includeUnshared,
     selectedId: state.findingId,
     notice: state.knowledgeNotice || (!overview ? "No knowledge read yet." : (emptyText || "")),
+    roles,
     onSelect: (id) => toggleFinding(id),
   });
   restoreGraphFocus(focusedId);
