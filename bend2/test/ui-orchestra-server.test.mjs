@@ -827,6 +827,16 @@ test('view CLI streams a committed native message through the owner subscription
     }
   }
   assert.ok(base, `view command exited before printing its URL: ${viewErrors.join('')}`);
+  const pageResponse = await fetch(base);
+  assert.equal(pageResponse.status, 200);
+  const page = await pageResponse.text();
+  const assets = [...page.matchAll(/<(?:script|link)\b[^>]*(?:src|href)="([^"]+)"/g)];
+  assert.ok(assets.length, 'the installed view references its interface assets');
+  for (const [, path] of assets) {
+    const asset = await fetch(new URL(path, base));
+    assert.equal(asset.status, 200, `installed interface asset ${path}`);
+    assert.ok((await asset.text()).length, `installed interface asset ${path} has content`);
+  }
   const snapshotResponse = await fetch(`${base}orchestra/snapshot?subject=child&since=0`);
   assert.equal(snapshotResponse.status, 200);
   const initial = await snapshotResponse.json();

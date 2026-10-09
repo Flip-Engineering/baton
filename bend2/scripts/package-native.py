@@ -105,16 +105,7 @@ def stage_adapters(payload):
             shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
     shutil.copyfile(ROOT / 'bend2/harness/native-history.mjs', directory / 'native-history.mjs')
-    ui = directory / 'ui'
-    ui.mkdir()
-    for name in ('server.mjs', 'index.html', 'styles.css', 'app.js'):
-        shutil.copyfile(ROOT / 'bend2/ui/orchestra' / name, ui / name)
-    shutil.copyfile(ROOT / 'bend2/ui/orchestra/native-owner-subscription.mjs',
-                    ui / 'native-owner-subscription.mjs')
-    fixtures = ui / 'fixtures'
-    fixtures.mkdir()
-    for name in ('fixture-small.json', 'fixture-dense.json', 'fixture-gap.json'):
-        shutil.copyfile(ROOT / 'bend2/ui/orchestra/fixtures' / name, fixtures / name)
+    shutil.copytree(ROOT / 'bend2/ui/orchestra', directory / 'ui')
     shutil.copyfile(ROOT / 'bend2/scripts/context-provider.mjs', directory / 'context-provider.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/context-project-policy.mjs', directory / 'context-project-policy.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/context-query-artifact.mjs', directory / 'context-query-artifact.mjs')
