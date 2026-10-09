@@ -348,7 +348,7 @@ class RetainedControl(unittest.TestCase):
         print('evidence spawned-setup-failure', json.dumps({
             'native': native, 'error': error.strip(), 'exit': status}))
         self.assertNotEqual(status, 0, output)
-        self.assertIn(os.strerror(errno.EISDIR), error)
+        self.assertIn(os.strerror(errno.EEXIST), error)
         self.assertGreater(native, 0)
         # A zombie still answers kill(pid, 0), so absence checks both exit and reap.
         with self.assertRaises(ProcessLookupError):
