@@ -55,6 +55,18 @@
   cursor: pointer;
 }
 
+.kw-zoom-level {
+  font-size: var(--step0, 12px);
+  min-width: 44px;
+  text-align: right;
+}
+
+.kw-search-status {
+  margin: 0;
+  font-size: var(--step0, 12px);
+  white-space: nowrap;
+}
+
 .kw-card {
   position: absolute;
   top: 8px;

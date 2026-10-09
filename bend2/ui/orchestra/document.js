@@ -358,6 +358,9 @@
       }, {
         mode: "whole",
         selectedId: opts.selectedFindingId,
+        // The shell's actor selection, so the map lights the actor a reader picked
+        // in the staves or the rail, not only the finding it holds.
+        selectedActorId: opts.selectedId || "",
         query: opts.knowledgeQuery || "",
         notice: opts.knowledgeNotice || "",
         onSelectFinding: opts.onSelectFinding,

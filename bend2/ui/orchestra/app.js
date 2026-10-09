@@ -1,7 +1,6 @@
 /* Orchestra live view. Read-only. All DOM text via textContent. */
 
 const CONTRACT_VERSION = 1;
-const ARRIVAL_THROTTLE_MS = 1000;
 const AGE_REFRESH_MS = 30000;
 
 const state = {
@@ -19,13 +18,6 @@ const state = {
   tasks: {},
   providers: {},
   selectionId: null,
-  pendingOpen: null,
-  search: "",
-  statusFilter: "running",
-  ensembleFilter: "all",
-  collapsed: new Set(),
-  arrivalAt: new Map(),
-  structure: "",
   snapshotLabel: "",
   capturedAt: "",
   // Bumped by every fetched read and by interactions that change what the
@@ -86,10 +78,6 @@ const el = {
   cursorState: sink,
   contractState: sink,
   generationState: sink,
-  tree: sink,
-  search: sink,
-  statusFilter: sink,
-  ensembleFilter: sink,
   includeUnshared: sink,
   knowledgeSearch: sink,
 };
@@ -151,54 +139,6 @@ function roleRank(role) {
   if (role === "associate-conductor") return 1;
   if (role === "operator") return 2;
   return 3;
-}
-
-function childrenOf(id) {
-  const out = [];
-  for (const p of state.players.values()) {
-    if ((p.parent || "") === id) out.push(p);
-  }
-  out.sort((a, b) => roleRank(a.role) - roleRank(b.role) || (a.id < b.id ? -1 : 1));
-  return out;
-}
-
-
-function matchesFilters(p) {
-  if (state.statusFilter !== "all" && deriveStatus(p) !== state.statusFilter) return false;
-  if (state.ensembleFilter !== "all") {
-    const ens = state.ensembles.get(state.ensembleFilter);
-    if (!ens) return false;
-    const members = ensembleMemberSet(state.ensembleFilter);
-    if (!members.has(p.id)) return false;
-  }
-  if (state.search) {
-    const q = state.search.toLowerCase();
-    const hay = [p.id, p.model, p.observedModel, p.branch, p.workspace, p.role, p.harness];
-    for (const ensId of (p.memberEnsembles || []).concat(p.ownedEnsembles || [])) {
-      hay.push(ensId);
-      const ens = state.ensembles.get(ensId);
-      for (const s of (ens && ens.sections) || []) hay.push(s.capability);
-    }
-    if (!hay.some((v) => (v || "").toLowerCase().includes(q))) return false;
-  }
-  return true;
-}
-
-function subtreeVisible(p) {
-  if (matchesFilters(p)) return true;
-  return childrenOf(p.id).some(subtreeVisible);
-}
-
-// Every stored member of one ensemble: its members, its sections' members and its
-// owner. The ensemble filter and the tag both read this one set.
-function ensembleMemberSet(ensId) {
-  const ens = state.ensembles.get(ensId);
-  const members = new Set();
-  if (!ens) return members;
-  for (const id of ens.members || []) members.add(id);
-  for (const section of ens.sections || []) for (const id of section.members || []) members.add(id);
-  if (ens.owner) members.add(ens.owner);
-  return members;
 }
 
 // The activity rail class for one recorded change kind. Kind values carry ":" and
@@ -335,90 +275,16 @@ function clearGapNotice() {
   }
 }
 
-// One arrival mark per row per second; a later event inside the window wins the
-// data and skips the second animation.
-function markArrival(id) {
-  if (!id || !state.players.has(id)) return;
-  const now = Date.now();
-  const previous = state.arrivalAt.get(id) || 0;
-  if (now - previous < ARRIVAL_THROTTLE_MS) return;
-  state.arrivalAt.set(id, now);
-  const row = rowElement(id);
-  if (row) {
-    row.classList.remove("arrival");
-    void row.offsetWidth;
-    row.classList.add("arrival");
-  }
-}
-
-function rowElement(id) {
-  return el.tree.querySelector('[data-row="' + CSS.escape(id) + '"]');
-}
-
-/* --- membership tags and the message connector ----------------------------- */
-
-// Ensemble membership cross-cuts parentage, so it is a column device: a rule with
-// the group label, repeated per member row. Consecutive member rows read as one
-// column, and no row is regrouped or duplicated.
-
-
-// One transient hairline for a message that moved between two rows, positioned in
-// the tree's own content coordinates because the tree is the scroll container.
-function messageConnector(fromId, toId) {
-  if (!fromId || !toId || fromId === toId) return;
-  const from = rowElement(fromId);
-  const to = rowElement(toId);
-  if (!from || !to) return;
-  const host = document.createElement("li");
-  host.className = "connector-host";
-  host.setAttribute("role", "presentation");
-  const line = document.createElement("div");
-  line.className = "connector";
-  line.setAttribute("aria-hidden", "true");
-  const base = el.tree.getBoundingClientRect().top - el.tree.scrollTop;
-  const a = from.getBoundingClientRect();
-  const b = to.getBoundingClientRect();
-  const top = Math.min(a.top, b.top) - base;
-  const bottom = Math.max(a.bottom, b.bottom) - base;
-  line.style.top = Math.round(top) + "px";
-  line.style.height = Math.round(bottom - top) + "px";
-  host.appendChild(line);
-  el.tree.appendChild(host);
-  setTimeout(() => host.remove(), 500);
-}
-
-// The line the tree pane shows when membership changed.
-function setTreeNotice(message) {
-  const node = document.getElementById("tree-notice");
-  if (!node) return;
-  node.hidden = !message;
-  node.textContent = "";
-  if (message) text(node, message);
-}
-
 /* --- rendering ------------------------------------------------------------ */
-
-function structureSignature() {
-  const ids = [...state.players.keys()].sort();
-  const parents = ids.map((id) => id + "<" + ((state.players.get(id) || {}).parent || ""));
-  return [
-    ids.join(","),
-    parents.join(","),
-    [...state.collapsed].sort().join(","),
-    state.search,
-    state.statusFilter,
-    state.ensembleFilter,
-    state.selectionId || "",
-    state.pendingOpen || "",
-    [...state.ensembles.keys()].sort().join(","),
-  ].join("|");
-}
-
 function select(id) {
   if (!state.players.has(id)) return;
   state.selectionId = id;
   state.knowledgeOpen = false;
   state.findingId = null;
+  // Every selection intent renders, even the same seat again: the map or the
+  // record may have dismissed a card since, and that dismissal is not in the
+  // shell's signature.
+  markDrawnStale();
   // The seat is addressable: a reader can send the link to a seat and land on
   // the same record.
   if (typeof history.replaceState === "function") {
@@ -435,26 +301,8 @@ function select(id) {
   if (target && typeof target.focus === "function") target.focus();
 }
 
-function toggleCollapse(id) {
-  if (state.collapsed.has(id)) state.collapsed.delete(id);
-  else state.collapsed.add(id);
-  renderTree();
-}
-
-
-function togglePending(id) {
-  state.pendingOpen = state.pendingOpen === id ? null : id;
-  renderTree();
-}
-
 function focusKey(kind, id) {
   return kind + ":" + id;
-}
-
-function restoreFocus(key) {
-  if (!key) return;
-  const next = el.tree.querySelector('[data-focus="' + CSS.escape(key) + '"]');
-  if (next && typeof next.focus === "function") next.focus();
 }
 
 // The document is the page. Every path that used to repaint a panel calls this
@@ -464,171 +312,8 @@ function renderTree() {
   renderDocumentSoon();
 }
 
-function renderAction(row, p) {
-  const action = actionFor(p);
-  let slot = row.querySelector(".node-action");
-  if (!action) {
-    if (slot) slot.remove();
-    return;
-  }
-  if (!slot) {
-    slot = document.createElement("span");
-    row.appendChild(slot);
-  }
-  slot.className = "node-action" + (action.stale ? " stale" : "");
-  slot.dataset.row = p.id;
-  slot.textContent = "";
-  const when = ageText(action.at);
-  text(slot, action.label + (when ? " · " + when : ""));
-}
-
-function buildRow(p, hasChildren) {
-  const status = deriveStatus(p);
-  const row = document.createElement("div");
-  row.className = "node-row";
-  row.dataset.row = p.id;
-  row.setAttribute("aria-selected", state.selectionId === p.id ? "true" : "false");
-
-  // A row with children carries the real expand control, named for assistive
-  // technology; a leaf carries a mark with no control behind it.
-  let twisty;
-  if (hasChildren) {
-    twisty = document.createElement("button");
-    twisty.type = "button";
-    twisty.className = "twisty";
-    twisty.dataset.focus = focusKey("twisty", p.id);
-    twisty.setAttribute("aria-label", (state.collapsed.has(p.id) ? "Expand " : "Collapse ") + p.id);
-    text(twisty, state.collapsed.has(p.id) ? "+" : "-");
-    twisty.addEventListener("click", () => toggleCollapse(p.id));
-  } else {
-    twisty = document.createElement("span");
-    twisty.className = "twisty leaf";
-    twisty.setAttribute("aria-hidden", "true");
-    text(twisty, ".");
-  }
-  row.appendChild(twisty);
-
-  const dot = document.createElement("span");
-  dot.className = "dot " + status;
-  dot.setAttribute("aria-hidden", "true");
-  row.appendChild(dot);
-
-  const tag = document.createElement("span");
-  tag.className = "role-tag " + (p.role || "");
-  text(tag, shortRole(p.role));
-  row.appendChild(tag);
-
-  const idBtn = document.createElement("button");
-  idBtn.className = "node-id";
-  idBtn.type = "button";
-  idBtn.dataset.focus = focusKey("id", p.id);
-  text(idBtn, p.id.length > 24 ? p.id.slice(0, 23) + "…" : p.id);
-  idBtn.title = p.id;
-  idBtn.addEventListener("click", () => select(p.id));
-  row.appendChild(idBtn);
-
-  const statusWord = document.createElement("span");
-  statusWord.className = "status-word";
-  text(statusWord, status);
-  row.appendChild(statusWord);
-
-  if (needsPerson(p)) {
-    // The seat is held by a recorded fact: an explicit stop or a failed attempt.
-    const held = document.createElement("span");
-    held.className = "status-word";
-    text(held, "needs a person");
-    row.appendChild(held);
-  }
-
-  // The badge counts the owed work set: queued input plus recorded reports the
-  // actor has not acknowledged. That work is the actor's own inbox; the stored
-  // sample behind the count stays partial.
-  const owedTotal = Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0);
-  if (owedTotal > 0) {
-    const badge = document.createElement("button");
-    badge.className = "pend-badge";
-    badge.type = "button";
-    badge.dataset.focus = focusKey("pending", p.id);
-    badge.setAttribute("aria-expanded", state.pendingOpen === p.id ? "true" : "false");
-    badge.setAttribute("aria-label",
-      owedTotal + " messages awaiting acknowledgement for " + p.id);
-    text(badge, "pending " + owedTotal);
-    badge.addEventListener("click", () => togglePending(p.id));
-    row.appendChild(badge);
-  }
-
-  const model = document.createElement("span");
-  model.className = "model-note";
-  text(model, (p.observedModel || p.model || "unknown") + " / " + (p.branch || "no branch"));
-  row.appendChild(model);
-
-  renderAction(row, p);
-
-  return row;
-}
-
-
-
-// A committed player event re-renders the full changed row: status, awaiting marker,
-// pending badge, model and branch, and the current-action slot all follow the event.
-// Filter membership and an open pending list follow too; focus stays on its row.
-function updateRow(p) {
-  const row = rowElement(p.id);
-  if (!row || !matchesFilters(p)) { renderTree(); return; }
-  const focused = row.contains(document.activeElement) && document.activeElement.dataset
-    ? document.activeElement.dataset.focus : null;
-  const fresh = buildRow(p, childrenOf(p.id).filter(subtreeVisible).length > 0);
-  row.replaceWith(fresh);
-  if (focused) restoreFocus(focused);
-  const li = fresh.parentElement;
-  if (li && state.pendingOpen === p.id) {
-    const oldList = li.querySelector(":scope > .pending-list");
-    if (oldList) oldList.replaceWith(renderPendingList(p));
-    else fresh.after(renderPendingList(p));
-  }
-  // The document is the page, so a row update repaints through the one coalesced
-  // entry. The retired panel renderers are gone from this path.
-  renderDocumentSoon();
-}
-
-// The header switch shows one view at a time. Switching to Knowledge
-// re-renders the seats, whose layout reads zero while hidden.
-
-// The ensemble board reads the same snapshot as the tree: recorded
-// membership, derived status and the current action label per actor.
-
-// The traffic surface reads the same snapshot: derived status per actor and
-// the committed transitions the activity rail already holds.
-
-// Every stored message the badge counts, newest first, named by id and kind. The
-// count is the stored count; this list is the sample behind it.
-function renderPendingList(p) {
-  const ul = document.createElement("ul");
-  ul.className = "pending-list";
-  const items = pendingItems(p);
-  if (!items.length) {
-    const li = document.createElement("li");
-    li.className = "muted";
-    text(li, "No stored sample in this snapshot for the " + Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0) + " awaiting messages.");
-    ul.appendChild(li);
-    return ul;
-  }
-  for (const item of items) {
-    const li = document.createElement("li");
-    li.className = "mono";
-    const when = ageText(item.at);
-    text(li, (item.kind || "message") + " · " + (item.id || "unrecorded id") + (when ? " · " + when : ""));
-    ul.appendChild(li);
-  }
-  return ul;
-}
-
-function shortRole(role) {
-  if (role === "principal-conductor") return "principal";
-  if (role === "associate-conductor") return "associate";
-  if (role === "operator") return "operator";
-  return "player";
-}
+// A committed player event repaints through the one coalesced entry, so the
+// document, the staves and the record all follow the event.
 
 // Complete recorded work for the selected actor, read on demand from the
 // work route: the full task body, the exact current input, the open native
@@ -999,7 +684,6 @@ function applySnapshot(data, label) {
     holdGapNotice("Snapshot reports an event history gap. Shown state is authoritative as of the cursor.");
   }
   if (state.selectionId && !state.players.has(state.selectionId)) state.selectionId = null;
-  if (state.pendingOpen && !state.players.has(state.pendingOpen)) state.pendingOpen = null;
   // A seat address is honoured once, on the first snapshot that carries the seat.
   if (state.pendingSeat) {
     const addressed = state.pendingSeat;
@@ -1120,13 +804,10 @@ function connectEvents() {
     else delete state.tasks[p.id];
     if (p.id === state.selectionId) void loadActorWork(p.id);
     if (ev.lastEventId) setCursor(ev.lastEventId);
-    // A new actor or a reparent restructures the tree; an attribute change is
-    // patched in place so focus, selection and filters stay where they are.
-    if (!known || structureSignature() !== state.structure) renderTree();
-    else {
-      updateRow(p);
-    }
-    markArrival(p.id);
+    // A new actor or a reparent changes what the page holds; every other frame
+    // repaints through the one coalesced entry as well, so the staves keep their
+    // own order, focus and selection without a second patch path.
+    renderTree();
     clearGapNotice();
   });
 
@@ -1149,30 +830,11 @@ function connectEvents() {
     if (ev.lastEventId) setCursor(ev.lastEventId);
     const actor = state.players.get(t.session);
     if (actor) {
-      const row = rowElement(actor.id);
-      if (row) renderAction(row, actor);
       // A transition on the selected actor can carry a new report, input,
       // or receipt, so the selected read refreshes with it.
       if (state.selectionId === actor.id) {
         void loadActorWork(actor.id);
       }
-    }
-    // Message admission goes to the recipient; its acknowledgement returns to
-    // the sender.
-    if (t.entity === "message" && t.counterpart) {
-      if (t.kind === "receipt") {
-        markArrival(t.counterpart);
-        messageConnector(t.session, t.counterpart);
-      } else if (t.operation === "insert") {
-        markArrival(t.counterpart);
-        messageConnector(t.counterpart, t.session);
-      }
-    }
-    // A membership or ensemble change is a structural change: the tree re-renders
-    // and the pane names what changed.
-    if (t.entity === "membership" || t.entity === "section-membership"
-        || t.entity === "ensemble" || t.entity === "section") {
-      setTreeNotice((t.kind || t.entity) + ": " + (t.summary || t.entityId || "recorded change"));
     }
     // A recorded knowledge change refreshes the open knowledge reads.
     if (t.entity === "knowledge" || t.entity === "promotion") {
@@ -1659,7 +1321,10 @@ function renderDocument() {
     knowledgeQuery: state.knowledgeSearch || "",
     knowledgeNotice: state.knowledgeNotice || "",
     onSelect: select,
-    onSelectFinding: (id) => { state.findingId = id; renderDocument(); },
+    // A selection intent always renders, even when the same finding is activated
+    // again: the map may have dismissed its card since, and its own state changed
+    // without the shell's signature moving.
+    onSelectFinding: (id) => { state.findingId = id; markDrawnStale(); renderDocument(); },
     onReadMessage: (id) => { void loadMessageBody(id); },
     onScrub: selectHistoryEvent,
     onSelectEvent: selectHistoryEvent,

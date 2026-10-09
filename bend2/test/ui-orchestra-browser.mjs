@@ -239,12 +239,18 @@ const urlA = firstViewLine.value.slice('Orchestra live view: '.length).trim();
 check('view URL uses the loopback HTTP listener', urlA.startsWith('http://127.0.0.1:'));
 
 await openPage(urlA);
+const earlyShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
+writeFileSync(join(OUT, 'initial.png'), Buffer.from(earlyShot.result.data, 'base64'));
 await until('snapshot line leaves its unloaded state',
   `document.getElementById('snapshot-line') && !document.getElementById('snapshot-line').textContent.includes('No snapshot loaded')`);
 await until('attention strip settles on the snapshot actors',
   `(document.getElementById('attention-band').textContent || '').length > 0`);
+const initialShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
+writeFileSync(join(OUT, 'initial.png'), Buffer.from(initialShot.result.data, 'base64'));
 check('quiet seats fold behind the control by default', await evalJs(
-  `document.getElementById('doc-ended').getAttribute('aria-pressed') === 'false' && document.querySelectorAll('#roster .doc-row').length === 0`));
+  `document.getElementById('doc-ended').getAttribute('aria-pressed') === 'false'
+    && document.querySelectorAll('#roster .doc-row.state-quiet').length === 0
+    && document.querySelector('#roster .doc-row.state-queued') !== null`));
 await evalJs(`document.getElementById('doc-ended').click()`);
 await until('roster renders the fixture actors in margin bands',
   `document.querySelectorAll('#roster .doc-row').length >= 4 && (document.getElementById('roster').textContent || '').includes('qa-ensemble')`);
@@ -298,21 +304,96 @@ check('map frame bounds the canvas', await evalJs(`(() => {
   return !!frame && !!frame.querySelector('#knowledge-whole')
     && getComputedStyle(frame).overflow === 'hidden' && frame.clientHeight <= 620;
 })()`));
+check('zoom controls state their action and level', await evalJs(
+  `!!document.querySelector('#knowledge-whole [aria-label="Zoom the map in"]') && !!document.querySelector('#knowledge-whole [aria-label="Zoom the map out"]') && !!document.querySelector('#knowledge-whole .kw-zoom-level')`));
+const mapNodeWidthBeforeZoom = await evalJs(`document.querySelector('#knowledge-whole .kw-anchor').getBoundingClientRect().width`);
 await evalJs(`document.querySelector('#knowledge-whole [aria-label="Zoom the map in"]').click()`);
 check('zoom control scales the map view', await evalJs(
-  `(document.querySelector('#knowledge-whole g.kw-view').getAttribute('transform') || '').includes('scale(1.25)')`));
-await evalJs(`document.querySelector('#knowledge-whole [aria-label="Reset the map view"]').click()`);
-check('reset restores the map view', await evalJs(
-  `document.querySelector('#knowledge-whole g.kw-view').getAttribute('transform') === 'translate(0,0) scale(1)'`));
+  `document.querySelector('#knowledge-whole .kw-anchor').getBoundingClientRect().width > ${JSON.stringify(mapNodeWidthBeforeZoom)} && parseFloat(document.querySelector('#knowledge-whole .kw-zoom-level').textContent) > 100`));
+await evalJs(`document.querySelector('#knowledge-whole [aria-label="Fit the map to the frame"]').click()`);
+check('fit returns the whole drawing to view', await evalJs(`(() => {
+  const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
+  const frame = document.querySelector('#knowledge-whole').parentElement;
+  const bounds = frame.getBoundingClientRect();
+  const nodes = [...svg.querySelectorAll('.kw-anchor, .knode, .kw-lozenge')];
+  return nodes.length > 0 && nodes.every((node) => {
+    const r = node.getBoundingClientRect();
+    return r.left >= bounds.left - 2 && r.right <= bounds.right + 2
+      && r.top >= bounds.top - 2 && r.bottom <= bounds.bottom + 2;
+  });
+})()`));
+check('drag pans the map view', await evalJs(`(() => {
+  const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
+  const node = svg.querySelector('.kw-anchor');
+  const before = node.getBoundingClientRect();
+  const r = svg.getBoundingClientRect();
+  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  svg.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: x, clientY: y }));
+  document.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, button: 0, clientX: x + 60, clientY: y + 20 }));
+  document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  const after = node.getBoundingClientRect();
+  return Math.abs(after.left - before.left - 60) < 2
+    && Math.abs(after.top - before.top - 20) < 2;
+})()`));
+check('wheel zooms the map view', await evalJs(`(() => {
+  const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
+  const g = document.querySelector('#knowledge-whole g.kw-view');
+  const before = /scale\(([^)]+)\)/.exec(g.getAttribute('transform') || '');
+  const r = svg.getBoundingClientRect();
+  svg.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -100, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+  const after = /scale\(([^)]+)\)/.exec(g.getAttribute('transform') || '');
+  const level = document.querySelector('#knowledge-whole .kw-zoom-level').textContent;
+  return before !== null && after !== null && Number(after[1]) !== Number(before[1])
+    && level === Math.round(Number(after[1]) * 100) + '%';
+})()`));
 await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'qa-aide-finding'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
 await until('map search centres and pins its hit',
   `document.querySelector('#knowledge-whole g.kw-view').getAttribute('transform') !== 'translate(0,0) scale(1)' && !!document.querySelector('#knowledge-whole .kw-card')`);
+check('search states its match count', await evalJs(
+  `document.querySelector('#knowledge-whole .kw-search-status').textContent === '1 match'`));
+await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'zzz-no-such-thing'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
+check('search with no match says so', await evalJs(
+  `(document.querySelector('#knowledge-whole .kw-search-status').textContent || '').startsWith('No match')`));
+await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'root'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
+check('search outside the drawn tiers says so', await evalJs(
+  `document.querySelector('#knowledge-whole .kw-search-status').textContent === "'root' is outside the drawn tiers"`));
+await evalJs(`document.querySelector('#knowledge-whole svg.kw-canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
+await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'qa-aide-finding'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
+await until('search re-pins its dismissed hit',
+  `!!document.querySelector('#knowledge-whole .kw-card')`);
 check('recorded edge types render directed', await evalJs(
   `['kw-edge-authorship', 'kw-edge-share', 'kw-edge-deliver'].every((cls) => [...document.querySelectorAll('#knowledge-whole .' + cls)].some((edge) => (edge.getAttribute('marker-end') || '').startsWith('url(')))`));
 await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
-await until('finding selection widens isolation to two hops',
-  `(() => { const co = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-live-finding"]');
-    return !!co && !co.classList.contains('kw-hover-dim'); })()`);
+await until('ensemble hull groups its drawn seats',
+  `!!document.querySelector('#knowledge-whole .kw-hull[data-kw-hull="qa-ensemble"]')`);
+await evalJs(`document.querySelector('#knowledge-whole .kw-hull[data-kw-hull="qa-ensemble"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('collapsing the hull hides its seats',
+  `!document.querySelector('#knowledge-whole [data-kw-id="worker"]') && !!document.querySelector('#knowledge-whole .kw-lozenge[data-kw-hull="qa-ensemble"]')`);
+await evalJs(`document.querySelector('#knowledge-whole .kw-lozenge[data-kw-hull="qa-ensemble"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('expanding restores the seats',
+  `!!document.querySelector('#knowledge-whole [data-kw-id="worker"]') && !document.querySelector('#knowledge-whole .kw-lozenge[data-kw-hull="qa-ensemble"]')`);
+await evalJs(`document.querySelector('#knowledge-whole .kw-hull[data-kw-hull="qa-ensemble"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('the hull collapses again for the search probe',
+  `!!document.querySelector('#knowledge-whole .kw-lozenge[data-kw-hull="qa-ensemble"]')`);
+await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'qa-worker-finding'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
+await until('search expands a collapsed ensemble to reach its hit',
+  `!document.querySelector('#knowledge-whole .kw-lozenge[data-kw-hull="qa-ensemble"]') && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]') && !!document.querySelector('#knowledge-whole .kw-card')`);
+await evalJs(`document.querySelector('#knowledge-whole .kw-hull[data-kw-hull="qa-ensemble"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('the hull collapses for the actor probe',
+  `!!document.querySelector('#knowledge-whole .kw-lozenge[data-kw-hull="qa-ensemble"]')`);
+await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'lead'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
+await until('search reaches an actor inside a collapsed ensemble',
+  `!document.querySelector('#knowledge-whole .kw-lozenge[data-kw-hull="qa-ensemble"]') && !!document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="lead"]')`);
+await until('selecting the actor pins its card on the map',
+  `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'lead'`);
+await evalJs(`document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('selecting an actor pins its card and neighborhood', `(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card .kw-card-title');
+  const self = document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"]');
+  const stranger = document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"]');
+  return !!card && card.textContent === 'worker' && !!self && !self.classList.contains('kw-hover-dim')
+    && !!stranger && stranger.classList.contains('kw-hover-dim');
+})()`);
 check('the legend keys every edge kind the map draws', await evalJs(`(() => {
   const classes = new Set();
   for (const edge of document.querySelectorAll('#knowledge-whole [class*="kw-edge-"]')) {
@@ -354,6 +435,19 @@ check('whole finding selection marks and keeps focus', await evalJs(
   `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').classList.contains('selected') && document.activeElement === document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`));
 await until('selecting a finding pins its card on the map',
   `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker retained finding.'`);
+await evalJs(`document.querySelector('#knowledge-whole svg.kw-canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
+check('escape dismisses the pinned card', await evalJs(
+  `!document.querySelector('#knowledge-whole .kw-card') && document.querySelectorAll('#knowledge-whole .kw-hover-dim').length === 0`));
+await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('card re-pins on selection',
+  `!!document.querySelector('#knowledge-whole .kw-card')`);
+await evalJs(`document.querySelector('#knowledge-whole svg.kw-canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
+await evalJs(`{ const n = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]'); n.focus(); n.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
+await until('keyboard re-pins the dismissed finding',
+  `!!document.querySelector('#knowledge-whole .kw-card')`);
+await evalJs(`document.querySelector('#knowledge-whole svg.kw-canvas').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+check('background click returns to the overview', await evalJs(
+  `!document.querySelector('#knowledge-whole .kw-card')`));
 await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
 check('hover isolates the finding neighborhood', await evalJs(`(() => {
   const hovered = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]');
@@ -372,6 +466,8 @@ writeFileSync(join(OUT, 'selected-work.png'), Buffer.from(selectedWorkShot.resul
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open').click()`);
 await until('second actor record replaces the first',
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'aide'`);
+await until('roster actor selection shows the actor card on the map',
+  `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'aide'`);
 baton('record', 'qa-worker-live-finding', 'worker', 'Worker live finding.',
   'Live evidence.', 'Live limits.');
 await until('live record updates the author compact line through native SSE',
@@ -383,6 +479,13 @@ await until('live promotion updates the shared count through native SSE',
   `(document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact') || {}).textContent?.includes('2 shared')`);
 await until('live promotion draws the second recorded share edge through native SSE',
   `[...document.querySelectorAll('#knowledge-whole .kw-edge-share[aria-label="promotion from worker to aide"]')].length === 2`);
+await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
+check('one-hop hover dims the second finding by the same author', await evalJs(
+  `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-live-finding"]').classList.contains('kw-hover-dim')`));
+await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('finding selection widens isolation to two hops',
+  `(() => { const co = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-live-finding"]');
+    return !!co && !co.classList.contains('kw-hover-dim'); })()`);
 await evalJs(`window.__qaMark = 41`);
 const ribbonMaxBeforeNativeCommit = await evalJs(`document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax')`);
 baton('message', 'qa-guidance-native', 'root', 'worker', 'guidance', 'Committed through the native owner.');
@@ -435,6 +538,7 @@ check('the spine marks the seat it holds', await evalJs(
   `!!document.querySelector('#ribbon .ribbon-chip[aria-current="true"]')`));
 
 // Visual evidence for the two redesigned surfaces, clipped to their own boxes.
+const surfaceCaptures = [];
 for (const [name, selector] of [['pit.png', '.pit'], ['map.png', '.map']]) {
   const box = await evalJs(`(() => {
     const el = document.querySelector(${JSON.stringify(selector)});
@@ -448,9 +552,10 @@ for (const [name, selector] of [['pit.png', '.pit'], ['map.png', '.map']]) {
       clip: { x: box.x, y: box.y, width: box.width, height: box.height, scale: 1 },
     });
     writeFileSync(join(OUT, name), Buffer.from(shot.result.data, 'base64'));
+    surfaceCaptures.push(name);
   }
 }
-check('pit and map evidence captured', true, 'pit.png, map.png');
+check('pit and map evidence captured', surfaceCaptures.length === 2, surfaceCaptures.join(', '));
 
 // operator-triggered reconnect re-reads the snapshot through the view command server
 const ribbonMaxBeforeReconnect = await evalJs(`document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax')`);
@@ -462,6 +567,32 @@ await until('manual reconnect re-reads the snapshot with the new commit',
 // narrow viewport + reduced motion evidence (phase A server stays up)
 await send(pageWs, 'Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 await evalJs('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'qa-worker-finding'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
+await until('narrow search selects its finding',
+  `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker retained finding.'`);
+check('narrow search puts the finding in the visible canvas center', await evalJs(`(() => {
+  const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
+  const frame = document.querySelector('.map-frame');
+  const drawing = svg.getBoundingClientRect(), clip = frame.getBoundingClientRect();
+  const left = Math.max(drawing.left, clip.left + frame.clientLeft);
+  const top = Math.max(drawing.top, clip.top + frame.clientTop);
+  const right = Math.min(drawing.right, clip.left + frame.clientLeft + frame.clientWidth);
+  const bottom = Math.min(drawing.bottom, clip.top + frame.clientTop + frame.clientHeight);
+  const hit = svg.querySelector('.knode[aria-label="qa-worker-finding"] .kw-finding').getBoundingClientRect();
+  return Math.abs((hit.left + hit.right - left - right) / 2) < 2
+    && Math.abs((hit.top + hit.bottom - top - bottom) / 2) < 2;
+})()`));
+check('narrow dragging moves the finding with the pointer', await evalJs(`(() => {
+  const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
+  const hit = svg.querySelector('.knode[aria-label="qa-worker-finding"] .kw-finding');
+  const before = hit.getBoundingClientRect();
+  const x = (before.left + before.right) / 2, y = (before.top + before.bottom) / 2;
+  svg.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true, button:0, clientX:x, clientY:y}));
+  document.dispatchEvent(new PointerEvent('pointermove', {bubbles:true, clientX:x + 35, clientY:y + 15}));
+  document.dispatchEvent(new PointerEvent('pointerup', {bubbles:true}));
+  const after = hit.getBoundingClientRect();
+  return Math.abs(after.left - before.left - 35) < 2 && Math.abs(after.top - before.top - 15) < 2;
+})()`));
 const narrow = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'narrow-390.png'), Buffer.from(narrow.result.data, 'base64'));
 await send(pageWs, 'Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -651,8 +782,11 @@ await until('attention selection opens the actor record',
 const runningDotColor = await evalJs(
   `getComputedStyle(document.querySelector('#selection .sel-dot')).backgroundColor`);
 await evalJs(`document.querySelector('#attention-band [data-att-key="chip:worker"]').focus()`);
+const ribbonBeforeFocusedGuidance = await evalJs(`document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax')`);
 baton('message', 'qa-guidance-lane-focus', 'root', 'worker', 'guidance', 'Attention focus retained on live input.');
 committed();
+await until('focused guidance reaches the live view',
+  `document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax') !== ${JSON.stringify(ribbonBeforeFocusedGuidance)}`);
 check('live attention redraw preserves focus on the same chip', await evalJs(
   `window.__qaMark === 42 && document.activeElement && document.activeElement.getAttribute('data-att-key') === 'chip:worker'`));
 // Ordinary owed input stays with the actor after its process exits.
