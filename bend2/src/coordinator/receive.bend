@@ -534,7 +534,7 @@ def run_status(result: T.RunRes) -> String:
     case T.RRun{T.SSignal{num}, out}: "signal " ++ U32.show(num)
     case T.RSpawn{detail}: detail
 
-def report_body(db: String, session: String, id: String, kind: String, body: String) -> IO<Unit>:
+def report_body(db: String, session: String, id: String, kind: String, body: String) -> IO(Unit):
   do IO<Unit>:
     noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":" ++ kind) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(body) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
     IO.pure(Unit,Unit{})
@@ -550,12 +550,12 @@ def history_appended(db: String, session: String, id: String, path: String, vari
         noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":profile-history-failed") ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q("subscription profile history home record failed at " ++ path ++ " for " ++ variable ++ ": " ++ U32.show(code) ++ ": " ++ detail ++ "; the provider cause stands and no profile was advanced.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
         IO.pure(Bool,False{})
 
-def history_recorded(db: String, session: String, id: String, variable: String, +path: String, line: String) -> IO<Bool>:
+def history_recorded(db: String, session: String, id: String, variable: String, +path: String, line: String) -> IO(Bool):
   do IO<Bool>:
     appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(path,Tx.trim_nl(line) ++ "\n")
     history_appended(db,session,id,path,variable,appended)
 
-def history_answered_empty(db: String, session: String, id: String, variable: String, path: String, answer: String, empty: Bool) -> IO<Bool>:
+def history_answered_empty(db: String, session: String, id: String, variable: String, path: String, answer: String, empty: Bool) -> IO(Bool):
   match empty:
     case True{}: do IO<Bool>:
       noted : Unit <- report_body(db,session,id,"profile-history-failed","the native history helper answered without a provider history home; the provider cause stands and no profile was advanced; helper output: " ++ Tx.trim_nl(answer))
@@ -563,7 +563,7 @@ def history_answered_empty(db: String, session: String, id: String, variable: St
     case False{}: history_recorded(db,session,id,variable,path,answer)
 
 # A usable answer is recorded whole, so the sidecar keeps what the helper resolved.
-def history_answered(+db: String, +session: String, +id: String, variable: String, path: String, answer: String, +home: String) -> IO<Bool>:
+def history_answered(+db: String, +session: String, +id: String, variable: String, path: String, answer: String, +home: String) -> IO(Bool):
   history_answered_empty(db,session,id,variable,path,answer,String.is_empty(home))
 
 def history_helper_result(+db: String, +session: String, +id: String, harness: String, variable: String, from_store: String, path: String, run: T.RunRes) -> IO(Bool):
@@ -699,7 +699,7 @@ def completed_profile(+db: String, +session: String, +id: String, log: String, c
       observed : Result<&1,&1,U32 & String,Unit> <- observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,lock,(outcome,deliveries),u => IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),adopted,True{})
       advanced_completed(db,session,id,attempt,again,observed)
 
-def completed_observation(+db: String, +session: String, +id: String, log: String, cursor: String, +native: String, +cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, observation: Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, cmd: String) -> IO<Result<&1,&1,U32 & String,Unit>>:
+def completed_observation(+db: String, +session: String, +id: String, log: String, cursor: String, +native: String, +cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, observation: Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   (+outcome,deliveries)=observation
   do IO<Result<&1,&1,U32 & String,Unit>>:
     superseded : Bool <- profile_handoff(db,session,id,outcome,native,cmd,cwd)
