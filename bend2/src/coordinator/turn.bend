@@ -267,7 +267,7 @@ def omp_terminal_messages_sql(+source: String, +message: String) -> String:
 # The frame arrives once, through the one-row seam frame_id_sql already uses, so
 # the extraction quotes the envelope once instead of once per SQL expression.
 def omp_terminal_sql(+event: String, +message: String) -> String:
-  +messages = omp_terminal_messages_sql("value",message)
+  +messages = omp_terminal_messages_sql("frame.value",message)
   "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='agent_end' AND coalesce(json_extract(value,'$.isTerminal'),1)=1 THEN CASE WHEN json_type(value,'$.messages')='array' THEN json_set(value,'$.messages',json(" ++ messages ++ ")) WHEN json_valid(" ++ C.q(message) ++ ") THEN json_set(value,'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE value END ELSE value END ELSE value END FROM frame;"
 
 def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) -> IO(String):
