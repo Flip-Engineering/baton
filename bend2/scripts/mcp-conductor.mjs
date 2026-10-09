@@ -203,7 +203,7 @@ const TOOLS = [
     description: 'Inspect an Ensemble or configure its owner and coupling.',
     inputSchema: { type: 'object', properties: {
       ensemble: { type: 'string' }, owner: { type: 'string' },
-      coupling: { type: 'string', enum: ['loose', 'tight'] },
+      coupling: { type: 'string', enum: ['loose', 'tight'], description: 'Omitting coupling preserves an existing Ensemble; new Ensembles default to loose.' },
     }, required: ['ensemble'], additionalProperties: false },
   },
   {
@@ -544,7 +544,8 @@ function handleToolCall(msg) {
         break;
       case 'baton2_ensemble':
         result = coord('ensemble', args.ensemble,
-          ...(args.owner === undefined && args.coupling === undefined ? [] : [args.owner ?? sessionId, args.coupling ?? 'loose']));
+          ...(args.owner === undefined && args.coupling === undefined ? []
+            : [args.owner ?? sessionId, ...(args.coupling === undefined ? [] : [args.coupling])]));
         break;
       case 'baton2_ensemble_member':
         result = coord('ensemble-member', args.ensemble, args.owner ?? sessionId, player, args.action);

@@ -173,9 +173,21 @@ class McpRoot(unittest.TestCase):
                          'principal-conductor')
         self.assertEqual({row['id'] for row in self.tool(proc, 'baton2_players')},
                          {'principal', 'player-id'})
-        self.tool(proc, 'baton2_ensemble', {'ensemble': 'team', 'coupling': 'loose'})
+        created = self.tool(proc, 'baton2_ensemble', {'ensemble': 'team', 'owner': 'principal'})
+        self.assertEqual(created['coupling'], 'loose')
         self.tool(proc, 'baton2_ensemble_member',
                   {'ensemble': 'team', 'player': 'player-id', 'action': 'add'})
+        self.assertEqual(self.tool(proc, 'baton2_ensemble',
+                                  {'ensemble': 'team', 'coupling': 'tight'})['coupling'], 'tight')
+        retained = self.tool(proc, 'baton2_ensemble', {'ensemble': 'team', 'owner': 'principal'})
+        self.assertEqual((retained['owner'], retained['coupling'], retained['members']),
+                         ('principal', 'tight', ['player-id']))
+        self.assertEqual(self.tool(proc, 'baton2_ensemble', {'ensemble': 'team'}), retained)
+        self.assertEqual(self.tool(proc, 'baton2_ensemble',
+                                  {'ensemble': 'team', 'coupling': 'loose'})['coupling'], 'loose')
+        self.assertEqual(self.tool(proc, 'baton2_ensemble',
+                                  {'ensemble': 'team', 'owner': 'principal',
+                                   'coupling': 'tight'})['coupling'], 'tight')
         declared = self.tool(proc, 'baton2_section',
                              {'ensemble': 'team', 'section': 'git', 'capability': 'repository changes'})
         self.assertEqual(declared, {'ensemble': 'team', 'id': 'git',

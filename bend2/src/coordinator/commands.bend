@@ -22,6 +22,7 @@ type Command is Data:
   Role{session: String, role: String}
   RoleRead{session: String}
   Ensemble{id: String, owner: String, coupling: String}
+  EnsembleEnsure{id: String, owner: String}
   EnsembleRead{id: String}
   EnsembleMember{id: String, owner: String, session: String, action: String}
   Message{id: String, sender: String, recipient: String, kind: String, body: String}
@@ -351,6 +352,9 @@ def ensemble_row(+row: String) -> String:
 def ensemble_sql(+id: String, +owner: String, +coupling: String) -> String:
   "INSERT INTO ensembles(id,owner,coupling) SELECT " ++ q(id) ++ "," ++ q(owner) ++ "," ++ q(coupling) ++ " WHERE " ++ q(coupling) ++ " IN ('loose','tight') ON CONFLICT(id) DO UPDATE SET id=CASE WHEN ensembles.owner=excluded.owner THEN ensembles.id ELSE NULL END,coupling=excluded.coupling;SELECT " ++ ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ " AND coupling=" ++ q(coupling) ++ ";"
 
+def ensemble_ensure_sql(+id: String, +owner: String) -> String:
+  "INSERT INTO ensembles(id,owner,coupling) VALUES (" ++ q(id) ++ "," ++ q(owner) ++ ",'loose') ON CONFLICT(id) DO UPDATE SET id=CASE WHEN ensembles.owner=excluded.owner THEN ensembles.id ELSE NULL END;SELECT " ++ ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ";"
+
 def ensemble_member_sql(+id: String, +owner: String, +session: String, +action: String) -> String:
   "DELETE FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ " AND " ++ q(action) ++ "='remove' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ");"
   ++ "INSERT OR IGNORE INTO ensemble_members(ensemble,session) SELECT " ++ q(id) ++ "," ++ q(session) ++ " WHERE " ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND " ++ assigned_role(q(session)) ++ "<>'operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ ");"
@@ -416,6 +420,7 @@ def sql(command: Command) -> String:
     case Role{session,role}: role_sql(session,role)
     case RoleRead{session}: role_result(session)
     case Ensemble{id,owner,coupling}: ensemble_sql(id,owner,coupling)
+    case EnsembleEnsure{id,owner}: ensemble_ensure_sql(id,owner)
     case EnsembleRead{id}:
       "SELECT " ++ ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ q(id) ++ ";"
     case EnsembleMember{id,owner,session,action}: ensemble_member_sql(id,owner,session,action)
@@ -569,7 +574,7 @@ def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Comma
       case _: Invalid{}
     case "section": SectionRead{session,id}
     case "role": Role{session,id}
-    case "ensemble": Ensemble{session,id,"loose"}
+    case "ensemble": EnsembleEnsure{session,id}
     case "force-stop": ForceStop{session,id}
     case "view": View{session,id,"7682"}
     case _: Invalid{}
