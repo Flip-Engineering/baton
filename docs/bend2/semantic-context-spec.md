@@ -372,7 +372,9 @@ Every query answer is `{version,query,owner,state,result,error,progress}`.
 `refused`. The last value is reserved for a retained admission rejection.
 `result` is null until complete; `error` is nonnull for failed, interrupted and
 refused outcomes. The envelope's progress always describes its own query.
-It is null for queries without managed roles, including control queries.
+It is null for queries without managed roles, including unmanaged query-control
+and inspect queries. Managed install and configure queries retain their own
+progress, control and cleanup.
 
 Progress is the closed object `{phase,waitingFor,control,cleanup}`. Phase is
 `preparing|running|waiting|cleaning|settled`, control is
