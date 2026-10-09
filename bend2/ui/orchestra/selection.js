@@ -104,6 +104,14 @@ function selShort(id, length) {
   return text.slice(0, length - 1) + "…";
 }
 
+// The id's tail: the trailing part that identifies it. Short ids read
+// whole; the full id travels in the title.
+function selTail(id) {
+  var text = String(id || "");
+  if (text.length <= 14) return text;
+  return "…" + text.slice(-12);
+}
+
 // The sharing path as a node chain: one stop per recorded handoff, edges
 // arrowed in travel order, the promoting actor above its edge. The stop
 // matching the finding's recorded author carries an origin ring. Full
@@ -279,12 +287,20 @@ function renderSelection(mount, data, options) {
       var mid = stub.id;
       var read = messages[mid] || null;
       var message = read && read.state === "ok" ? read.message : null;
-      var label = (stub.kind ? stub.kind + " " : "") + mid
-        + (message && message.sender ? " from " + message.sender : "");
+      var kindWord = stub.kind || "message";
+      var senderBit = message && message.sender ? " from " + message.sender : "";
       var open = selMsgOpen.has(mid);
-      var button = selEl("button", null, open ? "Hide " + label : "Read " + label);
+      var button = selEl("button", "sel-msg");
+      var mark = selEl("span", "sel-kind");
+      mark.setAttribute("aria-hidden", "true");
+      button.appendChild(mark);
+      button.appendChild(document.createTextNode(
+        (open ? "Hide " : "Read ") + selTail(mid) + senderBit));
       button.type = "button";
       button.dataset.selkey = "sel:msg:" + mid;
+      button.setAttribute("title", kindWord + " " + mid);
+      button.setAttribute("aria-label", (open ? "Hide " : "Read ")
+        + (stub.kind ? stub.kind + " " : "") + mid + senderBit);
       button.setAttribute("aria-expanded", String(open));
       button.addEventListener("click", function () {
         if (selMsgOpen.has(mid)) {

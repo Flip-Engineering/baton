@@ -41,7 +41,7 @@
 
   /* ── geometry ─────────────────────────────────────────────────────────── */
 
-  var GUTTER = 132;       // the tier labels' column
+  var GUTTER = 46;        // the tier figures' column; the names live in titles
   var SEAT_TOP = 26;      // room above the top tier for a halo and a label
   var R_MIN = 5.5;        // the mark's radius at the largest run
   var R_MAX = 18;         // the mark's radius at the smallest run
@@ -53,7 +53,6 @@
   var BOW = 14;
   var STRIP_LIMIT = 12;
   var ID_SHOWN = 30;
-  var TIER_LABEL_SHOWN = 16;
 
   // Readings, worst first. The index is the document order and it follows the
   // meanings: a recorded failure first, then live work, then the seats that owe
@@ -116,10 +115,9 @@
     return reading === "running" || reading === "waiting";
   }
 
-  function shortId(id, max) {
+  function shortId(id) {
     var full = String(id === undefined || id === null ? "" : id);
-    var limit = typeof max === "number" && max > 4 ? max : ID_SHOWN;
-    return full.length > limit ? full.slice(0, limit - 1) + "\u2026" : full;
+    return full.length > ID_SHOWN ? full.slice(0, ID_SHOWN - 1) + "\u2026" : full;
   }
 
   // Everything the seat owes, whatever the kind: queued inputs it has not
@@ -644,10 +642,17 @@
     // The podium line and the tier labels.
     var line = svgEl("line", { x1: 0, x2: laid.width, y1: SEAT_TOP - 8, y2: SEAT_TOP - 8 });
     svg.appendChild(line);
+    // Display each tier's actor count and retain its name in the tooltip.
     for (var t = 0; t < plan.tiers.length; t += 1) {
-      var label = svgEl("text", { "class": "att-section", x: 2, y: plan.tiers[t].y + 3 });
-      setText(label, shortId(plan.tiers[t].label, TIER_LABEL_SHOWN));
-      svg.appendChild(label);
+      var figure = svgEl("text", {
+        "class": "att-section", x: GUTTER - 10, y: plan.tiers[t].y + 3,
+      });
+      setText(figure, String(plan.tiers[t].rows.length));
+      var named = svgEl("title");
+      setText(named, (plan.tiers[t].label || "no ensemble") + ", "
+        + plan.tiers[t].rows.length + (plan.tiers[t].rows.length === 1 ? " seat" : " seats"));
+      figure.appendChild(named);
+      svg.appendChild(figure);
     }
 
     var now = Date.now();
@@ -699,9 +704,7 @@
     return svg;
   }
 
-  // The legend is a key to the marks, not a second report: the pit's plate line
-  // already states how many seats need a person and how many owe work, so no
-  // number is printed twice on the page.
+  // Status swatches retain their descriptions in tooltips and accessible labels.
   function legendNode() {
     var legend = document.createElement("div");
     legend.className = "att-legend";
@@ -715,11 +718,13 @@
     for (var i = 0; i < keys.length; i += 1) {
       var key = document.createElement("span");
       key.className = "att-key";
+      key.dataset.attKey = "legend:" + keys[i][2];
+      key.setAttribute("title", keys[i][2]);
+      key.setAttribute("aria-label", keys[i][2]);
       var swatch = document.createElement("i");
       swatch.style.background = keys[i][0];
       if (keys[i][1]) swatch.style.border = "1px solid " + keys[i][1];
       key.appendChild(swatch);
-      key.appendChild(span(null, keys[i][2]));
       legend.appendChild(key);
     }
     return legend;
@@ -743,7 +748,6 @@
     chip.appendChild(span("status-word", row.word));
     chip.appendChild(span("lane-id mono", shortId(row.id)));
     if (row.activity) chip.appendChild(span("att-activity", row.activity));
-    if (row.owed > 0) chip.appendChild(span("lane-badge", row.owed));
     chip.addEventListener("click", function () {
       if (typeof options.onSelect === "function") options.onSelect(row.id);
     });
@@ -897,8 +901,8 @@
     if (!listed.length) {
       var quiet = document.createElement("p");
       quiet.className = "att-quiet";
-      setText(quiet, "Nothing needs a person and no queue is waiting. "
-        + (result.counts.running + result.counts.waiting) + " seats are playing or starting.");
+      setText(quiet, "Nothing needs you. "
+        + (result.counts.running + result.counts.waiting) + " playing or starting.");
       container.appendChild(quiet);
       return result;
     }
@@ -913,9 +917,15 @@
       fold.className = "lane-chip att-fold";
       fold.dataset.attKey = "fold";
       fold.setAttribute("aria-expanded", expanded ? "true" : "false");
-      setText(fold, expanded
+      // The control reports the folded count and its action.
+      setText(fold, expanded ? "\u2212" : "+" + folded);
+      fold.setAttribute("title", expanded
         ? "Show the " + STRIP_LIMIT + " highest"
-        : "Show all " + listed.length + " (" + folded + " folded)");
+        : "Show all " + listed.length + ", " + folded + " folded");
+      fold.setAttribute("aria-label", expanded
+        ? "Show the " + STRIP_LIMIT + " highest"
+        : "Show all " + listed.length + " seats that need a person or owe work, "
+          + folded + " folded");
       fold.addEventListener("click", function () {
         expandedByContainer.set(container, !expanded);
         renderAttention(container, dataByContainer.get(container), opts);

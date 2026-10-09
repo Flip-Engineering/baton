@@ -48,14 +48,15 @@
 
 .pit .att-hit { fill: transparent; }
 
-.pit .att-label,
+/* A tier is named by its seat count, right-aligned against the seats it counts;
+   the recorded name is in that figure's title. */
 .pit .att-section {
   font-family: var(--mono);
+  font-size: 10px;
   fill: var(--muted);
+  text-anchor: end;
+  font-variant-numeric: tabular-nums;
 }
-
-.pit .att-label { font-size: 10px; }
-.pit .att-section { font-size: 9px; letter-spacing: 0.04em; }
 
 /* The baton: a curved line from the podium to the seat that acted most recently. */
 .pit .att-baton {
@@ -114,24 +115,28 @@
   to { stroke-dashoffset: -16; }
 }
 
-/* The legend states what each mark means, in the reader's language. */
+/* The legend is a key of inks: one swatch per reading, its word in the title. */
 .pit .att-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
+  align-items: center;
+  gap: 3px 10px;
   margin: 8px 0 2px;
-  font-family: var(--sans);
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--muted);
 }
 
-.pit .att-key { display: inline-flex; align-items: center; gap: 5px; }
+.pit .att-key {
+  display: inline-flex;
+  align-items: center;
+  cursor: default;
+}
+
+.pit .att-key:hover i,
+.pit .att-key:focus-visible i { outline: 1px solid var(--ink); outline-offset: 1px; }
 
 .pit .att-key i {
   display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
 }
 

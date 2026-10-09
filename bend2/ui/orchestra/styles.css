@@ -134,14 +134,15 @@ a { color: var(--selection); }
   color: var(--muted);
 }
 
-/* The run's expression mark: attacca, tutti, solo. */
+/* Overall run state. */
 .plate-mark {
   margin: 0 0 0 auto;
-  font-family: var(--serif);
+  font-family: var(--display);
   font-style: italic;
-  font-size: var(--step2);
+  font-size: 30px;
+  line-height: 1;
   color: var(--rehearsal);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
 }
 
 /* Summary counts use separate number and label elements. */
@@ -176,6 +177,9 @@ a { color: var(--selection); }
 
 /* The separator between two figures: quiet ink, the flex gap does the spacing. */
 .plate-facts .fact-sep { color: var(--hairline); }
+
+/* Snapshot age. */
+.plate-facts .fact-age { color: var(--muted); opacity: 0.85; }
 
 /* The movements the page holds, reachable by keyboard from the title. */
 .plate-nav {
@@ -300,10 +304,6 @@ button:active { background: var(--wash); }
   padding: 4px 4px 8px;
 }
 
-.lane-grouphead .status-word { font-weight: 600; }
-
-.lane-grouphead .muted { font-weight: 400; }
-
 .lane-chip {
   display: inline-flex;
   align-items: center;
@@ -323,17 +323,6 @@ button:active { background: var(--wash); }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* Pending message count. */
-.lane-badge {
-  min-width: 20px;
-  padding: 0 6px;
-  border: 1px solid currentColor;
-  border-radius: 10px;
-  color: var(--attention);
-  font-size: var(--step0);
-  text-align: center;
 }
 
 .lane-chip.selected { outline: 2px solid var(--selection); outline-offset: 1px; }
@@ -471,6 +460,16 @@ button:active { background: var(--wash); }
 .rail .rail-count {
   color: #cfd4de;
   margin-right: 8px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.rail .rail-count b {
+  font-size: var(--step2);
+  font-weight: 600;
+  line-height: 1;
+  color: #f2f1ea;
 }
 
 .rail button {
@@ -544,8 +543,6 @@ button:active { background: var(--wash); }
 .doc-note { max-width: 78ch; line-height: 1.45; }
 
 /* ── the attention strip ─────────────────────────────────────────────────── */
-
-.att-counts .status-word { font-weight: 600; }
 
 .att-need { border-left: 2px solid var(--attention); }
 .att-activity { color: var(--ink); }

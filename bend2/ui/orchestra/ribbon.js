@@ -1,12 +1,9 @@
-/* The run's time axis: the page spine in the pit.
+/* Recorded activity across the selected time window.
 
-   One bucket per stretch of recorded time across the window the page forwards,
-   its height against the busiest stretch and its ink against the recorded kind
-   that dominates it. A needle marks the reader's position and the live edge
-   carries a pulse while entries keep arriving. At the axis's left end a tempo
-   mark states one measured fact about the window, and the seats that moved most
-   in it are chips that jump the position to that seat's newest entry. The full
-   record opens behind one control.
+   Each interval has a note whose height and size represent its count and whose
+   color represents its most frequent event kind. The needle selects a time;
+   player chips select that player's newest entry. The full record opens from
+   the list control.
 
    The time scale is linear over the window and the axis spans the mount's
    content width with no inset of its own, so the grid lines up column for
@@ -23,6 +20,10 @@ const RIBBON_BARS_MAX = 180;
 const RIBBON_LIST_ROWS = 400;
 const RIBBON_PAGE_STEP = 50;
 const RIBBON_CHIPS_MAX = 8;
+// The five ruled lines of a staff, as percentages up from the axis floor, and
+// the position above the staff for the busiest stretch.
+const STAFF_LINES = [12, 31, 50, 69, 88];
+const STAFF_ABOVE = 97;
 const RIBBON_LIVE_MS = 90000;
 
 const ribbonListOpen = new WeakMap();
@@ -387,15 +388,28 @@ function renderRibbon(container, data, options) {
 
   const axis = document.createElement("div");
   axis.className = "ribbon-axis";
+  // Empty intervals retain their horizontal space without drawing a note.
+  for (const line of STAFF_LINES) {
+    const rule = document.createElement("span");
+    rule.className = "ribbon-staffline";
+    rule.style.bottom = line + "%";
+    rule.setAttribute("aria-hidden", "true");
+    axis.appendChild(rule);
+  }
+  let newestNote = null;
   for (let column = 0; column < bars; column += 1) {
     const counted = counts[column];
-    const bar = document.createElement("span");
-    bar.className = "ribbon-bar";
-    if (!counted) {
-      bar.classList.add("ribbon-empty");
-    } else {
+    const cell = document.createElement("span");
+    cell.className = "ribbon-cell";
+    if (counted) {
       const share = counted / busiest;
-      bar.style.height = (14 + Math.round(86 * share)) + "%";
+      const pitch = Math.min(STAFF_LINES.length, Math.round(share * STAFF_LINES.length));
+      const note = document.createElement("span");
+      note.className = "ribbon-note" + (column === here ? " ribbon-here" : "");
+      note.style.bottom = (pitch < STAFF_LINES.length ? STAFF_LINES[pitch] : STAFF_ABOVE) + "%";
+      const size = (2.6 + 3.4 * share).toFixed(1);
+      note.style.width = size + "px";
+      note.style.height = size + "px";
       let dominant = "unknown";
       let dominantCount = 0;
       for (const entry of kinds[column] || []) {
@@ -404,32 +418,31 @@ function renderRibbon(container, data, options) {
           dominantCount = entry[1];
         }
       }
-      bar.classList.add(ribbonKindClass(dominant));
+      note.classList.add(ribbonKindClass(dominant));
       const seatNames = [...(seats[column] || new Map()).entries()]
         .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1))
         .slice(0, 4)
         .map((entry) => entry[0]);
-      bar.title = ribbonCount(counted) + (counted === 1 ? " change" : " changes")
+      note.title = ribbonCount(counted) + (counted === 1 ? " recorded entry" : " recorded entries")
         + " \u00b7 " + dominant
         + (seatNames.length ? " \u00b7 " + seatNames.join(", ") : "");
       const stretchKinds = [...(kinds[column] || new Map()).entries()]
         .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1))
         .slice(0, 2);
-      bar.dataset.stretch = String(column);
       const stretchText = ribbonCount(counted) + (counted === 1 ? " recorded entry" : " recorded entries")
         + (stretchKinds.length
           ? " \u00b7 " + stretchKinds.map((entry) => entry[0] + " " + entry[1]).join(", ")
           : "")
         + (seatNames.length ? " \u00b7 " + seatNames.join(", ") : "");
-      bar.addEventListener("pointerenter", () => renderLine(stretchText));
+      note.addEventListener("pointerenter", () => renderLine(stretchText));
+      cell.appendChild(note);
+      newestNote = note;
     }
-    if (column === here) bar.classList.add("ribbon-here");
-    if (arriving && column === bars - 1) bar.classList.add("ribbon-arrival");
-    axis.appendChild(bar);
+    axis.appendChild(cell);
   }
-  axis.addEventListener("pointerleave", () => {
-    renderLine();
-  });
+  // The newest drawn note is the one an arrival inks.
+  if (arriving && newestNote) newestNote.classList.add("ribbon-arrival");
+  axis.addEventListener("pointerleave", () => renderLine());
 
   const needle = document.createElement("span");
   needle.className = "ribbon-needle";
@@ -486,14 +499,14 @@ function renderRibbon(container, data, options) {
       chip.dataset.focus = "ribbon-seat:" + entry[0];
       chip.dataset.seat = entry[0];
       chip.title = entry[0] + ", " + ribbonCount(entry[1]) + " recorded entries in this window";
-      const id = document.createElement("span");
-      id.className = "ribbon-chip-id";
-      id.textContent = ribbonShort(entry[0]);
-      chip.appendChild(id);
       const value = document.createElement("span");
       value.className = "ribbon-chip-count";
       value.textContent = ribbonCount(entry[1]);
       chip.appendChild(value);
+      const id = document.createElement("span");
+      id.className = "ribbon-chip-id";
+      id.textContent = ribbonShort(entry[0]);
+      chip.appendChild(id);
       const at = seatNewest.get(entry[0]);
       // The spine navigates: a chip opens the seat through the shell when the
       // shell passes that callback, and otherwise moves the needle to the seat's

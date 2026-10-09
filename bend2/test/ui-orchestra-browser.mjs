@@ -515,8 +515,10 @@ await until('ribbon full list opens with recorded rows',
 
 // The pit is the page spine: the axis draws its buckets, the needle moves by
 // keyboard and by pointer, and a chip in the spine opens its seat.
-await until('the axis draws its buckets and its needle in the pit',
-  `document.querySelectorAll('#ribbon .ribbon-bar').length > 1 && !!document.querySelector('#ribbon .ribbon-needle')`);
+await until('the axis draws the staff and its needle in the pit',
+  `document.querySelectorAll('#ribbon .ribbon-staffline').length === 5
+    && document.querySelectorAll('#ribbon .ribbon-note').length > 1
+    && !!document.querySelector('#ribbon .ribbon-needle')`);
 check('the axis states the window it draws', await evalJs(`(() => {
   const summary = document.querySelector('#ribbon .ribbon-summary');
   const mark = document.querySelector('#ribbon .ribbon-tempo');

@@ -249,9 +249,22 @@ function renderHeaderLine() {
   el.snapshotLine.textContent = "";
   const snapshot = document.createElement("span");
   snapshot.className = "fact";
-  text(snapshot, (state.snapshotLabel || "No snapshot loaded.")
-    + (state.capturedAt ? " · read " + (ageText(state.capturedAt) || "just now") : ""));
+  // Display the subject and snapshot age separately.
+  const subject = String(state.subject || "");
+  if (subject && state.players.size) {
+    text(snapshot, subject);
+    snapshot.title = state.snapshotLabel || "";
+  } else {
+    text(snapshot, state.snapshotLabel || "No snapshot loaded.");
+  }
   el.snapshotLine.appendChild(snapshot);
+  if (subject && state.players.size && state.capturedAt) {
+    el.snapshotLine.appendChild(factSeparator());
+    const age = document.createElement("span");
+    age.className = "fact fact-age";
+    text(age, "read " + (ageText(state.capturedAt) || "just now"));
+    el.snapshotLine.appendChild(age);
+  }
   if (state.players.size) {
     el.snapshotLine.appendChild(factSeparator());
     el.snapshotLine.appendChild(fact("need a person", people, people > 0 ? "attention" : ""));
@@ -648,8 +661,12 @@ function renderRail() {
   el.rail.appendChild(label);
   const count = document.createElement("span");
   count.className = "rail-count";
-  text(count, waiting.length
-    + (waiting.length === 1 ? " seat needs a person" : " seats need a person"));
+  const figure = document.createElement("b");
+  text(figure, String(waiting.length));
+  count.appendChild(figure);
+  const countLabel = document.createElement("span");
+  text(countLabel, waiting.length === 1 ? " seat needs a person" : " seats need a person");
+  count.appendChild(countLabel);
   el.rail.appendChild(count);
   waiting.slice(0, RAIL_CHIPS).forEach((p) => {
     const reason = railReason(p);

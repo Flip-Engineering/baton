@@ -14,6 +14,7 @@
 .sel-warning > p:first-child { color: var(--failed); font-weight: 600; }
 .sel-claim { font-weight: 600; }
 .sel-group { font-weight: 600; margin: 6px 0 2px; }
+.sel-kind { display: inline-block; width: 7px; height: 7px; border: 1.5px solid var(--muted); transform: rotate(45deg); margin-right: 8px; vertical-align: 1px; }
 .sel-origin { fill: none; stroke: var(--ink, #141a26); stroke-width: 1.5px; }
 .sel-timeline { list-style: none; margin: 4px 0 8px; padding: 0 0 0 14px; position: relative; }
 .sel-timeline::before { content: ""; position: absolute; left: 4px; top: 6px; bottom: 6px; width: 1px; background: var(--hairline); }

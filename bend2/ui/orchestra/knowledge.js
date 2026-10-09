@@ -367,13 +367,13 @@
     const defs = kwSvg(svg, "defs", null);
     const markers = [
       ["kw-arrow-author", "thin gray author to finding",
-        "var(--muted, #5b6478)"],
+        "var(--muted, #5b6478)", "line", ""],
       ["kw-arrow-share", "ochre sharing source to finding",
-        "var(--attention, #a2611f)"],
+        "var(--attention, #a2611f)", "arc", ""],
       ["kw-arrow-deliver", "gray finding to destination",
-        "var(--muted, #5b6478)"],
+        "var(--muted, #5b6478)", "arc", ""],
       ["kw-arrow-promote", "dashed dark promoter to finding",
-        "var(--selection, #2a3e6b)"],
+        "var(--selection, #2a3e6b)", "arc", "3 2"],
     ];
     for (const [mid, label, fill] of markers) {
       const marker = kwSvg(defs, "marker", {
@@ -593,10 +593,14 @@
     const findingPos = new Map();
     const query = opts && opts.query;
     for (const t of tiers) {
+      const depthWord = t.d < 0 ? "depth unknown" : "depth " + t.d;
       const label = kwSvg(svg, "text", {
         x: String(KW_PAD), y: String(t.y + 4), class: "kw-tier",
+        "aria-label": depthWord,
       });
-      label.textContent = t.d < 0 ? "depth unknown" : "depth " + t.d;
+      label.textContent = t.d < 0 ? "?" : String(t.d);
+      const depthTip = kwSvg(label, "title", null);
+      depthTip.textContent = depthWord;
       kwSvg(svg, "line", {
         x1: String(KW_GUTTER), y1: String(t.y + 8),
         x2: String(layout.width - KW_PAD), y2: String(t.y + 8),
@@ -873,16 +877,33 @@
     kwWireKeyHandler(container, (ev) => {
       if (ev.key === "Escape") kwDismiss();
     });
-    // The edge key generates from the same marker table that draws the
-    // arrowheads on one compact line, so the legend cannot drift from
-    // the drawing. Each entry carries its own separator for text reads.
+    // The edge key is one row of edge samples from the same marker
+    // table that draws the arrowheads, so it cannot drift from the
+    // drawing. Each sample mirrors its edge's shape, ink, dash and head;
+    // the full words sit in the title and the accessible label.
     const keys = kwEl(container, "ul", { class: "kw-legend-keys muted" });
     for (const entry of layout.markers || []) {
       const item = kwEl(keys, "li", null);
-      const swatch = kwEl(item, "span", { class: "kw-legend-swatch" });
-      swatch.style.background = String(entry[2] || "currentcolor");
-      const words = kwEl(item, "span", { class: "kw-legend-words" });
-      words.textContent = String(entry[1]) + ". ";
+      item.setAttribute("title", String(entry[1]) + ".");
+      item.setAttribute("aria-label", String(entry[1]) + ".");
+      const sw = kwSvg(item, "svg", {
+        class: "kw-legend-swatch", width: "26", height: "12", "aria-hidden": "true",
+      });
+      const paint = String(entry[2] || "currentcolor");
+      const shape = String(entry[3] || "line");
+      const dash = String(entry[4] || "");
+      if (shape === "arc") {
+        const arc = kwSvg(sw, "path", {
+          d: "M3,10 Q13,-1 23,8", fill: "none", stroke: paint, "stroke-width": "1.5",
+          "marker-end": "url(#" + String(entry[0]) + ")",
+        });
+        if (dash) arc.setAttribute("stroke-dasharray", dash);
+      } else {
+        kwSvg(sw, "line", {
+          x1: "3", y1: "9", x2: "23", y2: "3", stroke: paint, "stroke-width": "1.5",
+          "marker-end": "url(#" + String(entry[0]) + ")",
+        });
+      }
     }
     // Pan and zoom wrap the whole drawing: every child but the marker
     // defs moves into one transform group, so placement code above draws
