@@ -556,6 +556,16 @@ jobs:
                 BATON2_CONTEXT_TYPESCRIPT="$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-runtime/node_modules/typescript" \
                 python3 -u bend2/test/package-selected-context.py -v
               ;;
+            retained-control)
+              if [[ '${{ github.event_name }}' == 'workflow_dispatch' ]]; then
+                "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" process-fixture-build \
+                  env BEND="$PWD/.scratch/bend2/bend" CC=clang \
+                  sh bend2/scripts/build-native.sh bend2/test/process.bend .scratch/bend2/process-test
+              fi
+              "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" retained-control \
+                env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
+                python3 -u bend2/test/retained-control.py -v
+              ;;
             *)
               "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" '${{ matrix.suite }}' \
                 env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
