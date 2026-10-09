@@ -80,11 +80,54 @@ class SelectedContextPackageTest(unittest.TestCase):
 
     def tearDown(self):
         PACKAGE.ROOT = self.previous_root
+        if getattr(self, 'handoff_database', None) is not None and self.handoff_database.is_file():
+            self.retain_handoff_execution()
         if getattr(self, 'keep_runtime_workspace', False):
             self.temp._finalizer.detach()
             print(f'Runtime workspace retains cleanup evidence: {self.root}', flush=True)
         else:
             self.temp.cleanup()
+
+    def retain_handoff_execution(self):
+        evidence = self.handoff_evidence
+        evidence.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self.handoff_database) as source, sqlite3.connect(evidence / 'state.db') as retained:
+            source.backup(retained)
+            retained.row_factory = sqlite3.Row
+            tables = {row[0] for row in retained.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            records = {}
+            for table in ('executions', 'log_generations', 'log_stderr_runs'):
+                records[table] = [dict(row) for row in retained.execute(
+                    f"SELECT * FROM {table} WHERE session IN (?,?)",
+                    ('native-object-producer', 'native-object-consumer'))] if table in tables else []
+        files = []
+
+        def copy(path, destination):
+            path = Path(path)
+            destination = evidence / destination
+            exists = path.is_file()
+            if exists:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, destination)
+            files.append({'source': str(path), 'retained': str(destination) if exists else None})
+
+        directories = {(row['session'], row['id']): Path(row['directory'])
+                       for row in records['executions'] if row['directory']}
+        for row in records['log_generations']:
+            ident = row['attempt'].encode().hex()
+            copy(row['log'], Path(row['session']) / ident / 'generation.jsonl')
+            directories.setdefault((row['session'], row['attempt']),
+                                   Path(str(self.handoff_database) + '.attempt-' + ident))
+        for (actor, attempt), directory in directories.items():
+            for name in ('native.stderr', 'stdout', 'status', 'prompt.txt'):
+                copy(directory / name, Path(actor) / attempt.encode().hex() / name)
+        for row in records['log_stderr_runs']:
+            copy(row['stderr'], Path(row['session']) / row['attempt'].encode().hex()
+                 / f"generation.stderr.run-{row['run']}")
+        for name in ('native-handoff.py', 'native-handoff.json', 'handoff-request.json', 'handoff-task.txt'):
+            copy(self.root / name, Path(name))
+        (evidence / 'executions.json').write_text(json.dumps({**records, 'files': files}, indent=2) + '\n')
+        print(f'Native handoff execution evidence: {evidence}', flush=True)
 
     def test_stages_the_selected_provider_and_frontend_files(self):
         declaration = json.loads((self.root / 'bend2/context/bend2/selected-module.json').read_text())
@@ -264,11 +307,19 @@ class SelectedContextPackageTest(unittest.TestCase):
         shutil.copyfile(coordinator, installed)
         installed.chmod(0o755)
         database = self.root / 'state.db'
+        self.handoff_database = database
+        self.handoff_evidence = Path(os.environ.get('FINAL_NATIVE_CONTEXT_EVIDENCE', str(self.root))) / 'native-object-handoff'
+        self.handoff_evidence.mkdir(parents=True, exist_ok=True)
         RECEIVE.install_public_queue_codex(self, self.root)
 
         def invoke(*args, cwd=repository):
-            return subprocess.run([str(installed), str(database), *args], cwd=cwd,
-                                  capture_output=True, text=True)
+            argv = [str(installed), str(database), *args]
+            result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
+            with (self.handoff_evidence / 'commands.jsonl').open('a') as output:
+                output.write(json.dumps({'argv': argv, 'cwd': str(cwd),
+                                         'returncode': result.returncode,
+                                         'stdout': result.stdout, 'stderr': result.stderr}) + '\n')
+            return result
 
         attached = invoke('attach', 'validation-root', 'codex', 'fixture-native',
                           '')
