@@ -263,7 +263,10 @@ check('strip ticks encode degree and destinations as marks', await evalJs(`(() =
   return !!tick && tick.classList.contains('shared') && !!aide && aide.classList.contains('unshared')
     && stubs.some((s) => s.includes('→ aide')) && stubs.some((s) => s.includes('→ lead'));
 })()`));
-await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-finding"]').click()`);
+// Capture the rendered knowledge band before exercising its selection.
+const knowledgeShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
+writeFileSync(join(OUT, 'knowledge.png'), Buffer.from(knowledgeShot.result.data, 'base64'));
+await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
 check('strip tick selection marks, labels claim plus evidence, and keeps focus', await evalJs(`(() => {
   const row = '#roster .doc-row[data-doc-id="worker"] ';
   const tick = document.querySelector(row + '.kw-tick[data-kw-node="qa-worker-finding"]');
@@ -275,9 +278,6 @@ check('strip tick selection marks, labels claim plus evidence, and keeps focus',
     && !!evidence && evidence.textContent === 'Worker evidence.'
     && !!limits && limits.textContent === 'Worker limits.';
 })()`));
-// Capture the knowledge band for review.
-const knowledgeShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
-writeFileSync(join(OUT, 'knowledge.png'), Buffer.from(knowledgeShot.result.data, 'base64'));
 await evalJs(`document.querySelector('details.doc-whole').open = true`);
 await until('whole-orchestra canvas draws on demand behind its disclosure',
   `document.querySelector('#knowledge-whole svg.kw-canvas') && document.querySelectorAll('#knowledge-whole .kw-tier').length > 1`);
@@ -299,7 +299,7 @@ check('shared findings read larger than unshared ones', await evalJs(`(() => {
   const unshared = document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"] circle');
   return !!shared && !!unshared && Number(shared.getAttribute('r')) > Number(unshared.getAttribute('r'));
 })()`));
-await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').click()`);
+await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
 check('whole finding selection marks and keeps focus', await evalJs(
   `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').classList.contains('selected') && document.activeElement === document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`));
 // Capture the selected finding for review.
