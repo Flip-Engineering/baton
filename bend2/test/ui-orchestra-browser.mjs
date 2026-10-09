@@ -204,8 +204,8 @@ check('transitions list shows committed events with recorded times', await evalJ
   `document.querySelectorAll('#transitions li').length > 0 && /\\d{4}-\\d{2}-\\d{2}|:/.test(document.getElementById('transitions').textContent)`));
 await evalJs(`[...document.querySelectorAll('#tree button')].find((b) => (b.textContent || '').includes('worker'))?.click()`);
 check('detail separates configured, observed and recorded execution', await evalJs(
-  `['configured', 'observed', 'recorded execution', 'actual process'].every((k) => document.getElementById('detail').textContent.includes(k))`));
-check('actual process is explicit unknown', await evalJs(
+  `['configured', 'observed', 'recorded execution', 'observed process'].every((k) => document.getElementById('detail').textContent.includes(k))`));
+check('observed process is explicit unknown', await evalJs(
   `document.getElementById('detail').textContent.includes('unknown')`));
 await until('selected actor loads its stored findings',
   `document.getElementById('detail').textContent.includes('1 authored / 0 received')`);
