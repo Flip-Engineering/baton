@@ -1,8 +1,8 @@
 """Exercise default report delivery and input committed during a live turn.
 
-The coordinator returns the delivery result for an admitted message. Registered CLI
-sessions receive through their endpoint; an endpointless Codex thread uses the public
-managed lifecycle. Fixtures cover receipt ownership, parent reports and continued input.
+The coordinator launches generated receiver delivery asynchronously and returns public
+App admission results. Fixtures cover receipt ownership, parent reports and continued
+input through recorded receivers and the public managed Codex lifecycle.
 """
 import importlib.util
 import json
@@ -462,10 +462,17 @@ while True:
         self.recruit('child', 'lead', 'omp')
         self.coord('receiver', 'child', str(self.fixture), str(self.directory / 'child.jsonl'))
 
-        # The OMP child's completed turn reports to its Muse parent, which starts a turn.
-        self.release('child', 1)
-        self.dispatch('dispatch-file', 'child-task', 'lead', 'child', 'task', str(self.child_task))
+        # The ordinary sender returns while the controlled recipient turn is running.
+        admitted = json.loads(self.coord('message-file', 'child-task', 'lead', 'child',
+                                         'task', str(self.child_task)))
+        self.assertEqual(admitted['id'], 'child-task')
         child_turn = self.eventually(lambda: self.calls('child')[:1], 'the OMP child never started.')
+        self.assertEqual(json.loads(self.coord('player', 'child'))['execution']['phase'], 'running')
+        os.kill(child_turn[0]['pid'], 0)
+        self.assertFalse((self.releases / 'child.1.release').exists())
+        self.assertEqual(json.loads(self.coord('turns', 'child')), [])
+        # Releasing that turn delivers its completed report to the Muse parent.
+        self.release('child', 1)
         self.eventually(lambda: self.calls('lead')[:1], 'the child report never woke the Muse lead.')
         self.assertEqual(len(self.calls('child')), 1)
         self.assertIn('Task for the OMP child.', child_turn[0]['prompt'])
