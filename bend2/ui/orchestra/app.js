@@ -1210,13 +1210,15 @@ function setIncludeUnshared(on) {
 
 // A graph re-render recreates its nodes and drops keyboard focus with the
 // removed node. When focus was lost to the remount, restore it to the same
-// finding node if still present and visible. Focus the user placed elsewhere
-// is never moved.
-function restoreGraphFocus(findingId) {
-  if (!findingId || !el.graph || !el.viewKnowledge || el.viewKnowledge.hidden) return;
+// finding node or actor anchor if still present and visible. Focus the user
+// placed elsewhere is never moved.
+function restoreGraphFocus(focusedId, focusedKind) {
+  if (!focusedId || !el.graph || !el.viewKnowledge || el.viewKnowledge.hidden) return;
   if (document.activeElement !== document.body) return;
-  const node = [...el.graph.querySelectorAll(".knode")]
-    .find((n) => n.getAttribute("aria-label") === findingId);
+  const node = focusedKind === "anchor"
+    ? el.graph.querySelector('.kg-anchor[data-kg-id="' + CSS.escape(focusedId) + '"]')
+    : [...el.graph.querySelectorAll(".knode")]
+      .find((n) => n.getAttribute("aria-label") === focusedId);
   if (node && typeof node.focus === "function") node.focus();
 }
 
@@ -1243,8 +1245,7 @@ function toggleFinding(id) {
     const promotions = (state.knowledge && state.knowledge.promotions) || [];
     if (!promotions.some((p) => (p.finding || p.id) === id)) setIncludeUnshared(true);
     state.knowledgeOpen = true;
-    // The overview carries no evidence or limits, so the selected record is
-    // read through the existing on-demand author knowledge endpoint.
+    // Read the selected record through its author's knowledge endpoint.
     void loadGraphRecord(graphFindingAuthor(state.findingId), state.findingId);
     followGraphAuthor(state.findingId);
   }
@@ -1426,10 +1427,13 @@ function refreshKnowledgeSeats() {
 function renderKnowledgeGraphState(overview, emptyText) {
   const mount = el.graph;
   if (!mount || typeof renderKnowledgeGraph !== "function") return;
-  // The render recreates every node, so capture the actual focused finding
+  // The render recreates every node, so capture the actual focused node
   // first; the wrapper restores that exact identity afterwards.
-  const focusedId = mount.contains(document.activeElement)
-    ? document.activeElement.getAttribute("aria-label") || "" : "";
+  const focusedEl = mount.contains(document.activeElement) ? document.activeElement : null;
+  const focusedKind = focusedEl && focusedEl.classList
+    && focusedEl.classList.contains("kg-anchor") ? "anchor" : "node";
+  const focusedId = focusedEl && focusedEl.getAttribute
+    ? focusedEl.getAttribute(focusedKind === "anchor" ? "data-kg-id" : "aria-label") || "" : "";
   const roles = {};
   for (const p of state.players.values()) roles[p.id] = p.role || "";
   renderKnowledgeGraph(mount, overview, {
@@ -1438,9 +1442,11 @@ function renderKnowledgeGraphState(overview, emptyText) {
     selectedId: state.findingId,
     notice: state.knowledgeNotice || (!overview ? "No knowledge read yet." : (emptyText || "")),
     roles,
+    // Recorded roles and parent links place actors in graph rows.
+    actorMeta: (overview && overview.actors) || {},
     onSelect: (id) => toggleFinding(id),
   });
-  restoreGraphFocus(focusedId);
+  restoreGraphFocus(focusedId, focusedKind);
 }
 
 function renderKnowledge() {

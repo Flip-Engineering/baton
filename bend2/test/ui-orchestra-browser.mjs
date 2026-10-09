@@ -82,6 +82,10 @@ baton('record', 'qa-worker-finding', 'worker', 'Worker retained finding.',
 baton('record', 'qa-aide-finding', 'aide', 'Aide retained finding.',
   'Aide evidence.', 'Aide limits.');
 baton('promote', 'qa-worker-share', 'aide', 'worker', 'aide', 'qa-worker-finding');
+// A distinct recorded promoter exercises the fourth edge type: root promotes
+// the worker finding from the worker to the lead, so neither endpoint equals
+// the promoter and both conductors join the graph in their own tiers.
+baton('promote', 'qa-lead-share', 'root', 'worker', 'lead', 'qa-worker-finding');
 
 // --- chromium over CDP
 chrome = spawnTracked(CHROMIUM, ['--headless=new', '--no-sandbox', '--remote-debugging-port=0',
@@ -218,6 +222,12 @@ await until('native owner event stream is ready',
   `document.getElementById('conn-state').textContent === 'live'`);
 await until('knowledge graph draws the recorded findings and their promotion',
   `document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]') && document.querySelector('#knowledge-graph .knode[aria-label="qa-aide-finding"]') && [...document.querySelectorAll('#knowledge-graph .kg-edge-share')].some((edge) => edge.getAttribute('aria-label') === 'promotion from worker to aide')`);
+check('authorship edges carry direction along the recorded relation', await evalJs(
+  `[...document.querySelectorAll('#knowledge-graph .kg-edge-authorship')].length > 0 && [...document.querySelectorAll('#knowledge-graph .kg-edge-authorship')].every((edge) => (edge.getAttribute('marker-end') || '').startsWith('url('))`));
+check('recorded hierarchy renders more than one tier row', await evalJs(
+  `document.querySelectorAll('#knowledge-graph .kg-tier-label').length > 1`));
+check('all four recorded edge types render directed', await evalJs(
+  `['kg-edge-authorship', 'kg-edge-share', 'kg-edge-deliver', 'kg-edge-promote'].every((cls) => [...document.querySelectorAll('#knowledge-graph .' + cls)].some((edge) => (edge.getAttribute('marker-end') || '').startsWith('url(')))`));
 check('knowledge graph nodes stay inside the drawn surface', await evalJs(`(() => {
   const svg = document.querySelector('#knowledge-graph svg');
   const width = Number(svg.getAttribute('width'));
@@ -273,7 +283,14 @@ writeFileSync(join(OUT, 'selected-work.png'), Buffer.from(selectedWorkShot.resul
 await evalJs(`[...document.querySelectorAll('#tree button')].find((b) => (b.textContent || '').includes('aide'))?.click()`);
 await until("recipient caches its authored and received knowledge",
   `document.getElementById('detail').textContent.includes('1 authored / 1 received')`);
+// The dossier selects another finding while its recipient is cached: dimming
+// follows the new selection and the view stays on the graph.
+await evalJs(`[...document.querySelectorAll('#detail .finding-id')].find((button) => button.textContent === 'qa-aide-finding')?.click()`);
+await until('dossier selects another finding with its full record',
+  `['Aide retained finding.', 'Aide evidence.', 'Aide limits.'].every((value) => document.getElementById('detail').textContent.includes(value))`);
 await evalJs(`document.getElementById('view-knowledge-btn').click()`);
+await until('graph dimming follows the dossier selection',
+  `!document.getElementById('view-knowledge').hidden && document.querySelector('#knowledge-graph .knode.selected')?.getAttribute('aria-label') === 'qa-aide-finding' && !document.querySelector('#knowledge-graph .knode[aria-label="qa-aide-finding"]')?.classList.contains('kg-dim') && document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]')?.classList.contains('kg-dim')`);
 await evalJs(`(() => { const node = document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]'); node.focus(); node.click(); })()`);
 await until('received finding selection follows its recorded author',
   `!document.getElementById('view-knowledge').hidden && document.activeElement === document.querySelector('#knowledge-graph .knode.selected') && document.querySelector('[data-row="worker"]')?.getAttribute('aria-selected') === 'true' && ['Worker retained finding.', 'Worker evidence.', 'Worker limits.'].every((value) => document.getElementById('knowledge-promotions').textContent.includes(value))`);
@@ -281,6 +298,10 @@ await evalJs(`document.getElementById('view-actors-btn').click()`);
 await evalJs(`[...document.querySelectorAll('#tree button')].find((b) => (b.textContent || '').includes('worker'))?.click()`);
 await until('worker detail is restored for the live finding steps',
   `document.getElementById('detail').textContent.includes('1 authored / 0 received')`);
+// Actor anchor focus survives the app-driven refresh below: the live record
+// and promotion re-render the graph while focus rests on the anchor.
+await evalJs(`document.getElementById('view-knowledge-btn').click()`);
+await evalJs(`document.querySelector('#knowledge-graph .kg-anchor[data-kg-id="worker"]')?.focus()`);
 baton('record', 'qa-worker-live-finding', 'worker', 'Worker live finding.',
   'Live evidence.', 'Live limits.');
 await until('public record refreshes selected actor knowledge through native SSE',
@@ -292,6 +313,8 @@ await until('public promotion refreshes the knowledge overview through native SS
   `document.getElementById('knowledge-promotions').textContent.includes('qa-worker-live-finding')`);
 await until('public promotion draws the second recorded graph edge through native SSE',
   `[...document.querySelectorAll('#knowledge-graph .kg-edge-share[aria-label="promotion from worker to aide"]')].length === 2`);
+await until('actor anchor focus survives the app-driven refresh',
+  `document.activeElement?.getAttribute('data-kg-id') === 'worker'`);
 await evalJs(`window.__qaMark = 41`);
 const transitionsBeforeNativeCommit = await evalJs(`document.querySelectorAll('#transitions li').length`);
 const cursorBeforeNativeCommit = await evalJs(`document.getElementById('cursor-state').textContent`);

@@ -638,35 +638,51 @@
   "actors": {
    "fixture-knowledge-player-a": {
     "authored": 4,
-    "received": 0
+    "received": 0,
+    "role": "player",
+    "parent": "fixture-knowledge-conductor-a"
    },
    "fixture-knowledge-conductor-a": {
     "authored": 3,
-    "received": 3
+    "received": 3,
+    "role": "associate-conductor",
+    "parent": "fixture-knowledge-root"
    },
    "fixture-knowledge-conductor-b": {
     "authored": 2,
-    "received": 1
+    "received": 1,
+    "role": "associate-conductor",
+    "parent": "fixture-knowledge-root"
    },
    "fixture-knowledge-player-d": {
     "authored": 2,
-    "received": 0
+    "received": 0,
+    "role": "player",
+    "parent": "fixture-knowledge-conductor-b"
    },
    "fixture-knowledge-ghost": {
     "authored": 1,
-    "received": 0
+    "received": 0,
+    "role": "",
+    "parent": ""
    },
    "fixture-knowledge-operator": {
     "authored": 1,
-    "received": 0
+    "received": 0,
+    "role": "operator",
+    "parent": "fixture-knowledge-root"
    },
    "fixture-knowledge-player-e": {
     "authored": 1,
-    "received": 0
+    "received": 0,
+    "role": "player",
+    "parent": "fixture-knowledge-conductor-b"
    },
    "fixture-knowledge-root": {
     "authored": 0,
-    "received": 5
+    "received": 5,
+    "role": "principal-conductor",
+    "parent": ""
    }
   }
  }

@@ -374,6 +374,36 @@ button:active { background: var(--wash); }
 
 .kg-edge-authorship { stroke: var(--hairline); stroke-width: 1px; }
 
+.kg-edge-promote {
+  stroke: var(--ink);
+  stroke-width: 1px;
+  stroke-dasharray: 4px 3px;
+}
+
+.kg-tier-label { fill: var(--muted); }
+
+.kg-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.kg-controls button[aria-pressed="true"] {
+  border-color: var(--selection);
+  color: var(--selection);
+  background: var(--wash);
+}
+
+.kg .kg-dim { opacity: 0.15; }
+
+.kg-anchor { cursor: pointer; }
+
+.kg-anchor:focus-visible {
+  outline: 2px solid var(--selection);
+  outline-offset: 2px;
+}
+
 .knode { cursor: pointer; }
 
 .knode:focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }

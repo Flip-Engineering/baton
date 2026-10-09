@@ -761,23 +761,72 @@ function knowledgeTablesReady(db) {
   return found && found.n === 2;
 }
 
+// Findings carry their stored evidence and limits. Actor metadata includes
+// recorded roles and parent links through each referenced actor's ancestors.
 function knowledgeOverview(db) {
   if (!knowledgeTablesReady(db)) {
     return { contractVersion: 1, findings: [], promotions: [], actors: {}, empty: true };
   }
-  const findings = rows(db, 'SELECT id, author, claim FROM knowledge ORDER BY id');
+  const findings = rows(db, 'SELECT id, author, claim, evidence, limits FROM knowledge ORDER BY id')
+    .map((row) => ({
+      id: row.id,
+      author: row.author,
+      claim: row.claim,
+      evidence: row.evidence == null ? '' : row.evidence,
+      limits: row.limits == null ? '' : row.limits,
+    }));
   const promotions = rows(db,
     'SELECT id, finding, author, source, destination, promoted_by AS promotedBy FROM knowledge_promotions ORDER BY id');
   const actors = {};
+  const touch = (id) => {
+    if (id === null || id === undefined || id === '') return null;
+    if (!actors[id]) actors[id] = { authored: 0, received: 0, role: '', parent: '' };
+    return actors[id];
+  };
   for (const f of findings) {
-    if (!actors[f.author]) actors[f.author] = { authored: 0, received: 0 };
-    actors[f.author].authored += 1;
+    const actor = touch(f.author);
+    if (actor) actor.authored += 1;
   }
   for (const p of promotions) {
-    if (!actors[p.destination]) actors[p.destination] = { authored: 0, received: 0 };
-    actors[p.destination].received += 1;
+    const destination = touch(p.destination);
+    if (destination) destination.received += 1;
+    touch(p.source);
+    touch(p.promotedBy);
   }
-  return { contractVersion: 1, findings, promotions, actors, empty: findings.length === 0 && promotions.length === 0 };
+  // Include ancestors so graph rows follow complete recorded parent chains.
+  // UNION ends cycles when the query reaches an identical session row.
+  const ids = Object.keys(actors);
+  if (ids.length) {
+    const placeholders = ids.map(() => '?').join(', ');
+    for (const row of rows(db, `WITH RECURSIVE chain(id, parent, role) AS (
+        SELECT s.id, s.parent,
+               CASE coalesce(r.role, 'player')
+                 WHEN 'conductor' THEN CASE WHEN s.parent IS NULL
+                   THEN 'principal-conductor' ELSE 'associate-conductor' END
+                 ELSE coalesce(r.role, 'player') END
+          FROM sessions s LEFT JOIN session_roles r ON r.session = s.id
+         WHERE s.id IN (${placeholders})
+        UNION
+        SELECT up.id, up.parent,
+               CASE coalesce(ur.role, 'player')
+                 WHEN 'conductor' THEN CASE WHEN up.parent IS NULL
+                   THEN 'principal-conductor' ELSE 'associate-conductor' END
+                 ELSE coalesce(ur.role, 'player') END
+          FROM chain c
+          JOIN sessions up ON up.id = c.parent
+          LEFT JOIN session_roles ur ON ur.session = up.id)
+      SELECT id, parent, role FROM chain`, ...ids)) {
+      let actor = actors[row.id];
+      if (!actor) {
+        actor = { authored: 0, received: 0, role: '', parent: '' };
+        actors[row.id] = actor;
+      }
+      actor.role = row.role || '';
+      actor.parent = row.parent == null ? '' : row.parent;
+    }
+  }
+  return { contractVersion: 1, findings, promotions, actors,
+    empty: findings.length === 0 && promotions.length === 0 };
 }
 
 function knowledgeForActor(db, session) {
