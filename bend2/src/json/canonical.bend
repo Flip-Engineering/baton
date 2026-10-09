@@ -298,9 +298,14 @@ def utf8_wide(+code: U32, two: Bool) -> List<U32>:
   match two:
     case True{}: [U32.or(192, U32.shrn(code, 6n)), U32.or(128, U32.and(code, 63))]
     case False{}:
-      [U32.or(224, U32.shrn(code, 12n)),
-       U32.or(128, U32.and(U32.shrn(code, 6n), 63)),
-       U32.or(128, U32.and(code, 63))]
+      Bool.pick(List<U32>, U32.is_lt(code, 65536),
+        [U32.or(224, U32.shrn(code, 12n)),
+         U32.or(128, U32.and(U32.shrn(code, 6n), 63)),
+         U32.or(128, U32.and(code, 63))],
+        [U32.or(240, U32.shrn(code, 18n)),
+         U32.or(128, U32.and(U32.shrn(code, 12n), 63)),
+         U32.or(128, U32.and(U32.shrn(code, 6n), 63)),
+         U32.or(128, U32.and(code, 63))])
 
 def utf8_class(code: U32, ascii: Bool, two: Bool) -> List<U32>:
   match ascii:
@@ -385,4 +390,5 @@ law main:
 def main():
   do IO<Unit>:
     b : Unit <- IO.print(utf8_hex(utf8(str_cafe())))
+    supplementary : Unit <- IO.print(utf8_hex(utf8(one(ch(128512)))))
     print_all(corpus())
