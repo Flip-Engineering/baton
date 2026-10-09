@@ -1,43 +1,33 @@
-/* Attention order and state marks for the orchestra surface.
-   Pure record logic: no DOM, no requests, no clock. The shell keeps
-   snapshot reads, rendering, and selection; it calls orderPlayers once
-   per render and stateMark per row. Input players use the recorded
-   fields both surface concepts already pass around: id, status,
-   pendingCount, awaitingInput. Unknown statuses and missing fields sort
-   last without inventing new states. Only failed runs and waiting inputs
-   read as needing a person: an ordinary queue of unacknowledged messages
-   is routine agent work, so its count stays on the row as data and never
-   promotes the row to an intervention request. */
+/* Recorded activity order and row marks. Failed executions and explicitly
+   stopped actors with owed input precede running, starting and queued work. */
 
-// Need-first ranks. Failed runs and waiting inputs come before running
-// work; busy running actors sort above quiet ones by pending count in the
-// tiebreak below; waiting actors follow; ended and unrecognized states
-// close.
 function needRank(p) {
   if (!p) return 99;
   if (p.status === "failed") return 0;
-  if (p.awaitingInput) return 1;
+  if (p.status === "stopped" && (p.pendingCount || 0) > 0) return 1;
   if (p.status === "running") return 2;
   if (p.status === "waiting") return 3;
-  return 4;
+  if ((p.pendingCount || 0) > 0 || p.status === "pending") return 4;
+  return 5;
 }
 
-// One mark per actor for the shell to draw. word is always the recorded
-// status string, never a replacement; tone is one of need, run, idle,
-// ended, unknown.
+// Queued input stays visible when the last successful execution has ended.
 function stateMark(p) {
   const status = (p && p.status) || "unknown";
+  const owed = p && (p.pendingCount || 0) > 0;
   let tone = "unknown";
-  if (status === "failed" || (p && p.awaitingInput)) {
+  if (status === "failed" || (status === "stopped" && owed)) {
     tone = "need";
   } else if (status === "running") {
     tone = "run";
   } else if (status === "waiting") {
     tone = "idle";
+  } else if (owed || status === "pending") {
+    tone = "queued";
   } else if (status === "completed" || status === "stopped" || status === "ended") {
     tone = "ended";
   }
-  return { word: String(status), tone };
+  return { word: tone === "queued" ? "queued" : String(status), tone };
 }
 
 // A new array, need-first, then highest pending count, then id. The

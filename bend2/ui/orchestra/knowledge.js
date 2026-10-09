@@ -294,7 +294,7 @@
           x: String(x - 4), y: String(y - 4), width: "8", height: "8",
           class: "kw-actor",
         });
-        const name = kwSvg(svg, "text", {
+        const name = kwSvg(g, "text", {
           x: String(x + 10), y: String(y + 4), class: "kw-name mono",
         });
         name.textContent = String(id);

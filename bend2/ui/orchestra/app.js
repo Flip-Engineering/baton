@@ -1092,13 +1092,15 @@ function init() {
   state.fixtureName = query.get("fixture") || "";
   state.subject = query.get("subject") || "";
 
-  // The reset removes the filter toolbar and the view switch. One query moves the
-  // cursor through the rows and dims the rest in place, and one control reveals
-  // the quiet seats. Nothing here removes an actor from the recorded order.
+  // Query changes move to the first visible match while retaining typing focus.
   if (el.find) {
     el.find.addEventListener("input", () => {
-      state.docQuery = el.find.value.trim();
+      const query = el.find.value.trim();
+      if (query === state.docQuery) return;
+      state.docQuery = query;
       renderDocument();
+      const match = el.roster.querySelector(".doc-cursor");
+      if (match) match.scrollIntoView({ block: "nearest" });
     });
   }
   if (el.showEnded) {

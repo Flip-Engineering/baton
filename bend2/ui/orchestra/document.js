@@ -1,11 +1,5 @@
-/* The oversight document. Lead-owned composition for the reset.
-   Read-only. All text through textContent; no request from this module.
-
-   One document: the reader scrolls one order and never changes view. The order
-   is the recorded need order (order.js), so a reader meets what needs a person
-   before what is merely running, and no filter control hides anything. Selecting
-   a row expands the record beside the rows; typing moves the cursor to the next
-   match and dims the rest in place instead of removing rows.
+/* Read-only oversight document. Text is assigned through textContent.
+   Rows follow the recorded activity order. Selecting a row opens its record.
 
    window.OversightDocument.render(data, opts)
      data.players    [{id, parent, role, model, status, pendingCount,
@@ -22,31 +16,23 @@
      opts.onSelect(id), opts.onSelectFinding(id), opts.onScrub(index),
      opts.onSelectEvent(index), opts.onListOpen(open)
 
-   Nothing here decides what needs a person: that reading comes from
-   attention.js and the order from order.js, so one rule governs both the strip
-   at the top and the sequence of rows below it. */
+   attention.js reads activity for the summary; order.js orders the rows. */
 (function () {
   "use strict";
 
-  // A row is quiet when it is not live work. The reading that decides who needs a
-  // person comes from attention.js and order.js; this only decides which rows the
-  // quiet disclosure folds, so it reads the mark they return and nothing else.
+  // Ended and unobserved rows with no queued input are quiet.
   function isQuiet(mark) {
     if (!mark) return true;
     return mark.tone === "ended" || mark.tone === "unknown";
   }
 
-  // What a row asks of a reader, from recorded fields only. A queue of ordinary
-  // messages on a live seat is routine work, so it is queued and not stuck; only
-  // a seat that cannot proceed without a person reads as stuck. The reading that
-  // drives the strip comes from attention.js; this decides the row's own label.
+  // Failed executions and explicit stops retain their recorded indication.
   function workState(p) {
     if (!p) return "quiet";
     var live = p.status === "running" || p.status === "waiting" || p.status === "pending";
     if (p.status === "failed") return "stuck";
-    if (p.awaitingInput) return "stuck";
-    if (!live && (p.pendingCount || 0) > 0) return "stuck";
-    if (live && (p.pendingCount || 0) > 0) return "queued";
+    if (p.status === "stopped" && (p.pendingCount || 0) > 0) return "stuck";
+    if ((p.pendingCount || 0) > 0 || p.status === "pending") return "queued";
     if (live) return "working";
     return "quiet";
   }
@@ -154,9 +140,7 @@
     return dl;
   }
 
-  /* The left margin names the ensemble a run of rows belongs to. Rows keep the
-     need order, so a member that appears outside its run gets its own labelled
-     run rather than a moved row; membership needs no label on the row itself. */
+  // Each run names all recorded memberships shared by its rows.
   function renderRoster(mount, ordered, opts) {
     if (!mount) return;
     mount.textContent = "";
@@ -173,7 +157,7 @@
       var mark = typeof stateMark === "function" ? stateMark(p) : null;
       var quiet = isQuiet(mark);
       if (quiet && !opts.showEnded) return;
-      var ensemble = (p.ensembles && p.ensembles[0]) || "";
+      var ensemble = (p.ensembles || []).join(" · ");
       if (ensemble !== lastEnsemble || !run) {
         run = el("section", "doc-band");
         run.dataset.docEnsemble = ensemble;
@@ -197,7 +181,7 @@
     });
     if (!shown) {
       mount.appendChild(el("p", "muted", opts.showEnded
-        ? "No actors recorded." : "No actor needs a person right now. Quiet rows are behind the control at the top."));
+        ? "No actors recorded." : "No live or queued work. Show quiet to see ended and unobserved actors."));
     }
   }
 

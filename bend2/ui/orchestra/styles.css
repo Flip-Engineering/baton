@@ -367,6 +367,8 @@ button:active { background: var(--wash); }
   padding-left: 2px;
 }
 
+.doc-band-name { min-width: 0; overflow-wrap: anywhere; }
+
 /* The margin names the ensemble once per run of its members. */
 .doc-bracket {
   flex: none;
