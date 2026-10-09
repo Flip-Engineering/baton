@@ -985,7 +985,7 @@ button.pend-badge:hover { color: var(--selection); border-color: currentColor; }
 }
 .knowledge .msg-record { margin-top: 6px; font-size: var(--step0); }
 .knowledge .msg-record .go { margin-left: 8px; }
-.knowledge .msg-body { margin-top: 6px; }
+.knowledge .msg-body { margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .knowledge ul.knowledge-list {
   width: 100%;
