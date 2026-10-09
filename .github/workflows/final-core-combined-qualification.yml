@@ -454,6 +454,26 @@ jobs:
           exit "$status"
           SH
           chmod 0755 "$evidence/run-recorded.sh"
+      - name: Run existing Guidance and ACK cases
+        if: ${{ !cancelled() && matrix.suite == 'receive' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd owned
+          "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-guidance \
+            env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
+            python3 -u bend2/test/receive.py -v \
+              Receive.test_completed_omp_attempt_replay_leaves_guidance_for_current_native \
+              Receive.test_guidance_arrives_while_retained_native_is_silent \
+              Receive.test_failed_continuation_retains_original_input_for_retry
+      - name: Retain Guidance and ACK output before recovery and the full suite
+        if: ${{ always() && matrix.suite == 'receive' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-receive-guidance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-guidance.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run existing observer recovery cases
         if: ${{ !cancelled() && matrix.suite == 'receive' }}
         shell: bash
