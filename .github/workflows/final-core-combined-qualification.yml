@@ -22,7 +22,7 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: dd46162be0c89bd885e150014870f7142a6f669a
+  PRODUCT_SOURCE_SHA: 35092f794c5d41377bcf2979c82d91bbc9ba33e6
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
 
@@ -58,92 +58,12 @@ jobs:
             > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/install.log" 2>&1
           "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" version \
             > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/version.txt"
-          compiler_source="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-source"
-          mkdir -p "$compiler_source/bin"
-          cp -R "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bend2" "$compiler_source/bend2"
-          printf 'https://github.com/bendlang/bend/tree/v2.0.25/bend2\nBun runtime: retained Bend 2.0.25 executable via BUN_BE_BUN=1\nReporting changes: RangeError stack, failed memo cache, compiler definition and stage\n' \
-            > "$compiler_source/origin.txt"
-          for source in main bend comp; do
-            curl -fsSL "https://raw.githubusercontent.com/bendlang/bend/v2.0.25/bend2/$source.ts" \
-              -o "$compiler_source/bend2/$source.ts"
-          done
-          python3 - <<'PY'
-          import difflib
-          import os
-          from pathlib import Path
-          root = Path(os.environ['FINAL_NATIVE_CONTEXT_EVIDENCE']) / 'toolchain-source'
-          path = root / 'bend2/main.ts'
-          original = path.read_text()
-          changed = original.replace(
-              '      + " literal too large to expand)";',
-              '      + " literal too large to expand)\\n" + (e.stack ?? String(e));', 1)
-          (root / 'main.ts.upstream').write_text(original)
-          path.write_text(changed)
-          (root / 'reporting.diff').write_text(''.join(difflib.unified_diff(
-              original.splitlines(keepends=True), changed.splitlines(keepends=True),
-              fromfile='official-v2.0.25/main.ts', tofile='diagnostic/main.ts')))
-          path = root / 'bend2/comp.ts'
-          original = path.read_text()
-          changed = original.replace('  m.set(k, out);', '''  try {
-            m.set(k, out);
-          } catch (e) {
-            if (e instanceof RangeError) {
-              const label = m === CONSTS ? "CONSTS" : m === FLATS ? "FLATS"
-                : m === FOLDS ? "FOLDS" : m === LITS ? "LITS"
-                : m === OPENS ? "OPENS" : m === USES ? "USES"
-                : m === SPINES ? "SPINES" : "other";
-              const key = k as any;
-              console.error("compiler memo failure", label, "size", m.size,
-                "keyTag", key?.$, "keyName", typeof key === "string" ? key : key?.k);
-            }
-            throw e;
-          }''', 1)
-          changed = changed.replace('      compile_def(fl, k, tld);', '''      try {
-                  compile_def(fl, k, tld);
-                } catch (e) {
-                  if (e instanceof RangeError) {
-                    console.error("compiler definition failure", k);
-                  }
-                  throw e;
-                }''', 1)
-          changed = changed.replace('    memo_gc();\n    const tld = def_body(cb, d);', '''    try {
-                memo_gc();
-                const tld = def_body(cb, d);''', 1)
-          changed = changed.replace('    queue.push(...own.refs);', '''    queue.push(...own.refs);
-              } catch (e) {
-                if (e instanceof RangeError) {
-                  console.error("compiler traversal definition failure", d);
-                }
-                throw e;
-              }''', 1)
-          changed = changed.replace('  const cb = carb_book(book, ["main", ...RUNTIME_ADTS]);', '''  let cb: Carb;
-            try {
-              cb = carb_book(book, ["main", ...RUNTIME_ADTS]);
-            } catch (e) {
-              if (e instanceof RangeError) {
-                console.error("compiler stage failure", "carb_book");
-              }
-              throw e;
-            }''', 1)
-          (root / 'comp.ts.upstream').write_text(original)
-          path.write_text(changed)
-          with (root / 'reporting.diff').open('a') as evidence:
-              evidence.write(''.join(difflib.unified_diff(
-                  original.splitlines(keepends=True), changed.splitlines(keepends=True),
-                  fromfile='official-v2.0.25/comp.ts', tofile='diagnostic/comp.ts')))
-          PY
-          cat > "$compiler_source/bin/bend-diagnostic" <<'SH'
-          #!/bin/sh
-          exec env BUN_BE_BUN=1 "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" \
-            "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-source/bend2/main.ts" "$@"
-          SH
-          chmod +x "$compiler_source/bin/bend-diagnostic"
       - name: Build production Main
         id: main_build
         shell: bash
         run: |
           set -euo pipefail
-          bend="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-source/bin/bend-diagnostic"
+          bend="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend"
           mkdir -p owned/.scratch/bend2
           status=0
           set +e
