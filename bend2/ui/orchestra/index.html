@@ -14,6 +14,11 @@
     <h1>Orchestra live view</h1>
     <p class="subtitle" id="snapshot-line">No snapshot loaded.</p>
   </div>
+  <div class="viewswitch" role="group" aria-label="Views">
+    <button type="button" id="view-now-btn" aria-pressed="true">Now</button>
+    <button type="button" id="view-knowledge-btn" aria-pressed="false">Knowledge</button>
+    <button type="button" id="view-actors-btn" aria-pressed="false">Actors</button>
+  </div>
   <details class="conn-details">
     <summary>Connection</summary>
     <dl class="conn" aria-label="Connection state">
@@ -28,86 +33,99 @@
 <div class="notice" id="notice" hidden></div>
 <div class="notice fixture" id="fixture-notice" hidden></div>
 
-<div class="toolbar" role="search" aria-label="Filter actors">
-  <label class="field">Search
-    <input type="search" id="search" placeholder="id, model, branch, capability" autocomplete="off">
-  </label>
-  <label class="field">Status
-    <select id="status-filter">
-      <option value="all">all</option>
-      <option value="running" selected>running</option>
-      <option value="waiting">waiting</option>
-      <option value="completed">completed</option>
-      <option value="failed">failed</option>
-      <option value="stopped">stopped</option>
-      <option value="pending">pending</option>
-      <option value="unknown">unknown</option>
-    </select>
-  </label>
-  <label class="field">Ensemble
-    <select id="ensemble-filter">
-      <option value="all">all</option>
-    </select>
-  </label>
-  <span class="pair" role="group" aria-label="Tree expansion">
-    <button type="button" id="collapse-all">Collapse all</button>
-    <button type="button" id="expand-all">Expand all</button>
-  </span>
-  <button type="button" id="clear-filters">Clear</button>
-  <button type="button" id="reconnect">Reconnect</button>
-</div>
-
-<section class="lane" aria-labelledby="lane-title">
-  <h2 id="lane-title">Running and attention</h2>
-  <div id="attention-lane" class="lane-strip"></div>
+<main>
+<section class="view" id="view-now" aria-labelledby="board-title">
+  <section class="lane" aria-labelledby="lane-title">
+    <h2 id="lane-title">Running now</h2>
+    <div id="attention-lane" class="lane-strip"></div>
+  </section>
+  <div class="now-grid">
+    <section class="board" aria-labelledby="board-title">
+      <h2 id="board-title">Working together</h2>
+      <p class="legend">Tile size follows awaiting messages; bands show status; ended seats dim.</p>
+      <div id="ensemble-board"></div>
+    </section>
+    <section class="transitions" aria-labelledby="transitions-title">
+      <h2 id="transitions-title">Latest activity</h2>
+      <ol id="transitions" class="activity"></ol>
+    </section>
+  </div>
 </section>
 
-<main class="layout">
-  <section class="tree-pane" aria-labelledby="tree-title">
-    <h2 id="tree-title">Actors</h2>
-    <p class="count" id="tree-count"></p>
-    <p class="legend">Recorded coordinator state. Process liveness appears only where it was observed.</p>
-    <p class="tree-notice" id="tree-notice" hidden></p>
-    <ul class="tree" id="tree" role="tree" aria-label="Orchestra hierarchy"></ul>
+<section class="view" id="view-knowledge" aria-labelledby="knowledge-title" hidden>
+  <section class="stage" aria-labelledby="knowledge-title">
+    <div class="stage-head">
+      <h2 id="knowledge-title">Knowledge</h2>
+      <p class="count" id="knowledge-count"></p>
+      <p class="legend">Findings drawn between the actors that authored and received them. Ring size follows promotion count. Select a finding to open its record.</p>
+    </div>
+    <div class="stage-body">
+      <div class="stage-surface">
+        <div id="knowledge-graph"></div>
+      </div>
+      <div class="stage-readout knowledge">
+        <label class="field">Filter findings
+          <input type="search" id="knowledge-search" autocomplete="off">
+        </label>
+        <button type="button" id="include-unshared" aria-pressed="false">Include unshared</button>
+        <ol id="knowledge-promotions" class="activity"></ol>
+        <p class="muted" id="knowledge-empty" hidden></p>
+      </div>
+    </div>
   </section>
 
-  <div class="side">
+</section>
+
+<section class="view" id="view-actors" aria-labelledby="tree-title" hidden>
+  <div class="toolbar" role="search" aria-label="Filter actors">
+    <label class="field">Search
+      <input type="search" id="search" placeholder="id, model, branch, capability" autocomplete="off">
+    </label>
+    <label class="field">Status
+      <select id="status-filter">
+        <option value="all">all</option>
+        <option value="running" selected>running</option>
+        <option value="waiting">waiting</option>
+        <option value="completed">completed</option>
+        <option value="failed">failed</option>
+        <option value="stopped">stopped</option>
+        <option value="pending">pending</option>
+        <option value="unknown">unknown</option>
+      </select>
+    </label>
+    <label class="field">Ensemble
+      <select id="ensemble-filter">
+        <option value="all">all</option>
+      </select>
+    </label>
+    <span class="pair" role="group" aria-label="Tree expansion">
+      <button type="button" id="collapse-all">Collapse all</button>
+      <button type="button" id="expand-all">Expand all</button>
+    </span>
+    <button type="button" id="clear-filters">Clear</button>
+    <button type="button" id="reconnect">Reconnect</button>
+  </div>
+
+  <div class="actors-grid">
+    <section class="tree-pane" aria-labelledby="tree-title">
+      <h2 id="tree-title">Actors</h2>
+      <p class="count" id="tree-count"></p>
+      <p class="legend">Recorded coordinator state. Process liveness appears only where it was observed.</p>
+      <p class="tree-notice" id="tree-notice" hidden></p>
+      <ul class="tree" id="tree" role="tree" aria-label="Orchestra hierarchy"></ul>
+    </section>
+
     <section class="detail" aria-labelledby="detail-title">
       <h2 id="detail-title">Selected actor</h2>
       <div id="detail"><p class="muted">Select an actor in the hierarchy.</p></div>
     </section>
-
-    <section class="transitions" aria-labelledby="transitions-title">
-      <h2 id="transitions-title">Recent transitions</h2>
-      <ol id="transitions" class="activity"></ol>
-    </section>
-  </div>
-</main>
-
-<section class="stage" aria-labelledby="knowledge-title">
-  <div class="stage-head">
-    <h2 id="knowledge-title">Knowledge</h2>
-    <button type="button" id="live-only" aria-pressed="false">Live only</button>
-    <p class="count" id="knowledge-count"></p>
-    <p class="legend">Height shows authored findings; fill shows shared findings. Lines show promotions between actors. Select an actor or finding for details.</p>
-  </div>
-  <div class="stage-body">
-    <div class="stage-surface">
-      <div id="knowledge-surface"></div>
-    </div>
-    <div class="stage-readout knowledge">
-      <label class="field">Filter findings
-        <input type="search" id="knowledge-search" autocomplete="off">
-      </label>
-      <button type="button" id="include-unshared" aria-pressed="false">Include unshared</button>
-      <ol id="knowledge-promotions" class="activity"></ol>
-      <p class="muted" id="knowledge-empty" hidden></p>
-    </div>
   </div>
 </section>
+</main>
 
 <script src="attention.js" defer></script>
-<script src="knowledge-surface.js" defer></script>
+<script src="board.js" defer></script>
+<script src="kgraph.js" defer></script>
 <script src="app.js" defer></script>
 </body>
 </html>

@@ -1,14 +1,5 @@
-/* Orchestra live view — presentation.
-
-   An operations ledger for one live run: hairline rules, a tabular
-   sans for data, a serif voice for the page title and pane headings,
-   and one accent spent on attention. Structure comes from rules and
-   indentation; only the toolbar controls are raised surfaces.
-
-   Type stays in system families: the page fetches no font and makes no
-   request other than the snapshot and the event stream. The serif, sans
-   and mono stacks each carry a Linux fallback because the hosted gate
-   renders them in Chrome on Ubuntu. */
+/* Orchestra live view styles. System font stacks include Linux fallbacks
+   for the hosted browser runner. */
 
 :root {
   color-scheme: light;
@@ -195,33 +186,208 @@ button:active { background: var(--wash); }
 
 .toolbar .pair { display: flex; gap: 4px; }
 
-/* ── layout: rules, not boxes ──────────────────────────────────────────── */
+/* ── views: one visible composition at a time ─────────────────────────── */
 
-.layout {
+.view { padding: 20px 20px 0; }
+
+.now-grid,
+.actors-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);
   gap: var(--gutter);
   align-items: start;
-  padding: 16px 20px 0;
 }
+
+/* The view switch sits in the header beside the title. */
+.viewswitch { display: flex; gap: 4px; align-items: center; }
+
+.viewswitch button[aria-pressed="true"] {
+  border-color: var(--selection);
+  color: var(--selection);
+  background: var(--wash);
+}
+
+/* Ensemble groups show each member's current action. */
+.board h2 { font-size: var(--step3); }
+
+.board-grouphead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 14px 0 6px;
+  font-size: var(--step1);
+}
+
+.board-grouphead:first-child { margin-top: 0; }
+
+.board-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  width: 100%;
+  margin: 0 0 4px;
+  padding: 8px 12px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.board-row:hover { border-color: var(--selection); }
+
+.board-row.st-running { border-left: 4px solid var(--running); }
+
+.board-row.st-failed { border-left: 4px solid var(--failed); }
+
+.board-row.st-pending { border-left: 4px solid var(--attention); }
+
+.board-row.st-ended { border-left: 4px solid var(--muted); opacity: 0.62; }
+
+/* Tile size follows awaiting messages in three steps: none, some, many. */
+.board-row.pq1 { padding: 10px 14px; }
+
+.board-row.pq2 { padding: 12px 16px; }
+
+.board-row.pq2 .board-action { font-size: var(--step3); }
+
+.board-grouphead .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 44%;
+}
+
+.board-bar {
+  flex: none;
+  width: 120px;
+  height: 6px;
+  margin-left: auto;
+  background: var(--hairline);
+  border-radius: 3px;
+}
+
+.board-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--running);
+  border-radius: 3px;
+}
+
+/* ── knowledge graph: findings drawn between actors ─────────────────── */
+
+.kg-scroll {
+  overflow-x: auto;
+  scrollbar-gutter: stable;
+}
+
+.kg text {
+  font-family: var(--mono);
+  font-size: var(--step0);
+  fill: var(--muted);
+}
+
+/* Finding labels read as words, not identifiers; actor anchors stay mono. */
+.knode .kg-label { font-family: var(--sans); }
+
+.kg-actor { fill: var(--muted); }
+
+.kg-finding { fill: var(--ink); }
+
+.kg-finding.unshared {
+  fill: var(--paper);
+  stroke: var(--attention);
+  stroke-width: 1.5px;
+}
+
+.kg-edge-share { stroke: var(--attention); stroke-width: 1.5px; }
+
+.kg-edge-authored { stroke: var(--hairline); stroke-width: 1.5px; }
+
+.kg-divider { stroke: var(--hairline); stroke-width: 1px; }
+
+.kg-note { fill: var(--muted); }
+
+.knode { cursor: pointer; }
+
+.knode:focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }
+
+.knode.selected circle { stroke: var(--selection); stroke-width: 2.5px; }
+
+/* Newly arrived nodes pulse once. */
+.kg-new circle { animation: kg-arrive 600ms ease-out 1; }
+
+@keyframes kg-arrive {
+  from { opacity: 0.2; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kg-new circle { animation: none; }
+}
+
+.kg-legend { margin: 6px 0 0; font-size: var(--step0); }
+
+/* The explorer lists every filtered finding below the graph. */
+.explorer { margin-top: 20px; }
+
+.explorer h2 { margin: 0 0 6px; font-size: var(--step2); line-height: 1.3; }
+
+.board-row .board-action {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--step2);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.board-row .board-id {
+  flex: none;
+  max-width: 38%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: var(--step0);
+  color: var(--muted);
+}
+
+.board-row .board-task {
+  flex: 1 1 100%;
+  font-size: var(--step0);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-row.selected { outline: 2px solid var(--selection); outline-offset: 1px; }
+
+.board-row:focus-visible { outline: 2px solid var(--selection); outline-offset: 1px; }
+
+/* The explorer mount below the graph is retired; the readout beside the
+   graph carries the textual findings. findings.js stays on disk. */
+
+#view-now .transitions { border-top: none; padding-top: 0; }
+
+/* The lane opens the Now view above the board, inside the padded view. */
+#view-now .lane { padding: 0; margin: 0 0 16px; }
+
+/* The stage keeps its own spacing inside the padded Knowledge view. */
+#view-knowledge .stage { margin: 0 0 8px; }
 
 .tree-pane,
 .detail,
 .transitions { min-width: 0; padding: 0; }
 
-/* The two panes are the only surfaces: white on the paper ground, no border
-   and no radius. The right pane separates its two sections by a hairline. */
-.tree-pane,
-.side {
+/* The tree pane stays a quiet white surface on the paper ground. */
+.tree-pane {
   padding: 12px 14px;
   background: var(--surface);
-}
-
-.side {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 0;
 }
 
 .detail,
@@ -653,7 +819,8 @@ button.pend-badge:hover { color: var(--selection); border-color: currentColor; }
 }
 
 @media (max-width: 1000px) {
-  .layout { grid-template-columns: minmax(0, 1fr); }
+  .now-grid,
+  .actors-grid { grid-template-columns: minmax(0, 1fr); }
   .tree { max-height: 46vh; }
   .model-note { max-width: 34%; }
 }
@@ -661,8 +828,9 @@ button.pend-badge:hover { color: var(--selection); border-color: currentColor; }
 @media (max-width: 720px) {
   .page-head { padding: 12px 14px 10px; }
   .toolbar { padding: 10px 14px; }
-  .lane { padding: 8px 14px 0; }
-  .layout { padding: 12px 14px 0; gap: 12px; }
+  .view { padding: 12px 14px 0; }
+  .now-grid,
+  .actors-grid { gap: 12px; }
   .notice { margin: 10px 14px 0; }
   .field input { min-width: 140px; }
   .detail dl { grid-template-columns: 76px minmax(0, 1fr); }

@@ -35,12 +35,17 @@ const state = {
   knowledgeActor: null,
   knowledgeActorId: "",
   knowledgeActorRequest: null,
+  work: null,
+  workRequest: null,
+  workActorId: "",
   knowledgeOpen: false,
   includeUnshared: false,
   knowledgeSearch: "",
   findingId: null,
+  pendingDetailFocus: null,
   knowledgeLiveOnly: false,
   knowledgeSeatEmpty: "",
+  view: "now",
 };
 
 const el = {
@@ -65,6 +70,14 @@ const el = {
   knowledgeSurface: document.getElementById("knowledge-surface"),
   liveOnly: document.getElementById("live-only"),
   attention: document.getElementById("attention-lane"),
+  board: document.getElementById("ensemble-board"),
+  graph: document.getElementById("knowledge-graph"),
+  viewNow: document.getElementById("view-now"),
+  viewKnowledge: document.getElementById("view-knowledge"),
+  viewActors: document.getElementById("view-actors"),
+  viewNowBtn: document.getElementById("view-now-btn"),
+  viewKnowledgeBtn: document.getElementById("view-knowledge-btn"),
+  viewActorsBtn: document.getElementById("view-actors-btn"),
 };
 
 function text(parent, value) {
@@ -205,11 +218,15 @@ function lastTransitionFor(id) {
 // committed transition, marked stale. Nothing here invents work.
 function actionFor(p) {
   const current = p.currentAction || null;
-  if (current && current.label) {
-    return { label: current.label, at: current.at || "", stale: false };
-  }
+  const label = current && current.label ? current.label : "";
   const last = lastTransitionFor(p.id);
+  if (label && label.toLowerCase() !== deriveStatus(p)) {
+    return { label, at: current.at || "", stale: false };
+  }
+  // A bare phase word repeats the recorded status beside it, so the slot
+  // falls back to the actor's latest recorded transition instead.
   if (last) return { label: last.summary || last.kind || "", at: last.at || "", stale: true };
+  if (label) return { label, at: current.at || "", stale: false };
   return null;
 }
 
@@ -399,9 +416,17 @@ function select(id) {
   state.selectionId = id;
   state.knowledgeOpen = false;
   state.findingId = null;
+  // The dossier lives in the Actors view, so every selection reveals it;
+  // selections made inside that view render unchanged.
+  setView("actors");
   renderTree();
   renderDetail();
   void loadActorKnowledge(id);
+  void loadActorWork(id);
+  // Keyboard users land on the selected row instead of back at the top:
+  // the view switch hides the chip they came from.
+  const target = el.tree.querySelector("[data-focus=\"" + CSS.escape(focusKey("id", id)) + "\"]");
+  if (target && typeof target.focus === "function") target.focus();
 }
 
 function toggleCollapse(id) {
@@ -447,6 +472,7 @@ function renderTree() {
   state.structure = structureSignature();
   restoreFocus(key);
   renderAttentionState();
+  renderBoardState();
   refreshKnowledgeSeats();
 }
 
@@ -610,7 +636,22 @@ function updateRow(p) {
     else fresh.after(renderPendingList(p));
   }
   renderAttentionState();
+  renderBoardState();
   refreshKnowledgeSeats();
+}
+
+// The header switch shows one view at a time. Switching to Knowledge
+// re-renders the seats, whose layout reads zero while hidden.
+function setView(name) {
+  state.view = name;
+  const views = [["now", el.viewNowBtn, el.viewNow],
+    ["knowledge", el.viewKnowledgeBtn, el.viewKnowledge],
+    ["actors", el.viewActorsBtn, el.viewActors]];
+  for (const [n, button, section] of views) {
+    if (button) button.setAttribute("aria-pressed", n === name ? "true" : "false");
+    if (section) section.hidden = n !== name;
+  }
+  if (name === "knowledge") renderKnowledge();
 }
 
 // The attention lane mirrors recorded actor state with running actors first.
@@ -625,9 +666,47 @@ function renderAttentionState() {
       status: deriveStatus(p),
       awaitingInput: awaitingInput(p),
       pendingCount: p.pendingCount || 0,
+      action: (actionFor(p) || {}).label || "",
     });
   }
   renderAttention(mount, players, {
+    selectedId: state.selectionId,
+    onSelect: (id) => select(id),
+  });
+}
+
+// The ensemble board reads the same snapshot as the tree: recorded
+// membership, derived status and the current action label per actor.
+function boardData() {
+  const actors = [];
+  for (const p of state.players.values()) {
+    const action = actionFor(p) || {};
+    const ensembles = [];
+    for (const id of (p.ownedEnsembles || []).concat(p.memberEnsembles || [])) {
+      if (id && !ensembles.includes(id)) ensembles.push(id);
+    }
+    actors.push({
+      id: p.id,
+      status: deriveStatus(p),
+      awaitingInput: awaitingInput(p),
+      pendingCount: p.pendingCount || 0,
+      action: action.label || "",
+      stale: !!action.stale,
+      task: (state.tasks[p.id] || {}).title || "",
+      ensembles,
+    });
+  }
+  const ensembles = [];
+  for (const e of state.ensembles.values()) {
+    ensembles.push({ id: e.id, owner: e.owner || "", coupling: e.coupling || "", members: e.members || [] });
+  }
+  return { actors, ensembles };
+}
+
+function renderBoardState() {
+  const mount = el.board;
+  if (!mount || typeof renderEnsembleBoard !== "function") return;
+  renderEnsembleBoard(mount, boardData(), {
     selectedId: state.selectionId,
     onSelect: (id) => select(id),
   });
@@ -660,6 +739,76 @@ function shortRole(role) {
   if (role === "associate-conductor") return "associate";
   if (role === "operator") return "operator";
   return "player";
+}
+
+// Complete recorded work for the selected actor, read on demand from the
+// work route: the full task body, the exact current input, the open native
+// request, and the latest report. Nothing is truncated; rows appear only
+// for records the route returns.
+function renderWorkBlock(dl, p) {
+  if (!knowledgeWired()) return;
+  const data = state.workActorId === p.id ? state.work : null;
+  if (!data) {
+    td(dl, "work", "Reading recorded work.");
+    return;
+  }
+  if (data.refused) {
+    td(dl, "work", "Work for this actor is outside the bound reader's scope.");
+    return;
+  }
+  if (data.error) {
+    td(dl, "work", "Work unavailable: " + data.error);
+    return;
+  }
+  let shown = false;
+  const task = data.task || null;
+  if (task && task.description) {
+    td(dl, "task description", task.description);
+    shown = true;
+  }
+  const input = data.input || null;
+  if (input) {
+    td(dl, "current input", (input.kind || "message") + " from " + (input.sender || "unknown"));
+    if (input.body) td(dl, "input text", input.body);
+    shown = true;
+  }
+  const request = data.request || null;
+  if (request) {
+    td(dl, "open request", (request.method || "native") + " " + (request.event || "")
+      + (request.reply ? " response written" : " awaiting response")
+      + (request.closed ? " (closed)" : ""));
+    shown = true;
+  }
+  const report = data.report || null;
+  if (report) {
+    td(dl, "latest report", (report.id || "") + " to " + (report.recipient || "unknown"));
+    if (report.body) td(dl, "report text", report.body);
+    shown = true;
+  }
+  if (!shown) td(dl, "work", "No recorded task, input, request, or report.");
+}
+
+async function loadActorWork(id) {
+  const request = {};
+  state.workRequest = request;
+  state.work = null;
+  state.workActorId = id || "";
+  if (!knowledgeWired() || !id) {
+    renderDetail();
+    return;
+  }
+  let data;
+  try {
+    const res = await fetch(state.apiBase + "/orchestra/work?subject=" + encodeURIComponent(id));
+    if (res.status === 403) data = { refused: true };
+    else if (!res.ok) data = { error: "the endpoint answered " + res.status };
+    else data = await res.json();
+  } catch (e) {
+    data = { error: e && e.message ? e.message : String(e) };
+  }
+  if (state.workRequest !== request || state.selectionId !== id) return;
+  state.work = data;
+  renderDetail();
 }
 
 function renderDetail() {
@@ -697,6 +846,7 @@ function renderDetail() {
   } else {
     td(dl, "task", null);
   }
+  renderWorkBlock(dl, p);
 
   td(dl, "worktree", p.workspace || null, true);
   td(dl, "branch", p.branch || null, true);
@@ -760,6 +910,37 @@ function renderDetail() {
   renderKnowledgeBlock(el.detail, p);
 }
 
+const TRANSITION_LIMIT = 50;
+
+function transitionRow(t) {
+  const li = document.createElement("li");
+  li.className = kindClass(t.kind) + (t.arrival ? " arrival" : "");
+  const when = document.createElement("time");
+  text(when, t.at || "time unrecorded");
+  li.appendChild(when);
+  if (t.session) {
+    const go = document.createElement("button");
+    go.className = "go";
+    go.type = "button";
+    text(go, t.session);
+    go.addEventListener("click", () => select(t.session));
+    li.appendChild(go);
+  }
+  const kind = document.createElement("span");
+  text(kind, " " + (t.kind || "unknown") + " ");
+  li.appendChild(kind);
+  const sum = document.createElement("span");
+  sum.className = "muted";
+  const receipt = t.entity === "message" && t.kind === "receipt" && t.counterpart
+    ? " message from " + t.counterpart : "";
+  text(sum, (t.summary || "") + receipt);
+  li.appendChild(sum);
+  t.arrival = false;
+  return li;
+}
+
+// History stays available on demand: the rail opens with the newest batch
+// and a control reads the rest. Row shape and order are unchanged.
 function renderTransitions() {
   el.transitions.textContent = "";
   if (!state.transitions.length) {
@@ -768,31 +949,20 @@ function renderTransitions() {
     el.transitions.appendChild(li);
     return;
   }
-  for (const t of state.transitions) {
-    const li = document.createElement("li");
-    li.className = kindClass(t.kind) + (t.arrival ? " arrival" : "");
-    const when = document.createElement("time");
-    text(when, t.at || "time unrecorded");
-    li.appendChild(when);
-    if (t.session) {
-      const go = document.createElement("button");
-      go.className = "go";
-      go.type = "button";
-      text(go, t.session);
-      go.addEventListener("click", () => select(t.session));
-      li.appendChild(go);
-    }
-    const kind = document.createElement("span");
-    text(kind, " " + (t.kind || "unknown") + " ");
-    li.appendChild(kind);
-    const sum = document.createElement("span");
-    sum.className = "muted";
-    const receipt = t.entity === "message" && t.kind === "receipt" && t.counterpart
-      ? " message from " + t.counterpart : "";
-    text(sum, (t.summary || "") + receipt);
-    li.appendChild(sum);
-    el.transitions.appendChild(li);
-    t.arrival = false;
+  const expanded = state.showAllTransitions === true;
+  const shown = expanded ? state.transitions : state.transitions.slice(0, TRANSITION_LIMIT);
+  for (const t of shown) el.transitions.appendChild(transitionRow(t));
+  if (!expanded && state.transitions.length > shown.length) {
+    const more = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    text(button, "Show all " + state.transitions.length + " transitions");
+    button.addEventListener("click", () => {
+      state.showAllTransitions = true;
+      renderTransitions();
+    });
+    more.appendChild(button);
+    el.transitions.appendChild(more);
   }
 }
 
@@ -923,9 +1093,51 @@ function setIncludeUnshared(on) {
   }
 }
 
+// A graph finding selection opens the complete record through the existing
+// actor knowledge reads: the recorded author is selected so the detail pane
+// shows the full claim, evidence and limits. Every opening selection reveals
+// the dossier and moves visible keyboard focus, including one whose author is
+// already selected. Loaders, request guards and refusal paths are untouched.
+function revealFindingRecord(id) {
+  const data = state.knowledgeActor;
+  let actor = "";
+  if (data && state.knowledgeActorId === state.selectionId) {
+    const authored = data.authored || [];
+    const received = data.received || [];
+    if (authored.some((f) => f && f.id === id)
+      || received.some((r) => r && (r.finding || r.id) === id)) actor = state.selectionId;
+  }
+  if (!actor) {
+    const overview = state.knowledge || {};
+    const record = (overview.findings || []).find((f) => f && f.id === id) || {};
+    actor = record.author || "";
+    if (!actor) {
+      const edge = (overview.promotions || []).find((p) => p && (p.finding || p.id) === id) || {};
+      actor = edge.source || edge.author || "";
+    }
+  }
+  if (!actor || !state.players.has(actor)) return;
+  if (actor !== state.selectionId) {
+    select(actor);
+    // select() clears the finding; re-assert it so the record opens.
+    state.findingId = id;
+    state.knowledgeOpen = true;
+  } else {
+    // Already on the author: the dossier may sit hidden in Actors, so
+    // reveal it rather than returning with nothing visible.
+    setView("actors");
+  }
+  // The author may sit outside the current tree filter, leaving no row to
+  // focus; the detail record then takes focus once its read renders.
+  const row = el.tree.querySelector("[data-focus=\"" + CSS.escape(focusKey("id", actor)) + "\"]");
+  if (row && typeof row.focus === "function") row.focus();
+  else state.pendingDetailFocus = id;
+}
+
 function toggleFinding(id) {
   if (!id) return;
   state.findingId = state.findingId === id ? null : id;
+  state.pendingDetailFocus = null;
   if (state.findingId) {
     // A finding selected from the seats opens its recorded content. A finding no
     // recorded promotion carries has no row until the unshared rows are shown,
@@ -933,38 +1145,45 @@ function toggleFinding(id) {
     const promotions = (state.knowledge && state.knowledge.promotions) || [];
     if (!promotions.some((p) => (p.finding || p.id) === id)) setIncludeUnshared(true);
     state.knowledgeOpen = true;
+    revealFindingRecord(id);
   }
   renderKnowledge();
   renderDetail();
 }
 
-function promotionRow(promotion, findings) {
+// One row per finding: the claim once, its author, how many recorded
+// promotions carry it, and every recorded sharing path. Promotion rows
+// repeated the claim per edge; the group shows the finding and its
+// relationships together.
+function findingGroupRow(findingId, group, findings) {
   const li = document.createElement("li");
   li.className = "t-promotion";
+  const finding = findings.get(findingId);
   const id = document.createElement("button");
   id.type = "button";
   id.className = "finding-id mono";
-  text(id, promotion.finding || promotion.id || "unrecorded finding");
-  id.addEventListener("click", () => toggleFinding(promotion.finding || ""));
+  text(id, findingId || "unrecorded finding");
+  id.addEventListener("click", () => toggleFinding(findingId || ""));
   li.appendChild(id);
   const meta = document.createElement("span");
   meta.className = "finding-meta";
-  text(meta, " author " + (promotion.author || "unknown"));
+  const author = (finding && finding.author) || (group[0] && group[0].author) || "unknown";
+  text(meta, " author " + author + " · shared " + group.length
+    + (group.length === 1 ? " time" : " times"));
   li.appendChild(meta);
   const path = document.createElement("span");
   path.className = "share-path";
-  text(path, (promotion.source || "unknown") + " \u2192 " + (promotion.destination || "unknown")
-    + (promotion.promotedBy ? " via " + promotion.promotedBy : ""));
+  text(path, group.map((p) => (p.source || "unknown") + " → " + (p.destination || "unknown")
+    + (p.promotedBy ? " via " + p.promotedBy : "")).join(" / "));
   li.appendChild(path);
-  const finding = findings.get(promotion.finding);
   if (finding && finding.claim) {
     const claim = document.createElement("span");
     claim.className = "muted";
     text(claim, " " + finding.claim);
     li.appendChild(claim);
   }
-  if (state.findingId && state.findingId === promotion.finding) {
-    li.appendChild(findingDetail(promotion, finding || {}, false));
+  if (state.findingId && state.findingId === findingId) {
+    li.appendChild(findingDetail(group[0], finding || {}, false));
   }
   return li;
 }
@@ -1010,6 +1229,20 @@ function refreshKnowledgeSeats() {
   renderKnowledgeSeats(state.knowledge, state.knowledgeSeatEmpty);
 }
 
+// The knowledge graph draws the same overview behind the readout. A page
+// without the graph mount, or without kgraph.js, keeps the readout only.
+function renderKnowledgeGraphState(overview, emptyText) {
+  const mount = el.graph;
+  if (!mount || typeof renderKnowledgeGraph !== "function") return;
+  renderKnowledgeGraph(mount, overview, {
+    query: state.knowledgeSearch,
+    includeUnshared: state.includeUnshared,
+    selectedId: state.findingId,
+    notice: state.knowledgeNotice || (!overview ? "No knowledge read yet." : (emptyText || "")),
+    onSelect: (id) => toggleFinding(id),
+  });
+}
+
 function renderKnowledge() {
   const list = el.knowledgePromotions;
   const empty = el.knowledgeEmpty;
@@ -1025,12 +1258,14 @@ function renderKnowledge() {
     empty.hidden = false;
     text(empty, state.knowledgeNotice);
     renderKnowledgeSeats(overview);
+    renderKnowledgeGraphState(overview);
     return;
   }
   if (!overview) {
     empty.hidden = false;
     text(empty, "No knowledge read yet.");
     renderKnowledgeSeats(overview);
+    renderKnowledgeGraphState(overview);
     return;
   }
   const findings = new Map((overview.findings || []).map((f) => [f.id, f]));
@@ -1059,9 +1294,18 @@ function renderKnowledge() {
       ? "No findings match."
       : (overview.empty ? "No recorded findings." : "No recorded promotions."));
     renderKnowledgeSeats(overview, empty.textContent);
+    renderKnowledgeGraphState(overview, empty.textContent);
     return;
   }
-  for (const promotion of promotions) list.appendChild(promotionRow(promotion, findings));
+  const groups = new Map();
+  for (const promotion of promotions) {
+    const key = promotion.finding || promotion.id || "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(promotion);
+  }
+  for (const [findingId, group] of groups) {
+    list.appendChild(findingGroupRow(findingId, group, findings));
+  }
   for (const finding of unshared) {
     const li = document.createElement("li");
     li.className = "t-promotion finding-unshared";
@@ -1085,6 +1329,7 @@ function renderKnowledge() {
     list.appendChild(li);
   }
   renderKnowledgeSeats(overview);
+  renderKnowledgeGraphState(overview);
 }
 
 // The dossier block: authored, received and never-shared counts with the stored
@@ -1092,6 +1337,10 @@ function renderKnowledge() {
 function renderKnowledgeBlock(container, p) {
   const block = document.createElement("div");
   block.className = "knowledge";
+  // A button takes focus only once connected to the document; focusing a
+  // detached node is a silent no-op. The target is recorded in the loops
+  // and focused after the block is appended.
+  let focusTarget = null;
   const heading = document.createElement("h3");
   text(heading, "Knowledge");
   block.appendChild(heading);
@@ -1152,6 +1401,9 @@ function renderKnowledgeBlock(container, p) {
       li.appendChild(claim);
       if (state.findingId === f.id) {
         li.appendChild(findingDetail({ author: f.author, source: f.author, destination: "" }, f));
+        if (state.pendingDetailFocus === f.id) {
+          focusTarget = id;
+        }
       }
       ul.appendChild(li);
     }
@@ -1173,12 +1425,21 @@ function renderKnowledgeBlock(container, p) {
       claim.className = "muted";
       text(claim, " " + (promotion.claim || ""));
       li.appendChild(claim);
-      if (state.findingId === (promotion.finding || "")) li.appendChild(findingDetail(promotion, promotion));
+      if (state.findingId === (promotion.finding || "")) {
+        li.appendChild(findingDetail(promotion, promotion));
+        if (state.pendingDetailFocus && state.pendingDetailFocus === (promotion.finding || "")) {
+          focusTarget = id;
+        }
+      }
       ul.appendChild(li);
     }
     block.appendChild(ul);
   }
   container.appendChild(block);
+  if (focusTarget && document.contains(focusTarget) && typeof focusTarget.focus === "function") {
+    state.pendingDetailFocus = null;
+    focusTarget.focus();
+  }
 }
 
 function renderAges() {
@@ -1242,6 +1503,8 @@ function applySnapshot(data, label) {
   // Knowledge reads are on demand: refresh them with every authoritative snapshot.
   void loadKnowledgeOverview();
   if (state.selectionId) void loadActorKnowledge(state.selectionId);
+  // The selected work read refreshes with the snapshot the same way.
+  if (state.selectionId) void loadActorWork(state.selectionId);
 }
 
 async function loadSnapshot() {
@@ -1342,6 +1605,13 @@ function connectEvents() {
     if (!p || !p.id) return;
     const known = state.players.has(p.id);
     state.players.set(p.id, p);
+    // Player frames carry the concise task record; the selected read loads
+    // the complete work. A frame without one deletes the stored record so
+    // stale work metadata never persists. A frame for the selected actor
+    // refreshes the selected read, guarded like every on-demand read.
+    if (p.task) state.tasks[p.id] = p.task;
+    else delete state.tasks[p.id];
+    if (p.id === state.selectionId) void loadActorWork(p.id);
     if (ev.lastEventId) setCursor(ev.lastEventId);
     // A new actor or a reparent restructures the tree; an attribute change is
     // patched in place so focus, selection and filters stay where they are.
@@ -1378,7 +1648,12 @@ function connectEvents() {
     if (actor) {
       const row = rowElement(actor.id);
       if (row) renderAction(row, actor);
-      if (state.selectionId === actor.id) renderDetail();
+      // A transition on the selected actor can carry a new report, input,
+      // or receipt, so the selected read refreshes with it.
+      if (state.selectionId === actor.id) {
+        renderDetail();
+        void loadActorWork(actor.id);
+      }
     }
     // Message admission goes to the recipient; its acknowledgement returns to
     // the sender.
@@ -1529,6 +1804,11 @@ function init() {
       el.liveOnly.setAttribute("aria-pressed", state.knowledgeLiveOnly ? "true" : "false");
       renderKnowledge();
     });
+  }
+  for (const [name, button] of [["now", el.viewNowBtn],
+      ["knowledge", el.viewKnowledgeBtn], ["actors", el.viewActorsBtn]]) {
+    if (!button) continue;
+    button.addEventListener("click", () => setView(name));
   }
   if (el.knowledgeSearch) {
     el.knowledgeSearch.addEventListener("input", () => {

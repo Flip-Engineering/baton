@@ -962,4 +962,67 @@ test('the snapshot names the recorded current action and every stored awaiting',
   assert.equal(running.pendingSample.length, 1);
   assert.equal(running.pendingSample[0].id, 'pending-1');
   assert.equal(running.pendingSample[0].kind, 'task');
+
+  // The tasks map carries the recorded task message behind the action label.
+  assert.equal(snapshot.tasks.child.id, 'pending-1');
+  assert.equal(snapshot.tasks.child.title, 'pending input body');
+  assert.equal(snapshot.tasks.child.status, 'pending');
+  assert.match(snapshot.tasks.child.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(snapshot.providers.child, { name: 'configured/child', status: 'configured' });
+});
+
+test('selected work reads the recorded cursors and complete bodies', async (t) => {
+  const space = fixture();
+  t.after(() => rmSync(space.directory, { recursive: true, force: true }));
+  const server = createOrchestraServer({ databasePath: space.databasePath, reader: 'root' });
+  const base = await listen(server);
+  t.after(() => close(server));
+  const db = new DatabaseSync(space.databasePath);
+  t.after(() => db.close());
+
+  // The launch input the running attempt actually included, recorded by cursor.
+  db.prepare(`INSERT INTO messages(id,sender,recipient,kind,body)
+    VALUES ('launch-1','root','child','guidance','Launch the review pass now')`).run();
+  const seq = db.prepare(`SELECT seq FROM messages WHERE id = 'launch-1'`).get().seq;
+  db.prepare(`UPDATE executions SET id = ?, phase = 'running' WHERE session = 'child'`)
+    .run(`receive:child:${seq}`);
+  // A newer pending guidance arrives while that input is still running.
+  db.prepare(`INSERT INTO messages(id,sender,recipient,kind,body)
+    VALUES ('pending-2','root','child','guidance','Newer guidance while running')`).run();
+  // The actor reports its own failure in full.
+  db.prepare(`INSERT INTO messages(id,sender,recipient,kind,body)
+    VALUES ('report-1','child','root','report','Worker failed: missing fixture input.')`).run();
+
+  const snapshot = await (await fetch(`${base}/orchestra/snapshot?subject=child`)).json();
+  const child = snapshot.players.find((player) => player.id === 'child');
+
+  // The receive cursor drives the action label, not the newer pending input.
+  assert.equal(child.currentAction.kind, 'execution');
+  assert.equal(child.currentAction.label, 'running · guidance input: Launch the review pass now');
+  assert.equal(child.pendingSample[0].id, 'pending-2');
+  assert.equal(snapshot.tasks.child.id, 'pending-1');
+  assert.equal(snapshot.tasks.child.status, 'pending');
+  assert.equal(child.latestReportId, 'report-1');
+
+  // The selected read carries complete bodies, never excerpts.
+  const work = await (await fetch(`${base}/orchestra/work?subject=child`)).json();
+  assert.equal(work.actor, 'child');
+  assert.equal(work.task.description, 'pending input body');
+  assert.equal(work.input.body, 'Launch the review pass now');
+  assert.equal(work.report.body, 'Worker failed: missing fixture input.');
+
+  // The open request keeps its recorded method, event, and transport stage.
+  const grandchildWork = await (await fetch(`${base}/orchestra/work?subject=grandchild`)).json();
+  assert.equal(grandchildWork.request.method, 'input');
+  assert.equal(grandchildWork.request.event, '{"id":"native-req-1","method":"input"}');
+  assert.equal(grandchildWork.request.reply, null);
+  assert.equal(grandchildWork.request.written, 0);
+  assert.equal(grandchildWork.request.closed, null);
+
+  // Acknowledging the task flips its receipt state without rewriting history.
+  db.prepare(`UPDATE messages SET receipt = 'fixture-read' WHERE id = 'pending-1'`).run();
+  const after = await (await fetch(`${base}/orchestra/snapshot?subject=child`)).json();
+  assert.equal(after.tasks.child.status, 'acknowledged');
+  assert.ok(!after.players.find((player) => player.id === 'child')
+    .pendingSample.some((row) => row.id === 'pending-1')));
 });

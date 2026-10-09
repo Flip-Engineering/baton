@@ -69,6 +69,11 @@
   {
    "base": "fixture-base-1",
    "branch": "fixture/branch-b",
+   "currentAction": {
+    "at": "2026-10-06 19:59:55 UTC",
+    "kind": "native-request",
+    "label": "input request awaiting response"
+   },
    "effort": "high",
    "endpointRegistered": false,
    "execution": {
@@ -100,6 +105,18 @@
    ],
    "parent": "fixture-root",
    "pendingCount": 3,
+   "pendingSample": [
+    {
+     "at": "2026-10-06 19:59:50 UTC",
+     "id": "fixture-msg-g2",
+     "kind": "guidance"
+    },
+    {
+     "at": "2026-10-06 19:59:40 UTC",
+     "id": "fixture-msg-t2",
+     "kind": "task"
+    }
+   ],
    "reference": false,
    "role": "associate-conductor",
    "stop": null,
@@ -246,16 +263,12 @@
  ],
  "providers": {
   "fixture-conductor-b": {
-   "name": "fixture-provider-kimi",
-   "status": "known"
+   "name": "kimi-code/k3",
+   "status": "reported"
   },
   "fixture-player-1": {
-   "name": "fixture-provider-muse",
-   "status": "known"
-  },
-  "fixture-player-2": {
-   "name": "",
-   "status": "unknown"
+   "name": "muse-spark-1.3-contributor",
+   "status": "reported"
   }
  },
  "selection": {
@@ -266,15 +279,21 @@
  "tasks": {
   "fixture-conductor-b": {
    "id": "fixture-task-b",
-   "status": "in-progress",
+   "status": "pending",
    "title": "Coordinate fixture ensembles",
    "updatedAt": "2026-10-06 19:59:00 UTC"
   },
   "fixture-player-1": {
    "id": "fixture-task-1",
-   "status": "done",
+   "status": "acknowledged",
    "title": "Write fixture finding",
    "updatedAt": "2026-10-06 19:58:00 UTC"
+  },
+  "fixture-player-2": {
+   "id": "fixture-task-2",
+   "status": "pending",
+   "title": "Answer fixture finding",
+   "updatedAt": "2026-10-06 19:59:20 UTC"
   }
  },
  "transitions": [
