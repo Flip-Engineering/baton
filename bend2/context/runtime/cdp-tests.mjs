@@ -1250,7 +1250,13 @@ test('bootstrap-exec-in-place-same-pid-and-declared-environment', async () => {
     assertEqual(release.keeper.disposition, 'acknowledged', 'the keeper result is adopted');
     const exit = await keeper.exited;
     assertEqual(exit.signal, 'SIGKILL', 'actual exit evidence names the signal');
-    assertEqual(session.snapshot().state, 'releasing', 'the adapter reports no exit it did not observe');
+    const released = session.snapshot();
+    assert(['releasing', 'failed'].includes(released.state), 'release remains recorded through transport closure');
+    assertEqual(released.releaseSignal, 'SIGKILL', 'the committed release signal is retained');
+    assertEqual(released.targetLiveness, 'live', 'the adapter has received no target exit evidence');
+    if (released.state === 'failed') {
+      assertEqual(released.failure.condition, 'transportClosed', 'the adapter retains the observed transport closure');
+    }
   } finally {
     session.close();
     await keeper.stop();
