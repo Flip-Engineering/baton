@@ -240,18 +240,94 @@ test('event endpoint requires a ready owner subscription with a durable cursor',
   assert.deepEqual(await response.json(), { error: 'native-owner-subscription-unavailable' });
 });
 
-test('owner replay gap sends hello then closes with a snapshot gap', async (t) => {
+test('a stale owner gap flag does not close a stream with a valid durable position', async (t) => {
   const f = fixture();
+  const notifications = commitNotifications();
   const server = createOrchestraServer({ databasePath: f.databasePath, reader: 'root',
-    subscribeCommittedChanges: async () => ({ ready: true, generation: 'owner-1',
-      cursor: '0', gap: true, close() {} }) });
+    subscribeCommittedChanges: async (args) => ({
+      ...await notifications.subscribeCommittedChanges(args), gap: true,
+    }) });
   t.after(async () => { await close(server); rmSync(f.directory, { recursive: true, force: true }); });
   const base = await listen(server);
-  const response = await fetch(`${base}/orchestra/events?subject=child&since=0`);
+  const snapshot = await (await fetch(`${base}/orchestra/snapshot?subject=child&since=0`)).json();
+  const response = await fetch(`${base}/orchestra/events?subject=child&since=${snapshot.cursor}`);
   assert.equal(response.status, 200);
-  const frames = await response.text();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let frames = decoder.decode((await reader.read()).value);
+  const writer = new DatabaseSync(f.databasePath);
+  writer.exec("UPDATE executions SET phase='exited',status='exit 0' WHERE session='child';");
+  writer.close();
+  notifications.committed();
+  while (!frames.includes('exited exit 0')) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    frames += decoder.decode(value, { stream: true });
+  }
   assert.match(frames, /event: hello/);
-  assert.match(frames, /event: gap[\s\S]*cursor-gap/);
+  assert.match(frames, /event: player/);
+  assert.match(frames, /event: transition[\s\S]*exited exit 0/);
+  assert.match(frames, /"status":"exit 0"/);
+  assert.doesNotMatch(frames, /event: gap/);
+  await reader.cancel();
+});
+
+test('an out-of-scope knowledge change still invalidates the shared overview', async (t) => {
+  const f = fixture();
+  const notifications = commitNotifications();
+  const server = createOrchestraServer({ databasePath: f.databasePath, reader: 'root',
+    subscribeCommittedChanges: notifications.subscribeCommittedChanges });
+  t.after(async () => { await close(server); rmSync(f.directory, { recursive: true, force: true }); });
+  const base = await listen(server);
+  const snapshot = await (await fetch(`${base}/orchestra/snapshot?subject=child&since=0`)).json();
+  const response = await fetch(`${base}/orchestra/events?subject=child&since=${snapshot.cursor}`);
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  await reader.read();
+  const writer = new DatabaseSync(f.databasePath);
+  writer.exec(`
+    CREATE TABLE knowledge (id TEXT PRIMARY KEY, author TEXT, claim TEXT, evidence TEXT, limits TEXT);
+    CREATE TABLE knowledge_promotions (id TEXT PRIMARY KEY, finding TEXT, author TEXT,
+      source TEXT, destination TEXT, promoted_by TEXT);
+    BEGIN;
+    INSERT INTO knowledge VALUES ('finding-outside','sibling','Shared outside finding','Observed source','Recorded limits');
+    INSERT INTO native_changes(recorded_at,entity,entity_id,session_id,operation,kind,summary)
+      VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),'knowledge','finding-outside','sibling','insert','knowledge','finding recorded');
+    COMMIT;
+  `);
+  writer.close();
+  notifications.committed();
+  const readEntity = async (entity) => {
+    let frames = '';
+    while (!frames.includes(`"entity":"${entity}"`)) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      frames += decoder.decode(value, { stream: true });
+    }
+    assert.match(frames, /event: transition/);
+    assert.ok(frames.includes(`"entity":"${entity}"`));
+    assert.match(frames, /"session":""/);
+    assert.doesNotMatch(frames, /sibling|external|Shared outside finding/);
+  };
+  await readEntity('knowledge');
+  const overview = await (await fetch(`${base}/orchestra/knowledge/overview`)).json();
+  assert.deepEqual(overview.findings, [{ id: 'finding-outside', author: 'sibling', claim: 'Shared outside finding' }]);
+  const promotionWriter = new DatabaseSync(f.databasePath);
+  promotionWriter.exec(`
+    BEGIN;
+    INSERT INTO knowledge_promotions VALUES ('promotion-outside','finding-outside','sibling','sibling','external','root');
+    INSERT INTO native_changes(recorded_at,entity,entity_id,session_id,operation,kind,summary)
+      VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),'promotion','promotion-outside','external','insert','promotion','finding shared');
+    COMMIT;
+  `);
+  promotionWriter.close();
+  notifications.committed();
+  await readEntity('promotion');
+  const promoted = await (await fetch(`${base}/orchestra/knowledge/overview`)).json();
+  assert.equal(promoted.promotions[0].destination, 'external');
+  assert.equal(promoted.actors.external.received, 1);
+  await reader.cancel();
 });
 
 test('CLI reports its actual URL and exits cleanly when stdin reaches EOF', async (t) => {

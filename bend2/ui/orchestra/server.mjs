@@ -310,9 +310,7 @@ function ensembleHasVisibleMember(db, id, scope) {
   id, JSON.stringify(scope))?.visible);
 }
 
-// The durable projection is the authority on whether a client's cursor can still be
-// honored. An owner readiness flag or notice is a hint: a lagging owner high-water
-// must not close a stream whose durable position is valid.
+// Check the client cursor against the retained change bounds.
 function durableGap(db, cursor) {
   return inTransaction(db, () => {
     const bounds = one(db, 'SELECT min(change_id) AS first, max(change_id) AS last FROM native_changes');
@@ -400,6 +398,10 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
             const ensembleVisible = ensembleId
               && ensembleHasVisibleMember(db, ensembleId, scope);
             if (!visible.has(change.session) && !ensembleVisible) {
+              // The shared knowledge overview also includes actors outside this subtree.
+              if (change.entity === 'knowledge' || change.entity === 'promotion') {
+                return { id, type: 'shared', transition: change };
+              }
               return { id, type: 'cursor', data: {} };
             }
             if (['ensemble', 'membership', 'section', 'section-membership'].includes(change.entity)) {
@@ -432,6 +434,21 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
           cursor = frame.id;
           if (frame.type === 'cursor') {
             writeEvent(response, 'cursor', String(cursor), {});
+            continue;
+          }
+          if (frame.type === 'shared') {
+            // Notify the client to refresh the shared knowledge reads.
+            writeEvent(response, 'transition', String(cursor), {
+              seq: cursor,
+              at: frame.transition.at,
+              session: '',
+              kind: frame.transition.kind,
+              summary: '',
+              entity: frame.transition.entity,
+              entityId: '',
+              operation: frame.transition.operation,
+              counterpart: '',
+            });
             continue;
           }
           if (!frame.data) return endWithGap(frame.type === 'ensemble' ? 'ensemble-removed' : 'entity-removed');
@@ -468,7 +485,7 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
     }
     if (notice.kind === 'commit') pump();
     if (notice.kind === 'gap') {
-      // Same authority rule as readiness: only a durable gap closes the stream.
+      // Check retained bounds before closing for an owner gap notice.
       if (durableGap(db, cursor)) return endWithGap(notice.reason || 'cursor-gap');
       return pump();
     }
