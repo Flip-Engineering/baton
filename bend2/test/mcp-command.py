@@ -191,6 +191,58 @@ class McpCommand(unittest.TestCase):
         self.command(tool='baton2_player', arguments={'worker': 'player-id'},
                      expected_args=['player', 'player-id'])
 
+    def test_project_context_and_knowledge_tools_forward_literal_operands(self):
+        session = "Producer's λ"
+        path = "/shared project/query's λ.json"
+        query = 'retained-object-λ'
+        cases = {
+            'baton2_project': ({'path': path}, ['project', path]),
+            'baton2_project_sessions': ({'path': path}, ['project-sessions', path]),
+            'baton2_resume': ({'session': 'recorded consumer'}, ['resume', 'recorded consumer']),
+            'baton2_context_query_file': ({'query': query, 'path': path},
+                ['context-query-file', session, query, path]),
+            'baton2_context_result': ({'query': query}, ['context-result', query]),
+            'baton2_knowledge': ({}, ['knowledge', session]),
+            'baton2_knowledge_record': ({'id': 'finding-λ', 'claim': 'claim with\nnewlines',
+                'evidence': 'message:retained-message', 'limits': 'source only'},
+                ['record', 'finding-λ', session, 'claim with\nnewlines',
+                 'message:retained-message', 'source only']),
+            'baton2_knowledge_promote': ({'id': 'promotion-λ', 'source': 'source session',
+                'destination': session, 'finding': 'finding-λ'},
+                ['promote', 'promotion-λ', session, 'source session', session, 'finding-λ']),
+        }
+        for tool, (arguments, argv) in cases.items():
+            with self.subTest(tool=tool):
+                result = self.command(stdout='{"retained":"object λ"}\n', tool=tool,
+                                      arguments=arguments, session=session, expected_args=argv)
+                self.assertEqual(result['content'], [{'type': 'text', 'text': '{"retained":"object λ"}'}])
+                self.assertNotIn('isError', result)
+                schema = self.tools[tool]['inputSchema']
+                self.assertEqual(set(schema.get('required', [])), set(arguments))
+                self.assertEqual(set(schema['properties']), set(arguments))
+                self.assertFalse(schema['additionalProperties'])
+
+    def test_context_query_uses_attached_identity_and_consumer_reads_same_query(self):
+        query = 'shared-query'
+        self.command(tool='baton2_context_query_file',
+                     arguments={'query': query, 'path': '/query.json', 'owner': 'different-owner'},
+                     session='producer', expected_args=['context-query-file', 'producer', query, '/query.json'])
+        envelope = '{"query":"shared-query","owner":"producer","state":"complete"}'
+        result = self.command(stdout=envelope, tool='baton2_context_result',
+                              arguments={'query': query}, session='consumer',
+                              expected_args=['context-result', query])
+        self.assertEqual(result['content'][0]['text'], envelope)
+
+    def test_context_and_resume_refusals_preserve_native_exit_and_diagnostics(self):
+        for tool, arguments, argv, reason in (
+                ('baton2_context_result', {'query': 'absent'}, ['context-result', 'absent'],
+                 'contextResultAbsent:absent'),
+                ('baton2_resume', {'session': 'stopped'}, ['resume', 'stopped'],
+                 'session is stopped')):
+            with self.subTest(tool=tool):
+                self.failure('retained diagnostic\n', reason + '\n', code=3,
+                             tool=tool, arguments=arguments, expected_args=argv)
+
     def test_native_control_success_preserves_complete_output(self):
         stdout = '{"status":"dispatched"}\n' + 'coordinator output λ\n' * 100000 + 'complete\n'
         for tool, (arguments, argv) in self.native_controls().items():

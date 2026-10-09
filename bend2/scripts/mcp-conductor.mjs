@@ -124,6 +124,59 @@ function coord(...args) {
 // Tool definitions exposed to the attached Conductor.
 const TOOLS = [
   {
+    name: 'baton2_project',
+    description: 'Describe a project and register this coordinator database under its shared Git directory.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' } },
+      required: ['path'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_project_sessions',
+    description: 'List the project\'s recorded sessions, native identities and pending input counts.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' } },
+      required: ['path'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_resume',
+    description: 'Continue a recorded session through its registered receiver using its oldest pending input.',
+    inputSchema: { type: 'object', properties: { session: { type: 'string' } },
+      required: ['session'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_context_query_file',
+    description: 'Evaluate a native context query from a JSON request file as the attached session and retain its result in this database. Use a unique query ID and a file accessible to the coordinator.',
+    inputSchema: { type: 'object', properties: {
+      query: { type: 'string' }, path: { type: 'string', description: 'Path to the query request JSON file' },
+    }, required: ['query', 'path'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_context_result',
+    description: 'Read the retained context result envelope for a query ID in this shared database.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string' } },
+      required: ['query'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_knowledge',
+    description: 'Read findings and their evidence visible to the attached session.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'baton2_knowledge_record',
+    description: 'Record a finding as the attached session, citing retained message evidence and stating the claim\'s limits.',
+    inputSchema: { type: 'object', properties: {
+      id: { type: 'string' }, claim: { type: 'string' },
+      evidence: { type: 'string', description: 'Evidence reference, such as message:MESSAGE_ID' },
+      limits: { type: 'string' },
+    }, required: ['id', 'claim', 'evidence', 'limits'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_knowledge_promote',
+    description: 'Promote a reviewed finding from its recorded source into a destination scope as the attached session.',
+    inputSchema: { type: 'object', properties: {
+      id: { type: 'string', description: 'Promotion ID' }, source: { type: 'string' },
+      destination: { type: 'string' }, finding: { type: 'string', description: 'Finding ID' },
+    }, required: ['id', 'source', 'destination', 'finding'], additionalProperties: false },
+  },
+  {
     name: 'baton2_player',
     description: 'Inspect a Player or Conductor by session ID, including its responsibility and native identity.',
     inputSchema: { type: 'object', properties: { player: { type: 'string' } },
@@ -517,6 +570,30 @@ function handleToolCall(msg) {
   try {
     let result;
     switch (name) {
+      case 'baton2_project':
+        result = coord('project', args.path);
+        break;
+      case 'baton2_project_sessions':
+        result = coord('project-sessions', args.path);
+        break;
+      case 'baton2_resume':
+        result = coord('resume', args.session);
+        break;
+      case 'baton2_context_query_file':
+        result = coord('context-query-file', sessionId, args.query, args.path);
+        break;
+      case 'baton2_context_result':
+        result = coord('context-result', args.query);
+        break;
+      case 'baton2_knowledge':
+        result = coord('knowledge', sessionId);
+        break;
+      case 'baton2_knowledge_record':
+        result = coord('record', args.id, sessionId, args.claim, args.evidence, args.limits);
+        break;
+      case 'baton2_knowledge_promote':
+        result = coord('promote', args.id, sessionId, args.source, args.destination, args.finding);
+        break;
       case 'baton2_player':
         result = coord('player', player);
         break;
