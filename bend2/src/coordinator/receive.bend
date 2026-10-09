@@ -820,14 +820,17 @@ def run(+db: String, +session: String, +cmd: String, +model: String, +effort: St
     settled : Unit <- claim_left(db,session)
     IO.pure(Result<&1,&1,U32 & String,Unit>,result)
 
+def recover_observer_acquired(+db: String, +session: String, id: String, cursor: String, +cmd: String, model: String, effort: String, cwd: String, +log: String, harness: String, directory: String, native: String, acquired: U32 & U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match acquired:
+    case (lock,handle): observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},u => run(db,session,cmd,"","","",log,""),True{})
+
 def recover_observer_arguments(+db: String, +session: String, +directory: String, observer: U32, args: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match args:
     case executable <> flag <> saved_db <> saved_session <> id <> cursor <> +cmd <> model <> effort <> cwd <> +log <> harness <> saved_directory <> native <> Nil{}:
       do IO<Result<&1,&1,U32 & String,Unit>>:
         valid : Unit <- Stop.error_result("Recorded native recovery arguments differ from the current session; retain the attempt and inspect its manifest.",Bool.and(String.eq(flag,"--recover-receive"),Bool.and(String.eq(session,saved_session),String.eq(directory,saved_directory))))
         acquired : U32 & U32 <- IO.try(U32 & U32,Lock.SessionLock.recover_observer(db,session,directory,observer))
-        match acquired:
-          case (lock,handle): observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},u => run(db,session,cmd,"","","",log,""),True{})
+        recover_observer_acquired(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,acquired)
     case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Recorded native recovery arguments are invalid; retain the attempt and inspect its manifest.")})
 
 def recover_observer_recorded(+db: String, +session: String, +directory: String, observer: U32, recovery: Maybe<String>) -> IO(Result<&1,&1,U32 & String,Unit>):
