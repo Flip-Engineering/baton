@@ -594,7 +594,7 @@ def history_helper_result(+db: String, +session: String, +id: String, harness: S
 # continuation reads its home from it. An answer that names no home is not a usable one.
 def history_from_helper(db: String, session: String, id: String, +harness: String, variable: String, +from_store: String, path: String, profile: Subs.Profile, script: String, cmd: String, +cwd: String, native: String, existing: String) -> IO(Bool):
   do IO<Bool>:
-    run : T.RunRes <- Proc.runFull(Subs.history_prepare_args(script,harness,cmd,cwd,native,from_store,profile.store,existing),cwd)
+    run : T.RunRes <- Proc.runFull(Subs.history_prepare_args(script,harness,cmd,cwd,native,from_store,Subs.profile_store(profile),existing),cwd)
     history_helper_result(db,session,id,harness,variable,from_store,path,run)
 
 def prepare_history_variable(+db: String, +session: String, id: String, harness: String, from_store: String, cmd: String, cwd: String, native: String, profile: Subs.Profile, selected: Maybe<String>) -> IO(Bool):
@@ -633,7 +633,7 @@ def append_error(result: Result<&1,&1,U32 & String,Unit>) -> String:
 
 def record_handoff(db: String, session: String, id: String, harness: String, from_label: String, +profile: Subs.Profile, cause: String) -> IO(Bool):
   do IO<Bool>:
-    noted : Unit <- report_body(db,session,id,"profile-handoff",Subs.handoff_body(harness,from_label,profile.label,profile.store,cause))
+    noted : Unit <- report_body(db,session,id,"profile-handoff",Subs.handoff_body(harness,from_label,Subs.profile_label(profile),Subs.profile_store(profile),cause))
     IO.pure(Bool,True{})
 
 def record_append_failure(db: String, session: String, id: String, record_path: String, detail: String) -> IO(Bool):

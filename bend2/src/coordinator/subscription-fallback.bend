@@ -10,6 +10,18 @@ import ../git/text.bend as Tx
 type Profile is Data:
   Pr{harness: String, label: String, store: String}
 
+def profile_harness(profile: Profile) -> String:
+  match profile:
+    case Pr{harness,label,store}: harness
+
+def profile_label(profile: Profile) -> String:
+  match profile:
+    case Pr{harness,label,store}: label
+
+def profile_store(profile: Profile) -> String:
+  match profile:
+    case Pr{harness,label,store}: store
+
 # A missing optional profile or history file has no recorded value. Other read
 # failures retain the filesystem's code and detail.
 def optional_text(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,String>:
@@ -57,7 +69,7 @@ def profile_lines(lines: List<String>) -> List<Profile>:
 def profiles_for(profiles: List<Profile>, +harness: String) -> List<Profile>:
   match profiles:
     case Nil{}: Nil{}
-    case +profile <> +rest: Bool.pick(List<Profile>,String.eq(profile.harness,harness),Con{profile,profiles_for(rest,harness)},profiles_for(rest,harness))
+    case +profile <> +rest: Bool.pick(List<Profile>,String.eq(profile_harness(profile),harness),Con{profile,profiles_for(rest,harness)},profiles_for(rest,harness))
 
 def first_selected(profiles: List<Profile>) -> Maybe<Profile>:
   match profiles:
@@ -90,8 +102,8 @@ def next_after(profiles: List<Profile>, +harness: String, +current: String, seen
     case Nil{}: None{}
     case +profile <> +rest:
       match seen:
-        case True{}: Bool.pick(Maybe<Profile>,String.eq(profile.harness,harness),Some{profile},next_after(rest,harness,current,True{}))
-        case False{}: Bool.pick(Maybe<Profile>,Bool.and(String.eq(profile.harness,harness),String.eq(profile.label,current)),next_after(rest,harness,current,True{}),next_after(rest,harness,current,False{}))
+        case True{}: Bool.pick(Maybe<Profile>,String.eq(profile_harness(profile),harness),Some{profile},next_after(rest,harness,current,True{}))
+        case False{}: Bool.pick(Maybe<Profile>,Bool.and(String.eq(profile_harness(profile),harness),String.eq(profile_label(profile),current)),next_after(rest,harness,current,True{}),next_after(rest,harness,current,False{}))
 
 def next_profile(profiles: List<Profile>, harness: String, current: String) -> Maybe<Profile>:
   next_after(profiles,harness,current,False{})
@@ -123,7 +135,7 @@ def last_line(lines: List<String>) -> String:
 
 def label_of(parsed: Maybe<Profile>) -> String:
   match parsed:
-    case Some{+profile}: profile.label
+    case Some{profile}: profile_label(profile)
     case None{}: ""
 
 def record_label(line: String) -> String:
@@ -131,14 +143,14 @@ def record_label(line: String) -> String:
 
 def store_of(parsed: Maybe<Profile>) -> String:
   match parsed:
-    case Some{+profile}: profile.store
+    case Some{profile}: profile_store(profile)
     case None{}: ""
 
 def record_store(line: String) -> String:
   store_of(record_of(line))
 
 def record_line(+profile: Profile) -> String:
-  profile.label ++ " " ++ profile.store
+  profile_label(profile) ++ " " ++ profile_store(profile)
 
 # The report bodies carry the account change and the provider's own cause. Nothing
 # here decides anything; the caller records and reports.
