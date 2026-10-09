@@ -3,7 +3,7 @@
 # order. The store is the rest of the line. Each session records selections in a
 # separate file beside the database.
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ../json/canonical.bend as J
 import ../git/text.bend as Tx
 
