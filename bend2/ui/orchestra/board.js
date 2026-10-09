@@ -26,11 +26,12 @@ function renderEnsembleBoard(container, data, options) {
   const groups = [];
   for (const e of ensembles) {
     if (!e || !e.id) continue;
-    const members = (e.members || []).map((id) => byId.get(id)).filter(Boolean);
-    const live = members.filter((m) => isLive(m.status)).length;
+    const allMembers = (e.members || []).map((id) => byId.get(id)).filter(Boolean);
+    const members = allMembers.filter((m) => isLive(m.status));
+    const live = members.length;
     if (!live) continue;
     members.sort(byActivity);
-    groups.push({ id: e.id, owner: e.owner || "", coupling: e.coupling || "", members, live });
+    groups.push({ id: e.id, owner: e.owner || "", coupling: e.coupling || "", members, live, total: allMembers.length });
   }
   groups.sort((a, b) => (b.live - a.live) || (a.id < b.id ? -1 : 1));
   const grouped = new Set();
@@ -172,11 +173,11 @@ function renderEnsembleBoard(container, data, options) {
     summary.groups += 1;
   };
   for (const g of groups) {
-    card(String(g.id), " · " + g.live + " of " + g.members.length + " live"
+    card(String(g.id), " · " + g.live + " of " + g.total + " live"
       + (g.owner ? " · owner " + g.owner : "")
       + (g.coupling ? " · " + g.coupling : ""), g.members, {
-      label: g.live + " of " + g.members.length + " live",
-      width: Math.round((100 * g.live) / Math.max(1, g.members.length)) + "%",
+      label: g.live + " of " + g.total + " live",
+      width: Math.round((100 * g.live) / Math.max(1, g.total)) + "%",
     });
   }
   if (others.length) {
