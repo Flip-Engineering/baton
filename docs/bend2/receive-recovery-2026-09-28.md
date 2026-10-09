@@ -42,6 +42,26 @@ The native transport owns process descriptors, output storage and process exit.
 Bend owns inbox selection, native protocol parsing, reports and continuation.
 The ordinary `turn` path shares the receive session lock.
 
+## Completed native with an orphan observer
+
+Issue #708 includes an original DS receive process that retained its session
+lock and output reader after its keeper disappeared. Its native status file
+recorded exit 0, its control socket was absent, and eighteen messages remained
+pending while the observer continued using CPU.
+
+`baton2 DATABASE recover-observer SESSION OBSERVER_PID` retires that selected
+orphan observer and acquires its existing session lock. It requires the retained
+native exit status and an unavailable keeper control socket. The operator
+supplies the observed receive PID. The command sends TERM and CONT to that PID,
+then uses the current executable's ordinary recorded-attempt adoption path.
+
+The observer restores the retained checkpoint, reads remaining output and
+publishes the original report with its original inbox cutoff. It uses the
+recorded native conversation for pending continuation and honors terminal
+session stops. Retained native status, attempt arguments, output and messages
+remain available. The existing checkpoint restoration behavior retains an
+unusable-checkpoint diagnostic and replays the output when necessary.
+
 ## Regression fixes
 
 The first combined receive check exposed two regressions. A missing native

@@ -289,7 +289,7 @@ while True:
     body=action.get('body','native review complete')
     if omp:
         print(json.dumps({'type':'agent_end','isTerminal':True,'is_error':failure,'messages':[{'role':'assistant','content':[{'type':'text','text':body}]}]}),flush=True)
-        remaining_input=sys.stdin.read()
+        remaining_input='' if action.get('exit_after_terminal') else sys.stdin.read()
     elif claude:
         print(json.dumps({'type':'result','subtype':'error_during_execution' if failure else 'success',
                           'session_id':native,'is_error':failure,
@@ -1352,6 +1352,86 @@ class Receive(unittest.TestCase):
                     fixture.exercise_keeper_loss(harness, observer_loss=True)
                 finally:
                     fixture.doCleanups()
+
+    def exercise_completed_orphan_observer(self, stopped):
+        self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
+        self.player(harness='omp')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
+        self.prepare_input('first', 'parent', 'Complete the original input.', kind='task')
+        observer = self.spawn(*self.receive_args('parent'))
+        original, started = self.accept('parent')
+        native_id = self.eventually(lambda: self.coord('player', 'parent')['native'],
+                                    'The original native identity was not recorded.')
+        with sqlite3.connect(self.db) as database:
+            attempt = pathlib.Path(database.execute(
+                "SELECT directory FROM executions WHERE session='parent' AND mode='retained'"
+            ).fetchone()[0])
+        self.eventually(lambda: (attempt / 'checkpoint').exists(),
+                        'The original observer did not record its checkpoint.')
+        self.coord('message', 'second', 'root', 'parent', 'task', 'Retain this queued input.')
+        owner_command = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        owner = [process for process in self.owned_processes()
+                 if process['command'] == owner_command]
+        self.assertEqual(len(owner), 1)
+        selected_observer = self.selected_process(observer.pid)
+        selected_owner = self.selected_process(owner[0]['pid'])
+        self.signal_selected(selected_observer, signal.SIGSTOP)
+        body = 'Original result after native exit and keeper loss.'
+        self.action(original, body=body, exit_after_terminal=True)
+        self.assertEqual(original.readline(), b'')
+        self.eventually(lambda: (attempt / 'status').exists(),
+                        'The keeper did not record actual native exit.')
+        self.assertEqual((attempt / 'status').read_text(), '0\n')
+        if stopped:
+            self.coord('stop', 'parent', 'operator-stop', 'Preserve the operator stop.')
+        self.signal_selected(selected_owner, signal.SIGKILL)
+        self.eventually(lambda: (self.selected_process(selected_owner['pid']) or {}).get('state', 'Z').startswith('Z'),
+                        'The selected keeper did not exit.')
+        retained = {name: (attempt / name).read_bytes() for name in ('manifest', 'native.birth', 'status')}
+        self.assertFalse(self.session_guard_available('parent'))
+        if not stopped:
+            self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
+        recovery = self.spawn('recover-observer', 'parent', observer.pid)
+        self.finish(observer, ok=False)
+        self.assertEqual(observer.returncode, -signal.SIGTERM)
+        if stopped:
+            self.finish(recovery)
+            self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['second'])
+            self.assertEqual(self.coord('delivery', 'second')['receipt'], None)
+            with sqlite3.connect(self.db) as database:
+                self.assertEqual(database.execute(
+                    "SELECT id,reason FROM session_stops WHERE session='parent'"
+                ).fetchone(), ('operator-stop', 'Preserve the operator stop.'))
+            self.assert_no_start()
+        else:
+            continuation, resumed = self.accept('parent')
+            self.assertEqual(resumed['native'], native_id)
+            self.assertIn('[id: second]', resumed['prompt'])
+            self.assertIn('Retain this queued input.', resumed['prompt'])
+            self.assertNotIn('[id: first]', resumed['prompt'])
+            self.action(continuation, body='Pending input completed in the original conversation.')
+            self.assertEqual(continuation.readline(), b'')
+            self.finish(recovery)
+            self.assertEqual(self.coord('inbox', 'parent'), [])
+        turns = self.coord('turns', 'parent')
+        self.assertEqual(sum(row['reportBody'] == body for row in turns), 1)
+        self.assertTrue(all(row['receipt'] == 'parent-received' for row in turns))
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+        for name, content in retained.items():
+            self.assertEqual((attempt / name).read_bytes(), content)
+        self.assertTrue((attempt / 'released').exists())
+        self.assertTrue((attempt / 'acknowledged').exists())
+        self.shutdown_idle_database_owner('The recovered fixture owner did not exit naturally.')
+        self.assertTrue(self.session_guard_available('parent'))
+
+    def test_completed_orphan_observer_recovers_original_and_pending_input(self):
+        self.exercise_completed_orphan_observer(stopped=False)
+
+    def test_completed_orphan_observer_recovery_preserves_explicit_stop(self):
+        self.exercise_completed_orphan_observer(stopped=True)
 
     def test_completed_omp_attempt_replay_leaves_guidance_for_current_native(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))

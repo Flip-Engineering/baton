@@ -5,6 +5,7 @@ type Command is Data:
   Recruit{id: String, parent: String, harness: String, model: String, effort: String, repo: String, branch: String, path: String, base: String}
   Worktree{id: String}
   Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String}
+  RecoverObserver{session: String, observer: String}
   Start{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String, id: String, task: String}
   Receiver{session: String, cmd: String, log: String, cwd: String}
   Configure{id: String, harness: String, model: String, effort: String, cmd: String, log: String, expected_harness: String, expected_model: String, expected_effort: String}
@@ -487,6 +488,7 @@ def sql(command: Command) -> String:
     case ForceStop{session,id}: ""
     case RunTurn{player,id,cmd,model,effort,cwd,task,log,session}: ""
     case Receive{session,cmd,model,effort,cwd,log,message}: ""
+    case RecoverObserver{session,observer}: ""
     case Start{session,harness,cmd,model,effort,cwd,log,id,task}: ""
     case Receiver{session,cmd,log,cwd}: ""
     case Configure{id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort}: ""
@@ -599,6 +601,7 @@ def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Comma
     case "role": Role{session,id}
     case "ensemble": EnsembleEnsure{session,id}
     case "force-stop": ForceStop{session,id}
+    case "recover-observer": RecoverObserver{session,id}
     case "view": View{session,id,"7682"}
     case _: Invalid{}
 

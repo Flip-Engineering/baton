@@ -4653,11 +4653,55 @@ BP_EFFECT(baton_instance_publish_commit,CID_INSTANCE_PUBLISH_COMMIT,BP_INSTANCE_
 static void __attribute__((constructor)) baton_process_signals(void){signal(SIGPIPE,SIG_IGN);}
 
 /* Session locks use the physical database key and the owner IPC namespace. */
-#if defined(CID_SESSIONLOCK_CANONICAL) || defined(CID_SESSIONLOCK_TRY_ACQUIRE) || defined(CID_SESSIONLOCK_RELEASE) || defined(CID_SESSIONLOCK_EXECUTABLE)
+#if defined(CID_SESSIONLOCK_CANONICAL) || defined(CID_SESSIONLOCK_TRY_ACQUIRE) || defined(CID_SESSIONLOCK_RELEASE) || defined(CID_SESSIONLOCK_EXECUTABLE) || defined(CID_SESSIONLOCK_RECOVER_OBSERVER)
 typedef struct {
-  char *database, *session, *path;
+  char *database, *session, *path, *directory;
+  const char *detail;
   int handle, error, kind;
+  u32 observer;
 } BatonSessionLock;
+
+static int baton_observer_retire(BatonSessionLock *call) {
+  if(call->observer<=1 || call->observer>INT_MAX || call->observer==(u32)getpid())return EINVAL;
+  int error=br_admission_verify(call->directory,call->database,call->handle);
+  if(error)return error;
+  char *path=br_path(call->directory,"status");
+  FILE *file=path?fopen(path,"r"):NULL;
+  error=file?0:path?errno:ENOMEM;
+  free(path);
+  int status=0;
+  if(file) {
+    if(fscanf(file,"%d",&status)!=1)error=EINVAL;
+    else if(!WIFEXITED(status) && !WIFSIGNALED(status))error=EBUSY;
+    fclose(file);
+  }
+  if(error) {call->detail="Observer recovery requires the retained native exit status.";return error;}
+  BrBirth native;
+  if((error=br_read_file(call->directory,"native.birth",&native,sizeof(native))))return error;
+  if(call->observer==(u32)native.pid)return EINVAL;
+  BrManifest manifest={0};
+  if((error=br_manifest_read(call->directory,&manifest))) {
+    br_manifest_free(&manifest);return error;
+  }
+  struct sockaddr_un address;
+  error=br_socket_address(&address,manifest.field[5]);
+  br_manifest_free(&manifest);
+  int probe=error?-1:socket(AF_UNIX,SOCK_STREAM,0);
+  if(!error && probe<0)error=errno;
+  if(!error) {
+    if(!connect(probe,(struct sockaddr *)&address,sizeof(address))) {
+      error=EBUSY;call->detail="The retained keeper still owns observation; inspect the current receive.";
+    } else {
+      error=errno;
+      if(error==ENOENT || error==ECONNREFUSED)error=0;
+    }
+  }
+  if(probe>=0)close(probe);
+  if(error)return error;
+  if(kill((pid_t)call->observer,SIGTERM))return errno==ESRCH?0:errno;
+  if(kill((pid_t)call->observer,SIGCONT) && errno!=ESRCH)return errno;
+  return 0;
+}
 
 static void baton_session_lock_call(IoWork *w) {
   BatonSessionLock *call=(BatonSessionLock *)w->data;
@@ -4708,8 +4752,11 @@ static void baton_session_lock_call(IoWork *w) {
   call->handle=open(path,O_CREAT|O_RDWR|O_CLOEXEC,0600);
   free(path);
   if(call->handle<0) {call->error=errno;return;}
+  if(call->kind==5 && (call->error=baton_observer_retire(call))) {
+    close(call->handle);return;
+  }
   int result;
-  do {result=flock(call->handle,LOCK_EX|LOCK_NB);} while(result<0 && errno==EINTR);
+  do {result=flock(call->handle,LOCK_EX|(call->kind==5?0:LOCK_NB));} while(result<0 && errno==EINTR);
   if(result<0) {call->error=errno;close(call->handle);}
 }
 
@@ -4721,8 +4768,8 @@ static Term baton_session_lock_pack(Env e, IoWork *w) {
     if(call->error==EWOULDBLOCK || call->error==EAGAIN) {call->error=0;value=term_pak(CID_NONE,0);}
     else if(!call->error) value=io_box(e,CID_SOME,(Term)call->handle);
   }
-  Term result=call->error ? io_fail(e,call->error,NULL) : io_done(e,value);
-  free(call->database);free(call->session);free(call->path);free(call);
+  Term result=call->error ? io_fail(e,call->error,call->detail) : io_done(e,value);
+  free(call->database);free(call->session);free(call->path);free(call->directory);free(call);
   w->data=NULL;
   return result;
 }
@@ -4731,13 +4778,21 @@ static Term baton_session_lock_begin(Env e, Term *f, IoWork *w, int kind) {
   BatonSessionLock *call=calloc(1,sizeof(*call));
   if(!call) return io_fail(e,ENOMEM,NULL);
   call->kind=kind;
-  if(kind==3) {
+  if(kind==3 || kind==5) {
     u64 dn=0,sn=0;
     call->database=io_cstr(e,f[0],&dn);
     call->session=io_cstr(e,f[1],&sn);
     if(strlen(call->database)!=dn || strlen(call->session)!=sn) {
       free(call->database);free(call->session);free(call);
       return io_fail(e,EINVAL,"database or session contains NUL");
+    }
+    if(kind==5) {
+      u64 length=0;
+      call->directory=io_cstr(e,f[2],&length);call->observer=(u32)f[3];
+      if(strlen(call->directory)!=length) {
+        free(call->database);free(call->session);free(call->directory);free(call);
+        return io_fail(e,EINVAL,"attempt directory contains NUL");
+      }
     }
   } else if(kind==4) {
     u64 length=0;
@@ -4755,6 +4810,11 @@ static void __attribute__((constructor)) baton_session_lock_use_canonical(void) 
 #ifdef CID_SESSIONLOCK_TRY_ACQUIRE
 static Term baton_session_lock_try_acquire(Env e,Term *f,IoWork *w) {return baton_session_lock_begin(e,f,w,3);}
 static void __attribute__((constructor)) baton_session_lock_use_try_acquire(void) {io_eff(CID_SESSIONLOCK_TRY_ACQUIRE,baton_session_lock_try_acquire,0);}
+#endif
+
+#ifdef CID_SESSIONLOCK_RECOVER_OBSERVER
+static Term baton_session_lock_recover_observer(Env e,Term *f,IoWork *w) {return baton_session_lock_begin(e,f,w,5);}
+static void __attribute__((constructor)) baton_session_lock_use_recover_observer(void) {io_eff(CID_SESSIONLOCK_RECOVER_OBSERVER,baton_session_lock_recover_observer,0);}
 #endif
 #ifdef CID_SESSIONLOCK_RELEASE
 static Term baton_session_lock_release(Env e,Term *f,IoWork *w) {return baton_session_lock_begin(e,f,w,1);}
