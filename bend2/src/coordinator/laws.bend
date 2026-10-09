@@ -1203,17 +1203,6 @@ law an_absent_deferred_note_names_the_outstanding_guidance:
 def an_absent_deferred_note_names_the_outstanding_guidance(db,player,id):
   {==}
 
-law the_first_native_terminal_keeps_the_managed_completion:
-  for +db: String
-  for +event: String
-  for +previous: String
-  {Turn.terminal_event(db,event,previous,True{}) == (do IO<String>:
-    selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.terminal(event) ++ " THEN CASE WHEN " ++ C.q(previous) ++ "='' THEN " ++ C.q(event) ++ " ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
-    IO.pure(String,Tx.trim_nl(selected))) : IO(String)}
-
-def the_first_native_terminal_keeps_the_managed_completion(db,event,previous):
-  {==}
-
 law a_response_before_the_first_terminal_records_guidance_acceptance:
   for +db: String
   for +player: String
