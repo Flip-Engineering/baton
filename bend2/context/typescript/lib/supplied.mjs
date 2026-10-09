@@ -1,27 +1,5 @@
-// The supplied capture set for one invocation.
-//
-// `suppliedCaptures` answers `none` when the invocation carries no records and `supplied` when it does.
-// The two are different states and must stay different: `none` leaves the ordinary filesystem capture
-// in place, while `supplied` — including an empty set — makes the accepted bytes the only inputs, and a
-// path outside the set is then refused rather than read from the host. A caller that collapsed both to
-// an empty list would erase that distinction.
-//
-// The plan may already carry the captured inputs for this step, produced by the retained capture
-// owner before the plan froze. Those records are the accepted bytes for this analysis, so the
-// provider consumes them instead of constructing a fresh filesystem capture; a request that carries
-// no records keeps the ordinary filesystem path unchanged.
-//
-// One rendering is consumed, the camelCase wire record:
-//   {captureKind, role, path, marker, payload, payloadEncoding,
-//    producerModule, producerDigest, producerOperation}
-// A file or configuration record carries the content digest as its marker and the accepted bytes in
-// a byte-exact encoding; an absent record names an input the plan recorded as missing, so no
-// filesystem lookup is made for it. A link descriptor is not source content and is refused by name; a
-// directory record is an answer about membership, carried in the payload of the record rather than read
-// as source bytes, and it is replayed as the names it recorded.
-
-// The consumer reads the rendering and selects this step's records; it needs no encoder of its own, so it
-// imports nothing from the shared helper and cannot diverge from it.
+// Decode this step's retained files, missing paths and directory listings.
+// An omitted set uses live inputs; a present set supplies the recorded inputs.
 
 function refused(reason, detail) {
   return detail === undefined

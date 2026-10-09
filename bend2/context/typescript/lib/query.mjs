@@ -1,5 +1,4 @@
 // Run TypeScript analysis over captured files and return facts, references and input identities.
-// A changed captured input returns changedDuringCapture with the query failure.
 
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
@@ -84,8 +83,7 @@ export function runQuery({ resolved, request, queryId = null, supplied = null, c
   if (projections.has('exceptions')) collect(produceExceptions(context));
   if (projections.has('databaseAccesses')) collect(produceDatabaseAccesses(context));
 
-  // The captured bytes and answers are the query inputs: no post-capture probe runs, because a later
-  // host write does not change what this result describes.
+  // The captured bytes and filesystem answers identify the inputs used by this query.
   const uniqueRefs = [];
   const seenRefs = new Set();
   for (const ref of refs) {

@@ -1,20 +1,6 @@
-// The immutable captured filesystem host.
-//
-// The provider consumes exactly the bytes this host captured. Every read, every failed lookup and
-// every directory membership query is recorded with its identity, so a later revalidation can
-// decide whether the snapshot is still current, and a change during capture can be detected
-// before a result is published.
-//
-// Identity per entry:
-//   file      requested path, resolved real path, sha256 of the bytes
-//   directory resolved real path, sha256 of the sorted membership listing
-//   config    a file consumed as configuration (same fields as a file, distinct role)
-//   symlink   requested path and the real path the resolution followed
-//   absent    a failed lookup, recorded so a later appearance invalidates the snapshot
-//   failed    a probe that raised; it never agrees with anything
-//
-// Explicit read roots constrain reads to those paths and the provider's resources.
-// Requests without read roots use ordinary filesystem resolution.
+// Capture the files, missing paths and directory names consulted by TypeScript.
+// Retained records supply those recorded answers during replay.
+// Explicit read roots limit access to those paths and provider resources.
 
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
@@ -76,7 +62,7 @@ export function createCapture({ cwd, readRoots = [], providerRoots = [], supplie
         real: entry.path,
         supplied: true,
         membership: 'unavailable',
-        marker: typeof entry.marker === 'string' ? entry.marker : null,
+        sha256: typeof entry.marker === 'string' ? entry.marker : null,
         names: Array.isArray(entry.names) ? Object.freeze([...entry.names]) : null,
       });
       suppliedPaths.add(entry.path);
@@ -215,15 +201,8 @@ export function createCapture({ cwd, readRoots = [], providerRoots = [], supplie
   function readDirectory(path) {
     const existing = entries.get(path);
     if (existing && existing.kind === 'directory') {
-      // A supplied directory answer covers existence, and its membership is derived from the supplied
-      // set: the producer captured every member it listed, so the children of this directory are
-      // exactly the supplied names directly under it. An empty result is served only when the record's
-      // own digest is the digest of an empty listing, so an uncaptured membership refuses instead of
-      // reporting a directory as empty.
+      // Replay the recorded directory names.
       if (existing.membership === 'unavailable') {
-        // The record carries the names the producing host recorded, and those are served exactly. Without
-        // them the answer is existence only, so a listing refuses rather than being inferred from
-        // captured descendants, which could silently omit a sibling the host never consulted.
         if (Array.isArray(existing.names)) return [...existing.names];
         throw new CaptureRefusal('context-input-membership-unavailable', `${path} membership was not captured`);
       }

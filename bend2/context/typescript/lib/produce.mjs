@@ -58,13 +58,7 @@ export async function captureInputs(invocation, options = {}) {
       providerRoots: [resolved.contextRoot],
     });
 
-    // The service the query builds, with the request's own configuration, and then the projections the
-    // request asks for, through the existing query path with this capture injected: constructing the
-    // service and running the producers both read through the host, so the recorded closure is the one
-    // the analysis really consults, including the reads only the projection producers perform. A refusal
-    // the query raises — a changed input during capture, a failed capture probe, an acquisition failure —
-    // travels to the caller below and becomes this producer's refusal, because a partial or changed
-    // acquisition is not an answer to encode.
+    // The query and its projections use this host to record their consulted inputs.
     runQuery({
       resolved,
       request: {
