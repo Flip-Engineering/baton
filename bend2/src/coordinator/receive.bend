@@ -611,7 +611,7 @@ def prepare_history_variable(+db: String, +session: String, id: String, harness:
 # original account's effective provider history home and materializes what the next account
 # needs, and its answer is recorded for the continuation to bind. A helper that fails
 # reports its own cause and leaves the original input owed, so no profile is advanced.
-def prepare_history(+db: String, +session: String, +id: String, +harness: String, +from_store: String, +cmd: String, +cwd: String, +native: String, decided: Maybe<Subs.Profile>) -> IO(Bool):
+def prepare_history(+db: String, +session: String, +id: String, +harness: String, +from_store: String, +cmd: String, +cwd: String, +native: String, decided: Maybe<&2,Subs.Profile>) -> IO(Bool):
   match decided:
     case None{}: IO.pure(Bool,True{})
     case Some{profile}: prepare_history_variable(db,session,id,harness,from_store,cmd,cwd,native,profile,Subs.store_variable(harness))
@@ -655,7 +655,7 @@ def report_all_refused(db: String, session: String, id: String, harness: String,
     noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":profile-exhausted") ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(Subs.all_refused_body(harness,from_label,cause)) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
     IO.pure(Bool,False{})
 
-def choose_profile(db: String, session: String, id: String, record_path: String, harness: String, from_label: String, cause: String, decided: Maybe<Subs.Profile>) -> IO(Bool):
+def choose_profile(db: String, session: String, id: String, record_path: String, harness: String, from_label: String, cause: String, decided: Maybe<&2,Subs.Profile>) -> IO(Bool):
   match decided:
     case Some{+profile}: record_and_report(db,session,id,record_path,harness,from_label,profile,cause)
     case None{}: report_all_refused(db,session,id,harness,from_label,cause)
@@ -665,7 +665,7 @@ def advance_profile(+db: String, +session: String, +id: String, cause: String, n
     +harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     list_path : String <- profile_list_path(db)
     listed : String <- file_text(list_path)
-    +profiles : List<Subs.Profile> <- IO.pure(List<Subs.Profile>,Subs.profile_lines(Tx.split_lines(listed)))
+    +profiles : List<&2,Subs.Profile> <- IO.pure(List<&2,Subs.Profile>,Subs.profile_lines(Tx.split_lines(listed)))
     +record_path : String <- profile_record_path(db,session)
     +current : String <- file_text(record_path)
     +from_label : String <- IO.pure(String,Subs.record_label(Subs.last_line(Tx.split_lines(current))))
