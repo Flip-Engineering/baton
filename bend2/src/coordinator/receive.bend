@@ -472,12 +472,12 @@ def file_text(path: String) -> IO(String):
     read : Result<&1,&1,U32 & String,String> <- Text.Text.read(path)
     IO.pass(String,Subs.optional_text(read))
 
-def profile_list_path(db: String) -> IO(String):
+def profile_list_path(+db: String) -> IO(String):
   do IO<String>:
     listed : String <- IO.try(String,DB.Sql.query(db,Subs.profile_list_sql(db)))
     IO.pure(String,Tx.trim_nl(listed))
 
-def profile_record_path(db: String, session: String) -> IO(String):
+def profile_record_path(+db: String, session: String) -> IO(String):
   do IO<String>:
     saved : String <- IO.try(String,DB.Sql.query(db,Subs.profile_record_sql(db,session)))
     IO.pure(String,Tx.trim_nl(saved))
@@ -664,7 +664,7 @@ def profile_handoff(+db: String, session: String, id: String, outcome: Turn.Outc
 
 # The guidance message is written only for this session and names the retained attempt the
 # continuation resumes, so a session that already holds owed input is left untouched.
-def handoff_guidance(db: String, session: String, id: String, attempt: String) -> IO(Unit):
+def handoff_guidance(db: String, +session: String, id: String, attempt: String) -> IO(Unit):
   do IO<Unit>:
     noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":handoff-guidance") ++ ",id,id,'guidance'," ++ C.q("The provider reported usage exhaustion and the subscription profile advanced to the next operator-listed account. Continue the original retained attempt " ++ attempt ++ " on this binding; the task message that started it is already acknowledged.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
     IO.pure(Unit,Unit{})
