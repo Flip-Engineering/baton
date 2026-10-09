@@ -465,7 +465,7 @@ def runtime_store_event(+db: String, +binding: String, +owner: String,
     +launch_query: String, +adapter: U32, +frame: String,
     +query: String, +sequence: String, +frame_type: String, +payload: Codec.RawValue) -> IO(Unit):
   do IO<Unit>:
-    terminal : Bool = Bool.or(String.eq(frame_type, "failed"),
+    +terminal : Bool = Bool.or(String.eq(frame_type, "failed"),
       Bool.and(String.eq(frame_type, "event"),
         String.eq(Codec.raw_field_text(payload, "schema"), "baton2.context.runtime.result.v1")))
     associated : Bool <- Bool.pick(IO(Bool), String.is_empty(query),
