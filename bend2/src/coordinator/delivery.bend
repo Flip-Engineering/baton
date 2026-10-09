@@ -17,7 +17,9 @@ def endpoint_sql(id: String, condition: String) -> String:
 def result(saved: String, log: String, run: T.RunRes) -> Result<&1,&1,U32 & String,String>:
   match run:
     case T.RRun{T.SExit{0},out}: Done{saved}
-    case other: Fail{(1,"Message committed; session delivery failed. Read " ++ log ++ " and retry delivery from the pending inbox.")}
+    case T.RRun{T.SExit{code},out}: Fail{(1,"Message committed; session delivery failed (exit " ++ U32.show(code) ++ "): " ++ out ++ "\nRead " ++ log ++ " and retry delivery from the pending inbox.")}
+    case T.RRun{T.SSignal{signal},out}: Fail{(1,"Message committed; session delivery failed (signal " ++ U32.show(signal) ++ "): " ++ out ++ "\nRead " ++ log ++ " and retry delivery from the pending inbox.")}
+    case T.RSpawn{detail}: Fail{(1,"Message committed; session delivery failed: " ++ detail ++ ". Read " ++ log ++ " and retry delivery from the pending inbox.")}
 
 # A delivery whose log record cannot be written is reported as one that needs
 # inspection: the endpoint ran, and the delivery record does not exist.
