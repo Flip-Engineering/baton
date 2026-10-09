@@ -82,7 +82,10 @@ See [terminology](terminology.md) for Section and Orchestra controls.
 ## Reports and retained input
 
 `ask`, `ask-file` and `report` address the sender's recorded immediate parent.
-Native questions and completion reports use that same parent relationship.
+A parentless Principal Conductor uses the registered `operator` session with
+the operator responsibility. `ask-file` reads the complete file or stdin before
+using the same question path as `ask`. Native questions retain their recorded
+parent relationship; completion reports use the report recipient resolver.
 Recovery, stop results and knowledge notices retain their existing internal
 constructors. Recovery input and destination-owner promotion notices can be
 self-addressed internal events. Choosing their message kind on the public

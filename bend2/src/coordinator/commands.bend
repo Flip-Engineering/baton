@@ -452,7 +452,7 @@ def sql(command: Command) -> String:
     case Report{+id, +sender, body}:
       "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(sender) ++ "," ++ report_recipient(q(sender)) ++ ",'report'," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
     case Ask{+id, +player, body}:
-      "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(player) ++ ",(SELECT parent FROM sessions WHERE id=" ++ q(player) ++ "),'question'," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
+      "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(player) ++ "," ++ report_recipient(q(player)) ++ ",'question'," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
     case Ack{+id, +recipient, receipt}:
       "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";DELETE FROM wake_claims WHERE session=" ++ q(recipient) ++ " AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=" ++ q(recipient) ++ " AND receipt IS NULL);SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";"
     case Session{id}: session_result(id)

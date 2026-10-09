@@ -230,9 +230,29 @@ class Messaging(unittest.TestCase):
 
     def test_parent_reports_questions_native_outcomes_and_promotion_self_notice_continue(self):
         self.call('report', 'evidence', 'deep-leaf', 'Completed useful work.')
-        self.call('ask', 'question', 'deep-leaf', 'Review this result.')
+        body = "Review this result with apostrophe ' and unicode λ🙂.\nComplete question.\n"
+        question = self.directory / 'question.txt'
+        question.write_text(body, encoding='utf-8')
+        for verb, ident, sender, recipient in [
+                ('ask', 'question', 'deep-leaf', 'deep-lead'),
+                ('ask-file', 'child-question-file', 'deep-leaf', 'deep-lead'),
+                ('ask', 'principal-question', 'root', 'operator'),
+                ('ask-file', 'principal-question-file', 'root', 'operator')]:
+            with self.subTest(command=verb, sender=sender):
+                row = self.call(verb, ident, sender, str(question) if verb == 'ask-file' else body)
+                self.assertEqual((row['sender'], row['recipient'], row['kind'], row['body']),
+                                 (sender, recipient, 'question', body))
+                self.assertIsNone(row['receipt'])
+                self.assertEqual(self.call('delivery', ident)['body'], body)
         self.assertEqual(self.call('delivery', 'evidence')['recipient'], 'deep-lead')
         self.assertEqual(self.call('delivery', 'question')['recipient'], 'deep-lead')
+        self.assertEqual({row['id'] for row in self.call('inbox', 'operator')},
+                         {'principal-question', 'principal-question-file'})
+        self.assertEqual({row['id'] for row in self.call('inbox', 'deep-lead')},
+                         {'evidence', 'question', 'child-question-file'})
+        self.assertEqual(self.endpoint_output().splitlines(),
+                         [b'evidence', b'question', b'child-question-file',
+                          b'principal-question', b'principal-question-file'])
         event = self.directory / 'terminal.json'
         event.write_text(json.dumps({'type': 'result', 'result': 'Native completed.'}))
         self.call('observe-file', 'native-result', 'deep-leaf', str(event))
