@@ -514,7 +514,13 @@ def with_restore_result(-A: Type, result: Result<&1,&1,U32 & String,Unit>, next:
 
 # The host returns a right-nested line, notice and subscription status.
 type WakeRead is Data:
-  Awake{line: Maybe<String>, notice: String, active: Bool}
+  AwakeEnd{notice: String, active: Bool}
+  AwakeLine{line: String, notice: String, active: Bool}
+
+def wake_read(line: Maybe<String>, notice: String, active: Bool) -> WakeRead:
+  match line:
+    case None{}: AwakeEnd{notice,active}
+    case Some{text}: AwakeLine{text,notice,active}
 
 def subscribe_handle(opened: Result<&1,&1,U32 & String,U32 & String>) -> U32:
   match opened:
@@ -532,7 +538,7 @@ def wake_close(sub: U32, active: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
 def plain_wake_result(result: Result<&1,&1,U32 & String,Maybe<String>>) -> Result<&1,&1,U32 & String,WakeRead>:
   match result:
     case Fail{error}: Fail{error}
-    case Done{line}: Done{Awake{line,"",False{}}}
+    case Done{line}: Done{wake_read(line,"",False{})}
 
 def plain_wake_line(read: U32) -> IO(Result<&1,&1,U32 & String,WakeRead>):
   do IO<Result<&1,&1,U32 & String,WakeRead>>:
@@ -544,7 +550,7 @@ def notice_wake_value(sub: U32, value: Maybe<String> & (String & U32)) -> IO(Res
   +active=U32.is_eq(health,1)
   do IO<Result<&1,&1,U32 & String,WakeRead>>:
     closed : Result<&1,&1,U32 & String,Unit> <- wake_close(sub,Bool.not(active))
-    IO.pure(Result<&1,&1,U32 & String,WakeRead>,Done{Awake{line,notice,active}})
+    IO.pure(Result<&1,&1,U32 & String,WakeRead>,Done{wake_read(line,notice,active)})
 
 def notice_wake_result(+read: U32, sub: U32, result: Result<&1,&1,U32 & String,Maybe<String> & (String & U32)>) -> IO(Result<&1,&1,U32 & String,WakeRead>):
   match result:
@@ -587,14 +593,14 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       checkpoint_done : Result<&1,&1,U32 & String,Unit> <- checkpoint_written(flushed,Bool.and(String.is_empty(attempt),Bool.not(log_failed)),log,"")
       named : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(log,Logs.interrupted(held),log_failed)
       IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(waited),terminal,"Native output read failed: " ++ error_text(error),True{}},deliveries))
-    case Done{Awake{None{},+notice,+alive}}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+    case Done{AwakeEnd{+notice,+alive}}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
       Bool.pick(IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),String.is_empty(notice),
         consume_exhausted(db,player,id,log,held,log_failed,handle,harness,codex_log,terminal,filter,requested,first_error,sender,attempt,incomplete_observation,deliveries,wake_sub,alive),
         do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
           next : Result<&1,&1,U32 & String,WakeRead> <- wake_line(handle,wake_sub,alive)
           consume(db,player,id,log,policy,held,log_failed,handle,harness,drained,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,checkpoint_state,incomplete_observation,wake_sub,alive,deliveries,next))
-    case Done{Awake{Some{+line},notice,+alive}}:
+    case Done{AwakeLine{+line,notice,+alive}}:
       do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
         +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
         +current_policy : Logs.Policy <- Logs.policy(db,player)
