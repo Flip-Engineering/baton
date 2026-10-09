@@ -6,10 +6,12 @@
    arrived nodes pulse once. Renders from a knowledge overview shaped
    like the `orchestra/knowledge/overview` route; starts no request.
    options: {query, includeUnshared, selectedId, notice, onSelect}.
-   onSelect receives the finding id and its recorded author, so the host
-   can open the author dossier alongside the finding record. */
+   onSelect receives the finding id. Author anchors wrap into rows so the
+   graphic stays bounded at orchestra scale; edges run from every row. */
 
 const KG_ACTOR_SLOT = 150;
+const KG_ACTORS_PER_ROW = 10;
+const KG_ANCHOR_PITCH_Y = 30;
 const KG_GRID_SLOT_X = 150;
 const KG_GRID_SLOT_Y = 64;
 const KG_TOP = 44;
@@ -95,15 +97,15 @@ function renderKnowledgeGraph(container, overview, options) {
 
   const seen = kgSeenByMount.get(container) || new Set();
   const now = new Set();
-  const actorY = KG_TOP;
-  const gridY = KG_TOP + 56;
+  const anchorRows = Math.max(1, Math.ceil(actors.length / KG_ACTORS_PER_ROW));
+  const gridY = KG_TOP + (anchorRows - 1) * KG_ANCHOR_PITCH_Y + 56;
   const cols = Math.max(1, Math.ceil(Math.sqrt(Math.max(1, shared.length))));
   const sharedWidth = cols * KG_GRID_SLOT_X;
   const dividerX = KG_PAD + sharedWidth + 24;
   const unsharedX = dividerX + 24;
   const gridRows = Math.max(1, Math.ceil(shared.length / cols));
   const width = Math.max(
-    KG_PAD * 2 + actors.length * KG_ACTOR_SLOT,
+    KG_PAD * 2 + Math.min(actors.length, KG_ACTORS_PER_ROW) * KG_ACTOR_SLOT,
     KG_PAD + sharedWidth + (unshared.length ? 48 + KG_GRID_SLOT_X : 0) + KG_PAD,
   );
   const height = gridY + Math.max(gridRows, unshared.length) * KG_GRID_SLOT_Y + 40;
@@ -121,13 +123,14 @@ function renderKnowledgeGraph(container, overview, options) {
 
   const actorPos = new Map();
   actors.forEach((id, i) => {
-    const x = KG_PAD + i * KG_ACTOR_SLOT + KG_ACTOR_SLOT / 2;
-    actorPos.set(id, { x, y: actorY });
-    const n = String(id).length > 20 ? String(id).slice(0, 19) + "…" : String(id);
+    const x = KG_PAD + (i % KG_ACTORS_PER_ROW) * KG_ACTOR_SLOT + KG_ACTOR_SLOT / 2;
+    const y = KG_TOP + Math.floor(i / KG_ACTORS_PER_ROW) * KG_ANCHOR_PITCH_Y;
+    actorPos.set(id, { x, y });
+    const n = String(id).length > 18 ? String(id).slice(0, 17) + "…" : String(id);
     kgEl("svg", "rect", {
-      x: String(x - 4), y: String(actorY - 4), width: "8", height: "8", class: "kg-actor",
+      x: String(x - 4), y: String(y - 4), width: "8", height: "8", class: "kg-actor",
     }, svg);
-    kgText(svg, n, { x: String(x), y: String(actorY + 22), class: "kg-label mono" }, "middle");
+    kgText(svg, n, { x: String(x + 10), y: String(y + 4), class: "kg-label mono" }, "start");
   });
 
   const findingPos = new Map();
@@ -154,7 +157,7 @@ function renderKnowledgeGraph(container, overview, options) {
     const words = String(f.claim || f.id);
     const label = words.length > 26 ? words.slice(0, 25) + "…" : words;
     kgText(g, label, { x: String(x), y: String(y + r + 14), class: "kg-label" }, "middle");
-    const activate = () => { if (typeof opts.onSelect === "function") opts.onSelect(f.id, f.author); };
+    const activate = () => { if (typeof opts.onSelect === "function") opts.onSelect(f.id); };
     g.addEventListener("click", activate);
     g.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" || ev.key === " ") {

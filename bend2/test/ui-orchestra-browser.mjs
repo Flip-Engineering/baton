@@ -228,13 +228,16 @@ await send(pageWs, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', co
 await send(pageWs, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
 check('graph finding marks its node selected', await evalJs(
   `document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]').classList.contains('selected')`));
-await until('graph finding opens its stored record through the author dossier',
-  `['Worker retained finding.', 'Worker evidence.', 'Worker limits.'].every((value) => document.getElementById('detail').textContent.includes(value))`);
-await evalJs(`document.getElementById('view-knowledge-btn').click()`);
+check('graph finding keeps keyboard focus on its node', await evalJs(
+  `document.activeElement === document.querySelector('#knowledge-graph .knode.selected')`));
+await until('graph finding opens its complete record beside the graph',
+  `!document.getElementById('view-knowledge').hidden && ['Worker retained finding.', 'Worker evidence.', 'Worker limits.'].every((value) => document.getElementById('knowledge-promotions').textContent.includes(value))`);
 await evalJs(`document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]').click()`);
+check('toggle-off keeps focus on its graph node', await evalJs(
+  `document.activeElement && document.activeElement.getAttribute("aria-label") === 'qa-worker-finding' && !document.querySelector('#knowledge-graph .knode.selected')`));
 await evalJs(`document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"]').click()`);
-await until('reselected finding reveals the author dossier with focus',
-  `!document.getElementById('view-actors').hidden && document.activeElement === document.querySelector('[data-row="worker"] [data-focus="id:worker"]') && ['Worker retained finding.', 'Worker evidence.', 'Worker limits.'].every((value) => document.getElementById('detail').textContent.includes(value))`);
+await until('reselected finding reopens its complete record beside the graph with focus',
+  `document.activeElement === document.querySelector('#knowledge-graph .knode.selected') && !document.getElementById('view-knowledge').hidden && ['Worker retained finding.', 'Worker evidence.', 'Worker limits.'].every((value) => document.getElementById('knowledge-promotions').textContent.includes(value))`);
 await evalJs(`document.getElementById('view-actors-btn').click()`);
 check('transitions list shows committed events with recorded times', await evalJs(
   `document.querySelectorAll('#transitions li').length > 0 && /\\d{4}-\\d{2}-\\d{2}|:/.test(document.getElementById('transitions').textContent)`));
@@ -341,8 +344,8 @@ await evalJs(`(() => {
   node.focus();
   node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 })()`);
-await until('a graph finding opens its stored content',
-  `['Aide retained finding.', 'Aide evidence.', 'Aide limits.'].every((value) => document.getElementById('detail').textContent.includes(value))`);
+await until('a graph finding opens its stored content beside the graph',
+  `['Aide retained finding.', 'Aide evidence.', 'Aide limits.'].every((value) => document.getElementById('knowledge-promotions').textContent.includes(value))`);
 await evalJs(`document.getElementById('view-actors-btn').click()`);
 
 // Hold one real actor response until another actor's detail has rendered.

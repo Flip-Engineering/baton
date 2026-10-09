@@ -26,13 +26,18 @@ function attentionShortId(id) {
 
 // Graphical overview: one column per non-empty group, one node per actor,
 // node size following pending messages, largest first, capped and counted.
-// Nodes select through options.onSelect like chips. Page tokens arrive
-// through inline var() styles so no stylesheet change is needed.
+// Each column is only as tall as the nodes it draws, so small groups leave
+// no empty column space. Nodes select through options.onSelect like chips.
+// Page tokens arrive through inline var() styles so no stylesheet change
+// is needed.
 function renderAttentionOverview(container, grouped, opts) {
   const cols = grouped.filter((g) => g.members.length);
   if (!cols.length) return;
   const width = cols.length * ATTENTION_OV_COL_W + ATTENTION_OV_PAD * 2;
-  const height = ATTENTION_OV_TOP + ATTENTION_OV_NODES * ATTENTION_OV_SLOT + 24;
+  const drawnRows = (members) => Math.min(members.length, ATTENTION_OV_NODES)
+    + (members.length > ATTENTION_OV_NODES ? 1 : 0);
+  const height = ATTENTION_OV_TOP
+    + Math.max(1, ...cols.map((c) => drawnRows(c.members))) * ATTENTION_OV_SLOT + 24;
   const svgNS = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(svgNS, "svg");
   svg.setAttribute("viewBox", "0 0 " + width + " " + height);

@@ -214,49 +214,88 @@ button:active { background: var(--wash); }
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin: 14px 0 6px;
-  font-size: var(--step1);
+  margin: 18px 0 8px;
+  font-size: var(--step2);
 }
 
 .board-grouphead:first-child { margin-top: 0; }
 
-.board-row {
+.board-card {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+}
+
+.board-card .board-grouphead { margin-top: 0; }
+
+.board-tiles {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 8px;
-  width: 100%;
-  margin: 0 0 4px;
-  padding: 8px 12px;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.board-tile {
+  display: flex;
+  flex: 1 1 220px;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
   text-align: left;
   background: var(--surface);
   border: 1px solid var(--hairline);
+  border-top-width: 4px;
   border-radius: var(--radius);
   cursor: pointer;
 }
 
-.board-row:hover { border-color: var(--selection); }
+.board-tile:hover { border-color: var(--selection); }
 
-.board-row.st-running { border-left: 4px solid var(--running); }
+.board-tile.st-running { border-top-color: var(--running); }
 
-.board-row.st-failed { border-left: 4px solid var(--failed); }
+.board-tile.st-failed { border-top-color: var(--failed); }
 
-.board-row.st-pending { border-left: 4px solid var(--attention); }
+.board-tile.st-pending { border-top-color: var(--attention); }
 
-.board-row.st-ended { border-left: 4px solid var(--muted); opacity: 0.62; }
+.board-tile.st-ended { border-top-color: var(--muted); opacity: 0.62; }
 
 /* Tile size follows awaiting messages in three steps: none, some, many. */
-.board-row.pq1 { padding: 10px 14px; }
+.board-tile.pq1 { padding: 12px 14px; }
 
-.board-row.pq2 { padding: 12px 16px; }
+.board-tile.pq2 { padding: 14px 16px; }
 
-.board-row.pq2 .board-action { font-size: var(--step3); }
+.board-tile.pq2 .tile-action { font-size: var(--step3); }
 
 .board-grouphead .mono {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 44%;
+}
+
+.board-grouphead .board-dots {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.board-grouphead .board-dots .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.board-grouphead .board-focus {
+  font-size: var(--step0);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
 }
 
 .board-bar {
@@ -334,20 +373,29 @@ button:active { background: var(--wash); }
 
 .explorer h2 { margin: 0 0 6px; font-size: var(--step2); line-height: 1.3; }
 
-.board-row .board-action {
-  flex: 1 1 auto;
+.board-tile .tile-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.board-tile .tile-top .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.board-tile .tile-action {
   font-size: var(--step2);
   font-weight: 600;
   color: var(--ink);
 }
 
-.board-row .board-id {
-  flex: none;
-  max-width: 38%;
+.board-tile .tile-id {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -356,8 +404,9 @@ button:active { background: var(--wash); }
   color: var(--muted);
 }
 
-.board-row .board-task {
-  flex: 1 1 100%;
+.board-tile .tile-top .lane-badge { margin-left: auto; flex: none; }
+
+.board-tile .tile-task {
   font-size: var(--step0);
   color: var(--muted);
   overflow: hidden;
@@ -365,9 +414,9 @@ button:active { background: var(--wash); }
   white-space: nowrap;
 }
 
-.board-row.selected { outline: 2px solid var(--selection); outline-offset: 1px; }
+.board-tile.selected { outline: 2px solid var(--selection); outline-offset: 1px; }
 
-.board-row:focus-visible { outline: 2px solid var(--selection); outline-offset: 1px; }
+.board-tile:focus-visible { outline: 2px solid var(--selection); outline-offset: 1px; }
 
 /* The explorer mount below the graph is retired; the readout beside the
    graph carries the textual findings. findings.js stays on disk. */

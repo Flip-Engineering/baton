@@ -42,7 +42,8 @@ const state = {
   includeUnshared: false,
   knowledgeSearch: "",
   findingId: null,
-  pendingDetailFocus: null,
+  graphRecord: null,
+  graphRecordRequest: null,
   knowledgeLiveOnly: false,
   knowledgeSeatEmpty: "",
   view: "now",
@@ -1093,51 +1094,26 @@ function setIncludeUnshared(on) {
   }
 }
 
-// A graph finding selection opens the complete record through the existing
-// actor knowledge reads: the recorded author is selected so the detail pane
-// shows the full claim, evidence and limits. Every opening selection reveals
-// the dossier and moves visible keyboard focus, including one whose author is
-// already selected. Loaders, request guards and refusal paths are untouched.
-function revealFindingRecord(id) {
-  const data = state.knowledgeActor;
-  let actor = "";
-  if (data && state.knowledgeActorId === state.selectionId) {
-    const authored = data.authored || [];
-    const received = data.received || [];
-    if (authored.some((f) => f && f.id === id)
-      || received.some((r) => r && (r.finding || r.id) === id)) actor = state.selectionId;
-  }
-  if (!actor) {
-    const overview = state.knowledge || {};
-    const record = (overview.findings || []).find((f) => f && f.id === id) || {};
-    actor = record.author || "";
-    if (!actor) {
-      const edge = (overview.promotions || []).find((p) => p && (p.finding || p.id) === id) || {};
-      actor = edge.source || edge.author || "";
-    }
-  }
-  if (!actor || !state.players.has(actor)) return;
-  if (actor !== state.selectionId) {
-    select(actor);
-    // select() clears the finding; re-assert it so the record opens.
-    state.findingId = id;
-    state.knowledgeOpen = true;
-  } else {
-    // Already on the author: the dossier may sit hidden in Actors, so
-    // reveal it rather than returning with nothing visible.
-    setView("actors");
-  }
-  // The author may sit outside the current tree filter, leaving no row to
-  // focus; the detail record then takes focus once its read renders.
-  const row = el.tree.querySelector("[data-focus=\"" + CSS.escape(focusKey("id", actor)) + "\"]");
-  if (row && typeof row.focus === "function") row.focus();
-  else state.pendingDetailFocus = id;
+// A graph re-render recreates its nodes and drops keyboard focus with the
+// removed node. When focus was lost to the remount, restore it to the same
+// finding node if still present and visible. Focus the user placed elsewhere
+// is never moved.
+function restoreGraphFocus(findingId) {
+  if (!findingId || !el.graph || !el.viewKnowledge || el.viewKnowledge.hidden) return;
+  if (document.activeElement !== document.body) return;
+  const node = [...el.graph.querySelectorAll(".knode")]
+    .find((n) => n.getAttribute("aria-label") === findingId);
+  if (node && typeof node.focus === "function") node.focus();
 }
 
+// A finding selection opens the complete record inline beside the graph:
+// the readout expansion carries the full claim, evidence and limits, so the
+// relationship context stays visible while reading. The selection never
+// leaves the Knowledge view. Focus restore lives in the shared graph render
+// wrapper, which keeps the actual focused node across every redraw.
 function toggleFinding(id) {
   if (!id) return;
   state.findingId = state.findingId === id ? null : id;
-  state.pendingDetailFocus = null;
   if (state.findingId) {
     // A finding selected from the seats opens its recorded content. A finding no
     // recorded promotion carries has no row until the unshared rows are shown,
@@ -1145,10 +1121,104 @@ function toggleFinding(id) {
     const promotions = (state.knowledge && state.knowledge.promotions) || [];
     if (!promotions.some((p) => (p.finding || p.id) === id)) setIncludeUnshared(true);
     state.knowledgeOpen = true;
-    revealFindingRecord(id);
+    // The overview carries no evidence or limits, so the selected record is
+    // read through the existing on-demand author knowledge endpoint.
+    void loadGraphRecord(graphFindingAuthor(state.findingId), state.findingId);
   }
   renderKnowledge();
   renderDetail();
+}
+
+// The recorded author behind a finding: the current actor read first, then
+// the overview findings, then the promotion source. Only recorded identities.
+function graphFindingAuthor(id) {
+  const data = state.knowledgeActor;
+  if (data && state.knowledgeActorId === state.selectionId && state.selectionId) {
+    for (const f of data.authored || []) if (f && f.id === id) return state.selectionId;
+    for (const r of data.received || []) if (r && (r.finding || r.id) === id) return state.selectionId;
+  }
+  const overview = state.knowledge || {};
+  const record = (overview.findings || []).find((f) => f && f.id === id) || {};
+  if (record.author) return record.author;
+  const edge = (overview.promotions || []).find((p) => p && (p.finding || p.id) === id) || {};
+  return edge.source || edge.author || "";
+}
+
+// The selected inline record, read through the existing on-demand actor
+// knowledge endpoint without touching the dossier slot. The request guard
+// keeps a late earlier finding response from replacing the newly selected
+// record. Only selected records read full bodies; overview frames stay
+// excerpted.
+async function loadGraphRecord(actor, findingId) {
+  const request = {};
+  state.graphRecordRequest = request;
+  state.graphRecord = { actor: actor || "", data: null };
+  const current = state.knowledgeActor;
+  if (actor && current && state.knowledgeActorId === actor && !current.refused && !current.error) {
+    state.graphRecord = { actor, data: current };
+    renderKnowledge();
+    return;
+  }
+  if (state.fixtureName) {
+    if (state.fixtureKnowledge && actor) state.graphRecord = { actor, data: fixtureActorKnowledge(actor) };
+    renderKnowledge();
+    return;
+  }
+  if (!knowledgeWired() || !actor) {
+    renderKnowledge();
+    return;
+  }
+  let data;
+  try {
+    const res = await fetch(state.apiBase + "/orchestra/knowledge?actor=" + encodeURIComponent(actor));
+    if (res.status === 403) data = { refused: true };
+    else if (!res.ok) data = { error: "the endpoint answered " + res.status };
+    else data = await res.json();
+  } catch (e) {
+    data = { error: e && e.message ? e.message : String(e) };
+  }
+  if (state.graphRecordRequest !== request || state.findingId !== findingId) return;
+  state.graphRecord = { actor, data };
+  renderKnowledge();
+}
+
+// The complete recorded fields for the selected finding from its author
+// read, shaped like the dossier expansion. Null until that read arrives.
+function graphRecordFinding(id) {
+  const rec = state.graphRecord;
+  const data = rec && rec.data;
+  if (!data || data.refused || data.error) return null;
+  for (const f of data.authored || []) {
+    if (f && f.id === id) return {
+      promo: { author: f.author, source: f.author, destination: "" },
+      finding: f,
+    };
+  }
+  for (const r of data.received || []) {
+    if (r && (r.finding || r.id) === id) return { promo: r, finding: r };
+  }
+  return null;
+}
+
+// The selected record expansion: the complete recorded fields once the
+// on-demand author read arrives; meanwhile only what the overview carries,
+// plus the actual read state. Evidence and limits are never guessed.
+function findingRecordExpansion(parent, findingId, promo, finding) {
+  const full = graphRecordFinding(findingId);
+  if (full) {
+    parent.appendChild(findingDetail(full.promo, full.finding));
+    return;
+  }
+  parent.appendChild(findingDetail(promo, finding, false));
+  const rec = state.graphRecord;
+  if (!rec || !rec.actor) return;
+  const data = rec.data;
+  const note = document.createElement("p");
+  note.className = "muted";
+  if (data && data.refused) text(note, "Findings for this actor are outside the bound reader's scope.");
+  else if (data && data.error) text(note, "Knowledge unavailable: " + data.error);
+  else text(note, "Reading recorded evidence.");
+  parent.appendChild(note);
 }
 
 // One row per finding: the claim once, its author, how many recorded
@@ -1183,7 +1253,7 @@ function findingGroupRow(findingId, group, findings) {
     li.appendChild(claim);
   }
   if (state.findingId && state.findingId === findingId) {
-    li.appendChild(findingDetail(group[0], finding || {}, false));
+    findingRecordExpansion(li, findingId, group[0], finding || {});
   }
   return li;
 }
@@ -1234,6 +1304,10 @@ function refreshKnowledgeSeats() {
 function renderKnowledgeGraphState(overview, emptyText) {
   const mount = el.graph;
   if (!mount || typeof renderKnowledgeGraph !== "function") return;
+  // The render recreates every node, so capture the actual focused finding
+  // first; the wrapper restores that exact identity afterwards.
+  const focusedId = mount.contains(document.activeElement)
+    ? document.activeElement.getAttribute("aria-label") || "" : "";
   renderKnowledgeGraph(mount, overview, {
     query: state.knowledgeSearch,
     includeUnshared: state.includeUnshared,
@@ -1241,6 +1315,7 @@ function renderKnowledgeGraphState(overview, emptyText) {
     notice: state.knowledgeNotice || (!overview ? "No knowledge read yet." : (emptyText || "")),
     onSelect: (id) => toggleFinding(id),
   });
+  restoreGraphFocus(focusedId);
 }
 
 function renderKnowledge() {
@@ -1324,7 +1399,8 @@ function renderKnowledge() {
     text(claim, " " + (finding.claim || ""));
     li.appendChild(claim);
     if (state.findingId === finding.id) {
-      li.appendChild(findingDetail({ author: finding.author, source: finding.author, destination: "" }, finding, false));
+      findingRecordExpansion(li, finding.id,
+        { author: finding.author, source: finding.author, destination: "" }, finding);
     }
     list.appendChild(li);
   }
@@ -1337,10 +1413,6 @@ function renderKnowledge() {
 function renderKnowledgeBlock(container, p) {
   const block = document.createElement("div");
   block.className = "knowledge";
-  // A button takes focus only once connected to the document; focusing a
-  // detached node is a silent no-op. The target is recorded in the loops
-  // and focused after the block is appended.
-  let focusTarget = null;
   const heading = document.createElement("h3");
   text(heading, "Knowledge");
   block.appendChild(heading);
@@ -1401,9 +1473,6 @@ function renderKnowledgeBlock(container, p) {
       li.appendChild(claim);
       if (state.findingId === f.id) {
         li.appendChild(findingDetail({ author: f.author, source: f.author, destination: "" }, f));
-        if (state.pendingDetailFocus === f.id) {
-          focusTarget = id;
-        }
       }
       ul.appendChild(li);
     }
@@ -1427,19 +1496,12 @@ function renderKnowledgeBlock(container, p) {
       li.appendChild(claim);
       if (state.findingId === (promotion.finding || "")) {
         li.appendChild(findingDetail(promotion, promotion));
-        if (state.pendingDetailFocus && state.pendingDetailFocus === (promotion.finding || "")) {
-          focusTarget = id;
-        }
       }
       ul.appendChild(li);
     }
     block.appendChild(ul);
   }
   container.appendChild(block);
-  if (focusTarget && document.contains(focusTarget) && typeof focusTarget.focus === "function") {
-    state.pendingDetailFocus = null;
-    focusTarget.focus();
-  }
 }
 
 function renderAges() {
