@@ -350,7 +350,7 @@ def ack_then_retire(+handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
     retired : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.retire(handle)
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(acked,retired))
 
-def completed_wake(db: String, session: String, cursor: String, finished: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def completed_wake(+db: String, session: String, cursor: String, finished: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match finished:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
     case Done{unit}: wake_due(db,session,cursor,target => wake_launch(db,target))
