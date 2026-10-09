@@ -22,7 +22,7 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: 3c4f7cedba2299580279a6c49b6a63979f6545cc
+  PRODUCT_SOURCE_SHA: 4944885fb3bba1b6142266c68f41cd34222fbdc5
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
 
@@ -58,12 +58,43 @@ jobs:
             > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/install.log" 2>&1
           "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" version \
             > "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/version.txt"
+          compiler_source="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-source"
+          mkdir -p "$compiler_source/bin"
+          cp -R "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bend2" "$compiler_source/bend2"
+          printf 'https://github.com/bendlang/bend/tree/v2.0.25/bend2\nBun runtime: retained Bend 2.0.25 executable via BUN_BE_BUN=1\nReporting change: append RangeError.stack\n' \
+            > "$compiler_source/origin.txt"
+          for source in main bend comp; do
+            curl -fsSL "https://raw.githubusercontent.com/bendlang/bend/v2.0.25/bend2/$source.ts" \
+              -o "$compiler_source/bend2/$source.ts"
+          done
+          python3 - <<'PY'
+          import difflib
+          import os
+          from pathlib import Path
+          root = Path(os.environ['FINAL_NATIVE_CONTEXT_EVIDENCE']) / 'toolchain-source'
+          path = root / 'bend2/main.ts'
+          original = path.read_text()
+          changed = original.replace(
+              '      + " literal too large to expand)";',
+              '      + " literal too large to expand)\\n" + (e.stack ?? String(e));', 1)
+          (root / 'main.ts.upstream').write_text(original)
+          path.write_text(changed)
+          (root / 'reporting.diff').write_text(''.join(difflib.unified_diff(
+              original.splitlines(keepends=True), changed.splitlines(keepends=True),
+              fromfile='official-v2.0.25/main.ts', tofile='diagnostic/main.ts')))
+          PY
+          cat > "$compiler_source/bin/bend-diagnostic" <<'SH'
+          #!/bin/sh
+          exec env BUN_BE_BUN=1 "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend" \
+            "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-source/bend2/main.ts" "$@"
+          SH
+          chmod +x "$compiler_source/bin/bend-diagnostic"
       - name: Build production Main
         id: main_build
         shell: bash
         run: |
           set -euo pipefail
-          bend="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-home/bin/bend"
+          bend="$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain-source/bin/bend-diagnostic"
           mkdir -p owned/.scratch/bend2
           status=0
           set +e
