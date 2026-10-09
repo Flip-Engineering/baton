@@ -191,6 +191,8 @@ def duty_clear(+native: Ref, +delivery: Ref, +settle: Ref) -> Bool:
 
 # The attempt completed while owned: its outcome is recorded and the parent
 # wake becomes owed until a delivery result records it as actually delivered.
+# A rebuilt duty owes a wake only when the native outcome is already sealed;
+# a retained in-flight attempt (native open) owes nothing yet.
 def seal_completion(duty: Duty, +outcome: Ref) -> Duty:
   match duty:
     case Duty{owner,attempt,results,wake_owed,ack_owed,settle_owed,errors}:
@@ -280,7 +282,7 @@ def ack_ref(acknowledged: Bool) -> Ref:
 def rebuild_decided(+attempt: Attempt, +owner: OwnerInstance, +acknowledged: Bool, +native: Ref, +delivery: Ref, +settle: Ref, +continuation: Ref, errors: String, clear: Bool) -> Maybe<Duty>:
   match clear:
     case True{}: None{}
-    case False{}: Some{Duty{owner,attempt,Results{native,delivery,settle,ack_ref(acknowledged),continuation},Bool.not(fulfilled(delivery)),Bool.not(acknowledged),Bool.not(fulfilled(settle)),errors}}
+    case False{}: Some{Duty{owner,attempt,Results{native,delivery,settle,ack_ref(acknowledged),continuation},Bool.and(Bool.not(ref_open(native)),Bool.not(fulfilled(delivery))),Bool.not(acknowledged),Bool.not(fulfilled(settle)),errors}}
 
 def rebuild(attempt: Attempt, owner: OwnerInstance, +acknowledged: Bool, +native: Ref, +delivery: Ref, +settle: Ref, +continuation: Ref, errors: String) -> Maybe<Duty>:
   rebuild_decided(attempt,owner,acknowledged,native,delivery,settle,continuation,errors,Bool.and(acknowledged,Bool.and(duty_clear(native,delivery,settle),Bool.not(ref_open(continuation)))))

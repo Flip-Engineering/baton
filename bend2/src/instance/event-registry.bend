@@ -214,6 +214,10 @@ def token_session_of(token: TaskEvent) -> String:
   match token:
     case TaskEvent{identity,occurrence,generation,database,owner,request,session,phase}: session
 
+def token_phase_of(token: TaskEvent) -> EventPhase:
+  match token:
+    case TaskEvent{identity,occurrence,generation,database,owner,request,session,phase}: phase
+
 def token_is_adopted(token: TaskEvent) -> Bool:
   match token:
     case TaskEvent{identity,occurrence,generation,database,owner,request,session,phase}:

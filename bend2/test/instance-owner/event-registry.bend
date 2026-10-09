@@ -16,13 +16,20 @@ def check(name: String, ok: Bool) -> IO(Unit):
     case True{}: IO.print(name ++ "-ok\n")
     case False{}: IO.die(Unit,1,name ++ "-failed\n")
 
-# Stored occurrence value as an explicit Maybe parameter, matched directly;
-# laws and fixture checks use this helper instead of a shared production
-# predicate so the expected occurrence stays independently specified.
-def outstanding_value_or_zero(outstanding: Maybe<U32>) -> U32:
+# Stored occurrence compared against an explicit expected occurrence. None
+# fails; only the matching Some value passes, so a vanished occurrence
+# cannot satisfy an expected-value check.
+def occurrence_is(+outstanding: Maybe<U32>, +expected: U32) -> Bool:
   match outstanding:
-    case None{}: 0
-    case Some{value}: value
+    case None{}: False{}
+    case Some{value}: U32.is_eq(value,expected)
+
+# Exact returned phase: only ReturnedToRegistration passes, distinguishing
+# the queued retry token from an adopted or completed token.
+def returned_phase(token: Registry.TaskEvent) -> Bool:
+  match Registry.token_phase_of(token):
+    case Registry.ReturnedToRegistration{}: True{}
+    case other: False{}
 
 def checks() -> IO(Unit):
   do IO<Unit>:
@@ -69,7 +76,13 @@ def checks() -> IO(Unit):
     refuseddup : Unit <- match duplicate:
       case Registry.Refused{+registration,+destination}: check("duplicate-adoption-refused-records-preserved",Bool.and(Bool.and(U32.is_eq(Registry.dest_tasks_of(destination),1),Bool.not(Registry.reg_event_retained_of(registration))),U32.is_eq(Registry.reg_adoptions_of(registration),1)))
       case other: check("duplicate-adoption-refused-records-preserved",False{})
-    +requeue : Registry.Requeue <- IO.pure(Registry.Requeue,Registry.requeue_event(adoptedreg,adopteddest,outstanding))
+    +refusedreg : Registry.Registration <- match duplicate:
+      case Registry.Refused{+registration,+destination}: IO.pure(Registry.Registration,registration)
+      case other: IO.die(Registry.Registration,1,"duplicate-refusal-unexpected\n")
+    +refuseddest : Registry.Destination <- match duplicate:
+      case Registry.Refused{+registration,+destination}: IO.pure(Registry.Destination,destination)
+      case other: IO.die(Registry.Destination,1,"duplicate-refusal-unexpected\n")
+    +requeue : Registry.Requeue <- IO.pure(Registry.Requeue,Registry.requeue_event(refusedreg,refuseddest,outstanding))
     +requeuedreg : Registry.Registration <- match requeue:
       case Registry.Requeued{+registration,+destination,+returned}: IO.pure(Registry.Registration,registration)
       case other: IO.die(Registry.Registration,1,"requeue-unexpected\n")
@@ -97,12 +110,12 @@ def checks() -> IO(Unit):
     conserved : Unit <- check("requeued-event-readopts-with-new-occurrence",Bool.and(U32.is_eq(Registry.dest_tasks_of(seconddest),1),U32.is_eq(Registry.reg_adoptions_of(secondreg),2)))
     staletoken : Registry.Completion <- IO.pure(Registry.Completion,Registry.complete_event(secondreg,seconddest,outstanding))
     staletokendone : Unit <- match staletoken:
-      case Registry.Unowned{+registration,+destination,+outstanding}: check("saved-original-token-refused-with-new-task-live",Bool.and(U32.is_eq(Registry.dest_tasks_of(destination),1),Bool.and(Bool.not(Registry.outstanding_is_none(registration)),U32.is_eq(Registry.outstanding_value_or_zero(Registry.reg_outstanding_of(registration)),1))))
+      case Registry.Unowned{+registration,+destination,+outstanding}: check("saved-original-token-refused-with-new-task-live",Bool.and(U32.is_eq(Registry.dest_tasks_of(destination),1),Bool.and(Bool.not(Registry.outstanding_is_none(registration)),occurrence_is(Registry.reg_outstanding_of(registration),1))))
       case other: check("saved-original-token-refused-with-new-task-live",False{})
     +notified : Registry.Registration <- IO.pure(Registry.Registration,Registry.record_pending(secondreg))
     pendingset : Unit <- check("notification-during-task-records-pending",Registry.reg_pending_of(notified))
-    occkept : Unit <- check("notification-preserves-occurrence",U32.is_eq(Registry.outstanding_value_or_zero(Registry.reg_outstanding_of(notified)),1))
-    refusedpending : Registry.Completion <- IO.pure(Registry.Completion,Registry.complete_event(notified,seconddest,secondoutstanding))
+    occkept : Unit <- check("notification-preserves-occurrence",occurrence_is(Registry.reg_outstanding_of(notified),1))
+    +refusedpending : Registry.Completion <- IO.pure(Registry.Completion,Registry.complete_event(notified,seconddest,secondoutstanding))
     +refusalreg : Registry.Registration <- match refusedpending:
       case Registry.Unowned{+registration,+destination,+outstanding}: IO.pure(Registry.Registration,registration)
       case other: IO.die(Registry.Registration,1,"pending-completion-unexpected\n")
@@ -112,11 +125,11 @@ def checks() -> IO(Unit):
     +refusaltoken : Registry.TaskEvent <- match refusedpending:
       case Registry.Unowned{+registration,+destination,+outstanding}: IO.pure(Registry.TaskEvent,outstanding)
       case other: IO.die(Registry.TaskEvent,1,"pending-completion-unexpected\n")
-    pendingkept : Unit <- check("pending-completion-refusal-keeps-pending-count-occurrence",Bool.and(Bool.and(Registry.reg_pending_of(refusalreg),U32.is_eq(Registry.dest_tasks_of(refusaldest),1)),U32.is_eq(Registry.outstanding_value_or_zero(Registry.reg_outstanding_of(refusalreg)),1)))
+    pendingkept : Unit <- check("pending-completion-refusal-keeps-pending-count-occurrence",Bool.and(Bool.and(Registry.reg_pending_of(refusalreg),U32.is_eq(Registry.dest_tasks_of(refusaldest),1)),occurrence_is(Registry.reg_outstanding_of(refusalreg),1)))
     refusaltokenok : Unit <- check("pending-completion-refusal-retains-adopted-token",Bool.and(Bool.and(String.eq(Registry.token_identity_of(refusaltoken),"reg-1b"),U32.is_eq(Registry.token_occurrence_of(refusaltoken),1)),Bool.and(Registry.token_is_adopted(refusaltoken),Bool.and(String.eq(Registry.token_database_of(refusaltoken),"db"),String.eq(Registry.token_session_of(refusaltoken),"sess-1")))))
     +pendingrequeue : Registry.Requeue <- IO.pure(Registry.Requeue,Registry.requeue_event(refusalreg,refusaldest,refusaltoken))
     pendingrequeued : Unit <- match pendingrequeue:
-      case Registry.Requeued{+registration,+destination,+returned}: check("pending-requeue-clears-occurrence-returns-token-keeps-duty",Bool.and(Bool.and(Registry.reg_pending_of(registration),Registry.reg_event_retained_of(registration)),Bool.and(U32.is_eq(Registry.dest_tasks_of(destination),0),Bool.and(Registry.outstanding_is_none(registration),Bool.not(Registry.token_is_adopted(returned))))))
+      case Registry.Requeued{+registration,+destination,+returned}: check("pending-requeue-clears-occurrence-returns-token-keeps-duty",Bool.and(Bool.and(Registry.reg_pending_of(registration),Registry.reg_event_retained_of(registration)),Bool.and(U32.is_eq(Registry.dest_tasks_of(destination),0),Bool.and(Registry.outstanding_is_none(registration),returned_phase(returned))))
       case other: check("pending-requeue-clears-occurrence-returns-token-keeps-duty",False{})
     undisposable : Unit <- check("pending-registration-not-disposable",Bool.not(Registry.registration_disposable(notified)))
     +basereg : Registry.Registration <- IO.pure(Registry.Registration,Registry.Registration{"reg-1g",Registry.Generation{"owner-1","cap-1",3},"db","owner-1","req-1","sess-1",0,2,False{},False{},False{},None{},False{}})
@@ -148,7 +161,7 @@ def checks() -> IO(Unit):
       case other: IO.die(Registry.Registration,1,"observation-adoption-unexpected\n")
     +obsarmed : Registry.Registration <- IO.pure(Registry.Registration,Registry.register_ready(obsreg2,Registry.Generation{"owner-1","cap-1",3}))
     +obsnotify : Registry.Registration <- IO.pure(Registry.Registration,Registry.register_ready(obsarmed,Registry.Generation{"owner-1","cap-1",5}))
-    armednotify : Unit <- check("armed-then-changed-revision-records-notification",Bool.and(Bool.and(Registry.reg_armed_of(obsnotify),Registry.reg_pending_of(obsnotify)),Bool.and(U32.is_eq(Registry.outstanding_value_or_zero(Registry.reg_outstanding_of(obsnotify)),0),Bool.not(Registry.reg_event_retained_of(obsnotify)))))
+    armednotify : Unit <- check("armed-then-changed-revision-records-notification",Bool.and(Bool.and(Registry.reg_armed_of(obsnotify),Registry.reg_pending_of(obsnotify)),Bool.and(occurrence_is(Registry.reg_outstanding_of(obsnotify),0),Bool.not(Registry.reg_event_retained_of(obsnotify)))))
     +pendingonly : Registry.Registration <- IO.pure(Registry.Registration,Registry.Registration{"reg-1e",Registry.Generation{"owner-1","cap-1",3},"db","owner-1","req-1","sess-1",0,0,False{},False{},True{},None{},True{}})
     pendingdisposal : Unit <- check("pending-blocks-disposal-alone",Bool.not(Registry.registration_disposable(pendingonly)))
     +pendingclear : Registry.Registration <- IO.pure(Registry.Registration,Registry.Registration{"reg-1e",Registry.Generation{"owner-1","cap-1",3},"db","owner-1","req-1","sess-1",0,0,False{},False{},True{},None{},False{}})
