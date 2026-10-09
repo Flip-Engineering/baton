@@ -79,6 +79,8 @@ class NativeObservation(RECEIVE.Receive):
         }
         self.action(stream, native_frame=terminal)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.eventually(lambda: self.coord('turns', 'parent'),
+                        'terminal frame was not observed before raw stdout capture')
         raw = self.attempt_stdout('parent').read_text()
         self.action(stream, exit_fixture=True)
         self.finish(observer)
