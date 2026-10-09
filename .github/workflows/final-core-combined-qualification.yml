@@ -106,6 +106,16 @@ jobs:
                   }
                   throw e;
                 }''', 1)
+          changed = changed.replace('    memo_gc();\n    const tld = def_body(cb, d);', '''    try {
+                memo_gc();
+                const tld = def_body(cb, d);''', 1)
+          changed = changed.replace('    queue.push(...own.refs);', '''    queue.push(...own.refs);
+              } catch (e) {
+                if (e instanceof RangeError) {
+                  console.error("compiler traversal definition failure", d);
+                }
+                throw e;
+              }''', 1)
           changed = changed.replace('  const cb = carb_book(book, ["main", ...RUNTIME_ADTS]);', '''  let cb: Carb;
             try {
               cb = carb_book(book, ["main", ...RUNTIME_ADTS]);
