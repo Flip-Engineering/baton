@@ -1,15 +1,35 @@
 /* Orchestra live view styles. System font stacks include Linux fallbacks
    for the hosted browser runner. */
 
+/* Baton live score. Two materials carry the page: the hall (what is playing
+   now, dark, lit by stand lamps) and the paper (what is written down, cool
+   music paper with engraving ink). Both are defined once here; a module reads
+   the same token names in either material, and .pit remaps the status colors to
+   their lit variants so nothing in a region needs to know which ground it
+   stands on. */
+
 :root {
   color-scheme: light;
 
-  --paper: #fbfcfe;
-  --surface: #ffffff;
-  --ink: #141a26;
-  --wash: #eef1f6;
-  --hairline: #d7dce5;
+  /* Paper: the written score. */
+  --paper: #e6e7e1;
+  --surface: #eceded;
+  --ink: #15171b;
+  --wash: #dcded7;
+  --hairline: #c9ccc4;
   --muted: #5b6478;
+
+  /* The hall: the pit ground and its lit reads. */
+  --hall: #0d0f12;
+  --hall-edge: #23272f;
+  --graphite-lit: #9aa3b4;
+  --attention-lit: #e2a94f;
+  --running-lit: #57c46a;
+  --failed-lit: #ef6b5f;
+
+  /* Rehearsal marks and plate figures. Never a status. */
+  --rehearsal: #7a2f1c;
+  --staff: #b9bdb4;
 
   /* Selection, focus and links. */
   --selection: #2a3e6b;
@@ -22,6 +42,8 @@
   --waiting: #8a6d00;
   --failed: #b3261e;
 
+  --display: "Hoefler Text", "Iowan Old Style", Baskerville, "Palatino Linotype",
+    Palatino, Georgia, "DejaVu Serif", serif;
   --serif: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia,
     "DejaVu Serif", "Liberation Serif", serif;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
@@ -40,84 +62,139 @@
   --radius: 3px;
 }
 
+/* The pit reads the status colors lit. Nothing inside it overrides these. */
+.pit {
+  --ink: #e8e9e4;
+  --muted: var(--graphite-lit);
+  --hairline: var(--hall-edge);
+  --wash: #1a1e25;
+  --surface: #14171d;
+  --attention: var(--attention-lit);
+  --running: var(--running-lit);
+  --failed: var(--failed-lit);
+  --staff: #39404b;
+}
+
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  padding: 0 0 40px;
+  padding: 0 0 60px;
   color: var(--ink);
   background: var(--paper);
-  font-family: var(--sans);
-  font-size: var(--step1);
+  font-family: var(--serif);
+  font-size: var(--step2);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
 
-h1, h2 { margin: 0; font-family: var(--serif); font-weight: 600; }
+h1, h2, h3 { margin: 0; font-family: var(--display); font-weight: 600; }
 
 a { color: var(--selection); }
 
-/* ── header: one status line, transport folded into details ────────────── */
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  padding: 8px 14px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  z-index: 5;
+}
 
-.page-head {
+.skip:focus { left: 10px; top: 10px; }
+
+/* ── the plate line: the title page of the score ───────────────────────── */
+
+.plate {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 4px var(--gutter);
-  padding: 14px 20px 10px;
-  border-bottom: 1px solid var(--hairline);
+  gap: 2px 16px;
+  padding: 20px 28px 12px;
+  border-bottom: 2px solid var(--ink);
 }
 
-.page-head > div:first-child { min-width: 0; }
-
-h1 {
-  font-size: var(--step3);
-  line-height: 1.2;
-  letter-spacing: -0.005em;
+.plate-title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
 }
 
-.subtitle {
-  margin: 2px 0 0;
+.plate-sub {
+  margin: 0;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: var(--step2);
   color: var(--muted);
-  font-size: var(--step0);
-  overflow-wrap: anywhere;
 }
 
-.conn-details { font-size: var(--step0); color: var(--muted); }
-
-.conn-details > summary {
-  padding: 2px 0;
-  color: var(--muted);
-  cursor: pointer;
-  list-style: none;
+/* The run's expression mark: attacca, tutti, solo. */
+.plate-mark {
+  margin: 0 0 0 auto;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: var(--step2);
+  color: var(--rehearsal);
+  letter-spacing: 0.02em;
 }
 
-.conn-details > summary::-webkit-details-marker { display: none; }
-
-.conn-details > summary::after { content: " \25be"; font-size: 10px; }
-
-.conn-details[open] > summary::after { content: " \25b4"; }
-
-.conn-details > summary:hover { color: var(--selection); }
-
-.conn {
-  display: grid;
-  grid-template-columns: max-content max-content;
-  gap: 2px 12px;
-  margin: 8px 0 0;
-  padding: 8px 10px;
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-}
-
-.conn div { display: contents; }
-.conn dt { color: var(--muted); }
-.conn dd {
+.plate-facts {
+  flex: 1 1 100%;
   margin: 0;
   font-family: var(--mono);
   font-size: var(--step0);
-  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* The movements the page holds, reachable by keyboard from the title. */
+.plate-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: 0;
+  font-size: var(--step0);
+}
+
+.plate-nav a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  padding-bottom: 1px;
+}
+
+.plate-nav a:hover,
+.plate-nav a:focus-visible {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+
+/* A movement jump leaves the heading clear of the window edge. */
+#pit,
+#map,
+#staves,
+#record { scroll-margin-top: 12px; }
+
+/* ── movement headings ─────────────────────────────────────────────────── */
+
+.movement {
+  font-family: var(--display);
+  font-size: var(--step4);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.movement-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 18px;
+  margin: 0 0 10px;
 }
 
 /* ── notices ───────────────────────────────────────────────────────────── */
@@ -178,12 +255,7 @@ button:active { background: var(--wash); }
 
 /* ── responsive ────────────────────────────────────────────────────────── */
 
-@media (min-width: 1200px) {
-  h1 { font-size: var(--step4); }
-}
-
 @media (max-width: 720px) {
-  .page-head { padding: 12px 14px 10px; }
   .notice { margin: 10px 14px 0; }
   .field input { min-width: 140px; }
 }
@@ -238,29 +310,158 @@ button:active { background: var(--wash); }
 
 .lane-chip:focus-visible { outline: 2px solid var(--selection); outline-offset: 1px; }
 
-/* Oversight document. */
+/* ── the score: two materials, one page ────────────────────────────────── */
 
 [hidden] { display: none !important; }
 
-.sheet {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 0 var(--gutter) 40px;
+.sheet { margin: 0; padding: 0; }
+
+/* The pit: the hall, full width, the run's axis across its top. */
+.pit {
+  padding: 16px 28px 22px;
+  background: var(--hall);
+  color: var(--ink);
+  border-bottom: 3px solid var(--ink);
 }
 
-.doc-block { margin: 18px 0 0; }
-
-.doc-head {
+.pit-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 14px;
-  margin-bottom: 8px;
+  gap: 4px 16px;
+  margin: 0 0 10px;
 }
+
+.pit .movement { color: #f2f1ea; letter-spacing: 0.04em; }
+
+.pit .doc-counts { font-family: var(--mono); color: var(--graphite-lit); }
+
+/* The stage draws its own tiers and owns its height; the strip's scroll clamp
+   belongs to a chip list, not to this drawing. */
+.pit .lane-strip {
+  max-height: none;
+  overflow: visible;
+}
+
+/* The paper: the written score. Staves left, the record beside them. */
+.paper {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 8px 34px;
+  padding: 22px 28px 26px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.staves-col { min-width: 0; }
+
+.record-col {
+  position: sticky;
+  top: 12px;
+  align-self: start;
+  min-width: 0;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  /* The column floats while the page scrolls, so it carries the paper ground
+     with it; without it the map draws through the record. */
+  background: var(--paper);
+  border-left: 1px solid var(--hairline);
+  padding-left: 14px;
+}
+
+.map { padding: 20px 28px 32px; }
+
+/* The canvas box: the graph pans and zooms inside its own frame, so the page
+   height does not follow the number of recorded nodes. */
+.map-frame {
+  position: relative;
+  height: min(64vh, 620px);
+  min-height: 380px;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* The rail: the seats that need a person, one chip each, above the page. */
+.rail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 7px 28px;
+  background: var(--ink);
+  color: #f2f1ea;
+  font-family: var(--mono);
+  font-size: var(--step0);
+}
+
+.rail .rail-label {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: var(--step2);
+  color: var(--attention-lit);
+  margin-right: 4px;
+}
+
+.rail .rail-count {
+  color: #cfd4de;
+  margin-right: 8px;
+}
+
+.rail button {
+  font: inherit;
+  padding: 2px 9px;
+  color: var(--attention-lit);
+  background: transparent;
+  border: 1px solid var(--attention-lit);
+  border-radius: 999px;
+  cursor: pointer;
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail button:hover,
+.rail button:focus-visible { color: #0d0f12; background: var(--attention-lit); }
+
+/* The staff gutter: five lines per actor row, its recorded entries as note
+   heads on the shared window. Filled is committed, open is playing now. */
+.doc-staff {
+  position: relative;
+  flex: 0 0 38%;
+  min-width: 180px;
+  height: 21px;
+  margin: 0 10px 0 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--staff) 0 1px, transparent 1px 5px);
+  border-left: 1px solid var(--staff);
+}
+
+.staff-note {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 7px;
+  margin: -3.5px 0 0 -4.5px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+.staff-note.kind-run { background: var(--running); }
+.staff-note.kind-need { background: var(--attention); }
+.staff-note.kind-failed { background: var(--failed); }
+.staff-note.kind-compose { background: var(--rehearsal); }
+.staff-note.kind-quiet { background: var(--staff); }
+.staff-note.kind-run.open { background: transparent; box-shadow: inset 0 0 0 1.5px var(--running); }
+.staff-note.kind-need.open { background: transparent; box-shadow: inset 0 0 0 1.5px var(--attention); }
+
+/* ── the sections ──────────────────────────────────────────────────────── */
 
 .doc-section {
   margin: 0;
-  font-family: var(--serif);
+  font-family: var(--display);
   font-size: var(--step3);
   font-weight: 600;
 }
@@ -268,7 +469,7 @@ button:active { background: var(--wash); }
 .doc-counts,
 .doc-note {
   margin: 0;
-  font-size: var(--step0);
+  font-size: var(--step1);
   color: var(--muted);
 }
 
@@ -276,10 +477,6 @@ button:active { background: var(--wash); }
 
 /* ── the attention strip ─────────────────────────────────────────────────── */
 
-.doc-attention .lane-strip {
-  max-height: none;
-  overflow: visible;
-}
 .att-counts .status-word { font-weight: 600; }
 
 .att-need { border-left: 2px solid var(--attention); }
@@ -290,17 +487,11 @@ button:active { background: var(--wash); }
 /* ── the tools: one query, one disclosure, one reconnect ─────────────────── */
 
 .doc-tools {
-  position: sticky;
-  top: 0;
-  z-index: 3;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  margin: 16px 0 10px;
-  padding: 8px 0;
-  background: var(--paper);
-  border-bottom: 1px solid var(--hairline);
+  margin: 0;
 }
 
 .doc-find { display: inline-flex; align-items: center; gap: 8px; }
@@ -312,8 +503,8 @@ button:active { background: var(--wash); }
 }
 
 .doc-find input {
-  min-width: 260px;
-  padding: 5px 8px;
+  min-width: 220px;
+  padding: 4px 8px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius);
   background: var(--surface);
@@ -323,7 +514,7 @@ button:active { background: var(--wash); }
 }
 
 .doc-tools button {
-  padding: 5px 10px;
+  padding: 4px 10px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius);
   background: var(--surface);
@@ -338,18 +529,7 @@ button:active { background: var(--wash); }
   color: var(--selection);
 }
 
-/* ── the two columns: the roster, and the record that stays beside it ────── */
-
-.doc-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
-  gap: 22px;
-  align-items: start;
-}
-
-@media (max-width: 900px) {
-  .doc-body { grid-template-columns: minmax(0, 1fr); }
-}
+/* ── the staves: one staff per actor, the ensemble named once per run ────── */
 
 .doc-roster {
   margin: 0;
@@ -361,29 +541,45 @@ button:active { background: var(--wash); }
 
 .doc-band-head {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin: 6px 0 2px;
+  align-items: center;
+  gap: 9px;
+  margin: 16px 0 4px;
   padding-left: 2px;
 }
 
-.doc-band-name { min-width: 0; overflow-wrap: anywhere; }
-
-/* The margin names the ensemble once per run of its members. */
+/* The rehearsal mark: the boxed figure that names a run of rows. */
 .doc-bracket {
   flex: none;
-  width: 10px;
-  height: 10px;
-  border-left: 2px solid var(--hairline);
-  border-top: 2px solid var(--hairline);
+  min-width: 22px;
+  padding: 1px 4px;
+  border: 1px solid var(--rehearsal);
+  color: var(--rehearsal);
+  font-family: var(--display);
+  font-size: var(--step0);
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
 }
 
+.doc-band-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: var(--step1);
+  color: var(--muted);
+}
+
+/* The row reads as one line: who, what it is doing, the staff of what it has
+   recorded, then the counts. The action text is elided, never wrapped, so the
+   staves keep a steady height and their time grids line up down the page. */
 .doc-open {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 5px 8px;
+  min-height: 26px;
+  padding: 2px 8px;
   border: 0;
   background: none;
   color: var(--ink);
@@ -395,6 +591,57 @@ button:active { background: var(--wash); }
 
 .doc-open:hover { background: var(--wash); }
 
+.doc-name {
+  flex: 0 0 210px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--step0);
+}
+
+.doc-open .doc-lead {
+  flex: 1 1 auto;
+  min-width: 60px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+
+.doc-open .doc-work {
+  display: inline;
+  overflow-wrap: normal;
+}
+
+/* A row's state reads as the rule down its left edge, the way a marked bar
+   reads in a score: red for a failed turn, amber for a seat held by a recorded
+   stop or a seat whose inbox is behind, green for a seat playing now, hairline
+   for a quiet one. */
+.doc-row {
+  border-left: 3px solid transparent;
+  padding-left: 2px;
+}
+
+.doc-row.state-failed { border-left-color: var(--failed); }
+.doc-row.state-stopped { border-left-color: var(--attention); }
+.doc-row.state-queued { border-left-color: var(--attention); }
+.doc-row.state-working { border-left-color: var(--running); }
+.doc-row.state-quiet { border-left-color: var(--staff); }
+
+/* The state reads in the row: failed for a failed attempt, stopped for a seat the
+   record holds at an explicit stop. */
+.doc-fail-word,
+.doc-held-word {
+  flex: none;
+  color: var(--failed);
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: var(--step1);
+}
+
+.doc-held-word { color: var(--attention); }
+
 .doc-row.selected { border-left-color: var(--selection); background: var(--wash); }
 
 /* The work leads. Names, ages and counts follow it and recede. */
@@ -402,6 +649,32 @@ button:active { background: var(--wash); }
 .doc-work { display: block; overflow-wrap: anywhere; }
 .doc-work.stale { color: var(--muted); }
 .doc-work.quiet { color: var(--muted); font-style: italic; }
+
+/* Waiting reads in two kinds. A queue of input this seat has not answered keeps
+   the attention accent as an outline; reports this seat was sent and never
+   acknowledged are filled ink, because "was given work" and "never answered" are
+   different things to a person watching. */
+.doc-pending {
+  flex: none;
+  min-width: 20px;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: 10px;
+  color: var(--attention);
+  font-size: var(--step0);
+  text-align: center;
+}
+
+.doc-owed {
+  flex: none;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--step0);
+  text-align: center;
+}
 
 /* Matching rows receive a cursor outline. */
 .doc-dim { opacity: 0.32; }
@@ -431,34 +704,32 @@ button:active { background: var(--wash); }
   overflow-wrap: anywhere;
 }
 
-.doc-side {
-  position: sticky;
-  top: 62px;
-  min-width: 0;
-  padding-top: 2px;
-}
-
 .doc-selection { min-width: 0; }
 
 .doc-whole { margin-top: 10px; }
 
-.doc-whole summary {
-  cursor: pointer;
-  font-size: var(--step0);
-  color: var(--selection);
-}
-
 .doc-whole-mount { margin-top: 8px; }
-
-.doc-history { margin-bottom: 30px; }
 
 .doc-ribbon { min-width: 0; }
 
-/* The author's recorded findings sit on the author's own row. */
-.doc-row-knowledge { padding: 0 8px 6px 14px; }
+/* Narrow screens: the record drops under the staves and the rail wraps. */
+@media (max-width: 1000px) {
+  .paper { grid-template-columns: minmax(0, 1fr); }
 
-.doc-row-knowledge .kw-claim {
-  font-size: var(--step0);
-  overflow-wrap: anywhere;
+  .record-col {
+    position: static;
+    max-height: none;
+  }
+
+  .map,
+  .paper,
+  .pit,
+  .rail,
+  .plate,
+  .map-frame { padding-left: 16px; padding-right: 16px; }
 }
+
+/* The author's recorded findings sit on the author's own row: the halo and the
+   slur carry the graphic, and the layer holds the line to one compact row. */
+.doc-row-knowledge { padding: 0 8px 6px 14px; }
 

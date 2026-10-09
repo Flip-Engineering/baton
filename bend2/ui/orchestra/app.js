@@ -27,6 +27,13 @@ const state = {
   arrivalAt: new Map(),
   structure: "",
   snapshotLabel: "",
+  capturedAt: "",
+  // Bumped by every fetched read and by interactions that change what the
+  // document draws; the redraw signature carries it.
+  renderSeq: 0,
+  // A seat named by the page address (#seat=<id>), honoured on the first
+  // snapshot that carries it.
+  pendingSeat: "",
   sse: null,
   connected: false,
   knowledge: null,
@@ -71,6 +78,9 @@ const el = {
   find: document.getElementById("doc-find"),
   showEnded: document.getElementById("doc-ended"),
   reconnect: document.getElementById("reconnect"),
+  // The plate line and the rail.
+  plateMark: document.getElementById("plate-mark"),
+  rail: document.getElementById("rail"),
   // Written, never displayed.
   connState: sink,
   cursorState: sink,
@@ -98,17 +108,42 @@ function deriveStatus(p) {
   if (ex && ex.phase === "running") return "running";
   if (ex && ex.phase === "starting") return "waiting";
   if (ex && ex.phase === "exited") {
-    return ex.status === "exit 0" ? "completed" : "failed";
+    // A physical exit 0 does not prove the turn finished: a provider refusal can
+    // end the process with a zero status, and an OMP 403 is recorded that way.
+    // The terminal for the current attempt decides, read as
+    // execution.failure: null, or {cause, eventType, stopReason, errorStatus,
+    // errorMessage}. The field is absent until the server read projects it, and
+    // the physical status stands while it is absent.
+    const failure = ex.failure || null;
+    if (failure || ex.status !== "exit 0") return "failed";
+    return "completed";
   }
-  if ((p.pendingCount || 0) > 0) return "pending";
+  // Owed means the pending work set plus recorded reports awaiting
+  // acknowledgement; the unacknowledged count carries what the pending
+  // set omits. Status and ordering read this total; the row marks show
+  // the two counts as two separate facts.
+  if (Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0) > 0) return "pending";
   return "unknown";
 }
 
-// An ended turn that still owes a reply reads as waiting on input, which is a
-// different state from a session that is working now.
-function awaitingInput(p) {
-  const ex = p.execution || null;
-  return Boolean(ex && ex.phase === "exited" && (p.pendingCount || 0) > 0);
+// Two different reads, kept apart with different names.
+//
+// A seat OWES WORK when the recorded queue holds messages it has not
+// acknowledged. That is the actor's own inbox responsibility: an ordinary
+// pending task or report belongs to the actor, and it never establishes that a
+// person must act.
+//
+// A seat NEEDS A PERSON when the record holds a fact only a person can clear: an
+// explicit stop, or a failure on the current attempt (a provider failure at
+// exit 0 included, which deriveStatus reports as failed).
+function owesWork(p) {
+  return Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0) > 0;
+}
+
+function needsPerson(p) {
+  const stop = p.stop || null;
+  if (stop && stop.status === "stopped") return true;
+  return deriveStatus(p) === "failed";
 }
 
 function roleRank(role) {
@@ -228,13 +263,38 @@ function setConn(word) {
   text(el.connState, word);
 }
 
-// The visible header line states the snapshot fact only.
+// The visible header line: what this snapshot is, and the counts no region
+// states. The three counts are exclusive, in this precedence: a seat that needs
+// a person, then a seat that owes work to its own inbox, then a quiet seat. The
+// pit counts what is running, so this line does not count it a second time.
 function renderHeaderLine() {
-  // The header states the one recorded fact a reader needs: what this snapshot is
-  // and when it was taken. Stream, cursor, generation and contract are transport
-  // bookkeeping, so they are not shown.
+  let people = 0;
+  let owing = 0;
+  let quiet = 0;
+  for (const p of state.players.values()) {
+    if (needsPerson(p)) {
+      people += 1;
+      continue;
+    }
+    if (owesWork(p)) {
+      owing += 1;
+      continue;
+    }
+    const tone = (typeof stateMark === "function" ? stateMark(p) : null);
+    if (tone && (tone.tone === "ended" || tone.tone === "unknown")) quiet += 1;
+  }
+  const parts = [state.snapshotLabel || "No snapshot loaded."];
+  if (state.capturedAt) {
+    parts.push("read " + (ageText(state.capturedAt) || "just now"));
+  }
+  if (state.players.size) {
+    parts.push(people + (people === 1 ? " needs a person" : " need a person"));
+    parts.push(owing + (owing === 1 ? " owes work" : " owe work"));
+    parts.push(quiet + " quiet");
+  }
   el.snapshotLine.textContent = "";
-  text(el.snapshotLine, state.snapshotLabel || "No snapshot loaded.");
+  text(el.snapshotLine, parts.join(" · "));
+  el.snapshotLine.title = state.capturedAt ? "snapshot captured " + state.capturedAt : "";
 }
 
 function setCursor(cursor) {
@@ -359,11 +419,19 @@ function select(id) {
   state.selectionId = id;
   state.knowledgeOpen = false;
   state.findingId = null;
+  // The seat is addressable: a reader can send the link to a seat and land on
+  // the same record.
+  if (typeof history.replaceState === "function") {
+    history.replaceState(null, "", "#seat=" + encodeURIComponent(id));
+  }
   renderTree();
   void loadActorKnowledge(id);
   void loadActorWork(id);
-  // Move keyboard focus to the selected actor's row.
-  const target = el.tree.querySelector("[data-focus=\"" + CSS.escape(focusKey("id", id)) + "\"]");
+  // Move keyboard focus to the selected seat's row; when the row is not drawn
+  // (a quiet seat) the record itself takes the focus, since it holds the answer.
+  const row = el.roster.querySelector('.doc-row[data-doc-id="' + CSS.escape(id) + '"] .doc-open');
+  const record = document.getElementById("record");
+  const target = row || record;
   if (target && typeof target.focus === "function") target.focus();
 }
 
@@ -464,22 +532,27 @@ function buildRow(p, hasChildren) {
   text(statusWord, status);
   row.appendChild(statusWord);
 
-  if (awaitingInput(p)) {
-    const owed = document.createElement("span");
-    owed.className = "status-word";
-    text(owed, "awaiting input");
-    row.appendChild(owed);
+  if (needsPerson(p)) {
+    // The seat is held by a recorded fact: an explicit stop or a failed attempt.
+    const held = document.createElement("span");
+    held.className = "status-word";
+    text(held, "needs a person");
+    row.appendChild(held);
   }
 
-  if ((p.pendingCount || 0) > 0) {
+  // The badge counts the owed work set: queued input plus recorded reports the
+  // actor has not acknowledged. That work is the actor's own inbox; the stored
+  // sample behind the count stays partial.
+  const owedTotal = Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0);
+  if (owedTotal > 0) {
     const badge = document.createElement("button");
     badge.className = "pend-badge";
     badge.type = "button";
     badge.dataset.focus = focusKey("pending", p.id);
     badge.setAttribute("aria-expanded", state.pendingOpen === p.id ? "true" : "false");
     badge.setAttribute("aria-label",
-      p.pendingCount + " messages awaiting acknowledgement for " + p.id);
-    text(badge, "pending " + p.pendingCount);
+      owedTotal + " messages awaiting acknowledgement for " + p.id);
+    text(badge, "pending " + owedTotal);
     badge.addEventListener("click", () => togglePending(p.id));
     row.appendChild(badge);
   }
@@ -536,7 +609,7 @@ function renderPendingList(p) {
   if (!items.length) {
     const li = document.createElement("li");
     li.className = "muted";
-    text(li, "No stored sample in this snapshot for the " + (p.pendingCount || 0) + " awaiting messages.");
+    text(li, "No stored sample in this snapshot for the " + Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0) + " awaiting messages.");
     ul.appendChild(li);
     return ul;
   }
@@ -581,6 +654,7 @@ async function loadActorWork(id) {
   }
   if (state.workRequest !== request || state.selectionId !== id) return;
   state.work = data;
+  markDrawnStale();
   renderDocumentSoon();
 }
 
@@ -625,12 +699,14 @@ async function loadKnowledgeOverview() {
   if (state.fixtureName) {
     state.knowledge = state.fixtureKnowledge || null;
     state.knowledgeNotice = state.fixtureKnowledge ? "" : "A fixture carries no knowledge records.";
+    markDrawnStale();
     renderDocumentSoon();
     return;
   }
   if (!knowledgeWired()) {
     state.knowledge = null;
     state.knowledgeNotice = "No live endpoint is configured.";
+    markDrawnStale();
     renderDocumentSoon();
     return;
   }
@@ -643,6 +719,7 @@ async function loadKnowledgeOverview() {
     state.knowledge = null;
     state.knowledgeNotice = "Knowledge unavailable: " + (e && e.message ? e.message : e);
   }
+  markDrawnStale();
   renderDocumentSoon();
 }
 
@@ -802,6 +879,95 @@ async function loadGraphRecord(actor, findingId) {
 // The dossier block: authored, received and never-shared counts with the stored
 // findings behind them. A refused actor keeps the reason visible.
 
+// ── the shell's two readings of the run ────────────────────────────────────
+// The plate word: the run in one expression mark. A seat that needs a person
+// outranks everything, then the arrival of recorded changes, then silence.
+const PLATE_PULSE_MS = 90000;
+
+function plateWord() {
+  for (const p of state.players.values()) {
+    if (needsPerson(p)) return "fermata";
+  }
+  const now = Date.now();
+  for (const t of state.transitions) {
+    if (t && t.at && now - Date.parse(t.at) < PLATE_PULSE_MS) return "attacca";
+  }
+  return "tacet";
+}
+
+// The rail: the seats a person must act on, held by an explicit stop or a failed
+// attempt. The chip names the recorded fact and selects the seat, so the record
+// below answers the rail. A seat that only owes work to its own inbox is not
+// here; that work shows on the seat's own row and in the pit's queue tick.
+const RAIL_CHIPS = 12;
+let railSignature = "";
+
+function railReason(p) {
+  const stop = p.stop || null;
+  if (stop && stop.status === "stopped") {
+    return { word: "stopped", detail: stop.id || "an explicit stop" };
+  }
+  const ex = p.execution || null;
+  if (ex && ex.failure) {
+    const failure = ex.failure;
+    return {
+      word: "failed",
+      detail: [failure.cause, failure.errorStatus, failure.stopReason]
+        .filter(Boolean).join(" · "),
+    };
+  }
+  return { word: "failed", detail: "the attempt did not finish" };
+}
+
+function renderRail() {
+  if (!el.rail) return;
+  if (el.rail.contains(document.activeElement)) return;
+  const waiting = orderPlayers([...state.players.values()]).filter(needsPerson);
+  const signature = waiting.map((p) => p.id + ":" + railReason(p).word).join("|");
+  if (signature === railSignature) return;
+  railSignature = signature;
+  el.rail.textContent = "";
+  if (!waiting.length) {
+    el.rail.hidden = true;
+    return;
+  }
+  el.rail.hidden = false;
+  const label = document.createElement("span");
+  label.className = "rail-label";
+  text(label, "fermata");
+  el.rail.appendChild(label);
+  const count = document.createElement("span");
+  count.className = "rail-count";
+  text(count, waiting.length
+    + (waiting.length === 1 ? " seat needs a person" : " seats need a person"));
+  el.rail.appendChild(count);
+  waiting.slice(0, RAIL_CHIPS).forEach((p) => {
+    const reason = railReason(p);
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.dataset.railId = p.id;
+    chip.title = p.id + " · " + reason.word + ": " + reason.detail;
+    text(chip, p.id + " · " + reason.word);
+    chip.addEventListener("click", () => select(p.id));
+    el.rail.appendChild(chip);
+  });
+  if (waiting.length > RAIL_CHIPS) {
+    const more = document.createElement("span");
+    more.className = "rail-more";
+    text(more, "+" + (waiting.length - RAIL_CHIPS) + " more");
+    el.rail.appendChild(more);
+  }
+}
+
+function renderShell() {
+  if (el.plateMark) {
+    el.plateMark.textContent = "";
+    text(el.plateMark, plateWord());
+  }
+  renderHeaderLine();
+  renderRail();
+}
+
 // Ages belong to the document now: the roster states them, so the timer repaints
 // the document rather than rows of the retired tree.
 function renderAges() {
@@ -826,14 +992,20 @@ function applySnapshot(data, label) {
   state.tasks = data.tasks || {};
   state.providers = data.providers || {};
   state.fixtureKnowledge = data.knowledge || null;
-  state.snapshotLabel = label + (state.subject ? " subject " + state.subject : "")
-    + " at " + (data.capturedAt || "time unrecorded");
+  state.snapshotLabel = label + (state.subject ? " subject " + state.subject : "");
+  state.capturedAt = data.capturedAt || "";
   setCursor(data.cursor || "");
   if (data.selection && data.selection.gap === true) {
     holdGapNotice("Snapshot reports an event history gap. Shown state is authoritative as of the cursor.");
   }
   if (state.selectionId && !state.players.has(state.selectionId)) state.selectionId = null;
   if (state.pendingOpen && !state.players.has(state.pendingOpen)) state.pendingOpen = null;
+  // A seat address is honoured once, on the first snapshot that carries the seat.
+  if (state.pendingSeat) {
+    const addressed = state.pendingSeat;
+    state.pendingSeat = "";
+    if (state.players.has(addressed)) state.selectionId = addressed;
+  }
   renderTree();
   // Knowledge reads are on demand: refresh them with every authoritative snapshot.
   void loadKnowledgeOverview();
@@ -1092,6 +1264,11 @@ function init() {
   state.fixtureName = query.get("fixture") || "";
   state.subject = query.get("subject") || "";
 
+  // A seat address (#seat=<id>) selects that seat once the snapshot lands, so a
+  // link a reader sends opens the same record.
+  const seatAddress = String(location.hash || "").match(/^#seat=(.+)$/);
+  if (seatAddress) state.pendingSeat = decodeURIComponent(seatAddress[1]);
+
   // Query changes move to the first visible match while retaining typing focus.
   if (el.find) {
     el.find.addEventListener("input", () => {
@@ -1138,6 +1315,19 @@ function init() {
       el.find.focus();
     }
   });
+
+  // A pointer gesture owns the DOM until it ends: repaints are held so a drag,
+  // a hover or an in-flight animation is never destroyed mid-gesture, and the
+  // held repaint runs on release.
+  document.addEventListener("pointerdown", () => { pointerActive = true; }, true);
+  document.addEventListener("pointerup", () => {
+    pointerActive = false;
+    flushDeferredRepaint();
+  }, true);
+  document.addEventListener("pointercancel", () => {
+    pointerActive = false;
+    flushDeferredRepaint();
+  }, true);
 
   setInterval(renderAges, AGE_REFRESH_MS);
 
@@ -1189,7 +1379,20 @@ function documentPlayers() {
       model: p.observedModel || p.model || "",
       status,
       pendingCount: p.pendingCount || 0,
-      awaitingInput: awaitingInput(p),
+      // Reports this seat was sent and never acknowledged. The snapshot records
+      // the count, and it is a different kind of waiting from a queued input.
+      unacknowledgedCount: p.unacknowledgedCount || 0,
+      // The stored sample carries the kinds, so the report mark reads its own
+      // count. This is not unacknowledgedCount minus pendingCount: a stopped
+      // actor's queued inputs leave pendingCount while its reports stay
+      // unacknowledged, so the difference reads as reports that are not there.
+      reportCount: pendingItems(p).filter((m) => m && m.kind === "report").length,
+      // Everything the seat owes, whatever the kind, for ordering and the rail.
+      owedTotal: Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0),
+      // Two reads with two names: the work the actor owes its own inbox, and
+      // whether a recorded fact holds the seat for a person.
+      owesWork: owesWork(p),
+      needsPerson: needsPerson(p),
       action: action.label || "",
       actionAt: action.at || "",
       stale: action.stale === true,
@@ -1259,6 +1462,7 @@ async function loadMessageBody(id) {
       reason: (e && e.message) || String(e),
     };
   }
+  markDrawnStale();
   renderDocument();
 }
 
@@ -1273,7 +1477,20 @@ function selectedSeat() {
     model: p.observedModel || p.model || "",
     parent: p.parent || "",
     status: deriveStatus(p),
+    // What the actor owes its own inbox, and whether a recorded fact holds the
+    // seat for a person. The selection header paints its tone dot from
+    // needsPerson: an explicit stop or a failed attempt, never a queued message.
+    owesWork: owesWork(p),
+    needsPerson: needsPerson(p),
+    // The recorded terminal of the current attempt, when the server read has it:
+    // null, or the provider failure the attempt ended on. The record states the
+    // cause and the stop reason in one line.
+    failure: (p.execution && p.execution.failure) || null,
     pendingCount: p.pendingCount || 0,
+    unacknowledgedCount: p.unacknowledgedCount || 0,
+    // The report count the record states for this seat, read from the sample.
+    reportCount: pendingItems(p).filter((m) => m && m.kind === "report").length,
+    owedTotal: Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0),
     action: action.label || "",
     taskTitle: (state.tasks[p.id] && state.tasks[p.id].title) || "",
     // The recorded work read for this seat, when the on-demand read has landed
@@ -1288,12 +1505,27 @@ function selectedSeat() {
       at: (m && m.at) || "",
       seq: (m && m.seq) || 0,
     })).filter((m) => m.id),
+    // The bodies already read for those ids, in the shape the record renderer
+    // draws; an id whose body has not been read keeps its identity stub.
+    pendingMessages: pendingItems(p)
+      .map((m) => state.messages[String((m && m.id) || "")])
+      .filter((held) => held && held.state === "ok" && held.message)
+      .map((held) => ({
+        id: String(held.message.id || ""),
+        sender: held.message.sender || "",
+        recipient: held.message.recipient || "",
+        kind: held.message.kind || "",
+        body: held.message.body == null ? "" : held.message.body,
+      })),
   };
 }
 
 function selectHistoryEvent(index) {
   const event = state.transitions[index];
   state.ribbonSeq = index > 0 && event ? String(event.seq) : null;
+  // The reading position changes what the document draws; the revision carries
+  // it so the repaint is not suppressed as unchanged.
+  markDrawnStale();
   renderDocument();
 }
 
@@ -1303,8 +1535,80 @@ function historyPosition() {
   return index < 0 ? 0 : index;
 }
 
+// What the document draws, as one string, so a repaint that would draw the same
+// thing is skipped and any repaint is held while the pointer is down. Replacing
+// the DOM under the pointer is what cancels hover rings, drags and every one-shot
+// animation, so a still DOM is the prerequisite for motion doing real work.
+let drawnSignature = "";
+let deferredSignature = "";
+let pointerActive = false;
+
+function drawnNow(data) {
+  const rows = [];
+  for (const p of data.players) {
+    rows.push([
+      p.id, p.status, p.pendingCount, p.unacknowledgedCount,
+      p.owesWork ? 1 : 0, p.needsPerson ? 1 : 0, p.action, p.actionAt,
+      (p.ensembles || []).join(","),
+    ].join("~"));
+  }
+  const events = data.events || [];
+  const knowledge = data.knowledge || null;
+  return [
+    rows.join("|"),
+    (data.ensembles || []).length,
+    // The list changes at either end: the stream appends, and older history
+    // loads in front of what is held. Length plus both ends covers both, and a
+    // reply that replaces a held entry moves the newest end.
+    events.length + ":" + (events[0] ? events[0].seq : "") + ":"
+      + (events[events.length - 1] ? events[events.length - 1].seq : ""),
+    knowledge
+      ? (knowledge.findings || []).length + ":" + (knowledge.promotions || []).length
+      : "none",
+    state.selectionId || "",
+    state.findingId || "",
+    state.docQuery || "",
+    state.showEnded ? 1 : 0,
+    state.ribbonSeq || "",
+    // Every fetched read marks the drawn document stale through this revision,
+    // so a landing paints without the signature enumerating each future input.
+    state.renderSeq || 0,
+    state.workActorId || "",
+    state.work
+      ? (state.work.refused ? "refused" : state.work.error ? "error" : "read")
+      : "none",
+    // Each body's read state, not just how many are held: a body that finishes
+    // reading must repaint, and the count alone would not change.
+    Object.keys(state.messages || {})
+      .map((key) => key + ":" + ((state.messages[key] || {}).state || ""))
+      .join(","),
+  ].join("#");
+}
+
+// A fetched read or an interaction that changes what the document draws bumps
+// the revision; the caller then runs its own repaint, so a gesture in progress
+// keeps its continuity.
+function markDrawnStale() {
+  state.renderSeq = (state.renderSeq || 0) + 1;
+}
+
+// A held repaint runs once the gesture ends, so a drag finishes against the DOM
+// it started on and the pending change lands immediately after.
+function flushDeferredRepaint() {
+  if (!deferredSignature) return;
+  deferredSignature = "";
+  renderDocument();
+}
+
 function renderDocument() {
   if (!window.OversightDocument) return;
+  const drawn = drawnNow(documentData());
+  if (drawn === drawnSignature) return;
+  if (pointerActive) {
+    deferredSignature = drawn;
+    return;
+  }
+  drawnSignature = drawn;
   const active = document.activeElement;
   const rowFocus = active && active.dataset ? active.dataset.docKey : null;
   let knowledgeFocus = null;
@@ -1371,6 +1675,7 @@ function renderDocument() {
     const next = el.roster.querySelector('[data-doc-key="' + CSS.escape(rowFocus) + '"]');
     if (next) next.focus();
   }
+  renderShell();
   return result;
 }
 

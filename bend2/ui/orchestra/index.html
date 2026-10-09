@@ -4,74 +4,87 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="orchestra-api-base" content="">
-<title>Orchestra</title>
+<title>Baton - a live score</title>
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="knowledge.css">
 <link rel="stylesheet" href="ribbon.css">
 <link rel="stylesheet" href="selection.css">
+<link rel="stylesheet" href="attention.css">
 </head>
 <body>
-<header class="page-head">
-  <h1>Orchestra</h1>
-  <p class="subtitle" id="snapshot-line">No snapshot loaded.</p>
+
+<a class="skip" href="#pit">Skip to the pit</a>
+
+<header class="plate">
+  <h1 class="plate-title">Baton</h1>
+  <p class="plate-sub">a live score</p>
+  <nav class="plate-nav" aria-label="Move to a movement">
+    <a href="#pit">the pit</a>
+    <a href="#map">the map</a>
+    <a href="#staves">the staves</a>
+    <a href="#record">the record</a>
+  </nav>
+  <p class="plate-mark" id="plate-mark"></p>
+  <p class="plate-facts" id="snapshot-line">No snapshot loaded.</p>
 </header>
 
 <div class="notice" id="notice" hidden></div>
 <div class="notice fixture" id="fixture-notice" hidden></div>
 
+<div class="rail" id="rail" hidden></div>
+
 <main class="sheet">
 
-  <section class="doc-block doc-attention" aria-labelledby="attention-title">
-    <div class="doc-head">
-      <h2 id="attention-title" class="doc-section">Activity</h2>
+  <!-- The hall: what is playing now. The run's axis is the page spine, one
+       time grid for the whole page; the seats sit on their tiers under it. -->
+  <section class="pit" id="pit" tabindex="-1" aria-labelledby="pit-title">
+    <div class="pit-head">
+      <h2 id="pit-title" class="movement">The pit</h2>
       <p class="doc-counts" id="doc-counts"></p>
     </div>
-    <p class="muted doc-note">Live activity, queued messages, and work awaiting a reply.
-      Select an agent to inspect its work.</p>
+    <div id="ribbon" class="doc-ribbon"></div>
     <div id="attention-band" class="lane-strip"></div>
   </section>
 
-  <div class="doc-tools">
-    <label class="doc-find">
-      <span class="doc-find-label">Find</span>
-      <input type="search" id="doc-find" autocomplete="off"
-        placeholder="type to move the cursor" aria-controls="roster">
-    </label>
-    <button type="button" id="doc-ended" aria-pressed="false">Show quiet seats</button>
-    <button type="button" id="reconnect">Reconnect</button>
-  </div>
-
-  <div class="doc-body">
-    <section class="doc-roster-wrap" aria-labelledby="roster-title">
-      <h2 id="roster-title" class="doc-section">Every actor, attention first</h2>
-      <ul class="doc-roster" id="roster"></ul>
-    </section>
-    <section class="doc-side" aria-labelledby="selection-title">
-      <h2 id="selection-title" class="doc-section">Record</h2>
-      <div id="selection" class="doc-selection"></div>
-    </section>
-  </div>
-
-  <section class="doc-block doc-knowledge" aria-labelledby="knowledge-title">
-    <div class="doc-head">
-      <h2 id="knowledge-title" class="doc-section">Knowledge</h2>
-      <p class="muted doc-note">Each recorded finding sits on the row of the actor
-        that authored it, with how many recorded promotions carry it. The
-        whole-orchestra view of the same records opens here.</p>
+  <!-- The map: the whole recorded ensemble. It follows the pit so the two
+       whole-orchestra drawings open the page together. -->
+  <section class="map" id="map" tabindex="-1" aria-labelledby="map-title">
+    <div class="movement-row">
+      <h2 id="map-title" class="movement">The map</h2>
+      <p class="muted doc-note">The recorded ensemble: actors on their recorded depth
+        tiers, findings on the actor that authored them, and every recorded promotion
+        as an edge from its source to its destination. Select an actor or finding
+        to inspect its recorded work.</p>
     </div>
-    <details class="doc-whole">
-      <summary>Whole-orchestra knowledge</summary>
+    <div class="map-frame">
       <div id="knowledge-whole" class="doc-whole-mount"></div>
-    </details>
+    </div>
   </section>
 
-  <section class="doc-block doc-history" aria-labelledby="history-title">
-    <div class="doc-head">
-      <h2 id="history-title" class="doc-section">Recorded history</h2>
-      <p class="muted doc-note">Newest at the right. The reading position names one
-        committed change; the full list opens from the ribbon.</p>
+  <!-- The written score: one staff per actor, the record beside the staves. -->
+  <section class="paper" id="staves" tabindex="-1" aria-labelledby="staves-title">
+    <div class="staves-col">
+      <div class="movement-row">
+        <h2 id="staves-title" class="movement">The staves</h2>
+        <p class="muted doc-note">One staff per actor, read across the same recorded
+          window as the axis above, newest at the right. A note head is a recorded
+          entry; the counts at the row's end are what the seat owes.</p>
+        <div class="doc-tools">
+          <label class="doc-find">
+            <span class="doc-find-label">Find</span>
+            <input type="search" id="doc-find" autocomplete="off"
+              placeholder="type to move the cursor" aria-controls="roster">
+          </label>
+          <button type="button" id="doc-ended" aria-pressed="false">Show quiet seats</button>
+          <button type="button" id="reconnect">Reconnect</button>
+        </div>
+      </div>
+      <ul class="doc-roster" id="roster"></ul>
     </div>
-    <div id="ribbon" class="doc-ribbon"></div>
+    <aside class="record-col" id="record" tabindex="-1" aria-labelledby="selection-title">
+      <h2 id="selection-title" class="movement">The record</h2>
+      <div id="selection" class="doc-selection"></div>
+    </aside>
   </section>
 
 </main>

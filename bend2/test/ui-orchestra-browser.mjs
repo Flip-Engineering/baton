@@ -248,41 +248,79 @@ check('quiet seats fold behind the control by default', await evalJs(
 await evalJs(`document.getElementById('doc-ended').click()`);
 await until('roster renders the fixture actors in margin bands',
   `document.querySelectorAll('#roster .doc-row').length >= 4 && (document.getElementById('roster').textContent || '').includes('qa-ensemble')`);
-check('roster rows lead with work before the name', await evalJs(
-  `[...document.querySelectorAll('#roster .doc-row')].every((row) => { const btn = row.querySelector('.doc-open'); const lead = btn ? btn.firstElementChild : null; return !!btn && !!lead && lead.classList.contains('doc-lead') && !!lead.querySelector('.doc-work') && !!btn.querySelector('.doc-name'); })`));
+check('plate carries its heading and one expression mark', await evalJs(`(() => {
+  const h1 = document.querySelector('h1.plate-title');
+  const mark = document.getElementById('plate-mark');
+  return !!h1 && h1.textContent === 'Baton'
+    && !!mark && ['fermata', 'attacca', 'tacet'].includes((mark.textContent || '').trim());
+})()`));
+check('snapshot line names owed and quiet counts', await evalJs(`(() => {
+  const line = document.getElementById('snapshot-line').textContent || '';
+  return line.includes('need a person') && line.includes('quiet');
+})()`));
+check('pit and paper grounds paint their materials', await evalJs(`(() => {
+  const pit = document.querySelector('.pit');
+  const paper = document.querySelector('.paper');
+  return !!pit && !!paper
+    && getComputedStyle(pit).backgroundColor !== getComputedStyle(paper).backgroundColor;
+})()`));
+check('rail stays hidden while no exited seat owes', await evalJs(
+  `document.getElementById('rail').hidden === true`));
+check('staves give every row a staff and bands a rehearsal letter', await evalJs(`(() => {
+  const rows = [...document.querySelectorAll('#roster .doc-row')];
+  const heads = [...document.querySelectorAll('#roster .doc-band-head .doc-bracket')];
+  return rows.length > 0 && rows.every((row) => row.querySelector('.doc-staff'))
+    && heads.length > 0 && heads.every((h) => /^[A-Z]+$/.test((h.textContent || '').trim()))
+    && !!document.querySelector('#roster .doc-row .staff-note');
+})()`));
+check('promotion arcs join the rendered rows in the margin', await evalJs(
+  `!!document.querySelector('#roster > svg.kw-arcs') && !!document.querySelector('#roster .kw-arc[data-from="worker"][data-to="aide"]')`));
+check('sharing seats carry a holding halo in the row gutter', await evalJs(
+  `!!document.querySelector('#roster .kw-row-halo[data-row="worker"]')`));
+check('row knowledge reads as one compact line', await evalJs(`(() => {
+  const line = document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact');
+  return !!line && (line.textContent || '').includes('Worker retained finding');
+})()`));
+check('roster rows read the name, the work, then the staff', await evalJs(
+  `[...document.querySelectorAll('#roster .doc-row')].every((row) => { const btn = row.querySelector('.doc-open'); if (!btn) return false; const kids = [...btn.children]; const name = btn.querySelector('.doc-name'); const lead = btn.querySelector('.doc-lead'); const staff = btn.querySelector('.doc-staff'); return !!name && !!lead && !!staff && kids.indexOf(name) < kids.indexOf(lead) && kids.indexOf(lead) < kids.indexOf(staff); })`));
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('selection record opens for the chosen row',
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'worker'`);
-await until('knowledge strip attaches finding ticks to their authors',
-  `document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-finding"] title') && document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-finding"] title').textContent === 'Worker retained finding. — 2 promotions'`);
-check('strip ticks encode degree and destinations as marks', await evalJs(`(() => {
-  const row = '#roster .doc-row[data-doc-id="worker"] ';
-  const tick = document.querySelector(row + '.kw-tick[data-kw-node="qa-worker-finding"]');
-  const aide = document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-tick[data-kw-node="qa-aide-finding"]');
-  const stubs = [...document.querySelectorAll(row + '.kw-stub')].map((s) => s.textContent);
-  return !!tick && tick.classList.contains('shared') && !!aide && aide.classList.contains('unshared')
-    && stubs.some((s) => s.includes('→ aide')) && stubs.some((s) => s.includes('→ lead'));
-})()`));
-// Capture the rendered knowledge band before exercising its selection.
+check('row selection lights its own arcs', await evalJs(
+  `!!document.querySelector('#roster .kw-arc-hot[data-from="worker"]')`));
+// Capture the compact row knowledge for review.
 const knowledgeShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'knowledge.png'), Buffer.from(knowledgeShot.result.data, 'base64'));
-await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
-check('strip tick selection marks, labels claim plus evidence, and keeps focus', await evalJs(`(() => {
-  const row = '#roster .doc-row[data-doc-id="worker"] ';
-  const tick = document.querySelector(row + '.kw-tick[data-kw-node="qa-worker-finding"]');
-  const label = document.querySelector(row + '.kw-claim');
-  const evidence = document.querySelector(row + '.kw-evidence');
-  const limits = document.querySelector(row + '.kw-limits');
-  return !!tick && tick.classList.contains('selected') && document.activeElement === tick
-    && !!label && label.textContent === 'Worker retained finding.'
-    && !!evidence && evidence.textContent === 'Worker evidence.'
-    && !!limits && limits.textContent === 'Worker limits.';
-})()`));
-await evalJs(`document.querySelector('details.doc-whole').open = true`);
-await until('whole-orchestra canvas draws on demand behind its disclosure',
+await until('the map draws on the page without a disclosure',
   `document.querySelector('#knowledge-whole svg.kw-canvas') && document.querySelectorAll('#knowledge-whole .kw-tier').length > 1`);
+check('map frame bounds the canvas', await evalJs(`(() => {
+  const frame = document.querySelector('.map-frame');
+  return !!frame && !!frame.querySelector('#knowledge-whole')
+    && getComputedStyle(frame).overflow === 'hidden' && frame.clientHeight <= 620;
+})()`));
+await evalJs(`document.querySelector('#knowledge-whole [aria-label="Zoom the map in"]').click()`);
+check('zoom control scales the map view', await evalJs(
+  `(document.querySelector('#knowledge-whole g.kw-view').getAttribute('transform') || '').includes('scale(1.25)')`));
+await evalJs(`document.querySelector('#knowledge-whole [aria-label="Reset the map view"]').click()`);
+check('reset restores the map view', await evalJs(
+  `document.querySelector('#knowledge-whole g.kw-view').getAttribute('transform') === 'translate(0,0) scale(1)'`));
+await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'qa-aide-finding'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
+await until('map search centres and pins its hit',
+  `document.querySelector('#knowledge-whole g.kw-view').getAttribute('transform') !== 'translate(0,0) scale(1)' && !!document.querySelector('#knowledge-whole .kw-card')`);
 check('recorded edge types render directed', await evalJs(
   `['kw-edge-authorship', 'kw-edge-share', 'kw-edge-deliver'].every((cls) => [...document.querySelectorAll('#knowledge-whole .' + cls)].some((edge) => (edge.getAttribute('marker-end') || '').startsWith('url(')))`));
+await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('finding selection widens isolation to two hops',
+  `(() => { const co = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-live-finding"]');
+    return !!co && !co.classList.contains('kw-hover-dim'); })()`);
+check('the legend keys every edge kind the map draws', await evalJs(`(() => {
+  const classes = new Set();
+  for (const edge of document.querySelectorAll('#knowledge-whole [class*="kw-edge-"]')) {
+    for (const name of edge.classList) if (name.indexOf('kw-edge-') === 0) classes.add(name);
+  }
+  const keys = document.querySelectorAll('#knowledge-whole .kw-legend-keys li').length;
+  return classes.size > 0 && keys >= classes.size;
+})()`));
 check('whole-orchestra nodes stay inside the drawn surface', await evalJs(`(() => {
   const svg = document.querySelector('#knowledge-whole svg');
   const width = Number(svg.getAttribute('width'));
@@ -294,14 +332,40 @@ check('whole-orchestra nodes stay inside the drawn surface', await evalJs(`(() =
     return x - r >= 0 && y - r >= 0 && x + r <= width && y + r <= height;
   });
 })()`));
-check('shared findings read larger than unshared ones', await evalJs(`(() => {
-  const shared = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"] circle');
-  const unshared = document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"] circle');
-  return !!shared && !!unshared && Number(shared.getAttribute('r')) > Number(unshared.getAttribute('r'));
+check('a finding carries its recorded degree as a fact', await evalJs(`(() => {
+  const shared = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]');
+  const unshared = document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"]');
+  return !!shared && !!unshared && /2 promotions/.test(shared.textContent || '');
 })()`));
+check('shared findings carry a halo and unshared ones do not', await evalJs(
+  `!!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"] .kw-halo') && !document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"] .kw-halo')`));
+check('every recorded relation family is drawn once per record', await evalJs(`(() => {
+  const findings = document.querySelectorAll('#knowledge-whole .knode').length;
+  const authorship = document.querySelectorAll('#knowledge-whole .kw-edge-authorship').length;
+  const shares = document.querySelectorAll('#knowledge-whole .kw-edge-share').length;
+  return authorship >= findings - 1 && shares >= 1;
+})()`));
+check('conductor anchors read distinct from player anchors', await evalJs(
+  `!!document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="lead"] rect.role-conductor') && !document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"] rect.role-conductor')`));
+check('most promoted findings carry visible claims', await evalJs(
+  `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"] .kw-word')?.textContent.includes('Worker retained finding') && !document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"] .kw-word')`));
 await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
 check('whole finding selection marks and keeps focus', await evalJs(
   `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').classList.contains('selected') && document.activeElement === document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`));
+await until('selecting a finding pins its card on the map',
+  `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker retained finding.'`);
+await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
+check('hover isolates the finding neighborhood', await evalJs(`(() => {
+  const hovered = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]');
+  const author = document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"]');
+  const stranger = document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"]');
+  return hovered && !hovered.classList.contains('kw-hover-dim')
+    && author && !author.classList.contains('kw-hover-dim')
+    && stranger && stranger.classList.contains('kw-hover-dim');
+})()`));
+await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }))`);
+check('leaving the node restores the canvas', await evalJs(
+  `document.querySelectorAll('#knowledge-whole .kw-hover-dim').length === 0`));
 // Capture the selected finding for review.
 const selectedWorkShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'selected-work.png'), Buffer.from(selectedWorkShot.result.data, 'base64'));
@@ -310,13 +374,13 @@ await until('second actor record replaces the first',
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'aide'`);
 baton('record', 'qa-worker-live-finding', 'worker', 'Worker live finding.',
   'Live evidence.', 'Live limits.');
-await until('live record adds a second tick to the author strip through native SSE',
-  `document.querySelectorAll('#roster .doc-row[data-doc-id="worker"] .kw-tick').length === 2`);
+await until('live record updates the author compact line through native SSE',
+  `(document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact') || {}).textContent?.includes('2 findings')`);
 await until('live record draws the new whole-canvas node through native SSE',
   `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-live-finding"]')`);
 baton('promote', 'qa-worker-live-share', 'aide', 'worker', 'aide', 'qa-worker-live-finding');
-await until('live promotion inks the new tick through native SSE',
-  `document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-live-finding"]').classList.contains('shared')`);
+await until('live promotion updates the shared count through native SSE',
+  `(document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact') || {}).textContent?.includes('2 shared')`);
 await until('live promotion draws the second recorded share edge through native SSE',
   `[...document.querySelectorAll('#knowledge-whole .kw-edge-share[aria-label="promotion from worker to aide"]')].length === 2`);
 await evalJs(`window.__qaMark = 41`);
@@ -327,6 +391,66 @@ await until('native owner SSE moves the ribbon without reload',
 await evalJs(`document.querySelector('#ribbon [data-focus="ribbon-list"]').click()`);
 await until('ribbon full list opens with recorded rows',
   `document.querySelector('#ribbon .ribbon-list') && document.querySelectorAll('#ribbon .ribbon-row').length > 0 && (document.querySelector('#ribbon .ribbon-list').textContent || '').includes('worker')`);
+
+// The pit is the page spine: the axis draws its buckets, the needle moves by
+// keyboard and by pointer, and a chip in the spine opens its seat.
+await until('the axis draws its buckets and its needle in the pit',
+  `document.querySelectorAll('#ribbon .ribbon-bar').length > 1 && !!document.querySelector('#ribbon .ribbon-needle')`);
+check('the axis states the window it draws', await evalJs(`(() => {
+  const summary = document.querySelector('#ribbon .ribbon-summary');
+  const mark = document.querySelector('#ribbon .ribbon-tempo');
+  return !!summary && /recorded entries/.test(summary.textContent || '')
+    && (!mark || (mark.title || '').length > 0);
+})()`));
+const needleBefore = await evalJs(`document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuenow')`);
+await evalJs(`(() => { const s = document.querySelector('#ribbon .ribbon-slider'); s.focus(); return document.activeElement === s; })()`);
+await send(pageWs, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 });
+await send(pageWs, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 });
+await until('the needle moves one entry on a keypress',
+  `document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuenow') !== ${JSON.stringify(needleBefore)}`);
+const needleBeforeDrag = await evalJs(`document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuenow')`);
+await evalJs(`(() => {
+  const slider = document.querySelector('#ribbon .ribbon-slider');
+  const box = slider.getBoundingClientRect();
+  const at = (fraction) => ({
+    clientX: box.left + box.width * fraction,
+    clientY: box.top + box.height / 2,
+    bubbles: true,
+  });
+  const down = new PointerEvent('pointerdown', Object.assign({ pointerId: 7, button: 0 }, at(0.4)));
+  slider.dispatchEvent(down);
+  // The page redraws the whole document on a scrub report, so the pointer events
+  // that follow are dispatched on the document, as a real drag delivers them.
+  document.dispatchEvent(new PointerEvent('pointermove', Object.assign({ pointerId: 7 }, at(0.15))));
+  document.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerId: 7 }, at(0.15))));
+  return true;
+})()`);
+await until('the needle moves under the pointer across the redraw',
+  `document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuenow') !== ${JSON.stringify(needleBeforeDrag)}`);
+const chipSeat = await evalJs(`(() => { const chip = document.querySelector('#ribbon .ribbon-chip'); return chip ? chip.dataset.seat || '' : ''; })()`);
+await evalJs(`(() => { const chip = document.querySelector('#ribbon .ribbon-chip'); if (chip) chip.click(); return true; })()`);
+await until('a chip in the spine opens its seat record',
+  `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === ${JSON.stringify(chipSeat)}`);
+check('the spine marks the seat it holds', await evalJs(
+  `!!document.querySelector('#ribbon .ribbon-chip[aria-current="true"]')`));
+
+// Visual evidence for the two redesigned surfaces, clipped to their own boxes.
+for (const [name, selector] of [['pit.png', '.pit'], ['map.png', '.map']]) {
+  const box = await evalJs(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  })()`);
+  if (box && box.width > 1 && box.height > 1) {
+    const shot = await send(pageWs, 'Page.captureScreenshot', {
+      format: 'png',
+      clip: { x: box.x, y: box.y, width: box.width, height: box.height, scale: 1 },
+    });
+    writeFileSync(join(OUT, name), Buffer.from(shot.result.data, 'base64'));
+  }
+}
+check('pit and map evidence captured', true, 'pit.png, map.png');
 
 // operator-triggered reconnect re-reads the snapshot through the view command server
 const ribbonMaxBeforeReconnect = await evalJs(`document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax')`);
@@ -385,11 +509,8 @@ await until('phase B attention settles on the snapshot actors',
 await evalJs(`window.__qaMark = 42`);
 await evalJs(`document.querySelector('#ribbon [data-focus="ribbon-list"]').click()`);
 await until('phase B ribbon list opens', `document.querySelectorAll('#ribbon .ribbon-row').length > 0`);
-check('phase B strip holds shared and unshared ticks with no inclusion toggle', await evalJs(
-  `!!document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-finding"]') && !!document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-tick[data-kw-node="qa-aide-finding"]')`));
-await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-tick[data-kw-node="qa-aide-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
-check('strip tick selection marks its tick', await evalJs(
-  `document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-tick[data-kw-node="qa-aide-finding"]').classList.contains('selected')`));
+check('phase B rows carry compact knowledge lines', await evalJs(
+  `!!document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact') && !!document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-compact')`));
 
 // Hold one real actor response until another actor's detail has rendered.
 await evalJs(`(() => {
@@ -420,6 +541,8 @@ await evalJs('window.__qaKnowledgeHeld');
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open').click()`);
 await until('second row selects while the first work response is held',
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'aide'`);
+check('selected record shows its ledged facts', await evalJs(
+  `document.querySelectorAll('#selection .doc-facts dt').length >= 4`));
 await evalJs(`window.__qaReleaseKnowledge(); new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
 check('late first-actor work preserves the selected record', await evalJs(
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'aide'`));
@@ -458,6 +581,8 @@ await evalJs(`(() => {
 })()`);
 await until('pending message displays its complete stored body',
   `[...document.querySelectorAll('#selection .sel-body')].some((node) => node.textContent === ${JSON.stringify(pendingBody)})`);
+check('awaiting list names the owed total', await evalJs(
+  `[...document.querySelectorAll('#selection h2')].some((h) => (h.textContent || '').startsWith('Awaiting '))`));
 check('message body remains open and focused after its asynchronous read', await evalJs(
   `document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]').getAttribute('aria-expanded') === 'true'
     && document.activeElement === document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]')`));
@@ -475,6 +600,37 @@ await until('committed message arrives live without reload',
   `window.__qaMark === 42 && document.querySelectorAll('#ribbon .ribbon-row').length > ${ribbonRowsBefore}`);
 check('pending badge updates live on the worker row', await evalJs(
   `document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-pending') !== null`));
+check('arrival dot marks the worker row on new owed work', await evalJs(
+  `!!document.querySelector('#roster .kw-row-arrival[data-row="worker"]')`));
+// A report is owed work without queued input: the pending set excludes it,
+// the unacknowledged count records it. The aide row must mark it.
+{
+  const db = new DatabaseSync(DB);
+  db.prepare("INSERT INTO messages(id,sender,recipient,kind,body) VALUES ('qa-report-owed','worker','aide','report','Owed report probe.')").run();
+  db.close();
+}
+committed();
+await until('owed report marks the aide row',
+  `(() => { const row = document.querySelector('#roster .doc-row[data-doc-id="aide"]');
+    const mark = row && row.querySelector('.doc-owed');
+    return mark !== null && mark.textContent === '1'; })()`);
+// The stage is one tab stop: focus announces the cursor seat, arrows walk,
+// Enter opens.
+await evalJs(`document.querySelector('#attention-band svg.att-stage').focus()`);
+const stageFirst = await evalJs(`(document.querySelector('#attention-band .att-sr').textContent || '').split(',')[0].trim()`);
+check('stage focus announces its cursor seat', ['root', 'lead', 'worker', 'aide'].includes(stageFirst), stageFirst);
+const stageOther = stageFirst === 'aide' ? 'worker' : 'aide';
+await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="${stageOther}"] .doc-open').click()`);
+await until('record moves away before the stage jump',
+  `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === '${stageOther}'`);
+await evalJs(`document.querySelector('#attention-band svg.att-stage').focus()`);
+await evalJs(`document.querySelector('#attention-band svg.att-stage').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))`);
+await until('stage Enter opens the announced seat',
+  `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === '${stageFirst}'`);
+await evalJs(`document.querySelector('#attention-band svg.att-stage').dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight', bubbles:true}))`);
+await evalJs(`document.querySelector('#attention-band svg.att-stage').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))`);
+await until('stage arrow walks to a different seat',
+  `document.querySelector('#selection h2') && !['', '${stageFirst}'].includes(document.querySelector('#selection h2').textContent)`);
 let workerExecution;
 {
   const db = new DatabaseSync(DB);
@@ -492,11 +648,34 @@ writeFileSync(join(OUT, 'now.png'), Buffer.from(nowShot.result.data, 'base64'));
 await evalJs(`document.querySelector('#attention-band [data-att-key="chip:worker"]').click()`);
 await until('attention selection opens the actor record',
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'worker'`);
+const runningDotColor = await evalJs(
+  `getComputedStyle(document.querySelector('#selection .sel-dot')).backgroundColor`);
 await evalJs(`document.querySelector('#attention-band [data-att-key="chip:worker"]').focus()`);
 baton('message', 'qa-guidance-lane-focus', 'root', 'worker', 'guidance', 'Attention focus retained on live input.');
 committed();
 check('live attention redraw preserves focus on the same chip', await evalJs(
   `window.__qaMark === 42 && document.activeElement && document.activeElement.getAttribute('data-att-key') === 'chip:worker'`));
+// Ordinary owed input stays with the actor after its process exits.
+{
+  const db = new DatabaseSync(DB);
+  db.prepare('UPDATE executions SET phase = ?, status = ? WHERE session = ? AND id = ?')
+    .run('exited', 'exit 0', 'worker', workerExecution.id);
+  db.close();
+}
+committed();
+await until('exited seat retains its own owed work',
+  `document.querySelector('#roster .doc-row[data-doc-id="worker"].state-queued') !== null`);
+check('ordinary owed work leaves the intervention rail hidden', await evalJs(
+  `document.getElementById('rail').hidden === true`));
+const queuedDotColor = await evalJs(
+  `getComputedStyle(document.querySelector('#selection .sel-dot')).backgroundColor`);
+check('queued and running record states look different', queuedDotColor !== runningDotColor);
+for (const id of ['qa-guidance-native', 'qa-guidance-1', 'qa-guidance-2', 'qa-guidance-lane-focus']) {
+  baton('ack', id, 'worker', 'fixture-ui-read');
+}
+committed();
+await until('cleared seats fold the rail away',
+  `document.getElementById('rail').hidden === true`);
 {
   const db = new DatabaseSync(DB);
   db.prepare('UPDATE executions SET phase = ?, status = ? WHERE session = ? AND id = ?')
@@ -505,7 +684,55 @@ check('live attention redraw preserves focus on the same chip', await evalJs(
 }
 committed();
 await until('recorded completion removes the worker chip while its findings persist in the band',
-  `!document.querySelector('#attention-band [data-att-key="chip:worker"]') && !!document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-finding"]')`);
+  `!document.querySelector('#attention-band [data-att-key="chip:worker"]') && !!document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact')`);
+// Exit-zero provider failure reads failed, not completed: stage the
+// recorded terminal, prove the row and the record, then restore.
+let workerEvent;
+{
+  const db = new DatabaseSync(DB);
+  workerEvent = db.prepare('SELECT event FROM turns WHERE worker = ? AND id = ?').get('worker', workerExecution.id);
+  db.close();
+}
+check('failure staging join row exists', !!workerEvent);
+{
+  const db = new DatabaseSync(DB);
+  db.prepare('UPDATE turns SET event = ? WHERE worker = ? AND id = ?')
+    .run('{"is_error":1,"type":"agent_error","exitCode":403,"result":"provider quota refused the attempt."}', 'worker', workerExecution.id);
+  db.prepare('UPDATE executions SET phase = ?, status = ? WHERE session = ? AND id = ?')
+    .run('exited', 'exit 0', 'worker', workerExecution.id);
+  db.close();
+}
+committed();
+await until('recorded failure marks the worker row failed',
+  `document.querySelector('#roster .doc-row[data-doc-id="worker"].state-failed') !== null`);
+await until('provider failure raises the intervention rail',
+  `document.getElementById('rail').hidden === false && !!document.querySelector('#rail [data-rail-id="worker"]')`);
+await evalJs(`document.querySelector('#rail [data-rail-id="worker"]').click()`);
+await until('rail chip selects the failed seat',
+  `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'worker'`);
+check('failed row reads its rule and word', await evalJs(`(() => {
+  const row = document.querySelector('#roster .doc-row[data-doc-id="worker"]');
+  const word = row && row.querySelector('.doc-fail-word');
+  return !!row && !!word && word.textContent === 'failed';
+})()`));
+await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
+await until('failed record opens for the worker row',
+  `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'worker'`);
+check('record states the provider cause', await evalJs(
+  `[...document.querySelectorAll('#selection p')].some((p) => (p.textContent || '').includes('Failure: provider-failure'))`));
+const failedDotColor = await evalJs(
+  `getComputedStyle(document.querySelector('#selection .sel-dot')).backgroundColor`);
+check('failed and queued record states look different', failedDotColor !== queuedDotColor);
+{
+  const db = new DatabaseSync(DB);
+  db.prepare('UPDATE turns SET event = ? WHERE worker = ? AND id = ?').run(workerEvent.event, 'worker', workerExecution.id);
+  db.prepare('UPDATE executions SET phase = ?, status = ? WHERE session = ? AND id = ?')
+    .run(workerExecution.phase, workerExecution.status, 'worker', workerExecution.id);
+  db.close();
+}
+committed();
+await until('restored execution clears the failed row',
+  `document.querySelector('#roster .doc-row[data-doc-id="worker"].state-failed') === null`);
 
 // reconnect: drop the server, restart on the same port, no duplicated transitions
 server.close(); server.closeAllConnections?.();
@@ -534,6 +761,18 @@ baton('message', 'qa-guidance-4', 'root', 'worker', 'guidance', 'After the gap.'
 committed();
 await until('page recovers to live after the gap resnapshot',
   `window.__qaMark === 42 && document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax') !== ${JSON.stringify(ribbonMaxBeforeRecovery)}`);
+
+// Prolific authors collapse to one count badge that expands on focus.
+// Worker already holds two findings above; eleven more cross the dozen.
+for (let i = 0; i < 11; i += 1) {
+  baton('record', 'qa-cluster-' + i, 'worker', 'Cluster finding ' + i + '.', 'Cluster evidence.', 'Cluster limits.');
+}
+committed();
+await until('prolific author collapses to a count badge',
+  `document.querySelector('#knowledge-whole .kw-cluster[data-kw-cluster="worker"] .kw-cluster-count')?.textContent === '13'`);
+await evalJs(`document.querySelector('#knowledge-whole .kw-cluster[data-kw-cluster="worker"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('activating the badge expands the author fan',
+  `!document.querySelector('#knowledge-whole .kw-cluster[data-kw-cluster="worker"]') && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-cluster-0"]')`);
 
 console.log('BROWSER_QA_OK');
 } finally {

@@ -1,9 +1,24 @@
 /* Selection record reader. Definition lists follow the surface
-   convention; only the event list needs its own rules. State color
-   stays in the existing page tokens. */
+   convention; the changes timeline and the sharing-path chain carry
+   their own rules. State color stays in the existing page tokens. */
 .sel-block { margin: 0 0 12px; }
 .sel-block > h2 { overflow-wrap: anywhere; }
 .sel-body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 2px 0 8px; }
-.sel-events { list-style: none; margin: 4px 0 8px; padding: 0; }
-.sel-events li { padding: 1px 0; }
-.sel-events .mono { color: var(--muted); margin-right: 8px; }
+.sel-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
+.sel-claim { font-weight: 600; }
+.sel-group { font-weight: 600; margin: 6px 0 2px; }
+.sel-origin { fill: none; stroke: var(--ink, #141a26); stroke-width: 1.5px; }
+.sel-timeline { list-style: none; margin: 4px 0 8px; padding: 0 0 0 14px; position: relative; }
+.sel-timeline::before { content: ""; position: absolute; left: 4px; top: 6px; bottom: 6px; width: 1px; background: var(--hairline); }
+.sel-timeline li { position: relative; padding: 1px 0 1px 10px; }
+.sel-timeline li::before { content: ""; position: absolute; left: -13px; top: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.sel-timeline li[data-tone="bad"]::before { background: var(--failed); }
+.sel-timeline li[data-tone="note"]::before { background: var(--attention); }
+.sel-timeline li[data-tone="info"]::before { background: var(--selection); }
+.sel-chain { display: block; width: 100%; height: auto; margin: 2px 0 8px; }
+.sel-chain text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.sel-stop-label { font-size: 11px; fill: var(--ink, #141a26); }
+.sel-via { font-size: 10px; fill: var(--muted, #5b6478); }
+.sel-node { fill: var(--ink, #141a26); }
+.sel-edge { stroke: var(--muted, #5b6478); stroke-width: 1.5px; }
+.sel-arrowhead { fill: var(--muted, #5b6478); }

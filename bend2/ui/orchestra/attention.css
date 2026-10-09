@@ -1,0 +1,162 @@
+/* The pit stage: the seating plan drawn by attention.js.
+
+   This is an ordinary stylesheet, linked by the shell, because the page serves
+   `default-src 'self'` and refuses an inserted <style> element. The rules used to
+   be injected; an injected sheet was refused, so `fill: none` never applied to the
+   relation threads and they painted as filled shapes.
+
+   The stage draws on the hall ground inside `.pit`, which remaps the status
+   tokens to their lit variants, so the rules below read `var(--running)`,
+   `var(--attention)`, `var(--failed)`, `var(--muted)`, `var(--hairline)` and
+   `var(--ink)` without naming a lit value. Two tokens the pit does not remap
+   would be dark on the dark ground: starting and focus carry ground values here.
+   `--stage-starting` matches the ribbon's lit waiting so the page keeps one
+   palette; focus uses the remapped ink. */
+
+.pit .att-stage {
+  --stage-starting: #d7b45a;
+  display: block;
+  overflow: visible;
+}
+
+.pit .att-stage:focus { outline: none; }
+
+/* A seat is a pointer target and one stop in the stage's own keyboard walk. */
+.pit .att-seat { cursor: pointer; }
+
+.pit .att-ring { fill: none; }
+
+.pit .att-elapsed { fill: none; opacity: 0.85; }
+
+.pit .att-seat-ring {
+  fill: none;
+  stroke: var(--ink);
+  opacity: 0;
+}
+
+.pit .att-seat:hover .att-seat-ring,
+.pit .att-seat.att-cursor .att-seat-ring { opacity: 0.9; }
+
+/* The keyboard cursor is the focus ring on the hall ground. */
+.pit .att-seat.att-cursor .att-seat-ring { stroke-width: 2; }
+
+.pit .att-seat.att-selected .att-seat-ring {
+  opacity: 1;
+  stroke-width: 2;
+  stroke: var(--attention);
+}
+
+.pit .att-hit { fill: transparent; }
+
+.pit .att-label,
+.pit .att-section {
+  font-family: var(--mono);
+  fill: var(--muted);
+}
+
+.pit .att-label { font-size: 10px; }
+.pit .att-section { font-size: 9px; letter-spacing: 0.04em; }
+
+/* The baton: a curved line from the podium to the seat that acted most recently. */
+.pit .att-baton {
+  fill: none;
+  stroke: var(--attention);
+  stroke-width: 1.5;
+  opacity: 0.75;
+  stroke-dasharray: 4 4;
+  animation: att-march 1200ms linear infinite;
+}
+
+/* A recorded relation: stroke only, no filled body, width against the recorded
+   count. Promotions arrive as arcs from the author seat to the destination seat;
+   message traffic joins the seat that recorded the change to the seat on its far
+   side, inked by the recorded kind and fading with age. */
+.pit .att-know,
+.pit .att-thread {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.pit .att-know { stroke: var(--muted); opacity: 0.35; }
+
+.pit .att-thread { stroke: var(--muted); }
+.pit .att-thread-receipt,
+.pit .att-thread-report { stroke: var(--stage-starting); }
+.pit .att-thread-insert,
+.pit .att-thread-task,
+.pit .att-thread-guidance,
+.pit .att-thread-recovery { stroke: var(--stage-starting); }
+.pit .att-thread-stop { stroke: var(--failed); }
+.pit .att-thread-execution { stroke: var(--running); }
+
+/* Motion marks state and stops with it. */
+.pit .att-working .att-halo { animation: att-breathe 2600ms ease-in-out infinite; }
+.pit .att-stuck .att-ring { animation: att-alarm 1400ms ease-out infinite; }
+.pit .att-new .att-core { animation: att-flash 900ms ease-out 1; }
+
+@keyframes att-breathe {
+  0%, 100% { opacity: 0.18; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes att-alarm {
+  0% { opacity: 0.85; }
+  70% { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+@keyframes att-flash {
+  0% { stroke: #e2a94f; stroke-width: 3; }
+  100% { stroke-width: 0; }
+}
+
+@keyframes att-march {
+  to { stroke-dashoffset: -16; }
+}
+
+/* The legend states what each mark means, in the reader's language. */
+.pit .att-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 8px 0 2px;
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.pit .att-key { display: inline-flex; align-items: center; gap: 5px; }
+
+.pit .att-key i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.pit .att-quiet { margin: 6px 0 0; color: var(--muted); }
+
+/* What the stage announces when the keyboard walks it. */
+.pit .att-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pit .att-working .att-halo,
+  .pit .att-stuck .att-ring,
+  .pit .att-baton,
+  .pit .att-new .att-core { animation: none; }
+
+  .pit .att-working .att-halo { opacity: 0.4; }
+  .pit .att-stuck .att-ring { opacity: 0.8; }
+  .pit .att-baton { opacity: 0.6; }
+}

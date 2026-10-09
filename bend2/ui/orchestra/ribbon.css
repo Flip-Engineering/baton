@@ -1,95 +1,235 @@
-/* History ribbon presentation. One mark row, a readout line, and the full
-   recorded list behind one control. Colours come from the page tokens with the
-   shipped values as fallbacks. */
+/* The run's time axis, in the pit. One bucket per stretch of recorded time, its
+   height against the busiest stretch and its ink against the recorded kind that
+   dominates it, a needle at the reading position, and a pulse while entries keep
+   arriving. The tempo mark sits at the axis's left end.
+
+   The region reads the pit's own tokens, which the shell remaps to the lit
+   status colours. Only tokens prefixed --rib- are added here. */
 
 .ribbon {
-  padding: 10px 0 6px;
-  border-top: 1px solid var(--hairline, #d7dce5);
-  min-width: 0;
+  --rib-grid: var(--staff, #39404b);
+  --rib-needle: #f2f1ea;
+  --rib-mark: #f2f1ea;
+  --rib-focus: #8fa8e0;
+  /* The pit remaps the status colours but not these three, and their shipped
+     values are dark on paper. Their lit forms are region tokens. */
+  --rib-waiting: #d7b45a;
+  --rib-report: #8fa8e0;
+  --rib-structure: #c07a5e;
+  display: block;
+  margin: 0;
+  padding: 0;
 }
 
+/* The axis's left end: the tempo mark, the measured rate, and the live pulse.
+   The axis below spans the same content width as the staves, so the grid lines
+   up column for column. */
+.ribbon-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 6px;
+  padding: 0;
+}
+
+.ribbon-tempo {
+  font-family: "Hoefler Text", "Iowan Old Style", Baskerville, serif;
+  font-style: italic;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--rib-mark);
+}
+
+.ribbon-summary {
+  font-family: var(--mono);
+  font-size: var(--step0, 12px);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ribbon-pulse {
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--rib-grid);
+}
+
+.ribbon-head.ribbon-live .ribbon-pulse {
+  background: var(--running);
+  animation: ribbon-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes ribbon-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.7); }
+}
+
+/* The time axis itself. No side padding or margin of its own: the left edge and
+   the content width are the shell's, shared with the staves. */
 .ribbon-slider {
   position: relative;
-  padding: 6px 0 8px;
+  margin: 0;
+  padding: 0 0 4px;
   cursor: pointer;
   touch-action: none;
 }
 
 .ribbon-slider:focus-visible {
-  outline: 2px solid var(--selection, #2a3e6b);
+  outline: 2px solid var(--rib-focus);
   outline-offset: 2px;
 }
 
-.ribbon-strip {
+.ribbon-axis {
+  position: relative;
   display: flex;
   align-items: flex-end;
   gap: 1px;
-  height: 34px;
+  width: 100%;
+  height: 58px;
+  border-bottom: 1px solid var(--rib-grid);
+  background: var(--wash);
 }
 
-.ribbon-mark {
+.ribbon-bar {
   flex: 1 1 0;
   min-width: 1px;
-  height: 20px;
-  background: var(--hairline, #d7dce5);
-  border-radius: 1px;
+  background: var(--ink);
+  border-radius: 1px 1px 0 0;
 }
 
-/* The strip reads as the run's activity: the colour is the recorded kind most
-   present in that stretch. */
-.ribbon-mark[class*="ribbon-kind-message-"] { background: var(--ink, #141a26); }
-.ribbon-mark.ribbon-kind-message-task,
-.ribbon-mark.ribbon-kind-message-guidance,
-.ribbon-mark.ribbon-kind-message-recovery { background: var(--attention, #a2611f); }
-.ribbon-mark.ribbon-kind-message-report,
-.ribbon-mark.ribbon-kind-message-receipt,
-.ribbon-mark.ribbon-kind-report { background: var(--selection, #2a3e6b); }
-.ribbon-mark.ribbon-kind-execution,
-.ribbon-mark.ribbon-kind-native-request { background: var(--running, #1e7e34); }
-.ribbon-mark.ribbon-kind-stop { background: var(--failed, #b3261e); }
-.ribbon-mark[class*="ribbon-kind-ensemble"],
-.ribbon-mark[class*="ribbon-kind-membership"],
-.ribbon-mark[class*="ribbon-kind-section"],
-.ribbon-mark.ribbon-kind-role { background: var(--waiting, #8a6d00); }
+.ribbon-bar.ribbon-empty { background: transparent; }
 
-.ribbon-mark.ribbon-many { height: 28px; }
+/* The ink is the recorded kind that dominates the stretch. */
+.ribbon-bar[class*="ribbon-kind-message-"] { background: var(--ink); }
+.ribbon-bar.ribbon-kind-message-task,
+.ribbon-bar.ribbon-kind-message-guidance,
+.ribbon-bar.ribbon-kind-message-recovery { background: var(--rib-waiting); }
+.ribbon-bar.ribbon-kind-message-report,
+.ribbon-bar.ribbon-kind-message-receipt,
+.ribbon-bar.ribbon-kind-report { background: var(--rib-report); }
+.ribbon-bar.ribbon-kind-execution,
+.ribbon-bar.ribbon-kind-native-request { background: var(--running); }
+.ribbon-bar.ribbon-kind-stop { background: var(--failed); }
+.ribbon-bar[class*="ribbon-kind-ensemble"],
+.ribbon-bar[class*="ribbon-kind-membership"],
+.ribbon-bar[class*="ribbon-kind-section"],
+.ribbon-bar.ribbon-kind-role { background: var(--rib-structure); }
 
-.ribbon-mark.ribbon-here {
-  height: 34px;
-  background: var(--attention, #a2611f);
+.ribbon-bar.ribbon-here {
+  box-shadow: 0 0 0 1px var(--rib-needle) inset;
+}
+
+/* An entry that reached the page while it was open marks the live edge once. */
+.ribbon-bar.ribbon-arrival {
+  animation: ribbon-arrival 900ms ease-out 1;
+}
+
+@keyframes ribbon-arrival {
+  0% { transform: scaleY(0.15); transform-origin: bottom; background: var(--rib-needle); }
+  60% { transform: scaleY(1.15); transform-origin: bottom; background: var(--rib-needle); }
+  100% { transform: scaleY(1); transform-origin: bottom; }
+}
+
+.ribbon-needle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--rib-needle);
+  pointer-events: none;
+}
+
+.ribbon-needle::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--rib-needle);
 }
 
 .ribbon-readout {
-  margin: 0;
+  margin: 8px 0 0;
+  font-family: var(--mono);
   font-size: var(--step0, 12px);
-  color: var(--ink, #141a26);
-  font-family: var(--mono, monospace);
+  color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
+
+.ribbon-seats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.ribbon-seats-label {
+  font-family: var(--mono);
+  font-size: var(--step0, 12px);
+  color: var(--muted);
+}
+
+.ribbon-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rib-grid);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.ribbon-chip:hover { border-color: var(--rib-focus); color: var(--rib-focus); }
+
+.ribbon-chip[aria-current="true"] {
+  border-color: var(--rib-needle);
+  color: var(--rib-needle);
+}
+.ribbon-chip:focus-visible { outline: 2px solid var(--rib-focus); outline-offset: 1px; }
+
+.ribbon-chip-count { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .ribbon-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 6px;
+  margin: 8px 0 0;
 }
 
 .ribbon-button {
-  padding: 4px 9px;
+  padding: 4px 10px;
+  font-family: var(--mono);
   font-size: var(--step0, 12px);
-  color: var(--ink, #141a26);
-  background: var(--surface, #ffffff);
-  border: 1px solid var(--hairline, #d7dce5);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rib-grid);
   border-radius: var(--radius, 3px);
   cursor: pointer;
 }
 
-.ribbon-button:hover { border-color: var(--selection, #2a3e6b); color: var(--selection, #2a3e6b); }
+.ribbon-button:hover { border-color: var(--rib-focus); color: var(--rib-focus); }
 
 .ribbon-button[disabled] {
-  color: var(--muted, #5b6478);
-  border-color: var(--hairline, #d7dce5);
+  color: var(--muted);
+  border-color: var(--rib-grid);
   cursor: default;
+}
+
+.ribbon-legend {
+  margin: 8px 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .ribbon-list {
@@ -99,7 +239,7 @@
   max-height: 320px;
   overflow: auto;
   scrollbar-gutter: stable;
-  border-top: 1px solid var(--hairline, #d7dce5);
+  border-top: 1px solid var(--rib-grid);
 }
 
 .ribbon-row {
@@ -109,29 +249,27 @@
   width: 100%;
   padding: 3px 6px;
   text-align: left;
+  font-family: var(--mono);
   font-size: var(--step0, 12px);
+  color: var(--ink);
   background: none;
   border: 0;
-  border-bottom: 1px solid var(--hairline, #d7dce5);
+  border-bottom: 1px solid var(--rib-grid);
   border-radius: 0;
   cursor: pointer;
 }
 
-.ribbon-row:hover { background: var(--wash, #eef1f6); }
-.ribbon-row[aria-current="true"] { border-left: 3px solid var(--attention, #a2611f); }
+.ribbon-row:hover { background: var(--wash); }
+.ribbon-row[aria-current="true"] { border-left: 3px solid var(--rib-needle); }
 
 .ribbon-row time {
-  font-family: var(--mono, monospace);
-  color: var(--muted, #5b6478);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
-.ribbon-row-kind { color: var(--ink, #141a26); }
-
 .ribbon-row-who,
 .ribbon-row-far {
-  font-family: var(--mono, monospace);
-  color: var(--muted, #5b6478);
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -139,11 +277,19 @@
 
 .ribbon-row-note {
   padding: 6px;
+  font-family: var(--mono);
   font-size: var(--step0, 12px);
-  color: var(--muted, #5b6478);
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ribbon-head.ribbon-live .ribbon-pulse { animation: none; }
+  .ribbon-bar.ribbon-arrival { animation: none; }
 }
 
 @media (max-width: 720px) {
+  .ribbon-axis { height: 42px; }
+  .ribbon-tempo { font-size: 17px; }
   .ribbon-row { grid-template-columns: max-content minmax(0, 1fr); }
   .ribbon-row-who,
   .ribbon-row-far { display: none; }

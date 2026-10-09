@@ -5,51 +5,98 @@
 
 .kw-band { display: block; }
 
-.kw-author { margin: 0; }
-
-.kw-strip {
-  display: block;
-  width: 100%;
-  height: auto;
+.kw-compact {
+  margin: 0;
+  font-size: var(--step0, 12px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.kw-tick, .kw-anchor, .knode { cursor: pointer; }
+.kw-anchor, .knode, .kw-cluster { cursor: pointer; }
 
-.kw-mark { fill: var(--ink, #141a26); }
-
-.kw-mark.unshared {
+.kw-cluster-box {
   fill: var(--paper, #fbfcfe);
-  stroke: var(--attention, #a2611f);
+  stroke: var(--muted, #5b6478);
   stroke-width: 1.5px;
 }
 
-.kw-tick.selected .kw-mark {
-  stroke: var(--selection, #2a3e6b);
-  stroke-width: 2px;
+.kw-cluster-count {
+  font-size: var(--step0, 12px);
+  fill: var(--ink, #141a26);
 }
 
-.kw-strip text {
-  font-family: var(--sans, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif);
+.kw-maptools {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 8px;
+}
+
+.kw-search {
+  flex: 1 1 auto;
+  min-width: 120px;
+  max-width: 320px;
+  font-size: var(--step0, 12px);
+  padding: 4px 8px;
+  color: var(--ink, #141a26);
+  background: var(--paper, #fbfcfe);
+  border: 1px solid var(--muted, #5b6478);
+  border-radius: 4px;
+}
+
+.kw-zoom {
+  font-size: var(--step0, 12px);
+  padding: 4px 10px;
+  color: var(--ink, #141a26);
+  background: none;
+  border: 1px solid var(--muted, #5b6478);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.kw-card {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  max-width: 320px;
+  padding: 10px 12px;
+  background: var(--paper, #fbfcfe);
+  border: 1px solid var(--muted, #5b6478);
+  border-radius: 6px;
+}
+
+.kw-card-title {
+  margin: 0;
+  font-size: var(--step1, 13px);
+  color: var(--ink, #141a26);
+}
+
+.kw-card-fact {
+  margin: 4px 0 0;
+  font-size: var(--step0, 12px);
+}
+
+.kw-hull-line {
+  fill: var(--attention, #a2611f);
+  fill-opacity: 0.06;
+  stroke: var(--attention, #a2611f);
+  stroke-width: 1.5px;
+  stroke-linejoin: round;
+}
+
+.kw-hull, .kw-lozenge { cursor: pointer; }
+
+.kw-hull-label, .kw-lozenge-label {
   font-size: var(--step0, 12px);
   fill: var(--muted, #5b6478);
 }
 
-.kw-stub { color: var(--attention, #a2611f); overflow-wrap: anywhere; }
-
-.kw-destinations { display: flex; flex-wrap: wrap; gap: 2px 12px; }
-
-.kw-claim {
-  font-family: var(--sans, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif);
-  font-size: var(--step1, 13px);
-  color: var(--ink, #141a26);
-  margin: 2px 0 0;
-}
-
-.kw-evidence, .kw-limits {
-  font-family: var(--sans, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif);
-  font-size: var(--step0, 12px);
-  color: var(--muted, #5b6478);
-  margin: 2px 0 0;
+.kw-lozenge-box {
+  fill: var(--paper, #fbfcfe);
+  stroke: var(--attention, #a2611f);
+  stroke-width: 1.5px;
+  stroke-dasharray: 4 2;
 }
 
 .kw-canvas {
@@ -68,7 +115,24 @@
   font-family: var(--sans, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif);
 }
 
+.kw-canvas .kw-word {
+  paint-order: stroke;
+  stroke: var(--paper, #fbfcfe);
+  stroke-width: 3px;
+}
+
+@keyframes kw-arrive {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.kw-new { animation: kw-arrive 600ms ease-out; }
+
 .kw-actor { fill: var(--muted, #5b6478); }
+
+.kw-actor.role-conductor { fill: var(--ink, #141a26); }
+
+.kw-actor.role-operator { fill: var(--selection, #2a3e6b); }
 
 .knode.selected .kw-finding { stroke: var(--selection, #2a3e6b); stroke-width: 2px; }
 
@@ -80,21 +144,67 @@
   stroke-width: 1.5px;
 }
 
+.kw-halo {
+  fill: none;
+  stroke: var(--attention, #a2611f);
+  stroke-width: 1px;
+  opacity: 0.55;
+}
+
 .kw-edge-authorship { stroke: var(--muted, #5b6478); stroke-width: 1px; }
 
-.kw-edge-share { stroke: var(--attention, #a2611f); stroke-width: 1.5px; }
+.kw-edge-share { fill: none; stroke: var(--attention, #a2611f); stroke-width: 1.5px; }
 
-.kw-edge-deliver { stroke: var(--muted, #5b6478); stroke-width: 1.5px; }
+.kw-edge-deliver { fill: none; stroke: var(--muted, #5b6478); stroke-width: 1.5px; }
 
 .kw-edge-promote {
+  fill: none;
   stroke: var(--selection, #2a3e6b);
   stroke-width: 1.5px;
   stroke-dasharray: 5 3;
 }
 
 .kw-dim { opacity: 0.15; }
+.kw-hover-dim { opacity: 0.15; }
+
+.kw-arcs {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.kw-arc {
+  fill: none;
+  stroke: var(--attention, #a2611f);
+  stroke-width: 1.5px;
+  opacity: 0.35;
+}
+
+.kw-arc-hot {
+  opacity: 1;
+  stroke-width: 2px;
+}
+
+.kw-row-halo {
+  fill: none;
+  stroke: var(--attention, #a2611f);
+  stroke-width: 1.5px;
+  opacity: 0.8;
+}
+
+.kw-row-arrival { fill: var(--attention, #a2611f); }
 
 .kw-legend {
+  font-size: var(--step0, 12px);
+  max-width: 78ch;
+}
+
+.kw-legend-keys {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
   font-size: var(--step0, 12px);
   max-width: 78ch;
 }
@@ -103,4 +213,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .kw-canvas * { transition: none; }
+  .kw-new { animation: none; }
 }

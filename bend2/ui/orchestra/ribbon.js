@@ -1,25 +1,41 @@
-/* History ribbon. Read-only. All text via textContent.
+/* The run's time axis: the page spine in the pit.
 
-   One mark per committed event, oldest at the left, newest at the right. The
-   position names the event the reader is looking at; the readout states it in
-   words, and the full recorded list opens on demand so the history holds no
-   region of the page while the operator is not reading it.
+   One bucket per stretch of recorded time across the window the page forwards,
+   its height against the busiest stretch and its ink against the recorded kind
+   that dominates it. A needle marks the reader's position and the live edge
+   carries a pulse while entries keep arriving. At the axis's left end a tempo
+   mark states one measured fact about the window, and the seats that moved most
+   in it are chips that jump the position to that seat's newest entry. The full
+   record opens behind one control.
 
-   The recorded data carries each event's kind, time, actor and far side. It
-   does not carry the state of every actor before each event, so a position is
-   a reading position in the recorded history, and the page can mark the actor
-   an event touched. Selecting a row reports the event to the page.
+   The time scale is linear over the window and the axis spans the mount's
+   content width with no inset of its own, so the grid lines up column for
+   column with the staves below it.
 
-   options: {position, onScrub, onSelectEvent, onListOpen}
-   data: {events} newest first, as the page holds them.
+   Read-only. Every character of text is written through textContent, the module
+   starts no request, and it renders nothing without its mount.
 
-   Starts no request. */
+   options: {position, onScrub, onSelectEvent, onSelectActor, selectedId,
+             onListOpen}
+   data: {events} newest first, as the page holds them. */
 
-const RIBBON_BUCKETS_MAX = 900;
+const RIBBON_BARS_MAX = 180;
 const RIBBON_LIST_ROWS = 400;
 const RIBBON_PAGE_STEP = 50;
+const RIBBON_CHIPS_MAX = 8;
+const RIBBON_LIVE_MS = 90000;
 
 const ribbonListOpen = new WeakMap();
+const ribbonLastSeq = new WeakMap();
+
+// One drag at a time, owned by the document rather than by the strip. The page
+// redraws the whole document on every scrub report, which replaces the strip's
+// nodes and any listener attached to them. These listeners and this record
+// survive that redraw, so the pointer keeps owning the scrub past the first
+// point.
+let ribbonDragging = null;
+let ribbonQueued = null;
+let ribbonFrame = 0;
 
 function ribbonCount(value) {
   return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -44,24 +60,16 @@ function ribbonAge(at) {
   return Math.round(hours / 24) + "d ago";
 }
 
-function ribbonEventText(event, index, total) {
-  if (!event) return "no event at this position";
-  const from = String(event.session || "");
-  const to = String(event.counterpart || "");
-  const where = from && to ? from + " to " + to : (from || to || "no actor recorded");
-  return "event " + ribbonCount(total - index) + " of " + ribbonCount(total)
-    + ", " + (event.kind || "unknown") + ", " + where
-    + (event.at ? ", " + event.at : "");
+// A span in words, from two recorded times.
+function ribbonSpan(fromMs, toMs) {
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return "";
+  const minutes = Math.round((toMs - fromMs) / 60000);
+  if (minutes < 1) return "under a minute";
+  if (minutes < 60) return minutes + (minutes === 1 ? " minute" : " minutes");
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return hours + (hours === 1 ? " hour" : " hours");
+  return Math.round(hours / 24) + " days";
 }
-
-// One drag at a time, owned by the document rather than by the strip. The page
-// redraws the whole document on every scrub report, which replaces the strip's
-// nodes and any listener attached to them. These listeners and this record
-// survive that redraw, so the pointer keeps owning the scrub past the first
-// point.
-let ribbonDragging = null;
-let ribbonQueued = null;
-let ribbonFrame = 0;
 
 function ribbonEscape(value) {
   if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(value);
@@ -74,14 +82,81 @@ function ribbonKindClass(kind) {
   return "ribbon-kind-" + (slug || "unknown");
 }
 
-function ribbonPositionFromClient(container, clientX, total) {
-  const strip = container ? container.querySelector(".ribbon-strip") : null;
-  if (!strip) return null;
-  const box = strip.getBoundingClientRect();
-  if (!box.width || total < 2) return 0;
-  const fraction = Math.min(1, Math.max(0, (clientX - box.left) / box.width));
-  // Oldest at the left, newest at the right.
-  return Math.round((1 - fraction) * (total - 1));
+function ribbonSeats(event) {
+  const seats = [];
+  for (const value of [event.session, event.counterpart]) {
+    const id = String(value || "");
+    if (id && seats.indexOf(id) === -1) seats.push(id);
+  }
+  return seats;
+}
+
+// The busiest recorded kinds, named as the database names them.
+function ribbonKindTally(events, limit) {
+  const tally = new Map();
+  for (const event of events) {
+    const kind = String((event || {}).kind || "unknown");
+    tally.set(kind, (tally.get(kind) || 0) + 1);
+  }
+  return [...tally.entries()]
+    .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1))
+    .slice(0, limit);
+}
+
+// The tempo mark at the axis's left end states one measured fact about the
+// window, using the page's expression marks where their meaning is true: solo
+// when one seat carries the whole stretch, tutti while the busiest stretch
+// carries twelve or more entries, attacca while entries arrive. The counts the
+// shell already computes are quoted, never recomputed.
+function ribbonTempo(busiest, uniqueSeats, recent, shellCounts) {
+  let word = "";
+  let meaning = "";
+  if (uniqueSeats === 1) {
+    word = "solo";
+    meaning = "one seat carries every entry in this window";
+  } else if (busiest >= 12) {
+    word = "tutti";
+    meaning = "the busiest stretch carries " + busiest + " entries";
+  } else if (recent) {
+    word = "attacca";
+    meaning = "entries keep arriving";
+  }
+  if (!word) return null;
+  return { word: word, title: meaning + (shellCounts ? " \u00b7 " + shellCounts : "") };
+}
+
+// The counts the shell already computed, quoted in the mark's readout.
+function ribbonShellCounts() {
+  const node = document.getElementById("doc-counts");
+  return node && node.textContent ? node.textContent.trim() : "";
+}
+
+// The measured rate, in the words the page uses for a recorded entry.
+function ribbonRate(total, spanMs) {
+  if (!Number.isFinite(spanMs) || spanMs <= 0 || total < 2) return "";
+  const minutes = spanMs / 60000;
+  if (minutes < 1) return ribbonCount(total) + " entries in under a minute";
+  const per = total / minutes;
+  const rounded = per >= 10 ? Math.round(per) : Math.round(per * 10) / 10;
+  return ribbonCount(rounded) + " entries a minute";
+}
+
+function ribbonEventText(event, index, total) {
+  if (!event) return "no recorded change at this position";
+  const from = String(event.session || "");
+  const to = String(event.counterpart || "");
+  const where = from && to ? from + " to " + to : (from || to || "no actor recorded");
+  return "change " + ribbonCount(total - index) + " of " + ribbonCount(total)
+    + ", " + (event.kind || "unknown") + ", " + where
+    + (event.at ? ", " + event.at : "");
+}
+
+function ribbonPositionFromClient(container, clientX) {
+  const axis = container ? container.querySelector(".ribbon-axis") : null;
+  if (!axis) return null;
+  const box = axis.getBoundingClientRect();
+  if (!box.width) return null;
+  return Math.min(1, Math.max(0, (clientX - box.left) / box.width));
 }
 
 function ribbonFlush() {
@@ -102,10 +177,18 @@ function ribbonReport(index) {
   });
 }
 
+function ribbonAt(container, clientX) {
+  if (!ribbonDragging) return;
+  const fraction = ribbonPositionFromClient(container, clientX);
+  if (fraction === null) return;
+  const mapping = ribbonDragging.map;
+  const next = mapping ? mapping(fraction) : null;
+  if (next !== null && next !== undefined) ribbonReport(next);
+}
+
 function ribbonMove(event) {
   if (!ribbonDragging || event.pointerId !== ribbonDragging.pointerId) return;
-  const next = ribbonPositionFromClient(ribbonDragging.container, event.clientX, ribbonDragging.total);
-  if (next !== null) ribbonReport(next);
+  ribbonAt(ribbonDragging.container, event.clientX);
 }
 
 function ribbonEndDrag(event) {
@@ -115,10 +198,7 @@ function ribbonEndDrag(event) {
     window.cancelAnimationFrame(ribbonFrame);
     ribbonFrame = 0;
   }
-  if (event && typeof event.clientX === "number") {
-    const at = ribbonPositionFromClient(ribbonDragging.container, event.clientX, ribbonDragging.total);
-    if (at !== null) ribbonQueued = at;
-  }
+  if (event && typeof event.clientX === "number") ribbonAt(ribbonDragging.container, event.clientX);
   ribbonFlush();
   document.removeEventListener("pointermove", ribbonMove, true);
   document.removeEventListener("pointerup", ribbonEndDrag, true);
@@ -140,62 +220,129 @@ function renderRibbon(container, data, options) {
     ? (active.dataset.focus || "") : "";
 
   if (ribbonDragging && ribbonDragging.container === container) {
-    // A redraw during a drag: keep the live options and the window length so
-    // the pointer keeps owning the scrub.
+    // A redraw during a drag: keep the live options so the pointer keeps
+    // owning the scrub. The axis mapping is rebuilt below.
     ribbonDragging.opts = opts;
-    ribbonDragging.total = total;
   }
 
   container.textContent = "";
-  const strip = document.createElement("div");
-  strip.className = "ribbon-strip";
-  const readout = document.createElement("p");
-  readout.className = "ribbon-readout";
 
   if (!total) {
-    readout.textContent = "No committed event is recorded in this snapshot.";
-    container.appendChild(readout);
+    const empty = document.createElement("p");
+    empty.className = "ribbon-readout";
+    empty.textContent = "No recorded change is in this snapshot.";
+    container.appendChild(empty);
     return { events: 0, position: 0 };
   }
 
-  // The page holds events newest first; the ribbon draws oldest first.
+  // The page holds events newest first; the axis runs oldest to newest.
   let position = Number(opts.position);
   if (!Number.isFinite(position) || position < 0) position = 0;
   if (position > total - 1) position = total - 1;
   const current = events[position] || events[0];
 
-  const buckets = Math.min(total, RIBBON_BUCKETS_MAX);
-  const perBucket = total / buckets;
-  for (let bucket = 0; bucket < buckets; bucket += 1) {
-    // The page holds events newest first, so the oldest indices are drawn at
-    // the left, matching the position the strip maps from a pointer column.
-    const toEnd = Math.floor((bucket + 1) * perBucket);
-    const fromEnd = Math.floor(bucket * perBucket);
-    const last = Math.max(0, total - fromEnd);
-    const first = Math.max(0, total - toEnd);
-    const mark = document.createElement("span");
-    mark.className = "ribbon-mark";
-    const counts = new Map();
-    for (let index = first; index < last; index += 1) {
-      const kind = String((events[index] || {}).kind || "unknown");
-      counts.set(kind, (counts.get(kind) || 0) + 1);
-    }
-    let dominant = "unknown";
-    let dominantCount = 0;
-    for (const entry of counts) {
-      if (entry[1] > dominantCount) {
-        dominant = entry[0];
-        dominantCount = entry[1];
-      }
-    }
-    const counted = Math.max(1, last - first);
-    mark.classList.add(ribbonKindClass(dominant));
-    mark.title = ribbonCount(counted) + (counted === 1 ? " event" : " events")
-      + (counts.size > 1 ? ", mostly " + dominant : ", " + dominant);
-    if (counted > 1) mark.classList.add("ribbon-many");
-    if (position >= first && position < last) mark.classList.add("ribbon-here");
-    strip.appendChild(mark);
+  // Recorded times, oldest first, each with the index the page knows.
+  const timed = [];
+  for (let index = total - 1; index >= 0; index -= 1) {
+    const at = Date.parse((events[index] || {}).at || "");
+    if (Number.isFinite(at)) timed.push({ at, index });
   }
+  const usable = timed.length >= 2 && timed[timed.length - 1].at > timed[0].at;
+  const firstAt = usable ? timed[0].at : 0;
+  const lastAt = usable ? timed[timed.length - 1].at : 0;
+  const spanMs = usable ? lastAt - firstAt : 0;
+
+  function fractionOf(index) {
+    if (!usable) return total < 2 ? 1 : (total - 1 - index) / (total - 1);
+    const at = Date.parse((events[index] || {}).at || "");
+    if (!Number.isFinite(at)) return 1;
+    return Math.min(1, Math.max(0, (at - firstAt) / spanMs));
+  }
+
+  // The inverse: a column reports the recorded change nearest that time.
+  function indexAt(fraction) {
+    if (!usable) return Math.round((1 - fraction) * (total - 1));
+    const want = firstAt + fraction * spanMs;
+    let low = 0;
+    let high = timed.length - 1;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (timed[mid].at < want) low = mid + 1;
+      else high = mid;
+    }
+    const after = timed[low];
+    const before = timed[Math.max(0, low - 1)];
+    const pick = Math.abs(after.at - want) <= Math.abs(want - before.at) ? after : before;
+    return pick.index;
+  }
+  if (ribbonDragging && ribbonDragging.container === container) ribbonDragging.map = indexAt;
+
+  // Buckets over the axis: height follows the count, ink follows the recorded
+  // kind that dominates the stretch.
+  const bars = Math.max(1, Math.min(RIBBON_BARS_MAX, total));
+  const counts = new Array(bars).fill(0);
+  const kinds = new Array(bars).fill(null);
+  const seats = new Array(bars).fill(null);
+  const seatTally = new Map();
+  const seatNewest = new Map();
+  for (let index = 0; index < total; index += 1) {
+    const event = events[index] || {};
+    const column = Math.min(bars - 1, Math.floor(fractionOf(index) * bars));
+    counts[column] += 1;
+    if (!kinds[column]) kinds[column] = new Map();
+    const kind = String(event.kind || "unknown");
+    kinds[column].set(kind, (kinds[column].get(kind) || 0) + 1);
+    if (!seats[column]) seats[column] = new Map();
+    for (const id of ribbonSeats(event)) {
+      seats[column].set(id, (seats[column].get(id) || 0) + 1);
+      seatTally.set(id, (seatTally.get(id) || 0) + 1);
+      if (!seatNewest.has(id)) seatNewest.set(id, index);
+    }
+  }
+  let busiest = 1;
+  for (const value of counts) if (value > busiest) busiest = value;
+  const here = Math.min(bars - 1, Math.floor(fractionOf(position) * bars));
+
+  // The newest recorded time drives the arrival test and the live pulse, and the
+  // tempo mark reads it, so it is computed before the head is built.
+  const liveMs = Date.parse((events[0] || {}).at || "");
+  const live = Number.isFinite(liveMs) && (Date.now() - liveMs) < RIBBON_LIVE_MS;
+  const previousSeq = ribbonLastSeq.get(container) || "";
+  const newestSeq = String((events[0] || {}).seq || "");
+  const arriving = Boolean(newestSeq) && Boolean(previousSeq) && newestSeq !== previousSeq;
+  ribbonLastSeq.set(container, newestSeq);
+
+  const head = document.createElement("div");
+  head.className = "ribbon-head";
+  if (live) head.classList.add("ribbon-live");
+
+  const uniqueSeats = new Set([...seatTally.keys()]).size;
+  const tempo = ribbonTempo(busiest, uniqueSeats, live, ribbonShellCounts());
+  if (tempo) {
+    const mark = document.createElement("span");
+    mark.className = "ribbon-tempo";
+    mark.title = tempo.title;
+    mark.textContent = tempo.word;
+    head.appendChild(mark);
+  }
+  const summary = document.createElement("span");
+  summary.className = "ribbon-summary";
+  const spanWord = ribbonSpan(firstAt, lastAt);
+  const topKinds = ribbonKindTally(events, 3);
+  const rateWord = ribbonRate(total, spanMs);
+  summary.textContent = ribbonCount(total) + " recorded entries"
+    + (spanWord ? " over " + spanWord : "")
+    + (rateWord ? " \u00b7 " + rateWord : "")
+    + (topKinds.length
+      ? " \u00b7 mostly " + topKinds.map((entry) => entry[0] + " " + ribbonCount(entry[1])).join(", ")
+      : "");
+  head.appendChild(summary);
+
+  const liveWord = document.createElement("span");
+  liveWord.className = "ribbon-pulse";
+  liveWord.setAttribute("aria-hidden", "true");
+  head.appendChild(liveWord);
+
 
   const slider = document.createElement("div");
   slider.className = "ribbon-slider";
@@ -207,7 +354,60 @@ function renderRibbon(container, data, options) {
   slider.setAttribute("aria-valuemax", String(total));
   slider.setAttribute("aria-valuenow", String(total - position));
   slider.setAttribute("aria-valuetext", ribbonEventText(current, position, total));
-  slider.appendChild(strip);
+
+  const axis = document.createElement("div");
+  axis.className = "ribbon-axis";
+  for (let column = 0; column < bars; column += 1) {
+    const counted = counts[column];
+    const bar = document.createElement("span");
+    bar.className = "ribbon-bar";
+    if (!counted) {
+      bar.classList.add("ribbon-empty");
+    } else {
+      const share = counted / busiest;
+      bar.style.height = (14 + Math.round(86 * share)) + "%";
+      let dominant = "unknown";
+      let dominantCount = 0;
+      for (const entry of kinds[column] || []) {
+        if (entry[1] > dominantCount) {
+          dominant = entry[0];
+          dominantCount = entry[1];
+        }
+      }
+      bar.classList.add(ribbonKindClass(dominant));
+      const seatNames = [...(seats[column] || new Map()).entries()]
+        .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1))
+        .slice(0, 4)
+        .map((entry) => entry[0]);
+      bar.title = ribbonCount(counted) + (counted === 1 ? " change" : " changes")
+        + " \u00b7 " + dominant
+        + (seatNames.length ? " \u00b7 " + seatNames.join(", ") : "");
+      const stretchKinds = [...(kinds[column] || new Map()).entries()]
+        .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1))
+        .slice(0, 2);
+      bar.dataset.stretch = String(column);
+      bar.addEventListener("pointerenter", () => {
+        readout.textContent = ribbonCount(counted) + (counted === 1 ? " recorded change" : " recorded changes")
+          + (stretchKinds.length
+            ? " \u00b7 " + stretchKinds.map((entry) => entry[0] + " " + entry[1]).join(", ")
+            : "")
+          + (seatNames.length ? " \u00b7 " + seatNames.join(", ") : "");
+      });
+    }
+    if (column === here) bar.classList.add("ribbon-here");
+    if (arriving && column === bars - 1) bar.classList.add("ribbon-arrival");
+    axis.appendChild(bar);
+  }
+  axis.addEventListener("pointerleave", () => {
+    readout.textContent = readoutText();
+  });
+
+  const needle = document.createElement("span");
+  needle.className = "ribbon-needle";
+  needle.style.left = (fractionOf(position) * 100) + "%";
+  needle.setAttribute("aria-hidden", "true");
+  axis.appendChild(needle);
+  slider.appendChild(axis);
 
   function setPosition(next) {
     if (next < 0) next = 0;
@@ -218,12 +418,12 @@ function renderRibbon(container, data, options) {
   slider.addEventListener("pointerdown", (event) => {
     if (event.button !== undefined && event.button !== 0) return;
     event.preventDefault();
-    const at = ribbonPositionFromClient(container, event.clientX, total);
-    ribbonDragging = { container, opts, total, pointerId: event.pointerId };
+    ribbonDragging = { container, opts, pointerId: event.pointerId, map: indexAt };
     document.addEventListener("pointermove", ribbonMove, true);
     document.addEventListener("pointerup", ribbonEndDrag, true);
     document.addEventListener("pointercancel", ribbonEndDrag, true);
-    if (at !== null) setPosition(at);
+    const fraction = ribbonPositionFromClient(container, event.clientX);
+    if (fraction !== null) setPosition(indexAt(fraction));
     if (typeof slider.focus === "function") slider.focus({ preventScroll: true });
   });
   slider.addEventListener("keydown", (event) => {
@@ -238,8 +438,54 @@ function renderRibbon(container, data, options) {
     else setPosition(position - 1);
   });
 
-  readout.textContent = ribbonEventText(current, position, total)
-    + (current && current.at ? " \u00b7 " + ribbonAge(current.at) : "");
+  const readout = document.createElement("p");
+  readout.className = "ribbon-readout";
+  function readoutText() {
+    return ribbonEventText(current, position, total)
+      + (current && current.at ? " \u00b7 " + ribbonAge(current.at) : "");
+  }
+  readout.textContent = readoutText();
+
+  // The seats that moved most in this window; a chip jumps to that seat's
+  // newest recorded change.
+  const busiestSeats = [...seatTally.entries()]
+    .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1))
+    .slice(0, RIBBON_CHIPS_MAX);
+  const seatRow = document.createElement("div");
+  seatRow.className = "ribbon-seats";
+  if (busiestSeats.length) {
+    const label = document.createElement("span");
+    label.className = "ribbon-seats-label";
+    label.textContent = "Busiest";
+    seatRow.appendChild(label);
+    for (const entry of busiestSeats) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "ribbon-chip";
+      chip.dataset.focus = "ribbon-seat:" + entry[0];
+      chip.dataset.seat = entry[0];
+      chip.title = entry[0] + ", " + ribbonCount(entry[1]) + " recorded entries in this window";
+      const id = document.createElement("span");
+      id.className = "ribbon-chip-id";
+      id.textContent = ribbonShort(entry[0]);
+      chip.appendChild(id);
+      const value = document.createElement("span");
+      value.className = "ribbon-chip-count";
+      value.textContent = ribbonCount(entry[1]);
+      chip.appendChild(value);
+      const at = seatNewest.get(entry[0]);
+      // The spine navigates: a chip opens the seat through the shell when the
+      // shell passes that callback, and otherwise moves the needle to the seat's
+      // newest recorded entry.
+      const opensSeat = typeof opts.onSelectActor === "function";
+      if (String(opts.selectedId || "") === entry[0]) chip.setAttribute("aria-current", "true");
+      chip.addEventListener("click", () => {
+        if (opensSeat) opts.onSelectActor(entry[0]);
+        else if (typeof opts.onSelectEvent === "function") opts.onSelectEvent(at);
+      });
+      seatRow.appendChild(chip);
+    }
+  }
 
   const actions = document.createElement("div");
   actions.className = "ribbon-actions";
@@ -247,7 +493,7 @@ function renderRibbon(container, data, options) {
   now.type = "button";
   now.className = "ribbon-button";
   now.dataset.focus = "ribbon-now";
-  now.textContent = position === 0 ? "At the newest event" : "Back to the newest event";
+  now.textContent = position === 0 ? "At the newest change" : "Back to the newest change";
   now.disabled = position === 0;
   now.addEventListener("click", () => setPosition(0));
   actions.appendChild(now);
@@ -268,9 +514,20 @@ function renderRibbon(container, data, options) {
   });
   actions.appendChild(toggle);
 
+  const legend = document.createElement("p");
+  legend.className = "ribbon-legend";
+  const legendKinds = ribbonKindTally(events, 6);
+  legend.textContent = legendKinds.length
+    ? "Bar height follows the busiest stretch; the ink is the recorded kind that dominates it: "
+      + legendKinds.map((entry) => entry[0]).join(", ") + "."
+    : "Bar height follows the busiest stretch.";
+
+  container.appendChild(head);
   container.appendChild(slider);
   container.appendChild(readout);
+  container.appendChild(seatRow);
   container.appendChild(actions);
+  container.appendChild(legend);
 
   if (listOpen) {
     const list = document.createElement("ol");
@@ -278,7 +535,7 @@ function renderRibbon(container, data, options) {
     const start = Math.max(0, position - Math.floor(RIBBON_LIST_ROWS / 2));
     const end = Math.min(total, start + RIBBON_LIST_ROWS);
     for (let index = start; index < end; index += 1) {
-      const event = events[index];
+      const event = events[index] || {};
       const item = document.createElement("li");
       const button = document.createElement("button");
       button.type = "button";
@@ -310,7 +567,7 @@ function renderRibbon(container, data, options) {
       const note = document.createElement("li");
       note.className = "ribbon-row-note";
       note.textContent = "Showing " + ribbonCount(start + 1) + " to " + ribbonCount(end)
-        + " of " + ribbonCount(total) + ". Scrub the ribbon to read another stretch.";
+        + " of " + ribbonCount(total) + ". Scrub the axis to read another stretch.";
       list.appendChild(note);
     }
     container.appendChild(list);
