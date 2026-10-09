@@ -3,7 +3,7 @@
   "moduleId": "bend2",
   "revision": "development",
   "protocolVersion": "2",
-  "packageIdentity": "sha256:edaf2876288c11d8346d71d276bc277250edb4df7c1215fb239b5618736f5756",
+  "packageIdentity": "sha256:4125daabead2f4db126f98ae9483aedfcd8b6995eeb857d80f9ac05fd8aa335f",
   "entry": {
     "artifact": "native-provider.mjs",
     "argv": [
@@ -12,8 +12,13 @@
   },
   "artifactIdentities": [
     {
+      "packagePath": "capture-records.mjs",
+      "sha256": "6513bf32be118885c1ea091c23dd376f3c55b6cf857932f429c34125c91c1060",
+      "role": "capture-record-producer"
+    },
+    {
       "packagePath": "native-provider.mjs",
-      "sha256": "6c37c48265e99d0d732bee1aa96d78494d1b42808bdda49dfd4d4e4ad3e6114f",
+      "sha256": "97b5276b7712e87ed467b6d64801eb36709e3a9eecf64e5905e2ae5762501222",
       "role": "provider"
     },
     {
@@ -23,7 +28,7 @@
     },
     {
       "packagePath": "frontend-adapter.mjs",
-      "sha256": "a6e389276707738479881380fcde81b31bfc5630832135cc37d656ce3f92cd90",
+      "sha256": "2beaeeaad1304041f83b8f0b44ed0fa54533016ba2d7e0852e1d9ecf2ad17d8b",
       "role": "frontend-adapter"
     },
     {
@@ -43,7 +48,7 @@
     },
     {
       "packagePath": "source-binding.mjs",
-      "sha256": "4bf1cc96b8b6c89edc863caebff32f8e2f2aaa5ddc6b6becb10c9546f34d2bc7",
+      "sha256": "3b912a9503b5028e5085e7d0d5597436c1ab157f11bf2660d480360851faff27",
       "role": "source-binding"
     },
     {
@@ -74,13 +79,18 @@
   ],
   "dependencies": [
     {
+      "packagePath": "capture-records.mjs",
+      "sha256": "6513bf32be118885c1ea091c23dd376f3c55b6cf857932f429c34125c91c1060",
+      "role": "capture-record-producer"
+    },
+    {
       "packagePath": "worktree-capture.mjs",
       "sha256": "6a6e5dbed7e9b696bc3e2a1332dfa3ee4be1ddf3eeba15de8f58c9324ddb2f50",
       "role": "source-custody"
     },
     {
       "packagePath": "frontend-adapter.mjs",
-      "sha256": "a6e389276707738479881380fcde81b31bfc5630832135cc37d656ce3f92cd90",
+      "sha256": "2beaeeaad1304041f83b8f0b44ed0fa54533016ba2d7e0852e1d9ecf2ad17d8b",
       "role": "frontend-adapter"
     },
     {
@@ -100,7 +110,7 @@
     },
     {
       "packagePath": "source-binding.mjs",
-      "sha256": "4bf1cc96b8b6c89edc863caebff32f8e2f2aaa5ddc6b6becb10c9546f34d2bc7",
+      "sha256": "3b912a9503b5028e5085e7d0d5597436c1ab157f11bf2660d480360851faff27",
       "role": "source-binding"
     },
     {

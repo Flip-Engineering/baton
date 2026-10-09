@@ -100,13 +100,47 @@ export async function runSelectedInvocation(invocation, { wrapperPath = fileURLT
   if (selected.status !== 'resolved') return selected;
   const providerPath = join(selected.root, 'native-provider.mjs');
   try {
+    const declaration = JSON.parse(readFileSync(join(selected.root, 'native-provider.declaration.json'), 'utf8'));
     const provider = await import(pathToFileURL(realpathSync(providerPath)).href);
     return await provider.executeInvocation(invocation, {
       packageRoot: selected.root,
       cwd: invocation.request.cwd,
+      declaration,
     });
   } catch (error) {
     return refused('selectedProviderUnavailable', error.message);
+  }
+}
+
+// Selected producers with capture support contribute their own records.
+// Acquisition failures propagate; providers without this capability contribute none.
+export async function captureSelectedInputs(invocation, { wrapperPath = fileURLToPath(import.meta.url) } = {}) {
+  if (!Array.isArray(invocation?.operationPlan) || invocation.operationPlan.length === 0) return refused('capturePlanMissing');
+  const captures = [];
+  try {
+    for (const step of invocation.operationPlan) {
+      const binding = step?.binding;
+      const selected = resolveSelectedPackageRoot(wrapperPath, binding?.id);
+      if (selected.status !== 'resolved') return selected;
+      const provider = await import(pathToFileURL(realpathSync(join(selected.root, 'native-provider.mjs'))).href);
+      if (typeof provider.captureInputs !== 'function') continue;
+      const declaration = JSON.parse(readFileSync(join(selected.root, 'native-provider.declaration.json'), 'utf8'));
+      const answer = await provider.captureInputs({ ...invocation, moduleBinding: binding }, {
+        packageRoot: selected.root, cwd: invocation.request.cwd,
+        declaration,
+      });
+      if (answer?.status !== 'captured') return answer ?? refused('captureSupplierAnswerMissing', binding.id);
+      if (answer.query !== invocation.query || answer.owner !== invocation.owner || !Array.isArray(answer.captures)) return refused('captureSupplierIdentityMismatch', binding.id);
+      for (const capture of answer.captures) {
+        if (capture.producerModule !== binding.id || capture.producerDigest !== binding.declarationDigest
+            || capture.producerOperation !== binding.operation) return refused('captureProducerMismatch', capture.path);
+        captures.push(capture);
+      }
+    }
+    return Object.freeze({ status: 'captured', query: invocation.query, owner: invocation.owner,
+      captures: Object.freeze(captures) });
+  } catch (error) {
+    return refused('captureSupplierFailed', error.message);
   }
 }
 
@@ -140,6 +174,17 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
     const result = installedModuleInventory();
     process.stdout.write(`${JSON.stringify(result)}\n`);
     if (result.status === 'refused') process.exitCode = 2;
+  } else if (process.argv[2] === '--capture-inputs') {
+    let input = '';
+    for await (const chunk of process.stdin) input += chunk;
+    try {
+      const result = await captureSelectedInputs(JSON.parse(input));
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      if (result.status !== 'captured') process.exitCode = 2;
+    } catch (error) {
+      process.stdout.write(`${JSON.stringify(refused('captureRequestMalformed', error.message))}\n`);
+      process.exitCode = 2;
+    }
   } else if (process.argv[2] === '--project-policy') {
     const { observeProjectPolicy } = await import('./context-project-policy.mjs');
     let input = '';

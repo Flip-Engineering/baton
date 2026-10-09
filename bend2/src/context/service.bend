@@ -21,7 +21,7 @@ type Submission is Data:
     state: String, owner: String, request: String}
   SubmissionManaged{admission: ContextAdmit.Admission, planValue: String,
     planIdentity: String, resultSchema: String, artifactSha256: String,
-    bootstrapText: String}
+    bootstrapText: String, answersText: String}
   SubmissionManagedUncertain{stage: String, answer: String}
   SubmissionAbsent{}
   SubmissionForeign{owner: String, request: String}
@@ -173,11 +173,11 @@ def admitted_associated(+db: String, +binding: String, +id: String, +owner: Stri
 def managed_association_matches(+admission: ContextAdmit.Admission,
                                 +expectedPlanValue: String, +expectedPlanIdentity: String,
                                 +expectedResultSchema: String, +expectedArtifactSha: String,
-                                +expectedBootstrapText: String,
+                                +expectedBootstrapText: String, +expectedAnswersText: String,
                                 association: ContextAdmit.ManagedAssociation) -> Submission:
   match association:
     case ContextAdmit.ManagedAssociationStored{+planValue, +planIdentity,
-        +resultSchema, +artifactSha256, +bootstrapText}:
+        +resultSchema, +artifactSha256, +bootstrapText, +answersText}:
       Bool.pick(Submission,
         Bool.and(String.eq(expectedPlanValue, planValue),
         Bool.and(String.eq(expectedPlanIdentity, planIdentity),
@@ -185,7 +185,7 @@ def managed_association_matches(+admission: ContextAdmit.Admission,
         Bool.and(String.eq(expectedArtifactSha, artifactSha256),
           String.eq(expectedBootstrapText, bootstrapText))))),
         SubmissionManaged{admission, planValue, planIdentity,
-          resultSchema, artifactSha256, bootstrapText},
+          resultSchema, artifactSha256, bootstrapText, answersText},
         SubmissionManagedUncertain{"associationMismatch", bootstrapText})
     case ContextAdmit.ManagedAssociationMissing{}:
       SubmissionManagedUncertain{"associationMissing", ""}
@@ -206,7 +206,7 @@ def managed_admission_owner_matches(+admission: ContextAdmit.Admission,
 def managed_association_result(+expectedOwner: String, +expectedRequest: String,
                                +planValue: String, +planIdentity: String,
                                +resultSchema: String, +artifactSha: String,
-                               +bootstrapText: String, +admission: ContextAdmit.Admission,
+                               +bootstrapText: String, +answersText: String, +admission: ContextAdmit.Admission,
                                result: Result<&1,&1,U32 & String,ContextAdmit.ManagedAssociation>) -> IO(Submission):
   match result:
     case Fail{error}:
@@ -216,14 +216,14 @@ def managed_association_result(+expectedOwner: String, +expectedRequest: String,
       Bool.pick(IO(Submission), managed_admission_owner_matches(admission,
         expectedOwner, expectedRequest),
         IO.pure(Submission, managed_association_matches(admission, planValue, planIdentity,
-          resultSchema, artifactSha, bootstrapText, association)),
+          resultSchema, artifactSha, bootstrapText, answersText, association)),
         IO.pure(Submission, SubmissionForeign{"", ""}))
 
 def managed_admitted_stored(+db: String, +binding: String, +id: String,
                             +expectedOwner: String, +expectedRequestJson: String,
                             +planValue: String, +planIdentity: String,
                             +resultSchema: String, +artifactSha: String,
-                            +bootstrapText: String,
+                            +bootstrapText: String, +answersText: String,
                             admissionResult: Result<&1,&1,U32 & String,ContextAdmit.Admission>) -> IO(Submission):
   match admissionResult:
     case Fail{error}:
@@ -237,14 +237,14 @@ def managed_admitted_stored(+db: String, +binding: String, +id: String,
             association : Result<&1,&1,U32 & String,ContextAdmit.ManagedAssociation> <-
               ContextAdmit.readback_managed_association(db, binding, id)
             managed_association_result(expectedOwner, expectedRequestJson, planValue, planIdentity,
-              resultSchema, artifactSha, bootstrapText, admission, association)
+              resultSchema, artifactSha, bootstrapText, answersText, admission, association)
         case ContextAdmit.AdmissionRetained{+owner, +request,
              decision, state, attempt, keeperPath, cwd, artifactPath}:
           do IO<Submission>:
             association : Result<&1,&1,U32 & String,ContextAdmit.ManagedAssociation> <-
               ContextAdmit.readback_managed_association(db, binding, id)
             managed_association_result(expectedOwner, expectedRequestJson, planValue, planIdentity,
-              resultSchema, artifactSha, bootstrapText, admission, association)
+              resultSchema, artifactSha, bootstrapText, answersText, admission, association)
         case ContextAdmit.AdmissionAbsent{}: IO.pure(Submission, SubmissionAbsent{})
         case ContextAdmit.AdmissionUncertain{stage, answer}:
           IO.pure(Submission, SubmissionUncertain{stage, answer})
@@ -255,14 +255,14 @@ def admitted_managed_associated(+db: String, +binding: String, +id: String,
                                 +originAttempt: String, +artifactPath: String,
                                 +planValue: String, +planIdentity: String,
                                 +resultSchema: String, +artifactSha: String,
-                                +bootstrapText: String) -> IO(Submission):
+                                +bootstrapText: String, +answersText: String) -> IO(Submission):
   do IO<Submission>:
     answer : Result<&1,&1,U32 & String,ContextAdmit.Admission> <-
       ContextAdmit.admit_managed_associated(db, binding, id, owner, requestJson,
         keeperPath, cwd, originAttempt, artifactPath, planValue, planIdentity,
-        resultSchema, artifactSha, bootstrapText)
+        resultSchema, artifactSha, bootstrapText, answersText)
     managed_admitted_stored(db, binding, id, owner, requestJson, planValue,
-      planIdentity, resultSchema, artifactSha, bootstrapText, answer)
+      planIdentity, resultSchema, artifactSha, bootstrapText, answersText, answer)
 
 
 def discover_result(selected: Result<&1,&1,U32 & String,String>) -> IO(Discovery):

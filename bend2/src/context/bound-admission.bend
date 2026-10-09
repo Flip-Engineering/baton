@@ -43,7 +43,7 @@ type Association is Data:
 
 type ManagedAssociation is Data:
   ManagedAssociationStored{planValue: String, planIdentity: String,
-    resultSchema: String, artifactSha256: String, bootstrapText: String}
+    resultSchema: String, artifactSha256: String, bootstrapText: String, answersText: String}
   ManagedAssociationMissing{}
   ManagedAssociationMalformed{stage: String, answer: String}
 
@@ -110,7 +110,7 @@ def association_decode(+row: String) -> Association:
   association_decode_lines(Tx.split_lines(row), row)
 
 def managed_association_scalars(plan: Request.Scalar, identity: Request.Scalar,
-                                schema: Request.Scalar, bootstrap: Request.Scalar,
+                                schema: Request.Scalar, bootstrap: Request.Scalar, answers: Request.Scalar,
                                 +artifact_sha: String, +answer: String) -> ManagedAssociation:
   match plan:
     case Request.ScalarText{plan_value}:
@@ -120,48 +120,52 @@ def managed_association_scalars(plan: Request.Scalar, identity: Request.Scalar,
             case Request.ScalarText{result_schema}:
               match bootstrap:
                 case Request.ScalarText{bootstrap_text}:
-                  ManagedAssociationStored{plan_value, plan_identity,
-                    result_schema, artifact_sha, bootstrap_text}
+                  match answers:
+                    case Request.ScalarText{answers_text}:
+                      ManagedAssociationStored{plan_value, plan_identity,
+                        result_schema, artifact_sha, bootstrap_text, answers_text}
+                    case _: ManagedAssociationMalformed{"scalar", answer}
                 case _: ManagedAssociationMalformed{"scalar", answer}
             case _: ManagedAssociationMalformed{"scalar", answer}
         case _: ManagedAssociationMalformed{"scalar", answer}
     case _: ManagedAssociationMalformed{"scalar", answer}
 
 def managed_association_scalar(+plan: String, +identity: String, +schema: String,
-                               +artifact_sha: String, +bootstrap: String,
+                               +artifact_sha: String, +bootstrap: String, +answers: String,
                                +answer: String) -> ManagedAssociation:
   managed_association_scalars(
     Request.decode_scalar_utf8(ContextText.hex_decode(plan)),
     Request.decode_scalar_utf8(ContextText.hex_decode(identity)),
     Request.decode_scalar_utf8(ContextText.hex_decode(schema)),
-    Request.decode_scalar_utf8(ContextText.hex_decode(bootstrap)), artifact_sha, answer)
+    Request.decode_scalar_utf8(ContextText.hex_decode(bootstrap)),
+    Request.decode_scalar_utf8(ContextText.hex_decode(answers)), artifact_sha, answer)
 
 def managed_association_mark(+mark: String, +plan: String, +identity: String,
                              +schema: String, +artifact_mark: String,
-                             +artifact_sha: String, +bootstrap: String,
+                             +artifact_sha: String, +bootstrap: String, +answers: String,
                              +answer: String) -> ManagedAssociation:
   Bool.pick(ManagedAssociation, String.eq(mark, "absent"),
     Bool.pick(ManagedAssociation,
       Bool.and(Bool.and(String.is_empty(plan), String.is_empty(identity)),
         Bool.and(String.is_empty(schema),
           Bool.and(String.eq(artifact_mark, "absent"),
-            Bool.and(String.is_empty(artifact_sha), String.is_empty(bootstrap))))),
+            Bool.and(String.is_empty(artifact_sha), Bool.and(String.is_empty(bootstrap), String.is_empty(answers)))))),
       ManagedAssociationMissing{}, ManagedAssociationMalformed{"absentShape", answer}),
     Bool.pick(ManagedAssociation, String.eq(mark, "present"),
       Bool.pick(ManagedAssociation,
         Bool.and(Bool.and(hex_ok(plan), hex_ok(identity)),
-          Bool.and(Bool.and(hex_ok(schema), hex_ok(bootstrap)),
+          Bool.and(Bool.and(hex_ok(schema), Bool.and(hex_ok(bootstrap), hex_ok(answers))),
             Bool.and(String.eq(artifact_mark, "present"),
               Bool.and(Nat.is_eq(String.length(artifact_sha), 64n), hex_ok(artifact_sha))))),
-        managed_association_scalar(plan, identity, schema, artifact_sha, bootstrap, answer),
+        managed_association_scalar(plan, identity, schema, artifact_sha, bootstrap, answers, answer),
         ManagedAssociationMalformed{"framing", answer}),
       ManagedAssociationMalformed{"mark", answer}))
 
 def managed_association_fields(fields: List<String>, +answer: String) -> ManagedAssociation:
   match fields:
-    case +mark <> +plan <> +identity <> +schema <> +artifact_mark <> +artifact_sha <> +bootstrap <> Nil{}:
+    case +mark <> +plan <> +identity <> +schema <> +artifact_mark <> +artifact_sha <> +bootstrap <> +answers <> Nil{}:
       managed_association_mark(mark, plan, identity, schema, artifact_mark,
-        artifact_sha, bootstrap, answer)
+        artifact_sha, bootstrap, answers, answer)
     case Nil{}: ManagedAssociationMalformed{"empty", answer}
     case other: ManagedAssociationMalformed{"shape", answer}
 
@@ -371,13 +375,14 @@ def admit_managed_associated_sql(+id: String, +owner: String, +requestJson: Stri
                                  +originAttempt: String, +artifactPath: String,
                                  +planValue: String, +planIdentity: String,
                                  +resultSchema: String, +artifactSha: String,
-                                 +bootstrapText: String) -> String:
+                                 +bootstrapText: String, +answersText: String) -> String:
   "BEGIN IMMEDIATE;" ++ ContextStore.schema()
   ++ admit_query_insert_sql(id, owner, requestJson, keeperPath, cwd,
        originAttempt, artifactPath)
   ++ ContextStore.association_insert_sql(id, planValue, planIdentity,
        resultSchema, originAttempt)
   ++ ContextStore.managed_artifact_insert_sql(id, artifactSha, bootstrapText)
+  ++ ContextStore.answers_insert_sql(id, answersText)
   ++ admit_row_sql(id) ++ "COMMIT;"
 
 def admit_managed_associated(+db: String, +binding: String, +id: String,
@@ -386,12 +391,12 @@ def admit_managed_associated(+db: String, +binding: String, +id: String,
                              +originAttempt: String, +artifactPath: String,
                              +planValue: String, +planIdentity: String,
                              +resultSchema: String, +artifactSha: String,
-                             +bootstrapText: String) -> IO(Result<&1,&1,U32 & String,Admission>):
+                             +bootstrapText: String, +answersText: String) -> IO(Result<&1,&1,U32 & String,Admission>):
   do IO<Result<&1,&1,U32 & String,Admission>>:
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
       admit_managed_associated_sql(id, owner, requestJson, keeperPath, cwd,
         originAttempt, artifactPath, planValue, planIdentity, resultSchema,
-        artifactSha, bootstrapText))
+        artifactSha, bootstrapText, answersText))
     admit_after(result)
 
 
@@ -413,7 +418,9 @@ def managed_association_readback_sql(+id: String) -> String:
   ++ "coalesce((SELECT hex(result_schema) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),''),"
   ++ "CASE WHEN EXISTS(SELECT 1 FROM semantic_admission_artifacts WHERE query_id=" ++ C.q(id) ++ ") THEN 'present' ELSE 'absent' END,"
   ++ "coalesce((SELECT artifact_sha256 FROM semantic_admission_artifacts WHERE query_id=" ++ C.q(id) ++ "),''),"
-  ++ "coalesce((SELECT hex(bootstrap_text) FROM semantic_admission_artifacts WHERE query_id=" ++ C.q(id) ++ "),'');COMMIT;"
+  ++ "coalesce((SELECT hex(bootstrap_text) FROM semantic_admission_artifacts WHERE query_id=" ++ C.q(id) ++ "),''),"
+  ++ "coalesce((SELECT hex(answers_text) FROM semantic_admission_answers WHERE query_id=" ++ C.q(id) ++ "),"
+  ++ "(SELECT hex(json_extract(plan_value,'$.inputs')) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),'');COMMIT;"
 
 def managed_association_after(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,ManagedAssociation>):
   match result:

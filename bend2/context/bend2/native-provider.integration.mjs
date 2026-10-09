@@ -4,8 +4,8 @@ import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { invokeSourceAnalysis } from './native-provider.mjs';
-import { installedModuleInventory, moduleDirectoryName, runSelectedInvocation } from '../../scripts/context-provider.mjs';
+import { captureInputs, invokeSourceAnalysis } from './native-provider.mjs';
+import { captureSelectedInputs, installedModuleInventory, moduleDirectoryName, runSelectedInvocation } from '../../scripts/context-provider.mjs';
 
 const [packageArgument, worktreeArgument, targetArgument] = process.argv.slice(2);
 assert.ok(packageArgument && worktreeArgument && targetArgument, 'usage: node native-provider.integration.mjs MODULE_ROOT WORKTREE TARGET');
@@ -31,13 +31,16 @@ const invocation = (overrides = {}) => ({
   moduleBinding: binding,
   request: { version: 1, subject: { kind: 'program', path: target }, select: [], cwd: worktree },
   inputIdentities: [],
-  operationPlan: [{ common: 'sourceAnalysis', dependencies: [] }],
+  operationPlan: [{ binding, common: 'sourceAnalysis', dependencies: [] }],
   role: '',
   incarnation: '',
   ...overrides,
 });
 
-const completed = await invokeSourceAnalysis(invocation(), { cwd: worktree, packageRoot });
+const captured = await captureInputs(invocation(), { cwd: worktree, packageRoot });
+assert.equal(captured.status, 'captured', JSON.stringify(captured));
+const capturedInvocation = (overrides = {}) => invocation({ inputIdentities: captured.captures, ...overrides });
+const completed = await invokeSourceAnalysis(capturedInvocation(), { cwd: worktree, packageRoot });
 assert.equal(completed.type, 'event', JSON.stringify(completed));
 assert.equal(completed.version, 2);
 assert.equal(completed.query, 'integration-query-1');
@@ -51,9 +54,9 @@ assert.equal(completed.payload.status, 'completed');
 assert.equal(completed.payload.session.owner, 'integration-owner-1');
 assert.equal(completed.payload.session.identity, target);
 assert.equal(completed.payload.retainedReadSet.status, 'sealed');
-assert.ok(completed.payload.retainedReadSet.descriptors.some((entry) => entry.real === target && /^[0-9a-f]{64}$/.test(entry.sha256)));
+assert.ok(completed.payload.retainedReadSet.captures.some((entry) => entry.path === target && /^[0-9a-f]{64}$/.test(entry.marker)));
 
-const nullRole = await invokeSourceAnalysis(invocation({ role: null, incarnation: null }), { cwd: worktree, packageRoot });
+const nullRole = await invokeSourceAnalysis(capturedInvocation({ role: null, incarnation: null }), { cwd: worktree, packageRoot });
 assert.equal(nullRole.type, 'event');
 assert.equal(nullRole.role, null);
 assert.equal(nullRole.incarnation, null);
@@ -79,20 +82,50 @@ try {
   assert.equal(inventoryFrame.status, 'available');
   assert.deepEqual(inventoryFrame.refusals, []);
   assert.equal(inventoryFrame.modules[0].declarationDigest, declarationDigest);
-  const installed = await runSelectedInvocation(invocation(), { wrapperPath: installedWrapper });
+  const installedCaptures = await captureSelectedInputs(invocation(), { wrapperPath: installedWrapper });
+  assert.equal(installedCaptures.status, 'captured', JSON.stringify(installedCaptures));
+  const installedInvocation = (overrides = {}) => invocation({ inputIdentities: installedCaptures.captures, ...overrides });
+  const installed = await runSelectedInvocation(installedInvocation(), { wrapperPath: installedWrapper });
   assert.equal(installed.type, 'event');
   assert.equal(installed.query, 'integration-query-1');
   assert.equal(installed.owner, 'integration-owner-1');
   assert.equal(installed.runtime, completed.runtime);
-  const installedNullRole = await runSelectedInvocation(invocation({ role: null, incarnation: null }), { wrapperPath: installedWrapper });
+  const installedNullRole = await runSelectedInvocation(installedInvocation({ role: null, incarnation: null }), { wrapperPath: installedWrapper });
   assert.equal(installedNullRole.type, 'event');
   assert.equal(installedNullRole.role, null);
   assert.equal(installedNullRole.incarnation, null);
+
+  // An installed provider may execute without offering input acquisition.
+  const optionalId = 'fixture-without-capture';
+  const optionalRoot = join(installedPrefix, 'lib/context/modules', moduleDirectoryName(optionalId));
+  mkdirSync(optionalRoot, { recursive: true });
+  const optionalSource = 'export function executeInvocation(input) { return { status: "completed", query: input.query }; }\n';
+  writeFileSync(join(optionalRoot, 'native-provider.mjs'), optionalSource);
+  const optionalDeclaration = { ...declaration, moduleId: optionalId, dependencies: [],
+    artifactIdentities: [{ packagePath: 'native-provider.mjs',
+      sha256: createHash('sha256').update(optionalSource).digest('hex') }] };
+  const optionalBytes = JSON.stringify(optionalDeclaration);
+  writeFileSync(join(optionalRoot, 'native-provider.declaration.json'), optionalBytes);
+  const optionalBinding = { ...binding, id: optionalId,
+    declarationDigest: createHash('sha256').update(optionalBytes).digest('hex') };
+  const optionalStep = { binding: optionalBinding, common: 'sourceAnalysis', dependencies: [] };
+  const mixedCapture = await captureSelectedInputs(invocation({
+    operationPlan: [...invocation().operationPlan, optionalStep],
+  }), { wrapperPath: installedWrapper });
+  assert.equal(mixedCapture.status, 'captured');
+  assert.deepEqual(mixedCapture.captures, installedCaptures.captures);
+  const optionalInvocation = invocation({ moduleBinding: optionalBinding, operationPlan: [optionalStep] });
+  const optionalCapture = await captureSelectedInputs(optionalInvocation, { wrapperPath: installedWrapper });
+  assert.equal(optionalCapture.status, 'captured');
+  assert.deepEqual(optionalCapture.captures, []);
+  const optionalResult = await runSelectedInvocation(optionalInvocation, { wrapperPath: installedWrapper });
+  assert.equal(optionalResult.status, 'completed');
+  assert.equal(optionalResult.query, optionalInvocation.query);
 } finally {
   rmSync(installedPrefix, { recursive: true, force: true });
 }
 
-const outside = await invokeSourceAnalysis(invocation({ request: { version: 1,
+const outside = await captureInputs(invocation({ request: { version: 1,
   subject: { kind: 'program', path: resolve(worktree, '..', 'outside.bend') }, select: [], cwd: worktree } }), { cwd: worktree, packageRoot });
 assert.equal(outside.status, 'refused');
 assert.equal(outside.reason, 'sourceTargetUnavailable');

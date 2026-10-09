@@ -3,6 +3,7 @@
   "moduleId": "bend2",
   "protocolVersion": "2",
   "files": [
+    { "path": "capture-records.mjs" },
     { "path": "frontend-adapter.mjs" },
     { "path": "frontend-hook-events.mjs" },
     { "path": "frontend-hooks.mjs" },

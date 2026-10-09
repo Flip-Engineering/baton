@@ -10,6 +10,7 @@ import ./engines-decl.bend as Decl
 import ./engines-wire.bend as EnginesWire
 import ./native-request.bend as NativeRequest
 import ./native-catalog.bend as NativeCatalog
+import ./native-captures.bend as NativeCaptures
 import ./native-project-policy.bend as NativePolicy
 import ./service.bend as ContextService
 import ./native-managed-query.bend as ManagedQuery
@@ -695,7 +696,7 @@ def managed_recovery_association_row_matches(+bootstrap: ManagedQuery.Bootstrap,
                                              association: ContextAdmit.ManagedAssociation) -> Bool:
   match association:
     case ContextAdmit.ManagedAssociationStored{planValue, planIdentity,
-        resultSchema, artifactSha256, bootstrapText}:
+        resultSchema, artifactSha256, bootstrapText, answersText}:
       Bool.and(String.eq(planValue, ManagedQuery.bootstrap_plan_value(bootstrap)),
       Bool.and(String.eq(planIdentity, ManagedQuery.bootstrap_plan_identity(bootstrap)),
       Bool.and(String.eq(resultSchema, ManagedQuery.bootstrap_result_schema(bootstrap)),
@@ -1153,7 +1154,7 @@ def managed_prepare_roles(+db: String, +binding: String, +owner: String,
       EnginesWire.plan_value(plan), EnginesWire.plan_identity(plan), result_schema,
       artifact_path, keeper_path, guard_key, physical_role_key, owner_witness,
       recovery_argv, executable, runtime_path, provider_path, invocation_path,
-      invocation_sha256)
+      invocation_sha256, EnginesWire.captures_text(Sel.plan_inputs(plan)))
     +bootstrap_text : String = ManagedQuery.bootstrap_text(bootstrap)
     bootstrap_digest : String <- persist_managed_bootstrap(canonical_database,
       executable, runtime_path,
@@ -1574,6 +1575,70 @@ def launch_selected_plan(+plan: Sel.Plan, +result_schema: String,
         executable, runtime_path,
         selected_plan_frame(plan, query, owner, canonical))
 
+# Source acquisition returns the selected producers' retained records. The managed
+# invocation and admission receive the plan carrying that same set.
+def capture_supplier_frame(+executable: String, +runtime_path: String,
+                            +cwd: String, frame: StepInvocationFrame) -> IO(ProviderAnswer):
+  match frame:
+    case NativeStepRefused{module_id, declaration_digest, operation}:
+      IO.pure(ProviderAnswer, ProviderRefused{"captureStepMissing:" ++ module_id ++ ":" ++ operation})
+    case NativeStepFrame{frame}:
+      match frame:
+        case NativeFrameRefused{reason}: IO.pure(ProviderAnswer, ProviderRefused{reason})
+        case NativeFrameReady{value}:
+          do IO<ProviderAnswer>:
+            spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
+              Process.argv([runtime_path, "--experimental-strip-types",
+                installed_provider_path(executable), "--capture-inputs"]), cwd, "/dev/null")
+            provider_spawn(installed_provider_path(executable), cwd, value, spawned)
+
+def capture_supplier_rows(+plan: Sel.Plan, +query: String, +owner: String,
+                           rows: Result<&1,&1,U32 & String,String>) -> IO(NativeCaptures.CaptureAnswer):
+  match rows:
+    case Fail{error}: IO.pure(NativeCaptures.CaptureAnswer,
+      NativeCaptures.CapturesRefused{"captureAnswerReadFailed"})
+    case Done{value}: IO.pure(NativeCaptures.CaptureAnswer,
+      NativeCaptures.answer_rows(plan, query, owner, value))
+
+def capture_supplier_output(+db: String, +binding: String, +plan: Sel.Plan,
+                             +query: String, +owner: String,
+                             answer: ProviderAnswer) -> IO(NativeCaptures.CaptureAnswer):
+  match answer:
+    case ProviderRefused{reason}: IO.pure(NativeCaptures.CaptureAnswer,
+      NativeCaptures.CapturesRefused{reason})
+    case ProviderRuntime{path, version}: IO.pure(NativeCaptures.CaptureAnswer,
+      NativeCaptures.CapturesRefused{"captureRuntimeAnswerMalformed"})
+    case ProviderOutput{+value, status}:
+      Bool.pick(IO(NativeCaptures.CaptureAnswer), String.eq(status, "exit 0"),
+        do IO<NativeCaptures.CaptureAnswer>:
+          rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+            Req.json_tree_sql(value))
+          capture_supplier_rows(plan, query, owner, rows),
+        IO.pure(NativeCaptures.CaptureAnswer,
+          NativeCaptures.CapturesRefused{"captureProviderFailed:" ++ value}))
+
+def capture_plan_inputs(+db: String, +binding: String, +plan: Sel.Plan,
+                         +query: String, +owner: String, +canonical: String,
+                         +cwd: String, +executable: String,
+                         +runtime_path: String) -> IO(NativeCaptures.CaptureAnswer):
+  do IO<NativeCaptures.CaptureAnswer>:
+    answer : ProviderAnswer <- capture_supplier_frame(executable, runtime_path, cwd,
+      selected_plan_frame(plan, query, owner, canonical))
+    capture_supplier_output(db, binding, plan, query, owner, answer)
+
+def launch_captured_plan(+plan: Sel.Plan, +result_schema: String,
+                          +db: String, +binding: String, +owner: String,
+                          +query: String, +canonical: String, +cwd: String,
+                          +source_identity: String, +artifact_path: String,
+                          +executable: String, +runtime_path: String,
+                          answer: NativeCaptures.CaptureAnswer) -> IO(Unit):
+  match answer:
+    case NativeCaptures.CapturesRefused{condition}: IO.die(Unit, 3, condition)
+    case NativeCaptures.CapturesReady{captures}:
+      launch_selected_plan(NativeCaptures.with_captures(plan, captures), result_schema,
+        db, binding, owner, query, canonical, cwd, source_identity, artifact_path,
+        executable, runtime_path)
+
 def query_selection_answer(+db: String, +binding: String, +owner: String,
                            +query: String, +canonical: String, +cwd: String,
                            identity: Sel.ProjectPolicyIdentity,
@@ -1584,9 +1649,12 @@ def query_selection_answer(+db: String, +binding: String, +owner: String,
     case Sel.VerdictRefused{stage, +reason}:
       IO.die(Unit, 3, "selection:" ++ stage ++ ":" ++ Sel.rq_code(reason)
         ++ ":" ++ Sel.rq_detail(reason))
-    case Sel.VerdictAdmitted{plan, result_schema}:
-      launch_selected_plan(plan, result_schema, db, binding, owner, query,
-        canonical, cwd, source_identity, artifact_path, executable, runtime_path)
+    case Sel.VerdictAdmitted{+plan, result_schema}:
+      do IO<Unit>:
+        captures : NativeCaptures.CaptureAnswer <- capture_plan_inputs(db, binding,
+          plan, query, owner, canonical, cwd, executable, runtime_path)
+        launch_captured_plan(plan, result_schema, db, binding, owner, query,
+          canonical, cwd, source_identity, artifact_path, executable, runtime_path, captures)
 
 def project_selection(+db: String, +binding: String, +owner: String, +query: String,
                       +canonical: String, +cwd: String, +catalog: Decl.Cat,
