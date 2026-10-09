@@ -2,6 +2,7 @@
 import json
 import os
 import pathlib
+import signal
 import socket
 import sqlite3
 import stat
@@ -152,7 +153,8 @@ client.close()
 class Control(unittest.TestCase):
     def setUp(self):
         self.assertTrue(EXE.is_file(), f'Coordinator must be built at {EXE}')
-        retained = ROOT / '.scratch/bend2/control-fixtures'
+        evidence = os.environ.get('FINAL_NATIVE_CONTEXT_EVIDENCE')
+        retained = (pathlib.Path(evidence) if evidence else ROOT / '.scratch/bend2') / 'control-fixtures'
         retained.mkdir(parents=True, exist_ok=True)
         self.directory = pathlib.Path(tempfile.mkdtemp(prefix="control ' λ ", dir=retained))
         self.public_queue_calls = install_public_queue_codex(self, self.directory)
@@ -771,6 +773,123 @@ class Control(unittest.TestCase):
                     self.assertEqual(self.call('player', session)['native'], native)
                     shutdown_fixture_owner(self)
                     self.eventually(lambda: not self.process_rows())
+
+    def instant_direct_harness(self, name):
+        executable = self.directory / name
+        executable.write_text('#!' + sys.executable + '\n' + r'''
+import json,pathlib,sys
+args=sys.argv[1:]
+if '--prompt-file' in args:
+    prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
+else:
+    prompt=json.loads(sys.stdin.readline())['message']['content']
+pathlib.Path(__file__).with_suffix('.effect').write_text(prompt)
+if '--prompt-file' in args:
+    print(json.dumps({'stream':{'kind':'session','id':'instant-native'},
+                      'payload_type':'run.terminal.completed',
+                      'payload':{'kind':'run_terminal','terminal':'completed','text':prompt}}))
+else:
+    print(json.dumps({'type':'result','result':prompt,
+                      'session_id':'instant-native','is_error':False}))
+''')
+        executable.chmod(0o700)
+        return executable
+
+    def test_completed_direct_id_rejects_changed_request(self):
+        self.root()
+        for harness in ('muse', 'claude-code'):
+            with self.subTest(harness=harness):
+                session = 'completed-' + harness
+                self.recruit(session, harness)
+                assignment = self.call('player', session)
+                first = self.instant_direct_harness('first-' + harness)
+                ident = session + '-turn'
+                argv = ['turn', session, ident, first, assignment['model'],
+                        assignment['effort'], assignment['workspace'], self.task,
+                        self.directory / (ident + '.jsonl'), assignment['native']]
+                self.call(*argv, raw=True)
+                self.assertEqual(first.with_suffix('.effect').read_text(), self.task.read_text())
+                retained = self.call('delivery', ident)
+                self.assertEqual(retained['body'], self.task.read_text())
+                self.call(*argv, raw=True)
+                self.assertEqual(self.call('delivery', ident), retained)
+                changed = self.instant_direct_harness('changed-' + harness)
+                changed_task = self.directory / ('changed-' + harness + '.txt')
+                changed_task.write_text('Different task and executable under the same turn ID.\n')
+                result = self.call('turn', session, ident, changed, assignment['model'],
+                                   assignment['effort'], assignment['workspace'], changed_task,
+                                   self.directory / ('changed-' + harness + '.jsonl'),
+                                   assignment['native'], ok=False)
+                self.assertIn('different retained request', result['stderr'])
+                self.assertEqual(self.call('delivery', ident), retained)
+                self.assertFalse(changed.with_suffix('.effect').exists())
+
+    def test_direct_observer_loss_recovers_the_surviving_child(self):
+        self.root()
+        for harness in ('muse', 'claude-code'):
+            with self.subTest(harness=harness):
+                session = 'unresolved-' + harness
+                self.recruit(session, harness)
+                assignment = self.call('player', session)
+                first_id = session + '-first'
+                launched = self.dispatch('dispatch-turn', session, first_id, self.fixture,
+                                         self.directory / (first_id + '.jsonl'), self.task)
+                stream, start = self.accept(session)
+                before = self.rows('SELECT * FROM executions WHERE session=?', (session,))[0]
+                self.assertEqual((before['id'], before['mode']), (first_id, 'direct'))
+                self.assertTrue(before['directory'])
+                self.assertIn(before['phase'], ('starting', 'running'))
+                self.assertEqual(self.rows('SELECT id FROM messages WHERE id=?', (first_id,)), [])
+                observer = launched['deliveryPid']
+                selected = subprocess.run(['ps', '-p', str(observer), '-o', 'pid=,lstart=,stat=,command='],
+                                          capture_output=True, text=True, check=True).stdout.strip()
+                self.assertIn(str(self.db), selected)
+                self.assertIn(first_id, selected)
+                self.assertIn(' turn ', selected)
+                self.assertNotEqual(observer, start['ppid'])
+                replacement = self.instant_direct_harness('replacement-' + harness)
+                argv = ['turn', session, session + '-replacement', replacement,
+                        assignment['model'], assignment['effort'], assignment['workspace'],
+                        self.task, self.directory / (session + '-replacement.jsonl'),
+                        assignment['native']]
+                self.call(*argv, ok=False)
+                self.assertFalse(replacement.with_suffix('.effect').exists())
+                current = subprocess.run(['ps', '-p', str(observer), '-o', 'pid=,lstart=,stat=,command='],
+                                         capture_output=True, text=True, check=True).stdout.strip()
+                selected_fields = selected.split(None, 7)
+                current_fields = current.split(None, 7)
+                self.assertEqual(len(selected_fields), 8, selected)
+                self.assertEqual(len(current_fields), 8, current)
+                self.assertEqual(current_fields[:6], selected_fields[:6])
+                self.assertEqual(current_fields[7], selected_fields[7])
+                self.assertFalse(current_fields[6].startswith('Z'))
+                os.kill(observer, signal.SIGKILL)
+                self.eventually(lambda: not any(row.split(None, 1)[0] == str(observer)
+                                               for row in self.process_rows()))
+                self.assertEqual(self.action(stream, ack=True), {'acknowledged': True})
+                recovery = self.eventually(lambda: next((row for row in self.process_rows()
+                    if '--recover-direct' in row and first_id in row and str(self.db) in row), None))
+                result = self.call(*argv, ok=False)
+                after = self.rows('SELECT * FROM executions WHERE session=?', (session,))[0]
+                survived = self.action(stream, ack=True)
+                self.assertEqual(survived, {'acknowledged': True})
+                self.assertFalse(replacement.with_suffix('.effect').exists())
+                self.assertEqual((after['id'], after['directory']), (before['id'], before['directory']))
+                self.assertEqual(self.rows('SELECT id FROM messages WHERE id=?', (first_id,)), [])
+                with (self.directory / 'direct-boundary.jsonl').open('a') as evidence:
+                    evidence.write(json.dumps({'harness': harness, 'firstStart': start,
+                        'observer': selected, 'recovery': recovery, 'before': before, 'after': after,
+                        'retry': result, 'firstFixtureStillResponsive': survived}) + '\n')
+                self.finish(stream, 'The surviving direct child completed through recovery.')
+                self.exited(session)
+                self.eventually(lambda: any(row['id'] == first_id for row in self.call('turns', session)))
+                self.assertEqual(self.call('delivery', first_id)['body'],
+                                 'The surviving direct child completed through recovery.')
+                self.assertEqual(self.call('player', session)['native'], start['native'])
+                self.assertEqual(self.rows('SELECT id FROM messages WHERE id=?',
+                                          (session + '-replacement',)), [])
+                shutdown_fixture_owner(self)
+                self.eventually(lambda: not self.process_rows())
 
     def test_direct_turn_delivers_pending_input_after_native_exit(self):
         self.root()

@@ -2131,13 +2131,13 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 4)])
         self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
 
-    def test_stop_with_an_active_direct_execution_is_refused_and_preserves_the_claim(self):
+    def test_stop_with_a_legacy_direct_execution_is_refused_and_preserves_the_claim(self):
         self.player()
         self.prepare_input('owed', 'parent')
         self.claim('parent', 'claimed', 'owed', 4)
         with sqlite3.connect(str(self.db)) as database:
             database.execute("INSERT INTO executions(session, id, mode, directory, phase, status)"
-                             " VALUES ('parent', 'direct-1', 'direct', '/tmp', 'running', '')")
+                             " VALUES ('parent', 'direct-1', 'direct', '', 'running', '')")
         refused = self.coord('stop', 'parent', 'stop-direct', 'operator resolution', ok=False)
         self.assertNotEqual(refused.returncode, 0)
         self.assertEqual(self.claim_rows('parent'), [('parent', 'claimed', 'owed', 4)])

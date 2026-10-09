@@ -235,21 +235,50 @@ class Stop(unittest.TestCase):
         self.assertEqual(self.coord('force-stop', 'parent', 'operator-stop')['nativeStatus'], 'signal 9')
         self.assertEqual(self.rows('SELECT * FROM messages WHERE id=?', [completed['reportId']])[0]['receipt'], 'parent-received')
 
-    def test_active_direct_turn_refuses_stop_without_mutating_input(self):
+    def test_legacy_direct_turn_refuses_stop_without_mutating_input(self):
+        self.configure()
+        self.player(harness='codex')
+        self.prepare_input('owed', 'parent', 'Retain this input.')
+        with sqlite3.connect(self.db) as database:
+            database.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                             "VALUES ('parent','legacy-direct','direct','','running','')")
+        original = self.rows("SELECT * FROM messages WHERE recipient='parent'")
+        execution = self.rows("SELECT * FROM executions WHERE session='parent'")
+        refused = self.stop(ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('legacy direct turn without a keeper directory', refused.stderr)
+        self.assertEqual(self.rows('SELECT * FROM session_stops'), [])
+        self.assertEqual(self.rows("SELECT * FROM messages WHERE recipient='parent'"), original)
+        self.assertEqual(self.rows("SELECT * FROM executions WHERE session='parent'"), execution)
+
+    def test_retained_direct_turn_stop_preserves_input_and_observes_exit(self):
         self.configure()
         self.player(harness='codex')
         task = self.directory / 'task'
         task.write_text('Finish this direct turn.')
         direct = self.spawn('turn', 'parent', 'direct-turn', str(self.fixture), 'parent', 'low',
                             str(self.directory), str(task), str(self.directory / 'direct.jsonl'), '')
-        stream, _ = self.accept_child(direct, 'parent',
+        stream, started = self.accept_child(direct, 'parent',
                                       'Direct turn exited before native startup')
-        refused = self.stop(ok=False)
-        self.assertNotEqual(refused.returncode, 0)
-        self.assertIn('direct turn is unsupported', refused.stderr)
-        self.assertEqual(self.rows('SELECT * FROM session_stops'), [])
-        self.action(stream, body='Direct turn finished normally.')
-        self.finish(direct)
+        self.eventually(lambda: self.coord('player', 'parent')['native'] == started['native'],
+                        'direct native identity was not recorded')
+        execution = self.rows("SELECT * FROM executions WHERE session='parent'")[0]
+        self.assertEqual(execution['mode'], 'direct')
+        self.assertTrue(execution['directory'])
+        self.connect('parent')
+        self.message('owed', 'parent', 'This queued correction must remain visible.')
+        original = self.rows("SELECT * FROM messages WHERE recipient='parent' ORDER BY seq")
+        requested = self.stop()
+        self.assertEqual(requested['attempt'], 'direct-turn')
+        self.assertEqual(requested['requestedSignal'], 15)
+        self.finish(direct, ok=False)
+        self.assertEqual(stream.readline(), b'')
+        completed = self.completed()
+        self.assertEqual(completed['nativeStatus'], 'signal 15')
+        self.assertEqual(self.rows("SELECT * FROM messages WHERE recipient='parent' ORDER BY seq"), original)
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
+        self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
+        self.shutdown_idle_database_owner('stopped direct processes remained')
 
     def test_child_report_retry_notifies_stopped_parents_parent_once(self):
         self.configure()
