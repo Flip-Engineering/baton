@@ -387,7 +387,7 @@ await evalJs(`document.querySelector('#ribbon [data-focus="ribbon-list"]').click
 await until('phase B ribbon list opens', `document.querySelectorAll('#ribbon .ribbon-row').length > 0`);
 check('phase B strip holds shared and unshared ticks with no inclusion toggle', await evalJs(
   `!!document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-tick[data-kw-node="qa-worker-finding"]') && !!document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-tick[data-kw-node="qa-aide-finding"]')`));
-await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-tick[data-kw-node="qa-aide-finding"]').click()`);
+await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-tick[data-kw-node="qa-aide-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
 check('strip tick selection marks its tick', await evalJs(
   `document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-tick[data-kw-node="qa-aide-finding"]').classList.contains('selected')`));
 
