@@ -95,7 +95,7 @@ def apply(+db: String, +session: String, +level: String) -> IO(String):
   Bool.pick(IO(String),String.is_empty(level),read(db,session),write(db,session,level))
 
 def terminal_kind(+kind: String) -> Bool:
-  Bool.or(String.eq(kind,"agent_end"),Bool.or(String.eq(kind,"result"),String.eq(kind,"turn_end")))
+  Bool.or(String.eq(kind,"agent_end"),String.eq(kind,"turn_end"))
 
 def first_failure(first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,Unit>:
   match first:
@@ -202,6 +202,75 @@ def frame_id(db: String, line: String, omp: Bool) -> IO(String):
 def frame_identity(db: String, line: String, +kind: String, +omp: Bool) -> IO(String):
   Bool.pick(IO(String),Bool.and(omp,Bool.or(prefix_kind(kind),close_kind(kind))),frame_id(db,line,omp),IO.pure(String,""))
 
+# Public terminal projections retain identifiers, status, completion text and
+# raw size accounting. Turn supplies the normalized event and streamed-message
+# fallback. Retained stdout and the provider journal keep the native frame.
+def terminal_messages_of(+source: String) -> String:
+  "CASE WHEN json_type(" ++ source ++ ",'$.messages')='array' THEN json_extract(" ++ source ++ ",'$.messages') WHEN json_type(" ++ source ++ ",'$.message')='object' THEN json_array(json_extract(" ++ source ++ ",'$.message')) ELSE '[]' END"
+
+def terminal_results_of(+source: String) -> String:
+  "CASE WHEN json_type(" ++ source ++ ",'$.toolResults')='array' THEN json_extract(" ++ source ++ ",'$.toolResults') ELSE '[]' END"
+
+# The last assistant message a terminal envelope carries: the newest one in the
+# agent_end messages array, or the single turn_end message.
+def terminal_message_of(source: String) -> String:
+  "(SELECT m.value FROM json_each(" ++ terminal_messages_of(source) ++ ") m WHERE CASE WHEN m.type='object' THEN json_extract(m.value,'$.role') END='assistant' ORDER BY m.key DESC LIMIT 1)"
+
+# The completion or report text, read the same way terminal_body reads it.
+def terminal_text_of(source: String) -> String:
+  +message = terminal_message_of(source)
+  "(SELECT group_concat(CASE WHEN c.type='object' THEN json_extract(c.value,'$.text') END,char(10)) FROM json_each(CASE WHEN json_type(" ++ message ++ ",'$.content')='array' THEN json_extract(" ++ message ++ ",'$.content') ELSE '[]' END) c WHERE CASE WHEN c.type='object' THEN json_extract(c.value,'$.type') END='text')"
+
+def terminal_ids_of(source: String) -> String:
+  "coalesce((SELECT json_group_array(json_extract(m.value,'$.responseId')) FROM json_each(" ++ terminal_messages_of(source) ++ ") m WHERE CASE WHEN m.type='object' THEN json_type(m.value,'$.responseId') END='text'),'[]')"
+
+def terminal_calls_of() -> String:
+  "(SELECT json_group_array(call_id) FROM calls)"
+
+# Byte and message counts describe the raw frame. Text and response identifiers
+# come from the normalized event, including its streamed-message fallback.
+# The turns row stores that event. Retained receive stdout keeps raw frames
+# until acknowledgement; the provider journal retains its original record.
+def terminal_object_sql(+line: String, +event: String, +log: String) -> String:
+  +messages = terminal_messages_of("frame.value")
+  +results = terminal_results_of("frame.value")
+  +text = terminal_text_of("observed")
+  +object = "json_object("
+    ++ "'type',json_extract(value,'$.type'),'compacted',json('true'),"
+    ++ "'eventBytes',length(CAST(value AS BLOB)),"
+    ++ "'messageCount',(CASE WHEN json_type(value,'$.messages')='array' THEN (SELECT count(*) FROM json_each(value,'$.messages') e WHERE e.type='object') ELSE 0 END)"
+    ++ "+(CASE WHEN json_type(value,'$.message')='object' THEN 1 ELSE 0 END)"
+    ++ "+(CASE WHEN json_type(value,'$.toolResults')='array' THEN (SELECT count(*) FROM json_each(value,'$.toolResults') r WHERE r.type='object') ELSE 0 END),"
+    ++ "'textCharacters',coalesce(length(" ++ text ++ "),0),"
+    ++ "'text'," ++ text ++ ","
+    ++ "'error'," ++ C.omp_terminal_error_text_sql(event) ++ ","
+    ++ "'isTerminal',json(CASE WHEN json_extract(value,'$.isTerminal')=1 THEN 'true' WHEN json_extract(value,'$.isTerminal')=0 THEN 'false' END),"
+    ++ "'yielded',json(CASE WHEN json_extract(value,'$.yielded')=1 THEN 'true' WHEN json_extract(value,'$.yielded')=0 THEN 'false' END),"
+    ++ "'identifiers',json_object('responseIds'," ++ terminal_ids_of("observed") ++ ",'toolCallIds'," ++ terminal_calls_of() ++ "),"
+    ++ "'full',json_object('turnsRow'," ++ J.string_literal(attempt_of(log)) ++ ",'log'," ++ J.string_literal(log) ++ "))"
+  +calls = "calls(call_id) AS (SELECT json_extract(m.value,'$.toolCallId') FROM frame,json_each(" ++ messages ++ ") m WHERE CASE WHEN m.type='object' THEN json_type(m.value,'$.toolCallId') END='text'"
+    ++ " UNION ALL SELECT json_extract(t.value,'$.toolCallId') FROM frame,json_each(" ++ results ++ ") t WHERE CASE WHEN t.type='object' THEN json_type(t.value,'$.toolCallId') END='text')"
+  +strip = "base(o0) AS (SELECT " ++ object ++ " FROM frame), "
+    ++ "r1(o1) AS (SELECT CASE WHEN json_extract(o0,'$.text') IS NULL THEN json_remove(o0,'$.text') ELSE o0 END FROM base), "
+    ++ "r2(o2) AS (SELECT CASE WHEN json_extract(o1,'$.error') IS NULL THEN json_remove(o1,'$.error') ELSE o1 END FROM r1), "
+    ++ "r3(o3) AS (SELECT CASE WHEN json_extract(o2,'$.isTerminal') IS NULL THEN json_remove(o2,'$.isTerminal') ELSE o2 END FROM r2), "
+    ++ "r4(o4) AS (SELECT CASE WHEN json_extract(o3,'$.yielded') IS NULL THEN json_remove(o3,'$.yielded') ELSE o3 END FROM r3), "
+    ++ "r5(o5) AS (SELECT CASE WHEN json_extract(o4,'$.full.turnsRow')='' THEN json_remove(o4,'$.full.turnsRow') ELSE o4 END FROM r4)"
+  "WITH frame(value,observed) AS (VALUES(" ++ C.q(line) ++ "," ++ C.q(event) ++ ")), " ++ calls ++ ", " ++ strip ++ " SELECT coalesce(o5,'') FROM r5;"
+
+# The projection is not idempotent: projecting a compact line again zeroes the
+# counts and can embed the line as the error text, so a compact line is never
+# fed back as a frame. No replay path does that today.
+def terminal_compact(db: String, +line: String, +event: String, +log: String) -> IO(String):
+  do IO<String>:
+    projected : String <- IO.try(String,DB.Sql.query(db,terminal_object_sql(line,event,log)))
+    IO.pure(String,Tx.trim_nl(projected))
+
+def retained_from(compact: Bool, db: String, +line: String, event: String, +log: String) -> IO(String):
+  match compact:
+    case True{}: terminal_compact(db,line,event,log)
+    case False{}: IO.pure(String,line)
+
 def quiet_keep(keep: Bool, +line: String, held: String) -> List<String> & String:
   match keep:
     case True{}: (Con{line,Nil{}},held)
@@ -262,6 +331,16 @@ def step_choose_step(diagnostic: Bool, +level: String, +kind: String, +id: Strin
 def frame_step(policy: Policy, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
   match policy:
     case Policy{+level}: step_choose_step(String.eq(level,"diagnostic"),level,kind,id,line,held)
+
+# The line the public log receives. A classified terminal frame is written as the
+# compact projection at every level except diagnostic, where every frame is
+# written verbatim by intent. Every other frame is written as received, and the
+# held prefix frames keep the received line, so the checkpoint and the flush
+# paths are unchanged.
+def retained(db: String, policy: Policy, +kind: String, +line: String, event: String, +log: String) -> IO(String):
+  match policy:
+    case Policy{+level}:
+      retained_from(Bool.and(terminal_kind(kind),Bool.not(String.eq(level,"diagnostic"))),db,line,event,log)
 
 def step_lines(step: List<String> & String) -> List<String>:
   (lines,held)=step

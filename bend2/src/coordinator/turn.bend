@@ -223,7 +223,10 @@ def codex_finished(+db: String, player: String, id: String, +source: String, pre
 # The live issue-608-reclaim turn emitted its report in message_end, then an
 # agent_end with messages=[] and messageCount=352. Keep the latest assistant
 # message in this reader and use it when the terminal envelope omits messages.
-# The native log keeps both original frames.
+# The message_end frame is written as received; the agent_end frame reaches the
+# log as the compact projection, and the raw record stays in the attempt stdout
+# spool of a retained receive until acknowledgement and in the provider's own
+# journal.
 def omp_message(db: String, +event: String, previous: String, enabled: Bool) -> IO(String):
   match enabled:
     case False{}: IO.pure(String,previous)
@@ -233,29 +236,39 @@ def omp_message(db: String, +event: String, previous: String, enabled: Bool) -> 
 
 # The completion reader calls json_extract for content block fields. Keep
 # object blocks on assistant messages in order and give non-array content an
-# empty extraction list. The raw native frame remains in the log.
+# empty extraction list. Normalization changes nothing retained elsewhere: a
+# retained receive keeps the raw frame stream in the attempt stdout spool until
+# acknowledgement, and the provider's own journal holds the provider's raw
+# record. The public log holds the compact projection of a terminal frame.
 def omp_content_sql(+message: String) -> String:
-  "CASE WHEN json_extract(" ++ message ++ ",'$.role')='assistant' THEN json_set(" ++ message ++ ",'$.content',json(CASE WHEN json_type(" ++ message ++ ",'$.content')='array' THEN coalesce((SELECT json_group_array(json(CASE WHEN json_type(" ++ message ++ ",'$.content[' || content.key || ']')='object' THEN content.value ELSE '{}' END)) FROM (SELECT c.value AS value,c.key AS key FROM json_each(" ++ message ++ ",'$.content') c WHERE json_type(" ++ message ++ ",'$.content[' || c.key || ']')='object' ORDER BY c.key) content),'[]') ELSE '[]' END)) ELSE json(" ++ message ++ ") END"
+  "CASE WHEN json_extract(" ++ message ++ ",'$.role')='assistant' THEN json_set(" ++ message ++ ",'$.content',json(CASE WHEN json_type(" ++ message ++ ",'$.content')='array' THEN coalesce((SELECT json_group_array(json(content.value)) FROM (SELECT c.value AS value FROM json_each(" ++ message ++ ",'$.content') c WHERE c.type='object' ORDER BY c.key) content),'[]') ELSE '[]' END)) ELSE json(" ++ message ++ ") END"
 
-# Normalize extraction input for agent_end while retaining all source frames in
-# the native log. JSON object messages and content blocks retain source order.
-def omp_terminal_objects_sql(+event: String) -> String:
-  "(SELECT count(*) FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object')"
+# Normalize extraction input for agent_end. JSON object messages and content
+# blocks retain source order, and the raw frame stream stays in the attempt
+# stdout spool of a retained receive until acknowledgement.
+def omp_terminal_objects_sql(+source: String) -> String:
+  "(SELECT count(*) FROM json_each(" ++ source ++ ",'$.messages') m WHERE m.type='object')"
 
-def omp_terminal_kept_sql(+event: String) -> String:
-  "coalesce((SELECT json_group_array(json(message.value)) FROM (SELECT CASE WHEN json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object' THEN " ++ omp_content_sql("m.value") ++ " ELSE '{}' END AS value,m.key AS key FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_type(" ++ C.q(event) ++ ",'$.messages[' || m.key || ']')='object' ORDER BY m.key) message),'[]')"
+def omp_terminal_kept_sql(+source: String) -> String:
+  "coalesce((SELECT json_group_array(json(message.value)) FROM (SELECT " ++ omp_content_sql("m.value") ++ " AS value,m.key AS key FROM json_each(" ++ source ++ ",'$.messages') m WHERE m.type='object' ORDER BY m.key) message),'[]')"
 
-def omp_terminal_messages_sql(+event: String, +message: String) -> String:
-  +objects = omp_terminal_objects_sql(event)
-  +kept = omp_terminal_kept_sql(event)
+def omp_terminal_messages_sql(+source: String, +message: String) -> String:
+  +objects = omp_terminal_objects_sql(source)
+  +kept = omp_terminal_kept_sql(source)
   "CASE WHEN " ++ objects ++ "=0 AND json_valid(" ++ C.q(message) ++ ") THEN json_array(json(" ++ C.q(message) ++ ")) ELSE " ++ kept ++ " END"
 
 # OMP may return valid terminal envelopes whose messages array contains a
 # non-object metadata marker. Keep object messages in their original order for
-# result extraction. The native log retains the unmodified frame.
+# result extraction. The value here is the observed event the turns row
+# receives. A terminal frame reaches the public log as the compact projection
+# built by logs.bend terminal_object_sql. The raw frame stream stays in the
+# attempt stdout spool of a retained receive until acknowledgement, and the
+# provider's own journal holds the provider's raw record.
+# The frame arrives once, through the one-row seam frame_id_sql already uses, so
+# the extraction quotes the envelope once instead of once per SQL expression.
 def omp_terminal_sql(+event: String, +message: String) -> String:
-  +messages = omp_terminal_messages_sql(event,message)
-  "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 THEN CASE WHEN json_type(" ++ C.q(event) ++ ",'$.messages')='array' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json(" ++ messages ++ ")) WHEN json_valid(" ++ C.q(message) ++ ") THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END;"
+  +messages = omp_terminal_messages_sql("value",message)
+  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='agent_end' AND coalesce(json_extract(value,'$.isTerminal'),1)=1 THEN CASE WHEN json_type(value,'$.messages')='array' THEN json_set(value,'$.messages',json(" ++ messages ++ ")) WHEN json_valid(" ++ C.q(message) ++ ") THEN json_set(value,'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE value END ELSE value END ELSE value END FROM frame;"
 
 def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) -> IO(String):
   match enabled:
@@ -420,7 +433,7 @@ def append_frame(log: String, line: String, keep: Bool) -> IO(Result<&1,&1,U32 &
 def frame_kind(db: String, line: String, omp: Bool) -> IO(String):
   match omp:
     case False{}: IO.pure(String,"")
-    case True{}: IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE json_extract(value,'$.type') WHEN 'message_update' THEN 'message_update' WHEN 'tool_execution_update' THEN 'tool_execution_update' WHEN 'message_start' THEN 'message_start' WHEN 'response' THEN 'response' WHEN 'message_end' THEN 'message_end' WHEN 'tool_execution_start' THEN 'tool_execution_start' WHEN 'tool_execution_end' THEN 'tool_execution_end' WHEN 'agent_end' THEN 'agent_end' WHEN 'extension_ui_request' THEN 'extension_ui_request' ELSE '' END ELSE '' END FROM frame;"))
+    case True{}: IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE json_extract(value,'$.type') WHEN 'message_update' THEN 'message_update' WHEN 'tool_execution_update' THEN 'tool_execution_update' WHEN 'message_start' THEN 'message_start' WHEN 'response' THEN 'response' WHEN 'message_end' THEN 'message_end' WHEN 'tool_execution_start' THEN 'tool_execution_start' WHEN 'tool_execution_end' THEN 'tool_execution_end' WHEN 'turn_end' THEN 'turn_end' WHEN 'agent_end' THEN 'agent_end' WHEN 'extension_ui_request' THEN 'extension_ui_request' ELSE '' END ELSE '' END FROM frame;"))
 
 # The requested selection is active only when the server answered the
 # set_event_filter request successfully with that exact selection: the echoed
@@ -531,16 +544,18 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +current_policy : Logs.Policy <- Logs.policy(db,player)
         +kind : String <- frame_kind(db,line,String.eq(harness,"omp\n"))
         +frame_key : String <- Logs.frame_identity(db,line,Tx.trim_nl(kind),String.eq(harness,"omp\n"))
-        +next_held : String <- IO.pure(String,Logs.step_held(Logs.frame_step(current_policy,Tx.trim_nl(kind),frame_key,line,held)))
-        +logged : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(log,Logs.step_lines(Logs.frame_step(current_policy,Tx.trim_nl(kind),frame_key,line,held)),log_failed)
+        +message : String <- omp_message(db,line,last_message,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"message_end")))
+        +event : String <- omp_terminal(db,line,message,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"agent_end")))
+        +kept : String <- Logs.retained(db,current_policy,Tx.trim_nl(kind),line,event,log)
+        +step : List<String> & String <- IO.pure(List<String> & String,Logs.frame_step(current_policy,Tx.trim_nl(kind),frame_key,kept,held))
+        +next_held : String <- IO.pure(String,Logs.step_held(step))
+        +logged : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(log,Logs.step_lines(step),log_failed)
         +saved_checkpoint : Result<&1,&1,U32 & String,Unit> <- checkpoint_written(logged,Bool.and(String.is_empty(attempt),Bool.and(Bool.not(log_failed),Bool.not(String.eq(held,next_held)))),log,next_held)
         +written : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.first_failure(saved_checkpoint,logged))
         +failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,written))
         +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
         +sealed : Bool <- IO.pure(Bool,Bool.not(String.is_empty(terminal)))
         +next_cursor : String <- Guidance.observe(db,player,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant),sealed)
-        +message : String <- omp_message(db,line,last_message,Bool.and(String.eq(harness,"omp\n"),relevant))
-        +event : String <- omp_terminal(db,line,message,Bool.and(String.eq(harness,"omp\n"),relevant))
         +next_primary : String <- primary_command(db,event,primary,String.eq(harness,"muse\n"))
         +next_current : String <- current_command(db,event,current,String.eq(harness,"muse\n"))
         +state : String <- completion_state_event(db,id,player,event,next_primary,String.eq(harness,"muse\n"))
@@ -552,7 +567,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +closed_input : Result<&1,&1,U32 & String,Unit> <- close_input(handle,Bool.not(Bool.and(String.eq(harness,"omp\n"),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended))))))
         +codex_state : String <- codex_frames(db,codex_log,line,String.eq(harness,"codex\n"))
         questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool <- NativeRequests.observe(db,player,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
-        +mode : String <- filter_mode(db,line,String.eq(harness,"omp\n"),requested)
+        +mode : String <- filter_mode(db,line,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"response")),requested)
         +next_filter : String <- IO.pure(String,Omp.filter_next(filter,Tx.trim_nl(mode)))
         +next_checkpoint : Observer.State <- IO.pure(Observer.State,Observer.make(next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_held))
         NativeRequests.with_observation(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,questions,wakes => question_error => question_incomplete => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:

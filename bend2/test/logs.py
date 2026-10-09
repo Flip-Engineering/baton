@@ -186,7 +186,15 @@ sys.exit(%d)
         ]
         self.stream(frames)
         note = '{"type":"baton_event_filter","requested":"array+delta","active":false,"outcome":"unacknowledged"}'
-        self.assertEqual(self.lines(), [self.terminal(), '{"probe":"unknown type"}', note])
+        lines = self.lines()
+        self.assertEqual(len(lines), 3)
+        compact = json.loads(lines[0])
+        self.assertEqual(compact['type'], 'agent_end')
+        self.assertEqual(compact['text'], 'Complete answer λ')
+        self.assertEqual(compact['textCharacters'], len('Complete answer λ'))
+        self.assertEqual(compact['eventBytes'], len(self.terminal().encode()))
+        self.assertEqual(lines[1], '{"probe":"unknown type"}')
+        self.assertEqual(lines[2], note)
 
     def test_policy_reads_and_sets_only_the_concise_level(self):
         self.assertEqual(json.loads(self.call('logs', 'omp-worker')),
@@ -401,7 +409,9 @@ assert sys.stdin.read()==''
         finally:
             if turn.poll() is None: turn.kill()
         self.assertEqual(turn.returncode, 0, stderr)
-        self.assertIn(self.terminal('Concurrent answer'), self.lines())
+        retained = [json.loads(line) for line in self.lines()]
+        self.assertEqual([row['text'] for row in retained if row.get('type') == 'agent_end'],
+                         ['Concurrent answer'])
         self.assertEqual(json.loads(self.call('delivery', 'turn-1'))['body'], 'Concurrent answer')
 
     def test_interrupted_tool_call_keeps_only_its_last_update(self):

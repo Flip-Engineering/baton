@@ -12,6 +12,16 @@ The OMP setup request carries the session level to the provider before `get_stat
 
 The coordinator appends each retained frame to the generation log. It preserves complete frames, including large frames. The native process writes all stderr bytes to the unique path registered for that run.
 
+### Terminal frames
+
+An OMP terminal frame (`agent_end`, `turn_end`) reaches the public log as a compact projection of the provider envelope at every level except `diagnostic`. The line carries `type`, `compacted`, `eventBytes` (the byte length of the envelope it replaces), `messageCount`, `textCharacters`, `text`, `error` when the provider reported one, `isTerminal` and `yielded` when the envelope carries them, `identifiers.responseIds` and `identifiers.toolCallIds`, and `full`, which names the turn row and the log path. A key whose value the envelope does not carry is absent from the line.
+
+The projection covers the terminal kinds the OMP classification names. A terminal frame from another harness (Codex, Muse, Claude) carries an unclassified kind and is written as received at every level. At `diagnostic` every frame is written verbatim.
+
+`messageCount` counts the object entries the envelope carries across its messages array, its single message and its tool results, so a non-object marker in a messages array does not count. `identifiers.responseIds` lists the assistant entries, the only role that carries a `responseId`. `identifiers.toolCallIds` lists the tool result entries. `textCharacters` counts the extracted assistant text, the same text the `text` key carries, and includes the retained streamed completion when an `agent_end` envelope has an empty messages array. `error` carries the provider diagnostic for a terminal envelope whose last assistant message reports a failed stop reason.
+
+The retained records hold different things. The public log holds this projection. The turns row holds the observed event, with its message and content arrays reduced to object entries. A retained receive keeps the raw frame stream in the attempt `stdout` spool until acknowledgement unlinks it. The provider's own journal holds the provider's raw record.
+
 ## Generations and checkpoints
 
 `Logs.attempt_log(BASE, TURN)` names a separate generation file for each turn. A generation path preserves the turn identity and prevents later runs from appending into an earlier run's public log. `OUTPUT_LOG.pending` stores the latest incomplete frames for direct turns. A later turn appends that checkpoint before new frames and removes it after the append succeeds.

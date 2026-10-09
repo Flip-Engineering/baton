@@ -164,8 +164,15 @@ assert sys.stdin.read()==''
         self.assertEqual([f['partialResult']['content'][0]['text'] for f in frames if f.get('type')=='tool_execution_update'], [self.task.read_text()])
         with sqlite3.connect(self.db) as connection:
             stored_event=connection.execute('SELECT event FROM turns WHERE id=?',('omp-turn',)).fetchone()[0]
-        self.assertEqual(json.loads(stored_event), next(frame for frame in frames
-                         if frame.get('type') == 'agent_end' and frame.get('isTerminal') is True))
+        observed=json.loads(stored_event)
+        self.assertEqual(observed['type'],'agent_end')
+        self.assertIs(observed['isTerminal'],True)
+        self.assertEqual([message['role'] for message in observed['messages']],['assistant','assistant'])
+        compact=next(frame for frame in frames
+                     if frame.get('type')=='agent_end' and frame.get('isTerminal') is True)
+        self.assertEqual(compact['text'],'Full final answer λ')
+        self.assertEqual(compact['textCharacters'],len('Full final answer λ'))
+        self.assertEqual(compact['messageCount'],2)
         args=json.loads((self.cwd/'argv.json').read_text())
         self.assertEqual(args[args.index('--mode')+1],'rpc')
         self.assertEqual(args[args.index('--session-dir')+1],str(self.db)+'.sessions')
@@ -201,8 +208,17 @@ assert sys.stdin.read()==''
 ''')
         self.call('turn','omp-worker','retained-turn',str(self.player),'model','low',str(self.cwd),str(self.task),str(self.log),'')
         note='{"type":"baton_event_filter","requested":"array+delta","active":false,"outcome":"unacknowledged"}'
-        self.assertEqual(self.generation('retained-turn').read_text().splitlines(),
-                         retained+prefixes+[terminal,note])
+        lines=self.generation('retained-turn').read_text().splitlines()
+        self.assertEqual(lines[:len(retained+prefixes)], retained+prefixes)
+        compact=json.loads(lines[len(retained+prefixes)])
+        self.assertEqual(compact['type'],'agent_end')
+        self.assertEqual(compact['text'],final_text)
+        self.assertEqual(compact['textCharacters'],len(final_text))
+        self.assertEqual(compact['eventBytes'],len(terminal.encode()))
+        self.assertEqual(compact['full']['turnsRow'],'retained-turn')
+        self.assertEqual(compact['full']['log'],str(self.generation('retained-turn')))
+        self.assertEqual(lines[-1],note)
+        self.assertEqual(len(lines),len(retained+prefixes)+2)
         self.assertEqual(json.loads(self.call('delivery','retained-turn'))['body'],final_text)
 
     def test_omp_empty_terminal_envelope_delivers_streamed_trial_report(self):
@@ -212,6 +228,7 @@ assert sys.stdin.read()==''
         expected = '\n'.join(c['text'] for c in final['message']['content'] if c['type'] == 'text')
         self.assertEqual(terminal['messages'], [])
         self.register('omp-worker','root','omp','deepseek/deepseek-flash','low',str(self.cwd),'omp-branch','base')
+        self.call('logs','omp-worker','quiet')
         (self.cwd / 'events.jsonl').write_text(events)
         receiver = self.cwd / 'root-receiver.py'
         receiver.write_text('import json,pathlib,sqlite3,sys\n'
@@ -233,7 +250,16 @@ assert sys.stdin.read()==''
         self.assertEqual(json.loads(self.call('delivery','trial-report'))['body'], expected)
         self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'], expected)
         note='{"type":"baton_event_filter","requested":"array+delta","active":false,"outcome":"unacknowledged"}'
-        self.assertEqual(self.generation('trial-report').read_text().splitlines(),events.splitlines()+[note])
+        lines=self.generation('trial-report').read_text().splitlines()
+        compact=json.loads(lines[0])
+        self.assertEqual(compact['type'],'agent_end')
+        self.assertEqual(compact['messageCount'],0)
+        self.assertEqual(compact['textCharacters'],len(expected))
+        self.assertEqual(compact['eventBytes'],len(events.splitlines()[1].encode()))
+        self.assertEqual(compact['text'],expected)
+        self.assertEqual(compact['full']['turnsRow'],'trial-report')
+        self.assertEqual(lines[1],note)
+        self.assertEqual(len(lines),2)
         self.assertEqual([json.loads(line) for line in received.read_text().splitlines()], [expected])
         self.player.unlink()
         self.call('turn','omp-worker','trial-report',str(self.player),'deepseek/deepseek-flash','low',str(self.cwd),str(self.task),str(self.log),'')

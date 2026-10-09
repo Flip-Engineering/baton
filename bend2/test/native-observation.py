@@ -40,6 +40,15 @@ class NativeObservation(RECEIVE.Receive):
                 return result
             time.sleep(.01)
 
+    def attempt_stdout(self, session):
+        """The retained receive's raw frame spool, which acknowledgement unlinks."""
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            row = database.execute(
+                'SELECT directory FROM executions WHERE session=?', (session,)).fetchone()
+        if row is None or not row[0]:
+            self.fail(f'{session} has no retained attempt directory')
+        return pathlib.Path(row[0]) / 'stdout'
+
     def test_mixed_agent_end_members_preserve_completion_and_raw_frame(self):
         self.player(harness='omp')
         self.coord('message', 'mixed-task', 'root', 'parent', 'task', 'Read this task.')
@@ -70,15 +79,19 @@ class NativeObservation(RECEIVE.Receive):
         }
         self.action(stream, native_frame=terminal)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        raw = self.attempt_stdout('parent').read_text()
         self.action(stream, exit_fixture=True)
         self.finish(observer)
 
         turns = self.coord('turns', 'parent')
         self.assertEqual([row['reportBody'] for row in turns], ['Observed completion text.'])
         log = self.output_log('parent').read_text()
-        self.assertIn('181 items elided for RPC frame', log)
-        self.assertIn('plain string content block', log)
+        retained = [json.loads(line) for line in log.splitlines() if line.startswith('{')]
+        self.assertEqual([row['text'] for row in retained if row['type'] == 'agent_end'],
+                         ['Observed completion text.'])
         self.assertIn('not-json', log)
+        self.assertIn('181 items elided for RPC frame', raw)
+        self.assertIn('plain string content block', raw)
         self.assertEqual(self.coord('player', 'parent')['native'], 'omp-native')
         self.assertFalse(any('Native output observation failed' in row['body']
                              for row in self.coord('inbox', 'root')))
