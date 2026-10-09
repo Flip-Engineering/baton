@@ -3,8 +3,18 @@ name: bend2-native-development
 'on':
   pull_request:
     branches: [bend2-rewrite]
+    paths:
+      - 'bend2/src/**'
+      - 'bend2/scripts/build-native.sh'
+      - 'bend2/scripts/package-native.py'
+      - 'docs/bend2/reference/toolchain/install-2.0.25.sh'
   push:
     branches: [bend2-rewrite]
+    paths:
+      - 'bend2/src/**'
+      - 'bend2/scripts/build-native.sh'
+      - 'bend2/scripts/package-native.py'
+      - 'docs/bend2/reference/toolchain/install-2.0.25.sh'
 
 permissions:
   contents: read
