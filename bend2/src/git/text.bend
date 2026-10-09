@@ -222,45 +222,13 @@ def hex_char2(a: Char, b: Char) -> Char:
   +lo = hex_val(b)
   Char.from_u32(U32.add(U32.mul(hi, 16), lo))
 
-def hex_char_b(a: Char, rest: String) -> Char:
-  match rest:
-    case SNil{}: Char.from_u32(0)
-    case SCon{b, more}: hex_char2(a, b)
-
-def hex_char_a(p: String) -> Char:
-  match p:
-    case SNil{}: Char.from_u32(0)
-    case SCon{a, rest}: hex_char_b(a, rest)
-
-def hex_pairs_emit(prev: String, a: Char, out: List<String>) -> List<String>:
-  match prev:
-    case SNil{}: out
-    case SCon{p, pr}: Con{SCon{p, SCon{a, SNil{}}}, out}
-
-def hex_pairs_end(prev: String, out: List<String>) -> List<String>:
-  match prev:
-    case SNil{}: out
-    case SCon{p, pr}: out
-
-def one_char(c: Char) -> String:
-  SCon{c, SNil{}}
-
-def hex_pairs_go(s: String, prev: String, out: List<String>) -> List<String>:
-  match s:
-    case SNil{}: hex_pairs_end(prev, out)
-    case SCon{a, rest}:
-      +a2 = a
-      hex_pairs_go(rest, one_char(a2), hex_pairs_emit(prev, a2, out))
-
-def hex_cat_go(xs: List<String>, acc: String) -> String:
-  match xs:
-    case Nil{}: str_rev(acc)
-    case Con{p, rest}:
-      +acc2 = acc
-      hex_cat_go(rest, SCon{hex_char_a(p), acc2})
-
 def hex_decode(s: String) -> String:
-  hex_cat_go(hex_pairs_go(s, SNil{}, Nil{}), SNil{})
+  match s:
+    case SNil{}: ""
+    case SCon{high, tail}:
+      match tail:
+        case SNil{}: ""
+        case SCon{low, rest}: SCon{hex_char2(high, low), hex_decode(rest)}
 
 # The argv encoding of the process effect: each element as its UTF-8 byte
 def enc_argv_go(xs: List<String>, acc: String) -> String:

@@ -325,6 +325,7 @@ class RootWake(unittest.TestCase):
             ident = 'refused-app-more-' + str(index)
             additional = self.coord_raw('report', ident, 'child', 'Further work remains owed.')
             self.assertNotEqual(additional.returncode, 0)
+            self.assertIn(cause, additional.stderr)
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
         self.assertEqual(len(calls), 1, calls)
@@ -334,6 +335,10 @@ class RootWake(unittest.TestCase):
         self.coord('resume', 'root')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
         self.assertEqual(len(calls), 2, calls)
+        self.assertEqual(calls[1][:6], ['queue', '--remote', 'unix://', '--thread',
+                                       'native-app-root', '--message'])
+        self.assertEqual(json.loads(calls[1][6].splitlines()[1])['message'],
+                         'refused-app-input')
         self.assertEqual(json.loads(calls[1][6].splitlines()[1])['pendingCount'], 4)
         owed = ['refused-app-input'] + ['refused-app-more-' + str(index) for index in range(3)]
         for ident in owed:

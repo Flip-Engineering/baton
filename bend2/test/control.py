@@ -421,8 +421,10 @@ class Control(unittest.TestCase):
         self.root()
         assignment = self.recruit('project-linked', 'muse')
         workspace = pathlib.Path(assignment['workspace'])
+        shared_workspace = self.repo / 'shared λ 🙂'
+        shared_workspace.mkdir()
         self.call('join', 'project-shared', 'root', 'muse', 'project-shared',
-                  'low', self.repo)
+                  'low', shared_workspace)
         self.call('connect', 'project-linked', 'saved-project-native', '')
         self.call('message', 'project-owed', 'root', 'project-linked', 'task',
                   'Continue the retained project work.')
@@ -464,6 +466,7 @@ class Control(unittest.TestCase):
         self.assertEqual(set(sessions), {'project-linked', 'project-shared'})
         self.assertEqual(selected['project']['project'], str(common))
         self.assertEqual(sessions['project-linked']['native'], 'saved-project-native')
+        self.assertEqual(sessions['project-shared']['workspace'], str(shared_workspace.resolve()))
         self.assertEqual(sessions['project-linked']['pendingCount'], 1)
         self.assertEqual(self.project_call(subdirectory, 'inbox', 'project-linked')[0]['id'],
                          'project-owed')
@@ -490,7 +493,7 @@ class Control(unittest.TestCase):
         unfinished = pathlib.Path(assignment['workspace']) / 'unfinished.txt'
         unfinished.write_text('Retained unfinished project source.\n')
         self.call('connect', session, first['native'], '')
-        ident = 'project-input\twith-tab'
+        ident = 'project-input\twith-tab λ 🙂'
         self.call('message', ident, 'root', session, 'task', 'Resume the original project task.')
         self.assertIsNone(self.call('delivery', ident)['receipt'])
         self.call('connect', session, first['native'], json.dumps(endpoint))

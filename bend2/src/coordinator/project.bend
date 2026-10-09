@@ -12,6 +12,15 @@ import ../host/text.bend as Text
 import ../git/process.bend as Git
 import ../git/types.bend as G
 import ../git/text.bend as Tx
+import ../context/request.bend as Req
+
+def field_decoded(decoded: Req.Scalar) -> IO(String):
+  match decoded:
+    case Req.ScalarText{value}: IO.pure(String,value)
+    case other: IO.die(String,22,"Project field text could not be decoded: " ++ Req.scalar_reason(other))
+
+def field(encoded: String) -> IO(String):
+  field_decoded(Req.decode_scalar_utf8(Tx.hex_decode(Tx.trim_nl(encoded))))
 
 def git_common_args() -> List<String>:
   ["rev-parse", "--path-format=absolute", "--git-common-dir"]
@@ -116,7 +125,7 @@ def collect_members(workspaces: List<String>, +key: String, +canonical: String, 
     case Nil{}: IO.pure(List<String>, Nil{})
     case Con{encoded, rest}:
       do IO<List<String>>:
-        +workspace : String <- IO.pure(String,Tx.hex_decode(encoded))
+        +workspace : String <- field(encoded)
         keep : Bool <- member_now(workspace, key, canonical, keyed)
         tail : List<String> <- collect_members(rest, key, canonical, keyed)
         IO.pure(List<String>, cons_member(keep, workspace, tail))
@@ -153,7 +162,7 @@ def register_pointer(+key: String, database: String) -> IO(String):
   do IO<String>:
     made : Unit <- IO.try(Unit,Files.Files.mkdir(key ++ "/baton2"))
     +pointer : String <- IO.try(String,Host.Control.output(pointer_path(key)))
-    file : File <- IO.try(File,File.open(pointer,"wb"))
+    file : File <- IO.try(File,File.open(pointer,"w"))
     written : File & Result<&1,&1,U32 & String,Unit> <- File.write(file,database)
     closed : Unit <- pointer_written(written)
     IO.pure(String,pointer)
@@ -252,19 +261,22 @@ def session_field_sql(session: String, column: String) -> String:
 def resume_harness(+db: String, +session: String, oldest: String, +endpoint: String, harness: String) -> IO(Unit):
   do IO<Unit>:
     native : String <- IO.try(String,DB.Sql.query(db,session_field_sql(session,"native")))
-    resume_launch(db,session,oldest,endpoint,harness,Tx.hex_decode(Tx.trim_nl(native)),String.is_empty(endpoint))
+    decoded : String <- field(native)
+    resume_launch(db,session,oldest,endpoint,harness,decoded,String.is_empty(endpoint))
 
 def resume_endpoint(+db: String, +session: String, oldest: String, endpoint: String) -> IO(Unit):
   do IO<Unit>:
     harness : String <- IO.try(String,DB.Sql.query(db,session_field_sql(session,"harness")))
-    resume_harness(db,session,oldest,endpoint,Tx.hex_decode(Tx.trim_nl(harness)))
+    decoded : String <- field(harness)
+    resume_harness(db,session,oldest,endpoint,decoded)
 
 def resume_oldest(+db: String, +session: String, oldest: String, empty: Bool) -> IO(Unit):
   match empty:
     case True{}: IO.die(Unit,2,no_input_refusal(session))
     case False{}: do IO<Unit>:
       endpoint : String <- IO.try(String,DB.Sql.query(db,session_field_sql(session,"endpoint")))
-      resume_endpoint(db,session,oldest,Tx.hex_decode(Tx.trim_nl(endpoint)))
+      decoded : String <- field(endpoint)
+      resume_endpoint(db,session,oldest,decoded)
 
 def resume_stopped(+db: String, +session: String, stopped: Bool) -> IO(Unit):
   match stopped:
@@ -272,7 +284,7 @@ def resume_stopped(+db: String, +session: String, stopped: Bool) -> IO(Unit):
     case False{}:
       do IO<Unit>:
         oldest : String <- IO.try(String,DB.Sql.query(db,"SELECT hex(coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL ORDER BY seq LIMIT 1),''));"))
-        +trimmed : String <- IO.pure(String,Tx.hex_decode(Tx.trim_nl(oldest)))
+        +trimmed : String <- field(oldest)
         resume_oldest(db, session, trimmed, String.is_empty(trimmed))
 
 def resume_present(+db: String, +session: String, present: Bool) -> IO(Unit):
