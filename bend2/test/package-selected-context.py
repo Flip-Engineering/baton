@@ -100,6 +100,9 @@ class SelectedContextPackageTest(unittest.TestCase):
                 records[table] = [dict(row) for row in retained.execute(
                     f"SELECT * FROM {table} WHERE session IN (?,?)",
                     ('native-object-producer', 'native-object-consumer'))] if table in tables else []
+            records['direct_turn_requests'] = [dict(row) for row in retained.execute(
+                "SELECT session,id,directory FROM direct_turn_requests WHERE session IN (?,?)",
+                ('native-object-producer', 'native-object-consumer'))] if 'direct_turn_requests' in tables else []
         files = []
 
         def copy(path, destination):
@@ -112,14 +115,18 @@ class SelectedContextPackageTest(unittest.TestCase):
             files.append({'source': str(path), 'retained': str(destination) if exists else None})
 
         directories = {(row['session'], row['id']): Path(row['directory'])
-                       for row in records['executions'] if row['directory']}
+                       for row in records['direct_turn_requests'] + records['executions'] if row['directory']}
+        copy(str(self.handoff_database) + '.root.log', Path('root.log'))
         for row in records['log_generations']:
             ident = row['attempt'].encode().hex()
             copy(row['log'], Path(row['session']) / ident / 'generation.jsonl')
             directories.setdefault((row['session'], row['attempt']),
                                    Path(str(self.handoff_database) + '.attempt-' + ident))
         for (actor, attempt), directory in directories.items():
-            for name in ('native.stderr', 'stdout', 'status', 'prompt.txt'):
+            for name in ('native.stderr', 'stdout', 'status', 'prompt.txt', 'checkpoint',
+                         'checkpoint-error', 'manifest', 'native.pid', 'native.birth',
+                         'launch', 'released', 'acknowledged', 'observer.log',
+                         'observer-error', 'keeper.log'):
                 copy(directory / name, Path(actor) / attempt.encode().hex() / name)
         for row in records['log_stderr_runs']:
             copy(row['stderr'], Path(row['session']) / row['attempt'].encode().hex()

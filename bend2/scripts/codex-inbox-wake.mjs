@@ -219,6 +219,19 @@ class Events {
     if (this.values.length) return Promise.resolve(this.values.shift());
     return new Promise(resolve => { this.waiter = resolve; });
   }
+  async committed() {
+    const deferred = [];
+    try {
+      for (;;) {
+        const event = await this.next();
+        if (event.error) throw event.error;
+        if (event.change) return;
+        deferred.push(event);
+      }
+    } finally {
+      this.values = deferred.concat(this.values);
+    }
+  }
 }
 
 async function reportFailure(executable, database, session, threadId, error) {
@@ -244,14 +257,16 @@ async function reportFailure(executable, database, session, threadId, error) {
 async function openInbox(database, session, threadId) {
   const { DatabaseSync } = await import('node:sqlite');
   const db = new DatabaseSync(database, { readOnly: true });
-  const state = db.prepare(`SELECT s.native,
+  const query = `SELECT s.native,
     EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) AS stopped,
     (SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL) AS pendingCount,
     (SELECT max(seq) FROM messages WHERE recipient=s.id) AS inputSeq,
     (SELECT id FROM messages WHERE recipient=s.id AND receipt IS NULL ORDER BY seq LIMIT 1) AS message
-    FROM sessions s WHERE s.id=?`);
+    FROM sessions s WHERE s.id=?`;
+  let state;
   return {
     read() {
+      state ??= db.prepare(query);
       const row = state.get(session);
       if (!row) throw new Error('Baton session is not recorded: ' + session);
       if (row.native !== threadId) throw new Error('Baton session now records another native conversation: ' + JSON.stringify({ session, native: row.native }));
@@ -265,6 +280,27 @@ async function openInbox(database, session, threadId) {
         'Read your inbox again before ending the turn. Admission is separate from handling and acknowledgement.';
     },
   };
+}
+
+function databaseBusy(error) {
+  return Number.isInteger(error?.errcode) && (error.errcode & 255) === 5;
+}
+
+async function readCommittedInbox(inbox, events, session, threadId) {
+  let waiting = false;
+  for (;;) {
+    try {
+      const row = inbox.read();
+      if (waiting) record({ type: 'codexInboxDatabaseReady', session, threadId });
+      return row;
+    } catch (error) {
+      if (!databaseBusy(error)) throw error;
+      if (!waiting) record({ type: 'codexInboxDatabaseBusy', session, threadId,
+        errcode: error.errcode, cause: error.message });
+      waiting = true;
+      await events.committed();
+    }
+  }
 }
 
 async function follow(proxy, executable, database, session, threadId, inbox) {
@@ -305,7 +341,7 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
   try {
     await readiness;
     await proxy.connect();
-    let row = inbox.read();
+    let row = await readCommittedInbox(inbox, events, session, threadId);
     if (row.stopped || !row.pendingCount) return;
     await proxy.rpc('thread/resume', { threadId });
     record({ type: 'codexInboxSubscribed', session, threadId });
@@ -313,7 +349,7 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
     let event = { initial: true };
     for (;;) {
       if (event.error) throw event.error;
-      row = inbox.read();
+      row = await readCommittedInbox(inbox, events, session, threadId);
       if (row.stopped || !row.pendingCount) {
         record({ type: 'codexInboxReleased', session, threadId, stopped: Boolean(row.stopped), pendingCount: row.pendingCount });
         return;
@@ -335,7 +371,7 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
         const turns = await proxy.rpc('thread/turns/list', { threadId, sortDirection: 'desc', itemsView: 'notLoaded' });
         const settlement = JSON.stringify([turns.data[0]?.id ?? null, row.inputSeq]);
         if (settlement !== lastAdmission) {
-          row = inbox.read();
+          row = await readCommittedInbox(inbox, events, session, threadId);
           if (!row.stopped && row.pendingCount) {
             lastAdmission = settlement;
             try { await deliver(proxy, threadId, inbox.pointer(row)); }
@@ -346,7 +382,7 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
           }
         }
       } else if (thread.status.type === 'active' && event.method === 'turn/completed') {
-        row = inbox.read();
+        row = await readCommittedInbox(inbox, events, session, threadId);
         if (!row.stopped && row.pendingCount) {
           try { await deliver(proxy, threadId, inbox.pointer(row)); }
           catch (error) {
@@ -396,13 +432,15 @@ if (!threadId || (managed ? !executable || !database || !session || (mode === '-
   try {
     if (managed) {
       inbox = await openInbox(database, session, threadId);
-      const row = inbox.read();
-      if (row.stopped || !row.pendingCount) {
-        record({ type: 'codexInboxRetained', session, threadId, stopped: Boolean(row.stopped), pendingCount: row.pendingCount });
-      } else {
+      if (mode === '--follow') {
         proxy = new PublicProxy();
-        if (mode === '--follow') await follow(proxy, executable, database, session, threadId, inbox);
-        else {
+        await follow(proxy, executable, database, session, threadId, inbox);
+      } else {
+        const row = inbox.read();
+        if (row.stopped || !row.pendingCount) {
+          record({ type: 'codexInboxRetained', session, threadId, stopped: Boolean(row.stopped), pendingCount: row.pendingCount });
+        } else {
+          proxy = new PublicProxy();
           await proxy.connect();
           await deliver(proxy, threadId, inbox.pointer(row));
         }

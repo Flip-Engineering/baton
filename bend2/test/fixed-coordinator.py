@@ -312,6 +312,32 @@ class FixedCoordinator(unittest.TestCase):
             self.assertEqual(self.serve_proc.returncode, expect_serve, stderr)
 
     def managed_app_proxy(self):
+        real_node = shutil.which('node')
+        self.assertIsNotNone(real_node, 'the managed App fixture requires Node')
+        self.app_follow_events = self.directory / 'app-follow-events.jsonl'
+        node = self.directory / 'node'
+        node.write_text('#!' + sys.executable + '\n' + r'''
+import os,pathlib,signal,subprocess,sys
+real_node=__NODE__
+argv=sys.argv[1:]
+if len(argv)<2 or pathlib.Path(argv[0]).name!='codex-inbox-wake.mjs' or argv[1]!='--follow':
+    os.execv(real_node,[real_node,*argv])
+child=subprocess.Popen([real_node,*argv],stdout=subprocess.PIPE)
+for signum in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP):
+    signal.signal(signum,lambda signum,frame:child.send_signal(signum))
+with pathlib.Path(__EVENTS__).open('ab',buffering=0) as events:
+    for line in child.stdout:
+        events.write(line)
+        sys.stdout.buffer.write(line)
+        sys.stdout.buffer.flush()
+code=child.wait()
+if code<0:
+    signal.signal(-code,signal.SIG_DFL)
+    os.kill(os.getpid(),-code)
+sys.exit(code)
+'''.replace('__NODE__', repr(real_node))
+           .replace('__EVENTS__', repr(str(self.app_follow_events))))
+        node.chmod(0o700)
         state = self.directory / 'managed-app.json'
         state.write_text(json.dumps({'status': 'active', 'turn': 'app-initial', 'number': 0}))
         command = self.directory / 'codex'
@@ -798,8 +824,34 @@ finally:
         self.stream_for('w1-app')
         self.assertTrue(app_calls('turn/steer'), 'the short sender admitted input to the active App turn')
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='t3'"), [(None,)])
-        self.release('w1-app', settle=True)
+
+        def follow_events(kind):
+            if not self.app_follow_events.exists():
+                return []
+            return [row for line in self.app_follow_events.read_text().splitlines(keepends=True)
+                    if line.endswith('\n') and (row := json.loads(line))['type'] == kind]
+
+        self.eventually(lambda: follow_events('codexInboxSubscribed'),
+                        'the managed follower never subscribed to the active App thread')
+        writer = sqlite3.connect(str(self.db))
+        try:
+            writer.execute('BEGIN EXCLUSIVE')
+            self.release('w1-app', settle=True)
+            busy = self.eventually(lambda: follow_events('codexInboxDatabaseBusy'),
+                                   'the held writer did not reach the follower read')
+            self.assertEqual(busy[0]['errcode'] & 255, sqlite3.SQLITE_BUSY)
+            self.assertEqual(app_calls('turn/start'), [],
+                             'the follower continued before its pending-input read succeeded')
+            writer.commit()
+        finally:
+            writer.close()
+        self.coord('report', 'app-writer-released', 'w1',
+                   'The fixture writer released after the App settled with input still owed.')
+        self.eventually(lambda: follow_events('codexInboxDatabaseReady'),
+                        'the ordinary commit did not resume the held follower read')
         self.eventually(lambda: app_calls('turn/start'), 'App completion did not prompt its remaining inbox')
+        self.assertEqual(len(follow_events('codexInboxSubscribed')), 1,
+                         'writer contention replaced the existing App follower')
         self.assertIn('"recipient":"w1"', app_calls('turn/start')[0]['params']['input'][0]['text'])
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='t3'"), [(None,)],
                          'the lifecycle watcher acknowledged input')
