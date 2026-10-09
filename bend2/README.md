@@ -191,6 +191,11 @@ tool run or a stream of text updates, guidance waits for the next such event.
 The native response records the delivery receipt. Guidance
 with no receipt remains in the Player's inbox for a later delivery attempt.
 
+`join ID PARENT HARNESS MODEL EFFORT WORKSPACE` registers a Player in an
+existing checkout. The recorded workspace is absolute; branch and base come
+from that checkout. Multiple Players can share it. Repeating the assignment
+preserves the Player's recorded base as the checkout advances.
+
 `recruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE` creates a branch
 and worktree, then records the Player under its parent. A relative `PATH` is
 resolved from `REPO`; the stored workspace path is absolute. The base is stored
@@ -201,6 +206,13 @@ The recorded assignment, binding, pending input, branch and workspace remain
 available. Read `session ID` and `worktree ID`, retry the recorded assignment,
 or recruit a new ID with a new branch and unused path.
 `worktree ID` reads its current Git branch, commit and dirty state.
+
+For source work, Players coordinate edits in a shared checkout and commit
+completed changes. Their reports identify the intended target branch and
+remaining work. The Conductor integrates completed changes into that target
+and pushes it to the requested remote. Temporary worktrees and task branches
+are retired once they have no active owner or uncommitted work. The shared
+checkout, target branch, unfinished source and explicit stops remain available.
 
 `configure ID HARNESS MODEL EFFORT HARNESS_CMD OUTPUT_LOG EXPECTED_HARNESS
 EXPECTED_MODEL EXPECTED_EFFORT` moves an existing registered session's next

@@ -1,6 +1,7 @@
 import Base
 
 type Command is Data:
+  Join{id: String, parent: String, harness: String, model: String, effort: String, path: String}
   Recruit{id: String, parent: String, harness: String, model: String, effort: String, repo: String, branch: String, path: String, base: String}
   Worktree{id: String}
   Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String}
@@ -471,6 +472,7 @@ def sql(command: Command) -> String:
     case LogsStorage{}: ""
     case LogsClean{session}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
+    case Join{id,parent,harness,model,effort,path}: ""
     case Worktree{id}: ""
     case KnowledgeRecord{id,author,claim,evidence,limits}: ""
     case KnowledgeRead{reader}: ""
@@ -632,6 +634,8 @@ def parse(args: List<String>) -> Command:
       parse_verb_four_args(verb,id,one,two,three)
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
       Bool.pick(Command, Bool.and(String.eq(verb,"land"),String.eq(three,"--commit")), LandAt{id,one,two,four}, parse_verb_five_args(verb,id,one,two,three,four))
+    case "join" <> +id <> +parent <> +harness <> +model <> +effort <> +path <> Nil{}:
+      Join{id,parent,harness,model,effort,path}
     case +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
       Bool.pick(Command, Bool.and(String.eq(verb,"land-checked"),String.eq(log,"--commit")), LandCheckedAt{session,cmd,model,effort,cwd,message}, parse_receive(verb,session,cmd,model,effort,cwd,log,message))
     case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:

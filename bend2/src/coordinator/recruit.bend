@@ -2,6 +2,7 @@ import Base
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
+import ../host/control.bend as Host
 import ../git/create-worktree.bend as CW
 import ../git/status.bend as WS
 import ../git/process.bend as Git
@@ -69,6 +70,20 @@ def recruit(+db: String,+id: String,+parent: String,harness: String,model: Strin
     commit : String <- git_output("git rev-parse --verify", base_result)
     existing : String <- IO.try(String,Store.apply(db,C.Session{id}))
     create(db,id,parent,harness,model,effort,repo,branch,absolute(line(root),path,Tx.starts_with(path,"/")),line(commit),Bool.not(String.is_empty(existing)))
+
+# Join an existing checkout. Several Players can use the same worktree.
+def join(+db: String,+id: String,+parent: String,harness: String,model: String,effort: String,+path: String) -> IO(Unit):
+  do IO<Unit>:
+    parent_row : String <- IO.try(String,Store.apply(db,C.Session{parent}))
+    present : Unit <- require_parent(Bool.not(String.is_empty(parent_row)))
+    +workspace : String <- IO.try(String,Host.Control.workspace(path))
+    branch_result : G.GitOut <- Git.runGit(workspace,["rev-parse","--abbrev-ref","HEAD"])
+    branch_raw : String <- git_output("git rev-parse --abbrev-ref",branch_result)
+    commit_result : G.GitOut <- Git.runGit(workspace,["rev-parse","HEAD"])
+    commit_raw : String <- git_output("git rev-parse HEAD",commit_result)
+    +existing : String <- IO.try(String,DB.Sql.query(db,"SELECT base FROM sessions WHERE id=" ++ C.q(id) ++ ";"))
+    base : String <- IO.pure(String,Bool.pick(String,String.is_empty(existing),line(commit_raw),line(existing)))
+    register(db,id,parent,harness,model,effort,Done{G.WCreated{line(branch_raw),workspace,base}})
 
 def status_json(id: String,path: String,branch: String,commit: String,dirty: Bool) -> String:
   "{\"id\":" ++ J.string_literal(id) ++ ",\"workspace\":" ++ J.string_literal(path) ++ ",\"branch\":" ++ J.string_literal(branch) ++ ",\"commit\":" ++ J.string_literal(commit) ++ ",\"dirty\":" ++ Bool.pick(String,dirty,"true","false") ++ "}"
