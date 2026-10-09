@@ -330,6 +330,26 @@ jobs:
           exit "$status"
           SH
           chmod 0755 "$evidence/run-recorded.sh"
+      - name: Run existing observer recovery cases
+        if: ${{ !cancelled() && matrix.suite == 'receive' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd owned
+          "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-observer-recovery \
+            env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
+            python3 -u bend2/test/receive.py -v \
+              Receive.test_completed_orphan_observer_recovers_original_and_pending_input \
+              Receive.test_completed_orphan_observer_recovery_preserves_explicit_stop \
+              Receive.test_completed_live_keeper_observer_handoff_recovers_original_and_pending_input
+      - name: Retain observer recovery output before the full suite
+        if: ${{ always() && matrix.suite == 'receive' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-receive-observer-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-observer-recovery.*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run selected suite
         id: suite
         if: ${{ !cancelled() }}
@@ -364,15 +384,6 @@ jobs:
                 env PYTHONUNBUFFERED=1 \
                 BATON2_CONTEXT_TYPESCRIPT="$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-runtime/node_modules/typescript" \
                 python3 -u bend2/test/package-selected-context.py -v
-              ;;
-            receive)
-              "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive \
-                env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
-                python3 -u bend2/test/receive.py -v \
-                  Receive.test_completed_orphan_observer_recovers_original_and_pending_input \
-                  Receive.test_completed_orphan_observer_recovery_preserves_explicit_stop \
-                  Receive.test_completed_live_keeper_observer_handoff_recovers_original_and_pending_input \
-                  Receive
               ;;
             *)
               "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" '${{ matrix.suite }}' \
