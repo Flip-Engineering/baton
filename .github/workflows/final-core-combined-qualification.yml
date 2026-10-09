@@ -521,11 +521,38 @@ jobs:
                   bend2/tests/runtime/source-maps.test.mjs bend2/tests/runtime/cdp-composition.test.mjs
               ;;
             selected-context-package)
+              cat > "$FINAL_NATIVE_CONTEXT_EVIDENCE/build-selected-clang.sh" <<'SH'
+          set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/baton-context-llvm.asc > /dev/null
+          printf '%s\n' 'deb https://apt.llvm.org/noble/ llvm-toolchain-noble-20 main' \
+            | sudo tee /etc/apt/sources.list.d/baton-context-llvm.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build clang-20 llvm-20-dev libclang-20-dev libclang-cpp20-dev
+          clang-20 --version
+          build="$FINAL_NATIVE_CONTEXT_EVIDENCE/clang-build"
+          runtime="$FINAL_NATIVE_CONTEXT_EVIDENCE/clang-runtime"
+          cmake -S bend2/context/clang/extractor -B "$build" -G Ninja \
+            -DLLVM_DIR=/usr/lib/llvm-20/lib/cmake/llvm \
+            -DCMAKE_CXX_COMPILER=clang++-20 -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=$ORIGIN/lib'
+          cmake --build "$build" --target context-clang-20
+          mkdir -p "$runtime/lib"
+          cp "$build/context-clang-20" "$runtime/context-clang-20"
+          ldd "$runtime/context-clang-20" \
+            | tee "$FINAL_NATIVE_CONTEXT_EVIDENCE/logs/selected-clang-linked-libraries.txt"
+          ldd "$runtime/context-clang-20" | awk '/=> \// {print $3}' \
+            | while IFS= read -r library; do cp -L "$library" "$runtime/lib/"; done
+          SH
+              "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" selected-clang-build \
+                bash "$FINAL_NATIVE_CONTEXT_EVIDENCE/build-selected-clang.sh"
               "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" selected-typescript-install \
                 npm install --prefix "$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-runtime" \
                   --ignore-scripts --no-audit --no-fund typescript@5.9.3
               "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" selected-context-package \
                 env PYTHONUNBUFFERED=1 \
+                BATON2_CONTEXT_CLANG="$FINAL_NATIVE_CONTEXT_EVIDENCE/clang-runtime" \
                 BATON2_CONTEXT_TYPESCRIPT="$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-runtime/node_modules/typescript" \
                 python3 -u bend2/test/package-selected-context.py -v
               ;;
