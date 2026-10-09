@@ -738,7 +738,7 @@ def retained_output(+db: String, +player: String, +id: String, +log: String, +ha
     consume(db,player,id,generation,policy,held,False{},handle,harness,cursor,last_message,primary,current,terminal,filter,requested,codex_log,"",sender,attempt,checkpoint_state,False{},wake_sub,wake_on,Nil{},first)
 
 def muse_retained_arguments(cmd: String, model: String, effort: String, prompt_file: String, +session: String) -> List<String>:
-  List.append(&1,String,Muse.arguments(cmd,model,effort,prompt_file),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session]))
+  Muse.resume_arguments(cmd,model,effort,prompt_file,session)
 
 def retained_arguments(omp: Bool, claude: Bool, +cmd: String, +model: String, +effort: String, sessions: String, +native: String) -> String:
   Bool.pick(String,claude,

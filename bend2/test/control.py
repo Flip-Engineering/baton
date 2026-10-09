@@ -45,6 +45,14 @@ resume=args[args.index('--resume')+1] if '--resume' in args else (
     args[args.index('--session-id')+1] if '--session-id' in args else (
     native_args[2] if native_args[:2]==['exec','resume'] else ''))
 native=resume or ('native-'+session)
+if muse and resume:
+    original_workspace=config.get('muse_workspace_roots',{}).get(native)
+    if original_workspace and os.getcwd()!=original_workspace and '--allow-workspace-switch' not in args:
+        print('session '+native+' was created in workspace '+original_workspace+
+              '; refusing to resume in workspace '+os.getcwd()+
+              '; pass --workspace '+original_workspace+' or --allow-workspace-switch to continue in the new workspace',
+              file=sys.stderr,flush=True)
+        sys.exit(1)
 if omp:
     json.loads(sys.stdin.readline())
     state=json.loads(sys.stdin.readline())
@@ -613,8 +621,12 @@ class Control(unittest.TestCase):
 
     def test_completed_player_moves_to_shared_checkout_and_resumes_after_task_retirement(self):
         self.root()
-        assignment = self.recruit('completed', 'codex')
+        assignment = self.recruit('completed', 'muse')
         workspace = pathlib.Path(assignment['workspace'])
+        configuration = self.directory / 'fixture.json'
+        configured = json.loads(configuration.read_text())
+        configured['muse_workspace_roots'] = {'native-completed': str(workspace.resolve())}
+        configuration.write_text(json.dumps(configured))
         (workspace / 'completed.txt').write_text('Completed contribution.\n')
         for args in (('add', 'completed.txt'), ('commit', '-q', '-m', 'Completed contribution')):
             subprocess.run(['git', '-C', str(workspace), *args], env=self.environment,
