@@ -57,7 +57,10 @@ type PlanDecision is Data:
 type Submission is Data:
   # A retained row whose stored identity equals the identity the caller supplied, carrying
   # the stored complete rendering and schema rather than the caller's proposed ones.
-  SubmissionRetainedVerified{admission: ContextAdmit.Admission, planValue: String, resultSchema: String}
+  SubmissionRetainedVerified{admission: ContextAdmit.Admission, planValue: String, resultSchema: String, answersText: String}
+  # A created row whose association was written with it, carrying the stored rendering, schema
+  # and resolved answers rather than the caller's proposed ones.
+  SubmissionAdmittedStored{admission: ContextAdmit.Admission, planValue: String, resultSchema: String, answersText: String}
   SubmissionAdmitted{admission: ContextAdmit.Admission, proposedPlan: String, proposedSchema: String}
   SubmissionRetainedUnverified{admission: ContextAdmit.Admission, proposedPlan: String, proposedSchema: String}
   SubmissionPlanRefused{stage: String, reason: String}
@@ -197,18 +200,18 @@ def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJ
 # a different identity refuses at the plan stage rather than attaching a fresh plan to a
 # retained row, and a row that carries no association stays unestablished because nothing
 # here can repair it.
-def submission_stored(+expectedOwner: String, +expectedRequest: String, +plan: String, admission: ContextAdmit.Admission, +planValue: String, +planIdentity: String, +storedSchema: String) -> Submission:
+def submission_stored(+expectedOwner: String, +expectedRequest: String, +plan: String, admission: ContextAdmit.Admission, +planValue: String, +planIdentity: String, +storedSchema: String, +answersText: String) -> Submission:
   match admission:
-    case ContextAdmit.AdmissionCreated{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: SubmissionAdmitted{admission, planValue, storedSchema}
+    case ContextAdmit.AdmissionCreated{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: SubmissionAdmittedStored{admission, planValue, storedSchema, answersText}
     case ContextAdmit.AdmissionRetained{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}:
       Bool.pick(Submission, ContextAdmit.admit_identical(admission, expectedOwner, expectedRequest),
-        Bool.pick(Submission, String.eq(planIdentity, plan), SubmissionRetainedVerified{admission, planValue, storedSchema}, SubmissionPlanRefused{"plan", "stale"}),
+        Bool.pick(Submission, String.eq(planIdentity, plan), SubmissionRetainedVerified{admission, planValue, storedSchema, answersText}, SubmissionPlanRefused{"plan", "stale"}),
         submission_of(expectedOwner, expectedRequest, plan, storedSchema, admission))
     case _: SubmissionUncertain{"association", "unexpectedAdmission"}
 
 def submission_replayed(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, admission: ContextAdmit.Admission, association: ContextAdmit.Association) -> Submission:
   match association:
-    case ContextAdmit.AssociationStored{planValue, planIdentity, resultSchema: storedSchema}: submission_stored(expectedOwner, expectedRequest, plan, admission, planValue, planIdentity, storedSchema)
+    case ContextAdmit.AssociationStored{planValue, planIdentity, resultSchema: storedSchema, answersText}: submission_stored(expectedOwner, expectedRequest, plan, admission, planValue, planIdentity, storedSchema, answersText)
     case ContextAdmit.AssociationMissing{}: submission_of(expectedOwner, expectedRequest, plan, resultSchema, admission)
     case ContextAdmit.AssociationMalformed{stage, answer}: SubmissionUncertain{stage, answer}
 
@@ -238,9 +241,9 @@ def admitted_stored(+expectedOwner: String, +expectedRequest: String, +identity:
 # creating transaction stores as the carrier and `identity` is the rendering over the
 # members that decide what will run, which is what a replay compares; the association is
 # written in the same BEGIN IMMEDIATE as the query row and read back for the answer.
-def admitted_associated(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +planValue: String, +identity: String, +resultSchema: String) -> IO(Submission):
+def admitted_associated(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +planValue: String, +identity: String, +resultSchema: String, +answersText: String) -> IO(Submission):
   do IO<Submission>:
-    answer : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit_associated(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, planValue, identity, resultSchema)
+    answer : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit_associated(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, planValue, identity, resultSchema, answersText)
     admitted_stored(owner, requestJson, identity, resultSchema, db, binding, id, answer)
 
 

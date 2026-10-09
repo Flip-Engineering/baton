@@ -77,23 +77,43 @@ def runtime_epoch_value(+epoch: String) -> String:
 def association_schema() -> String:
   "CREATE TABLE IF NOT EXISTS semantic_admissions (query_id TEXT PRIMARY KEY NOT NULL REFERENCES semantic_queries(id),plan_value TEXT NOT NULL,plan_identity TEXT NOT NULL,result_schema TEXT NOT NULL,origin_attempt TEXT,CHECK(json_valid(plan_value)));"
 
+# The resolved answers the admission resolved, in their own additive relation. A database
+# whose association table already exists cannot gain a column by create-if-missing, so this
+# value lives in a second relation created the same way and appears only through this schema
+# text: a row admitted before the answers existed has no row here, which reads as absent and
+# is never backfilled. The answers are a JSON document, so an empty column means absent
+# rather than a recorded empty answer set.
+def answers_schema() -> String:
+  "CREATE TABLE IF NOT EXISTS semantic_admission_answers (query_id TEXT PRIMARY KEY NOT NULL REFERENCES semantic_queries(id),answers_text TEXT NOT NULL,CHECK(json_valid(answers_text)));"
+
+def answers_present(id: String) -> String:
+  "EXISTS(SELECT 1 FROM semantic_admission_answers WHERE query_id=" ++ C.q(id) ++ ")"
+
+# Guarded like the association insert: `changes()` refers to the insert immediately before
+# it, which inserted one row in the transaction that created the query row and zero rows on
+# a replay, so the answers are written only by the run that created the row.
+def answers_insert_sql(+id: String, +answersText: String) -> String:
+  "INSERT INTO semantic_admission_answers(query_id,answers_text) SELECT " ++ C.q(id) ++ "," ++ C.q(answersText) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admission_answers WHERE query_id=" ++ C.q(id) ++ ");"
+
 def association_present(id: String) -> String:
   "EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ")"
 
-# The stored association as four columns: a marker, then the complete rendering, the
-# identity over the deciding members, and the result schema, each as hex, because a
+# The stored association as five columns: a marker, then the complete rendering, the
+# identity over the deciding members, the result schema and the resolved answers, each as
+# hex, because a
 # rendering is arbitrary JSON text and a tab or a newline inside it would otherwise split
 # the tab-separated answer row. A row with no association answers the absent marker with
-# three empty values.
+# four empty values, and a row whose association predates the answers column carries an
+# empty answers value rather than a recorded one.
 def association_row_sql(+id: String) -> String:
-  "SELECT CASE WHEN " ++ association_present(id) ++ " THEN 'present' ELSE 'absent' END," ++ "coalesce((SELECT hex(plan_value) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),'')," ++ "coalesce((SELECT hex(plan_identity) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),'')," ++ "coalesce((SELECT hex(result_schema) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),'');"
+  "SELECT CASE WHEN " ++ association_present(id) ++ " THEN 'present' ELSE 'absent' END," ++ "coalesce((SELECT hex(plan_value) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),'')," ++ "coalesce((SELECT hex(plan_identity) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),'')," ++ "coalesce((SELECT hex(result_schema) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),'')," ++ "coalesce((SELECT hex(answers_text) FROM semantic_admission_answers WHERE query_id=" ++ C.q(id) ++ "),'');"
 
 def schema() -> String:
   "CREATE TABLE IF NOT EXISTS semantic_queries (id TEXT PRIMARY KEY NOT NULL,owner TEXT NOT NULL REFERENCES sessions(id),request_json TEXT NOT NULL,admission_decision TEXT NOT NULL CHECK(admission_decision IN ('accepted','rejected')),prepared_keeper_path TEXT,cwd TEXT NOT NULL,origin_attempt TEXT,state TEXT NOT NULL CHECK(state IN ('accepted','running','complete','failed','interrupted','refused')),result_json TEXT,error_json TEXT,progress_json TEXT,cleanup_intent_json TEXT,recovery_intent_json TEXT,runtime_id TEXT,artifact_path TEXT NOT NULL,CHECK(json_valid(request_json)),CHECK(result_json IS NULL OR json_valid(result_json)),CHECK(error_json IS NULL OR json_valid(error_json)),CHECK(progress_json IS NULL OR json_valid(progress_json)),CHECK(cleanup_intent_json IS NULL OR json_valid(cleanup_intent_json)),CHECK(recovery_intent_json IS NULL OR json_valid(recovery_intent_json)));"
   ++ "CREATE TABLE IF NOT EXISTS semantic_runtimes (id TEXT PRIMARY KEY NOT NULL,owner TEXT NOT NULL REFERENCES sessions(id),origin_attempt TEXT,launch_query TEXT NOT NULL UNIQUE,adapter_id TEXT NOT NULL,state TEXT NOT NULL," ++ runtime_epoch_column() ++ ",pending_query TEXT,outcome_json TEXT,CHECK(outcome_json IS NULL OR json_valid(outcome_json)));"
   ++ "CREATE TABLE IF NOT EXISTS semantic_roles (query_id TEXT NOT NULL REFERENCES semantic_queries(id),role TEXT NOT NULL CHECK(role IN ('starter','target','adapter')),incarnation TEXT NOT NULL,keeper_path TEXT NOT NULL UNIQUE,guard_anchor TEXT NOT NULL,guard_key TEXT NOT NULL,guard_identity_json TEXT NOT NULL,recovery_argv_json TEXT NOT NULL,database_binding_json TEXT NOT NULL,phase TEXT NOT NULL,observer_identity_json TEXT,observer_cursor TEXT NOT NULL,exit_evidence_json TEXT,capture_json TEXT,release_intent_json TEXT,cleanup_phase TEXT NOT NULL,PRIMARY KEY(query_id,role,incarnation),CHECK(json_valid(guard_identity_json)),CHECK(json_valid(recovery_argv_json)),CHECK(json_valid(database_binding_json)),CHECK(observer_identity_json IS NULL OR json_valid(observer_identity_json)),CHECK(exit_evidence_json IS NULL OR json_valid(exit_evidence_json)),CHECK(capture_json IS NULL OR json_valid(capture_json)),CHECK(release_intent_json IS NULL OR json_valid(release_intent_json)));"
   ++ "CREATE INDEX IF NOT EXISTS semantic_queries_owner ON semantic_queries(owner);"
-  ++ "CREATE INDEX IF NOT EXISTS semantic_roles_keeper ON semantic_roles(guard_key);" ++ association_schema()
+  ++ "CREATE INDEX IF NOT EXISTS semantic_roles_keeper ON semantic_roles(guard_key);" ++ association_schema() ++ answers_schema()
 
 # The runtime epoch is a canonical unsigned decimal counter of arbitrary length; it
 # is stored and inserted as text so no SQLite numeric conversion can coerce it.
