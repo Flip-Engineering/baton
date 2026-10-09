@@ -307,10 +307,10 @@ law m1_the_record_io_queries_delivers_and_answers:
 def m1_the_record_io_queries_delivers_and_answers(db, id, author, claim, evidence, limits):
   {==}
 
-# M-8: the read's own IO sequence: one committing query, then the answer.
+# M-8: the read's own IO sequence: one read-only query, then the answer.
 def read_io(+db: String, +reader: String) -> IO(Unit):
   do IO<Unit>:
-    visible : String <- IO.try(String,DB.Sql.query(db,K.commit_sql(K.read_sql(reader))))
+    visible : String <- IO.try(String,DB.Sql.read(db,K.read_sql(reader)))
     IO.write(visible)
 
 law m8_the_read_io_queries_the_visible_findings_and_answers:

@@ -25,7 +25,7 @@ import ../host/sqlite.bend as DB
 def notice_id(finding: String) -> String:
   finding ++ ":notice"
 
-# Reads also open databases written before the shared projection installer.
+# Knowledge writes install these tables before their transaction runs.
 def knowledge_schema() -> String:
   "CREATE TABLE IF NOT EXISTS knowledge (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, claim TEXT NOT NULL, evidence TEXT NOT NULL, limits TEXT NOT NULL);"
   ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions (id TEXT UNIQUE NOT NULL, finding TEXT NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, destination TEXT NOT NULL, promoted_by TEXT NOT NULL);"
@@ -151,7 +151,7 @@ def record(+db: String, +id: String, author: String, claim: String, evidence: St
 # empty array.
 def read(db: String, reader: String) -> IO(Unit):
   do IO<Unit>:
-    visible : String <- IO.try(String,DB.Sql.query(db,commit_sql(read_sql(reader))))
+    visible : String <- IO.try(String,DB.Sql.read(db,read_sql(reader)))
     IO.write(visible)
 
 # Promote: one transaction writes the promotion and its destination notice,

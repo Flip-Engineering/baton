@@ -38,6 +38,11 @@ def run(+db: String, +command: C.Command) -> IO(Unit):
     woken : Unit <- IO.try(Unit,Wake.drive_command(db,command,Done{result}))
     print_result(result)
 
+def read_command(+db: String, +command: C.Command) -> IO(Unit):
+  do IO<Unit>:
+    result : String <- IO.try(String,Store.read(db,command))
+    print_result(result)
+
 def usage() -> String:
   "usage: baton2 DATABASE COMMAND ARGS\n       baton2 --project PATH COMMAND ARGS\ncontext-engines\ncontext-query-file OWNER QUERY REQUEST_PATH\ncontext-result QUERY\nstart SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE\nreceiver SESSION HARNESS_CMD OUTPUT_LOG [CWD]\ndispatch-file ID SENDER RECIPIENT KIND PATH\ndispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\nui-subscribe AFTER GENERATION\nserve\nowner-status\nstatus --pretty\nplayers --pretty\norchestra --pretty\npending --pretty\nplayer ID --pretty\nsession ID --pretty\ninbox ID --pretty\ndelivery ID --pretty\nturns PLAYER_ID --pretty\nknowledge READER --pretty\nworktree ID --pretty\nattach ID HARNESS NATIVE ENDPOINT\njoin ID PARENT HARNESS MODEL EFFORT WORKSPACE\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nconfigure ID HARNESS MODEL EFFORT HARNESS_CMD OUTPUT_LOG EXPECTED_HARNESS EXPECTED_MODEL EXPECTED_EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nreport-file ID PLAYER PATH\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nproject PATH\nproject-sessions PATH\nresume SESSION [--lift-stop]\nland PLAYER_ID REPO TARGET_BRANCH [--commit COMMIT]\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES [--commit COMMIT]\npush REPO BRANCH REMOTE\nremote-tip REPO BRANCH REMOTE\nobserved-usage SESSION\nmodels SESSION\nlogs SESSION [LEVEL]\nlogs-storage\nlogs-clean SESSION\nview SUBJECT [READER [PORT]]\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nrecover-observer SESSION OBSERVER_PID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nview starts the optional read-only Orchestra live view: a loopback server for the subject's recorded state under the reader's admitted scope (default the subject itself), opened in a browser when one answers; it serves until the command exits.\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session\nconfigure changes one registered Player's route for its next admitted turn, keeps its identity, parentage, workspace, branch, base, native conversation and pending input, and rebuilds the receiver endpoint from the selected model key; the expected route fences a delayed continuation.\nComplete stored input: delivery MESSAGE_ID returns the full body and receipt of any message; turns PLAYER_ID lists turn history with report bodies; players reports latestReport and latestReportId. Acknowledged messages leave inbox and pending and remain readable by ID.\nDATABASE project PATH registers that database at the project's canonical Git common-dir/baton2/database; a directory outside Git uses PATH/baton2/database. --project PATH COMMAND reads that pointer and runs the command against the same database. project-sessions lists recorded sessions for the project with pending input, reports and native conversation identities.\nresume SESSION requests delivery of the oldest owed input and reports its current receipt with the latest retained report. Add --lift-stop to explicitly clear the current stop and continue the same native conversation; stop reports and turn history remain stored."
 
@@ -87,6 +92,19 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       do IO<Unit>:
         saved : String <- Control.pretty(db,read)
         print_result(saved)
+    case C.RoleRead{session}: read_command(db,C.RoleRead{session})
+    case C.EnsembleRead{id}: read_command(db,C.EnsembleRead{id})
+    case C.Session{id}: read_command(db,C.Session{id})
+    case C.Delivery{id}: read_command(db,C.Delivery{id})
+    case C.Pending{}: read_command(db,C.Pending{})
+    case C.Inbox{id}: read_command(db,C.Inbox{id})
+    case C.Status{}: read_command(db,C.Status{})
+    case C.Players{}: read_command(db,C.Players{})
+    case C.LegacySubordinates{}: read_command(db,C.LegacySubordinates{})
+    case C.PlayerRead{id}: read_command(db,C.PlayerRead{id})
+    case C.SectionRead{ensemble,id}: read_command(db,C.SectionRead{ensemble,id})
+    case C.Orchestra{}: read_command(db,C.Orchestra{})
+    case C.Turns{id}: read_command(db,C.Turns{id})
     case C.Recruit{id,parent,harness,model,effort,repo,branch,path,base}:
       Recruit.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
     case C.Join{id,parent,harness,model,effort,path}:

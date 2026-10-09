@@ -98,6 +98,9 @@ def commit_sql(command: C.Command) -> String:
 def commit(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
   transact_sql(db,commit_sql(command))
 
+def read(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
+  DB.Sql.read(db,C.sql(command))
+
 def apply(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     result : Result<&1,&1,U32 & String,String> <- commit(db,command)

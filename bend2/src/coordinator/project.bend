@@ -323,7 +323,6 @@ def describe(+db: String, +path: String) -> IO(Unit):
 # pending input counts, last turns, latest reports and native identities.
 def sessions(+db: String, +path: String) -> IO(Unit):
   do IO<Unit>:
-    ensured : Unit <- Store.ensure_before_begin(db)
     +canonical : String <- IO.try(String, Host.Control.workspace(path))
     +resolved : G.GitOut <- Git.runGit(canonical, git_common_args())
     +raw : String <- IO.pure(String, common_of(resolved))
@@ -331,9 +330,9 @@ def sessions(+db: String, +path: String) -> IO(Unit):
     +common : String <- canonicalize_common(raw, keyed)
     +key : String <- IO.pure(String, key_of(canonical, common, keyed))
     database : String <- IO.try(String,Host.Control.output(db))
-    +listed : String <- IO.try(String, DB.Sql.query(db, workspaces_sql()))
+    +listed : String <- IO.try(String, DB.Sql.read(db, workspaces_sql()))
     members : List<String> <- collect_members(Tx.split_lines(listed), key, canonical, keyed)
-    saved : String <- IO.try(String,DB.Sql.query(db,project_sessions_sql(path,canonical,key,keyed,common_cause(resolved),rule_of(keyed),database,membership_condition(members))))
+    saved : String <- IO.try(String,DB.Sql.read(db,project_sessions_sql(path,canonical,key,keyed,common_cause(resolved),rule_of(keyed),database,membership_condition(members))))
     IO.write(saved)
 
 # Continue through the recorded receiver and return the delivery with retained reports.

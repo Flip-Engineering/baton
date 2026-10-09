@@ -113,8 +113,8 @@ def inspect_path(id: String,path: String,missing: Bool) -> IO(Unit):
 
 def inspect_result(+db: String,+id: String) -> IO(String):
   do IO<String>:
-    ready : String <- IO.try(String,Store.apply(db,C.Session{id}))
-    +path : String <- IO.try(String,DB.Sql.query(db,"SELECT workspace FROM sessions WHERE id=" ++ C.q(id) ++ ";"))
+    ready : String <- IO.try(String,Store.read(db,C.Session{id}))
+    +path : String <- IO.try(String,DB.Sql.read(db,"SELECT workspace FROM sessions WHERE id=" ++ C.q(id) ++ ";"))
     inspect_path_result(id,line(path),String.is_empty(ready))
 
 def inspect(db: String,id: String) -> IO(Unit):

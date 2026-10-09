@@ -443,7 +443,7 @@ def readable_worktree_command_selects_the_existing_reader(id):
 law readable_knowledge_uses_the_existing_visibility_query:
   for db: String
   for reader: String
-  {Control.read_snapshot(db,C.KnowledgeRead{reader}) == IO.try(String,DB.Sql.query(db,Knowledge.commit_sql(Knowledge.read_sql(reader)))) : IO(String)}
+  {Control.read_snapshot(db,C.KnowledgeRead{reader}) == IO.try(String,DB.Sql.read(db,Knowledge.read_sql(reader))) : IO(String)}
 
 def readable_knowledge_uses_the_existing_visibility_query(db,reader):
   {==}
@@ -498,8 +498,8 @@ law worktree_result_reads_the_registered_workspace:
   for +db: String
   for +id: String
   {Recruit.inspect_result(db,id) == (do IO<String>:
-    ready : String <- IO.try(String,Store.apply(db,C.Session{id}))
-    +path : String <- IO.try(String,DB.Sql.query(db,"SELECT workspace FROM sessions WHERE id=" ++ C.q(id) ++ ";"))
+    ready : String <- IO.try(String,Store.read(db,C.Session{id}))
+    +path : String <- IO.try(String,DB.Sql.read(db,"SELECT workspace FROM sessions WHERE id=" ++ C.q(id) ++ ";"))
     Recruit.inspect_path_result(id,Recruit.line(path),String.is_empty(ready))) : IO(String)}
 
 def worktree_result_reads_the_registered_workspace(db,id):

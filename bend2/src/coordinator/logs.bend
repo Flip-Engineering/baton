@@ -72,8 +72,7 @@ def read_sql(+session: String) -> String:
 
 def read(+db: String, session: String) -> IO(String):
   do IO<String>:
-    ensured : Unit <- Schema.ensure(db)
-    saved : String <- IO.try(String,DB.Sql.query(db,schema() ++ read_sql(session)))
+    saved : String <- IO.try(String,DB.Sql.read(db,read_sql(session)))
     IO.pure(String,Tx.trim_nl(saved))
 
 def write_sql(+session: String, +level: String) -> String:
@@ -810,16 +809,14 @@ def storage_json(db: String, database: U32, root: U32, logs: String, attempts: S
   ++ ",\"attempts\":[" ++ attempts ++ "]"
   ++ ",\"stderrRuns\":[" ++ stderr_runs ++ "]}"
 
-# Inspects registered artifact paths and cleanup candidates. The policy schema
-# is initialized or migrated before the read.
+# Inspects registered artifact paths and cleanup candidates.
 def storage(+db: String) -> IO(String):
   do IO<String>:
-    ensured : Unit <- Schema.ensure(db)
-    log_text : String <- IO.try(String,DB.Sql.query(db,schema() ++ log_rows_sql()))
+    log_text : String <- IO.try(String,DB.Sql.read(db,log_rows_sql()))
     logs : String <- log_items(Tx.split_lines(log_text),"")
-    attempt_text : String <- IO.try(String,DB.Sql.query(db,attempt_rows_sql(db,"")))
+    attempt_text : String <- IO.try(String,DB.Sql.read(db,attempt_rows_sql(db,"")))
     attempts : String <- attempt_items(db,Tx.split_lines(attempt_text),"")
-    run_text : String <- IO.try(String,DB.Sql.query(db,stderr_runs_schema() ++ stderr_run_rows_sql()))
+    run_text : String <- IO.try(String,DB.Sql.read(db,stderr_run_rows_sql()))
     stderr_runs : String <- stderr_run_items(Tx.split_lines(run_text),"")
     database : U32 <- IO.try(U32,F.Files.size(db))
     root : U32 <- IO.try(U32,F.Files.size(db ++ ".root.log"))

@@ -148,7 +148,7 @@ def receiver(+db: String, +session: String, cmd: String, log: String, +cwd: Stri
   do IO<String>:
     found : String <- IO.try(String,Store.apply(db,C.Session{session}))
     accepted : String <- registered(found)
-    model : String <- IO.try(String,DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +workspace : String <- Bool.pick(IO(String),String.is_empty(cwd),IO.pure(String,""),IO.try(String,Host.Control.workspace(cwd)))
     branch : Maybe<String> <- receiver_branch(workspace)
     +endpoint : String <- configured_endpoint(db,session,cmd,log,Tx.trim_nl(model))
@@ -272,7 +272,7 @@ def task_path(path: String, stdin: Bool) -> IO(String):
 
 def recorded_field(db: String, player: String, column: String) -> IO(String):
   do IO<String>:
-    value : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ column ++ " FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+    value : String <- IO.try(String,DB.Sql.read(db,"SELECT " ++ column ++ " FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     IO.pure(String,Tx.trim_nl(value))
 
 # A direct turn records its launch arguments as the default wake route.
@@ -299,7 +299,7 @@ def dispatch_turn(+db: String, +player: String, +id: String, +cmd: String, log: 
   do IO<String>:
     found : String <- IO.try(String,Store.commit(db,C.Session{player}))
     present : String <- registered(found)
-    allowed : String <- IO.try(String,DB.Sql.query(db,turn_admission_sql(player)))
+    allowed : String <- IO.try(String,DB.Sql.read(db,turn_admission_sql(player)))
     admitted : Unit <- turn_admitted(String.eq(allowed,"1\n"))
     command : Unit <- command_present(String.is_empty(cmd))
     harness_cmd : String <- IO.try(String,Host.Control.command(cmd))
@@ -318,19 +318,19 @@ def dispatch_turn(+db: String, +player: String, +id: String, +cmd: String, log: 
 
 def status_pretty(+db: String) -> IO(String):
   do IO<String>:
-    saved : String <- IO.try(String,Store.apply(db,C.Status{}))
-    IO.try(String,DB.Sql.query(db,"SELECT baton_json_pretty(json(" ++ C.q(Tx.trim_nl(saved)) ++ "));"))
+    saved : String <- IO.try(String,Store.read(db,C.Status{}))
+    IO.try(String,DB.Sql.query(":memory:","SELECT baton_json_pretty(json(" ++ C.q(Tx.trim_nl(saved)) ++ "));"))
 
 def pretty_saved(db: String, saved: String, empty: Bool) -> IO(String):
   match empty:
     case True{}: IO.die(String,1,"No matching session or message; inspect status and the requested ID.")
-    case False{}: IO.try(String,DB.Sql.query(db,"SELECT baton_json_pretty(json(" ++ C.q(Tx.trim_nl(saved)) ++ "));"))
+    case False{}: IO.try(String,DB.Sql.query(":memory:","SELECT baton_json_pretty(json(" ++ C.q(Tx.trim_nl(saved)) ++ "));"))
 
 def read_snapshot(db: String, command: C.Command) -> IO(String):
   match command:
     case C.Worktree{id}: Recruit.inspect_result(db,id)
-    case C.KnowledgeRead{reader}: IO.try(String,DB.Sql.query(db,Knowledge.commit_sql(Knowledge.read_sql(reader))))
-    case other: IO.try(String,Store.apply(db,other))
+    case C.KnowledgeRead{reader}: IO.try(String,DB.Sql.read(db,Knowledge.read_sql(reader)))
+    case other: IO.try(String,Store.read(db,other))
 
 def pretty(+db: String, command: C.Command) -> IO(String):
   do IO<String>:
