@@ -56,7 +56,7 @@ def instructions(executable: String, database: String, +session: String, orienta
   ++ "The players command lists all Players, including Principal and Associate Conductors. PLAYER denotes a player session ID.\n"
   ++ "Public messages follow assigned roles, parent links and explicit tight Ensemble membership. A Conductor can message its descendants; report and ask reach your immediate parent. Peer messages require a shared tight Ensemble.\n"
   ++ "Coordinator CLI:\n  " ++ command ++ " inbox " ++ shell(session) ++ "\n  " ++ command ++ " ack MESSAGE_ID " ++ shell(session) ++ " RECEIPT\n"
-  ++ "Acknowledge each message after accepting it.\n  " ++ command ++ " orchestra\n  " ++ command ++ " players\n  " ++ command ++ " session ID\n  " ++ command ++ " worktree ID\n  " ++ command ++ " turns ID\n"
+  ++ "Read each pending message in full and acknowledge your own handled input with its disposition. A receipt records input handling. Keep unfinished work and outstanding qualification in your reports and project state. Read your inbox again as work continues.\n  " ++ command ++ " orchestra\n  " ++ command ++ " players\n  " ++ command ++ " session ID\n  " ++ command ++ " worktree ID\n  " ++ command ++ " turns ID\n"
   ++ "Use join for Players working in an existing checkout. Use recruit when the task needs a separate worktree.\n"
   ++ "  " ++ command ++ " join PLAYER " ++ shell(session) ++ " HARNESS MODEL EFFORT WORKSPACE\n"
   ++ "  " ++ command ++ " recruit PLAYER " ++ shell(session) ++ " HARNESS MODEL EFFORT REPO BRANCH PATH BASE\n"
