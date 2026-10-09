@@ -1859,14 +1859,15 @@ class Receive(unittest.TestCase):
         child = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
         self.assertIn('[id: owed]', started['prompt'])
-        self.action(control, ack=False)
-        self.finish(child)
         taken = self.eventually(
             lambda: next((row for row in self.claim_rows('parent')
                           if row[2] == 'owed' and row[3] > 7), None),
             'a live driver never took over the stale claim')
         self.assertEqual(taken[2:], ('owed', taken[3]))
         self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+        self.action(control)
+        self.finish(child)
+        self.assertEqual(self.claim_rows('parent'), [])
 
     def test_wake_behind_an_unreaped_attempt_stands_down_without_reclaiming(self):
         """Two-driver launch handoff: with a claimed obligation whose recorded
@@ -2012,17 +2013,16 @@ class Receive(unittest.TestCase):
                     pass
 
     def test_wake_with_stale_running_phase_and_dead_native_takes_over_and_repairs_metadata(self):
-        """A running phase with a genuinely dead native never suppresses the
-        wake: the second admission's wake observes host death through the
-        reaped status, repairs the stale execution row, and takes the
-        obligation over with a fenced generation."""
+        """A failed terminal attempt retains its input. A later admission reads
+        its reaped status and repairs the stale execution phase under the lock.
+        """
         self.player()
         self.prepare_input('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
         self.assertIn('[id: first]', started['prompt'])
-        self.action(control, ack=False)
-        self.finish(first)
+        self.action(control, fail=True, ack=False)
+        self.finish(first, ok=False)
         self.assertEqual(self.execution('parent')[0], 'exited')
         before = self.claim_rows('parent')
         self.assertEqual(len(before), 1)
@@ -2174,6 +2174,53 @@ class Receive(unittest.TestCase):
         self.finish(delivery)
         self.assert_no_start()
         self.assertEqual(len(self.coord('turns', 'parent')), 1)
+
+    def test_successful_turn_continues_original_unacknowledged_input(self):
+        """A successful turn continues its unacknowledged initial input in the
+        same native conversation. The recipient accepts it in the next turn.
+        """
+        self.player(harness='omp')
+        self.prepare_input('owed', 'parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, original = self.accept('parent')
+        self.assertIn('[id: owed]', original['prompt'])
+        directory = pathlib.Path(self.execution('parent')[2])
+        self.action(control, ack=False)
+        continued, resumed = self.accept_or_child_exit(
+            first, 'successful turn closed with original input still pending')
+        self.assertEqual(resumed['session'], 'parent')
+        self.assertEqual(resumed['native'], original['native'])
+        self.assertTrue(resumed['resume'])
+        self.assertIn('[id: owed]', resumed['prompt'])
+        self.assertIsNone(self.coord('delivery', 'owed')['receipt'])
+        self.action(continued)
+        self.finish(first)
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.assertEqual(self.coord('delivery', 'owed')['receipt'], 'native-reviewed')
+        self.assertEqual(len(self.coord('turns', 'parent')), 2)
+        self.assertEqual(self.coord('player', 'parent')['native'], original['native'])
+        self.assertTrue((directory / 'acknowledged').exists())
+        self.assert_no_start()
+
+    def test_failed_continuation_retains_original_input_for_retry(self):
+        """A provider failure in the continuation retains the original input
+        and returns the failure to the delivery caller.
+        """
+        self.player(harness='omp')
+        self.prepare_input('owed', 'parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, original = self.accept('parent')
+        self.action(control, ack=False)
+        continued, resumed = self.accept_or_child_exit(
+            first, 'successful turn did not continue original input')
+        self.assertEqual(resumed['native'], original['native'])
+        self.assertIn('[id: owed]', resumed['prompt'])
+        self.action(continued, fail=True, ack=False)
+        self.finish(first, ok=False)
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+        self.assertIsNone(self.coord('delivery', 'owed')['receipt'])
+        self.assertEqual(len(self.coord('turns', 'parent')), 2)
+        self.assert_no_start()
 
     def test_concurrent_sends_preserve_both_inputs_and_start_one_continuation(self):
         """Two arrivals against one live session are both carried by a single continuation
