@@ -111,6 +111,34 @@ class NativeObservation(RECEIVE.Receive):
                              for row in self.coord('inbox', 'root')))
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
+    def test_captured_protocol_research_elision_keeps_completed_report(self):
+        # Extracted from the original protocol-research completion and terminal tail.
+        capture = pathlib.Path(__file__).with_name('fixtures') / 'issue669-omp-elided-completion.jsonl'
+        frames = [json.loads(line) for line in capture.read_text().splitlines()]
+        text = '\n'.join(block['text'] for block in frames[0]['message']['content']
+                         if block.get('type') == 'text')
+        self.player(harness='omp')
+        self.coord('message', 'captured-elision-task', 'root', 'parent', 'task',
+                   'Read this task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, _ = self.accept_child(observer, 'parent',
+                                      'Observation receive exited before native startup')
+        self.review_input(stream, 'captured-elision-task')
+        for frame in frames:
+            self.action(stream, native_frame=frame)
+            self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        turns = self.eventually(lambda: self.coord('turns', 'parent'),
+                                'the captured completion was not reported')
+        raw = self.attempt_stdout('parent').read_text()
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+
+        self.assertEqual([row['reportBody'] for row in turns], [text])
+        self.assertEqual(self.coord('delivery', turns[0]['id'])['body'], text)
+        for frame in frames:
+            self.assertIn(json.dumps(frame), raw)
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
     def test_muse_uses_admitted_turn_terminal_and_keeps_later_lifecycle_separate(self):
         self.player(harness='muse')
         fake = self.directory / 'muse native fixture'

@@ -116,11 +116,34 @@ function playerSupport(db, sessionIds) {
   const changeKey = (entity, id) => entity + '\u0000' + id;
 
   // The recorded execution of a session: the first row in rowid order.
-  for (const row of rows(db, `SELECT session, id, mode, phase, status FROM executions
-                               WHERE session IN (${placeholders}) ORDER BY session, rowid`, ...ids)) {
+  // Provider failures come from the terminal recorded for that same attempt.
+  for (const row of rows(db, `SELECT e.session, e.id, e.mode, e.phase, e.status,
+                                    CASE WHEN e.phase = 'exited' THEN
+                                      CASE WHEN coalesce(json_extract(t.event, '$.is_error'), 0) = 1 THEN
+                                        json_object('cause', 'provider-failure',
+                                          'eventType', json_extract(t.event, '$.type'),
+                                          'errorStatus', json_extract(t.event, '$.exitCode'),
+                                          'errorMessage', json_extract(t.event, '$.result'))
+                                      WHEN json_extract(t.event, '$.type') = 'agent_end' THEN (
+                                        SELECT json_object('cause', 'provider-failure', 'eventType', 'agent_end',
+                                          'stopReason', 'error',
+                                          'errorStatus', json_extract(assistant.value, '$.errorStatus'),
+                                          'errorMessage', json_extract(assistant.value, '$.errorMessage'))
+                                          FROM (SELECT m.value FROM json_each(
+                                            CASE WHEN json_type(t.event, '$.messages') = 'array'
+                                              THEN json_extract(t.event, '$.messages') ELSE '[]' END) m
+                                            WHERE CASE WHEN m.type = 'object'
+                                              THEN json_extract(m.value, '$.role') END = 'assistant'
+                                            ORDER BY m.key DESC LIMIT 1) assistant
+                                         WHERE json_extract(assistant.value, '$.stopReason') = 'error'
+                                      ) END
+                                    END AS failure
+                               FROM executions e LEFT JOIN turns t ON t.id = e.id AND t.worker = e.session
+                              WHERE e.session IN (${placeholders}) ORDER BY e.session, e.rowid`, ...ids)) {
     if (!support.execution.has(row.session)) {
       support.execution.set(row.session, {
         attempt: row.id, mode: row.mode, phase: row.phase, status: row.status,
+        failure: row.failure ? JSON.parse(row.failure) : null,
       });
     }
   }
@@ -172,22 +195,21 @@ function playerSupport(db, sessionIds) {
       });
     }
   }
-  // The set the pending badge counts: stored task, guidance and recovery
-  // messages awaiting acknowledgement on a session with no recorded stop. One
-  // definition for the count and the list; recorded stops and other kinds stay
-  // visible through their own fields, never through this set.
+  // The pending badge counts stored task, guidance and recovery messages
+  // awaiting acknowledgement on a session with no recorded stop.
   for (const row of rows(db, `SELECT recipient, count(*) AS n FROM messages
                                WHERE recipient IN (${placeholders}) AND receipt IS NULL
                                  AND kind IN ('task', 'guidance', 'recovery')
                                GROUP BY recipient`, ...ids)) {
     if (!support.stop.has(row.recipient)) support.pending.set(row.recipient, row.n);
   }
-  // The stored rows behind those counts, newest first per recipient.
-  for (const row of rows(db, `SELECT recipient, id, kind FROM messages
+  // Awaiting input and report metadata, newest first per recipient. Reports
+  // remain readable when the recipient has a recorded stop.
+  for (const row of rows(db, `SELECT recipient, id, sender, kind FROM messages
                                WHERE recipient IN (${placeholders}) AND receipt IS NULL
-                                 AND kind IN ('task', 'guidance', 'recovery')
+                                 AND kind IN ('task', 'guidance', 'recovery', 'report')
                                ORDER BY seq DESC`, ...ids)) {
-    if (support.stop.has(row.recipient)) continue;
+    if (support.stop.has(row.recipient) && row.kind !== 'report') continue;
     const list = support.pendingSample.get(row.recipient) || [];
     list.push(row);
     support.pendingSample.set(row.recipient, list);
@@ -396,7 +418,7 @@ function playerSnapshot(db, session, support) {
     stop: support.stop.get(session) || null,
     currentAction: currentAction(support, session, execution),
     pendingSample: sample.map((row) => ({
-      id: row.id, kind: row.kind, at: support.messageAt.get(row.id) || '',
+      id: row.id, sender: row.sender, kind: row.kind, at: support.messageAt.get(row.id) || '',
     })),
   };
 }

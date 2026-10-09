@@ -971,6 +971,57 @@ test('the snapshot names the recorded current action and every stored awaiting',
   assert.deepEqual(snapshot.providers.child, { name: 'configured/child', status: 'configured' });
 });
 
+test('an exited attempt exposes its OMP provider error at exit zero and clears it for a successful retry', async (t) => {
+  const space = fixture();
+  t.after(() => rmSync(space.directory, { recursive: true, force: true }));
+  const server = createOrchestraServer({ databasePath: space.databasePath, reader: 'root' });
+  const base = await listen(server);
+  t.after(() => close(server));
+  const db = new DatabaseSync(space.databasePath);
+  t.after(() => db.close());
+  const attempt = 'receive:child:15046:2ea5b54983c5ee60f296033626704637';
+  const providerError = {
+    role: 'assistant', content: [], stopReason: 'error', errorStatus: 403,
+    errorMessage: 'Usage limit reached for 5 hour.',
+  };
+  db.prepare(`INSERT INTO turns(id, worker, event) VALUES (?, 'child', ?)`).run(attempt,
+    JSON.stringify({ type: 'agent_end', isTerminal: true,
+      messages: [{ role: 'user', content: [] }, providerError, 'terminal', { usage: {} }] }));
+  db.prepare(`UPDATE executions SET id = ?, phase = 'exited', status = 'exit 0'
+    WHERE session = 'child'`).run(attempt);
+
+  const snapshot = await (await fetch(`${base}/orchestra/snapshot?subject=child`)).json();
+  const execution = snapshot.players.find((player) => player.id === 'child').execution;
+  assert.equal(execution.attempt, attempt);
+  assert.equal(execution.status, 'exit 0');
+  assert.deepEqual(execution.failure, {
+    cause: 'provider-failure', eventType: 'agent_end', stopReason: 'error',
+    errorStatus: 403, errorMessage: providerError.errorMessage,
+  });
+  const work = await (await fetch(`${base}/orchestra/work?subject=child`)).json();
+  assert.deepEqual(work.execution.failure, execution.failure);
+
+  const retry = 'receive:child:15047:retry';
+  db.prepare(`UPDATE executions SET id = ?, phase = 'running', status = ''
+    WHERE session = 'child'`).run(retry);
+  const running = await (await fetch(`${base}/orchestra/snapshot?subject=child`)).json();
+  const runningPlayer = running.players.find((player) => player.id === 'child');
+  assert.equal(runningPlayer.lastTurnId, attempt);
+  assert.equal(runningPlayer.execution.attempt, retry);
+  assert.equal(runningPlayer.execution.failure, null);
+
+  db.prepare(`INSERT INTO turns(id, worker, event) VALUES (?, 'child', ?)`).run(retry,
+    JSON.stringify({ type: 'agent_end', isTerminal: true, messages: [providerError,
+      { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Work completed.' }] },
+      { usage: {} }, 'terminal'] }));
+  db.prepare(`UPDATE executions SET phase = 'exited', status = 'exit 0' WHERE session = 'child'`).run();
+  const completed = await (await fetch(`${base}/orchestra/snapshot?subject=child`)).json();
+  const completedPlayer = completed.players.find((player) => player.id === 'child');
+  assert.equal(completedPlayer.execution.attempt, retry);
+  assert.equal(completedPlayer.execution.status, 'exit 0');
+  assert.equal(completedPlayer.execution.failure, null);
+});
+
 test('selected work reads the recorded cursors and complete bodies', async (t) => {
   const space = fixture();
   t.after(() => rmSync(space.directory, { recursive: true, force: true }));
@@ -1027,7 +1078,7 @@ test('selected work reads the recorded cursors and complete bodies', async (t) =
     .pendingSample.some((row) => row.id === 'pending-1'));
 });
 
-test('selected message reads the complete stored body on demand', async (t) => {
+test('awaiting report metadata keeps input counts and complete message bodies readable on demand', async (t) => {
   const space = fixture();
   t.after(() => rmSync(space.directory, { recursive: true, force: true }));
   const server = createOrchestraServer({ databasePath: space.databasePath, reader: 'root' });
@@ -1039,6 +1090,21 @@ test('selected message reads the complete stored body on demand', async (t) => {
     VALUES ('support-1','child','root','report','Full supporting body with message:trailing reference.')`).run();
   db.prepare(`INSERT INTO messages(id,sender,recipient,kind,body)
     VALUES ('empty-1','child','root','report','')`).run();
+  db.prepare(`INSERT INTO messages(id,sender,recipient,kind,body)
+    VALUES ('qa-report-owed','grandchild','child','report','Owed report probe.')`).run();
+
+  const snapshot = await (await fetch(`${base}/orchestra/snapshot?subject=root`)).json();
+  const child = snapshot.players.find((player) => player.id === 'child');
+  assert.equal(child.pendingCount, 1);
+  assert.equal(child.unacknowledgedCount, 2);
+  assert.deepEqual(child.pendingSample.map((message) => [message.id, message.sender, message.kind]),
+    [['qa-report-owed', 'grandchild', 'report'], ['pending-1', 'root', 'task']]);
+  assert.match(child.pendingSample[0].at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(Object.hasOwn(child.pendingSample[0], 'body'), false);
+  const root = snapshot.players.find((player) => player.id === 'root');
+  assert.equal(root.pendingCount, 0);
+  assert.equal(root.unacknowledgedCount, 2);
+  assert.deepEqual(root.pendingSample.map((message) => message.id), ['empty-1', 'support-1']);
 
   const found = await (await fetch(`${base}/orchestra/message?id=support-1`)).json();
   assert.equal(found.message.id, 'support-1');
@@ -1050,6 +1116,19 @@ test('selected message reads the complete stored body on demand', async (t) => {
   const empty = await (await fetch(`${base}/orchestra/message?id=empty-1`)).json();
   assert.ok(empty.message);
   assert.equal(empty.message.body, '');
+
+  const owed = await (await fetch(`${base}/orchestra/message?id=qa-report-owed`)).json();
+  assert.equal(owed.message.sender, 'grandchild');
+  assert.equal(owed.message.body, 'Owed report probe.');
+
+  db.prepare(`INSERT INTO session_stops(session, id, outcome, attempt, report_id)
+    VALUES ('child', 'stop-child', 'stopped', 'attempt-1', NULL)`).run();
+  const stoppedSnapshot = await (await fetch(`${base}/orchestra/snapshot?subject=child`)).json();
+  const stopped = stoppedSnapshot.players.find((player) => player.id === 'child');
+  assert.equal(stopped.pendingCount, 0);
+  assert.equal(stopped.unacknowledgedCount, 2);
+  assert.deepEqual(stopped.pendingSample.map((message) => [message.id, message.sender, message.kind]),
+    [['qa-report-owed', 'grandchild', 'report']]);
 
   const missing = await (await fetch(`${base}/orchestra/message?id=no-such-message`)).json();
   assert.equal(missing.message, null);

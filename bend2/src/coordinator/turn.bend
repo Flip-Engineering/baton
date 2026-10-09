@@ -266,18 +266,16 @@ def omp_terminal_objects_sql(+source: String) -> String:
 def omp_terminal_kept_sql(+source: String) -> String:
   "coalesce((SELECT json_group_array(json(message.value)) FROM (SELECT " ++ omp_content_sql("m.value") ++ " AS value,m.key AS key FROM json_each(" ++ source ++ ",'$.messages') m WHERE m.type='object' ORDER BY m.key) message),'[]')"
 
-# The terminal ends in an elision or metadata marker, its last assistant error
-# names a completed error already observed in this attempt, and the stream's
-# last assistant activity is the retained completion with a different identity.
-# The matching identities establish the completed response reached later.
-def omp_repeated_error_sql(+source: String, +message: String, +activity: String) -> String:
+# An elided terminal can carry earlier tool use or an already observed error.
+# The stream's last assistant activity identifies the retained completion.
+def omp_elided_completion_sql(+source: String, +message: String, +activity: String) -> String:
   +assistant = C.last_assistant_sql_expr(source)
-  "CASE WHEN json_valid(" ++ message ++ ") AND json_valid(" ++ activity ++ ") THEN CASE WHEN (SELECT CASE WHEN tail.type='object' THEN coalesce(json_extract(tail.value,'$.role')='assistant',0) ELSE 0 END FROM json_each(" ++ source ++ ",'$.messages') tail ORDER BY tail.key DESC LIMIT 1)=0 AND json_extract(" ++ assistant ++ ",'$.stopReason')='error' AND coalesce(json_extract(" ++ assistant ++ ",'$.responseId'),'')<>'' AND json_extract(" ++ activity ++ ",'$.kind')='message_end' AND coalesce(json_extract(" ++ activity ++ ",'$.id'),'')<>'' AND json_extract(" ++ activity ++ ",'$.id')=json_extract(" ++ message ++ ",'$.responseId') AND json_extract(" ++ assistant ++ ",'$.responseId')<>json_extract(" ++ activity ++ ",'$.id') AND EXISTS(SELECT 1 FROM json_each(" ++ activity ++ ",'$.errors') observed WHERE observed.value=json_extract(" ++ assistant ++ ",'$.responseId')) THEN 1 ELSE 0 END ELSE 0 END"
+  "CASE WHEN json_valid(" ++ message ++ ") AND json_valid(" ++ activity ++ ") THEN CASE WHEN (SELECT CASE WHEN tail.type='object' THEN coalesce(json_extract(tail.value,'$.role')='assistant',0) ELSE 0 END FROM json_each(" ++ source ++ ",'$.messages') tail ORDER BY tail.key DESC LIMIT 1)=0 AND coalesce(json_extract(" ++ assistant ++ ",'$.responseId'),'')<>'' AND json_extract(" ++ activity ++ ",'$.kind')='message_end' AND coalesce(json_extract(" ++ activity ++ ",'$.id'),'')<>'' AND json_extract(" ++ activity ++ ",'$.id')=json_extract(" ++ message ++ ",'$.responseId') AND json_extract(" ++ assistant ++ ",'$.responseId')<>json_extract(" ++ activity ++ ",'$.id') AND ((json_extract(" ++ assistant ++ ",'$.stopReason')='toolUse' AND json_extract(" ++ message ++ ",'$.stopReason')='stop') OR (json_extract(" ++ assistant ++ ",'$.stopReason')='error' AND EXISTS(SELECT 1 FROM json_each(" ++ activity ++ ",'$.errors') observed WHERE observed.value=json_extract(" ++ assistant ++ ",'$.responseId')))) THEN 1 ELSE 0 END ELSE 0 END"
 
 def omp_terminal_messages_sql(+source: String, +message: String, +activity: String) -> String:
   +objects = omp_terminal_objects_sql(source)
   +kept = omp_terminal_kept_sql(source)
-  "CASE WHEN " ++ objects ++ "=0 AND json_valid(" ++ message ++ ") THEN json_array(json(" ++ message ++ ")) WHEN " ++ omp_repeated_error_sql(source,message,activity) ++ "=1 THEN json_array(json(" ++ omp_content_sql(message) ++ ")) ELSE " ++ kept ++ " END"
+  "CASE WHEN " ++ objects ++ "=0 AND json_valid(" ++ message ++ ") THEN json_array(json(" ++ message ++ ")) WHEN " ++ omp_elided_completion_sql(source,message,activity) ++ "=1 THEN json_array(json(" ++ omp_content_sql(message) ++ ")) ELSE " ++ kept ++ " END"
 
 # OMP may return valid terminal envelopes whose messages array contains a
 # non-object metadata marker. Keep object messages in their original order for
