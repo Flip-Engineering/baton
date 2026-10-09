@@ -34,6 +34,10 @@ type WireOperands is Data:
   WoOk{operands: Sel.RequestOperands}
   WoRefused{condition: String}
 
+type WireCaptures is Data:
+  WcOk{captures: Sel.Captures}
+  WcRefused{condition: String}
+
 # --- member helpers --------------------------------------------------------
 
 def wc_name_present(+name: String, +members: Codec.RawValue) -> Bool:
@@ -246,7 +250,104 @@ def wire_operands_read(+request: Codec.RawValue, +common: String) -> WireOperand
     case Codec.Robj{+members}: wo_step(members, common, wo_ok(members))
     case other: WoRefused{"invalidRequestOperands"}
 
-# --- laws ------------------------------------------------------------------
+# --- the captures ----------------------------------------------------------
+# The other direction of the capture wire. A capture record carries nine camelCase
+# members and every one of them is text, so the decoder requires the exact member set,
+# the kind of each member, and the array shape the emitter writes, and it refuses before
+# it builds any record. The empty array is the sentinel cell the emitter writes for no
+# captures.
+
+def wc_capture_names() -> Req.Words:
+  Req.words_from(["captureKind", "role", "path", "marker", "payload", "payloadEncoding", "producerModule", "producerDigest", "producerOperation"])
+
+def wc_capture_members_ok(+members: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, wc_text_member_ok("captureKind", members),
+    Bool.pick(Bool, wc_text_member_ok("role", members),
+      Bool.pick(Bool, wc_text_member_ok("path", members),
+        Bool.pick(Bool, wc_text_member_ok("marker", members),
+          Bool.pick(Bool, wc_text_member_ok("payload", members),
+            Bool.pick(Bool, wc_text_member_ok("payloadEncoding", members),
+              Bool.pick(Bool, wc_text_member_ok("producerModule", members),
+                Bool.pick(Bool, wc_text_member_ok("producerDigest", members),
+                  wc_text_member_ok("producerOperation", members), False{}), False{}), False{}), False{}), False{}), False{}), False{}), False{})
+
+def wc_capture_ok(+elem: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, Codec.raw_keys_ok(wc_capture_names(), wc_object_members(elem)), wc_capture_members_ok(wc_object_members(elem)), False{})
+
+def wc_capture_build_elem(+elem: Codec.RawValue) -> Sel.Capture:
+  Sel.Capture{wc_text_member_for(elem, "captureKind"), wc_text_member_for(elem, "role"),
+    wc_text_member_for(elem, "path"), wc_text_member_for(elem, "marker"),
+    wc_text_member_for(elem, "payload"), wc_text_member_for(elem, "payloadEncoding"),
+    wc_text_member_for(elem, "producerModule"), wc_text_member_for(elem, "producerDigest"),
+    wc_text_member_for(elem, "producerOperation")}
+
+def wc_captures_rest_ok(+rest: Codec.RawValue) -> Bool:
+  match rest:
+    case Codec.Rnil{}: True{}
+    case Codec.Rarr{+head, +tail}: Bool.pick(Bool, wc_capture_ok(head), wc_captures_rest_ok(tail), False{})
+    case other: False{}
+
+def wc_captures_ok(+value: Codec.RawValue) -> Bool:
+  match value:
+    case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: True{}
+    case Codec.Rarr{+head, +tail}: Bool.pick(Bool, wc_capture_ok(head), wc_captures_rest_ok(tail), False{})
+    case other: False{}
+
+def wc_captures_build_tail(+rest: Codec.RawValue) -> Sel.Captures:
+  match rest:
+    case Codec.Rnil{}: Sel.CapNil{}
+    case Codec.Rarr{+head, +tail}: Sel.CapCons{wc_capture_build_elem(head), wc_captures_build_tail(tail)}
+    case other: Sel.CapNil{}
+
+def wc_captures_build(+value: Codec.RawValue) -> Sel.Captures:
+  match value:
+    case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: Sel.CapNil{}
+    case Codec.Rarr{+head, +tail}: Sel.CapCons{wc_capture_build_elem(head), wc_captures_build_tail(tail)}
+    case other: Sel.CapNil{}
+
+def wc_captures_step(+value: Codec.RawValue, ok: Bool) -> WireCaptures:
+  Bool.pick(WireCaptures, ok, WcOk{wc_captures_build(value)}, WcRefused{"invalidCaptures"})
+
+def wire_captures_read(+value: Codec.RawValue) -> WireCaptures:
+  wc_captures_step(value, wc_captures_ok(value))
+
+def wc_capture_value() -> Codec.RawValue:
+  Codec.Robj{
+    Codec.Rpair{"captureKind", Codec.Rstr{"source"}, Codec.Rpair{"role", Codec.Rstr{"subject"},
+      Codec.Rpair{"path", Codec.Rstr{"/p"}, Codec.Rpair{"marker", Codec.Rstr{"m1"},
+        Codec.Rpair{"payload", Codec.Rstr{"text"}, Codec.Rpair{"payloadEncoding", Codec.Rstr{"utf8"},
+          Codec.Rpair{"producerModule", Codec.Rstr{"mod"}, Codec.Rpair{"producerDigest", Codec.Rstr{"d1"},
+            Codec.Rpair{"producerOperation", Codec.Rstr{"op"}, Codec.Rnil{}}}}}}}}}}
+
+law wc_law_a_capture_record_reads_into_the_typed_capture:
+  {wire_captures_read(Codec.Rarr{wc_capture_value(), Codec.Rnil{}}) == WcOk{Sel.CapCons{Sel.Capture{"source", "subject", "/p", "m1", "text", "utf8", "mod", "d1", "op"}, Sel.CapNil{}}} : WireCaptures}
+
+def wc_law_a_capture_record_reads_into_the_typed_capture():
+  {==}
+
+law wc_law_no_captures_read_as_the_empty_capture_list:
+  {wire_captures_read(Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}) == WcOk{Sel.CapNil{}} : WireCaptures}
+
+def wc_law_no_captures_read_as_the_empty_capture_list():
+  {==}
+
+law wc_law_a_capture_missing_a_member_refuses:
+  {wire_captures_read(Codec.Rarr{Codec.Robj{Codec.Rpair{"captureKind", Codec.Rstr{"source"}, Codec.Rnil{}}}, Codec.Rnil{}}) == WcRefused{"invalidCaptures"} : WireCaptures}
+
+def wc_law_a_capture_missing_a_member_refuses():
+  {==}
+
+law wc_law_a_capture_with_a_number_payload_refuses:
+  {wire_captures_read(Codec.Rarr{Codec.Robj{Codec.Rpair{"captureKind", Codec.Rstr{"source"}, Codec.Rpair{"role", Codec.Rstr{"r"}, Codec.Rpair{"path", Codec.Rstr{"/p"}, Codec.Rpair{"marker", Codec.Rstr{"m"}, Codec.Rpair{"payload", Codec.Rnum{"1"}, Codec.Rpair{"payloadEncoding", Codec.Rstr{"utf8"}, Codec.Rpair{"producerModule", Codec.Rstr{"mod"}, Codec.Rpair{"producerDigest", Codec.Rstr{"d"}, Codec.Rpair{"producerOperation", Codec.Rstr{"op"}, Codec.Rnil{}}}}}}}}}}, Codec.Rnil{}}) == WcRefused{"invalidCaptures"} : WireCaptures}
+
+def wc_law_a_capture_with_a_number_payload_refuses():
+  {==}
+
+law wc_law_a_second_capture_appends:
+  {wire_captures_read(Codec.Rarr{wc_capture_value(), Codec.Rarr{wc_capture_value(), Codec.Rnil{}}}) == WcOk{Sel.CapCons{Sel.Capture{"source", "subject", "/p", "m1", "text", "utf8", "mod", "d1", "op"}, Sel.CapCons{Sel.Capture{"source", "subject", "/p", "m1", "text", "utf8", "mod", "d1", "op"}, Sel.CapNil{}}}} : WireCaptures}
+
+def wc_law_a_second_capture_appends():
+  {==}
 
 def wo_request() -> Codec.RawValue:
   Codec.Robj{Codec.Rpair{"subject", Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"clang"}, Codec.Rnil{}}},
