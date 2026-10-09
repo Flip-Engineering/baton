@@ -296,11 +296,11 @@ function writeEvent(response, event, id, data) {
   response.write(`id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-function eventRows(db, cursor) {
-  return rows(db, `
+function nextEventRow(db, cursor) {
+  return one(db, `
     SELECT change_id AS id, recorded_at AS at, session_id AS session,
            entity, entity_id AS entityId, operation, kind, summary
-      FROM native_changes WHERE change_id > ? ORDER BY change_id`, cursor);
+      FROM native_changes WHERE change_id > ? ORDER BY change_id LIMIT 1`, cursor);
 }
 
 function ensembleHasVisibleMember(db, id, scope) {
@@ -347,8 +347,8 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
   let cursor = initialCursor;
   let closed = false;
   let subscriptionClosed = false;
-  let pumping = false;
-  let pumpAgain = false;
+  let scheduled = null;
+  let waitingForDrain = false;
   let admittedScope = null;
   response.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -359,6 +359,9 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
   });
   response.flushHeaders?.();
   const closeSubscription = () => {
+    if (scheduled !== null) clearImmediate(scheduled);
+    scheduled = null;
+    response.removeListener('drain', onDrain);
     if (subscriptionClosed) return;
     subscriptionClosed = true;
     subscription.close();
@@ -370,112 +373,121 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
     response.end();
     closeSubscription();
   };
+  const onDrain = () => {
+    waitingForDrain = false;
+    pump();
+  };
   const pump = () => {
-    if (closed) return;
-    if (pumping) {
-      pumpAgain = true;
+    if (closed || scheduled !== null || waitingForDrain) return;
+    if (response.writableNeedDrain) {
+      waitingForDrain = true;
+      response.once('drain', onDrain);
       return;
     }
-    pumping = true;
+    scheduled = setImmediate(pumpNext);
+  };
+  const pumpNext = () => {
+    scheduled = null;
+    if (closed) return;
     try {
-      do {
-        pumpAgain = false;
-        const batch = inTransaction(db, () => {
-          const scope = visibleScope(db, reader, subject);
-          if (!scope) return { refused: true, gap: false, rows: [] };
-          const bounds = one(db, 'SELECT min(change_id) AS first, max(change_id) AS last FROM native_changes');
-          const high = Number(bounds.last ?? 0);
-          const first = Number(bounds.first ?? (high + 1));
-          const gap = cursor > high || (cursor > 0 && cursor < first - 1);
-          const changes = gap ? [] : eventRows(db, cursor);
-          const visible = new Set(scope);
-          const frames = changes.map((change) => {
-            const id = Number(change.id);
-            const ensembleId = change.entity === 'ensemble'
-              ? change.entityId
-              : ['section', 'section-membership'].includes(change.entity)
-                ? change.entityId.split('/')[0] : '';
-            const ensembleVisible = ensembleId
-              && ensembleHasVisibleMember(db, ensembleId, scope);
-            if (!visible.has(change.session) && !ensembleVisible) {
-              // The shared knowledge overview also includes actors outside this subtree.
-              if (change.entity === 'knowledge' || change.entity === 'promotion') {
-                return { id, type: 'shared', transition: change };
-              }
-              return { id, type: 'cursor', data: {} };
+      const batch = inTransaction(db, () => {
+        const scope = visibleScope(db, reader, subject);
+        if (!scope) return { refused: true, gap: false, rows: [] };
+        const bounds = one(db, `SELECT
+          (SELECT min(change_id) FROM native_changes) AS first,
+          (SELECT max(change_id) FROM native_changes) AS last`);
+        const high = Number(bounds.last ?? 0);
+        const first = Number(bounds.first ?? (high + 1));
+        const gap = cursor > high || (cursor > 0 && cursor < first - 1);
+        // Each scheduling step reads one change and releases its transaction.
+        const change = gap ? null : nextEventRow(db, cursor);
+        const changes = change ? [change] : [];
+        const visible = new Set(scope);
+        const frames = changes.map((change) => {
+          const id = Number(change.id);
+          const ensembleId = change.entity === 'ensemble'
+            ? change.entityId
+            : ['section', 'section-membership'].includes(change.entity)
+              ? change.entityId.split('/')[0] : '';
+          const ensembleVisible = ensembleId
+            && ensembleHasVisibleMember(db, ensembleId, scope);
+          if (!visible.has(change.session) && !ensembleVisible) {
+            // The shared knowledge overview also includes actors outside this subtree.
+            if (change.entity === 'knowledge' || change.entity === 'promotion') {
+              return { id, type: 'shared', transition: change };
             }
-            if (['ensemble', 'membership', 'section', 'section-membership'].includes(change.entity)) {
-              const value = ensembleSnapshot(db, change.entityId.split('/')[0], scope);
-              const player = change.entity === 'membership' && visible.has(change.session)
-                ? playerSnapshot(db, change.session) : null;
-              return { id, type: 'ensemble', data: value ? JSON.parse(value) : null,
-                player, transition: change, sessionVisible: visible.has(change.session) };
-            }
-            const player = playerSnapshot(db, change.session);
-            return { id, type: 'player', data: player, transition: change,
-              sessionVisible: visible.has(change.session),
-              pending: player && (change.kind.startsWith('message:')
-                || ['receipt', 'report', 'stop', 'execution', 'role'].includes(change.kind))
-                ? { session: player.id, pendingCount: player.pendingCount,
-                  unacknowledgedCount: player.unacknowledgedCount,
-                  lastTurnId: player.lastTurnId, latestReportId: player.latestReportId } : null };
-          });
-          return { refused: false, gap, scope, rows: frames };
+            return { id, type: 'cursor', data: {} };
+          }
+          if (['ensemble', 'membership', 'section', 'section-membership'].includes(change.entity)) {
+            const value = ensembleSnapshot(db, change.entityId.split('/')[0], scope);
+            const player = change.entity === 'membership' && visible.has(change.session)
+              ? playerSnapshot(db, change.session) : null;
+            return { id, type: 'ensemble', data: value ? JSON.parse(value) : null,
+              player, transition: change, sessionVisible: visible.has(change.session) };
+          }
+          const player = playerSnapshot(db, change.session);
+          return { id, type: 'player', data: player, transition: change,
+            sessionVisible: visible.has(change.session),
+            pending: player && (change.kind.startsWith('message:')
+              || ['receipt', 'report', 'stop', 'execution', 'role'].includes(change.kind))
+              ? { session: player.id, pendingCount: player.pendingCount,
+                unacknowledgedCount: player.unacknowledgedCount,
+                lastTurnId: player.lastTurnId, latestReportId: player.latestReportId } : null };
         });
-        if (batch.refused) return endWithGap('reader-scope-changed');
-        if (batch.gap) return endWithGap('cursor-gap');
-        const scope = new Set(batch.scope);
-        if (admittedScope && (admittedScope.size !== scope.size
-            || [...admittedScope].some((session) => !scope.has(session)))) {
-          return endWithGap('reader-scope-changed');
+        return { refused: false, gap, scope, rows: frames, high };
+      });
+      if (batch.refused) return endWithGap('reader-scope-changed');
+      if (batch.gap) return endWithGap('cursor-gap');
+      const scope = new Set(batch.scope);
+      if (admittedScope && (admittedScope.size !== scope.size
+          || [...admittedScope].some((session) => !scope.has(session)))) {
+        return endWithGap('reader-scope-changed');
+      }
+      admittedScope = scope;
+      for (const frame of batch.rows) {
+        cursor = frame.id;
+        if (frame.type === 'cursor') {
+          writeEvent(response, 'cursor', String(cursor), {});
+          continue;
         }
-        admittedScope = scope;
-        for (const frame of batch.rows) {
-          cursor = frame.id;
-          if (frame.type === 'cursor') {
-            writeEvent(response, 'cursor', String(cursor), {});
-            continue;
-          }
-          if (frame.type === 'shared') {
-            // Notify the client to refresh the shared knowledge reads.
-            writeEvent(response, 'transition', String(cursor), {
-              seq: cursor,
-              at: frame.transition.at,
-              session: '',
-              kind: frame.transition.kind,
-              summary: '',
-              entity: frame.transition.entity,
-              entityId: '',
-              operation: frame.transition.operation,
-              counterpart: '',
-            });
-            continue;
-          }
-          if (!frame.data) return endWithGap(frame.type === 'ensemble' ? 'ensemble-removed' : 'entity-removed');
-          writeEvent(response, frame.type, String(cursor), frame.data);
-          if (frame.player) writeEvent(response, 'player', String(cursor), frame.player);
-          if (frame.pending) writeEvent(response, 'pending', String(cursor), frame.pending);
-          const change = frame.transition;
-          const counterpart = change.entity === 'message'
-            ? (messageCounterparts(db, [change.entityId]).get(change.entityId)?.sender || '')
-            : '';
+        if (frame.type === 'shared') {
+          // Notify the client to refresh the shared knowledge reads.
           writeEvent(response, 'transition', String(cursor), {
             seq: cursor,
-            at: change.at,
-            session: frame.sessionVisible === false ? '' : change.session,
-            kind: change.kind,
-            summary: change.summary,
-            entity: change.entity,
-            entityId: change.entityId,
-            operation: change.operation,
-            counterpart,
+            at: frame.transition.at,
+            session: '',
+            kind: frame.transition.kind,
+            summary: '',
+            entity: frame.transition.entity,
+            entityId: '',
+            operation: frame.transition.operation,
+            counterpart: '',
           });
+          continue;
         }
-      } while (pumpAgain && !closed);
+        if (!frame.data) return endWithGap(frame.type === 'ensemble' ? 'ensemble-removed' : 'entity-removed');
+        writeEvent(response, frame.type, String(cursor), frame.data);
+        if (frame.player) writeEvent(response, 'player', String(cursor), frame.player);
+        if (frame.pending) writeEvent(response, 'pending', String(cursor), frame.pending);
+        const change = frame.transition;
+        const counterpart = change.entity === 'message'
+          ? (messageCounterparts(db, [change.entityId]).get(change.entityId)?.sender || '')
+          : '';
+        writeEvent(response, 'transition', String(cursor), {
+          seq: cursor,
+          at: change.at,
+          session: frame.sessionVisible === false ? '' : change.session,
+          kind: change.kind,
+          summary: change.summary,
+          entity: change.entity,
+          entityId: change.entityId,
+          operation: change.operation,
+          counterpart,
+        });
+      }
+      if (cursor < batch.high) pump();
     } catch (error) {
       endWithGap('event-read-failed');
-    } finally {
-      pumping = false;
     }
   };
   onNotice = (notice) => {

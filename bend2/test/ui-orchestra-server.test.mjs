@@ -557,6 +557,109 @@ test('SSE pumps committed rows from owner hints and replays by durable cursor af
   assert.match(await gapStream.text(), /event: gap[\s\S]*cursor-gap/);
 });
 
+test('old-cursor replay yields to HTTP and SQLite commits and drains every change in order', async (t) => {
+  const f = fixture();
+  const writer = new DatabaseSync(f.databasePath);
+  writer.exec(`
+    CREATE TABLE knowledge (id TEXT PRIMARY KEY, author TEXT, claim TEXT, evidence TEXT, limits TEXT);
+    CREATE TABLE knowledge_promotions (id TEXT PRIMARY KEY, finding TEXT, author TEXT,
+      source TEXT, destination TEXT, promoted_by TEXT);
+    WITH RECURSIVE history(n) AS (
+      SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 256
+    )
+    INSERT INTO native_changes(recorded_at,entity,entity_id,session_id,operation,kind,summary)
+      SELECT '2026-10-09T00:00:00Z','execution','child','child','update','execution',
+             'recorded execution ' || n FROM history;
+  `);
+  const initialIds = writer.prepare('SELECT change_id FROM native_changes ORDER BY change_id')
+    .all().map((row) => row.change_id);
+  const notifications = commitNotifications();
+  const server = createOrchestraServer({ databasePath: f.databasePath, reader: 'root',
+    subscribeCommittedChanges: notifications.subscribeCommittedChanges });
+  let streamReader;
+  t.after(async () => {
+    await streamReader?.cancel();
+    await close(server);
+    writer.close();
+    rmSync(f.directory, { recursive: true, force: true });
+  });
+  const base = await listen(server);
+  let emittedCursor = 0;
+  let interleaved = false;
+  const duringReplay = new Promise((resolve, reject) => {
+    server.on('request', (request, response) => {
+      if (!request.url.startsWith('/orchestra/events')) return;
+      const write = response.write.bind(response);
+      response.write = (chunk, ...args) => {
+        const frame = String(chunk);
+        if (frame.includes('\nevent: transition\n')) {
+          emittedCursor = Number(frame.match(/^id: (\d+)/)[1]);
+          if (!interleaved) {
+            interleaved = true;
+            setImmediate(async () => {
+              try {
+                assert.ok(emittedCursor < initialIds.at(-1), 'replay held the event loop until its final row');
+                writer.exec(`
+                  BEGIN EXCLUSIVE;
+                  UPDATE executions SET phase='exited',status='committed during replay' WHERE session='child';
+                  INSERT INTO knowledge VALUES ('during-replay','sibling','Committed shared finding','Source','Limits');
+                  INSERT INTO native_changes(recorded_at,entity,entity_id,session_id,operation,kind,summary)
+                    VALUES ('2026-10-09T00:00:01Z','knowledge','during-replay','sibling','insert','knowledge','finding recorded');
+                  COMMIT;
+                `);
+                notifications.committed();
+                const [page, knowledge] = await Promise.all([
+                  fetch(`${base}/app.js`),
+                  fetch(`${base}/orchestra/knowledge/overview`),
+                ]);
+                assert.equal(page.status, 200);
+                await page.text();
+                assert.equal(knowledge.status, 200);
+                assert.equal((await knowledge.json()).findings[0].id, 'during-replay');
+                assert.ok(emittedCursor < initialIds.at(-1), 'HTTP completed after the replay drained');
+                resolve(writer.prepare('SELECT change_id FROM native_changes ORDER BY change_id')
+                  .all().map((row) => row.change_id));
+              } catch (error) {
+                reject(error);
+              }
+            });
+          }
+        }
+        return write(chunk, ...args);
+      };
+    });
+  });
+  const [response, expectedIds] = await Promise.all([
+    fetch(`${base}/orchestra/events?subject=child&since=0`),
+    duringReplay,
+  ]);
+  assert.equal(response.status, 200);
+  streamReader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = '';
+  const transitions = [];
+  while (transitions.at(-1)?.id !== expectedIds.at(-1)) {
+    const chunk = await streamReader.read();
+    assert.equal(chunk.done, false);
+    buffered += decoder.decode(chunk.value, { stream: true });
+    let boundary;
+    while ((boundary = buffered.indexOf('\n\n')) !== -1) {
+      const frame = buffered.slice(0, boundary);
+      buffered = buffered.slice(boundary + 2);
+      if (!frame.includes('\nevent: transition\n')) continue;
+      transitions.push({
+        id: Number(frame.match(/^id: (\d+)/)[1]),
+        data: JSON.parse(frame.split('\ndata: ')[1]),
+      });
+    }
+  }
+  assert.deepEqual(transitions.map((transition) => transition.id), expectedIds);
+  assert.equal(transitions.at(-2).data.summary, 'exited committed during replay');
+  assert.equal(transitions.at(-1).data.entity, 'knowledge');
+  assert.equal(transitions.at(-1).data.session, '');
+  assert.equal(transitions.at(-1).data.entityId, '');
+});
+
 test('native coordinator commit is replayed through an injected owner notification contract', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'baton-orchestra-native-'));
   const databasePath = join(directory, 'orchestra.db');
