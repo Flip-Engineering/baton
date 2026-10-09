@@ -46,6 +46,7 @@ def continued(db: String, player: String, +handle: U32, cursor: String, ended: B
       pending_live(db,player,handle,cursor,closed)
 
 # A commit notice drains guidance while this native attempt accepts input.
+@unsafe
 def drain_pending(+db: String, +player: String, +handle: U32, +cursor: String) -> IO(String):
   do IO<String>:
     +next : String <- continued(db,player,handle,cursor,False{})
