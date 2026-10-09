@@ -17,6 +17,22 @@ import ./contracts.bend as Context
 type RuntimeBridge is Data:
   RuntimeBridge{target: U32, adapter: U32, target_dir: String, adapter_dir: String}
 
+def runtime_target_handle(bridge: RuntimeBridge) -> U32:
+  match bridge:
+    case RuntimeBridge{target, adapter, target_dir, adapter_dir}: target
+
+def runtime_adapter_handle(bridge: RuntimeBridge) -> U32:
+  match bridge:
+    case RuntimeBridge{target, adapter, target_dir, adapter_dir}: adapter
+
+def runtime_target_directory(bridge: RuntimeBridge) -> String:
+  match bridge:
+    case RuntimeBridge{target, adapter, target_dir, adapter_dir}: target_dir
+
+def runtime_adapter_directory(bridge: RuntimeBridge) -> String:
+  match bridge:
+    case RuntimeBridge{target, adapter, target_dir, adapter_dir}: adapter_dir
+
 def runtime_retained_handle(result: Result<&1,&1,U32 & String,Process.RetainedStart>) -> IO(U32):
   match result:
     case Fail{(code, detail)}: IO.die(U32, code, detail)
@@ -321,20 +337,16 @@ def runtime_release_signaled(+db: String, +binding: String, +launch_query: Strin
     case Fail{(code, detail)}:
       runtime_release_waited(db, binding, launch_query, bridge, query, Fail{(code, detail)})
     case Done{value}:
-      match bridge:
-        case RuntimeBridge{+target, adapter, target_dir, adapter_dir}:
-          do IO<Unit>:
-            waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(target)
-            runtime_release_waited(db, binding, launch_query, bridge, query, waited)
+      do IO<Unit>:
+        waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(runtime_target_handle(bridge))
+        runtime_release_waited(db, binding, launch_query, bridge, query, waited)
 
 def runtime_retained_release(+db: String, +binding: String, +launch_query: String,
     +bridge: RuntimeBridge, +query: String, +signal: String) -> IO(Unit):
-  match bridge:
-    case RuntimeBridge{target, adapter, +target_dir, adapter_dir}:
-      do IO<Unit>:
-        signal_number : U32 <- runtime_signal(signal)
-        signaled : Result<&1,&1,U32 & String,Unit> <- Process.ProcessChild.control_signal(target_dir, signal_number)
-        runtime_release_signaled(db, binding, launch_query, bridge, query, signaled)
+  do IO<Unit>:
+    signal_number : U32 <- runtime_signal(signal)
+    signaled : Result<&1,&1,U32 & String,Unit> <- Process.ProcessChild.control_signal(runtime_target_directory(bridge), signal_number)
+    runtime_release_signaled(db, binding, launch_query, bridge, query, signaled)
 
 def runtime_target_wait_handle(+db: String, +binding: String, +launch_query: String,
     +target: U32, +target_dir: String, +adapter_dir: String) -> IO(Unit):
@@ -541,11 +553,9 @@ def runtime_observe_step(+db: String, +binding: String, +owner: String,
     +launch_query: String, +bridge: RuntimeBridge, step: RuntimeObserve) -> IO(Unit):
   match step:
     case RuntimeObserveNext{}:
-      match bridge:
-        case RuntimeBridge{target, +adapter, target_dir, adapter_dir}:
-          do IO<Unit>:
-            line : Maybe<String> <- IO.try(Maybe<String>, Process.ProcessChild.read_line(adapter))
-            runtime_observe_step(db, binding, owner, launch_query, bridge, RuntimeObserveLine{line})
+      do IO<Unit>:
+        line : Maybe<String> <- IO.try(Maybe<String>, Process.ProcessChild.read_line(runtime_adapter_handle(bridge)))
+        runtime_observe_step(db, binding, owner, launch_query, bridge, RuntimeObserveLine{line})
     case RuntimeObserveLine{line}:
       match line:
         case None{}: runtime_adapter_closed(db, binding, owner, launch_query, bridge)
@@ -557,13 +567,11 @@ def runtime_observe_step(+db: String, +binding: String, +owner: String,
       match read:
         case RuntimeReadFailed{frame}: IO.die(Unit, 3, "runtimeAdapterFrameMalformed:" ++ frame)
         case RuntimeReadFrame{+frame, +kind, +query, +signal, sequence}:
-          match bridge:
-            case RuntimeBridge{target, +adapter, target_dir, adapter_dir}:
-              do IO<Unit>:
-                handled : Unit <- Bool.pick(IO(Unit), String.eq(kind, "keeperRelease"),
-                  runtime_keeper_release(db, binding, owner, launch_query, bridge, frame, query, signal),
-                  runtime_common_read(db, binding, owner, launch_query, adapter, frame))
-                runtime_observe_step(db, binding, owner, launch_query, bridge, RuntimeObserveNext{})
+          do IO<Unit>:
+            handled : Unit <- Bool.pick(IO(Unit), String.eq(kind, "keeperRelease"),
+              runtime_keeper_release(db, binding, owner, launch_query, bridge, frame, query, signal),
+              runtime_common_read(db, binding, owner, launch_query, runtime_adapter_handle(bridge), frame))
+            runtime_observe_step(db, binding, owner, launch_query, bridge, RuntimeObserveNext{})
 
 def runtime_observe(db: String, binding: String, owner: String,
     launch_query: String, bridge: RuntimeBridge) -> IO(Unit):
@@ -580,32 +588,30 @@ def runtime_run_settled(+db: String, +binding: String, bridge: RuntimeBridge) ->
 
 def runtime_run_finished(+db: String, +binding: String, +bridge: RuntimeBridge,
     target_wait: Chan(Unit)) -> IO(Unit):
-  match bridge:
-    case RuntimeBridge{target, adapter, +target_dir, +adapter_dir}:
+  +target_dir : String = runtime_target_directory(bridge)
+  +adapter_dir : String = runtime_adapter_directory(bridge)
+  do IO<Unit>:
+    waited : Unit <- IO.join(Unit, target_wait)
+    known : String <- IO.try(String, DB.Sql.query_bound(db, binding,
+      "SELECT EXISTS(SELECT 1 FROM semantic_roles WHERE keeper_path=" ++ ContextCommands.q(target_dir)
+      ++ " AND role='target' AND phase='exited') AND EXISTS(SELECT 1 FROM semantic_roles WHERE keeper_path="
+      ++ ContextCommands.q(adapter_dir) ++ " AND role='adapter' AND phase='closed');"))
+    Bool.pick(IO(Unit), String.eq(Tx.trim_nl(known), "1"),
+      runtime_run_settled(db, binding, bridge),
       do IO<Unit>:
-        waited : Unit <- IO.join(Unit, target_wait)
-        known : String <- IO.try(String, DB.Sql.query_bound(db, binding,
-          "SELECT EXISTS(SELECT 1 FROM semantic_roles WHERE keeper_path=" ++ ContextCommands.q(target_dir)
-          ++ " AND role='target' AND phase='exited') AND EXISTS(SELECT 1 FROM semantic_roles WHERE keeper_path="
-          ++ ContextCommands.q(adapter_dir) ++ " AND role='adapter' AND phase='closed');"))
-        Bool.pick(IO(Unit), String.eq(Tx.trim_nl(known), "1"),
-          runtime_run_settled(db, binding, bridge),
-          do IO<Unit>:
-            evidence : String <- IO.try(String, DB.Sql.query_bound(db, binding,
-              "SELECT json_object('target',json((SELECT exit_evidence_json FROM semantic_roles WHERE keeper_path="
-              ++ ContextCommands.q(target_dir) ++ ")),'adapter',json((SELECT exit_evidence_json FROM semantic_roles WHERE keeper_path="
-              ++ ContextCommands.q(adapter_dir) ++ ")));"))
-            IO.die(Unit, 3, "runtimeNativeStatusUnavailable:" ++ Tx.trim_nl(evidence)))
+        evidence : String <- IO.try(String, DB.Sql.query_bound(db, binding,
+          "SELECT json_object('target',json((SELECT exit_evidence_json FROM semantic_roles WHERE keeper_path="
+          ++ ContextCommands.q(target_dir) ++ ")),'adapter',json((SELECT exit_evidence_json FROM semantic_roles WHERE keeper_path="
+          ++ ContextCommands.q(adapter_dir) ++ ")));"))
+        IO.die(Unit, 3, "runtimeNativeStatusUnavailable:" ++ Tx.trim_nl(evidence)))
 
 # The public recovery CLI observes in the background after the launch CLI returns.
 def runtime_run(+db: String, +binding: String, +owner: String,
     +launch_query: String, +bridge: RuntimeBridge) -> IO(Unit):
-  match bridge:
-    case RuntimeBridge{target, adapter, +target_dir, adapter_dir}:
-      do IO<Unit>:
-        target_wait : Chan(Unit) <- IO.fork(Unit, runtime_target_wait(db, binding, launch_query, bridge))
-        observed : Unit <- runtime_observe(db, binding, owner, launch_query, bridge)
-        runtime_run_finished(db, binding, bridge, target_wait)
+  do IO<Unit>:
+    target_wait : Chan(Unit) <- IO.fork(Unit, runtime_target_wait(db, binding, launch_query, bridge))
+    observed : Unit <- runtime_observe(db, binding, owner, launch_query, bridge)
+    runtime_run_finished(db, binding, bridge, target_wait)
 
 def runtime_recovery_job(result: Result<&1,&1,U32 & String,String>) -> String:
   match result:

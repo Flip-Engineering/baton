@@ -1734,6 +1734,11 @@ def launch_runtime_submit(+db: String, +binding: String, +owner: String,
       runtime_path, invocation_text, doc, target_guard, adapter_guard,
       submission)
 
+def launch_runtime_text_field(+label: String, field: CoreCodec.FieldText) -> IO(String):
+  match field:
+    case CoreCodec.FtBad{condition}: IO.die(String, 3, label ++ condition)
+    case CoreCodec.FtText{text}: IO.pure(String, text)
+
 def launch_runtime_doc_fields(+db: String, +binding: String, +owner: String,
                               +query: String, +cwd: String, +executable: String,
                               +runtime_path: String, +invocation_text: String,
@@ -1744,20 +1749,15 @@ def launch_runtime_doc_fields(+db: String, +binding: String, +owner: String,
                               fields: List<String>) -> IO(Unit):
   match fields:
     case +doc <> +program <> Nil{}:
-      +doc_field : CoreCodec.FieldText = CoreCodec.text_field(doc)
-      +program_field : CoreCodec.FieldText = CoreCodec.text_field(program)
-      match doc_field:
-        case CoreCodec.FtBad{condition}: IO.die(Unit, 3, "runtimeLaunchDocument:" ++ condition)
-        case CoreCodec.FtText{+text}:
-          match program_field:
-            case CoreCodec.FtBad{condition}: IO.die(Unit, 3, "runtimeLaunchDocument:" ++ condition)
-            case CoreCodec.FtText{+plain}:
-              Bool.pick(IO(Unit), String.is_empty(plain),
-                IO.die(Unit, 3, "runtimeLaunchProgramMissing"),
-                launch_runtime_submit(db, binding, owner, query, cwd, executable,
-                  runtime_path, invocation_text, plan_value, plan_identity,
-                  canonical, artifact_path, result_schema, text, target_guard,
-                  adapter_guard))
+      do IO<Unit>:
+        text : String <- launch_runtime_text_field("runtimeLaunchDocument:", CoreCodec.text_field(doc))
+        plain : String <- launch_runtime_text_field("runtimeLaunchDocument:", CoreCodec.text_field(program))
+        Bool.pick(IO(Unit), String.is_empty(plain),
+          IO.die(Unit, 3, "runtimeLaunchProgramMissing"),
+          launch_runtime_submit(db, binding, owner, query, cwd, executable,
+            runtime_path, invocation_text, plan_value, plan_identity,
+            canonical, artifact_path, result_schema, text, target_guard,
+            adapter_guard))
     case other: IO.die(Unit, 3, "runtimeLaunchDocument")
 
 def launch_runtime_doc_result(+db: String, +binding: String, +owner: String,
@@ -1867,21 +1867,16 @@ def launch_frame_intent_fields(+db: String, +binding: String, +owner: String,
                                fields: List<String>) -> IO(Unit):
   match fields:
     case +intent_hex <> +session_hex <> Nil{}:
-      +intent_field : CoreCodec.FieldText = CoreCodec.text_field(intent_hex)
-      +session_field : CoreCodec.FieldText = CoreCodec.text_field(session_hex)
-      match intent_field:
-        case CoreCodec.FtBad{condition}: IO.die(Unit, 3, "runtimeLaunchIntent:" ++ condition)
-        case CoreCodec.FtText{+intent}:
-          match session_field:
-            case CoreCodec.FtBad{condition}: IO.die(Unit, 3, "runtimeLaunchIntent:" ++ condition)
-            case CoreCodec.FtText{+session}:
-              Bool.pick(IO(Unit), String.eq(intent, "launch"),
-                launch_runtime_launch(db, binding, owner, query, cwd, executable,
-                  runtime_path, invocation_text, plan_value, plan_identity, canonical,
-                  artifact_path, result_schema),
-                launch_runtime_session(db, binding, owner, query, cwd, invocation_text,
-                  plan_value, plan_identity, canonical, artifact_path, result_schema,
-                  session))
+      do IO<Unit>:
+        intent : String <- launch_runtime_text_field("runtimeLaunchIntent:", CoreCodec.text_field(intent_hex))
+        session : String <- launch_runtime_text_field("runtimeLaunchIntent:", CoreCodec.text_field(session_hex))
+        Bool.pick(IO(Unit), String.eq(intent, "launch"),
+          launch_runtime_launch(db, binding, owner, query, cwd, executable,
+            runtime_path, invocation_text, plan_value, plan_identity, canonical,
+            artifact_path, result_schema),
+          launch_runtime_session(db, binding, owner, query, cwd, invocation_text,
+            plan_value, plan_identity, canonical, artifact_path, result_schema,
+            session))
     case other: IO.die(Unit, 3, "runtimeLaunchIntent")
 
 def launch_frame_intent(+db: String, +binding: String, +owner: String,
