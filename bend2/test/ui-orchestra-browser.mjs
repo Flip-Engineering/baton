@@ -316,7 +316,9 @@ await evalJs(`(() => {
 })()`);
 await until('surface selection loads the author record',
   `document.getElementById('detail').textContent.includes('1 authored / 2 received')`);
-await evalJs(`[...document.querySelectorAll('#knowledge-surface .ks-finding-id')].find((button) => button.textContent === 'qa-aide-finding').click()`);
+await until('surface readout exposes the unshared finding control',
+  `[...document.querySelectorAll('#knowledge-surface button.ks-finding-id')].some((button) => button.textContent === 'qa-aide-finding')`);
+await evalJs(`[...document.querySelectorAll('#knowledge-surface button.ks-finding-id')].find((button) => button.textContent === 'qa-aide-finding').click()`);
 await until('an unshared surface finding opens its stored content',
   `document.getElementById('include-unshared').getAttribute('aria-pressed') === 'true' && ['Aide evidence.', 'Aide limits.'].every((value) => document.getElementById('detail').textContent.includes(value))`);
 await evalJs(`document.getElementById('include-unshared').click()`);
