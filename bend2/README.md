@@ -203,8 +203,9 @@ as a commit ID. A matching repeated recruitment returns the existing Player.
 Conflicting assignment fields return `player-assignment-conflict` with exit
 status 2, the existing and requested assignments, and a next-step instruction.
 The recorded assignment, binding, pending input, branch and workspace remain
-available. Read `session ID` and `worktree ID`, retry the recorded assignment,
-or recruit a new ID with a new branch and unused path.
+available. Read `session ID` and `worktree ID` and retry the recorded assignment.
+Use `join` for another Player in an existing checkout, or `recruit` for a task
+that needs a separate worktree.
 `worktree ID` reads its current Git branch, commit and dirty state.
 
 For source work, Players coordinate edits in a shared checkout and commit
@@ -614,11 +615,11 @@ report alone leaves that receipt empty.
 
 A recruited OMP Player assigned as an Associate Conductor can receive reports
 from its own Players. The examples use `lead` for that session and `root` for
-the Principal Conductor. Recruit the Associate Conductor under the Conductor, then connect its
+the Principal Conductor. Join the Associate Conductor to the shared checkout, then connect its
 native receiver:
 
 ```sh
-baton2 /repo/state.db recruit lead root omp deepseek/deepseek-flash low REPO lead-branch LEAD_WORKTREE BASE
+baton2 /repo/state.db join lead root omp deepseek/deepseek-flash low SHARED_CHECKOUT
 baton2 /repo/state.db role lead associate-conductor
 baton2 /repo/state.db receiver lead /path/to/omp /repo/lead-native.jsonl
 ```
@@ -635,16 +636,15 @@ the coordinator, which delivers the report to the Associate Conductor's parent. 
 turn also reports its failure and leaves unacknowledged input available.
 
 Send the Associate Conductor's task with `dispatch-file ID root lead task TASK_FILE`. The Associate Conductor
-recruits children by passing `lead` as their parent, reviews their reports and
-lands their branches onto `lead-branch`. Detach the Associate Conductor's checkout before a
-landing advances that branch. The Conductor can then review and land the Associate Conductor's
-registered branch through the same landing command.
+joins children by passing `lead` as their parent, coordinates their edits and
+reviews their completed changes in the shared checkout. It integrates separate
+worktree contributions into the intended target and publishes completed work.
 
 Use the same receiver path for OMP children. After recruitment, register each
 child's endpoint once and send its initial task:
 
 ```sh
-baton2 /repo/state.db recruit worker1 lead omp deepseek/deepseek-flash low REPO worker-branch PLAYER_WORKTREE lead-branch
+baton2 /repo/state.db join worker1 lead omp deepseek/deepseek-flash low SHARED_CHECKOUT
 baton2 /repo/state.db receiver worker1 /path/to/omp /repo/worker1-native.jsonl
 baton2 /repo/state.db dispatch-file worker1-task-1 lead worker1 task /repo/worker1-task.md
 ```
@@ -759,7 +759,8 @@ integration branch, mutable state directory, native executable paths, check
 program and task-file paths in its assignment. The
 [Principal Conductor instructions](trial/principal-conductor-instructions.md)
 and [Associate Conductor instructions](trial/associate-conductor-instructions.md)
-describe recruitment, detached task delivery, review and both landing levels.
+describe shared source work, detached task delivery, review, publication and
+retirement of completed task branches.
 
 Use the shipped `check-unittest.sh` for selected Python tests, or
 `check-node-test.sh` for a JS runner that supplies typed `failures` and
@@ -771,10 +772,12 @@ unjudged check blocks landing under the documented comparison rules.
 
 Landing advances a checked-out target through its holding worktree. Overlapping
 uncommitted changes return a refusal with the affected worktree. The Associate
-Conductor reviews and lands Player work onto its branch. The Principal reviews and lands that
-branch, publishes the target through `push`, verifies its advertised ref and
-reports to the operator. Retain the database, native stores, logs and worktrees
-for corrections and continued work.
+Conductor coordinates shared source edits and integrates completed Player
+contributions into the intended target. The Principal publishes that target
+through `push` and reports the resulting behavior and remaining work. After an
+owned turn finishes, move the same Player to the shared checkout with `receiver`
+and retire its clean inactive temporary worktree and integrated task branch.
+Retain unfinished source, databases, native stores and pending input.
 
 The earlier `bend2/scripts/trial-start.sh` launcher remains in source for
 historical trial reproduction. Its source-specific measurements are recorded
