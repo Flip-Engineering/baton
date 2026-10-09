@@ -766,8 +766,16 @@ else:
 pathlib.Path(__file__).with_suffix('.effect').write_text(prompt)
 if '--prompt-file' in args:
     print(json.dumps({'stream':{'kind':'session','id':'instant-native'},
+                      'payload_type':'run.model.configured',
+                      'payload':{'kind':'run_model_configured',
+                                 'model_id':args[args.index('--model')+1]}}))
+    print(json.dumps({'stream':{'kind':'session','id':'instant-native'},
+                      'payload_type':'turn.input.user',
+                      'payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}))
+    print(json.dumps({'stream':{'kind':'session','id':'instant-native'},
                       'payload_type':'run.terminal.completed',
-                      'payload':{'kind':'run_terminal','terminal':'completed','text':prompt}}))
+                      'payload':{'kind':'run_terminal','terminal':'completed',
+                                 'command_id':'fixture-primary','text':prompt}}))
 else:
     print(json.dumps({'type':'result','result':prompt,
                       'session_id':'instant-native','is_error':False}))

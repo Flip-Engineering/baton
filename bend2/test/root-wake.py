@@ -467,7 +467,8 @@ while True:
                                          'task', str(self.child_task)))
         self.assertEqual(admitted['id'], 'child-task')
         child_turn = self.eventually(lambda: self.calls('child')[:1], 'the OMP child never started.')
-        self.assertEqual(json.loads(self.coord('player', 'child'))['execution']['phase'], 'running')
+        self.assertEqual(self.rows("SELECT phase FROM executions WHERE session='child'"),
+                         [{'phase': 'running'}])
         os.kill(child_turn[0]['pid'], 0)
         self.assertFalse((self.releases / 'child.1.release').exists())
         self.assertEqual(json.loads(self.coord('turns', 'child')), [])

@@ -1024,5 +1024,5 @@ test('selected work reads the recorded cursors and complete bodies', async (t) =
   const after = await (await fetch(`${base}/orchestra/snapshot?subject=child`)).json();
   assert.equal(after.tasks.child.status, 'acknowledged');
   assert.ok(!after.players.find((player) => player.id === 'child')
-    .pendingSample.some((row) => row.id === 'pending-1')));
+    .pendingSample.some((row) => row.id === 'pending-1'));
 });

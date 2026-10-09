@@ -912,10 +912,11 @@ class SharedInstance(unittest.TestCase):
 
         original.send_signal(signal.SIGTERM)
         original.wait()
-        os.kill(int(owners[0].split()[0]), signal.SIGKILL)
-        while self.owner_processes():
+        old_owner_pid = owners[0].split()[0]
+        os.kill(int(old_owner_pid), signal.SIGKILL)
+        while any(row.split()[0] == old_owner_pid for row in self.owner_processes()):
             time.sleep(.05)
-        self.assertEqual(self.owner_processes(), [])
+        self.assertNotIn(old_owner_pid, [row.split()[0] for row in self.owner_processes()])
 
         current_witness = self.command('ensure-owner-witness', self.db).stdout.strip()
         self.assertRegex(current_witness, r'^\d+:\d+$')

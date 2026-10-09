@@ -127,7 +127,7 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.assertEqual(self.generation('turn-1').read_text(),'unframed startup failure\n')
         with sqlite3.connect(self.db) as connection:
             directory = connection.execute(
-                'SELECT directory FROM executions WHERE session=? AND attempt=?',
+                'SELECT directory FROM executions WHERE session=? AND id=?',
                 ('worker', 'turn-1')).fetchone()[0]
         self.assertTrue(directory)
         self.assertEqual((pathlib.Path(directory) / 'native.stderr').read_text(),'diagnosis')
