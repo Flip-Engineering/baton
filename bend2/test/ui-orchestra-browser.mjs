@@ -442,8 +442,11 @@ check('pending badge updates live', await evalJs(
   `document.getElementById('tree').textContent.includes('worker')`));
 
 // Recorded knowledge persists in the graph while inclusion is on.
-check('graph separates unshared findings past a divider', await evalJs(
-  `!!document.querySelector('#knowledge-graph .kg-divider')`));
+check('graph places unshared findings below the shared field', await evalJs(`(() => {
+  const unshared = document.querySelector('#knowledge-graph .knode[aria-label="qa-aide-finding"] circle');
+  const shared = document.querySelector('#knowledge-graph .knode[aria-label="qa-worker-finding"] circle');
+  return !!unshared && !!shared && Number(unshared.getAttribute('cy')) > Number(shared.getAttribute('cy'));
+})()`));
 let workerExecution;
 {
   const db = new DatabaseSync(DB);

@@ -1,19 +1,20 @@
 /* Knowledge graph. Read-only. All text via textContent.
-   Draws recorded findings as nodes between the actors that authored
-   and received them, so the reader sees what the stored data actually
-   connects: author anchors on top, findings sized by promotion count,
-   ochre edges for recorded shares. Layout is deterministic; newly
+   Draws shared findings in rings grouped by promotion count, with edges
+   connecting their recorded sources and destinations. Unshared findings
+   appear in author bands. Ring sizes follow their node counts; all finding
+   nodes have the same size. Layout is deterministic; newly
    arrived nodes pulse once. Renders from a knowledge overview shaped
    like the `orchestra/knowledge/overview` route; starts no request.
    options: {query, includeUnshared, selectedId, notice, onSelect}.
    onSelect receives the finding id. Author anchors wrap into rows so the
-   graphic stays bounded at orchestra scale; edges run from every row. */
+   actor labels stay inside the surface; edges run from every row. */
 
 const KG_ACTOR_SLOT = 150;
 const KG_ACTORS_PER_ROW = 10;
 const KG_ANCHOR_PITCH_Y = 30;
-const KG_GRID_SLOT_X = 150;
-const KG_GRID_SLOT_Y = 64;
+const KG_GOLDEN_ANGLE = 2.399963;
+const KG_NODE_SLOT = 26;
+const KG_BAND_PITCH = 22;
 const KG_TOP = 44;
 const KG_PAD = 16;
 
@@ -97,18 +98,54 @@ function renderKnowledgeGraph(container, overview, options) {
 
   const seen = kgSeenByMount.get(container) || new Set();
   const now = new Set();
+  // Shared findings circle by recorded sharing degree; each ring radius fits
+  // its own node count at one node slot per node, so neighbors never share
+  // a point. Unshared findings list under their author below the field.
   const anchorRows = Math.max(1, Math.ceil(actors.length / KG_ACTORS_PER_ROW));
-  const gridY = KG_TOP + (anchorRows - 1) * KG_ANCHOR_PITCH_Y + 56;
-  const cols = Math.max(1, Math.ceil(Math.sqrt(Math.max(1, shared.length))));
-  const sharedWidth = cols * KG_GRID_SLOT_X;
-  const dividerX = KG_PAD + sharedWidth + 24;
-  const unsharedX = dividerX + 24;
-  const gridRows = Math.max(1, Math.ceil(shared.length / cols));
+  const anchorBottom = KG_TOP + (anchorRows - 1) * KG_ANCHOR_PITCH_Y;
+  const ringOf = (count) => (count >= 5 ? 0 : count >= 2 ? 1 : 2);
+  const ringCounts = [0, 0, 0];
+  for (const f of shared) ringCounts[ringOf(promoCount.get(f.id) || 0)] += 1;
+  // Each ring needs circumference for its nodes; radii accumulate outward.
+  const ringRadius = [];
+  {
+    let r = 0;
+    for (let k = 0; k < 3; k += 1) {
+      r += Math.max(110, Math.ceil((ringCounts[k] * KG_NODE_SLOT) / (2 * Math.PI)));
+      ringRadius.push(k === 0 ? Math.max(70, r) : r);
+    }
+  }
+  const maxR = ringRadius.length ? ringRadius[ringRadius.length - 1] : 0;
   const width = Math.max(
     KG_PAD * 2 + Math.min(actors.length, KG_ACTORS_PER_ROW) * KG_ACTOR_SLOT,
-    KG_PAD + sharedWidth + (unshared.length ? 48 + KG_GRID_SLOT_X : 0) + KG_PAD,
+    KG_PAD * 2 + maxR * 2,
   );
-  const height = gridY + Math.max(gridRows, unshared.length) * KG_GRID_SLOT_Y + 40;
+  const cx = width / 2;
+  const cy = anchorBottom + 70 + maxR;
+  const fieldBottom = cy + maxR + 44;
+  const ringTaken = [0, 0, 0];
+  // Unshared findings carry no promotion edges, so they list under their
+  // author in wrapping bands. Band geometry precedes surface creation.
+  const bandAuthors = new Map();
+  for (const f of unshared) {
+    const author = String((f && f.author) || "unknown");
+    if (!bandAuthors.has(author)) bandAuthors.set(author, []);
+    bandAuthors.get(author).push(f);
+  }
+  const bandNames = [...bandAuthors.keys()].sort((a, b) => {
+    const diff = bandAuthors.get(b).length - bandAuthors.get(a).length;
+    return diff !== 0 ? diff : (a < b ? -1 : a > b ? 1 : 0);
+  });
+  const bandX0 = KG_PAD + 230;
+  const bandPerRow = Math.max(1, Math.floor((width - bandX0 - KG_PAD) / KG_BAND_PITCH));
+  const bandPlan = bandNames.map((author) => ({
+    author,
+    items: bandAuthors.get(author),
+    rows: Math.max(1, Math.ceil(bandAuthors.get(author).length / bandPerRow)),
+  }));
+  let bandSpan = 0;
+  for (const b of bandPlan) bandSpan += b.rows * KG_BAND_PITCH + 14;
+  const height = fieldBottom + (bandPlan.length ? 30 + bandSpan + 6 : 0);
 
   const wrap = kgEl(null, "div", { class: "kg-scroll" }, container);
   const svg = kgEl("svg", "svg", {
@@ -127,22 +164,39 @@ function renderKnowledgeGraph(container, overview, options) {
     const y = KG_TOP + Math.floor(i / KG_ACTORS_PER_ROW) * KG_ANCHOR_PITCH_Y;
     actorPos.set(id, { x, y });
     const n = String(id).length > 18 ? String(id).slice(0, 17) + "…" : String(id);
+    // The last column labels run left so every label stays inside the surface.
+    const lastCol = (i % KG_ACTORS_PER_ROW) === KG_ACTORS_PER_ROW - 1 || i === actors.length - 1;
     kgEl("svg", "rect", {
       x: String(x - 4), y: String(y - 4), width: "8", height: "8", class: "kg-actor",
     }, svg);
-    kgText(svg, n, { x: String(x + 10), y: String(y + 4), class: "kg-label mono" }, "start");
+    kgText(svg, n, {
+      x: String(x + (lastCol ? -10 : 10)),
+      y: String(y + 4),
+      class: "kg-label mono",
+    }, lastCol ? "end" : "start");
   });
 
   const findingPos = new Map();
-  const placeFinding = (f, x, y) => {
+  // Labels render for the two inner rings and the selected node only; at
+  // orchestra scale a label per node overlaps its neighbors. Every other
+  // node shows its claim words while focused or hovered.
+  const nodeLabel = (g, f, x, y, hover) => {
+    const words = String(f.claim || f.id);
+    const label = words.length > 26 ? words.slice(0, 25) + "…" : words;
+    kgText(g, label, {
+      x: String(x),
+      y: String(y + 21),
+      class: "kg-label" + (hover ? " kg-hover" : ""),
+    }, "middle");
+  };
+  const placeFinding = (f, x, y, staticLabel) => {
     findingPos.set(f.id, { x, y });
     now.add(f.id);
-    const count = promoCount.get(f.id) || 0;
-    const r = 5 + 2 * Math.min(count, 3);
+    const selected = opts.selectedId && opts.selectedId === f.id;
     const g = kgEl("svg", "g", {
       class: "knode"
         + (sharedIds.has(f.id) ? "" : " unshared")
-        + (opts.selectedId && opts.selectedId === f.id ? " selected" : "")
+        + (selected ? " selected" : "")
         + (seen.has(f.id) ? "" : " kg-new"),
       tabindex: "0",
       role: "button",
@@ -151,12 +205,23 @@ function renderKnowledgeGraph(container, overview, options) {
     const heading = kgEl("svg", "title", {}, g);
     heading.textContent = String(f.claim || f.id);
     kgEl("svg", "circle", {
-      cx: String(x), cy: String(y), r: String(r),
+      cx: String(x), cy: String(y), r: "5",
       class: "kg-finding" + (sharedIds.has(f.id) ? "" : " unshared"),
     }, g);
-    const words = String(f.claim || f.id);
-    const label = words.length > 26 ? words.slice(0, 25) + "…" : words;
-    kgText(g, label, { x: String(x), y: String(y + r + 14), class: "kg-label" }, "middle");
+    if (staticLabel || selected) nodeLabel(g, f, x, y, false);
+    const showHoverLabel = () => {
+      if (g.querySelector(".kg-label")) return;
+      nodeLabel(g, f, x, y, true);
+    };
+    const hideHoverLabel = () => {
+      if (selected) return;
+      const hover = g.querySelector(".kg-hover");
+      if (hover) hover.remove();
+    };
+    g.addEventListener("focus", showHoverLabel);
+    g.addEventListener("blur", hideHoverLabel);
+    g.addEventListener("mouseenter", showHoverLabel);
+    g.addEventListener("mouseleave", hideHoverLabel);
     const activate = () => { if (typeof opts.onSelect === "function") opts.onSelect(f.id); };
     g.addEventListener("click", activate);
     g.addEventListener("keydown", (ev) => {
@@ -166,20 +231,28 @@ function renderKnowledgeGraph(container, overview, options) {
       }
     });
   };
-  shared.forEach((f, i) => {
-    placeFinding(f, KG_PAD + (i % cols) * KG_GRID_SLOT_X + KG_GRID_SLOT_X / 2,
-      gridY + Math.floor(i / cols) * KG_GRID_SLOT_Y + 20);
-  });
-  if (unshared.length) {
-    kgEl("svg", "line", {
-      x1: String(dividerX), y1: String(gridY - 10),
-      x2: String(dividerX), y2: String(gridY + unshared.length * KG_GRID_SLOT_Y),
-      class: "kg-divider",
+  for (const f of shared) {
+    const ring = ringOf(promoCount.get(f.id) || 0);
+    const angle = ringTaken[ring] * KG_GOLDEN_ANGLE + ring * 0.7;
+    ringTaken[ring] += 1;
+    const radius = ringRadius[ring];
+    placeFinding(f, cx + radius * Math.cos(angle), cy + radius * Math.sin(angle), ring <= 1);
+  }
+  let bandY = fieldBottom + 30;
+  for (const plan of bandPlan) {
+    const short = plan.author.length > 18 ? plan.author.slice(0, 17) + "…" : plan.author;
+    kgEl("svg", "rect", {
+      x: String(KG_PAD + 4), y: String(bandY - 4), width: "8", height: "8", class: "kg-actor",
     }, svg);
-    kgText(svg, "not yet shared", { x: String(unsharedX), y: String(gridY - 16), class: "kg-note" });
-    unshared.forEach((f, i) => {
-      placeFinding(f, unsharedX + KG_GRID_SLOT_X / 2, gridY + i * KG_GRID_SLOT_Y + 20);
+    kgText(svg, short, {
+      x: String(KG_PAD + 18), y: String(bandY + 4), class: "kg-label mono",
+    }, "start");
+    plan.items.forEach((f, i) => {
+      placeFinding(f,
+        bandX0 + (i % bandPerRow) * KG_BAND_PITCH + KG_BAND_PITCH / 2,
+        bandY + Math.floor(i / bandPerRow) * KG_BAND_PITCH, false);
     });
+    bandY += plan.rows * KG_BAND_PITCH + 14;
   }
 
   for (const p of promotions) {
@@ -210,7 +283,9 @@ function renderKnowledgeGraph(container, overview, options) {
   kgSeenByMount.set(container, now);
 
   const legend = kgEl(null, "p", { class: "kg-legend muted" }, container);
-  legend.textContent = "Lines run from the sharing source through the finding to its destination. "
-    + "Ring size follows promotion count. Select a finding to open its record.";
+  legend.textContent = "Shared findings are grouped by sharing activity; "
+    + "unshared findings appear below them by author. "
+    + "Lines run from the sharing source through the finding to its destination. "
+    + "Select a finding to open its record.";
   return summary;
 }

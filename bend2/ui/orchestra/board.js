@@ -108,28 +108,59 @@ function renderEnsembleBoard(container, data, options) {
     container.appendChild(none);
     return summary;
   }
-  // One dot per member shows who works together at a glance; when live
-  // members share the same current work, the header names it with its count.
+  // The header draws membership as one figure: member nodes circle a
+  // shared-work center, with links joining members on the shared recorded
+  // action. When live members share the same current work, the header also
+  // names it with its count.
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const doingOf = (m) => String((m.action && m.stale
+    ? m.action + " (last transition)" : m.action) || m.id);
   const headerExtras = (head, members) => {
-    const dots = document.createElement("span");
-    dots.className = "board-dots";
-    dots.setAttribute("role", "img");
-    dots.setAttribute("aria-label", members.map((m) => String(m.id)).join(", "));
     const tally = new Map();
     for (const m of members) {
-      const dot = document.createElement("span");
-      dot.className = "dot " + dotWord(m);
-      dot.title = String(m.id);
-      dots.appendChild(dot);
       if (!isLive(m.status)) continue;
-      const doing = String((m.action && m.stale ? m.action + " (last transition)" : m.action) || m.id);
+      const doing = doingOf(m);
       tally.set(doing, (tally.get(doing) || 0) + 1);
     }
-    head.appendChild(dots);
     let focus = "", focusCount = 0;
     for (const [doing, n] of tally) {
       if (n > focusCount) { focus = doing; focusCount = n; }
     }
+    const glyph = document.createElementNS(SVG_NS, "svg");
+    glyph.setAttribute("viewBox", "0 0 72 44");
+    glyph.setAttribute("class", "board-glyph");
+    glyph.setAttribute("role", "img");
+    glyph.setAttribute("aria-label", members.map((m) => String(m.id)).join(", "));
+    const shown = members;
+    shown.forEach((m, i) => {
+      const angle = Math.PI * 2 * (i / Math.max(1, shown.length));
+      const x = 36 + 29 * Math.cos(angle);
+      const y = 22 + 15 * Math.sin(angle);
+      if (focusCount >= 2 && isLive(m.status) && doingOf(m) === focus) {
+        const link = document.createElementNS(SVG_NS, "line");
+        link.setAttribute("x1", "36");
+        link.setAttribute("y1", "22");
+        link.setAttribute("x2", String(Math.round(x * 10) / 10));
+        link.setAttribute("y2", String(Math.round(y * 10) / 10));
+        link.setAttribute("class", "clink");
+        glyph.appendChild(link);
+      }
+      const node = document.createElementNS(SVG_NS, "circle");
+      node.setAttribute("cx", String(Math.round(x * 10) / 10));
+      node.setAttribute("cy", String(Math.round(y * 10) / 10));
+      node.setAttribute("r", "3");
+      node.setAttribute("class", "cdot " + dotWord(m));
+      glyph.appendChild(node);
+    });
+    if (focusCount >= 2) {
+      const core = document.createElementNS(SVG_NS, "circle");
+      core.setAttribute("cx", "36");
+      core.setAttribute("cy", "22");
+      core.setAttribute("r", "4");
+      core.setAttribute("class", "cpurpose");
+      glyph.appendChild(core);
+    }
+    head.appendChild(glyph);
     if (focusCount >= 2) {
       const line = document.createElement("span");
       line.className = "board-focus";
