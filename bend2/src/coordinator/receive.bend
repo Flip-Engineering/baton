@@ -722,7 +722,7 @@ def started(+db: String, +session: String, +id: String, +log: String, cursor: St
 # native process exists: the claim names the head unacknowledged message as
 # owner and fences the generation past any stale row, so a driver that dies
 # before launch never suppresses the next wake.
-def start_admitted(+db: String, +session: String, +id: String, cmd: String, route: String, thinking: String, +workspace: String, +log: String, +lock: U32, cursor: String, +native: String, +attempt: String, +harness: String, storage: String, prompt: String, recovery: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), allowed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def start_admitted(+db: String, +session: String, +id: String, +cmd: String, route: String, thinking: String, +workspace: String, +log: String, +lock: U32, cursor: String, +native: String, +attempt: String, +harness: String, storage: String, prompt: String, recovery: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), allowed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match allowed:
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
