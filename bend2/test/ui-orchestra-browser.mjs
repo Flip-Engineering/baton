@@ -197,6 +197,10 @@ check('view URL uses the loopback HTTP listener', urlA.startsWith('http://127.0.
 
 await openPage(urlA);
 await until('status filter is available', `document.getElementById('status-filter')`);
+await until('initial snapshot reports its actor count',
+  `document.getElementById('tree-count').textContent.includes('actors shown')`);
+check('running is the default and the completed fixture has no matching actors', await evalJs(
+  `document.getElementById('status-filter').value === 'running' && document.querySelectorAll('#tree .node-row').length === 0`));
 await evalJs(`document.getElementById('status-filter').value = 'all'; document.getElementById('status-filter').dispatchEvent(new Event('change'));`);
 await until('tree renders the fixture hierarchy from the snapshot',
   `document.querySelectorAll('#tree li').length >= 3 && document.getElementById('tree').textContent.includes('worker')`);
@@ -266,6 +270,11 @@ const server = createOrchestraServer({ databasePath: DB, reader: 'root', subject
 await new Promise((r) => server.on('listening', r));
 const portB = server.address().port;
 await openPage(`http://127.0.0.1:${portB}/`);
+await until('phase B snapshot reports its actor count',
+  `document.getElementById('tree-count').textContent.includes('actors shown')`);
+check('phase B starts with the running filter and no running fixture actors', await evalJs(
+  `document.getElementById('status-filter').value === 'running' && document.querySelectorAll('#tree .node-row').length === 0`));
+await evalJs(`document.getElementById('status-filter').value = 'all'; document.getElementById('status-filter').dispatchEvent(new Event('change'));`);
 await until('phase B tree renders', `document.querySelectorAll('#tree li').length >= 3`);
 await until('phase B stream reaches live', `document.getElementById('conn-state').textContent === 'live'`);
 await evalJs(`window.__qaMark = 42`);
