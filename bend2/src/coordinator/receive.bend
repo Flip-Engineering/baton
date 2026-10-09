@@ -350,6 +350,11 @@ def ack_then_retire(+handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
     retired : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.retire(handle)
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(acked,retired))
 
+def completed_wake(db: String, session: String, cursor: String, finished: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match finished:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+    case Done{unit}: wake_due(db,session,cursor,target => wake_launch(db,target))
+
 def completed(+db: String, +session: String, +id: String, +log: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     failed : Bool <- outcome_failed(db,outcome)
@@ -358,9 +363,7 @@ def completed(+db: String, +session: String, +id: String, +log: String, stderr: 
     observer_released : Unit <- release_observer(lock)
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
     finished : Result<&1,&1,U32 & String,Unit> <- finish_pending(db,session,id,log,pending_cursor,outcome,deliveries,again,u => ack_then_retire(handle))
-    match finished:
-      case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
-      case Done{unit}: wake_due(db,session,pending_cursor,target => wake_launch(db,target))
+    completed_wake(db,session,pending_cursor,finished)
 
 # The recovery input records the workspace state and makes clearing the refused
 # identity atomic. Replaying the old attempt preserves a later native identity.
