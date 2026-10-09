@@ -30,5 +30,5 @@ def settled(result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
 
 def main() -> IO(Unit):
   do IO<Unit>:
-    result : Result<&1,&1,U32 & String,Unit> <- Receive.finish_pending("state.db","parent","completed","unused","0",Turn.Ended{"exit 0","{\"type\":\"agent_end\"}","",False{}},[],u => continuation(),u => acknowledge())
+    result : Result<&1,&1,U32 & String,Unit> <- Receive.finish_pending("state.db","parent","completed","unused","0",Turn.Ended{"exit 0","{\"type\":\"agent_end\"}","",False{}},[],u => continuation(),u => acknowledge(),False{})
     settled(result)

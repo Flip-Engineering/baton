@@ -311,9 +311,9 @@ def completion_sql_expr(+id: String, +player: String, +event: String) -> String:
   ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ event ++ ",'$.type'),json_extract(" ++ event ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ completion_pending_sql(player) ++ ",'oldestPendingId'," ++ completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
 
 # The SQL query owns this temporary frame relation for its complete transaction.
-# Identity, report and turn statements read the same complete native frame.
+# Identity, report and turn statements read the same complete valid JSON frame.
 def observation_frame_sql(+event: String) -> String:
-  "CREATE TEMP TABLE baton_observation_frame(value TEXT NOT NULL);INSERT INTO temp.baton_observation_frame(value) VALUES(" ++ q(event) ++ ");"
+  "CREATE TEMP TABLE baton_observation_frame(value TEXT NOT NULL);INSERT INTO temp.baton_observation_frame(value) SELECT value FROM (SELECT " ++ q(event) ++ " AS value) WHERE json_valid(value);"
 
 def observation_frame() -> String:
   "(SELECT value FROM temp.baton_observation_frame)"
