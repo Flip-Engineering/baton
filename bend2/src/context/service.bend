@@ -1,15 +1,5 @@
-# CLAIM: the context service companion for the native context operations. It submits one
-# query through validated admission, reads the retained envelope of one query with its state,
-# and performs passive discovery through a supplied catalog selection, with every failure
-# keeping its original code and detail.
-#
-# The Core plan validation and the catalog selection arrive as supplied operands, because
-# Core's modules are not part of this worktree's closure and this module invents no bridge to
-# them. A pure plan decision is validation, not an effect callable. The catalog operand stays
-# unconnected until the actual passive catalog consumer is bound.
-#
-# Reference expansion is not restated here: ContextStore.ref_lookup is the typed ref access of
-# this service, with its own staged answers and its own host failure.
+# Context service operations for managed query admission, stored plan associations,
+# retained query envelopes and catalog selection. Host failures retain their code and detail.
 import Base
 import ./text.bend as ContextText
 import ./bound-admission.bend as ContextAdmit
@@ -18,43 +8,8 @@ import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 import ../coordinator/commands.bend as C
 
-# What one submission concluded. Every admission variant is carried as itself: an answer this
-# run created, a retained row whose owner and request are the caller's own, a retained row
-# that belongs to another owner or request, a read-back absence, and uncertainty with its
-# stage and raw answer.
-# The admitted plan decision Core's verdict produces, as this lane can consume it. Every value here is
-# the caller's proposed carrier and this lane neither interprets it nor treats it as a retained
-# association.
-#
-# Core publishes two renderings and they answer different questions. The association this lane carries
-# must be the complete rendering, Wire.plan_value(plan), because it has to be written atomically with
-# creation and read back as the original frozen plan. Comparisons use Wire.plan_identity(plan), which
-# renders only the members that decide what will run and therefore treats two plans that differ only in
-# observed availability or in their captured records as the same plan.
-#
-# The identity text establishes equality between two renderings and nothing more. A caller holding the
-# same member values can reproduce it, so equal caller supplied text authorizes nothing here; Core
-# provides no parser, and reconstruction from the text belongs to the parsing owner. A literal
-# placeholder cannot be told from a real rendering by this lane, so a placeholder refuses where the
-# association is actually compared, in the retained comparison below, not in the presence check here:
-# an empty identity is an absent association and refuses before any row is created, while any other
-# value is carried unexamined.
-#
-# The refusal carries Core's literal stage together with Core's reason as this lane's own carrier, and
-# that is all it carries literally: this value holds a reason string, and no mapper to a code and a
-# detail exists in this lane. Core's AdmissionRefuses derives that code and detail from the same reason
-# and keeps the typed reason under native173, so connecting the two is Core's to supply rather than
-# something this comment may claim.
-#
-# The dependency this lane waits on is the Codec decode of the admitted canonical request into
-# Sel.RequestOperands plus the request text; Sel.ProjectState is configured, inventoried or observed and
-# is supplied by its own owner separately, assembled through Sel.sel_inputs, never as request authority.
-type PlanDecision is Data:
-  PlanAdmits{proposedPlan: String, proposedSchema: String}
-  PlanRefuses{stage: String, reason: String}
-
-# The plan and schema arrive as the caller's lossless carrier of the frozen plan, whose exact
-# representation must be agreed with Core; this lane never interprets them.
+# Submission answers carry admission and plan data. Managed answers also carry
+# artifact and bootstrap identity.
 type Submission is Data:
   # A retained row whose stored identity equals the identity the caller supplied, carrying
   # the stored complete rendering and schema rather than the caller's proposed ones.
@@ -162,40 +117,6 @@ def submission_of(+expectedOwner: String, +expectedRequest: String, +plan: Strin
     case ContextAdmit.AdmissionRetained{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: submission_retained(expectedOwner, expectedRequest, plan, resultSchema, admission, owner, request, decision, state)
     case ContextAdmit.AdmissionAbsent{}: SubmissionAbsent{}
     case ContextAdmit.AdmissionUncertain{stage, answer}: SubmissionUncertain{stage, answer}
-
-def submission_after(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, result: Result<&1,&1,U32 & String,ContextAdmit.Admission>) -> IO(Submission):
-  match result:
-    case Done{+admission}: IO.pure(Submission, submission_of(expectedOwner, expectedRequest, plan, resultSchema, admission))
-    case Fail{error}:
-      match error:
-        case (code, detail): IO.pure(Submission, SubmissionRefused{code, detail})
-
-# One submission: the Core plan validation runs first and a refusal there creates no row, then
-# the atomic admission creates or replays the row and its answer is dispatched as itself.
-# Presence only: an empty identity is an absent association. Any other value is carried unexamined,
-# because a caller supplied rendering authorizes nothing here on its own.
-def plan_identity_present(+identity: String) -> Bool:
-  Bool.not(String.is_empty(identity))
-
-def admitted(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +plan: String, +resultSchema: String) -> IO(Submission):
-  do IO<Submission>:
-    answer : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath)
-    submission_after(owner, requestJson, plan, resultSchema, answer)
-
-
-# The presence of the identity is bound before it is inspected, so the scrutinee is a
-# parameter and the IO action is chosen inside the match: an absent identity refuses in
-# this branch and reaches no bound call, and a present one proceeds to the admission.
-def submit_identified(+absent: Bool, +db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +plan: String, +resultSchema: String) -> IO(Submission):
-  match absent:
-    case True{}: IO.pure(Submission, SubmissionPlanRefused{"plan", "absent"})
-    case False{}: admitted(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, plan, resultSchema)
-
-def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +decision: PlanDecision) -> IO(Submission):
-  match decision:
-    case PlanRefuses{stage, reason}: IO.pure(Submission, SubmissionPlanRefused{stage, reason})
-    case PlanAdmits{+proposedPlan, proposedSchema}:
-      submit_identified(plan_identity_present(proposedPlan), db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, proposedPlan, proposedSchema)
 
 # The replay decision over the stored association. The stored identity is compared with
 # the identity the caller supplied, which is the only comparison available without a
