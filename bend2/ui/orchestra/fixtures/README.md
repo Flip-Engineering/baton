@@ -1,14 +1,19 @@
 # DOM behavior fixtures
 
-These files exercise hierarchy, filter, detail, and transition
-rendering in `bend2/ui/orchestra/`. Every id starts with `fixture-`
-and each file carries `"fixture": true`.
+These files exercise hierarchy, filter, detail, transition and
+knowledge band rendering in `bend2/ui/orchestra/`. Every id starts
+with `fixture-` and each file carries `"fixture": true`.
 
 They carry synthetic ids and a fixture marker. Backend field
 definitions live in `../interface.md`. The page loads a fixture
 only with `?fixture=<name>`
 (for example `?fixture=fixture-small`) and labels the screen
 `DOM behavior fixture, not live state` while live updates stay off.
+
+A fixture may carry a `knowledge` block shaped like the
+`/orchestra/knowledge/overview` response, and the knowledge band renders from
+that block; the shape is described in `../interface.md`. `fixture-small`,
+`fixture-dense` and `fixture-gap` carry no block and render the band's notice.
 
 - `fixture-small.json`: 6 actors across three levels, two ensembles
   (one with a section), one orphaned parent reference, mixed
@@ -21,6 +26,16 @@ only with `?fixture=<name>`
   and narrow viewports.
 - `fixture-gap.json`: copy of the small fixture with
   `selection.gap: true`. Renders the history-gap notice path.
+- `fixture-knowledge.json`: 11 actors across four levels, one ensemble, three
+  transitions, and a `knowledge` block with 14 findings and 9 promotions. It
+  covers the seats surface (four ranks plus an author the snapshot does not
+  carry), the promotion readout, a promotion whose source seat differs from the
+  finding's author, six findings that no seat has promoted, and findings that
+  carry evidence and limits for the selected-actor pane. Actors are running,
+  completed, failed and pending, so `Live only` narrows the surface.
+- `fixture-knowledge-empty.json`: three actors and a `knowledge` block with no
+  findings, no promotions and `empty: true`. Renders the knowledge band's empty
+  state.
 - `fixture-events-recovery.json`: harness-driven SSE recovery script,
   not a `?fixture=` render document. Scripts a transient pre-open 503
   (`native-owner-subscription-unavailable`) followed by a healthy

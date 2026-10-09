@@ -32,6 +32,11 @@ The server reads the same coordinator database as the CLI. It never writes to it
   no `native_changes` table and the snapshot endpoint answers `503 snapshot-unavailable`.
 - A snapshot is one read transaction: the scoped state plus the `native_changes`
   high-water cursor, so the snapshot is exactly the state at that cursor.
+- The projection reads every per-session value in a fixed number of passes: one pass
+  per recorded relation (executions, turns, reports, unread messages, the pending
+  sample, ensembles and memberships, stops, open native requests, the recorded times
+  behind a current action) over the sessions the request covers. A snapshot of the
+  whole scope and an event frame for one session read those relations once each.
 - The event stream (Server-Sent Events) replays durable `native_changes` rows after the
   client's cursor and pushes player/ensemble/pending/transition frames. The browser
   holds an `EventSource`; it does not poll.

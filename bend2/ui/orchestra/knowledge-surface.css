@@ -1,0 +1,306 @@
+/* The knowledge surface uses the page's color tokens. Actor bars show finding
+   counts, and lines connect promotion sources and destinations. */
+
+.stage {
+  margin: 24px 20px 8px;
+  padding-top: 2px;
+  border-top: 1px solid var(--hairline, #d7dce5);
+  font-family: var(--sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif);
+}
+
+.stage-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 16px;
+  padding: 14px 0 10px;
+}
+
+.stage-head h2 {
+  margin: 0;
+  font-family: var(--serif, Georgia, serif);
+  font-size: var(--step3, 20px);
+  font-weight: 600;
+}
+
+.stage-head .count,
+.stage-head .legend {
+  margin: 0;
+  color: var(--muted, #5b6478);
+  font-size: var(--step0, 12px);
+}
+
+.stage-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  align-items: stretch;
+}
+
+@media (max-width: 900px) {
+  .stage-body { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── view switch ───────────────────────────────────────────────────────── */
+
+.view-switch {
+  display: inline-flex;
+  border: 1px solid var(--hairline, #d7dce5);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.view-switch button {
+  border: 0;
+  border-left: 1px solid var(--hairline, #d7dce5);
+  padding: 4px 12px;
+  background: var(--surface, #fff);
+  color: var(--muted, #5b6478);
+  font: inherit;
+  font-size: var(--step0, 12px);
+  cursor: pointer;
+}
+
+.view-switch button:first-child { border-left: 0; }
+.view-switch button:hover { color: var(--selection, #2a3e6b); }
+.view-switch button[aria-pressed="true"] {
+  background: var(--ink, #141a26);
+  color: var(--paper, #fbfcfe);
+}
+.view-switch button:focus-visible { outline: 2px solid var(--selection, #2a3e6b); outline-offset: -2px; }
+
+/* ── seats: the seating plan ───────────────────────────────────────────── */
+
+.ks { display: flex; flex-direction: column; min-width: 0; margin: 0; }
+
+.ks-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 0 0 10px;
+  color: var(--muted, #5b6478);
+  font-size: var(--step0, 12px);
+}
+
+.ks-legend-pair { display: inline-flex; align-items: center; gap: 5px; }
+.ks-legend-item { display: inline-block; flex: none; }
+.ks-legend-text { color: var(--muted, #5b6478); }
+
+.ks-legend-count {
+  margin-left: auto;
+  color: var(--ink, #141a26);
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.ks-key-stand {
+  width: 4px;
+  height: 12px;
+  background: var(--ink, #141a26);
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+
+.ks-key-shared {
+  width: 4px;
+  height: 6px;
+  background: var(--selection, #2a3e6b);
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
+.ks-key-arc {
+  width: 20px;
+  height: 0;
+  border-top: 2px solid var(--selection, #2a3e6b);
+  margin-right: 4px;
+  vertical-align: 3px;
+}
+
+.ks-viewport {
+  overflow: auto;
+  /* The plan height is 144 + (rank groups - 1) * 92 + 58 at its tallest first
+     rank and 47 + (rank groups - 1) * 92 + 58 for a podium holding a small stand,
+     so a five-rank plan measures 473 px and fits at rest. A deeper plan scrolls
+     vertically. */
+  max-height: 490px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--hairline, #d7dce5);
+  border-radius: 3px;
+}
+
+.ks-svg { display: block; }
+
+.ks-notice {
+  padding: 22px 16px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--hairline, #d7dce5);
+  color: var(--muted, #5b6478);
+  font-size: var(--step0, 12px);
+}
+
+.ks-rank { stroke: var(--hairline, #d7dce5); stroke-width: 1; }
+.ks-rank.ks-podium { stroke: var(--muted, #5b6478); stroke-width: 1.5; }
+
+.ks-rank-label {
+  fill: var(--muted, #5b6478);
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+/* A stand is a vertical rule. Height is authored findings, the dark part of the
+   fill is the live seat, the structural ink inside it is what was shared, and
+   the tick under the baseline is what the seat received. */
+.ks-body { fill: var(--hairline, #d7dce5); }
+.ks-stand.ks-live .ks-body { fill: var(--ink, #141a26); }
+.ks-stand.ks-out .ks-body { fill: none; stroke: var(--hairline, #d7dce5); stroke-dasharray: 2 2; }
+.ks-stand.ks-idle .ks-body { fill: #b9c2d1; }
+
+.ks-shared { fill: var(--selection, #2a3e6b); }
+.ks-stand.ks-live .ks-shared { fill: #93a7d6; }
+.ks-received { fill: var(--muted, #5b6478); opacity: 0.55; }
+.ks-foot { stroke: var(--hairline, #d7dce5); stroke-width: 1; }
+.ks-hit { fill: transparent; }
+
+.ks-stand-label {
+  fill: var(--muted, #5b6478);
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 10px;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.ks-stand:hover .ks-body { fill: var(--selection, #2a3e6b); }
+.ks-stand.ks-selected .ks-body { fill: var(--selection, #2a3e6b); }
+
+.ks-stand:focus { outline: none; }
+.ks-stand:focus .ks-hit,
+.ks-stand:focus-visible .ks-hit {
+  fill: none;
+  stroke: var(--selection, #2a3e6b);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+}
+
+/* A recorded promotion runs from its source seat to its destination seat, and
+   the arrow sits at the destination end. Stroke width carries how many
+   promotions travel the line. */
+.ks-arc {
+  fill: none;
+  stroke: var(--selection, #2a3e6b);
+  stroke-opacity: 0.3;
+  marker-end: url(#ks-arrow);
+  cursor: pointer;
+}
+
+.ks-arrow-head { fill: var(--selection, #2a3e6b); fill-opacity: 0.45; }
+
+/* A search dims every seat and line it does not match and leaves the layout in
+   place. The live filter is a separate, explicit narrowing that hides seats. */
+.ks-stand.ks-dim .ks-body,
+.ks-stand.ks-dim .ks-shared { opacity: 0.18; }
+.ks-stand.ks-dim .ks-stand-label { opacity: 0.35; }
+.ks-arc.ks-dim { stroke-opacity: 0.08; }
+
+.ks-arc:hover,
+.ks-arc:focus { stroke: var(--attention, #a2611f); stroke-opacity: 0.9; outline: none; }
+.ks-arc:focus { stroke-dasharray: 4 2; }
+
+/* A seat or line that arrived with the latest committed knowledge change: one
+   transition that settles, and the attention accent, which is what the page
+   keeps that colour for. */
+.ks-new { animation: ks-arrive 1600ms ease-out 1; }
+.ks-stand.ks-new .ks-shared,
+.ks-stand.ks-new .ks-body { fill: var(--attention, #a2611f); }
+.ks-arc.ks-new { stroke: var(--attention, #a2611f); stroke-opacity: 0.95; }
+
+@keyframes ks-arrive {
+  0% { opacity: 0.2; }
+  35% { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+/* ── seat readout ──────────────────────────────────────────────────────── */
+
+.ks-readout {
+  min-width: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 12px 2px 2px;
+  border-top: 1px solid var(--hairline, #d7dce5);
+  margin-top: 10px;
+}
+
+.ks-readout[hidden] { display: none; }
+
+.ks-readout-title {
+  margin: 0 0 8px;
+  color: var(--ink, #141a26);
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: var(--step1, 13px);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ks-readout-hint { margin: 0; color: var(--muted, #5b6478); font-size: var(--step0, 12px); }
+
+.ks-readout-facts { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; }
+
+.ks-fact { display: contents; }
+.ks-fact dt { color: var(--muted, #5b6478); font-size: 11px; }
+.ks-fact dd {
+  margin: 0;
+  color: var(--ink, #141a26);
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.ks-findings { list-style: none; margin: 10px 0 0; padding: 0; }
+
+.ks-finding {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 0;
+  border-top: 1px solid var(--hairline, #d7dce5);
+}
+
+.ks-finding:first-child { border-top: none; }
+
+.ks-finding-id {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--selection, #2a3e6b);
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 11px;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+code.ks-finding-id { text-decoration: none; cursor: text; }
+
+.ks-finding-claim,
+.ks-finding-meta { color: var(--ink, #141a26); font-size: var(--step0, 12px); line-height: 1.45; }
+
+.ks-finding-claim {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ks-finding-meta { color: var(--muted, #5b6478); font-size: 11px; }
+
+/* Hidden detail and empty-state elements stay outside the layout. */
+[hidden] { display: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ks-new { animation: none; }
+}

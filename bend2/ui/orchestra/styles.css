@@ -661,6 +661,7 @@ button.pend-badge:hover { color: var(--selection); border-color: currentColor; }
 @media (max-width: 720px) {
   .page-head { padding: 12px 14px 10px; }
   .toolbar { padding: 10px 14px; }
+  .lane { padding: 8px 14px 0; }
   .layout { padding: 12px 14px 0; gap: 12px; }
   .notice { margin: 10px 14px 0; }
   .field input { min-width: 140px; }
@@ -760,3 +761,80 @@ button.pend-badge:hover { color: var(--selection); border-color: currentColor; }
 .knowledge > ol > li.t-promotion::before { background: var(--ink); }
 .knowledge > ol > li.t-promotion.finding-unshared::before { background: none; border: 1px solid var(--muted); }
 .knowledge > ol > li.t-knowledge::before { background: var(--ink); }
+
+/* ── attention lane ─────────────────────────────────────────────────── */
+
+.lane {
+  padding: 10px 20px 0;
+}
+
+.lane h2 {
+  margin: 0 0 6px;
+  font-size: var(--step2);
+  line-height: 1.3;
+}
+
+.lane-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 128px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 4px 4px 8px;
+}
+
+/* A group head names the status once for the chips under it and starts its group
+   on a full row, so the lane reads as bands instead of one run of chips. It is a
+   label, not a control, so it carries no border and no background; the dot and
+   the status word keep the colour rules the tree rows already use. The margin is
+   reset because a <p> keeps its default margins as a flex item. */
+.lane-grouphead {
+  flex: 0 0 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--step0);
+}
+
+.lane-grouphead .status-word { font-weight: 600; }
+
+.lane-grouphead .muted { font-weight: 400; }
+
+.lane-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 280px;
+  padding: 4px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.lane-chip .lane-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The count keeps the pending-badge language: ochre ink and an outline on
+   the surface, never light text on the ochre fill. */
+.lane-badge {
+  min-width: 20px;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: 10px;
+  color: var(--attention);
+  font-size: var(--step0);
+  text-align: center;
+}
+
+.lane-chip.selected { outline: 2px solid var(--selection); outline-offset: 1px; }
+
+.lane-chip:focus-visible { outline: 2px solid var(--selection); outline-offset: 1px; }

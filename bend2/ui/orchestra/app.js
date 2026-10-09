@@ -30,6 +30,7 @@ const state = {
   sse: null,
   connected: false,
   knowledge: null,
+  fixtureKnowledge: null,
   knowledgeNotice: "",
   knowledgeActor: null,
   knowledgeActorId: "",
@@ -38,6 +39,8 @@ const state = {
   includeUnshared: false,
   knowledgeSearch: "",
   findingId: null,
+  knowledgeLiveOnly: false,
+  knowledgeSeatEmpty: "",
 };
 
 const el = {
@@ -59,6 +62,9 @@ const el = {
   knowledgeCount: document.getElementById("knowledge-count"),
   includeUnshared: document.getElementById("include-unshared"),
   knowledgeSearch: document.getElementById("knowledge-search"),
+  knowledgeSurface: document.getElementById("knowledge-surface"),
+  liveOnly: document.getElementById("live-only"),
+  attention: document.getElementById("attention-lane"),
 };
 
 function text(parent, value) {
@@ -440,6 +446,8 @@ function renderTree() {
   text(el.treeCount, shown + " of " + state.players.size + " actors shown");
   state.structure = structureSignature();
   restoreFocus(key);
+  renderAttentionState();
+  refreshKnowledgeSeats();
 }
 
 function renderAction(row, p) {
@@ -601,6 +609,28 @@ function updateRow(p) {
     if (oldList) oldList.replaceWith(renderPendingList(p));
     else fresh.after(renderPendingList(p));
   }
+  renderAttentionState();
+  refreshKnowledgeSeats();
+}
+
+// The attention lane mirrors recorded actor state with running actors first.
+// It renders from the same snapshot the tree reads and selects through it.
+function renderAttentionState() {
+  const mount = el.attention;
+  if (!mount || typeof renderAttention !== "function") return;
+  const players = [];
+  for (const p of state.players.values()) {
+    players.push({
+      id: p.id,
+      status: deriveStatus(p),
+      awaitingInput: awaitingInput(p),
+      pendingCount: p.pendingCount || 0,
+    });
+  }
+  renderAttention(mount, players, {
+    selectedId: state.selectionId,
+    onSelect: (id) => select(id),
+  });
 }
 // Every stored message the badge counts, newest first, named by id and kind. The
 // count is the stored count; this list is the sample behind it.
@@ -775,10 +805,37 @@ function knowledgeWired() {
   return !state.fixtureName && Boolean(state.apiBase);
 }
 
+// A fixture may carry a knowledge block so the band and the list render without
+// the live endpoint. The records are synthetic and the screen is labeled as a
+// fixture; the shapes match the overview and actor routes.
+function fixtureActorKnowledge(id) {
+  const source = state.fixtureKnowledge || {};
+  const findings = source.findings || [];
+  const promotions = source.promotions || [];
+  const authored = findings.filter((f) => String(f.author || "") === id);
+  const promoted = new Set(promotions.map((p) => p.finding).filter(Boolean));
+  const received = promotions.filter((p) => String(p.destination || "") === id).map((p) => {
+    const finding = findings.find((f) => f.id === p.finding) || {};
+    return { id: p.id, finding: p.finding, author: p.author, source: p.source,
+      destination: p.destination, promotedBy: p.promotedBy, claim: finding.claim,
+      evidence: finding.evidence, limits: finding.limits };
+  });
+  const unshared = authored.filter((f) => !promoted.has(f.id)).length;
+  return { contractVersion: CONTRACT_VERSION, actor: id, authored, received,
+    counts: { authored: authored.length, received: received.length, unshared },
+    empty: authored.length === 0 && received.length === 0 };
+}
+
 async function loadKnowledgeOverview() {
+  if (state.fixtureName) {
+    state.knowledge = state.fixtureKnowledge || null;
+    state.knowledgeNotice = state.fixtureKnowledge ? "" : "A fixture carries no knowledge records.";
+    renderKnowledge();
+    return;
+  }
   if (!knowledgeWired()) {
     state.knowledge = null;
-    state.knowledgeNotice = "A fixture carries no knowledge records.";
+    state.knowledgeNotice = "No live endpoint is configured.";
     renderKnowledge();
     return;
   }
@@ -799,6 +856,11 @@ async function loadActorKnowledge(id) {
   state.knowledgeActorRequest = request;
   state.knowledgeActor = null;
   state.knowledgeActorId = id || "";
+  if (state.fixtureName) {
+    if (state.fixtureKnowledge && id) state.knowledgeActor = fixtureActorKnowledge(id);
+    renderDetail();
+    return;
+  }
   if (!knowledgeWired() || !id) {
     renderDetail();
     return;
@@ -852,9 +914,26 @@ function findingDetail(promotion, finding, full = true) {
   return ul;
 }
 
+// Showing the findings no recorded promotion carries. One place owns the state
+// and its control's pressed state.
+function setIncludeUnshared(on) {
+  state.includeUnshared = Boolean(on);
+  if (el.includeUnshared) {
+    el.includeUnshared.setAttribute("aria-pressed", state.includeUnshared ? "true" : "false");
+  }
+}
+
 function toggleFinding(id) {
   if (!id) return;
   state.findingId = state.findingId === id ? null : id;
+  if (state.findingId) {
+    // A finding selected from the seats opens its recorded content. A finding no
+    // recorded promotion carries has no row until the unshared rows are shown,
+    // and the detail pane holds the record only while the block is open.
+    const promotions = (state.knowledge && state.knowledge.promotions) || [];
+    if (!promotions.some((p) => (p.finding || p.id) === id)) setIncludeUnshared(true);
+    state.knowledgeOpen = true;
+  }
   renderKnowledge();
   renderDetail();
 }
@@ -890,23 +969,68 @@ function promotionRow(promotion, findings) {
   return li;
 }
 
+// The knowledge band renders the read as seats: every actor that holds a recorded
+// finding sits at its recorded distance from the podium, and each recorded
+// promotion is a line between two seats. A page without the mount, or without the
+// module, keeps the promotion list only.
+function snapshotPlayers() {
+  const out = [];
+  for (const p of state.players.values()) {
+    out.push({
+      id: p.id,
+      parent: p.parent || "",
+      role: p.role || "",
+      model: p.observedModel || p.model || "",
+      status: deriveStatus(p),
+    });
+  }
+  return out;
+}
+
+function renderKnowledgeSeats(overview, emptyText) {
+  const mount = el.knowledgeSurface;
+  if (!mount || !window.KnowledgeSurface) return;
+  state.knowledgeSeatEmpty = emptyText || "";
+  window.KnowledgeSurface.render(mount, overview, {
+    players: snapshotPlayers(),
+    liveOnly: state.knowledgeLiveOnly,
+    query: state.knowledgeSearch,
+    selectedId: state.selectionId,
+    notice: state.knowledgeNotice || (!overview ? "No knowledge read yet." : (emptyText || "")),
+    onSelectActor: (id) => select(id),
+    onSelectFinding: (id) => toggleFinding(id),
+  });
+}
+
+// The seats read the same recorded state as the tree - each seat's liveness, its
+// place in the hierarchy and the selected actor - so a tree refresh refreshes the
+// seats with it. The promotion list is unchanged by that state and stays as it is.
+function refreshKnowledgeSeats() {
+  if (!el.knowledgeSurface || !window.KnowledgeSurface) return;
+  renderKnowledgeSeats(state.knowledge, state.knowledgeSeatEmpty);
+}
+
 function renderKnowledge() {
   const list = el.knowledgePromotions;
   const empty = el.knowledgeEmpty;
   if (!list || !empty) return; // a page without the knowledge section renders nothing
+  // These three nodes persist across renders, and text() appends, so each one is
+  // cleared before this render writes to it.
   list.textContent = "";
+  empty.textContent = "";
+  el.knowledgeCount.textContent = "";
   empty.hidden = true;
   const overview = state.knowledge;
   if (state.knowledgeNotice) {
     empty.hidden = false;
     text(empty, state.knowledgeNotice);
-    text(el.knowledgeCount, "");
+    renderKnowledgeSeats(overview);
     return;
   }
   if (!overview) {
     empty.hidden = false;
     text(empty, "No knowledge read yet.");
-    text(el.knowledgeCount, "");
+    renderKnowledgeSeats(overview);
     return;
   }
   const findings = new Map((overview.findings || []).map((f) => [f.id, f]));
@@ -934,6 +1058,7 @@ function renderKnowledge() {
     text(empty, query
       ? "No findings match."
       : (overview.empty ? "No recorded findings." : "No recorded promotions."));
+    renderKnowledgeSeats(overview, empty.textContent);
     return;
   }
   for (const promotion of promotions) list.appendChild(promotionRow(promotion, findings));
@@ -959,6 +1084,7 @@ function renderKnowledge() {
     }
     list.appendChild(li);
   }
+  renderKnowledgeSeats(overview);
 }
 
 // The dossier block: authored, received and never-shared counts with the stored
@@ -1100,6 +1226,7 @@ function applySnapshot(data, label) {
   state.transitions = Array.isArray(data.transitions) ? data.transitions.slice() : [];
   state.tasks = data.tasks || {};
   state.providers = data.providers || {};
+  state.fixtureKnowledge = data.knowledge || null;
   state.snapshotLabel = label + (state.subject ? " subject " + state.subject : "")
     + " at " + (data.capturedAt || "time unrecorded");
   setCursor(data.cursor || "");
@@ -1392,8 +1519,14 @@ function init() {
   document.getElementById("clear-filters").addEventListener("click", clearFilters);
   if (el.includeUnshared) {
     el.includeUnshared.addEventListener("click", () => {
-      state.includeUnshared = !state.includeUnshared;
-      el.includeUnshared.setAttribute("aria-pressed", state.includeUnshared ? "true" : "false");
+      setIncludeUnshared(!state.includeUnshared);
+      renderKnowledge();
+    });
+  }
+  if (el.liveOnly) {
+    el.liveOnly.addEventListener("click", () => {
+      state.knowledgeLiveOnly = !state.knowledgeLiveOnly;
+      el.liveOnly.setAttribute("aria-pressed", state.knowledgeLiveOnly ? "true" : "false");
       renderKnowledge();
     });
   }
@@ -1496,7 +1629,8 @@ function init() {
   loadSnapshot().then(connectEvents).catch((e) => {
     state.snapshotLabel = "Snapshot failed to load: " + (e && e.message ? e.message : e);
     renderHeaderLine();
-    setConn("failed");
+    // A failed initial snapshot uses the existing endpoint retry path.
+    scheduleEndpointRetry(e);
   });
 }
 

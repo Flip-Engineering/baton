@@ -195,3 +195,44 @@ fields only. It is recorded state, not process liveness:
 - `unknown`: none of the above can be established.
 
 Pending counts render as badges next to the status in every case.
+
+## Rendered areas
+
+The page renders five areas:
+
+- A running-and-attention band above the tree: one chip per actor whose
+  derived status is `running`, `failed` or `pending`, and per actor with a
+  recorded execution that ended while its pending count is above zero
+  (`awaiting input`). Running actors come first, then awaiting input, then
+  failed, then pending; within a group the recorded pending count orders the
+  chips. A chip selects its actor.
+- The actor tree: the parentage hierarchy, with a tag line under each row that
+  carries ensemble or section membership.
+- The selected actor: the recorded fields of the Player object below, plus
+  that actor's stored findings.
+- Recent transitions: the snapshot's `transitions`, newest first.
+- The knowledge band: one stand per actor that holds a recorded finding, at
+  that actor's recorded distance from the podium; a stand's height is the
+  actor's authored findings, the filled inner part of that height is the
+  findings promoted at least once, the tick below the baseline is the
+  promotions the actor received, and a line joins the source seat and the
+  destination seat of a recorded promotion. An actor that holds a finding and
+  is absent from the snapshot sits in a final `recorded outside this view`
+  rank. The promotion readout beside the surface lists the same records as
+  text, with a filter field that narrows rows by finding id, claim or author,
+  an `Include unshared` control, and a `Live only` control that narrows the
+  surface to running, waiting and pending seats.
+
+## Fixture documents
+
+`index.html?fixture=<name>` loads `fixtures/<name>.json` in place of the
+snapshot route and turns live updates off. The document carries the snapshot
+fields, a `fixture: true` marker, a `fixtureNote`, and may carry one more key:
+
+- `knowledge`: an object shaped like `/orchestra/knowledge/overview`
+  (`contractVersion`, `findings`, `promotions`, `actors`, and `empty` for a
+  document with no records). A fixture that carries it renders the knowledge
+  band from this object in place of an overview request. Its `findings` may
+  carry the `evidence` and `limits` fields the actor route serves, so the
+  selected-actor pane shows a complete record without a live endpoint. A
+  fixture without the key renders the band's notice.

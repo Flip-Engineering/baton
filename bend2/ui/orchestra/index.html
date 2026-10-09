@@ -6,6 +6,7 @@
 <meta name="orchestra-api-base" content="">
 <title>Orchestra live view</title>
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="knowledge-surface.css">
 </head>
 <body>
 <header class="page-head">
@@ -56,6 +57,11 @@
   <button type="button" id="reconnect">Reconnect</button>
 </div>
 
+<section class="lane" aria-labelledby="lane-title">
+  <h2 id="lane-title">Running and attention</h2>
+  <div id="attention-lane" class="lane-strip"></div>
+</section>
+
 <main class="layout">
   <section class="tree-pane" aria-labelledby="tree-title">
     <h2 id="tree-title">Actors</h2>
@@ -75,20 +81,33 @@
       <h2 id="transitions-title">Recent transitions</h2>
       <ol id="transitions" class="activity"></ol>
     </section>
-    <section class="knowledge" aria-labelledby="knowledge-title">
-      <h2 id="knowledge-title">Knowledge shared</h2>
-      <p class="legend">Recorded findings and promotion edges. Display order follows the recorded hierarchy; it carries no trust meaning.</p>
-      <p class="count" id="knowledge-count"></p>
+  </div>
+</main>
+
+<section class="stage" aria-labelledby="knowledge-title">
+  <div class="stage-head">
+    <h2 id="knowledge-title">Knowledge</h2>
+    <button type="button" id="live-only" aria-pressed="false">Live only</button>
+    <p class="count" id="knowledge-count"></p>
+    <p class="legend">Height shows authored findings; fill shows shared findings. Lines show promotions between actors. Select an actor or finding for details.</p>
+  </div>
+  <div class="stage-body">
+    <div class="stage-surface">
+      <div id="knowledge-surface"></div>
+    </div>
+    <div class="stage-readout knowledge">
       <label class="field">Filter findings
         <input type="search" id="knowledge-search" autocomplete="off">
       </label>
       <button type="button" id="include-unshared" aria-pressed="false">Include unshared</button>
       <ol id="knowledge-promotions" class="activity"></ol>
       <p class="muted" id="knowledge-empty" hidden></p>
-    </section>
+    </div>
   </div>
-</main>
+</section>
 
+<script src="attention.js" defer></script>
+<script src="knowledge-surface.js" defer></script>
 <script src="app.js" defer></script>
 </body>
 </html>
