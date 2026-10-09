@@ -178,6 +178,12 @@ jobs:
           done
           original_run_json=$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])),separators=(",",":")))' "$original_run")
           printf 'original_run_json=%s\n' "$original_run_json" >> "$GITHUB_OUTPUT"
+          conclusion=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["conclusion"])' "$original_run")
+          printf 'Original Darwin run %s completed with conclusion %s\n' "$CANONICAL_DARWIN_RUN_ID" "$conclusion"
+          if [[ "$conclusion" != success ]]; then
+            cat "$original_run"
+            exit 1
+          fi
 
   darwin:
     if: ${{ !cancelled() && !inputs.runtime_suite && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') && (github.event_name == 'workflow_dispatch' || needs.darwin_publication.result == 'success') }}
