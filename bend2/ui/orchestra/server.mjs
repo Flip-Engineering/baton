@@ -938,6 +938,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.
     const close = () => {
       if (closing) return;
       closing = true;
+      process.stdin.pause();
       server.close(() => { process.exitCode = 0; });
       server.closeAllConnections?.();
     };
