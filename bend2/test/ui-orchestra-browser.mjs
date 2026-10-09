@@ -196,6 +196,8 @@ const urlA = firstViewLine.value.slice('Orchestra live view: '.length).trim();
 check('view URL uses the loopback HTTP listener', urlA.startsWith('http://127.0.0.1:'));
 
 await openPage(urlA);
+await until('status filter is available', `document.getElementById('status-filter')`);
+await evalJs(`document.getElementById('status-filter').value = 'all'; document.getElementById('status-filter').dispatchEvent(new Event('change'));`);
 await until('tree renders the fixture hierarchy from the snapshot',
   `document.querySelectorAll('#tree li').length >= 3 && document.getElementById('tree').textContent.includes('worker')`);
 await until('native owner event stream is ready',

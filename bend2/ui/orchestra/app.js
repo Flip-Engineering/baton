@@ -21,7 +21,7 @@ const state = {
   selectionId: null,
   pendingOpen: null,
   search: "",
-  statusFilter: "all",
+  statusFilter: "running",
   ensembleFilter: "all",
   collapsed: new Set(),
   arrivalAt: new Map(),
