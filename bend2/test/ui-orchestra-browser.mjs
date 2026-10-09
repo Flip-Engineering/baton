@@ -83,6 +83,16 @@ const wsUrl = await new Promise((resolve, reject) => {
   chrome.once('exit', (c) => reject(new Error(`chromium exited ${c}: ${chromeErr}`)));
 }).catch((e) => { console.log('FAIL chromium startup — ' + e.message); throw e; });
 
+process.on('uncaughtException', (e) => {
+  console.log(`UNCAUGHT ${e && e.message ? e.message : e}`);
+  if (e && e.stack) console.log(String(e.stack).slice(0, 600));
+  process.exit(3);
+});
+process.on('unhandledRejection', (e) => {
+  console.log(`UNHANDLED ${e && e.message ? e.message : e}`);
+  if (e && e.stack) console.log(String(e.stack).slice(0, 600));
+  process.exit(4);
+});
 let msgId = 0;
 const pendingCalls = new Map();
 let pageWs = null;
@@ -184,8 +194,10 @@ check('view command reports the live URL',
   firstViewLine.value || 'view command closed stdout');
 const urlA = firstViewLine.value.slice('Orchestra live view: '.length).trim();
 check('view URL uses the loopback HTTP listener', urlA.startsWith('http://127.0.0.1:'));
+console.log('MARK before openPage(urlA)');
 
 await openPage(urlA);
+console.log('MARK after openPage(urlA)');
 await until('tree renders the fixture hierarchy from the snapshot',
   `document.querySelectorAll('#tree li').length >= 3 && document.getElementById('tree').textContent.includes('worker')`);
 await until('native owner event stream is ready',
