@@ -270,9 +270,17 @@ def provider_usage_answer_sql(harness: String, command: String, observedAt: Stri
   ++ "'detail',CASE WHEN json_valid(t) THEN NULL ELSE t END,"
   ++ "'answer',CASE WHEN json_valid(t) THEN json(t) ELSE NULL END) FROM answer;"
 
-def provider_usage_outcome(+db: String, harness: String, command: String, observedAt: String, outcome: T.RunRes) -> IO(String):
+def provider_usage_decoded(harness: String, command: String, observedAt: String, stdout: String, result: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match result:
+    case Fail{(code,detail)}:
+      IO.pure(String,"{\"state\":\"unknown\",\"harness\":" ++ J.string_literal(harness) ++ ",\"observedAt\":" ++ observedAt ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":[\"usage\",\"--json\"],\"condition\":\"usageObservationHostFailure\",\"code\":" ++ U32.show(code) ++ ",\"detail\":" ++ J.string_literal(detail) ++ ",\"process\":{\"status\":\"exit\",\"code\":0},\"stdout\":" ++ J.string_literal(stdout) ++ "}")
+    case Done{answer}: IO.pure(String,answer)
+
+def provider_usage_outcome(+db: String, +harness: String, +command: String, +observedAt: String, outcome: T.RunRes) -> IO(String):
   match outcome:
-    case T.RRun{T.SExit{0},out}: IO.try(String,DB.Sql.read(db,provider_usage_answer_sql(harness,command,observedAt,out)))
+    case T.RRun{T.SExit{0},+out}: do IO<String>:
+      result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,provider_usage_answer_sql(harness,command,observedAt,out))
+      provider_usage_decoded(harness,command,observedAt,out,result)
     case T.RRun{T.SExit{code},out}: IO.pure(String,provider_usage_failed(harness,command,observedAt,"exit",code,out))
     case T.RRun{T.SSignal{num},out}: IO.pure(String,provider_usage_failed(harness,command,observedAt,"signal",num,out))
     case T.RSpawn{detail}: IO.pure(String,provider_usage_unknown(harness,command,observedAt,"unreadableProcessStatus","null",detail))
@@ -296,12 +304,28 @@ def provider_usage_command(+db: String, +harness: String, +command: String, cwd:
 def provider_usage(+db: String, +harness: String, +command: String, cwd: String) -> IO(String):
   Bool.pick(IO(String),String.eq(harness,"omp"),provider_usage_command(db,harness,command,cwd),IO.pure(String,provider_usage_absent(harness,command,"unsupportedHarness")))
 
-# The conversation projection prints with the provider observation beside it, so
-# conversation token usage keeps its own members.
-def print_with_provider(+db: String, conversation: String, +provider: String) -> IO(Unit):
+# project_sql supplies a nonempty JSON object. The accumulated conversation
+# prints after provider-read failures without another database read.
+def print_with_provider(conversation: String, provider: String) -> IO(Unit):
+  match conversation:
+    case SCon{'{',rest}: IO.print("{\"providerUsage\":" ++ provider ++ "," ++ rest)
+    case other: IO.die(Unit,2,"Observed usage conversation projection is not an object")
+
+def provider_usage_for_session(+db: String, +session: String, harness: String) -> IO(String):
+  do IO<String>:
+    command : String <- IO.try(String,DB.Sql.read(db,harness_command_sql(session)))
+    cwd : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce(workspace,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    provider_usage(db,harness,Tx.trim_nl(command),Tx.trim_nl(cwd))
+
+def usage_provider_result(harness: String, conversation: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Fail{(code,detail)}: print_with_provider(conversation,provider_usage_unknown(harness,"","null","usageObservationHostFailure",U32.show(code),detail))
+    case Done{provider}: print_with_provider(conversation,provider)
+
+def usage_with_provider(db: String, session: String, +harness: String, conversation: String) -> IO(Unit):
   do IO<Unit>:
-    spliced : String <- IO.try(String,DB.Sql.read(db,"SELECT json_set(" ++ C.q(conversation) ++ ",'$.providerUsage',json(" ++ C.q(provider) ++ "));"))
-    IO.print(spliced)
+    result : Result<&1,&1,U32 & String,String> <- provider_usage_for_session(db,session,harness)
+    usage_provider_result(harness,conversation,result)
 
 # --- the model discovery read ------------------------------------------------
 
@@ -380,22 +404,20 @@ def usage_lines_json(file: String) -> IO(String):
     text : String <- IO.try(String,Text.Text.read(file))
     IO.pure(String,lines_array(Tx.split_lines(text)))
 
-def usage_unavailable(+db: String, session: String, native: String, harness: String, +provider: String) -> IO(Unit):
-  do IO<Unit>:
-    projection : String <- IO.try(String,DB.Sql.read(db,project_sql("0","[]",session,Tx.trim_nl(harness),native,"")))
-    print_with_provider(db,projection,provider)
+def usage_unavailable(db: String, session: String, native: String, harness: String) -> IO(String):
+  IO.try(String,DB.Sql.read(db,project_sql("0","[]",session,Tx.trim_nl(harness),native,"")))
 
 # A selected file is projected only after its recorded identity matches the
 # session's, and only the distinct entries it records are summed.
-def usage_selected(+db: String, +session: String, +native: String, harness: String, +file: String, +provider: String) -> IO(Unit):
-  do IO<Unit>:
+def usage_selected(+db: String, +session: String, +native: String, harness: String, +file: String) -> IO(String):
+  do IO<String>:
     +lines_json : String <- usage_lines_json(file)
     malformed : String <- IO.try(String,DB.Sql.read(db,malformed_sql(lines_json)))
     +recorded : String <- IO.try(String,DB.Sql.read(db,header_sql(lines_json)))
     checked : Unit <- usage_recorded_conversation(Tx.trim_nl(recorded),native,String.eq(Tx.trim_nl(recorded),native))
     entries : String <- IO.try(String,DB.Sql.read(db,extract_sql(lines_json)))
     projection : String <- IO.try(String,DB.Sql.read(db,project_sql(Tx.trim_nl(malformed),entries,session,Tx.trim_nl(harness),native,file)))
-    print_with_provider(db,projection,provider)
+    IO.pure(String,projection)
 
 def observed_usage(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:
@@ -405,12 +427,9 @@ def observed_usage(+db: String, +session: String) -> IO(Unit):
     +native : String <- IO.try(String,DB.Sql.read(db,"SELECT native FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     storage : String <- IO.try(String,DB.Sql.read(db,storage_sql(db,session)))
     +file : String <- usage_source(Tx.trim_nl(storage),db ++ ".sessions",Tx.trim_nl(native))
-    command : String <- IO.try(String,DB.Sql.read(db,harness_command_sql(session)))
-    cwd : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce(workspace,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    +provider : String <- provider_usage(db,Tx.trim_nl(harness),Tx.trim_nl(command),Tx.trim_nl(cwd))
     empty : Bool <- IO.pure(Bool,String.is_empty(file))
-    picked : Unit <- Bool.pick(IO(Unit),empty,usage_unavailable(db,session,Tx.trim_nl(native),Tx.trim_nl(harness),provider),usage_selected(db,session,Tx.trim_nl(native),Tx.trim_nl(harness),file,provider))
-    IO.pure(Unit,Unit{})
+    conversation : String <- Bool.pick(IO(String),empty,usage_unavailable(db,session,Tx.trim_nl(native),Tx.trim_nl(harness)),usage_selected(db,session,Tx.trim_nl(native),Tx.trim_nl(harness),file))
+    usage_with_provider(db,session,Tx.trim_nl(harness),conversation)
 
 def models(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:

@@ -88,15 +88,17 @@ class ObservedUsage(unittest.TestCase):
         answer.update(values)
         return answer
 
-    def provider_command(self, body, exit_code=0, identity_prefix=False):
+    def provider_command(self, body, exit_code=0, identity_prefix=False, remove_database=False):
         workspace = self.directory / 'provider workspace'
         workspace.mkdir()
         program = workspace / 'provider fixture'
         program.write_text('#!' + sys.executable + '\n'
                            'import json, pathlib, sys\n'
                            "pathlib.Path('queried.json').write_text(json.dumps({'argv': sys.argv[1:], 'cwd': str(pathlib.Path.cwd())}))\n"
-                           'print(' + repr(body) + ', flush=True)\n'
-                           'sys.exit(' + repr(exit_code) + ')\n')
+                           + ('pathlib.Path(' + repr(str(self.db)) + ').unlink()\n'
+                              if remove_database else '')
+                           + 'print(' + repr(body) + ', flush=True)\n'
+                           + 'sys.exit(' + repr(exit_code) + ')\n')
         program.chmod(0o755)
         command = './provider fixture'
         endpoint = [str(EXE), str(self.db), 'receive', 'reader', command,
@@ -161,6 +163,28 @@ class ObservedUsage(unittest.TestCase):
         self.assertEqual(answer['providerUsage']['state'], 'unknown')
         self.assertEqual(answer['providerUsage']['condition'], 'malformedUsageJson')
         self.assertIn('Actual non-JSON provider response', answer['providerUsage']['detail'])
+
+    def test_provider_database_failure_preserves_accumulated_conversation(self):
+        self.write([record('retained', usage(7, 2, 0, 0))])
+        raw = json.dumps({'reports': [{'provider': 'fixture', 'remaining': 0}]})
+        workspace, command = self.provider_command(raw, remove_database=True)
+        answer = self.read()
+        self.assertEqual(answer['session'], 'reader')
+        self.assertEqual(answer['native'], 'native-1')
+        self.assertEqual(answer['source'], str(self.source))
+        self.assertEqual(answer['observed'], {'input': 7, 'output': 2, 'cacheRead': 0,
+                                            'cacheWrite': 0, 'totalTokens': 9})
+        provider = answer['providerUsage']
+        self.assertEqual(provider['state'], 'unknown')
+        self.assertEqual(provider['condition'], 'usageObservationHostFailure')
+        self.assertEqual(provider['code'], sqlite3.SQLITE_CANTOPEN)
+        self.assertTrue(provider['detail'])
+        self.assertEqual(provider['command'], command)
+        self.assertEqual(provider['process'], {'status': 'exit', 'code': 0})
+        self.assertEqual(provider['stdout'], raw + '\n')
+        self.assertEqual(json.loads((workspace / 'queried.json').read_text())['argv'],
+                         ['usage', '--json'])
+        self.assertFalse(self.db.exists())
 
     def test_models_runs_the_recorded_omp_catalog_in_its_workspace_and_keeps_json(self):
         catalog = {'models': [{'provider': 'fixture-provider', 'selector': 'fixture/model',
