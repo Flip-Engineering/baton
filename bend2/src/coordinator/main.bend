@@ -49,7 +49,7 @@ def log_answer_step(refused: Bool, saved: String) -> IO(Unit):
 def log_answer(+saved: String) -> IO(Unit):
   log_answer_step(Logs.refused(saved),saved)
 
-def execute(db: String, command: C.Command) -> IO(Unit):
+def execute(+db: String, command: C.Command) -> IO(Unit):
   match command:
     case C.Help{}: IO.write(usage())
     case C.Invalid{}: IO.die(Unit,2,usage())
@@ -59,13 +59,15 @@ def execute(db: String, command: C.Command) -> IO(Unit):
       do IO<Unit>:
         saved : String <- Control.start(db,session,harness,cmd,model,effort,cwd,log,id,task)
         print_result(saved)
-    case C.Receiver{session,cmd,log,cwd}:
+    case C.Receiver{+session,cmd,log,cwd}:
       do IO<Unit>:
         saved : String <- Control.receiver(db,session,cmd,log,cwd)
+        woken : Unit <- IO.try(Unit,Receive.wake_due(db,session,"0",target => Receive.wake_launch(db,target)))
         print_result(saved)
-    case C.Configure{id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort}:
+    case C.Configure{+id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort}:
       do IO<Unit>:
         saved : String <- Control.configure(db,id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort)
+        woken : Unit <- IO.try(Unit,Receive.wake_due(db,id,"0",target => Receive.wake_launch(db,target)))
         print_result(saved)
     case C.DispatchFile{id,sender,recipient,kind,path}:
       do IO<Unit>:

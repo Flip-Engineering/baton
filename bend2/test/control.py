@@ -666,6 +666,43 @@ class Control(unittest.TestCase):
         self.assertEqual(self.call('session', 'configured')['endpointArgv'], endpoint)
         self.assertEqual(self.call('session', 'configured')['workspace'], assignment['workspace'])
 
+    def test_receiver_registration_wakes_already_owed_muse_input(self):
+        self.root()
+        for registration in ('receiver', 'configure'):
+            with self.subTest(registration=registration):
+                session = 'registered-' + registration
+                assignment = self.recruit(session, 'muse')
+                native = 'saved-' + session
+                self.call('connect', session, native, '')
+                message = session + '-owed'
+                body = 'Handle the input already pending before receiver registration.'
+                self.call('message', message, 'root', session, 'task', body)
+                self.assertEqual(self.call('session', session)['endpoint'], '')
+                self.assertIsNone(self.call('delivery', message)['receipt'])
+                self.assertEqual(self.rows('SELECT * FROM executions WHERE session=?', (session,)), [])
+
+                log = self.directory / (session + '.jsonl')
+                if registration == 'receiver':
+                    self.receiver(session)
+                else:
+                    self.call('configure', session, 'muse', session, 'low', self.fixture, log,
+                              'muse', session, 'low')
+                stream, start = self.accept(session)
+                self.assertEqual(start['resume'], native)
+                self.assertEqual(start['native'], native)
+                self.assertEqual(start['cwd'], assignment['workspace'])
+                self.assertIn('[id: ' + message + ']', start['prompt'])
+                self.assertIn(body, start['prompt'])
+                self.assertIsNone(self.call('delivery', message)['receipt'])
+                self.finish(stream, 'The input present before registration is complete.')
+                self.exited(session)
+                self.assertEqual(self.call('delivery', message)['receipt'], 'fixture-native-reviewed')
+                self.assertEqual(self.call('inbox', session), [])
+                self.assertEqual(self.call('session', session)['native'], native)
+                self.assertEqual(len(self.call('turns', session)), 1)
+                shutdown_fixture_owner(self)
+                self.eventually(lambda: not self.process_rows())
+
     def test_completed_turn_replay_repairs_an_absent_receiver_and_delivers_pending_input(self):
         self.root()
         assignment = self.recruit('legacy-muse', 'muse')

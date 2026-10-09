@@ -73,8 +73,6 @@ class Configure(unittest.TestCase):
         self.recruit('leaf')
         self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
         log = self.directory / 'leaf.jsonl'
-        configured = self.call('receiver', 'leaf', self.fixture, log)
-        self.assertEqual(configured['endpoint'], self.receiver_endpoint('leaf', 'kimi-code/k3', log))
         before = self.assignment('leaf')
         inbox = self.call('inbox', 'leaf')
         messages = self.messages()
@@ -89,8 +87,15 @@ class Configure(unittest.TestCase):
             self.assertEqual(changed[field], before[field], field)
         self.assertEqual(self.call('inbox', 'leaf'), inbox)
         self.assertEqual(self.messages(), messages)
-        self.assertEqual(self.rows("SELECT * FROM executions WHERE session='leaf'"), [])
         self.assertEqual(self.call('delivery', 'retained-task')['body'], self.task.read_text())
+        stream, native = self.accept('leaf')
+        self.assertEqual(native['args'][native['args'].index('--model') + 1], 'gpt-6-astra')
+        self.assertEqual(native['cwd'], before['workspace'])
+        self.assertIn('[id: retained-task]', native['prompt'])
+        self.assertIsNone(self.call('delivery', 'retained-task')['receipt'])
+        self.finish(stream)
+        self.exited('leaf')
+        self.assertEqual(self.call('delivery', 'retained-task')['receipt'], 'fixture-native-reviewed')
 
     def test_route_change_fences_a_delayed_expected_route_and_leaves_the_row_alone(self):
         self.root()
@@ -187,11 +192,9 @@ class Configure(unittest.TestCase):
         self.recruit('leaf')
         self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
         log = self.directory / 'leaf.jsonl'
-        self.call('receiver', 'leaf', self.fixture, log)
         changed = self.route('leaf', 'omp', 'gpt-6-astra', 'high',
                              ('omp', 'kimi-code/k3', 'low'), log=log)
         self.assertEqual(changed['model'], 'gpt-6-astra')
-        self.dispatch('dispatch-file', 'route-task', 'root', 'leaf', 'task', self.task)
         stream, native = self.accept('leaf')
         self.assertEqual(native['args'][native['args'].index('--model') + 1], 'gpt-6-astra')
         self.assertEqual(native['args'][native['args'].index('--thinking') + 1], 'high')
@@ -202,7 +205,7 @@ class Configure(unittest.TestCase):
         self.finish(stream, body)
         self.exited('leaf')
         self.eventually(lambda: any(row['reportBody'] == body for row in self.call('turns', 'leaf')))
-        self.assertEqual(self.call('delivery', 'route-task')['receipt'], 'fixture-native-reviewed')
+        self.assertEqual(self.call('delivery', 'retained-task')['receipt'], 'fixture-native-reviewed')
 
 
 if __name__ == '__main__':
