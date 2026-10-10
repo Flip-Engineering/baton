@@ -679,11 +679,17 @@ function fixtureScopedKnowledge(scope) {
       parent = (known[parent] || {}).parent || "";
     }
   };
+  // Walk first, assign second: the chain adds ancestors to `actors` while it
+  // runs, so assigning roles and parents over a snapshot taken before the walk
+  // leaves every chain-added ancestor with the touch() defaults and the map's
+  // depth tiers lose the chain past the first ancestor.
+  for (const id of Object.keys(actors)) {
+    chain(id);
+  }
   for (const id of Object.keys(actors)) {
     const recorded = known[id] || {};
     actors[id].role = recorded.role || "";
     actors[id].parent = recorded.parent || "";
-    chain(id);
   }
   return Object.assign({}, source, {
     scope: { kind: asking.kind, id: asking.id || null, holders },
