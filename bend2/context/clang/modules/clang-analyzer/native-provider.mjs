@@ -15,6 +15,8 @@ export async function executeInvocation(invocation, { packageRoot }) {
     ];
     const kind = subject.kind;
     const joinsDatabase = request.select.includes('databaseAccesses');
+    const needsBody = ['calls', 'authorization', 'diagnostics', 'flow']
+      .some(name => request.select.includes(name));
     const extractorSubject = kind === 'position'
       ? { kind: 'position', path: subject.path, line: subject.line, column: subject.column }
       : kind === 'symbol'
@@ -26,7 +28,7 @@ export async function executeInvocation(invocation, { packageRoot }) {
       command: 'analyze',
       request: {
         version: 1,
-        operation: kind === 'symbol' && !joinsDatabase ? 'functionSignature' : 'handlerAnalysis',
+        operation: kind === 'symbol' && !joinsDatabase && !needsBody ? 'functionSignature' : 'handlerAnalysis',
         directory: compile.directory,
         file: compile.file,
         arguments: argumentsWithTranslationUnitLast,

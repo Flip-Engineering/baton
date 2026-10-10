@@ -388,7 +388,9 @@ void handler(const char *dynamic) {
             shutil.copytree(repository / 'bend2/context' / directory,
                             self.root / 'bend2/context' / directory)
         selected = PACKAGE.stage_clang_module(
-            self.payload, 'clang-analyzer', ['type', 'calls', 'databaseAccesses'], Path(runtime))
+            self.payload, 'clang-analyzer',
+            ['type', 'calls', 'authorization', 'diagnostics', 'databaseAccesses'],
+            Path(runtime))
         module_root = self.payload / selected['path']
         declaration = json.loads((module_root / 'native-provider.declaration.json').read_text())
         project = self.root / 'fossil project'
@@ -421,7 +423,8 @@ void handler(const char *dynamic) {
             'request': {'version': 1, 'engine': 'clang-analyzer',
                         'subject': {'kind': 'position', 'path': 'src/report.c',
                                     'line': 30, 'column': 5},
-                        'select': ['type', 'calls', 'databaseAccesses'],
+                        'select': ['type', 'calls', 'authorization', 'diagnostics',
+                                   'databaseAccesses'],
                         'cwd': str(project),
                         'options': {'project': 'compile_commands.json',
                                     'database': {'engine': 'sqlite-schema', 'path': database.name}}},
@@ -473,6 +476,48 @@ void handler(const char *dynamic) {
             self.assertEqual(span['path'], str(generated), result.stdout)
             self.assertIn(sql.encode(), generated.read_bytes()[span['byteStart']:span['byteEnd']])
             self.assertEqual(refs[relation['to']]['subject']['name'], 'reportfmt', result.stdout)
+        names = set()
+        for condition in output.get('conditions', []):
+            for operand in condition.get('operands', []):
+                names.add(operand.get('name', ''))
+                names.update(operand.get('fields', []))
+        self.assertIn('okRdTkt', names, result.stdout)
+        self.assertIn('okNewTkt', names, result.stdout)
+        permission = next(condition for condition in output['conditions']
+                          if any('okRdTkt' in [operand.get('name', '')] + list(operand.get('fields', []))
+                                 for operand in condition.get('operands', [])))
+        self.assertTrue(permission.get('supported', False), result.stdout)
+        guard = next(row for row in output.get('guards', [])
+                     if row.get('conditionId') == permission['id']
+                     and row.get('callId') == prepare['id'])
+        self.assertEqual(guard.get('status'), 'derived', result.stdout)
+        denied = [route for route in guard.get('deniedRoutes', []) if route.get('returnId')]
+        self.assertTrue(denied, result.stdout)
+        return_ids = {row['id'] for row in output.get('returns', [])}
+        for route in denied:
+            self.assertIn(route['returnId'], return_ids, result.stdout)
+        self.assertTrue(any(call.get('name') == 'login_needed' for call in output.get('calls', [])),
+                        result.stdout)
+        self.assertIsInstance(output.get('diagnostics'), list, result.stdout)
+        for diagnostic in output['diagnostics']:
+            self.assertIn(diagnostic.get('level'), ('error', 'warning', 'note', 'remark'),
+                          result.stdout)
+            self.assertTrue(diagnostic.get('message'), result.stdout)
+        symbol_invocation = {**invocation, 'query': 'fossil-reportlist-body',
+                             'request': {**invocation['request'],
+                                         'subject': {'kind': 'symbol', 'path': 'src/report.c',
+                                                     'name': 'view_list'},
+                                         'select': ['calls', 'authorization', 'diagnostics']}}
+        symbol_result = subprocess.run(['node', str(wrapper)], input=json.dumps(symbol_invocation),
+                                       cwd=project, capture_output=True, text=True)
+        self.assertEqual(symbol_result.returncode, 0, symbol_result.stdout + symbol_result.stderr)
+        symbol_frame = json.loads(symbol_result.stdout)
+        self.assertEqual(symbol_frame['payload']['status'], 'complete', symbol_result.stdout)
+        symbol_output = symbol_frame['payload']['result']
+        self.assertEqual(symbol_output['selectedFunction']['name'], 'view_list', symbol_result.stdout)
+        self.assertTrue(any(call.get('name') == 'login_needed'
+                            for call in symbol_output.get('calls', [])), symbol_result.stdout)
+        self.assertTrue(symbol_output.get('conditions'), symbol_result.stdout)
         with sqlite3.connect(database) as connection:
             self.assertEqual(connection.execute('SELECT rn,title,owner FROM reportfmt').fetchall(),
                              [(1, 'Example report', 'operator')])
@@ -701,10 +746,16 @@ void handler(const char *dynamic) {
             (worktree / 'analysis.ts').write_text(
                 'declare function query(sql: string): number;\n'
                 'export const answer: number = query("SELECT value FROM records");\n')
+            catalog_database = worktree / 'catalog.db'
+            with sqlite3.connect(catalog_database) as connection:
+                connection.execute('CREATE TABLE records(value TEXT)')
+                connection.execute("INSERT INTO records VALUES ('alpha')")
             request.write_text(json.dumps({
                 'version': 1, 'engine': 'typescript',
                 'subject': {'kind': 'symbol', 'path': 'analysis.ts', 'name': 'answer'},
                 'select': ['definition', 'type', 'databaseAccesses'], 'cwd': str(worktree),
+                'options': {'database': {'engine': 'sqlite-schema', 'path': 'catalog.db'},
+                            'client': {'path': 'analysis.ts', 'line': 0, 'column': 17}},
             }) + '\n')
             submitted = invoke('context-query-file', 'validation-owner', 'installed-typescript',
                                str(request), cwd=worktree)
@@ -722,6 +773,31 @@ void handler(const char *dynamic) {
                          if fact['kind'] == 'sqlCall']
             self.assertIn({'status': 'constant', 'text': 'SELECT value FROM records',
                            'literalKind': 'stringLiteral'}, sql_calls, retained.stdout)
+            # The catalog half of the same projection: the retained result carries the relation
+            # from the resolved call's own reference to the catalog object its statement names.
+            statement_facts = [fact for fact in payload['facts'] if fact['kind'] == 'sqlCall']
+            accesses = payload['databaseAccesses']
+            self.assertEqual(accesses['status'], 'complete', retained.stdout)
+            self.assertEqual(accesses['database']['path'], str(catalog_database), retained.stdout)
+            relations = [relation for relation in accesses['relations']
+                         if relation['value']['object']['name'] == 'records']
+            self.assertTrue(relations, retained.stdout)
+            relation = relations[0]
+            self.assertEqual(relation['value']['statementKind'], 'read', retained.stdout)
+            self.assertEqual(relation['value']['statementText'], 'SELECT value FROM records',
+                             retained.stdout)
+            statement = relation['value']['statement']
+            calls_by_id = {fact['id']: fact for fact in statement_facts}
+            self.assertIn(statement['sqlCallId'], calls_by_id, retained.stdout)
+            self.assertEqual(statement['clientMatch'], 'matched', retained.stdout)
+            self.assertEqual(relation['from'], calls_by_id[statement['sqlCallId']]['value']['callSiteRef'],
+                             retained.stdout)
+            self.assertIn(relation['from'], {ref['id'] for ref in payload['refs']}, retained.stdout)
+            joined_refs = {ref['id']: ref for ref in accesses['refs']}
+            self.assertEqual(joined_refs[relation['to']]['subject']['name'], 'records', retained.stdout)
+            with sqlite3.connect(catalog_database) as connection:
+                self.assertEqual(connection.execute('SELECT value FROM records').fetchall(),
+                                 [('alpha',)], retained.stdout)
 
         target = worktree / 'runtime-target.mjs'
         shutil.copyfile(repository / 'bend2/context/runtime/cdp-fixture-longrun.mjs', target)
