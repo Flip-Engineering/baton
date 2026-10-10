@@ -25,7 +25,7 @@ def late_terminal(text):
 
 
 def deferred_body(sealed, guidance):
-    body = ('A later native terminal completed after the report ' + sealed +
+    body = ('A later native terminal was observed after the report ' + sealed +
             ' was sealed; the episode is retained in the native log')
     if guidance:
         body += ' and the deferred guidance ' + guidance + ' stays pending for the next receive'

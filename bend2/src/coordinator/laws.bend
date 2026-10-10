@@ -1108,14 +1108,6 @@ law a_later_native_terminal_is_named_once:
 def a_later_native_terminal_is_named_once(event,terminal):
   {==}
 
-law the_deferred_note_names_the_sealed_report:
-  for +id: String
-  for +pending: String
-  {Turn.deferred_text(id,pending) == ("A later native terminal completed after the report " ++ id ++ " was sealed; the episode is retained in the native log" ++ Turn.deferred_pending(pending) ++ ".") : String}
-
-def the_deferred_note_names_the_sealed_report(id,pending):
-  {==}
-
 law the_deferred_note_names_the_pending_guidance:
   for +pending: String
   {Turn.deferred_pending(pending) == Bool.pick(String,String.is_empty(pending),""," and the deferred guidance " ++ pending ++ " stays pending for the next receive") : String}

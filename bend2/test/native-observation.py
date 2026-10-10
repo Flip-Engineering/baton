@@ -184,7 +184,7 @@ class NativeObservation(RECEIVE.Receive):
         reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
         deferred = [row for row in reports if row['id'].endswith(':deferred')]
         self.assertEqual(len(deferred), 1)
-        self.assertIn('later native terminal completed', deferred[0]['body'])
+        self.assertIn('later native terminal was observed', deferred[0]['body'])
         self.assertTrue(any('original report is preserved' in row['body'] for row in reports))
         self.assertFalse(any('Nested task completion' in row['body'] for row in reports))
         self.assertFalse(any('Terminal without command identity.' in row['body'] for row in reports))

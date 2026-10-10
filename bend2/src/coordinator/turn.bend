@@ -408,7 +408,7 @@ def deferred_pending(+pending: String) -> String:
   Bool.pick(String,String.is_empty(pending),""," and the deferred guidance " ++ pending ++ " stays pending for the next receive")
 
 def deferred_text(id: String, pending: String) -> String:
-  "A later native terminal completed after the report " ++ id ++ " was sealed; the episode is retained in the native log" ++ deferred_pending(pending) ++ "."
+  "A later native terminal was observed after the report " ++ id ++ " was sealed; the episode is retained in the native log" ++ deferred_pending(pending) ++ "."
 
 # A later OMP failure sends its observed status and diagnostic to the parent.
 def deferred_failure_text(+id: String, +failure: String, +pending: String) -> String:
