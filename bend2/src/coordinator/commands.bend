@@ -839,6 +839,13 @@ def index_finish(base: Command, inbox: Bool, condition: String, state: String, +
   +selected = Bool.pick(Command,index,MessageIndex{inbox,condition,state},base)
   Bool.pick(Command,Bool.and(Bool.not(index),filtered),Invalid{},Bool.pick(Command,pretty,Pretty{selected},selected))
 
+def index_state_sql(value: String) -> String:
+  match value:
+    case "pending": "m.receipt IS NULL"
+    case "acknowledged": "m.receipt IS NOT NULL"
+    case "all": "1"
+    case _: ""
+
 # Option values are consumed literally, including values that name another option.
 def index_options(args: List<String>, +base: Command, +inbox: Bool, +condition: String, +state: String, +index: Bool, +pretty: Bool, +filtered: Bool) -> Command:
   match args:
@@ -852,11 +859,8 @@ def index_options(args: List<String>, +base: Command, +inbox: Bool, +condition: 
     case "--kind" <> value <> rest:
       index_options(rest,base,inbox,condition ++ " AND m.kind=" ++ q(value),state,index,pretty,True{})
     case "--state" <> value <> +rest:
-      match value:
-        case "pending": index_options(rest,base,inbox,condition,"m.receipt IS NULL",index,pretty,True{})
-        case "acknowledged": index_options(rest,base,inbox,condition,"m.receipt IS NOT NULL",index,pretty,True{})
-        case "all": index_options(rest,base,inbox,condition,"1",index,pretty,True{})
-        case _: Invalid{}
+      +selected_state = index_state_sql(value)
+      Bool.pick(Command,Bool.not(String.is_empty(selected_state)),index_options(rest,base,inbox,condition,selected_state,index,pretty,True{}),Invalid{})
     case "--after-seq" <> value <> +rest:
       +bound = value
       Bool.pick(Command,index_integer(bound),index_options(rest,base,inbox,condition ++ " AND m.seq>CAST(" ++ q(bound) ++ " AS INTEGER)",state,index,pretty,True{}),Invalid{})
