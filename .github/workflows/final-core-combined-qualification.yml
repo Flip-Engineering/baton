@@ -30,11 +30,11 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: ${{ inputs.fixture_source_sha || 'cc17ce187793aa81a6d03a740635633fbba282c0' }}
+  PRODUCT_SOURCE_SHA: ${{ inputs.fixture_source_sha || 'f827da6167e86325a33481b8087186995d9126cb' }}
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
-  CANONICAL_DARWIN_RUN_ID: '38012732493'
-  CANONICAL_DARWIN_SOURCE_SHA: '2b320a6019dc176f0c07d852d2a1e6f5624f4970'
+  CANONICAL_DARWIN_RUN_ID: '38017751363'
+  CANONICAL_DARWIN_SOURCE_SHA: 'f827da6167e86325a33481b8087186995d9126cb'
 
 jobs:
   build:
@@ -472,6 +472,28 @@ jobs:
         with:
           name: final-native-context-receive-guidance-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-guidance.*
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Run existing provider continuation cases before observer recovery
+        if: ${{ !cancelled() && matrix.suite == 'receive' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd owned
+          "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-provider-continuation \
+            env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
+            python3 -u bend2/test/receive.py -v \
+              Receive.test_codex_direct_hands_off_to_the_next_profile_and_resumes_the_same_native \
+              Receive.test_codex_direct_chains_two_handoffs_with_distinct_reports \
+              Receive.test_codex_recovered_direct_hands_off_to_the_next_profile \
+              Receive.test_omp_direct_retries_the_same_conversation_after_a_rate_refusal \
+              Receive.test_omp_rate_error_continues_same_conversation_without_new_account
+      - name: Retain provider continuation output before observer recovery and the full suite
+        if: ${{ always() && matrix.suite == 'receive' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-receive-provider-continuation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-provider-continuation.*
           if-no-files-found: warn
           retention-days: 14
       - name: Run existing observer recovery cases
