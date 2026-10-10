@@ -89,15 +89,14 @@
 }
 
 /* The match list takes its own wrapped row inside the tools, between
-   the status and the buttons, and scrolls past five rows rather than
-   pushing the canvas out of the clipped frame. */
+   the status and the buttons, and the page carries its length: the
+   frame no longer clips, so the list needs no window of its own. The
+   pinned card keeps the one inner scroller on the map. */
 .kw-match-list {
   flex: 1 1 100%;
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 176px;
-  overflow-y: auto;
   border-top: 1px solid var(--hairline, #d5c9b4);
   border-bottom: 1px solid var(--hairline, #d5c9b4);
 }
@@ -159,7 +158,8 @@
   right: 8px;
   max-width: 320px;
   /* A bounded box: however long the record, the card never covers the
-     graph past this height, and the claim clamps to four lines. */
+     graph past this height, and the claim reads whole inside the
+     scroll instead of ending in an ellipsis. */
   max-height: 264px;
   overflow-y: auto;
   padding: 10px 12px;
@@ -189,16 +189,6 @@
 
 .kw-card-state {
   margin-top: 2px;
-}
-
-/* A finding claim clamps to four lines; the full text lives in the
-   rail record behind the read button. Actor ids stay unclamped. */
-p.kw-card-title {
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
 .kw-card-full,

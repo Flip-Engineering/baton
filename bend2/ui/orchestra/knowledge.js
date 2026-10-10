@@ -228,6 +228,7 @@
   // instead of pretending the endpoint is an actor or a finding.
   var kwRefMarks = new Map();
   var kwRefsDrawn = 0;
+  var kwEvidenceDrawn = 0;
   // Drawn text boxes this render: settling tags keep clear of them.
   var kwLabelBoxes = [];
   // Drawn node centres, drawing width, and hull boxes this render,
@@ -807,6 +808,9 @@
       const members = e && Array.isArray(e.members)
         ? e.members.map((m) => String(m)) : [];
       if (!id || !members.length) continue;
+      // The recorded coupling names the membership's kind; hull and
+      // lozenge carry it when the ensemble states it.
+      const coupling = e && e.coupling ? String(e.coupling) : "";
       const toggle = () => {
         if (kwCollapsedEnsembles.has(id)) kwCollapsedEnsembles.delete(id);
         else kwCollapsedEnsembles.add(id);
@@ -841,10 +845,12 @@
         const g = kwSvg(layer, "g", {
           class: "kw-lozenge",
           tabindex: "0", role: "button",
-          "aria-label": "ensemble " + id + ", " + members.length + " seats, activate to expand",
+          "aria-label": "ensemble " + id + ", " + members.length + " seats"
+          + (coupling ? ", " + coupling : "") + ", activate to expand",
           "data-kw-hull": id,
         });
-        const boxW = Math.max(80, String(id).length * 6.4 + 36);
+        const boxW = Math.max(80,
+          (String(id).length + (coupling ? coupling.length + 3 : 0)) * 6.4 + 36);
         kwSvg(g, "rect", {
           x: String(x - boxW / 2), y: String(y - 11),
           width: String(boxW), height: "22", rx: "11",
@@ -861,6 +867,10 @@
         lname.textContent = String(id) + " ";
         const lcount = kwSvg(label, "tspan", { class: "kw-lozenge-count" });
         lcount.textContent = String(members.length);
+        if (coupling) {
+          const lcoupling = kwSvg(label, "tspan", { class: "kw-lozenge-name" });
+          lcoupling.textContent = " · " + coupling;
+        }
         wire(g);
         continue;
       }
@@ -883,7 +893,8 @@
       const g = kwSvg(layer, "g", {
         class: "kw-hull",
         tabindex: "0", role: "button",
-        "aria-label": "ensemble " + id + ", " + members.length + " seats, activate to collapse",
+        "aria-label": "ensemble " + id + ", " + members.length + " seats"
+        + (coupling ? ", " + coupling : "") + ", activate to collapse",
         "data-kw-hull": id,
       });
       kwSvg(g, "path", { d, class: "kw-hull-line" });
@@ -891,8 +902,9 @@
         x: String(top.x), y: String(top.y - 6),
         class: "kw-hull-label", "text-anchor": "middle",
       });
-      label.textContent = id + " (" + members.length + ")";
-      const hlw = (String(id).length + 5) * 9 + 8;
+      label.textContent = id + " (" + members.length
+        + (coupling ? ", " + coupling : "") + ")";
+      const hlw = (label.textContent.length + 1) * 9 + 8;
       kwTrackBox(top.x - hlw / 2, top.y - 20, top.x + hlw / 2, top.y);
       kwLabelBoxes.push({ x0: top.x - hlw / 2, y0: top.y - 20, x1: top.x + hlw / 2, y1: top.y });
       // Each hull records its box: member span plus the label above it.
@@ -929,6 +941,7 @@
     kwContentBBox = null;
     kwRefMarks = new Map();
     kwRefsDrawn = 0;
+    kwEvidenceDrawn = 0;
     kwKindsDrawn = new Map();
     kwRelStyleDrawn = new Map();
     kwMidpointsDrawn = 0;
@@ -1401,7 +1414,8 @@
         const y = Math.max(at.y + rr * Math.sin(rad), 14);
         mark = {
           x, y, w, shown, ref: end.ref, family: end.family, held, unheld,
-          relations: [], follow: refFollow.get(end.ref) || "",
+          relations: [], evidenceOf: [],
+          follow: refFollow.get(end.ref) || "",
           anchorX: at.x, anchorY: at.y, anchor: nodeId,
         };
         kwRefMarks.set(end.ref, mark);
@@ -1451,6 +1465,25 @@
           x1: mx + shown.length * 3.5 + 4, y1: my + 2, gap: false });
       }
       relateSpecs.push({ a, b, name, shown });
+    }
+    // Evidence the store actually holds draws too: a drawn finding whose
+    // evidence parses as a structured reference earns a tag and a quiet
+    // stub, the only links a scope without relations can honestly show.
+    // Prose evidence stays caption and card text; it names no record.
+    const evidenceSpecs = [];
+    for (const f of layout.findings.values()) {
+      if (!findingPos.has(f.id)) continue;
+      const raw = String((f && f.evidence) || "");
+      if (!raw || (!KW_REF_FAMILIES.test(raw) && !kwFindingRef(raw)
+        && !actorPos.has(raw) && !findingPos.has(raw))) continue;
+      const end = kwResolveEnd(raw, layout.findings, findingPos, actorPos);
+      if (!end || end.kind === "hidden") continue;
+      if (end.kind === "node" && end.id === f.id) continue;
+      if (end.kind === "ref") {
+        const mark = kwRefSlot(kwKey("finding", f.id), findingPos.get(f.id), end);
+        if (mark.evidenceOf.indexOf(f.id) < 0) mark.evidenceOf.push(f.id);
+      }
+      evidenceSpecs.push({ a: { kind: "node", id: f.id }, b: end });
     }
     // Tags settle top-down past nodes, text and the tags above; a tag
     // keeps stepping until it clears, so settling never places overlap
@@ -1596,6 +1629,41 @@
       const mark = kwRefMarks.get(end.ref);
       return mark ? { x: mark.x, y: mark.y } : null;
     };
+    // Evidence stubs draw first, under the relation strokes: where a
+    // relation cites the same pair its stroke covers this one, and the
+    // tag's card states both facts. The tag beside the stub is the
+    // keyboard path; the stub itself carries only a title.
+    for (const spec of evidenceSpecs) {
+      const from = relateEnd(spec.a);
+      const to = relateEnd(spec.b);
+      if (!from || !to) continue;
+      const bRef = spec.b.kind === "node" ? spec.b.id : spec.b.ref;
+      const bKind = spec.b.kind === "node" ? kwDrawnKind(spec.b.id) : "ref";
+      const g = kwSvg(edgeLayer, "g", {
+        class: "kw-edge-evidence",
+        "data-kind": "evidence",
+        "data-from": spec.a.id,
+        "data-to": bRef,
+        "data-from-kind": "finding",
+        "data-to-kind": bKind,
+      });
+      const spans = kwStubSpans(from.x, from.y, to.x, to.y);
+      for (const span of spans) {
+        kwSvg(g, "line", {
+          x1: String(from.x + (to.x - from.x) * span[0]),
+          y1: String(from.y + (to.y - from.y) * span[0]),
+          x2: String(from.x + (to.x - from.x) * span[1]),
+          y2: String(from.y + (to.y - from.y) * span[1]),
+          stroke: "var(--muted, #5b6478)", "stroke-width": "1",
+          "stroke-linecap": "round",
+        });
+      }
+      const tip = kwSvg(g, "title", null);
+      tip.textContent = "evidence for '" + spec.a.id + "'";
+      kwTrackBox(Math.min(from.x, to.x), Math.min(from.y, to.y),
+        Math.max(from.x, to.x), Math.max(from.y, to.y));
+      kwEvidenceDrawn += 1;
+    }
     for (const spec of relateSpecs) {
       const a = spec.a;
       const b = spec.b;
@@ -1760,6 +1828,16 @@
     if (kwRelNames.length > KW_KEY_RELATIONS) {
       keyEntries.push({ toggle: true });
     }
+    // An empty relation collection reads as empty, not as a drawing
+    // that failed: the row states the absence the canvas cannot show.
+    if ((overview.relations || []).length === 0) {
+      keyEntries.push(["", "no recorded relations",
+        "var(--ink, #141a26)", "empty", ""]);
+    }
+    if (kwEvidenceDrawn > 0) {
+      keyEntries.push(["", "evidence",
+        "var(--muted, #5b6478)", "evline", ""]);
+    }
     // One row per drawn kind family, with its count; the drawn kinds
     // stand named in the row's title, and the card names the kind of the
     // finding it pins. The swatch mirrors the family's first-drawn shape
@@ -1802,7 +1880,7 @@
       for (const entry of keyEntries) {
         if (!entry || entry.toggle) continue;
         const shape = String(entry[3] || "");
-        if (shape === "line" || shape === "arc" || shape === "relate") edges = true;
+        if (shape === "line" || shape === "arc" || shape === "relate" || shape === "evline") edges = true;
         else if (shape.indexOf("family:") === 0) families = true;
         else if (shape === "groupnode") groups = true;
         else if (shape === "tag" || shape === "glyphs") marks = true;
@@ -1908,6 +1986,13 @@
           cx: "16", cy: "6", r: "2.5", fill: "none", stroke: paint, "stroke-width": "1",
         });
         kwSvg(sw, "circle", { cx: "22", cy: "6", r: "1.8", fill: paint });
+      } else if (shape === "evline") {
+        kwSvg(sw, "line", {
+          x1: "3", y1: "9", x2: "23", y2: "3", stroke: paint, "stroke-width": "1",
+        });
+      } else if (shape === "empty") {
+        // An absence keys no mark, so it carries no swatch.
+        sw.remove();
       } else if (shape === "arc") {
         const arc = kwSvg(sw, "path", {
           d: "M3,10 Q13,-1 23,8", fill: "none", stroke: paint, "stroke-width": "1.5",
@@ -2443,21 +2528,12 @@
           send + " → " + dend
           + (step.promotedBy ? " via " + String(step.promotedBy) : ""));
       }
-      // The selection already rendered the complete claim, evidence and
-      // limits in the rail; the button takes the reader there.
-      const full = kwEl(card, "button", { class: "kw-card-full", type: "button" },
-        "Read the full record");
-      full.addEventListener("click", () => {
-        const rail = document.getElementById("record");
-        if (!rail) return;
-        if (typeof rail.scrollIntoView === "function") rail.scrollIntoView({ block: "nearest" });
-        if (typeof rail.focus === "function") rail.focus({ preventScroll: true });
-      });
-      // The shell opens the record at this finding when it offers the
-      // hook; without it the card stays exactly as it was.
+      // The card is a glance; the button opens the record at this
+      // finding through the shell hook. Without the hook there is no
+      // button: no control on the card may do nothing.
       if (opts && typeof opts.onOpenRecord === "function") {
         const open = kwEl(card, "button", { class: "kw-card-open", type: "button" },
-          "Show in the record");
+          "Read the full record");
         open.addEventListener("click", () => { opts.onOpenRecord(found.id); });
       }
     } else if (selKind === "session") {
@@ -2521,6 +2597,19 @@
         if (t.dash) ln.setAttribute("stroke-dasharray", t.dash);
         const words = kwEl(item, "span", null);
         words.textContent = String(rel.name) + " — " + shown;
+      }
+      for (const ev of ref.evidenceOf || []) {
+        const item = kwEl(refs, "p", { class: "kw-card-ref mono" });
+        const sw = kwSvg(item, "svg", {
+          class: "kw-rel-swatch", width: "26", height: "12", "aria-hidden": "true",
+        });
+        kwSvg(sw, "line", {
+          x1: "1", y1: "9", x2: "25", y2: "3",
+          stroke: "var(--muted, #5b6478)", "stroke-width": "1",
+          "stroke-linecap": "round",
+        });
+        const words = kwEl(item, "span", null);
+        words.textContent = "evidence for " + String(ev);
       }
       if (ref.follow && opts && typeof opts.onSelectFinding === "function") {
         const show = kwEl(card, "button", { class: "kw-card-full", type: "button" },
@@ -2738,21 +2827,9 @@
     }
     const layout = kwRenderWhole(container, overview, promotions, opts, collapsed);
     kwPlaceWhole(layout, container, overview, promotions, opts, ensembles);
-    // The drawing's natural height, plus the chrome stacked above it, so
-    // the shell sizes the frame to the whole content: the tools and the
-    // key consume frame height before the canvas sees any, and publishing
-    // the drawing alone would clip the canvas by exactly their share. Each
-    // 8 is the margin-bottom its own stylesheet rule puts beneath it.
-    const kwSvgH = Number(layout.svg && layout.svg.getAttribute("height")) || 0;
-    const kwToolsEl = container.querySelector(".kw-maptools");
-    const kwKeysEl = container.querySelector(".kw-legend-keys");
-    const kwChromeH = (kwToolsEl ? kwToolsEl.offsetHeight + 8 : 0)
-      + (kwKeysEl ? kwKeysEl.offsetHeight + 8 : 0);
-    const kwNatural = kwSvgH + kwChromeH;
-    container.setAttribute("data-kw-natural-height", kwNatural > 0 ? String(kwNatural) : "");
-    // The chrome's own height beside it, so the shell can grow the frame
-    // past its viewport share and keep a drawing floor under dense chrome.
-    container.setAttribute("data-kw-chrome-height", kwChromeH > 0 ? String(kwChromeH) : "");
+    // The frame takes the drawing's own height and the page scrolls,
+    // so the map publishes no heights. The content tracker stays: it
+    // still sizes the canvas itself and frames Fit.
     kwRestoreFocus(container, focused, caret);
     return {
       findings: (overview.findings || []).length,

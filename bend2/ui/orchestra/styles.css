@@ -406,13 +406,10 @@ button:active { background: var(--wash); }
 
 .map { padding: 20px 0 28px; }
 
-/* The canvas box: the graph pans and zooms inside its own frame. The layer
-   publishes the height its drawing needs and the shell sets it within these
-   bounds, so a small recorded ensemble does not sit in a tall empty box. */
+/* The canvas box: the graph pans and zooms inside its own frame, which carries
+   the drawing at its own height while the page scrolls. */
 .map-frame {
   position: relative;
-  /* The drawing takes its own height and the page scrolls, so there is no second
-     scroll window and no clip: nothing the map draws is cut off. */
   min-width: 0;
 }
 
