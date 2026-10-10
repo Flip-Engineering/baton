@@ -126,9 +126,11 @@
    the same pattern as the largest, and each family's period is about half again the
    one before it: promotions are dots (1 on, 3 off), receipts and reports short dashes
    (3 on, 3 off), tasks and guidance dashes (6 on, 4 off), stops long dashes (10 on,
-   6 off), executions run solid. Every family leaves a gap, so a thread shorter than
-   one period still shows a gap and cannot be read as an execution. The kind is named
-   in each thread's title as well, so the pattern is never the only channel. */
+   6 off), executions run solid, and a kind the five families do not name draws one dot
+   with a 23px gap. A dash pattern only shows its gap past its first painted dash, so
+   these counts are chosen against the shortest thread the stage models, which is long
+   enough for every family to repeat. The kind is named in each thread's title as well,
+   so the pattern is never the only channel. */
 .pit .att-know,
 .pit .att-thread {
   fill: none;
@@ -144,6 +146,11 @@
 .pit .att-thread-guidance,
 .pit .att-thread-recovery { stroke-dasharray: 6 4; }
 .pit .att-thread-stop { stroke-dasharray: 10 6; }
+
+/* A kind the five families do not name: the sparsest mark on the ladder, one dot with
+   a 23px gap (period 24, half again the stop family's 16), so an unnamed kind can
+   never be read as an execution or as any family. Its title still names it. */
+.pit .att-thread-recorded { stroke-dasharray: 1 23; }
 
 /* ── motion ────────────────────────────────────────────────────────────── */
 

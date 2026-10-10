@@ -141,20 +141,21 @@ function ribbonKindTally(events, limit) {
 }
 
 // The mark at the axis's left end states one measured fact about the window in
-// a familiar word: one seat when a single seat carries the whole stretch, busy
-// while the busiest stretch carries twelve or more entries, live while entries
-// arrive. Each word is set beside a plain reading of the same measurement, so
-// nothing has to be decoded. The counts the shell already computes are quoted,
-// never recomputed.
+// a familiar word: one agent when a single agent carries the whole window, busy
+// while the busiest part carries twelve or more entries, live while entries
+// arrive. The reading beside the word states the measurement itself, so nothing
+// has to be decoded. The counts the shell already computes are quoted, never
+// recomputed.
 function ribbonTempo(busiest, uniqueSeats, recent, shellCounts) {
   let word = "";
   let reading = "";
   if (uniqueSeats === 1) {
-    word = "one seat";
-    reading = "one seat carries the window";
+    word = "one agent";
+    reading = "every entry in this window came from one agent";
   } else if (busiest >= 12) {
     word = "busy";
-    reading = "twelve or more entries in one stretch";
+    reading = "the busiest part of this window holds "
+      + ribbonCount(busiest) + " recorded entries";
   } else if (recent) {
     word = "live";
     reading = "entries are arriving";
@@ -610,7 +611,7 @@ function renderRibbon(container, data, options) {
   if (busiestSeats.length) {
     const label = document.createElement("span");
     label.className = "ribbon-seats-label";
-    label.textContent = "Busiest";
+    label.textContent = "Busiest agents";
     seatRow.appendChild(label);
     for (const entry of busiestSeats) {
       const chip = document.createElement("button");
@@ -633,7 +634,8 @@ function renderRibbon(container, data, options) {
           ? " \u00b7 " + kindsHeld.slice(0, 3)
             .map((row) => row[0] + " " + ribbonCount(row[1])).join(", ")
           : "")
-        + (newestAt ? " \u00b7 newest " + (ribbonAge(newestAt) || newestAt) : "");
+        + (newestAt ? " \u00b7 newest " + (ribbonAge(newestAt) || newestAt) : "")
+        + " \u00b7 opens this agent's record";
       const value = document.createElement("span");
       value.className = "ribbon-chip-count";
       value.textContent = ribbonCount(entry[1]);
@@ -681,8 +683,8 @@ function renderRibbon(container, data, options) {
   toggle.dataset.focus = "ribbon-list";
   toggle.setAttribute("aria-expanded", listOpen ? "true" : "false");
   toggle.textContent = listOpen
-    ? "Hide the full record"
-    : "Show the full record (" + ribbonCount(total) + ")";
+    ? "Hide all changes"
+    : "Show all changes (" + ribbonCount(total) + ")";
   toggle.addEventListener("click", () => {
     ribbonListOpen.set(container, !listOpen);
     if (typeof opts.onListOpen === "function") opts.onListOpen(!listOpen);
@@ -733,7 +735,7 @@ function renderRibbon(container, data, options) {
       const note = document.createElement("li");
       note.className = "ribbon-row-note";
       note.textContent = "Showing " + ribbonCount(start + 1) + " to " + ribbonCount(end)
-        + " of " + ribbonCount(total) + ". Scrub the axis to read another stretch.";
+        + " of " + ribbonCount(total) + ". Drag the axis to read another part.";
       list.appendChild(note);
     }
     container.appendChild(list);

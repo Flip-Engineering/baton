@@ -492,7 +492,7 @@
     }
 
     var tiers = [];
-    if (podium.length) tiers.push({ id: "", label: "podium", rows: podium });
+    if (podium.length) tiers.push({ id: "", label: "conductors", conductors: true, rows: podium });
     byBand.forEach(function (members, key) {
       tiers.push({ id: key, label: shortId(labels[key] || key), rows: members });
     });
@@ -857,15 +857,22 @@
     });
   }
 
+  // The kinds the ladder's families name. A kind outside them reads as the fallback,
+  // so an unnamed kind can never wear a family's pattern.
+  var THREAD_KINDS = {
+    receipt: 1, report: 1, task: 1, guidance: 1, recovery: 1, stop: 1, execution: 1,
+  };
+
   // The record names a kind with its namespace (message:task). A class name is a
   // selector token, so a recorded value passes one normaliser before it becomes one:
-  // the namespace goes, and anything else outside letters, digits, dash and underscore
-  // becomes a dash. The class is never the raw record value - a colon in it would match
-  // no rule and fail silently - and the title keeps the record's own word.
+  // the namespace goes, anything else outside letters, digits, dash and underscore
+  // becomes a dash, and a kind the families do not name becomes the fallback class.
+  // The class is never the raw record value - a colon in it would match no rule and
+  // fail silently - and the title keeps the record's own word.
   function kindClass(kind) {
     var text = String(kind || "").replace(/^[a-z]+:/i, "").toLowerCase();
     text = text.replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-    return text || "recorded";
+    return THREAD_KINDS[text] ? text : "recorded";
   }
 
   // The page holds its events newest first. A thread joins the seat that recorded
@@ -949,7 +956,7 @@
       viewBox: "0 0 " + laid.width + " " + laid.height,
       tabindex: "0",
       role: "application",
-      "aria-label": "The stage. " + laid.seats.length + " seats drawn of "
+      "aria-label": "Activity. " + laid.seats.length + " seats drawn of "
         + result.rows.length + " recorded actors. Arrow keys walk the seats, Enter opens one.",
     });
 
@@ -1030,7 +1037,7 @@
     // The baton, drawn under the seats so it never hides one.
     var holderId = "";
     for (var h = 0; h < plan.tiers.length; h += 1) {
-      if (plan.tiers[h].label !== "podium") continue;
+      if (!plan.tiers[h].conductors) continue;
       for (var q = 0; q < plan.tiers[h].rows.length; q += 1) {
         if (plan.tiers[h].rows[q].role === "principal-conductor") holderId = plan.tiers[h].rows[q].id;
       }
@@ -1244,7 +1251,7 @@
             + (cursorRow.activity ? ", " + activityText(cursorRow) : "")
             + (cursorRow.stopNote ? ", " + cursorRow.stopNote : ""));
         } else {
-          setText(live, "The stage. No seat is drawn.");
+          setText(live, "Activity. No seat is drawn.");
         }
       });
 
