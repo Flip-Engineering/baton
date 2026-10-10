@@ -26,6 +26,7 @@ import ../host/sqlite.bend as DB
 import ../host/process.bend as Process
 import ../host/instance.bend as Custody
 import ../host/session-lock.bend as Host
+import ../host/text.bend as HostText
 import ../git/process.bend as Git
 import ../git/types.bend as G
 import ../git/text.bend as Tx
@@ -2259,6 +2260,338 @@ def query_runtime_source_path(+db: String, +binding: String, +owner: String,
     launch_source_program(db, binding, canonical, owner),
     IO.pure(String, subject_path))
 
+# A query-control subject names a retained query, an intent (recover or
+# release), and a signal for release. Coordinates resolve from retained
+# state: the keeper directory and bootstrap file come from the admitted
+# bootstrap artifact row, and the worktree is the owner's retained
+# workspace. The control request admits its own row first and records its
+# outcome there, so context-result reads the control id after caller loss.
+# Recover runs the same-query recovery operation as a child process,
+# draining child stdout before the wait, and retains the target envelope
+# on success or the exit status and child stderr on failure. Missing
+# coordinates or a missing owner workspace publishes a failed envelope.
+# Release writes the cleanup intent before signaling the target keeper
+# directory, then retains the signal outcome beside the intent. A target
+# the owner does not own, or one with no retained bootstrap, refuses as
+# control-unknown; any other kind runs the ordinary runtime query path.
+def query_control_lookup_sql(+canonical: String, +owner: String) -> String:
+  "SELECT CASE WHEN json_extract(" ++ ContextCommands.q(canonical) ++ ",'$.subject.intent') IN ('recover','release')"
+  ++ " THEN CASE WHEN EXISTS(SELECT 1 FROM semantic_queries q JOIN semantic_admission_artifacts a ON a.query_id=q.id"
+  ++ " WHERE q.id=json_extract(" ++ ContextCommands.q(canonical) ++ ",'$.subject.query')"
+  ++ " AND q.owner=" ++ ContextCommands.q(owner) ++ ")"
+  ++ " THEN 'control' ELSE 'control-unknown' END"
+  ++ " ELSE 'control-invalid' END,"
+  ++ "hex(coalesce(cast(json_extract(" ++ ContextCommands.q(canonical) ++ ",'$.subject.query') as TEXT),''))"
+  ++ ",hex(coalesce(cast(json_extract(" ++ ContextCommands.q(canonical) ++ ",'$.subject.intent') as TEXT),''))"
+  ++ ",hex(coalesce(cast(json_extract(" ++ ContextCommands.q(canonical) ++ ",'$.subject.signal') as TEXT),''))"
+  ++ ",hex(coalesce((SELECT json_extract(a.bootstrap_text,'$.keeperPath') FROM semantic_admission_artifacts a JOIN semantic_queries q ON q.id=a.query_id WHERE q.id=json_extract(" ++ ContextCommands.q(canonical) ++ ",'$.subject.query') AND q.owner=" ++ ContextCommands.q(owner) ++ "),''))"
+  ++ ",hex(coalesce((SELECT q2.artifact_path || '/bootstrap.json' FROM semantic_queries q2 WHERE q2.id=json_extract(" ++ ContextCommands.q(canonical) ++ ",'$.subject.query') AND q2.owner=" ++ ContextCommands.q(owner) ++ "),''))"
+  ++ ",hex(coalesce((SELECT q3.artifact_path FROM semantic_queries q3 WHERE q3.id=json_extract(" ++ ContextCommands.q(canonical) ++ ",'$.subject.query') AND q3.owner=" ++ ContextCommands.q(owner) ++ "),''));"
+
+def query_control_lookup_text(result: Result<&1,&1,U32 & String,String>) -> IO(List<String>):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.die(List<String>, code, "queryControlSource:" ++ detail)
+    case Done{+text}:
+      IO.pure(List<String>, Tx.split_tabs(Tx.trim_nl(text)))
+
+def query_control_lookup(+db: String, +binding: String, +owner: String, +canonical: String) -> IO(List<String>):
+  do IO<List<String>>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+      query_control_lookup_sql(canonical, owner))
+    query_control_lookup_text(result)
+
+def query_control_text(field: CoreCodec.FieldText) -> IO(String):
+  match field:
+    case CoreCodec.FtBad{condition}: IO.die(String, 3, "queryControlCoordinates:" ++ condition)
+    case CoreCodec.FtText{+text}: IO.pure(String, text)
+
+def query_control_field(+hex: String) -> IO(String):
+  query_control_text(CoreCodec.text_field(hex))
+
+def query_control_target_fields(fields: List<String>) -> IO(String):
+  match fields:
+    case +envelope <> Nil{}: IO.pure(String, envelope)
+    case other: IO.die(String, 3, "queryControlTargetMissing")
+
+def query_control_target_text(result: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.die(String, code, "queryControlTarget:" ++ detail)
+    case Done{+text}:
+      query_control_target_fields(Tx.split_tabs(Tx.trim_nl(text)))
+
+def query_control_target_envelope(+db: String, +binding: String, +target: String) -> IO(String):
+  do IO<String>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+      ContextStore.envelope_sql(target))
+    query_control_target_text(result)
+
+def query_control_publish(+db: String, +binding: String, +owner: String, +control: String,
+                          +next: String, +result_json: String, +error_json: String) -> IO(Unit):
+  do IO<Unit>:
+    published : String <- IO.try(String, DB.Sql.query_bound(db, binding,
+      ContextStore.state_publish_managed_sql(control, owner, next, result_json, error_json)))
+    launch_runtime_envelope(db, binding, control)
+
+def query_control_failed(+db: String, +binding: String, +owner: String, +control: String,
+                         +condition: String) -> IO(Unit):
+  query_control_publish(db, binding, owner, control, "failed", "",
+    "{\"condition\":" ++ J.json_text(J.Jstr{condition}) ++ "}")
+
+def query_control_admitted(admitted: Result<&1,&1,U32 & String,ContextAdmit.Admission>) -> IO(Unit):
+  match admitted:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.die(Unit, code, detail)
+    case Done{admission}: IO.pure(Unit, Unit{})
+
+def query_control_admit(+db: String, +binding: String, +control: String, +owner: String,
+                        +canonical: String, +cwd: String, +artifact_path: String) -> IO(Unit):
+  do IO<Unit>:
+    origin_attempt : String <- owner_origin_attempt(db, binding, owner)
+    admitted : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit(db, binding,
+      control, owner, canonical, "", cwd, origin_attempt, artifact_path)
+    query_control_admitted(admitted)
+
+def query_control_recover_argv(+executable: String, +db: String, +owner: String, +target: String,
+                               +directory: String, +path: String, +bootstrap_file: String) -> String:
+  Process.argv([executable, "--recover-context-query", db, owner, target, directory, path, bootstrap_file])
+
+def query_control_recover_stderr(+db: String, +binding: String, +owner: String, +control: String,
+                                 +status: String, read: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match read:
+    case Fail{error}:
+      match error:
+        case (read_code, read_detail):
+          query_control_publish(db, binding, owner, control, "failed", "",
+            "{\"condition\":\"queryControlRecover\",\"status\":" ++ J.json_text(J.Jstr{status})
+            ++ ",\"stderrReadCode\":" ++ U32.show(read_code)
+            ++ ",\"stderrReadDetail\":" ++ J.json_text(J.Jstr{read_detail}) ++ "}")
+    case Done{+text}:
+      query_control_publish(db, binding, owner, control, "failed", "",
+        "{\"condition\":\"queryControlRecover\",\"status\":" ++ J.json_text(J.Jstr{status})
+        ++ ",\"stderr\":" ++ J.json_text(J.Jstr{text}) ++ "}")
+
+def query_control_recover_answered(+db: String, +binding: String, +owner: String, +control: String,
+                                   +target: String, +stderr_file: String,
+                                   answer: ProviderAnswer) -> IO(Unit):
+  match answer:
+    case ProviderOutput{value, +status}:
+      Bool.pick(IO(Unit), String.eq(status, "exit 0"),
+        do IO<Unit>:
+          envelope : String <- query_control_target_envelope(db, binding, target)
+          query_control_publish(db, binding, owner, control, "complete", envelope, ""),
+        do IO<Unit>:
+          read : Result<&1,&1,U32 & String,String> <- HostText.Text.read(stderr_file)
+          query_control_recover_stderr(db, binding, owner, control, status, read))
+    case ProviderRefused{reason}:
+      query_control_publish(db, binding, owner, control, "failed", "",
+        "{\"condition\":\"queryControlRecover\",\"detail\":" ++ J.json_text(J.Jstr{reason}) ++ "}")
+
+def query_control_recover_waited(+db: String, +binding: String, +owner: String, +control: String,
+                                 +target: String, +stderr_file: String, +handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    answer : ProviderAnswer <- provider_wait(handle, SNil{}, False{})
+    query_control_recover_answered(db, binding, owner, control, target, stderr_file, answer)
+
+def query_control_recover_drain_stderr(+db: String, +binding: String, +owner: String, +control: String,
+                                         +status: String, +code: U32, +detail: String,
+                                         read: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match read:
+    case Fail{error}:
+      match error:
+        case (read_code, read_detail):
+          query_control_publish(db, binding, owner, control, "failed", "",
+            "{\"condition\":\"queryControlRecover\",\"status\":" ++ J.json_text(J.Jstr{status})
+            ++ ",\"drainCode\":" ++ U32.show(code) ++ ",\"drainDetail\":" ++ J.json_text(J.Jstr{detail})
+            ++ ",\"stderrReadCode\":" ++ U32.show(read_code) ++ ",\"stderrReadDetail\":" ++ J.json_text(J.Jstr{read_detail}) ++ "}")
+    case Done{+text}:
+      query_control_publish(db, binding, owner, control, "failed", "",
+        "{\"condition\":\"queryControlRecover\",\"status\":" ++ J.json_text(J.Jstr{status})
+        ++ ",\"drainCode\":" ++ U32.show(code) ++ ",\"drainDetail\":" ++ J.json_text(J.Jstr{detail})
+        ++ ",\"stderr\":" ++ J.json_text(J.Jstr{text}) ++ "}")
+
+def query_control_recover_drain_answered(+db: String, +binding: String, +owner: String, +control: String,
+                                          +target: String, +stderr_file: String, +code: U32, +detail: String,
+                                          answer: ProviderAnswer) -> IO(Unit):
+  match answer:
+    case ProviderOutput{value, +status}:
+      do IO<Unit>:
+        read : Result<&1,&1,U32 & String,String> <- HostText.Text.read(stderr_file)
+        query_control_recover_drain_stderr(db, binding, owner, control, status, code, detail, read)
+    case ProviderRefused{reason}:
+      query_control_publish(db, binding, owner, control, "failed", "",
+        "{\"condition\":\"queryControlRecover\",\"drainCode\":" ++ U32.show(code)
+        ++ ",\"drainDetail\":" ++ J.json_text(J.Jstr{detail})
+        ++ ",\"detail\":" ++ J.json_text(J.Jstr{reason}) ++ "}")
+
+def query_control_recover_drain_waited(+db: String, +binding: String, +owner: String, +control: String,
+                                       +target: String, +stderr_file: String, +handle: U32,
+                                       +code: U32, +detail: String) -> IO(Unit):
+  do IO<Unit>:
+    answer : ProviderAnswer <- provider_wait(handle, SNil{}, False{})
+    query_control_recover_drain_answered(db, binding, owner, control, target, stderr_file, code, detail, answer)
+
+def query_control_recover_drained(+db: String, +binding: String, +owner: String, +control: String,
+                                  +target: String, +stderr_file: String, +handle: U32,
+                                  drained: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match drained:
+    case Fail{error}:
+      match error:
+        case (code, detail):
+          query_control_recover_drain_waited(db, binding, owner, control, target, stderr_file, handle, code, detail)
+    case Done{unit}:
+      query_control_recover_waited(db, binding, owner, control, target, stderr_file, handle)
+
+def query_control_recover_spawned(+db: String, +binding: String, +owner: String, +control: String,
+                                  +target: String, +stderr_file: String,
+                                  spawned: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+  match spawned:
+    case Fail{error}:
+      match error:
+        case (code, detail):
+          query_control_publish(db, binding, owner, control, "failed", "",
+            "{\"condition\":\"queryControlRecoverSpawn\",\"detail\":" ++ J.json_text(J.Jstr{detail}) ++ "}")
+    case Done{+handle}:
+      do IO<Unit>:
+        drained : Result<&1,&1,U32 & String,Unit> <- NativeRuntime.runtime_copy_drain(handle)
+        query_control_recover_drained(db, binding, owner, control, target, stderr_file, handle, drained)
+
+def query_control_recover_workspace(+db: String, +binding: String, +owner: String, +control: String,
+                                    +target: String, +directory: String, +bootstrap_file: String,
+                                    workspace: OwnerWorkspace) -> IO(Unit):
+  match workspace:
+    case OwnerWorkspaceRefused{reason}:
+      query_control_publish(db, binding, owner, control, "failed", "",
+        "{\"condition\":\"queryControlWorkspace\",\"detail\":" ++ J.json_text(J.Jstr{reason}) ++ "}")
+    case OwnerWorkspaceReady{+path}:
+      do IO<Unit>:
+        executable : String <- IO.try(String, Host.SessionLock.executable())
+        stderr_key : String <- IO.try(String, ContextIdentity.role_guard_key(control))
+        +stderr_file : String = directory ++ "/control-recovery-" ++ stderr_key ++ ".log"
+        spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
+          query_control_recover_argv(executable, db, owner, target, directory, path, bootstrap_file),
+          path, stderr_file)
+        query_control_recover_spawned(db, binding, owner, control, target, stderr_file, spawned)
+
+def query_control_recover(+db: String, +binding: String, +owner: String, +control: String,
+                          +target: String, +directory: String, +bootstrap_file: String) -> IO(Unit):
+  do IO<Unit>:
+    workspace : OwnerWorkspace <- read_owner_workspace(db, binding, owner)
+    query_control_recover_workspace(db, binding, owner, control, target, directory, bootstrap_file, workspace)
+
+def query_control_release_store_sql(+canonical: String, +target: String, +owner: String, +control_error: String) -> String:
+  "UPDATE semantic_queries SET cleanup_intent_json=json_object('intent','release','signal',json_extract("
+  ++ ContextCommands.q(canonical) ++ ",'$.subject.signal'),'controlError',json(" ++ ContextCommands.q(control_error) ++ ")) WHERE id=" ++ ContextCommands.q(target)
+  ++ " AND owner=" ++ ContextCommands.q(owner) ++ ";"
+
+def query_control_release_answered(+db: String, +binding: String, +owner: String, +canonical: String,
+                                   +control: String, +target: String,
+                                   signaled: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match signaled:
+    case Done{unit}:
+      do IO<Unit>:
+        outcome : String <- IO.try(String, DB.Sql.query_bound(db, binding,
+          query_control_release_store_sql(canonical, target, owner, "null")))
+        envelope : String <- query_control_target_envelope(db, binding, target)
+        query_control_publish(db, binding, owner, control, "complete", envelope, "")
+    case Fail{error}:
+      match error:
+        case (code, detail):
+          do IO<Unit>:
+            +failed : String = "{\"code\":" ++ U32.show(code) ++ ",\"detail\":" ++ J.json_text(J.Jstr{detail}) ++ "}"
+            outcome : String <- IO.try(String, DB.Sql.query_bound(db, binding,
+              query_control_release_store_sql(canonical, target, owner, failed)))
+            query_control_publish(db, binding, owner, control, "failed", "", failed)
+
+def query_control_release_stored(+db: String, +binding: String, +owner: String, +canonical: String,
+                                 +control: String, +target: String, +directory: String, +number: U32) -> IO(Unit):
+  do IO<Unit>:
+    intent : String <- IO.try(String, DB.Sql.query_bound(db, binding,
+      query_control_release_store_sql(canonical, target, owner, "null")))
+    signaled : Result<&1,&1,U32 & String,Unit> <- Process.ProcessChild.control_signal(directory, number)
+    query_control_release_answered(db, binding, owner, canonical, control, target, signaled)
+
+def query_control_release_named(+db: String, +binding: String, +owner: String, +canonical: String,
+                                +control: String, +target: String, +signal: String, +directory: String) -> IO(Unit):
+  do IO<Unit>:
+    number : U32 <- NativeRuntime.runtime_signal(signal)
+    query_control_release_stored(db, binding, owner, canonical, control, target, directory, number)
+
+def query_control_release_numbered(+db: String, +binding: String, +owner: String, +canonical: String,
+                                     +control: String, +target: String, +signal: String, +directory: String,
+                                     number: Maybe<&2,U32>) -> IO(Unit):
+  match number:
+    case Some{+count}:
+      query_control_release_stored(db, binding, owner, canonical, control, target, directory, count)
+    case None{}:
+      Bool.pick(IO(Unit), Bool.or(String.eq(signal, "SIGTERM"), String.eq(signal, "SIGKILL")),
+        query_control_release_named(db, binding, owner, canonical, control, target, signal, directory),
+        query_control_failed(db, binding, owner, control, "runtimeSignalUnknown"))
+
+def query_control_release_signal(+db: String, +binding: String, +owner: String, +canonical: String,
+                                 +control: String, +target: String, +signal: String, +directory: String) -> IO(Unit):
+  query_control_release_numbered(db, binding, owner, canonical, control, target, signal, directory, U32.read(signal))
+
+def query_control_release(+db: String, +binding: String, +owner: String, +canonical: String,
+                          +control: String, +target: String, +signal: String, +directory: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.is_empty(signal),
+    query_control_failed(db, binding, owner, control, "queryControlSignalAbsent"),
+    query_control_release_signal(db, binding, owner, canonical, control, target, signal, directory))
+
+def query_control_ready(+db: String, +binding: String, +owner: String, +control: String,
+                        +canonical: String, +target: String, +intent: String, +signal: String,
+                        +directory: String, +bootstrap_file: String) -> IO(Unit):
+  match intent:
+    case "recover":
+      Bool.pick(IO(Unit), Bool.or(String.is_empty(directory), String.is_empty(bootstrap_file)),
+        query_control_failed(db, binding, owner, control, "queryControlCoordinates"),
+        query_control_recover(db, binding, owner, control, target, directory, bootstrap_file))
+    case "release":
+      query_control_release(db, binding, owner, canonical, control, target, signal, directory)
+    case other: IO.die(Unit, 3, "queryControlIntent")
+
+def query_control_intent(+db: String, +binding: String, +owner: String, +control: String,
+                         +cwd: String, +canonical: String, +target: String, +intent: String,
+                         +signal: String, +directory: String, +bootstrap_file: String,
+                         +artifact_path: String) -> IO(Unit):
+  do IO<Unit>:
+    admitted : Unit <- query_control_admit(db, binding, control, owner, canonical, cwd, artifact_path)
+    query_control_ready(db, binding, owner, control, canonical, target, intent, signal, directory, bootstrap_file)
+
+def query_control_fields(+db: String, +binding: String, +owner: String, +control: String,
+                         +cwd: String, +canonical: String, fields: List<String>) -> IO(Unit):
+  match fields:
+    case +marker <> +target_hex <> +intent_hex <> +signal_hex <> +directory_hex <> +bootstrap_hex <> +artifact_hex <> Nil{}:
+      match marker:
+        case "control-unknown": IO.die(Unit, 3, "queryControlUnknown")
+        case "control-invalid": IO.die(Unit, 3, "queryControlIntent")
+        case "control":
+          do IO<Unit>:
+            target : String <- query_control_field(target_hex)
+            intent : String <- query_control_field(intent_hex)
+            signal : String <- query_control_field(signal_hex)
+            directory : String <- query_control_field(directory_hex)
+            bootstrap_file : String <- query_control_field(bootstrap_hex)
+            artifact_path : String <- query_control_field(artifact_hex)
+            query_control_intent(db, binding, owner, control, cwd, canonical, target, intent, signal, directory, bootstrap_file, artifact_path)
+        case other: IO.die(Unit, 3, "queryControlCoordinates")
+    case other: IO.die(Unit, 3, "queryControlCoordinates")
+
+def query_control_environment(+db: String, +binding: String, +owner: String, +control: String,
+                              +cwd: String, +canonical: String) -> IO(Unit):
+  do IO<Unit>:
+    fields : List<String> <- query_control_lookup(db, binding, owner, canonical)
+    query_control_fields(db, binding, owner, control, cwd, canonical, fields)
+
+def query_control_request(+operands: Sel.RequestOperands) -> Bool:
+  match operands:
+    case Sel.RequestOperands{+subject, projections, explicit, common}:
+      String.eq(subject, "query-control")
+
 def query_environment_runtime(+db: String, +binding: String, +owner: String,
                               +query: String, +cwd: String, +worktree: String,
                               +request: NativeRequest.RequestDecode,
@@ -2283,18 +2616,20 @@ def query_environment_runtime(+db: String, +binding: String, +owner: String,
         query_catalog_result(db, binding, owner, query, policy, answer,
           request, source, artifact, executable, path)
 
-def query_request_environment(db: String, binding: String, owner: String, query: String,
+def query_request_environment(+db: String, +binding: String, +owner: String, +query: String,
                               cwd: String, worktree: String,
                               +request: NativeRequest.RequestDecode) -> IO(Unit):
   match request:
     case NativeRequest.RequestDecodeRefused{condition}:
       IO.die(Unit, 3, "request:" ++ condition)
     case NativeRequest.RequestDecoded{canonical, operands, operation_chain, +cwd, source_path}:
-      do IO<Unit>:
-        executable : String <- IO.try(String, Host.SessionLock.executable())
-        runtime : ProviderAnswer <- resolve_node_runtime(cwd)
-        query_environment_runtime(db, binding, owner, query, cwd, worktree,
-          request, executable, runtime)
+      Bool.pick(IO(Unit), query_control_request(operands),
+        query_control_environment(db, binding, owner, query, cwd, canonical),
+        do IO<Unit>:
+          executable : String <- IO.try(String, Host.SessionLock.executable())
+          runtime : ProviderAnswer <- resolve_node_runtime(cwd)
+          query_environment_runtime(db, binding, owner, query, cwd, worktree,
+            request, executable, runtime))
 
 def owner_root_matches(+workspace: String, root: G.GitOut) -> Bool:
   match root:

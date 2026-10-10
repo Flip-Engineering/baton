@@ -691,6 +691,60 @@ void handler(const char *dynamic) {
                          'baton2.context.bend2.source-analysis.result.v1', retained.stdout)
         self.assertEqual(payload['status'], 'completed', retained.stdout)
 
+        control_query = 'installed-source-analysis-recover'
+        control_request = self.root / 'control-request.json'
+        control_request.write_text(json.dumps(dict(
+            source_tool['requestExample'], cwd=str(worktree),
+            subject={'kind': 'query-control', 'query': query, 'intent': 'recover'},
+        )) + '\n')
+        control_submitted = invoke('context-query-file', 'validation-owner', control_query,
+                                   str(control_request), cwd=worktree)
+        self.assertEqual(control_submitted.returncode, 0,
+                         control_submitted.stdout + control_submitted.stderr)
+        control_retained = invoke('context-result', control_query, cwd=worktree)
+        self.assertEqual(control_retained.returncode, 0,
+                         control_retained.stdout + control_retained.stderr)
+        connection = sqlite3.connect(str(database))
+        try:
+            targetRow = connection.execute(
+                'SELECT state, runtime_id, prepared_keeper_path'
+                ' FROM semantic_queries WHERE id=?', (query,)).fetchone()
+        finally:
+            connection.close()
+        self.assertIsNotNone(targetRow, control_retained.stdout)
+        self.assertEqual(targetRow[0], 'complete', control_retained.stdout)
+        self.assertIsNone(targetRow[1], control_retained.stdout)
+        keeperPath = targetRow[2]
+        self.assertTrue(keeperPath, control_retained.stdout)
+        self.assertTrue(os.path.isdir(keeperPath), control_retained.stdout)
+        self.assertTrue(os.path.isfile(os.path.join(keeperPath, 'status')),
+                       control_retained.stdout)
+        self.assertFalse(os.path.exists(os.path.join(keeperPath, 'acknowledged')),
+                         control_retained.stdout)
+        self.assertFalse(os.path.exists(os.path.join(keeperPath, 'released')),
+                         control_retained.stdout)
+        control = json.loads(control_retained.stdout)
+        self.assertEqual(control['query'], control_query)
+        self.assertEqual(control['owner'], 'validation-owner')
+        # The retained source-analysis target finished through the managed
+        # wait path, which records the reaped status but never releases or
+        # acknowledges the keeper. The recover child therefore refuses at
+        # the keeper attach step: exit 3 with
+        # managedRecoveryAttachUnavailable. The target row keeps its
+        # retained result.
+        self.assertEqual(control['state'], 'failed', control_retained.stdout)
+        controlError = control['error']
+        self.assertEqual(controlError['condition'], 'queryControlRecover',
+                         control_retained.stdout)
+        self.assertEqual(controlError['status'], 'exit 3', control_retained.stdout)
+        self.assertIn('managedRecoveryAttachUnavailable',
+                      controlError.get('stderr', ''), control_retained.stdout)
+        reread = invoke('context-result', query, cwd=worktree)
+        self.assertEqual(reread.returncode, 0, reread.stdout + reread.stderr)
+        rereadEnvelope = json.loads(reread.stdout)
+        self.assertEqual(rereadEnvelope['state'], envelope['state'], reread.stdout)
+        self.assertEqual(rereadEnvelope['result'], envelope['result'], reread.stdout)
+
         handoff_query = 'installed-native-handoff'
         producer, consumer = 'native-object-producer', 'native-object-consumer'
         handoff_request = self.root / 'handoff-request.json'
