@@ -336,7 +336,7 @@ def main():
         require((package_ui / 'server.mjs').is_file()
                 and (package_ui / 'native-owner-subscription.mjs').is_file(),
                 'The extracted artifact must contain the Orchestra server and native owner adapter')
-        view_test_name = 'view CLI streams a committed native message through the owner subscription'
+        view_test_name = 'view CLI streams native commits and returns to the original project session'
         view_test_path = Path(__file__).resolve().parent.parent / 'test/ui-orchestra-server.test.mjs'
         require(view_test_path.is_file(), f'Public native view test is missing: {view_test_path}')
         view_environment = {
