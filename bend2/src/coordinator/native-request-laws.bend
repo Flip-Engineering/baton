@@ -38,16 +38,6 @@ law native_reply_uses_recorded_attempt_and_frame:
 def native_reply_uses_recorded_attempt_and_frame(attempt,frame):
   {==}
 
-law native_question_failed_record_cannot_wake:
-  for +db: String
-  for +code: U32
-  for +text: String
-  for -tasks: List<Chan(Result<&1,&1,U32 & String,String>)>
-  {Requests.saved(db,tasks,Fail{(code,text)}) == IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,(U32.show(code) ++ ": " ++ text,True{}))) : IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool)}
-
-def native_question_failed_record_cannot_wake(db,code,text,tasks):
-  {==}
-
 def recorded_send(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     allowed : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM native_requests WHERE id=" ++ C.q(id) ++ " AND reply IS NOT NULL AND closed IS NULL AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=native_requests.worker));"))
@@ -106,15 +96,4 @@ law native_reply_unadmitted_response_cannot_send:
   {Requests.reply_result(db,id,False{},already) == refusal_context(db,id) : IO(Result<&1,&1,U32 & String,String>)}
 
 def native_reply_unadmitted_response_cannot_send(db,id,already):
-  {==}
-
-# This equation binds the generated parent/method/selection and immutable-answer
-# predicates. SQLite execution is exercised by the native receive fixtures.
-law native_reply_sql_checks_parent_method_and_immutable_answer:
-  for +parent: String
-  for +id: String
-  for +response: String
-  {Requests.response_sql(parent,id,response) == "WITH supplied(value) AS (VALUES(" ++ C.q(response) ++ ")), valid(frame) AS (SELECT json_patch(json_object('type','extension_ui_response','id',r.native_id),json(supplied.value)) FROM supplied,native_requests r WHERE r.id=" ++ C.q(id) ++ " AND r.parent=" ++ C.q(parent) ++ " AND r.closed IS NULL AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=r.worker) AND CASE WHEN json_valid(supplied.value) THEN json_type(supplied.value)='object' AND (SELECT count(*) FROM json_each(supplied.value))=1 AND (json_type(supplied.value,'$.cancelled')='true' OR (r.method='confirm' AND json_type(supplied.value,'$.confirmed') IN ('true','false')) OR (r.method IN ('input','editor') AND json_type(supplied.value,'$.value')='text') OR (r.method='select' AND json_type(supplied.value,'$.value')='text' AND EXISTS(SELECT 1 FROM json_each(r.event,'$.options') o WHERE o.value=json_extract(supplied.value,'$.value')))) ELSE 0 END) UPDATE native_requests SET id=CASE WHEN reply IS NULL OR reply=(SELECT frame FROM valid) THEN id ELSE NULL END,reply=coalesce(reply,(SELECT frame FROM valid)) WHERE id=" ++ C.q(id) ++ " AND EXISTS(SELECT 1 FROM valid);" : String}
-
-def native_reply_sql_checks_parent_method_and_immutable_answer(parent,id,response):
   {==}

@@ -556,19 +556,6 @@ law m14_player_conflict_returns_the_structured_refusal:
 def m14_player_conflict_returns_the_structured_refusal(db,command):
   {==}
 
-# M-8: attaching a root is bound to the row it names. The conflict clause
-# updates only a row with no parent, so an attach cannot replace a recruited
-# player's identity, and the player keeps its parentage and placement.
-law m8_attach_never_overwrites_a_player_row:
-  for +id: String
-  for +harness: String
-  for +native: String
-  for +endpoint: String
-  {C.sql(C.Attach{id, harness, native, endpoint}) == "INSERT INTO sessions(id,harness,native,endpoint) VALUES(" ++ C.q(id) ++ "," ++ C.q(harness) ++ "," ++ C.q(native) ++ "," ++ C.q(endpoint) ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN sessions.parent IS NULL THEN sessions.id ELSE NULL END,harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint;" ++ C.session_result(id) : String}
-
-def m8_attach_never_overwrites_a_player_row(id, harness, native, endpoint):
-  {==}
-
 # M-8: a route change is bound to the route the caller expected. The predicate
 # is the stored row's own id, harness, model and effort, so a delayed or repeated
 # continuation cannot reconfigure a session whose recorded route already moved.

@@ -941,6 +941,12 @@ class Receive(unittest.TestCase):
                          'stdin-written')
         conflicting = self.coord('native-reply', 'root', request['id'], '{"value":"new branch"}', ok=False)
         self.assertNotEqual(conflicting.returncode, 0)
+        self.assertIn('Native reply refused', conflicting.stderr)
+        self.assertNotIn('NOT NULL constraint failed', conflicting.stderr)
+        retained = self.native_requests()[0]
+        self.assertEqual(json.loads(retained['reply']), {'type': 'extension_ui_response',
+                                                       'id': event['id'], 'value': 'preserve current'})
+        self.assertEqual(retained['written'], 1)
         self.assertTrue(any(p['pid'] == started['pid'] and p['ppid'] == started['ppid']
                             for p in self.owned_processes()))
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
@@ -952,6 +958,53 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.coord('inbox', 'root'), [])
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])
+
+    def test_native_request_conflict_preserves_original_question_and_reply(self):
+        observer, stream, started = self.start_question_player()
+        event = {'type': 'extension_ui_request', 'id': 'retained-request', 'method': 'select',
+                 'title': 'Keep the original question', 'options': ['original answer', 'other answer']}
+        request = self.native_question(stream, event)
+        self.eventually(lambda: self.coord('delivery', request['id'])['receipt'],
+                        'parent did not handle the original question')
+        original_question = self.coord('delivery', request['id'])
+        conflicting = dict(event, title='A conflicting question under the same native identity')
+        for repeated in (event, conflicting):
+            self.action(stream, native_request=repeated)
+            self.assertEqual(json.loads(stream.readline()), {'request_written': repeated})
+        barrier = 'native continued after the conflicting request'
+        self.action(stream, progress=barrier)
+        self.assertEqual(json.loads(stream.readline()), {'progress_written': barrier})
+        log = self.output_log('parent')
+        self.eventually(lambda: barrier in log.read_text(),
+                        'observer did not continue past the conflicting request')
+        self.assertEqual(self.native_requests(), [request])
+        self.assertEqual(self.coord('delivery', request['id']), original_question)
+        self.assertEqual(self.coord('native-reply', 'root', request['id'],
+                                    '{"value":"original answer"}')['status'], 'stdin-written')
+        self.action(stream, read_native_reply=True)
+        self.assertEqual(json.loads(stream.readline()), {'native_reply': {
+            'type': 'extension_ui_response', 'id': event['id'], 'value': 'original answer'}})
+        self.assertTrue(any(p['pid'] == started['pid'] for p in self.owned_processes()))
+        self.action(stream, body='The original native continued with its original answer.',
+                    hold_exit=True, report_input=True)
+        self.assertEqual(json.loads(stream.readline()),
+                         {'terminal_written': True, 'input_after_prompt': ''})
+        self.action(stream, exit_fixture=True)
+        output, error = self.finish(observer, ok=False)
+        self.assertNotIn('NOT NULL constraint failed', output + error)
+        self.assertEqual(self.native_requests()[0]['event'], json.dumps(event))
+        self.assertEqual(self.native_requests()[0]['id'], request['id'])
+        self.assertEqual(json.loads(self.native_requests()[0]['reply'])['value'], 'original answer')
+        delivered = [json.loads(line) for line in
+                     (self.directory / 'parent-deliveries.jsonl').read_text().splitlines()]
+        self.assertEqual([row['id'] for row in delivered if row['kind'] == 'question'],
+                         [request['id']])
+        diagnosis = [row['body'] for row in delivered if row['id'].endswith(':observation')]
+        self.assertEqual(len(diagnosis), 1)
+        self.assertIn('native-request-id-conflict', diagnosis[0])
+        self.assertNotIn('NOT NULL constraint failed', diagnosis[0])
+        self.assertIn(conflicting['title'], log.read_text())
+        self.shutdown_idle_database_owner('conflicting request fixture did not exit naturally')
 
     def test_native_reply_saved_before_write_is_sent_by_recovered_observer(self):
         observer, stream, started = self.start_question_player()

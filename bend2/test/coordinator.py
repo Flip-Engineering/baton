@@ -71,6 +71,36 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(retry['receipt'], 'native-accepted-42')
         self.assertEqual(self.call('inbox', 'root'), [])
 
+    def test_attach_reports_parented_session_conflict_and_preserves_original_state(self):
+        self.call('message', 'owed-worker-task', 'root', 'worker', 'task',
+                  'Keep working on the original assignment.')
+        self.call('report', 'owed-worker-report', 'worker', 'Original report remains owed.')
+        self.call('connect', 'worker', 'original-native', '["original-receiver"]')
+        before = self.call('session', 'worker')
+        worker_input = self.call('inbox', 'worker')
+        parent_input = self.call('inbox', 'root')
+        for harness, native, endpoint in [('codex', 'replacement-native', '["replacement"]'),
+                                          ('requested-harness', 'original-native',
+                                           '["original-receiver"]')]:
+            with self.subTest(harness=harness):
+                failed = self.call('attach', 'worker', harness, native, endpoint, success=False)
+                self.assertEqual(failed.returncode, 2)
+                error = json.loads(failed.stderr)
+                self.assertEqual((error['error'], error['session'], error['parent']),
+                                 ('attach-parent-conflict', 'worker', 'root'))
+                self.assertIn('connect or receiver', error['next'])
+                self.assertNotIn('NOT NULL', failed.stderr)
+                self.assertEqual(self.call('session', 'worker'), before)
+                self.assertEqual(self.call('inbox', 'worker'), worker_input)
+                self.assertEqual(self.call('inbox', 'root'), parent_input)
+        self.call('connect', 'worker', 'updated-native', '["updated-receiver"]')
+        updated = self.call('session', 'worker')
+        self.assertEqual((updated['parent'], updated['harness'], updated['native'],
+                          updated['endpoint']),
+                         ('root', before['harness'], 'updated-native', '["updated-receiver"]'))
+        self.assertEqual(self.call('inbox', 'worker'), worker_input)
+        self.assertEqual(self.call('inbox', 'root'), parent_input)
+
     def test_guidance_and_question_route_to_the_named_session(self):
         self.call('message', 'guide-1', 'root', 'worker', 'guide', 'Continue the task.')
         self.assertEqual(self.call('inbox', 'worker')[0]['kind'], 'guide')

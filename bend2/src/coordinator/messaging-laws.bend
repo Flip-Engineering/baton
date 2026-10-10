@@ -128,15 +128,6 @@ law role_declarations_validate_registered_sessions_and_closed_roles:
 def role_declarations_validate_registered_sessions_and_closed_roles(session,role):
   {==}
 
-law ensemble_declarations_validate_owner_and_closed_coupling:
-  for +id: String
-  for +owner: String
-  for +coupling: String
-  {C.ensemble_sql(id,owner,coupling) == "INSERT INTO ensembles(id,owner,coupling) SELECT " ++ C.q(id) ++ "," ++ C.q(owner) ++ "," ++ C.q(coupling) ++ " WHERE " ++ C.q(coupling) ++ " IN ('loose','tight') ON CONFLICT(id) DO UPDATE SET id=CASE WHEN ensembles.owner=excluded.owner THEN ensembles.id ELSE NULL END,coupling=excluded.coupling;SELECT " ++ C.ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ C.q(id) ++ " AND owner=" ++ C.q(owner) ++ " AND coupling=" ++ C.q(coupling) ++ ";" : String}
-
-def ensemble_declarations_validate_owner_and_closed_coupling(id,owner,coupling):
-  {==}
-
 law ensemble_membership_requires_the_owner_and_registered_agent_members:
   for +id: String
   for +owner: String

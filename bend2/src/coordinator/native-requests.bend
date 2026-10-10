@@ -1,6 +1,7 @@
 import Base
 import ../coordinator/commands.bend as C
 import ./delivery.bend as Delivery
+import ./store.bend as Store
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../git/text.bend as Tx
@@ -16,11 +17,22 @@ def schema() -> String:
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_requests_update AFTER UPDATE ON native_requests WHEN OLD.reply IS NOT NEW.reply OR OLD.written IS NOT NEW.written OR OLD.closed IS NOT NEW.closed BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('native-request',NEW.id,NEW.worker,'update','native-request',NEW.method || CASE WHEN NEW.reply IS NOT OLD.reply THEN ' response stored' WHEN NEW.written IS NOT OLD.written THEN ' response written' WHEN NEW.closed IS NOT OLD.closed THEN ' request closed' ELSE ' request updated' END); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_requests_delete AFTER DELETE ON native_requests BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('native-request',OLD.id,OLD.worker,'delete','native-request',OLD.method || ' request removed'); END;"
 
+def request_matches(+player: String, +attempt: String, +event: String) -> String:
+  "worker=" ++ C.q(player) ++ " AND parent=(SELECT parent FROM sessions WHERE id=" ++ C.q(player) ++ ") AND attempt=" ++ C.q(attempt) ++ " AND native_id=json_extract(" ++ C.q(event) ++ ",'$.id') AND event=" ++ C.q(event)
+
+def question_body() -> String:
+  "json_object('nativeRequest',json(event),'requestId',id,'replyCommand',json_array('native-reply',parent,id),'replyFormat',CASE WHEN method='confirm' THEN '{\"confirmed\":true} or {\"confirmed\":false} or {\"cancelled\":true}' ELSE '{\"value\":\"answer\"} or {\"cancelled\":true}' END,'completion','stdin-written records transport completion; native continuation is observed separately')"
+
+def request_conflict_sql(+player: String, turn: String, +attempt: String, +event: String) -> String:
+  "SELECT json_object('error','native-request-id-conflict','request',id,'attempt'," ++ C.q(attempt) ++ ",'nativeId',json_extract(" ++ C.q(event) ++ ",'$.id'),'stored',json_object('worker',worker,'parent',parent,'attempt',attempt,'nativeId',native_id,'method',method),'condition','The native request identity is already stored with different content.','next','Use the retained question and request ID to answer the original request; the incoming frame remains in the native log.') FROM native_requests WHERE (id=" ++ C.q(turn ++ ":native:") ++ " || lower(hex(json_extract(" ++ C.q(event) ++ ",'$.id'))) OR (attempt=" ++ C.q(attempt) ++ " AND native_id=json_extract(" ++ C.q(event) ++ ",'$.id'))) AND NOT (" ++ request_matches(player,attempt,event) ++ ");"
+
 def request_sql(+player: String, +turn: String, +attempt: String, +event: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) INSERT INTO native_requests(id,worker,parent,attempt,native_id,method,event) SELECT " ++ C.q(turn ++ ":native:") ++ " || lower(hex(json_extract(value,'$.id'))),s.id,s.parent," ++ C.q(attempt) ++ ",json_extract(value,'$.id'),json_extract(value,'$.method'),value FROM frame,sessions s WHERE s.id=" ++ C.q(player) ++ " AND s.harness='omp' AND json_type(value,'$.id')='text' AND json_extract(value,'$.method') IN ('input','select','confirm','editor') ON CONFLICT(attempt,native_id) DO UPDATE SET id=CASE WHEN native_requests.worker=excluded.worker AND native_requests.parent=excluded.parent AND native_requests.event=excluded.event THEN native_requests.id ELSE NULL END;"
+  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) INSERT INTO native_requests(id,worker,parent,attempt,native_id,method,event) SELECT " ++ C.q(turn ++ ":native:") ++ " || lower(hex(json_extract(value,'$.id'))),s.id,s.parent," ++ C.q(attempt) ++ ",json_extract(value,'$.id'),json_extract(value,'$.method'),value FROM frame,sessions s WHERE s.id=" ++ C.q(player) ++ " AND s.harness='omp' AND json_type(value,'$.id')='text' AND json_extract(value,'$.method') IN ('input','select','confirm','editor') ON CONFLICT DO NOTHING;"
+  ++ request_conflict_sql(player,turn,attempt,event)
   ++ "UPDATE native_requests SET closed=coalesce(closed,'native-cancelled') WHERE attempt=" ++ C.q(attempt) ++ " AND native_id=json_extract(" ++ C.q(event) ++ ",'$.targetId') AND json_extract(" ++ C.q(event) ++ ",'$.method')='cancel';"
-  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT id,worker,parent,'question',json_object('nativeRequest',json(event),'requestId',id,'replyCommand',json_array('native-reply',parent,id),'replyFormat',CASE WHEN method='confirm' THEN '{\"confirmed\":true} or {\"confirmed\":false} or {\"cancelled\":true}' ELSE '{\"value\":\"answer\"} or {\"cancelled\":true}' END,'completion','stdin-written records transport completion; native continuation is observed separately') FROM native_requests WHERE attempt=" ++ C.q(attempt) ++ " AND native_id=json_extract(" ++ C.q(event) ++ ",'$.id')" ++ C.message_upsert()
-  ++ "SELECT id FROM native_requests WHERE attempt=" ++ C.q(attempt) ++ " AND native_id=json_extract(" ++ C.q(event) ++ ",'$.id') AND closed IS NULL;"
+  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT id,worker,parent,'question'," ++ question_body() ++ " FROM native_requests WHERE " ++ request_matches(player,attempt,event) ++ C.message_upsert()
+  ++ C.message_conflict_sql("(SELECT id FROM native_requests WHERE " ++ request_matches(player,attempt,event) ++ ")",C.q(player),"(SELECT parent FROM sessions WHERE id=" ++ C.q(player) ++ ")","'question'","(SELECT " ++ question_body() ++ " FROM native_requests WHERE " ++ request_matches(player,attempt,event) ++ ")","EXISTS(SELECT 1 FROM native_requests WHERE " ++ request_matches(player,attempt,event) ++ ")")
+  ++ "SELECT id FROM native_requests WHERE " ++ request_matches(player,attempt,event) ++ " AND closed IS NULL AND EXISTS(SELECT 1 FROM messages m WHERE m.id=native_requests.id AND m.sender=native_requests.worker AND m.recipient=native_requests.parent AND m.kind='question' AND m.body=" ++ question_body() ++ ");"
 
 def dispatch(attempt: String, frame: String, allowed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match allowed:
@@ -66,7 +78,7 @@ def fork_saved(db: String, id: String, tasks: List<Chan(Result<&1,&1,U32 & Strin
 # A failed transaction cannot publish a parent wake or send a stored answer.
 def saved(db: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,String>) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool):
   match result:
-    case Fail{(code,text)}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,(U32.show(code) ++ ": " ++ text,True{})))
+    case Fail{(code,+text)}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,(U32.show(code) ++ ": " ++ text,Bool.not(Store.refused(text)))))
     case Done{+id}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
       next : List<Chan(Result<&1,&1,U32 & String,String>)> <- fork_saved(db,Tx.trim_nl(id),tasks,String.is_empty(id))
       IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(next,("",False{})))
@@ -79,7 +91,8 @@ def record(+db: String, player: String, turn: String, attempt: String, event: St
     case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
       ready : String <- IO.try(String,prepare_projection(db))
       result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ request_sql(player,turn,attempt,event) ++ "COMMIT;")
-      saved(db,tasks,result)
+      accepted : Result<&1,&1,U32 & String,String> <- Store.committed(result)
+      saved(db,tasks,accepted)
 
 def observe(+db: String, +player: String, turn: String, attempt: String, +event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, enabled: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool):
   match enabled:
@@ -112,7 +125,7 @@ def settle(tasks: List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Result<&1
 # The native ID and destination are read from the original request. A response
 # contains exactly one method value or an explicit cancellation.
 def response_sql(+parent: String, +id: String, +response: String) -> String:
-  "WITH supplied(value) AS (VALUES(" ++ C.q(response) ++ ")), valid(frame) AS (SELECT json_patch(json_object('type','extension_ui_response','id',r.native_id),json(supplied.value)) FROM supplied,native_requests r WHERE r.id=" ++ C.q(id) ++ " AND r.parent=" ++ C.q(parent) ++ " AND r.closed IS NULL AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=r.worker) AND CASE WHEN json_valid(supplied.value) THEN json_type(supplied.value)='object' AND (SELECT count(*) FROM json_each(supplied.value))=1 AND (json_type(supplied.value,'$.cancelled')='true' OR (r.method='confirm' AND json_type(supplied.value,'$.confirmed') IN ('true','false')) OR (r.method IN ('input','editor') AND json_type(supplied.value,'$.value')='text') OR (r.method='select' AND json_type(supplied.value,'$.value')='text' AND EXISTS(SELECT 1 FROM json_each(r.event,'$.options') o WHERE o.value=json_extract(supplied.value,'$.value')))) ELSE 0 END) UPDATE native_requests SET id=CASE WHEN reply IS NULL OR reply=(SELECT frame FROM valid) THEN id ELSE NULL END,reply=coalesce(reply,(SELECT frame FROM valid)) WHERE id=" ++ C.q(id) ++ " AND EXISTS(SELECT 1 FROM valid);"
+  "WITH supplied(value) AS (VALUES(" ++ C.q(response) ++ ")), valid(frame) AS (SELECT json_patch(json_object('type','extension_ui_response','id',r.native_id),json(supplied.value)) FROM supplied,native_requests r WHERE r.id=" ++ C.q(id) ++ " AND r.parent=" ++ C.q(parent) ++ " AND r.closed IS NULL AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=r.worker) AND CASE WHEN json_valid(supplied.value) THEN json_type(supplied.value)='object' AND (SELECT count(*) FROM json_each(supplied.value))=1 AND (json_type(supplied.value,'$.cancelled')='true' OR (r.method='confirm' AND json_type(supplied.value,'$.confirmed') IN ('true','false')) OR (r.method IN ('input','editor') AND json_type(supplied.value,'$.value')='text') OR (r.method='select' AND json_type(supplied.value,'$.value')='text' AND EXISTS(SELECT 1 FROM json_each(r.event,'$.options') o WHERE o.value=json_extract(supplied.value,'$.value')))) ELSE 0 END) UPDATE native_requests SET reply=coalesce(reply,(SELECT frame FROM valid)) WHERE id=" ++ C.q(id) ++ " AND EXISTS(SELECT 1 FROM valid) AND (reply IS NULL OR reply=(SELECT frame FROM valid));"
 
 def refused(db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
