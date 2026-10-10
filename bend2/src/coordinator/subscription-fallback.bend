@@ -285,7 +285,7 @@ def exhaustion_cause(db: String, +event: String) -> IO(String):
 def transient_provider_sql(event: String) -> String:
   "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")), diagnostic(terminal,assistant,muse_terminal,muse_reason) AS MATERIALIZED (SELECT json_extract(frame.value,'$.type')," ++ C.last_assistant_sql_expr("frame.value") ++ ",CASE WHEN json_extract(frame.value,'$.payload.kind')='run_terminal' THEN json_extract(frame.value,'$.payload.terminal') END,coalesce(json_extract(frame.value,'$.payload.reason'),'') FROM frame) SELECT CASE WHEN (diagnostic.terminal='agent_end' AND json_extract(diagnostic.assistant,'$.stopReason')='error' AND (json_extract(diagnostic.assistant,'$.errorStatus')=429 OR instr(coalesce(json_extract(diagnostic.assistant,'$.errorMessage'),''),'The socket connection was closed unexpectedly.')=1)) OR (diagnostic.muse_terminal='failed' AND instr(diagnostic.muse_reason,'transport error [net-timeout]:')=1) THEN 1 ELSE 0 END FROM diagnostic;"
 
-def transient_provider_stated(db: String, +event: String) -> IO(Bool):
+def transient_provider_stated(+db: String, +event: String) -> IO(Bool):
   do IO<Bool>:
     found : String <- IO.try(String,DB.Sql.query(db,transient_provider_sql(event)))
     cause : String <- exhaustion_cause(db,event)
