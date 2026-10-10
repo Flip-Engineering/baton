@@ -110,9 +110,9 @@ Declare a Principal Conductor with `role SESSION principal-conductor` when the
 session has no parent, or an Associate Conductor with
 `role SESSION associate-conductor` when it has a parent. Unassigned sessions
 are Players. A Conductor can message descendants, and subordinate agents can
-message their immediate parent. Peer messages require shared tight Ensemble
-membership; Conductor peers also require the same hierarchy depth. An
-explicit operator identity communicates with top-level Conductors.
+message their immediate parent. Peer messages require non-operator sessions
+with no ancestor relationship and shared tight Ensemble membership. An explicit
+operator identity communicates with top-level Conductors.
 
 `ensemble ID OWNER` declares loose coupling. Add members with
 `ensemble-member ID OWNER SESSION add`, then use `ensemble ID OWNER tight`

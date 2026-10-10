@@ -47,10 +47,10 @@ requirements in the installation guide.
 
 ## Coordination
 
-Each agent session has a parent and an explicit route. Conductors send messages
-to descendants; subordinate agents send messages to their immediate Conductor.
-Peers communicate through explicitly designated tight Ensembles. Conductor
-peers also share a hierarchy depth. New Ensembles default to loose coupling.
+Agent sessions record parentage and an explicit route. Conductors send messages
+to descendants; subordinate agents send messages to their immediate parent.
+Non-operator peers with no ancestor relationship communicate through explicitly
+designated tight Ensembles. New Ensembles default to loose coupling.
 The [messaging guide](docs/bend2/messaging.md) describes admission and retries.
 
 Reports retain their complete bodies and native acceptance receipts. Registered

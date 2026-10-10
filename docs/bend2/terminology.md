@@ -44,10 +44,10 @@ roster for existing callers; first-party help and tools use `players`.
 
 ## Ensembles and Sections
 
-An Ensemble records its Conductor owner, loose or tight coupling and member
-Players. New Ensembles use loose coupling. A Player can belong to several
-Ensembles. [Messaging](messaging.md) defines hierarchy routes and peer routes
-through explicit tight Ensemble membership.
+An Ensemble records its owner ID, loose or tight coupling and member Players.
+The recorded owner manages membership. New Ensembles use loose coupling.
+A Player can belong to several Ensembles. [Messaging](messaging.md) defines
+hierarchy routes and peer routes through explicit tight Ensemble membership.
 
 A Section records a capability label and members within one Ensemble. Its
 owner is the Ensemble's recorded owner. Section members must already belong
