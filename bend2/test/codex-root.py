@@ -79,6 +79,52 @@ class CodexRootAdapter(unittest.TestCase):
             self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout.strip()
 
+    def observe(self, observation):
+        while True:
+            value = observation()
+            if value is not None:
+                return value
+            time.sleep(0.05)
+
+    def accepted(self, ident, receipt, missing=False):
+        def observation():
+            stored = subprocess.run([str(EXE), str(self.db), 'delivery', ident],
+                                    text=True, capture_output=True)
+            if (missing and stored.returncode == 1 and stored.stdout == ''
+                    and stored.stderr == 'No matching session or message; inspect status and the requested ID.\n'):
+                return None
+            self.assertEqual(stored.returncode, 0, stored.stdout + stored.stderr)
+            value = json.loads(stored.stdout)
+            if value['receipt'] is None:
+                return None
+            self.assertEqual(value['receipt'], receipt, value)
+            return value
+        return self.observe(observation)
+
+    def exited(self, session, status='exit 0'):
+        def observation():
+            player = next(row for row in json.loads(self.coord('players')) if row['id'] == session)
+            execution = player['execution']
+            if execution is None:
+                return None
+            self.assertEqual(execution['mode'], 'retained')
+            self.assertIn(execution['phase'], ('starting', 'running', 'exited'))
+            if execution['phase'] != 'exited':
+                self.assertEqual(execution['status'], '')
+                return None
+            self.assertEqual(execution['status'], status)
+            return execution
+        return self.observe(observation)
+
+    def completed(self, session, bodies):
+        def observation():
+            turns = json.loads(self.coord('turns', session))
+            return turns if len(turns) >= len(bodies) else None
+        turns = self.observe(observation)
+        self.assertEqual([turn['reportBody'] for turn in turns], bodies)
+        self.exited(session)
+        return turns
+
     def test_player_terminal_starts_attached_root_without_a_listener(self):
         import time
 
@@ -206,11 +252,14 @@ class CodexRootAdapter(unittest.TestCase):
         self.assertEqual(attached.returncode, 0, attached.stderr)
         self.register('w1', 'root', 'codex', 'model', 'low', str(temp), 'branch', 'base')
         failed = subprocess.run([str(EXE), str(self.db), 'report', 'failed-delivery', 'w1', 'Retained report'], capture_output=True, text=True)
-        self.assertNotEqual(failed.returncode, 0)
-        self.assertIn('Message committed; session delivery failed', failed.stderr)
+        self.assertEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+        self.exited('root', 'exit 23')
         pending = json.loads(self.coord('inbox', 'root'))
         self.assertEqual(pending[0]['body'], 'Retained report')
-        self.assertIsNone(json.loads(self.coord('delivery', 'failed-delivery'))['receipt'])
+        retained = json.loads(self.coord('delivery', 'failed-delivery'))
+        self.assertEqual((retained['sender'], retained['recipient'], retained['kind'], retained['body']),
+                         ('w1', 'root', 'report', 'Retained report'))
+        self.assertIsNone(retained['receipt'])
 
     def test_attached_session_continues_later_input_and_reattaches_same_native(self):
         temp = pathlib.Path(self.temp.name)
@@ -234,6 +283,10 @@ class CodexRootAdapter(unittest.TestCase):
             if message == 'first':
                 self.register('sender', 'root', 'fixture', 'model', 'low')
             self.coord('report', message, 'sender', 'Review this message.')
+            self.accepted(message, 'reviewed')
+            if message == 'first':
+                self.accepted('during-turn', 'reviewed', missing=True)
+            self.exited('root')
             self.assertEqual(json.loads(self.coord('player', 'root'))['native'], 'native-root')
         observed = [json.loads(line) for line in calls.read_text().splitlines()]
         self.assertEqual(len(observed), 3)
@@ -292,6 +345,8 @@ class CodexRootAdapter(unittest.TestCase):
                                   env={**os.environ, 'OPENAI_API_KEY': 'fixture-only',
                                        'CODEX_API_KEY': 'fixture-only'})
         self.assertEqual(reported.returncode, 0, reported.stderr)
+        self.accepted('selected-report', 'selected-reviewed')
+        self.completed(associate, ['Selected Associate reviewed.'])
         observed = json.loads(calls.read_text())
         expected_prefix = ['exec', 'resume', native_id] if native_id else ['exec', '--json', '--model']
         start = observed['argv'].index('exec')
