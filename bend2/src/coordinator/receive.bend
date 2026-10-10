@@ -55,7 +55,7 @@ def instructions(executable: String, database: String, +session: String, orienta
   ++ "Public messages follow assigned roles, parent links and explicit tight Ensemble membership. A Conductor can message its descendants. Report, ask and ask-file reach your recorded parent; a parentless Principal Conductor reaches the registered operator. Peer messages require a shared tight Ensemble.\n"
   ++ "Coordinator CLI:\n  " ++ command ++ " inbox " ++ shell(session) ++ "\n  " ++ command ++ " ack MESSAGE_ID " ++ shell(session) ++ " RECEIPT\n"
   ++ "Read each pending message in full and acknowledge your own handled input with its disposition. A receipt records input handling. Keep unfinished work and outstanding qualification in your reports and project state. Read your inbox again as work continues.\n  " ++ command ++ " orchestra\n  " ++ command ++ " players\n  " ++ command ++ " session ID\n  " ++ command ++ " worktree ID\n  " ++ command ++ " turns ID\n"
-  ++ "Use join for Players working in an existing checkout. Use recruit when the task needs a separate worktree.\n"
+  ++ "Use join for Players working in the shared checkout. Use recruit when the task needs a separate worktree. Each source assignment names the shared checkout, target branch, requested remote and Conductor who owns integration and publication.\n"
   ++ "  " ++ command ++ " join PLAYER " ++ shell(session) ++ " HARNESS MODEL EFFORT WORKSPACE\n"
   ++ "  " ++ command ++ " recruit PLAYER " ++ shell(session) ++ " HARNESS MODEL EFFORT REPO BRANCH PATH BASE\n"
   ++ "  " ++ command ++ " receiver PLAYER HARNESS_CMD OUTPUT_LOG [CWD]\n  " ++ command ++ " dispatch-file ID " ++ shell(session) ++ " PLAYER task TASK_FILE\n"
@@ -574,7 +574,7 @@ def acquired_pending(+db: String, +session: String, cmd: String, model: String, 
 
 def observe_guarded(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    reconciled : Unit <- Stop.reconcile(db,session,id,directory)
+    reconciled : Unit <- Stop.observing(db,session,id,directory)
     observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,handle,"unknown")
     completed_observation(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted,cmd)
 

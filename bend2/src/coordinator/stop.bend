@@ -115,6 +115,13 @@ def started(+db: String, +session: String, +attempt: String, +directory: String)
     saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE executions SET phase='running' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND phase='starting';"))
     reconcile(db,session,attempt,directory)
 
+# A successful attachment resumes observation of this current attempt. Its
+# retained native status becomes the execution status when observation finishes.
+def observing(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE executions SET phase='running',status='' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND directory=" ++ C.q(directory) ++ ";"))
+    reconcile(db,session,attempt,directory)
+
 # Completion preserves the native event and status. Its stop report is committed
 # before the owner releases custody; native acceptance receipts are unchanged.
 def exited_sql(+session: String, +attempt: String, +status: String, +event: String, +error: String, +log: String) -> String:

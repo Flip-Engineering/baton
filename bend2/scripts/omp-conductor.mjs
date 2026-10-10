@@ -88,7 +88,9 @@ function systemPrompt(session) {
     `  ${command} status          — show all sessions`,
     `  ${command} players         — list players with latest report`,
     `  ${command} player PLAYER — inspect a Player or Conductor`,
-    `  ${command} recruit PLAYER ${recipient} HARNESS MODEL EFFORT REPO BRANCH PATH BASE — recruit a child`,
+    `  ${command} join PLAYER ${recipient} HARNESS MODEL EFFORT WORKSPACE — register a Player in the shared checkout`,
+    `  ${command} recruit PLAYER ${recipient} HARNESS MODEL EFFORT REPO BRANCH PATH BASE — create a separate task worktree`,
+    `  ${command} receiver PLAYER HARNESS_CMD OUTPUT_LOG [CWD] — register or relocate a Player's receive endpoint`,
     `  ${command} turns PLAYER    — show a player's turn history`,
     `  ${command} inbox ${recipient}      — show your pending messages`,
     `  ${command} pending         — list all undelivered messages`,
@@ -114,11 +116,13 @@ function systemPrompt(session) {
     `  ${command} promote PROMOTION_ID ${recipient} SOURCE ${recipient} FINDING_ID — promote from SOURCE into your scope`,
     '',
     'Landing defaults to the recorded branch tip; --commit selects a reviewed ancestor while later work remains on the branch.',
+    'Use join for shared-checkout work and recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment.',
     'Author findings from reviewed evidence. Cite the source of the finding and state the claim\'s limits. A message:MESSAGE_ID reference includes the retained message body.',
     'Review a finding before explicitly promoting it from its recorded source scope. Its original author remains recorded.',
     'A promotion notice names a finding shared into your scope. Retrieve it with knowledge, review its evidence and decide which players should receive a message about it.',
     'When you receive a player report, review it and acknowledge it.',
-    'If the player made changes, inspect its worktree state and land them when ready.',
+    'Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target.',
+    'After publication and turn completion, relocate the same Player with receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work and receiver/toolchain dependencies.',
   ].join('\n');
 }
 

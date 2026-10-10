@@ -1274,7 +1274,7 @@ def recover(+db: String, +player: String, +id: String, +cmd: String, +model: Str
     valid_harness : Unit <- Stop.error_result("Recorded direct recovery harness differs from the current session; preserve the attempt and inspect its manifest.",String.eq(Tx.trim_nl(recorded_harness),harness))
     prompt : String <- IO.try(String,T.Text.read(directory ++ "/prompt.txt"))
     +handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
-    reconciled : Unit <- Stop.reconcile(db,player,id,directory)
+    reconciled : Unit <- Stop.observing(db,player,id,directory)
     observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,recorded_harness,directory,handle,"unknown")
     direct_first_observed(db,player,id,cmd,model,effort,cwd,"",log,recorded_harness,directory,session,prompt,handle,None{},observation)
 

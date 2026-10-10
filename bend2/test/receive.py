@@ -2871,7 +2871,9 @@ class Receive(unittest.TestCase):
     def test_direct_receive_behind_a_live_child_starts_no_second_turn(self):
         """A live retained child outlives its dead observer with the session
         lock free: a direct receive adopts rather than duplicating, so no
-        second native conversation starts and the live claim row is intact."""
+        second native conversation starts and the live claim row is intact.
+        Adoption also clears stale owner-death execution metadata.
+        """
         self.player()
         self.prepare_input('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
@@ -2884,6 +2886,11 @@ class Receive(unittest.TestCase):
         self.drain_others()
         directory = self.execution('parent')[2]
         self.assert_native_alive(directory, 'retained child died; the live-child premise is void')
+        self.connect('parent')
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute("UPDATE executions SET phase='exited',status='owner-death'"
+                             " WHERE session=?", ('parent',))
+        self.assertEqual(self.coord('player', 'parent')['blockedCause'], 'provider-failure')
         second = self.spawn(*self.receive_args('parent'))
         marker = 'original native observed by the adopted direct receiver'
         self.action(control, progress=marker)
@@ -2896,6 +2903,8 @@ class Receive(unittest.TestCase):
             return log.exists() and marker in log.read_text()
 
         self.eventually(adopted_output, 'direct receiver did not observe the retained child')
+        self.assertEqual(self.execution('parent')[:2], ('running', ''))
+        self.assertEqual(self.coord('player', 'parent')['blockedCause'], '')
         self.assert_no_start()
         self.assertIsNone(second.poll(),
                           'direct receive exited instead of adopting the live attempt')
