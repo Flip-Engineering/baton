@@ -83,7 +83,7 @@ class FixedCoordinator(unittest.TestCase):
         self.addCleanup(self.close_children)
         self.owner_pid = None
         self.serve_proc = None
-        self.coord('attach', 'root', 'codex', 'native-root', '')
+        self.coord('attach', 'root', 'terminal', '', '')
         self.coord('role', 'root', 'principal-conductor')
         self.coord('attach', 'operator', 'terminal', '', '')
         self.coord('role', 'operator', 'operator')
@@ -1045,6 +1045,54 @@ finally:
         self.assertEqual(self.inbox('late'), [])
         self.assertEqual(self.query("SELECT count(*) FROM session_stops"), [(0,)])
         self.shutdown(expect_serve=1)
+
+    def test_13_endpointless_codex_continues_owed_input_after_settlement(self):
+        self.recruit('w1', 'codex')
+        self.managed_app_proxy()
+        self.queue('w1-app', {'controlReady': True})
+        self.dispatch('endpointless-task', 'w1', 'Continue this original task after the App turn settles.')
+        self.start_owner()
+        self.start_serve()
+        self.stream_for('w1-app')
+
+        def app_calls(method):
+            lines = self.codex_calls.read_text().splitlines(keepends=True)
+            return [row for line in lines if line.endswith('\n')
+                    for row in [json.loads(line)] if row['method'] == method
+                    and row.get('params', {}).get('threadId') == 'native-w1']
+
+        self.assertEqual(self.query("SELECT native,endpoint FROM sessions WHERE id='w1'"),
+                         [('native-w1', '')])
+        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='endpointless-task'"),
+                         [(None,)])
+        self.assertTrue(app_calls('turn/steer'), 'the public sender did not admit the original input')
+        self.release('w1-app', settle=True)
+        self.eventually(lambda: app_calls('turn/start'),
+                        'the endpointless App session did not continue its original owed input')
+        self.assertEqual(len(app_calls('turn/start')), 1)
+        self.dispatch('endpointless-guidance', 'w1', 'Handle this guidance with the original task.',
+                      kind='guidance')
+        self.release('w1-app', settle=True)
+        self.eventually(lambda: len(app_calls('turn/start')) >= 2,
+                        'the endpointless App session lost later owed guidance')
+        self.assertEqual(len(app_calls('turn/start')), 2)
+        pointer = app_calls('turn/start')[-1]['params']['input'][0]['text']
+        self.assertIn('"pendingCount":2', pointer)
+        self.assertEqual(self.query("SELECT receipt FROM messages WHERE recipient='w1' ORDER BY seq"),
+                         [(None,), (None,)])
+        self.assertEqual(len(self.connections('w1-app')), 1,
+                         'the original App follower was replaced')
+        self.assertEqual(len(self.connections('w1')), 0,
+                         'the endpointless App session launched a native CLI receiver')
+        self.coord('stop', 'w1', 'endpointless-operator-stop', 'Retain the remaining App input.')
+        self.eventually(lambda: not any('--follow' in process['command'] and str(self.db) in process['command']
+                                       for process in self.owned_processes()),
+                        'the endpointless follower remained live after the explicit stop')
+        self.assertEqual([message['id'] for message in self.inbox('w1')],
+                         ['endpointless-task', 'endpointless-guidance'])
+        self.assertEqual(self.query("SELECT native,endpoint FROM sessions WHERE id='w1'"),
+                         [('native-w1', '')])
+        self.shutdown()
 
 
 if __name__ == '__main__':

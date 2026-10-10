@@ -49,7 +49,7 @@ def recorded_endpoint(+db: String, +session: String, index: String) -> IO(String
     IO.pure(String, Tx.trim_nl(saved))
 
 def managed_receiver_sql() -> String:
-  "CASE WHEN json_valid(s.endpoint) THEN s.harness='codex' AND s.native<>'' AND json_extract(s.endpoint,'$[1]') LIKE '%/codex-inbox-wake.mjs' AND json_extract(s.endpoint,'$[#-5]')='--session' AND json_extract(s.endpoint,'$[#-2]')=s.id AND json_extract(s.endpoint,'$[#-1]')=s.native ELSE 0 END"
+  "s.harness='codex' AND s.native<>'' AND CASE WHEN s.endpoint='' THEN 1 WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND (json_array_length(s.endpoint)=0 OR (json_extract(s.endpoint,'$[1]') LIKE '%/codex-inbox-wake.mjs' AND json_extract(s.endpoint,'$[#-5]')='--session' AND json_extract(s.endpoint,'$[#-2]')=s.id AND json_extract(s.endpoint,'$[#-1]')=s.native)) ELSE 0 END"
 
 def native_receiver_sql() -> String:
   Delivery.native_receiver_sql()
@@ -66,7 +66,8 @@ def split_triple(+line: String) -> (String & String) & String:
   split_triple_parts(String.split(line, Char.from_u32(124)), line)
 
 # Generated receivers use Receive for Codex, OMP, Muse and Claude Code.
-# A configured managed Codex App helper subscribes to its existing conversation.
+# Codex App sessions with an empty receiver or a configured managed helper
+# subscribe to their recorded conversation.
 # Other routes retain their recorded endpoint and report their required setup.
 def parse_fit(fit: Bool, session: String, harness: String, serve: List<(String & String)>, refuse: List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
   match fit:

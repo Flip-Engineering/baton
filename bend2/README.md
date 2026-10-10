@@ -171,9 +171,11 @@ new one. A failed submission retains the daemon's output and owed messages;
 
 For a managed Codex App session, `connect` accepts the installed helper endpoint
 `["node","/absolute/libexec/baton2/codex-inbox-wake.mjs","--session","/absolute/bin/baton2","/absolute/database","PLAYER","THREAD"]`.
-`serve` owns one lifecycle subscription for each configured session with pending
-input. When its App turn settles, the helper checks its pending inbox and
-prompts the same conversation to handle it. The helper retains actual
+Codex App sessions with a recorded native conversation can also leave their
+receiver endpoint empty. `serve` owns one lifecycle subscription for each
+endpointless or configured App session with pending input. When its App turn
+settles, the helper checks its pending inbox and prompts the same conversation
+to handle it. The helper retains actual
 turn failures and public input admission results. Recipient acknowledgements
 clear handled input; an explicit stop closes the subscription and preserves
 the remaining messages.
