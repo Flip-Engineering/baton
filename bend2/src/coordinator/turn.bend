@@ -849,14 +849,18 @@ def profile_path(+db: String, player: String) -> IO(String):
     IO.pure(String,Tx.trim_nl(saved))
 
 # The profile in use is the last line of the session's append-only record. A missing
-# record keeps the harness's default store. Other read failures stop the launch with
-# the filesystem's code and detail.
-def current_store(db: String, player: String) -> IO(String):
+# record keeps the harness's default store. A record written under another harness
+# binds nothing, so a Codex store never becomes CLAUDE_CONFIG_DIR after a route
+# switch; legacy harness-less records keep today's binding. Other read failures stop
+# the launch with the filesystem's code and detail.
+def current_store(db: String, player: String, +harness: String) -> IO(String):
   do IO<String>:
     path : String <- profile_path(db,player)
     read : Result<&1,&1,U32 & String,String> <- T.Text.read(path)
     text : String <- IO.pass(String,Subs.optional_text(read))
-    IO.pure(String,Subs.record_store(Subs.last_line(Tx.split_lines(text))))
+    +last : String <- IO.pure(String,Subs.last_line(Tx.split_lines(text)))
+    recorded : String <- IO.pure(String,Subs.record_harness(last))
+    IO.pure(String,Bool.pick(String,Bool.or(String.is_empty(recorded),String.eq(recorded,Tx.trim_nl(harness))),Subs.record_store(last),""))
 
 def history_path(+db: String, player: String) -> IO(String):
   do IO<String>:
@@ -926,7 +930,7 @@ def retained_prepare(+db: String, +player: String, +directory: String, +cmd: Str
     muse_args : String <- IO.pure(String,prefix ++ P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
     +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
     +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
-    +store : String <- current_store(db,player)
+    +store : String <- current_store(db,player,harness)
     history : String <- current_history(db,player)
     +args : String <- IO.pure(String,prefix ++ Bool.pick(String,String.is_empty(store),retained_arguments(omp,claude,cmd,model,effort,sessions,native),retained_profile_arguments(omp,claude,Subs.store_binding(Tx.trim_nl(harness),store),Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)))
     +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
@@ -1152,6 +1156,83 @@ def direct_cleanup(+handle: U32, deliveries: List<Chan(Result<&1,&1,U32 & String
     acknowledged : Result<&1,&1,U32 & String,Unit> <- direct_acknowledge(handle)
     IO.pass(Unit,combine(released,combine(questions,acknowledged)))
 
+# The terminal event carried by an Ended outcome, for the direct route decision.
+def direct_event(outcome: Outcome) -> String:
+  match outcome:
+    case Ended{status,event,error,incomplete}: event
+
+# The recovery guidance for a direct route switch names the original turn, the old
+# native lineage and the complete saved direct task. It is written even when other
+# reports are owed, so the continuation carries its provenance on a busy session too.
+# Parentless turns keep no :task-input row; the saved request row carries the task.
+def direct_route_guidance(+db: String, +player: String, +id: String, conversation: String, harness: String, model: String) -> IO(Unit):
+  do IO<Unit>:
+    task : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT task FROM direct_turn_requests WHERE id=" ++ C.q(id) ++ " AND session=" ++ C.q(player) ++ "),'');"))
+    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":route-guidance") ++ ",id,id,'guidance'," ++ C.q("All subscription accounts refused with provider-reported usage exhaustion and the task continues on another operator-listed route: harness=" ++ harness ++ " model=" ++ model ++ ". Continue the original direct turn from its assignment and context; the previous native conversation lineage is " ++ conversation ++ "; the failed turn stays recorded with the provider cause; the complete saved direct task: " ++ Tx.trim_nl(task)) ++ " FROM sessions WHERE id=" ++ C.q(player) ++ " AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ ";"))
+    IO.pure(Unit,Unit{})
+
+# A route switch runs only on a complete, clean exhaustion terminal that recorded the
+# all-accounts-refused outcome on an unstopped session. An incomplete observation or
+# a recorded observation error keeps the ordinary wake; a provider-exhaustion report
+# alone does not clear it. History and lineage append IO failures and stops also keep
+# the ordinary wake. Receive shares this decision through route_observed so both
+# paths require the same completely observed availability episode.
+def route_reported(+db: String, +player: String, +id: String, event: String, error_clear: Bool) -> IO(Bool):
+  match error_clear:
+    case True{}: do IO<Bool>:
+      closed : Bool <- Stop.stopped(db,player)
+      triggered : Bool <- Subs.route_trigger(db,id,event)
+      IO.pure(Bool,Bool.and(Bool.not(closed),triggered))
+    case False{}: IO.pure(Bool,False{})
+
+def route_observed(+db: String, +player: String, +id: String, event: String, error: String, incomplete: Bool) -> IO(Bool):
+  match incomplete:
+    case True{}: IO.pure(Bool,False{})
+    case False{}: route_reported(db,player,id,event,String.is_empty(error))
+
+def direct_route_decided(+db: String, +player: String, +id: String, outcome: Outcome) -> IO(Bool):
+  match outcome:
+    case Ended{status,event,error,incomplete}: route_observed(db,player,id,event,error,incomplete)
+
+def direct_route_applied(+db: String, +player: String, +id: String, +log: String, +cause: String, +old_harness: String, old_model: String, +effort: String, +conversation: String, outcome: Outcome, chosen: Maybe<&2,Subs.Route>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match chosen:
+    case None{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      noted : Unit <- Subs.report_route_unavailable(db,player,id,old_harness,cause)
+      wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,wake)
+    case Some{+route}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      noted : Unit <- Subs.report_route_chosen(db,player,id,route,cause)
+      configured : String <- Control.configure(db,player,Subs.route_harness(route),Subs.route_model(route),effort,Subs.route_cmd(route),log,old_harness,old_model,effort)
+      cleared : Unit <- Subs.clear_incompatible_native(db,player,old_harness,Subs.route_harness(route))
+      guided : Unit <- direct_route_guidance(db,player,id,conversation,Subs.route_harness(route),Subs.route_model(route))
+      wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,wake)
+
+def direct_route_continue(+db: String, +player: String, +id: String, +log: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +cause : String <- Subs.exhaustion_cause(db,direct_event(outcome))
+    +old_harness : String <- IO.try(String,DB.Sql.query(db,Subs.session_route_sql(db,player)))
+    +old_model : String <- IO.try(String,DB.Sql.query(db,Subs.session_model_sql(db,player)))
+    +effort : String <- IO.try(String,DB.Sql.query(db,"SELECT effort FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+    +conversation : String <- direct_conversation(db,player,"")
+    chosen : Maybe<&2,Subs.Route> <- Subs.select_route(db,player,id)
+    direct_route_applied(db,player,id,log,cause,Tx.trim_nl(old_harness),Tx.trim_nl(old_model),Tx.trim_nl(effort),Tx.trim_nl(conversation),outcome,chosen)
+
+def direct_route_wake(+db: String, +player: String, +id: String, +log: String, outcome: Outcome, routed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match routed:
+    case False{}: direct_wake(db,player,id,outcome)
+    case True{}: direct_route_continue(db,player,id,log,outcome)
+
+# A route launches only on clean settlement: any native release, finish, question or
+# acknowledgment failure keeps its own failed result and wakes ordinarily, matching
+# the receive route_after_advance gate.
+def direct_settled_wake(+db: String, +player: String, +id: String, +log: String, +outcome: Outcome, settled: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match settled:
+    case Fail{error}: direct_wake(db,player,id,outcome)
+    case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      routed : Bool <- direct_route_decided(db,player,id,outcome)
+      direct_route_wake(db,player,id,log,outcome,routed)
+
 def direct_completed(+db: String, +player: String, +id: String, +log: String, +directory: String, +handle: U32, lock: Maybe<U32>, observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Unit):
   (+outcome,deliveries)=observation
   do IO<Unit>:
@@ -1162,8 +1243,9 @@ def direct_completed(+db: String, +player: String, +id: String, +log: String, +d
     finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     acknowledged : Result<&1,&1,U32 & String,Unit> <- direct_acknowledge(handle)
-    wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
-    IO.pass(Unit,combine(native_released,combine(finished,combine(questions,combine(acknowledged,wake)))))
+    +settled : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,combine(native_released,combine(finished,combine(questions,acknowledged))))
+    wake : Result<&1,&1,U32 & String,Unit> <- direct_settled_wake(db,player,id,log,outcome,settled)
+    IO.pass(Unit,combine(settled,wake))
 
 def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +directory: String, lock: Maybe<U32>, error: String) -> IO(Unit):
   do IO<Unit>:

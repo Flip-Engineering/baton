@@ -1992,7 +1992,7 @@ class Receive(unittest.TestCase):
         self.action(second)
         self.finish(observer)
         self.assertEqual(self.coord('delivery', 'fallback')['receipt'], 'native-reviewed')
-        self.assertEqual(record.read_text().splitlines()[-1], 'B ' + str(store_b))
+        self.assertEqual(record.read_text().splitlines()[-1], 'codex B ' + str(store_b))
         handoff = [message for message in self.coord('inbox', 'operator')
                    if 'subscription profile handoff' in message['body']]
         self.assertEqual(len(handoff), 1)
@@ -2057,7 +2057,7 @@ class Receive(unittest.TestCase):
             self.assertEqual(prepared['store'], str(store_b))
             self.assertEqual(prepared['rolloutPath'], str(transcript_a))
             self.assertEqual(prepared['historyPath'], str(transcript_b))
-            self.assertEqual(record.read_text().splitlines()[-1], 'B ' + str(store_b))
+            self.assertEqual(record.read_text().splitlines()[-1], 'claude-code B ' + str(store_b))
             self.action(second)
             self.finish(observer)
         self.assertEqual(self.coord('delivery', 'claude-fallback')['receipt'], 'native-reviewed')
@@ -2161,7 +2161,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(history[1]['home'], str(home_a))
         self.action(second)
         self.finish(direct)
-        self.assertEqual(record.read_text().splitlines()[-1], 'B ' + str(store_b))
+        self.assertEqual(record.read_text().splitlines()[-1], 'codex B ' + str(store_b))
         handoff = [message for message in self.coord('inbox', 'operator')
                    if 'subscription profile handoff' in message['body']]
         self.assertEqual(len(handoff), 1)
@@ -2240,7 +2240,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(recorded_home['home'], str(home_a))
         self.action(third)
         self.finish(direct)
-        self.assertEqual(record.read_text().splitlines()[-1], 'C ' + str(store_c))
+        self.assertEqual(record.read_text().splitlines()[-1], 'codex C ' + str(store_c))
         handoff = sorted((message for message in self.coord('inbox', 'operator')
                           if 'subscription profile handoff' in message['body']),
                          key=lambda message: message['id'])
@@ -2312,7 +2312,7 @@ class Receive(unittest.TestCase):
         # continuation's own completion is still pending: the keeper-owned recovery
         # process has no test handle, so observe the actual final turn row rather
         # than asserting it immediately.
-        self.assertEqual(record.read_text().splitlines()[-1], 'B ' + str(store_b))
+        self.assertEqual(record.read_text().splitlines()[-1], 'codex B ' + str(store_b))
         handoff = [message for message in self.coord('inbox', 'operator')
                    if 'subscription profile handoff' in message['body']]
         self.assertEqual(len(handoff), 1)
@@ -2705,6 +2705,128 @@ class Receive(unittest.TestCase):
         self.assertIn('provider-reported usage exhaustion: ' + cause, account_reports[0]['body'])
         self.assertEqual(self.coord('delivery', 'input')['receipt'], 'native-reviewed')
         self.assertEqual(self.coord('inbox', 'parent'), [])
+
+    def test_omp_insufficient_balance_exhaustion_keeps_its_account_failure(self):
+        self.player('parent', harness='omp')
+        self.message('input', 'parent')
+        cause = ('402 Insufficient Balance '
+                 '(request_id: 4d0c2819-79e8-492c-b9d5-823ee49dc538), '
+                 'repeated Insufficient Balance, '
+                 'type=unknown_error param=invalid_request_error')
+        failed = self.spawn(*self.receive_args('parent'))
+        control, original = self.accept('parent')
+        self.action(control, fail_status=402, fail_message=cause)
+        self.action(control, exit_fixture=True)
+        self.finish(failed, ok=False)
+        self.assert_no_start()
+        turns = self.coord('turns', 'parent')
+        self.assertEqual(len(turns), 1)
+        self.assertIn(cause, turns[0]['reportBody'])
+        account_reports = [message for message in self.coord('inbox', 'root')
+                           if message['id'].endswith(':profile-exhausted')]
+        self.assertEqual(len(account_reports), 1)
+        self.assertIn('provider-reported usage exhaustion: ' + cause, account_reports[0]['body'])
+        self.assertEqual(self.coord('delivery', 'input')['receipt'], 'native-reviewed')
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+
+    def test_omp_exhaustion_continues_on_operator_listed_route(self):
+        """All accounts refused with no .profiles file: the :profile-exhausted report is
+        recorded, the first viable operator-listed route in state.db.routes is selected,
+        the session is reconfigured to it, route guidance names the new route, and the same
+        receive invocation relaunches the retained original task under it. The refused omp
+        pair is recorded in the per-session route lineage. Every assertion reads coordinator
+        state or the relaunched native start; no source SQL text is asserted."""
+        self.player('parent', harness='omp')
+        self.message('input', 'parent')
+        (self.directory / 'state.db.routes').write_text(
+            'omp parent ' + str(self.fixture) + '\n'
+            'muse muse-main ' + str(self.fixture) + '\n')
+        cause = ('429 Usage limit reached for 5 hour. Your limit will reset at 2026-10-06 07:12:52\n'
+                 'Usage limit reached for 5 hour. Your limit will reset at 2026-10-06 07:12:52 (type=1308)')
+        failed = self.spawn(*self.receive_args('parent'))
+        control, original = self.accept('parent')
+        self.action(control, fail_status=429, fail_message=cause)
+        self.action(control, exit_fixture=True)
+        second, resumed = self.accept_or_child_exit(failed, 'route continuation did not relaunch')
+        self.assertEqual(resumed['session'], 'parent')
+        self.assertNotEqual(resumed['native'], original['native'])
+        rerouted = self.coord('player', 'parent')
+        self.assertEqual((rerouted['harness'], rerouted['model']), ('muse', 'muse-main'))
+        account_reports = [message for message in self.coord('inbox', 'root')
+                           if message['id'].endswith(':profile-exhausted')]
+        self.assertEqual(len(account_reports), 1)
+        self.assertIn('provider-reported usage exhaustion: ' + cause, account_reports[0]['body'])
+        chosen = [message for message in self.coord('inbox', 'root')
+                  if message['id'].endswith(':route-chosen')]
+        self.assertEqual(len(chosen), 1)
+        self.assertIn('harness=muse', chosen[0]['body'])
+        self.assertIn('model=muse-main', chosen[0]['body'])
+        self.assertIn(cause, chosen[0]['body'])
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            guidance = database.execute(
+                "SELECT body FROM messages WHERE id LIKE '%:route-guidance'").fetchall()
+        self.assertEqual(len(guidance), 1)
+        self.assertIn('harness=muse', guidance[0][0])
+        self.assertIn('model=muse-main', guidance[0][0])
+        self.assertNotIn('SELECT', guidance[0][0])
+        lineage = self.directory / ('state.db.route-' + 'parent'.encode().hex())
+        self.assertEqual(lineage.read_text().splitlines()[-1].split()[-2:], ['omp', 'parent'])
+        self.action(second)
+        self.finish(failed)
+        turns = self.coord('turns', 'parent')
+        self.assertEqual(len(turns), 2)
+        failed_turns = [turn for turn in turns if cause in turn['reportBody']]
+        self.assertEqual(len(failed_turns), 1)
+        self.assertEqual(self.coord('delivery', 'input')['receipt'], 'native-reviewed')
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+
+    def test_direct_exhaustion_continues_on_operator_listed_route(self):
+        """A raw turn that fails with provider-reported usage exhaustion and no .profiles
+        file records :profile-exhausted, selects the first viable operator-listed route,
+        reconfigures the session, and writes continuation guidance carrying the saved
+        complete task. The refused omp pair is recorded in the per-session route lineage
+        and the original cause travels on the chosen report. Every assertion reads
+        coordinator state; no source SQL text is asserted."""
+        self.player('routed', harness='omp')
+        self.connect('routed')
+        (self.directory / 'state.db.routes').write_text(
+            'omp routed ' + str(self.fixture) + '\n'
+            'muse muse-main ' + str(self.fixture) + '\n')
+        task = self.directory / 'direct task'
+        task.write_text('Direct retained work.\n')
+        child = self.spawn('turn', 'routed', 'routed-turn', self.fixture, 'routed', 'low',
+                           self.directory, task, self.directory / 'routed.jsonl', '')
+        control, started = self.accept('routed')
+        cause = ('429 Usage limit reached for 5 hour. Your limit will reset at 2026-10-06 07:12:52\n'
+                 'Usage limit reached for 5 hour. Your limit will reset at 2026-10-06 07:12:52 (type=1308)')
+        self.action(control, fail_status=429, fail_message=cause)
+        self.action(control, exit_fixture=True)
+        self.finish(child)
+        turns = self.coord('turns', 'routed')
+        failed_turns = [turn for turn in turns if cause in turn['reportBody']]
+        self.assertEqual(len(failed_turns), 1)
+        rerouted = self.coord('player', 'routed')
+        self.assertEqual((rerouted['harness'], rerouted['model']), ('muse', 'muse-main'))
+        self.assertEqual(rerouted['native'], '')
+        account_reports = [message for message in self.coord('inbox', 'root')
+                           if message['id'].endswith(':profile-exhausted')]
+        self.assertEqual(len(account_reports), 1)
+        self.assertIn('provider-reported usage exhaustion: ' + cause, account_reports[0]['body'])
+        chosen = [message for message in self.coord('inbox', 'root')
+                  if message['id'].endswith(':route-chosen')]
+        self.assertEqual(len(chosen), 1)
+        self.assertIn('harness=muse', chosen[0]['body'])
+        self.assertIn('model=muse-main', chosen[0]['body'])
+        self.assertIn(cause, chosen[0]['body'])
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            guidance = database.execute(
+                "SELECT body FROM messages WHERE id LIKE '%:route-guidance'").fetchall()
+        self.assertEqual(len(guidance), 1)
+        self.assertIn('Direct retained work.', guidance[0][0])
+        self.assertIn('harness=muse', guidance[0][0])
+        self.assertNotIn('SELECT', guidance[0][0])
+        lineage = self.directory / ('state.db.route-' + 'routed'.encode().hex())
+        self.assertEqual(lineage.read_text().splitlines()[-1].split()[-2:], ['omp', 'routed'])
 
     def test_turn_and_receive_share_ownership_and_omp_session_file(self):
         self.player(harness='omp')

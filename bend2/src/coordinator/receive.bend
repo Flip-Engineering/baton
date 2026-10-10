@@ -2,6 +2,7 @@ import Base
 import ../coordinator/commands.bend as C
 import ./../coordinator/logs.bend as Logs
 import ../harness/omp-player.bend as Omp
+import ./control.bend as Control
 import ./store.bend as Store
 import ./stop.bend as Stop
 import ./subscription-fallback.bend as Subs
@@ -598,11 +599,71 @@ def completed_profile(+db: String, +session: String, +id: String, log: String, c
       observed : Result<&1,&1,U32 & String,Unit> <- observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,lock,(outcome,deliveries),u => IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),adopted,True{})
       advanced_completed(db,session,id,attempt,again,observed)
 
+# A route switch runs only on a complete, clean exhaustion terminal with no profile
+# advanced. The shared Turn.route_observed decision requires the same completely
+# observed availability episode as the Direct path; history and lineage append IO
+# failures and stops keep the ordinary failed settlement.
+def route_terminal(+db: String, +session: String, +id: String, outcome: Turn.Outcome) -> IO(Bool):
+  match outcome:
+    case Turn.Ended{status,event,error,incomplete}: Turn.route_observed(db,session,id,event,error,incomplete)
+
+def route_decided(+db: String, +session: String, +id: String, +outcome: Turn.Outcome, advanced: Bool) -> IO(Bool):
+  match advanced:
+    case True{}: IO.pure(Bool,False{})
+    case False{}: route_terminal(db,session,id,outcome)
+
+# The recovery guidance for a route switch names the original assignment and the old
+# native lineage. It is written even when other reports are owed, so the continuation
+# carries its provenance on a busy session too.
+def route_guidance(db: String, +session: String, id: String, attempt: String, native: String, harness: String, model: String) -> IO(Unit):
+  do IO<Unit>:
+    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":route-guidance") ++ ",id,id,'guidance'," ++ C.q("All subscription accounts refused with provider-reported usage exhaustion and the task continues on another operator-listed route: harness=" ++ harness ++ " model=" ++ model ++ ". Continue the original retained attempt " ++ attempt ++ " from the original assignment and context; the previous native conversation lineage is " ++ native ++ "; the task message that started it is already acknowledged and the failed turn stays recorded with the provider cause.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
+    IO.pure(Unit,Unit{})
+
+def route_applied(+db: String, +session: String, +id: String, attempt: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), native: String, log: String, +cause: String, +old_harness: String, old_model: String, +effort: String, chosen: Maybe<&2,Subs.Route>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match chosen:
+    case None{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      noted : Unit <- Subs.report_route_unavailable(db,session,id,old_harness,cause)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case Some{+route}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      noted : Unit <- Subs.report_route_chosen(db,session,id,route,cause)
+      configured : String <- Control.configure(db,session,Subs.route_harness(route),Subs.route_model(route),effort,Subs.route_cmd(route),log,old_harness,old_model,effort)
+      cleared : Unit <- Subs.clear_incompatible_native(db,session,old_harness,Subs.route_harness(route))
+      guided : Unit <- route_guidance(db,session,id,attempt,native,Subs.route_harness(route),Subs.route_model(route))
+      next : Result<&1,&1,U32 & String,Unit> <- again(Unit{})
+      IO.pure(Result<&1,&1,U32 & String,Unit>,next)
+
+def route_continue(+db: String, +session: String, +id: String, +attempt: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), native: String, log: String, outcome: Turn.Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +cause : String <- Subs.exhaustion_cause(db,terminal_event(outcome))
+    +old_harness : String <- IO.try(String,DB.Sql.query(db,Subs.session_route_sql(db,session)))
+    +old_model : String <- IO.try(String,DB.Sql.query(db,Subs.session_model_sql(db,session)))
+    +effort : String <- IO.try(String,DB.Sql.query(db,"SELECT effort FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    chosen : Maybe<&2,Subs.Route> <- Subs.select_route(db,session,id)
+    route_applied(db,session,id,attempt,again,native,log,cause,Tx.trim_nl(old_harness),Tx.trim_nl(old_model),Tx.trim_nl(effort),chosen)
+
+# A selected route continuation reuses the suppressed-settle distinction: only a
+# cleanly observed path continues. Any delivery, settlement, finish, or acknowledgment
+# failure keeps its own result and launches nothing, while the failed turn row stays
+# recorded from the outcome itself.
+def route_after_advance(+db: String, +session: String, +id: String, +attempt: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), native: String, log: String, outcome: Turn.Outcome, observed: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match observed:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+    case Done{unit}: route_continue(db,session,id,attempt,again,native,log,outcome)
+
+def completed_routed(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, +cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, superseded: Bool, routed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match routed:
+    case False{}: completed_profile(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,adopted,superseded)
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      observed : Result<&1,&1,U32 & String,Unit> <- observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,lock,(outcome,deliveries),u => IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),adopted,True{})
+      route_after_advance(db,session,id,attempt,again,native,log,outcome,observed)
+
 def completed_observation(+db: String, +session: String, +id: String, log: String, cursor: String, +native: String, +cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, observation: Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   (+outcome,deliveries)=observation
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    superseded : Bool <- Subs.profile_handoff(db,session,id,terminal_event(outcome),native,cmd,cwd)
-    completed_profile(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,adopted,superseded)
+    +superseded : Bool <- Subs.profile_handoff(db,session,id,terminal_event(outcome),native,cmd,cwd)
+    routed : Bool <- route_decided(db,session,id,outcome,superseded)
+    completed_routed(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,adopted,superseded,routed)
 
 def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, level: String, lock: U32, start: P.RetainedStart, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match start:

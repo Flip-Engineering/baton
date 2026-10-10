@@ -1,6 +1,9 @@
 # Fixture for the #702 subscription-profile fallback. It drives the real operator list
 # parse and order, the real credential-store binding, the real harness argv composition
 # with its env option order, record serialization and optional-file read results.
+# Route selection drives the real two-field parse, the Opus pairing rule, incident
+# refusal skips and operator-order choice over parsed fixture entries only: entry
+# names are fixtures and prove no live availability.
 # Native receive cases in receive.py exercise retained task and history continuation.
 import Base
 import ../src/coordinator/subscription-fallback.bend as Subs
@@ -83,9 +86,18 @@ def record_checks() -> IO<Unit>:
     last : Unit <- check("record-last-line-is-current",String.eq(Subs.last_line(Tx.split_lines("codex-main /fixture/a\ncodex-alt /fixture/b c\n")),"codex-alt /fixture/b c"))
     label : Unit <- check("record-label-parses",String.eq(Subs.record_label("codex-alt /fixture/b c"),"codex-alt"))
     store : Unit <- check("record-store-keeps-spaces",String.eq(Subs.record_store("codex-alt /fixture/b c"),"/fixture/b c"))
-    serialized : String <- IO.pure(String,Subs.record_line(Subs.Pr{"codex","codex-alt","/fixture/b c"}))
-    line : Unit <- check("record-line-keeps-spaces",String.eq(serialized,"codex-alt /fixture/b c"))
-    roundtrip : Unit <- check("record-line-roundtrip",Bool.and(String.eq(Subs.record_label(serialized),"codex-alt"),String.eq(Subs.record_store(serialized),"/fixture/b c")))
+    +serialized : String <- IO.pure(String,Subs.record_line(Subs.Pr{"codex","codex-alt","/fixture/b c"}))
+    line : Unit <- check("record-line-names-harness",String.eq(serialized,"codex codex-alt /fixture/b c"))
+    roundtrip : Unit <- check("record-line-roundtrip",Bool.and(String.eq(Subs.record_label(serialized),"codex-alt"),Bool.and(String.eq(Subs.record_store(serialized),"/fixture/b c"),String.eq(Subs.record_harness(serialized),"codex"))))
+    legacy : Unit <- check("legacy-record-carries-no-harness",Bool.and(String.eq(Subs.record_label("codex-alt /fixture/b c"),"codex-alt"),Bool.and(String.eq(Subs.record_store("codex-alt /fixture/b c"),"/fixture/b c"),String.eq(Subs.record_harness("codex-alt /fixture/b c"),""))))
+    current : Unit <- check("record-current-stays-on-harness",String.eq(Subs.record_current("codex","codex codex-alt /fixture/b c"),"codex-alt"))
+    switched : Unit <- check("record-current-restarts-off-harness",String.eq(Subs.record_current("claude-code","codex codex-alt /fixture/b c"),""))
+    legacy_current : Unit <- check("legacy-record-keeps-label",String.eq(Subs.record_current("codex","codex-alt /fixture/b c"),"codex-alt"))
+    source : Unit <- check("record-source-stays-on-harness",String.eq(Subs.record_source("codex","codex codex-alt /fixture/b c"),"/fixture/b c"))
+    source_reset : Unit <- check("record-source-resets-off-harness",String.eq(Subs.record_source("claude-code","codex codex-alt /fixture/b c"),""))
+    legacy_source : Unit <- check("legacy-record-keeps-store",String.eq(Subs.record_source("codex","codex-alt /fixture/b c"),"/fixture/b c"))
+    chosen : Unit <- check("route-chosen-body",String.eq(Subs.route_chosen_body("omp","sol-main","/fixture/bin/omp path","provider-reported usage exhaustion: hit your limit"),"cross-harness route selected: harness=omp; model=sol-main; command=/fixture/bin/omp path; original cause: provider-reported usage exhaustion: hit your limit"))
+    unavailable : Unit <- check("route-unavailable-body",String.eq(Subs.route_unavailable_body("codex","provider-reported usage exhaustion: hit your limit"),"cross-harness routes unavailable: harness=codex refused every operator-listed route after all its accounts reported usage exhaustion; original cause: provider-reported usage exhaustion: hit your limit; the task stays retained with its owed input; resume the session or configure a route to continue."))
     empty : Unit <- check("empty-record-is-empty",String.eq(Subs.last_line(Nil{}),""))
     IO.pure(Unit,Unit{})
 
@@ -106,6 +118,80 @@ def read_checks() -> IO<Unit>:
     failed : Unit <- failed_read(5,"Input/output error")
     IO.pure(Unit,Unit{})
 
+# route_fixture_list is operator preference order: one command-less entry selection
+# skips, one Opus-off-harness entry, usable entries (one with a spaced command path),
+# one empty line, one fieldless line, and one empty-model line. Refused lists are
+# per-session lineage pairs, which carry no command by construction.
+def route_fixture_list() -> String:
+  "aaa nopick\nomp opus-side /fixture/bin/omp\nomp sol-main /fixture/bin/omp path\nmuse muse-main /fixture/bin/muse\nclaude-code opus-main /fixture/bin/claude\ncodex codex-main /fixture/bin/codex\n\nlonely\nmuse \n"
+
+def route_six(routes: List<Subs.Route>) -> IO(Unit):
+  match routes:
+    case first <> second <> third <> fourth <> fifth <> sixth <> Nil{}: check("route-list-parses-six",True{})
+    case other: IO.die(Unit,1,"fixture-profile route-list: unexpected shape")
+
+def route_pick(decided: Maybe<&2,Subs.Route>, +harness: String, +model: String, +expected_harness: String, +expected_model: String, +expected_cmd: String) -> IO(Unit):
+  match decided:
+    case Some{+route}: check("route-pick-" ++ harness ++ "-" ++ model,Bool.and(String.eq(Subs.route_harness(route),expected_harness),Bool.and(String.eq(Subs.route_model(route),expected_model),String.eq(Subs.route_cmd(route),expected_cmd))))
+    case None{}: IO.die(Unit,1,"fixture-profile route-pick-" ++ harness ++ "-" ++ model ++ ": no route")
+
+def route_chosen(routes: List<Subs.Route>, refused: List<Subs.Route>, +harness: String, +model: String, +expected_harness: String, +expected_model: String, +expected_cmd: String) -> IO(Unit):
+  route_pick(Subs.choose_route(routes,refused,harness,model),harness,model,expected_harness,expected_model,expected_cmd)
+
+# A two-field lineage pair parses with an empty command: membership compares the
+# harness/model pair only, and selection never picks a command-less entry.
+def route_head_cmd(routes: List<Subs.Route>) -> IO(Unit):
+  match routes:
+    case head <> tail: check("route-lineage-pair-carries-no-command",String.eq(Subs.route_cmd(head),""))
+    case Nil{}: IO.die(Unit,1,"fixture-profile route-lineage-pair: unexpected shape")
+
+def route_cmd_default() -> IO(Unit):
+  route_head_cmd(Subs.route_lines(Tx.split_lines("codex codex-main\n")))
+
+def refusal_epoch_shown(refused: Maybe<&2,Subs.Refusal>, +name: String, +expected: String) -> IO(Unit):
+  match refused:
+    case Some{+refusal}: check(name,String.eq(Subs.refusal_epoch(refusal),expected))
+    case None{}: IO.die(Unit,1,"fixture-profile refusal: no refusal")
+
+def refusal_assignment_shown(refused: Maybe<&2,Subs.Refusal>, +name: String, +expected: String) -> IO(Unit):
+  match refused:
+    case Some{+refusal}: check(name,String.eq(Subs.refusal_assignment(refusal),expected))
+    case None{}: IO.die(Unit,1,"fixture-profile refusal: no refusal")
+
+def refusal_harness_shown(refused: Maybe<&2,Subs.Refusal>, +name: String, +expected: String) -> IO(Unit):
+  match refused:
+    case Some{+refusal}: check(name,String.eq(Subs.route_harness(Subs.refusal_route(refusal)),expected))
+    case None{}: IO.die(Unit,1,"fixture-profile refusal: no refusal")
+
+def refusal_checks() -> IO(Unit):
+  do IO<Unit>:
+    digits : Unit <- check("epoch-digits",Bool.and(Subs.epoch_digits("12"),Bool.and(Bool.not(Subs.epoch_digits("1a")),Bool.not(Subs.epoch_digits("")))))
+    marked : Unit <- refusal_epoch_shown(Subs.refusal_of("7 42 omp sol-main"),"refusal-marked-epoch","7")
+    marked_task : Unit <- refusal_assignment_shown(Subs.refusal_of("7 42 omp sol-main"),"refusal-marked-assignment","42")
+    marked_pair : Unit <- refusal_harness_shown(Subs.refusal_of("7 42 omp sol-main"),"refusal-marked-pair","omp")
+    legacy : Unit <- refusal_epoch_shown(Subs.refusal_of("codex codex-main"),"refusal-legacy-epoch","0")
+    legacy_task : Unit <- refusal_assignment_shown(Subs.refusal_of("codex codex-main"),"refusal-legacy-assignment","0")
+    legacy_pair : Unit <- refusal_harness_shown(Subs.refusal_of("codex codex-main"),"refusal-legacy-pair","codex")
+    IO.pure(Unit,Unit{})
+
+def route_absent(decided: Maybe<&2,Subs.Route>, +harness: String) -> IO(Unit):
+  match decided:
+    case Some{+route}: IO.die(Unit,1,"fixture-profile route-none: unexpected " ++ Subs.route_line(route))
+    case None{}: check("route-none-" ++ harness,True{})
+
+def route_none(routes: List<Subs.Route>, refused: List<Subs.Route>, +harness: String, model: String) -> IO(Unit):
+  route_absent(Subs.choose_route(routes,refused,harness,model),harness)
+
+def route_names() -> IO(Unit):
+  do IO<Unit>:
+    lower : Unit <- check("opus-lower",Subs.names_opus("opus"))
+    upper : Unit <- check("opus-upper",Subs.names_opus("Opus"))
+    prefixed : Unit <- check("opus-prefixed",Subs.names_opus("anthropic/opus-4"))
+    other : Unit <- check("opus-sonnet",Bool.not(Subs.names_opus("sonnet")))
+    empty : Unit <- check("opus-empty",Bool.not(Subs.names_opus("")))
+    short : Unit <- check("opus-short",Bool.not(Subs.names_opus("op")))
+    IO.pure(Unit,Unit{})
+
 def main() -> IO<Unit>:
   do IO<Unit>:
     +profiles : List<Subs.Profile> <- IO.pure(List<Subs.Profile>,Subs.profile_lines(Tx.split_lines(fixture_list())))
@@ -123,5 +209,16 @@ def main() -> IO<Unit>:
     claude_plain_ok : Unit <- claude_plain()
     records : Unit <- record_checks()
     reads : Unit <- read_checks()
+    +routes : List<Subs.Route> <- IO.pure(List<Subs.Route>,Subs.route_lines(Tx.split_lines(route_fixture_list())))
+    route_count : Unit <- route_six(routes)
+    refused_codex : List<Subs.Route> <- IO.pure(List<Subs.Route>,Subs.route_lines(Tx.split_lines("codex codex-main\n")))
+    route_first : Unit <- route_chosen(routes,refused_codex,"codex","codex-main","omp","sol-main","/fixture/bin/omp path")
+    refused_two : List<Subs.Route> <- IO.pure(List<Subs.Route>,Subs.route_lines(Tx.split_lines("omp sol-main\ncodex codex-main\n")))
+    route_opus : Unit <- route_chosen(routes,refused_two,"muse","muse-main","claude-code","opus-main","/fixture/bin/claude")
+    refused_four : List<Subs.Route> <- IO.pure(List<Subs.Route>,Subs.route_lines(Tx.split_lines("omp sol-main\nmuse muse-main\ncodex codex-main\nomp opus-side\n")))
+    route_last : Unit <- route_none(routes,refused_four,"claude-code","opus-main")
+    route_unrunnable : Unit <- route_cmd_default()
+    refusals : Unit <- refusal_checks()
+    route_words : Unit <- route_names()
     printed : Unit <- IO.print("fixture-profiles-ok")
     IO.pure(Unit,Unit{})

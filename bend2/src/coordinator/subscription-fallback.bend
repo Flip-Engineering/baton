@@ -121,14 +121,26 @@ def started_or_next(+profiles: List<&2,Profile>, +harness: String, +current: Str
 def record_fields(+label: String, +store: String) -> Maybe<&2,Profile>:
   Bool.pick(Maybe<&2,Profile>,Bool.and(Bool.not(String.is_empty(label)),Bool.not(String.is_empty(store))),Some{Pr{"",label,store}},None{})
 
+# New record lines name the harness first. A legacy two-field line carries no harness;
+# a longer line whose head is not a harness this tree binds is a legacy label with a
+# spaced store. The harness set is closed and code-defined, so the shapes never depend
+# on operator data; a legacy label that literally names a harness reparses fail-safe
+# (default binding, list-head restart).
+def record_harness_known(+word: String) -> Bool:
+  Bool.or(String.eq(word,"codex"),Bool.or(String.eq(word,"omp"),Bool.or(String.eq(word,"muse"),Bool.or(String.eq(word,"claude-code"),String.eq(word,"claude")))))
+
+def record_profile(+harness: String, +label: String, +store: String) -> Maybe<&2,Profile>:
+  Bool.pick(Maybe<&2,Profile>,Bool.and(record_harness_known(harness),Bool.and(Bool.not(String.is_empty(label)),Bool.not(String.is_empty(store)))),Some{Pr{harness,label,store}},None{})
+
 def record_parts(fields: List<String>) -> Maybe<&2,Profile>:
   match fields:
-    case label <> rest: record_fields(label,Tx.join(" ",rest))
+    case +harness <> +label <> +store <> +rest: Bool.pick(Maybe<&2,Profile>,record_harness_known(harness),record_profile(harness,label,Tx.join(" ",Con{store,rest})),record_fields(harness,Tx.join(" ",Con{label,Con{store,rest}})))
+    case label <> store <> Nil{}: record_fields(label,store)
     case other: None{}
 
 # The per-session record is append-only: the last non-empty line is the profile in
-# use, so advancing it needs no rewrite and no lock. Its fields are the label and the
-# rest of the line as the store.
+# use, so advancing it needs no rewrite and no lock. A current line names harness,
+# label and the rest of the line as the store; legacy lines name label and store.
 def record_of(line: String) -> Maybe<&2,Profile>:
   record_parts(split_parts(String.split(Tx.trim_nl(line),Char.from_u32(32))))
 
@@ -155,8 +167,38 @@ def store_of(parsed: Maybe<&2,Profile>) -> String:
 def record_store(line: String) -> String:
   store_of(record_of(line))
 
+def harness_of(parsed: Maybe<&2,Profile>) -> String:
+  match parsed:
+    case Some{profile}: profile_harness(profile)
+    case None{}: ""
+
+def record_harness(line: String) -> String:
+  harness_of(record_of(line))
+
+# The label in force for this harness: a record written under another harness restarts
+# at the operator list head, so a route-switched session advances within its own
+# harness list; legacy harness-less records keep today's label match.
+def record_current_parsed(harness: String, parsed: Maybe<&2,Profile>) -> String:
+  match parsed:
+    case None{}: ""
+    case Some{+profile}: Bool.pick(String,Bool.or(String.is_empty(profile_harness(profile)),String.eq(profile_harness(profile),harness)),profile_label(profile),"")
+
+def record_current(harness: String, line: String) -> String:
+  record_current_parsed(harness,record_of(line))
+
+# The store in force for this harness: a record written under another harness selects
+# nothing, so a route-switched session never searches the old harness's store for the
+# new harness's transcript; legacy harness-less records keep today's store.
+def record_source_parsed(harness: String, parsed: Maybe<&2,Profile>) -> String:
+  match parsed:
+    case None{}: ""
+    case Some{+profile}: Bool.pick(String,Bool.or(String.is_empty(profile_harness(profile)),String.eq(profile_harness(profile),harness)),profile_store(profile),"")
+
+def record_source(harness: String, line: String) -> String:
+  record_source_parsed(harness,record_of(line))
+
 def record_line(+profile: Profile) -> String:
-  profile_label(profile) ++ " " ++ profile_store(profile)
+  profile_harness(profile) ++ " " ++ profile_label(profile) ++ " " ++ profile_store(profile)
 
 # The report bodies carry the account change and the provider's own cause. Nothing
 # here decides anything; the caller records and reports.
@@ -193,11 +235,12 @@ def failed_terminal_sql_expr(+event: String) -> String:
 # limit. Your quota will reset when the current 5-hour window ends.", which the
 # "reached your" fragment below covers. The "hit your" fragment omits the apostrophe so
 # the curly and ASCII forms both match. ZAI reports "Usage limit reached for 5 hour"
-# with its reset time. Not matched: the upstream "limit reached" header
-# flag, "rate limit exceeded", the context-window message, stream disconnection and
-# timeouts.
+# with its reset time. The observed OMP 402 stopReason=error shape reports
+# "402 Insufficient Balance" with type=unknown_error. Not matched: the upstream
+# "limit reached" header flag, "rate limit exceeded", the context-window message,
+# stream disconnection and timeouts.
 def exhausted_marker_sql(+text: String) -> String:
-  "CASE WHEN (instr(lower(" ++ text ++ "),'hit your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'budget')>0)) OR (instr(lower(" ++ text ++ "),'reached your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'quota')>0)) OR instr(lower(" ++ text ++ "),'usage limit reached for ')>0 OR instr(lower(" ++ text ++ "),'out of credits')>0 OR instr(lower(" ++ text ++ "),'spend cap')>0 OR instr(lower(" ++ text ++ "),'quota exceeded')>0 OR instr(lower(" ++ text ++ "),'spend limit reached')>0 OR instr(lower(" ++ text ++ "),'spend limit unavailable')>0 THEN 1 ELSE 0 END"
+  "CASE WHEN (instr(lower(" ++ text ++ "),'hit your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'budget')>0)) OR (instr(lower(" ++ text ++ "),'reached your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'quota')>0)) OR instr(lower(" ++ text ++ "),'usage limit reached for ')>0 OR instr(lower(" ++ text ++ "),'out of credits')>0 OR instr(lower(" ++ text ++ "),'spend cap')>0 OR instr(lower(" ++ text ++ "),'quota exceeded')>0 OR instr(lower(" ++ text ++ "),'spend limit reached')>0 OR instr(lower(" ++ text ++ "),'spend limit unavailable')>0 OR instr(lower(" ++ text ++ "),'insufficient balance')>0 THEN 1 ELSE 0 END"
 
 # Bind the complete terminal once and extract its diagnostic once for the
 # provider's subscription-limit wording and the returned cause.
@@ -383,24 +426,29 @@ def history_from_helper(db: String, session: String, id: String, +harness: Strin
     run : T.RunRes <- Proc.runFull(history_prepare_args(script,harness,cmd,cwd,native,from_store,profile_store(profile),existing),cwd)
     history_helper_result(db,session,id,harness,variable,from_store,path,run)
 
-def prepare_history_variable(+db: String, +session: String, id: String, harness: String, from_store: String, cmd: String, cwd: String, native: String, profile: Profile, selected: Maybe<String>) -> IO(Bool):
+def prepare_history_variable(+db: String, +session: String, id: String, harness: String, from_store: String, cmd: String, cwd: String, native: String, profile: Profile, selected: Maybe<String>, previous: String) -> IO(Bool):
   match selected:
     case None{}: IO.pure(Bool,True{})
     case Some{variable}: do IO<Bool>:
       +path : String <- history_path(db,session)
-      recorded : String <- file_text(path)
-      last : String <- IO.pure(String,last_line(Tx.split_lines(recorded)))
       script : String <- helper_script()
-      history_from_helper(db,session,id,harness,variable,from_store,path,profile,script,cmd,cwd,native,last)
+      history_from_helper(db,session,id,harness,variable,from_store,path,profile,script,cmd,cwd,native,previous)
 
 # The preserved history home for this handoff. The packaged native runtime helper reads the
 # original account's effective provider history home and materializes what the next account
 # needs, and its answer is recorded for the continuation to bind. A helper that fails
 # reports its own cause and leaves the original input owed, so no profile is advanced.
+# The previous native-history record is the sidecar's last line for this handoff's own
+# harness. An empty source store means no previous store on this harness (a harness
+# reset or a fresh session), so no previous record is passed either; old lines stay.
 def prepare_history(+db: String, +session: String, +id: String, +harness: String, +from_store: String, +cmd: String, +cwd: String, +native: String, decided: Maybe<&2,Profile>) -> IO(Bool):
   match decided:
     case None{}: IO.pure(Bool,True{})
-    case Some{profile}: prepare_history_variable(db,session,id,harness,from_store,cmd,cwd,native,profile,store_variable(harness))
+    case Some{profile}: do IO<Bool>:
+      +path : String <- history_path(db,session)
+      recorded : String <- file_text(path)
+      previous : String <- IO.pure(String,Bool.pick(String,String.is_empty(from_store),"",last_line(Tx.split_lines(recorded))))
+      prepare_history_variable(db,session,id,harness,from_store,cmd,cwd,native,profile,store_variable(harness),previous)
 
 # Each account advance records its provider cause under a separate report ID.
 def record_handoff(db: String, session: String, id: String, harness: String, from_label: String, +profile: Profile, cause: String) -> IO(Bool):
@@ -444,8 +492,9 @@ def advance_profile(+db: String, +session: String, +id: String, cause: String, n
     +profiles : List<&2,Profile> <- IO.pure(List<&2,Profile>,profile_lines(Tx.split_lines(listed)))
     +record_path : String <- profile_record_path(db,session)
     +current : String <- file_text(record_path)
-    +from_label : String <- IO.pure(String,record_label(last_line(Tx.split_lines(current))))
-    from_store : String <- IO.pure(String,record_store(last_line(Tx.split_lines(current))))
+    +last_record : String <- IO.pure(String,last_line(Tx.split_lines(current)))
+    +from_label : String <- IO.pure(String,record_current(Tx.trim_nl(harness),last_record))
+    from_store : String <- IO.pure(String,record_source(Tx.trim_nl(harness),last_record))
     prepared : Bool <- prepare_history(db,session,id,Tx.trim_nl(harness),from_store,cmd,cwd,native,started_or_next(profiles,Tx.trim_nl(harness),from_label))
     taken : Bool <- Bool.pick(IO(Bool),prepared,choose_profile(db,session,id,record_path,Tx.trim_nl(harness),from_label,cause,started_or_next(profiles,Tx.trim_nl(harness),from_label)),IO.pure(Bool,False{}))
     IO.pure(Bool,taken)
@@ -459,3 +508,309 @@ def profile_handoff(+db: String, session: String, id: String, +event: String, na
     +cause : String <- exhaustion_cause(db,event)
     advanced : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_profile(db,session,id,cause,native,cmd,cwd))
     IO.pure(Bool,advanced)
+
+# --- cross-harness route fallback --------------------------------------------
+#
+# When every operator-listed account for the session's harness refuses, the same actor
+# continues on another operator-permitted harness/model route. The operator list is an
+# ordered plain file beside the database; its order is the preference, and absence of
+# a recorded refusal proves no present availability, so the choice is the first untried
+# entry in operator order, never an availability claim. Refusal lineage is a
+# per-session append-only file of refused pairs beside the database: the incident scope
+# is this session's own records, so history from other sessions never blocks, and no
+# availability store, catalog, TTL, or score exists anywhere. A model id naming Opus
+# runs only on the subscription-backed claude-code harness. Chosen/unavailable reports
+# and the guarded route application belong to the applying seam; this core only selects
+# and records the refusal fact.
+
+type Route is Data:
+  Rt{harness: String, model: String, cmd: String}
+
+def route_harness(route: Route) -> String:
+  match route:
+    case Rt{harness,model,cmd}: harness
+
+def route_model(route: Route) -> String:
+  match route:
+    case Rt{harness,model,cmd}: model
+
+def route_cmd(route: Route) -> String:
+  match route:
+    case Rt{harness,model,cmd}: cmd
+
+def route_line(+route: Route) -> String:
+  route_harness(route) ++ " " ++ route_model(route) ++ " " ++ route_cmd(route)
+
+# One three-field line: the harness command is the rest of the line, so a command
+# path with spaces survives; model ids carry no spaces. A two-field line parses with
+# an empty command for refusal-lineage pairs, which name no executable. A line with
+# an empty harness or model is skipped rather than guessed at.
+def route_fields(+harness: String, +model: String, +cmd: String) -> Maybe<&2,Route>:
+  Bool.pick(Maybe<&2,Route>,Bool.and(Bool.not(String.is_empty(harness)),Bool.not(String.is_empty(model))),Some{Rt{harness,model,cmd}},None{})
+
+def route_of(fields: List<String>) -> Maybe<&2,Route>:
+  match fields:
+    case harness <> model <> cmd <> rest: route_fields(harness,model,Tx.join(" ",Con{cmd,rest}))
+    case harness <> model <> Nil{}: route_fields(harness,model,"")
+    case other: None{}
+
+def route_entry(parsed: Maybe<&2,Route>, tail: List<&2,Route>) -> List<&2,Route>:
+  match parsed:
+    case Some{route}: Con{route,tail}
+    case None{}: tail
+
+def route_lines(lines: List<String>) -> List<&2,Route>:
+  match lines:
+    case Nil{}: Nil{}
+    case line <> rest: route_entry(route_of(split_parts(String.split(Tx.trim_nl(line),Char.from_u32(32)))),route_lines(rest))
+
+# Fold one ASCII uppercase letter to lowercase; every other code passes through.
+def fold_upper(+code: U32) -> U32:
+  Bool.pick(U32,Bool.and(Bool.not(U32.is_lt(code,65)),Bool.not(U32.is_lt(90,code))),U32.add(code,32),code)
+
+def fold_eq(first: Char, second: Char) -> Bool:
+  U32.is_eq(fold_upper(Char.to_u32(first)),fold_upper(Char.to_u32(second)))
+
+# Each level matches its own head, so no match follows a bind and no arm rebuilds a
+# string; definitions precede their first caller throughout the chain.
+def starts_us(oc: Char, pc: Char, uc: Char, ur: String) -> Bool:
+  match ur:
+    case SNil{}: False{}
+    case SCon{sc, sr}: Bool.and(Bool.and(fold_eq(oc,Char.from_u32(111)),fold_eq(pc,Char.from_u32(112))),Bool.and(fold_eq(uc,Char.from_u32(117)),fold_eq(sc,Char.from_u32(115))))
+
+def starts_pus(pc: Char, pr: String, oc: Char) -> Bool:
+  match pr:
+    case SNil{}: False{}
+    case SCon{uc, ur}: starts_us(oc,pc,uc,ur)
+
+def starts_opus(+tc: Char, tr: String) -> Bool:
+  match tr:
+    case SNil{}: False{}
+    case SCon{pc, pr}: Bool.pick(Bool,fold_eq(tc,Char.from_u32(111)),starts_pus(pc,pr,tc),False{})
+
+# True when the model id names an Opus model anywhere in its text, matched
+# case-insensitively: provider/model ids vary in prefix but keep the family name.
+def names_opus(text: String) -> Bool:
+  match text:
+    case SNil{}: False{}
+    case SCon{tc, +tr}: Bool.pick(Bool,starts_opus(tc,tr),True{},names_opus(tr))
+
+# An Opus model runs only on the subscription-backed claude-code harness; every
+# other listed model runs on any listed harness.
+def route_permitted(+route: Route) -> Bool:
+  Bool.or(Bool.not(names_opus(route_model(route))),String.eq(route_harness(route),"claude-code"))
+
+def route_same(+first: Route, +second: Route) -> Bool:
+  Bool.and(String.eq(route_harness(first),route_harness(second)),String.eq(route_model(first),route_model(second)))
+
+def route_current(harness: String, model: String, +route: Route) -> Bool:
+  Bool.and(String.eq(route_harness(route),harness),String.eq(route_model(route),model))
+
+def route_member(refused: List<&2,Route>, +route: Route) -> Bool:
+  match refused:
+    case Nil{}: False{}
+    case head <> rest: Bool.pick(Bool,route_same(head,route),True{},route_member(rest,route))
+
+# A list entry without a named harness command cannot build a native binding, so
+# selection skips it; refusal-lineage pairs carry no command by construction.
+def route_runnable(+route: Route) -> Bool:
+  Bool.not(String.is_empty(route_cmd(route)))
+
+# Viable means untried in this incident, permitted, and runnable: not the just-refused
+# current pair, not in the refusal lineage, no Opus model off the subscription harness,
+# and a named harness command for the native binding. Operator order decides among
+# viable entries; nothing here claims availability.
+def route_viable(refused: List<&2,Route>, harness: String, model: String, +route: Route) -> Bool:
+  Bool.and(Bool.not(route_current(harness,model,route)),Bool.and(Bool.not(route_member(refused,route)),Bool.and(route_permitted(route),route_runnable(route))))
+
+def choose_route(routes: List<&2,Route>, +refused: List<&2,Route>, +harness: String, +model: String) -> Maybe<&2,Route>:
+  match routes:
+    case Nil{}: None{}
+    case +route <> +rest: Bool.pick(Maybe<&2,Route>,route_viable(refused,harness,model,route),Some{route},choose_route(rest,refused,harness,model))
+
+# A stored refusal carries its episode marker and task assignment: the latest turns
+# rowid and the latest message seq when it was recorded. A refusal counts only while
+# no later terminal on the session states a non-exhausted outcome and no later task
+# assignment reached the session, so any later success, other failure or new task
+# ends the exhaustion episode and a restored route returns without reusing stale
+# history. Old lines stay in the file; only the read filters them. A line without
+# markers is legacy and counts only on a session with neither marker since.
+type Refusal is Data:
+  Ref{route: Route, epoch: String, assignment: String}
+
+def refusal_route(refusal: Refusal) -> Route:
+  match refusal:
+    case Ref{route,epoch,assignment}: route
+
+def refusal_epoch(refusal: Refusal) -> String:
+  match refusal:
+    case Ref{route,epoch,assignment}: epoch
+
+def refusal_assignment(refusal: Refusal) -> String:
+  match refusal:
+    case Ref{route,epoch,assignment}: assignment
+
+def digit_code(+code: U32) -> Bool:
+  Bool.and(Bool.not(U32.is_lt(code,48)),Bool.not(U32.is_lt(57,code)))
+
+def epoch_tail(+text: String) -> Bool:
+  match text:
+    case SNil{}: True{}
+    case SCon{head, tail}: Bool.and(digit_code(Char.to_u32(head)),epoch_tail(tail))
+
+def epoch_digits(+text: String) -> Bool:
+  match text:
+    case SNil{}: False{}
+    case SCon{head, tail}: Bool.and(digit_code(Char.to_u32(head)),epoch_tail(tail))
+
+# A marked line names its episode marker and task assignment before the pair; any
+# other shape is a legacy pair with marker 0 and no assignment. Pair heads are
+# harness names, never digits, so a digit head is always a marker. A new task
+# assignment after the write ends the episode even with no intervening terminal, so
+# old refusals never exclude a recovered route from a new task.
+def refusal_wrap(+epoch: String, +assignment: String, parsed: Maybe<&2,Route>) -> Maybe<&2,Refusal>:
+  match parsed:
+    case Some{+route}: Some{Ref{route,epoch,assignment}}
+    case None{}: None{}
+
+def refusal_fields(fields: List<String>) -> Maybe<&2,Refusal>:
+  match fields:
+    case +epoch <> +second <> +rest: Bool.pick(Maybe<&2,Refusal>,Bool.and(epoch_digits(epoch),epoch_digits(second)),refusal_wrap(epoch,second,route_of(rest)),refusal_wrap("0","0",route_of(Con{epoch,Con{second,rest}})))
+    case +single <> Nil{}: refusal_wrap("0","0",route_of(Con{single,Nil{}}))
+    case Nil{}: None{}
+
+def refusal_of(line: String) -> Maybe<&2,Refusal>:
+  refusal_fields(split_parts(String.split(Tx.trim_nl(line),Char.from_u32(32))))
+
+def refusal_line(parsed: Maybe<&2,Refusal>, tail: List<&2,Refusal>) -> List<&2,Refusal>:
+  match parsed:
+    case Some{refusal}: Con{refusal,tail}
+    case None{}: tail
+
+def refusal_lines(lines: List<String>) -> List<&2,Refusal>:
+  match lines:
+    case Nil{}: Nil{}
+    case line <> rest: refusal_line(refusal_of(line),refusal_lines(rest))
+
+def exhausted_frame_sql(+event: String) -> String:
+  "CASE WHEN " ++ failed_terminal_sql_expr(event) ++ "=1 AND " ++ exhausted_marker_sql(usage_text_sql_expr(event)) ++ "=1 THEN 1 ELSE 0 END"
+
+# A new task assignment to the session ends the refusal episode even with no
+# intervening terminal: only task and task-assignment messages count, so guidance,
+# recovery and report traffic never resets it. The assignment kinds are the same
+# ones the wake logic treats as task input.
+def refusal_assigned(db: String, session: String, +assignment: String) -> IO(Bool):
+  do IO<Bool>:
+    newer : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE recipient=" ++ C.q(session) ++ " AND ((sender<>recipient AND kind='task') OR kind='task-assignment') AND seq>" ++ assignment ++ ");"))
+    IO.pure(Bool,String.eq(newer,"0\n"))
+
+# Whether any refusal row at this epoch is still current: a later
+# non-exhausted terminal clears resolved rows.
+def refusal_current(db: String, session: String, +epoch: String) -> IO(Bool):
+  do IO<Bool>:
+    kept : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM turns t WHERE t.worker=" ++ C.q(session) ++ " AND t.rowid>" ++ epoch ++ " AND " ++ C.terminal_expr("t.event") ++ " AND " ++ exhausted_frame_sql("t.event") ++ "=0) THEN '0' ELSE '1' END;"))
+    IO.pure(Bool,String.eq(Tx.trim_nl(kept),"1"))
+def current_refusals(+db: String, +session: String, refusals: List<&2,Refusal>) -> IO(List<&2,Route>):
+  match refusals:
+    case Nil{}: IO.pure(List<&2,Route>,Nil{})
+    case +head <> +rest: do IO<List<&2,Route>>:
+      +tail : List<&2,Route> <- current_refusals(db,session,rest)
+      epoch_kept : Bool <- refusal_current(db,session,refusal_epoch(head))
+      task_kept : Bool <- refusal_assigned(db,session,refusal_assignment(head))
+      IO.pure(List<&2,Route>,Bool.pick(List<&2,Route>,Bool.and(epoch_kept,task_kept),Con{refusal_route(head),tail},tail))
+
+# The operator route list and the per-session refusal lineage are plain files beside
+# the database, like the profile sidecars: no schema, no daemon, no environment lookup.
+def route_list_sql(+db: String) -> String:
+  "SELECT " ++ C.q(db ++ ".routes") ++ ";"
+
+def route_refused_sql(+db: String, +session: String) -> String:
+  "SELECT " ++ C.q(db ++ ".route-") ++ " || lower(hex(id)) FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+
+def route_list_path(+db: String) -> IO(String):
+  do IO<String>:
+    listed : String <- IO.try(String,DB.Sql.query(db,route_list_sql(db)))
+    IO.pure(String,Tx.trim_nl(listed))
+
+def route_refused_path(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    saved : String <- IO.try(String,DB.Sql.query(db,route_refused_sql(db,session)))
+    IO.pure(String,Tx.trim_nl(saved))
+
+def session_route_sql(+db: String, +session: String) -> String:
+  "SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+
+def session_model_sql(+db: String, +session: String) -> String:
+  "SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+
+def select_recorded(db: String, session: String, id: String, refused_path: String, chosen: Maybe<&2,Route>, recorded: Result<&1,&1,U32 & String,Unit>) -> IO(Maybe<&2,Route>):
+  match recorded:
+    case Done{unit}: IO.pure(Maybe<&2,Route>,chosen)
+    case Fail{(code,detail)}: do IO<Maybe<&2,Route>>:
+      noted : Unit <- report_body(db,session,id,"route-record-failed","Route refusal lineage append failed at " ++ refused_path ++ ": " ++ U32.show(code) ++ ": " ++ detail ++ "; no route was selected.")
+      IO.pure(Maybe<&2,Route>,None{})
+
+# Select the first viable route in operator order and record the just-refused current
+# pair beside it, so a later hop skips exactly the pairs this session refused. Only
+# refusals from the current exhaustion episode count: a later non-exhausted terminal
+# opens a new episode and old lines go inert. A missing list or lineage file reads as
+# empty, so no route is selected without configuration. Reports and the guarded route
+# application belong to the applying seam.
+def select_route(+db: String, +session: String, id: String) -> IO(Maybe<&2,Route>):
+  do IO<Maybe<&2,Route>>:
+    list_path : String <- route_list_path(db)
+    listed : String <- file_text(list_path)
+    routes : List<&2,Route> <- IO.pure(List<&2,Route>,route_lines(Tx.split_lines(listed)))
+    +refused_path : String <- route_refused_path(db,session)
+    refused_text : String <- file_text(refused_path)
+    refusals : List<&2,Refusal> <- IO.pure(List<&2,Refusal>,refusal_lines(Tx.split_lines(refused_text)))
+    refused : List<&2,Route> <- current_refusals(db,session,refusals)
+    +harness : String <- IO.try(String,DB.Sql.query(db,session_route_sql(db,session)))
+    +model : String <- IO.try(String,DB.Sql.query(db,session_model_sql(db,session)))
+    chosen : Maybe<&2,Route> <- IO.pure(Maybe<&2,Route>,choose_route(routes,refused,Tx.trim_nl(harness),Tx.trim_nl(model)))
+    marker : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(max(rowid),0) FROM turns WHERE worker=" ++ C.q(session) ++ ";"))
+    assignment : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(max(seq),0) FROM messages WHERE recipient=" ++ C.q(session) ++ ";"))
+    recorded : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(refused_path,Tx.trim_nl(marker) ++ " " ++ Tx.trim_nl(assignment) ++ " " ++ Tx.trim_nl(harness) ++ " " ++ Tx.trim_nl(model) ++ "\n")
+    select_recorded(db,session,id,refused_path,chosen,recorded)
+
+# True only on the actual all-accounts-refused outcome: the terminal states
+# provider-reported usage exhaustion and this attempt recorded the exhausted report.
+# History and lineage append IO failures write different reports, so they return false
+# here and never cause a cross-route switch.
+def exhausted_reported(db: String, id: String) -> IO(Bool):
+  do IO<Bool>:
+    found : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":profile-exhausted") ++ ");"))
+    IO.pure(Bool,String.eq(found,"1\n"))
+
+def route_trigger(+db: String, id: String, +event: String) -> IO(Bool):
+  do IO<Bool>:
+    +cause : String <- exhaustion_cause(db,event)
+    reported : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),exhausted_reported(db,id))
+    IO.pure(Bool,reported)
+
+# The applying seam reports the chosen route with the original provider cause, or the
+# lack of any route with actionable recovery: the task stays retained with its owed
+# input, so resuming the session or configuring a route continues it.
+def route_chosen_body(harness: String, model: String, cmd: String, cause: String) -> String:
+  "cross-harness route selected: harness=" ++ harness ++ "; model=" ++ model ++ "; command=" ++ cmd ++ "; original cause: " ++ cause
+
+def route_unavailable_body(harness: String, cause: String) -> String:
+  "cross-harness routes unavailable: harness=" ++ harness ++ " refused every operator-listed route after all its accounts reported usage exhaustion; original cause: " ++ cause ++ "; the task stays retained with its owed input; resume the session or configure a route to continue."
+
+def report_route_chosen(db: String, session: String, id: String, +route: Route, cause: String) -> IO(Unit):
+  report_body(db,session,id,"route-chosen",route_chosen_body(route_harness(route),route_model(route),route_cmd(route),cause))
+
+def report_route_unavailable(db: String, session: String, id: String, harness: String, cause: String) -> IO(Unit):
+  report_body(db,session,id,"route-unavailable",route_unavailable_body(harness,cause))
+
+# A cross-harness route change drops only the incompatible native binding; the same
+# harness keeps its conversation. Old attempt, event, request and history rows stay.
+def clear_when(clear: Bool, +db: String, +session: String) -> IO(Unit):
+  match clear:
+    case True{}: IO.pure(Unit,Unit{})
+    case False{}: do IO<Unit>:
+      cleared : String <- IO.try(String,DB.Sql.query(db,"UPDATE sessions SET native='' WHERE id=" ++ C.q(session) ++ ";"))
+      IO.pure(Unit,Unit{})
+
+def clear_incompatible_native(db: String, session: String, old_harness: String, new_harness: String) -> IO(Unit):
+  clear_when(String.eq(old_harness,new_harness),db,session)
