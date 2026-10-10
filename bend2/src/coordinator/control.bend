@@ -329,7 +329,7 @@ def pretty_saved(db: String, saved: String, empty: Bool) -> IO(String):
 def read_snapshot(db: String, command: C.Command) -> IO(String):
   match command:
     case C.Worktree{id}: Recruit.inspect_result(db,id)
-    case C.KnowledgeRead{reader}: IO.try(String,DB.Sql.read(db,Knowledge.read_sql(reader)))
+    case C.KnowledgeRead{reader}: Knowledge.read_value(db,reader)
     case other: IO.try(String,Store.read(db,other))
 
 def pretty(+db: String, command: C.Command) -> IO(String):

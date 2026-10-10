@@ -72,11 +72,12 @@ uses recorded parentage, Conductor responsibility and Ensemble coupling.
 execution state and pending counts in one snapshot. Separate databases have
 separate coordination state.
 
-A knowledge scope ID names an existing logical session, whose owner reviews
-the scope's findings. Visibility follows stored parent links and explicit
-promotions. A shared scope includes its owner, the owner's immediate parent
-and the owner's subtree. Ensemble and Section membership describe task
-organization; knowledge retrieval uses the recorded session relationships.
+Worker knowledge includes the session's authored findings and findings explicitly
+promoted to it. Group knowledge uses the recorded Ensemble owner's holdings.
+Universal knowledge uses the Principal Conductor's holdings. `knowledge` reads
+all findings for discovery; `knowledge-scope` selects these holdings. Typed items
+and authored relationships connect observations, decisions, corrections and
+their evidence references.
 
 Promotion notifies the destination scope owner. That owner decides which
 Ensembles, Sections or Players receive further task messages. The

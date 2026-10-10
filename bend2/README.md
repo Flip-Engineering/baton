@@ -447,26 +447,30 @@ Conductor acceptance receipt are required for the live-slice result.
 
 ## Shared knowledge
 
-Agents record findings with a claim, a source reference and stated limits.
+Agents record knowledge with a kind, a claim, a source reference and stated limits.
 A `message:MESSAGE_ID` reference includes the retained message body. References
-can also name source files, commits, runs or other evidence. An unpublished
-finding is visible to its author and immediate parent. `knowledge READER` returns the complete visible list, including the
-cited message body and promotion history.
+can also name source files, commits, runs or other evidence. `knowledge READER`
+returns all stored findings, including cited messages, relationships and promotion
+history. `knowledge-scope` selects worker, group or universal shared holdings.
 
 ```sh
 .scratch/bend2/baton2 state.db record finding1 worker1 'Observed claim' message:report1 'Observed limits'
-.scratch/bend2/baton2 state.db knowledge root
+.scratch/bend2/baton2 state.db record-typed correction1 worker1 correction 'Corrected claim' message:report2 'Observed limits'
+.scratch/bend2/baton2 state.db relate correction-link worker1 finding:correction1 Supersedes finding:finding1
 .scratch/bend2/baton2 state.db promote promotion1 root worker1 root finding1
+.scratch/bend2/baton2 state.db knowledge-scope root universal root
 ```
 
 After reviewing the evidence, the destination scope's owner can explicitly
-promote the exact finding from its named source scope. A shared scope includes
-its owner, the owner's immediate parent and the owner's subtree. Higher
-promotion names the scope that already carries the finding. The original
+promote the exact finding from its named source scope. Worker holdings include
+authored and explicitly received findings. Group holdings use the Ensemble
+owner; universal holdings use the Principal Conductor. Higher promotion names
+the session that already carries the finding. The original
 author and each promotion's source, destination and promoter remain recorded.
-Declared scope IDs are logical session IDs. An Ensemble or Section brief names
-the sessions involved; knowledge visibility follows the recorded parent links
-and promotions described above.
+Kinds and relationship names are descriptive strings chosen by the author.
+The Orchestra UI shows universal knowledge by default and the relevant graph
+after a worker or group selection. The [knowledge API](../docs/bend2/knowledge-context-2026-09-29.md)
+describes scoped retrieval and explicit all-data discovery.
 
 ## Native Conductor delivery
 

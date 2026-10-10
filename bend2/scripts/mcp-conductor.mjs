@@ -158,16 +158,30 @@ const TOOLS = [
   {
     name: 'baton2_knowledge',
     description: 'Read findings and their evidence visible to the attached session.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    inputSchema: { type: 'object', properties: {
+      scope: { type: 'string', description: 'universal, worker, group, or all (the default discovery view)' },
+      subject: { type: 'string', description: 'Worker or Ensemble ID; universal can name its Principal Conductor' },
+    }, additionalProperties: false },
   },
   {
     name: 'baton2_knowledge_record',
-    description: 'Record a finding as the attached session, citing retained message evidence and stating the claim\'s limits.',
+    description: 'Record knowledge as the attached session, with cited evidence and limits. An optional kind names the item, such as observation, decision or hypothesis.',
     inputSchema: { type: 'object', properties: {
       id: { type: 'string' }, claim: { type: 'string' },
+      kind: { type: 'string', description: 'Authored item type; omitted means finding. Types are free-form.' },
       evidence: { type: 'string', description: 'Evidence reference, such as message:MESSAGE_ID' },
       limits: { type: 'string' },
     }, required: ['id', 'claim', 'evidence', 'limits'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_knowledge_relate',
+    description: 'Connect two knowledge or evidence references with an authored relationship. The direction is source relation target, such as a correction Supersedes an earlier finding.',
+    inputSchema: { type: 'object', properties: {
+      id: { type: 'string' },
+      source: { type: 'string', description: 'Reference such as finding:ID, message:ID or an external source' },
+      relation: { type: 'string', description: 'Free-form relationship name, such as Supports, DerivedFrom or Supersedes' },
+      target: { type: 'string', description: 'The related reference' },
+    }, required: ['id', 'source', 'relation', 'target'], additionalProperties: false },
   },
   {
     name: 'baton2_knowledge_promote',
@@ -597,10 +611,16 @@ function handleToolCall(msg) {
         result = coord('context-result', args.query);
         break;
       case 'baton2_knowledge':
-        result = coord('knowledge', sessionId);
+        result = args.scope === undefined ? coord('knowledge', sessionId)
+          : coord('knowledge-scope', sessionId, args.scope, args.subject ?? (args.scope === 'worker' ? sessionId : ''));
         break;
       case 'baton2_knowledge_record':
-        result = coord('record', args.id, sessionId, args.claim, args.evidence, args.limits);
+        result = args.kind === undefined
+          ? coord('record', args.id, sessionId, args.claim, args.evidence, args.limits)
+          : coord('record-typed', args.id, sessionId, args.kind, args.claim, args.evidence, args.limits);
+        break;
+      case 'baton2_knowledge_relate':
+        result = coord('relate', args.id, sessionId, args.source, args.relation, args.target);
         break;
       case 'baton2_knowledge_promote':
         result = coord('promote', args.id, sessionId, args.source, args.destination, args.finding);

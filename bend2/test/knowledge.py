@@ -67,6 +67,57 @@ class Knowledge(unittest.TestCase):
     def ids(self, rows):
         return sorted(row['id'] for row in rows)
 
+    def scoped(self, scope, subject=''):
+        return self.call('knowledge-scope', 'root', scope, subject)
+
+    def test_typed_evidence_and_corrections_follow_explicit_shared_holdings(self):
+        self.call('role', 'worker', 'associate-conductor')
+        self.call('ensemble', 'review-group', 'worker', 'tight')
+        self.call('ensemble-member', 'review-group', 'worker', 'grand', 'add')
+        observed = self.evidence('quota-observed', 'grand')
+        corrected = self.evidence('quota-corrected', 'grand')
+        self.call('record-typed', 'quota-observation', 'grand', 'observation',
+                  'The provider ended with a quota error.', observed, 'One retained turn.')
+        self.call('record-typed', 'quota-correction', 'grand', 'correction',
+                  'Process exit zero does not describe the retained provider error.',
+                  corrected, 'The observed provider response.')
+        self.call('relate', 'quota-support', 'grand', observed, 'Supports',
+                  'finding:quota-observation')
+        relation = self.call('relate', 'quota-supersedes', 'grand',
+                             'finding:quota-correction', 'Supersedes',
+                             'finding:quota-observation')
+        self.assertEqual(relation['relation'], 'Supersedes')
+        local = {row['id']: row for row in self.scoped('worker', 'grand')}
+        self.assertEqual(local['quota-correction']['kind'], 'correction')
+        self.assertEqual(local['quota-observation']['evidenceMessage']['id'], 'quota-observed')
+        self.assertEqual({row['id'] for row in local['quota-observation']['relations']},
+                         {'quota-support', 'quota-supersedes'})
+        self.assertEqual(self.scoped('group', 'review-group'), [])
+        self.assertEqual(self.scoped('universal'), [])
+        self.call('promote', 'quota-to-worker', 'worker', 'grand', 'worker', 'quota-observation')
+        self.assertEqual(self.ids(self.scoped('group', 'review-group')), ['quota-observation'])
+        self.assertEqual(self.scoped('universal'), [])
+        self.call('promote', 'quota-to-root', 'root', 'worker', 'root', 'quota-observation')
+        self.assertEqual(self.ids(self.scoped('universal')), ['quota-observation'])
+        self.assertEqual(self.ids(self.scoped('all')), ['quota-correction', 'quota-observation'])
+        self.assertEqual(self.ids(self.read('root')), ['quota-correction', 'quota-observation'])
+
+    def test_an_existing_knowledge_table_keeps_its_findings_when_typed_records_are_written(self):
+        with sqlite3.connect(self.db) as db:
+            db.execute('DROP TABLE knowledge')
+            db.execute('CREATE TABLE knowledge (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,'
+                       'claim TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL)')
+            db.execute("INSERT INTO knowledge VALUES ('legacy','root','Recorded claim','run:legacy','One run')")
+        legacy = self.read('root')[0]
+        self.assertEqual((legacy['id'], legacy['kind'], legacy['relations']),
+                         ('legacy', 'finding', []))
+        self.call('record-typed', 'new-observation', 'root', 'observation',
+                  'New recorded observation', 'run:new', 'One run')
+        migrated = {row['id']: row for row in self.read('root')}
+        self.assertEqual(migrated['legacy']['claim'], 'Recorded claim')
+        self.assertEqual(migrated['legacy']['kind'], 'finding')
+        self.assertEqual(migrated['new-observation']['kind'], 'observation')
+
     def test_a_finding_is_readable_by_every_registered_session(self):
         recorded = self.call('record', 'finding-1', 'worker', 'the cache is warm',
                              self.evidence('report-1', 'worker'), 'one host, one load')
@@ -191,9 +242,12 @@ class Knowledge(unittest.TestCase):
         repeated = self.call('record', 'finding-8', 'worker', 'a', evidence, 'c')
         self.assertEqual((repeated['id'], repeated['evidence']), ('finding-8', evidence))
 
-    def test_the_usage_names_the_three_knowledge_verbs(self):
+    def test_the_usage_names_knowledge_commands(self):
         p = self.call('nonsense-verb', success=False)
         for verb in ('record FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS', 'knowledge READER',
+                     'record-typed FINDING_ID AUTHOR KIND CLAIM EVIDENCE LIMITS',
+                     'relate RELATION_ID AUTHOR SOURCE RELATION TARGET',
+                     'knowledge-scope READER universal|worker|group|all SUBJECT',
                      'promote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING'):
             self.assertIn(verb, p.stderr)
 

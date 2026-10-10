@@ -66,7 +66,10 @@ type Command is Data:
   ProjectSessions{path: String}
   Resume{session: String, lift_stop: Bool}
   KnowledgeRecord{id: String, author: String, claim: String, evidence: String, limits: String}
+  KnowledgeRecordTyped{id: String, author: String, kind: String, claim: String, evidence: String, limits: String}
+  KnowledgeRelate{id: String, author: String, source: String, relation: String, target: String}
   KnowledgeRead{reader: String}
+  KnowledgeReadScope{reader: String, scope: String, subject: String}
   KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
   View{subject: String, reader: String, port: String}
   UiSubscribe{after_cursor: String, generation: String}
@@ -513,7 +516,10 @@ def sql(command: Command) -> String:
     case Join{id,parent,harness,model,effort,path}: ""
     case Worktree{id}: ""
     case KnowledgeRecord{id,author,claim,evidence,limits}: ""
+    case KnowledgeRecordTyped{id,author,kind,claim,evidence,limits}: ""
+    case KnowledgeRelate{id,author,source,relation,target}: ""
     case KnowledgeRead{reader}: ""
+    case KnowledgeReadScope{reader,scope,subject}: ""
     case KnowledgePromote{id,promoter,source,destination,finding}: ""
     case View{subject,reader,port}: ""
     case UiSubscribe{after_cursor,generation}: ""
@@ -612,6 +618,7 @@ def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Comma
 
 def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String) -> Command:
   match verb:
+    case "knowledge-scope": KnowledgeReadScope{id,one,two}
     case "context-query-file": ContextQueryFile{id,one,two}
     case "receiver": Receiver{id,one,two,""}
     case "ensemble": Ensemble{id,one,two}
@@ -649,6 +656,7 @@ def parse_verb_five_args(+verb: String, +id: String, +one: String, +two: String,
     case "message": Message{id,one,two,three,four}
     case "message-file": MessageFile{id,one,two,three,four}
     case "record": KnowledgeRecord{id,one,two,three,four}
+    case "relate": KnowledgeRelate{id,one,two,three,four}
     case "promote": KnowledgePromote{id,one,two,three,four}
     case _: Invalid{}
 
@@ -679,6 +687,8 @@ def parse(args: List<String>) -> Command:
       parse_verb_four_args(verb,id,one,two,three)
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
       Bool.pick(Command, Bool.and(String.eq(verb,"land"),String.eq(three,"--commit")), LandAt{id,one,two,four}, parse_verb_five_args(verb,id,one,two,three,four))
+    case "record-typed" <> +id <> +author <> +kind <> +claim <> +evidence <> +limits <> Nil{}:
+      KnowledgeRecordTyped{id,author,kind,claim,evidence,limits}
     case "join" <> +id <> +parent <> +harness <> +model <> +effort <> +path <> Nil{}:
       Join{id,parent,harness,model,effort,path}
     case +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:

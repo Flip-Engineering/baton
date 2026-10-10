@@ -783,22 +783,66 @@ function knowledgeTablesReady(db) {
   return found && found.n === 2;
 }
 
+function knowledgeFindings(db, where = '', ...args) {
+  const typed = rows(db, "PRAGMA table_info('knowledge')").some((column) => column.name === 'kind');
+  return rows(db, `SELECT k.id, k.author, ${typed ? 'k.kind' : "'finding'"} AS kind,
+      k.claim, k.evidence, k.limits,
+      CASE WHEN m.id IS NOT NULL THEN json_object('id',m.id,'sender',m.sender,
+        'recipient',m.recipient,'body',m.body) ELSE NULL END AS evidenceMessage
+    FROM knowledge k LEFT JOIN messages m ON k.evidence = 'message:' || m.id
+    ${where} ORDER BY k.id`, ...args).map((row) => ({
+    ...row, evidence: row.evidence ?? '', limits: row.limits ?? '',
+    evidenceMessage: row.evidenceMessage == null ? null : JSON.parse(row.evidenceMessage),
+  }));
+}
+
+function knowledgeRelations(db) {
+  const present = one(db, "SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='knowledge_relations'");
+  return present ? rows(db, 'SELECT id, author, source, relation, target FROM knowledge_relations ORDER BY id') : [];
+}
+
+function knowledgeScope(db, kind, id) {
+  if (kind === 'all') return { kind, id: null, holders: null };
+  let holders;
+  if (kind === 'worker') holders = rows(db, 'SELECT id FROM sessions WHERE id = ?', id);
+  else if (kind === 'group') holders = rows(db, 'SELECT owner AS id FROM ensembles WHERE id = ?', id);
+  else holders = rows(db, `SELECT s.id FROM sessions s JOIN session_roles r ON r.session = s.id
+    WHERE s.parent IS NULL AND r.role IN ('principal-conductor','conductor')
+      AND (? = '' OR s.id = ?)`, id, id);
+  return { kind, id: id || null, holders: holders.map((holder) => holder.id) };
+}
+
+function findingsForScope(db, scope) {
+  if (scope.holders === null) return knowledgeFindings(db);
+  if (!scope.holders.length) return [];
+  const placeholders = scope.holders.map(() => '?').join(',');
+  return knowledgeFindings(db, `WHERE k.author IN (${placeholders}) OR EXISTS(
+    SELECT 1 FROM knowledge_promotions p WHERE p.finding = k.id AND p.destination IN (${placeholders}))`,
+  ...scope.holders, ...scope.holders);
+}
+
+function relationsForScope(db, scope, findings) {
+  const relations = knowledgeRelations(db);
+  if (scope.holders === null) return relations;
+  const holders = new Set(scope.holders);
+  const references = new Set(findings.flatMap((finding) => [finding.id, 'finding:' + finding.id]));
+  return relations.filter((relation) => holders.has(relation.author)
+    || references.has(relation.source) || references.has(relation.target));
+}
+
 // Findings carry their stored evidence and limits. Actor metadata includes
 // recorded roles and parent links through each referenced actor's ancestors.
-function knowledgeOverview(db) {
+function knowledgeOverview(db, kind = 'universal', id = '') {
+  const scope = knowledgeScope(db, kind, id);
   if (!knowledgeTablesReady(db)) {
-    return { contractVersion: 1, findings: [], promotions: [], actors: {}, empty: true };
+    return { contractVersion: 1, scope, findings: [], promotions: [], relations: [], actors: {}, empty: true };
   }
-  const findings = rows(db, 'SELECT id, author, claim, evidence, limits FROM knowledge ORDER BY id')
-    .map((row) => ({
-      id: row.id,
-      author: row.author,
-      claim: row.claim,
-      evidence: row.evidence == null ? '' : row.evidence,
-      limits: row.limits == null ? '' : row.limits,
-    }));
+  const findings = findingsForScope(db, scope);
+  const relations = relationsForScope(db, scope, findings);
+  const findingIds = new Set(findings.map((finding) => finding.id));
   const promotions = rows(db,
-    'SELECT id, finding, author, source, destination, promoted_by AS promotedBy FROM knowledge_promotions ORDER BY id');
+    'SELECT id, finding, author, source, destination, promoted_by AS promotedBy FROM knowledge_promotions ORDER BY id')
+    .filter((promotion) => findingIds.has(promotion.finding));
   const actors = {};
   const touch = (id) => {
     if (id === null || id === undefined || id === '') return null;
@@ -815,6 +859,7 @@ function knowledgeOverview(db) {
     touch(p.source);
     touch(p.promotedBy);
   }
+  for (const relation of relations) touch(relation.author);
   // Include ancestors so graph rows follow complete recorded parent chains.
   // UNION ends cycles when the query reaches an identical session row.
   const ids = Object.keys(actors);
@@ -847,26 +892,30 @@ function knowledgeOverview(db) {
       actor.parent = row.parent == null ? '' : row.parent;
     }
   }
-  return { contractVersion: 1, findings, promotions, actors,
-    empty: findings.length === 0 && promotions.length === 0 };
+  return { contractVersion: 1, scope, findings, promotions, relations, actors,
+    empty: findings.length === 0 && promotions.length === 0 && relations.length === 0 };
 }
 
 function knowledgeForActor(db, session) {
+  const scope = knowledgeScope(db, 'worker', session);
   if (!knowledgeTablesReady(db)) {
-    return { contractVersion: 1, actor: session, authored: [], received: [], counts: { authored: 0, received: 0, unshared: 0 }, empty: true };
+    return { contractVersion: 1, scope, actor: session, authored: [], received: [], relations: [], counts: { authored: 0, received: 0, unshared: 0 }, empty: true };
   }
-  const authored = rows(db,
-    'SELECT id, author, claim, evidence, limits FROM knowledge WHERE author = ? ORDER BY id', session);
-  const received = rows(db,
-    `SELECT p.id AS id, p.finding AS finding, p.author AS author, p.source AS source,
-            p.destination AS destination, p.promoted_by AS promotedBy,
-            k.claim AS claim, k.evidence AS evidence, k.limits AS limits
-       FROM knowledge_promotions p LEFT JOIN knowledge k ON k.id = p.finding
-      WHERE p.destination = ? ORDER BY p.id`, session);
+  const held = knowledgeFindings(db, `WHERE k.author = ? OR EXISTS(
+    SELECT 1 FROM knowledge_promotions p WHERE p.finding = k.id AND p.destination = ?)`, session, session);
+  const authored = held.filter((finding) => finding.author === session);
+  const byId = new Map(held.map((finding) => [finding.id, finding]));
+  const received = rows(db, `SELECT id, finding, author, source, destination, promoted_by AS promotedBy
+    FROM knowledge_promotions WHERE destination = ? ORDER BY id`, session).map((promotion) => {
+    const finding = byId.get(promotion.finding) || {};
+    return { ...promotion, kind: finding.kind || 'finding', claim: finding.claim,
+      evidence: finding.evidence, evidenceMessage: finding.evidenceMessage ?? null, limits: finding.limits };
+  });
+  const relations = relationsForScope(db, scope, held);
   const promoted = new Set(rows(db, 'SELECT DISTINCT finding AS f FROM knowledge_promotions').map((r) => r.f));
   const unshared = authored.filter((f) => !promoted.has(f.id)).length;
-  return { contractVersion: 1, actor: session, authored, received,
-    counts: { authored: authored.length, received: received.length, unshared }, empty: authored.length === 0 && received.length === 0 };
+  return { contractVersion: 1, scope, actor: session, authored, received, relations,
+    counts: { authored: authored.length, received: received.length, unshared }, empty: authored.length === 0 && received.length === 0 && relations.length === 0 };
 }
   const handleRequest = (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
@@ -904,7 +953,11 @@ function knowledgeForActor(db, session) {
     }
     if (url.pathname === '/orchestra/knowledge/overview') {
       try {
-        return json(response, 200, knowledgeOverview(db));
+        const group = url.searchParams.get('group');
+        const actor = url.searchParams.get('actor');
+        const kind = group ? 'group' : actor ? 'worker' : url.searchParams.get('scope') || 'universal';
+        const selected = group || actor || url.searchParams.get('subject') || '';
+        return json(response, 200, knowledgeOverview(db, kind, selected));
       } catch (error) {
         return json(response, 503, { error: 'knowledge-unavailable' });
       }

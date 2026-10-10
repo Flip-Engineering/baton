@@ -311,8 +311,8 @@ test('an out-of-scope knowledge change still invalidates the shared overview', a
     assert.doesNotMatch(frames, /sibling|external|Shared outside finding/);
   };
   await readEntity('knowledge');
-  const overview = await (await fetch(`${base}/orchestra/knowledge/overview`)).json();
-  assert.deepEqual(overview.findings, [{ id: 'finding-outside', author: 'sibling', claim: 'Shared outside finding', evidence: 'Observed source', limits: 'Recorded limits' }]);
+  const overview = await (await fetch(`${base}/orchestra/knowledge/overview?scope=all`)).json();
+  assert.deepEqual(overview.findings, [{ id: 'finding-outside', author: 'sibling', kind: 'finding', claim: 'Shared outside finding', evidence: 'Observed source', limits: 'Recorded limits', evidenceMessage: null }]);
   const promotionWriter = new DatabaseSync(f.databasePath);
   promotionWriter.exec(`
     BEGIN;
@@ -324,10 +324,64 @@ test('an out-of-scope knowledge change still invalidates the shared overview', a
   promotionWriter.close();
   notifications.committed();
   await readEntity('promotion');
-  const promoted = await (await fetch(`${base}/orchestra/knowledge/overview`)).json();
+  const promoted = await (await fetch(`${base}/orchestra/knowledge/overview?scope=all`)).json();
   assert.equal(promoted.promotions[0].destination, 'external');
   assert.equal(promoted.actors.external.received, 1);
   await reader.cancel();
+});
+
+test('knowledge graphs expose authored types, cited messages and scoped shared holdings', async (t) => {
+  const f = fixture();
+  const writer = new DatabaseSync(f.databasePath);
+  writer.exec(`
+    CREATE TABLE knowledge (id TEXT PRIMARY KEY, author TEXT, claim TEXT, evidence TEXT,
+      limits TEXT, kind TEXT DEFAULT 'finding');
+    CREATE TABLE knowledge_promotions (id TEXT PRIMARY KEY, finding TEXT, author TEXT,
+      source TEXT, destination TEXT, promoted_by TEXT);
+    CREATE TABLE knowledge_relations (id TEXT PRIMARY KEY, author TEXT, source TEXT,
+      relation TEXT, target TEXT);
+    INSERT INTO ensembles VALUES ('review-group','child','tight');
+    INSERT INTO ensemble_members VALUES ('review-group','child'),('review-group','grandchild');
+    INSERT INTO messages(id,sender,recipient,kind,body)
+      VALUES ('quota-report','grandchild','child','report','Retained provider quota error.');
+    INSERT INTO knowledge VALUES
+      ('quota-observation','grandchild','Provider quota error','message:quota-report','One turn','observation'),
+      ('quota-correction','grandchild','Process exit differs from provider outcome','run:correction','One run','correction'),
+      ('root-decision','root','Use another available account','message:quota-report','The observed account','decision'),
+      ('outside-local','external','Unshared local finding','run:outside','One run','finding');
+    INSERT INTO knowledge_promotions VALUES
+      ('to-group','quota-observation','grandchild','grandchild','child','child'),
+      ('to-root','quota-observation','grandchild','child','root','root');
+    INSERT INTO knowledge_relations VALUES
+      ('quota-source','grandchild','message:quota-report','Supports','finding:quota-observation'),
+      ('quota-revision','grandchild','finding:quota-correction','Supersedes','finding:quota-observation'),
+      ('quota-cause','root','finding:root-decision','BecauseOf','finding:quota-observation');
+  `);
+  writer.close();
+  const server = createOrchestraServer({ databasePath: f.databasePath, reader: 'root' });
+  t.after(async () => { await close(server); rmSync(f.directory, { recursive: true, force: true }); });
+  const base = await listen(server);
+  const read = async (query = '') => (await fetch(`${base}/orchestra/knowledge/overview${query}`)).json();
+  const universal = await read();
+  assert.deepEqual(universal.scope, { kind: 'universal', id: null, holders: ['root'] });
+  assert.deepEqual(universal.findings.map((item) => item.id), ['quota-observation', 'root-decision']);
+  assert.equal(universal.findings[0].kind, 'observation');
+  assert.deepEqual(universal.findings[0].evidenceMessage, {
+    id: 'quota-report', sender: 'grandchild', recipient: 'child', body: 'Retained provider quota error.',
+  });
+  assert.equal(universal.relations.find((relation) => relation.id === 'quota-source').relation, 'Supports');
+  const group = await read('?group=review-group');
+  assert.deepEqual(group.scope, { kind: 'group', id: 'review-group', holders: ['child'] });
+  assert.deepEqual(group.findings.map((item) => item.id), ['quota-observation']);
+  const worker = await read('?actor=grandchild');
+  assert.deepEqual(worker.findings.map((item) => item.kind), ['correction', 'observation']);
+  assert.equal(worker.relations.find((relation) => relation.id === 'quota-revision').relation, 'Supersedes');
+  const actor = await (await fetch(`${base}/orchestra/knowledge?actor=child`)).json();
+  assert.equal(actor.received[0].kind, 'observation');
+  assert.equal(actor.received[0].evidenceMessage.id, 'quota-report');
+  const all = await read('?scope=all');
+  assert.deepEqual(all.findings.map((item) => item.id),
+    ['outside-local', 'quota-correction', 'quota-observation', 'root-decision']);
 });
 
 test('CLI reports its actual URL and exits cleanly when stdin reaches EOF', async (t) => {
@@ -610,7 +664,7 @@ test('old-cursor replay yields to HTTP and SQLite commits and drains every chang
                 notifications.committed();
                 const [page, knowledge] = await Promise.all([
                   fetch(`${base}/app.js`),
-                  fetch(`${base}/orchestra/knowledge/overview`),
+                  fetch(`${base}/orchestra/knowledge/overview?scope=all`),
                 ]);
                 assert.equal(page.status, 200);
                 await page.text();

@@ -229,6 +229,10 @@ class McpCommand(unittest.TestCase):
                 'evidence': 'message:retained-message', 'limits': 'source only'},
                 ['record', 'finding-λ', session, 'claim with\nnewlines',
                  'message:retained-message', 'source only']),
+            'baton2_knowledge_relate': ({'id': 'correction-link-λ', 'source': 'finding:corrected-λ',
+                'relation': 'Supersedes', 'target': 'finding:original-λ'},
+                ['relate', 'correction-link-λ', session, 'finding:corrected-λ',
+                 'Supersedes', 'finding:original-λ']),
             'baton2_knowledge_promote': ({'id': 'promotion-λ', 'source': 'source session',
                 'destination': session, 'finding': 'finding-λ'},
                 ['promote', 'promotion-λ', session, 'source session', session, 'finding-λ']),
@@ -241,12 +245,25 @@ class McpCommand(unittest.TestCase):
                 self.assertNotIn('isError', result)
                 schema = self.tools[tool]['inputSchema']
                 self.assertEqual(set(schema.get('required', [])), set(arguments))
-                expected_properties = set(arguments) | ({'liftStop'} if tool == 'baton2_resume' else set())
+                optional = {'baton2_resume': {'liftStop'}, 'baton2_knowledge': {'scope', 'subject'},
+                            'baton2_knowledge_record': {'kind'}}.get(tool, set())
+                expected_properties = set(arguments) | optional
                 self.assertEqual(set(schema['properties']), expected_properties)
                 self.assertFalse(schema['additionalProperties'])
         self.command(stdout='{"session":"recorded consumer"}\n', tool='baton2_resume',
                      arguments={'session': 'recorded consumer', 'liftStop': True}, session=session,
                      expected_args=['resume', 'recorded consumer', '--lift-stop'])
+        self.command(tool='baton2_knowledge_record', session=session,
+                     arguments={'id': 'corrected-λ', 'kind': 'correction', 'claim': 'Corrected\nclaim',
+                                'evidence': 'message:retained-message', 'limits': 'One run'},
+                     expected_args=['record-typed', 'corrected-λ', session, 'correction',
+                                    'Corrected\nclaim', 'message:retained-message', 'One run'])
+        self.command(tool='baton2_knowledge', session=session,
+                     arguments={'scope': 'worker'},
+                     expected_args=['knowledge-scope', session, 'worker', session])
+        self.command(tool='baton2_knowledge', session=session,
+                     arguments={'scope': 'group', 'subject': 'review-group'},
+                     expected_args=['knowledge-scope', session, 'group', 'review-group'])
 
     def test_context_query_uses_attached_identity_and_consumer_reads_same_query(self):
         query = 'shared-query'

@@ -443,7 +443,7 @@ def readable_worktree_command_selects_the_existing_reader(id):
 law readable_knowledge_uses_the_existing_visibility_query:
   for db: String
   for reader: String
-  {Control.read_snapshot(db,C.KnowledgeRead{reader}) == IO.try(String,DB.Sql.read(db,Knowledge.read_sql(reader))) : IO(String)}
+  {Control.read_snapshot(db,C.KnowledgeRead{reader}) == Knowledge.read_value(db,reader) : IO(String)}
 
 def readable_knowledge_uses_the_existing_visibility_query(db,reader):
   {==}

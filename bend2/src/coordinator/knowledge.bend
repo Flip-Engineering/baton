@@ -27,8 +27,9 @@ def notice_id(finding: String) -> String:
 
 # Knowledge writes install these tables before their transaction runs.
 def knowledge_schema() -> String:
-  "CREATE TABLE IF NOT EXISTS knowledge (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, claim TEXT NOT NULL, evidence TEXT NOT NULL, limits TEXT NOT NULL);"
+  "CREATE TABLE IF NOT EXISTS knowledge (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, claim TEXT NOT NULL, evidence TEXT NOT NULL, limits TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'finding');"
   ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions (id TEXT UNIQUE NOT NULL, finding TEXT NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, destination TEXT NOT NULL, promoted_by TEXT NOT NULL);"
+  ++ "CREATE TABLE IF NOT EXISTS knowledge_relations (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, relation TEXT NOT NULL, target TEXT NOT NULL);"
 
 def commit_sql(statements: String) -> String:
   "BEGIN IMMEDIATE;" ++ C.schema() ++ knowledge_schema() ++ statements ++ "COMMIT;"
@@ -58,11 +59,47 @@ def knowledge_promotions() -> String:
 def evidence_message(+evidence: String) -> String:
   "(SELECT json_object('id',id,'sender',sender,'recipient',recipient,'body',body) FROM messages WHERE substr(" ++ evidence ++ ",1,8)='message:' AND id=substr(" ++ evidence ++ ",9))"
 
+def knowledge_relations() -> String:
+  "(SELECT coalesce(json_group_array(json_object('id',r.id,'author',r.author,'source',r.source,'relation',r.relation,'target',r.target)),json('[]')) FROM knowledge_relations r WHERE r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))"
+
+def knowledge_item_with_types(+typed: Bool) -> String:
+  "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'claim',k.claim,'evidence',k.evidence,'evidenceMessage'," ++ evidence_message("k.evidence") ++ ",'limits',k.limits,'destinations'," ++ knowledge_destinations() ++ ",'promotions'," ++ knowledge_promotions() ++ ",'relations'," ++ Bool.pick(String,typed,knowledge_relations(),"json('[]')") ++ ")"
+
 def knowledge_item() -> String:
-  "json_object('id',k.id,'author',k.author,'claim',k.claim,'evidence',k.evidence,'evidenceMessage'," ++ evidence_message("k.evidence") ++ ",'limits',k.limits,'destinations'," ++ knowledge_destinations() ++ ",'promotions'," ++ knowledge_promotions() ++ ")"
+  knowledge_item_with_types(True{})
+
+def scope_holders_sql(scope: String, +subject: String) -> String:
+  match scope:
+    case "worker": "SELECT id FROM sessions WHERE id=" ++ C.q(subject)
+    case "group": "SELECT owner AS id FROM ensembles WHERE id=" ++ C.q(subject)
+    case "universal": "SELECT s.id FROM sessions s JOIN session_roles r ON r.session=s.id WHERE s.parent IS NULL AND r.role IN('principal-conductor','conductor') AND (" ++ C.q(subject) ++ "='' OR s.id=" ++ C.q(subject) ++ ")"
+    case _: "SELECT id FROM sessions"
+
+def scope_findings_sql(+scope: String, subject: String) -> String:
+  match scope:
+    case "all": "1"
+    case _:
+      +holders = scope_holders_sql(scope,subject)
+      "(k.author IN(" ++ holders ++ ") OR EXISTS(SELECT 1 FROM knowledge_promotions p WHERE p.finding=k.id AND p.destination IN(" ++ holders ++ ")))"
+
+def scoped_read_sql(+reader: String, scope: String, subject: String, typed: Bool) -> String:
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_item_with_types(typed) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject) ++ " ORDER BY k.rowid);"
+
+def read_sql_with_types(reader: String, typed: Bool) -> String:
+  scoped_read_sql(reader,"all","",typed)
 
 def read_sql(+reader: String) -> String:
-  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_item() ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") ORDER BY k.rowid);"
+  read_sql_with_types(reader,True{})
+
+# A read of an older database retains its existing findings before any writer
+# installs the new columns and relationship table.
+def read_scope_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
+  do IO<String>:
+    typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+    IO.try(String,DB.Sql.read(db,scoped_read_sql(reader,scope,subject,String.eq(typed,"1\n"))))
+
+def read_value(db: String, reader: String) -> IO(String):
+  read_scope_value(db,reader,"all","")
 
 # The stored finding, read back only when it is this invocation's own finding:
 # the id, author, claim, evidence and limits must all match this invocation.
@@ -91,6 +128,18 @@ def finding_statement(+id: String, +author: String, claim: String, +evidence: St
 
 def record_statements(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
   finding_statement(id,author,claim,evidence,limits) ++ notice_statement(id,author,claim,evidence,limits) ++ knowledge_answer(id,author,claim,evidence,limits)
+
+def typed_record_statements(+id: String, +author: String, kind: String, +claim: String, +evidence: String, +limits: String) -> String:
+  finding_statement(id,author,claim,evidence,limits)
+  ++ "UPDATE knowledge SET kind=" ++ C.q(kind) ++ " WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ ";"
+  ++ notice_statement(id,author,claim,evidence,limits)
+  ++ "SELECT json_object('id',id,'author',author,'kind',kind,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ ";"
+
+# Source and target are ordinary reference strings. An agent can link findings,
+# retained messages or external evidence and choose the relationship's name.
+def relation_statements(+id: String, author: String, source: String, relation: String, target: String) -> String:
+  "INSERT INTO knowledge_relations(id,author,source,relation,target) VALUES(" ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(source) ++ "," ++ C.q(relation) ++ "," ++ C.q(target) ++ ") ON CONFLICT(id) DO UPDATE SET author=excluded.author,source=excluded.source,relation=excluded.relation,target=excluded.target;"
+  ++ "SELECT json_object('id',id,'author',author,'source',source,'relation',relation,'target',target) FROM knowledge_relations WHERE id=" ++ C.q(id) ++ ";"
 
 # A promotion is admitted only for the registered destination's owner.
 def promotion_admitted(promoter: String, +destination: String) -> String:
@@ -147,11 +196,27 @@ def record(+db: String, +id: String, author: String, claim: String, evidence: St
     delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,id,saved)
     answered(delivery)
 
+def record_typed(+db: String, +id: String, author: String, kind: String, claim: String, evidence: String, limits: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(typed_record_statements(id,author,kind,claim,evidence,limits))))
+    delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,id,saved)
+    answered(delivery)
+
+def relate(db: String, id: String, author: String, source: String, relation: String, target: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(relation_statements(id,author,source,relation,target))))
+    write_answer(saved)
+
 # Read: the shared findings as a JSON array. An unregistered reader receives the
 # empty array.
 def read(db: String, reader: String) -> IO(Unit):
   do IO<Unit>:
-    visible : String <- IO.try(String,DB.Sql.read(db,read_sql(reader)))
+    visible : String <- read_value(db,reader)
+    IO.write(visible)
+
+def read_scope(db: String, reader: String, scope: String, subject: String) -> IO(Unit):
+  do IO<Unit>:
+    visible : String <- read_scope_value(db,reader,scope,subject)
     IO.write(visible)
 
 # Promote: one transaction writes the promotion and its destination notice,
