@@ -2,6 +2,7 @@
 import { realpathSync } from 'node:fs';
 import { runQuery } from './lib/query.mjs';
 import { resolveTypeScript } from './lib/resolve.mjs';
+import { databaseAccesses } from './lib/sql-join.mjs';
 import { suppliedCaptures } from './lib/supplied.mjs';
 // The producer side is exported beside the consumer: a context caller invokes captureInputs before the
 // plan freezes, and executeInvocation consumes what the plan carries.
@@ -52,9 +53,19 @@ export async function executeInvocation(invocation, options = {}) {
       return eventFrame(invocation, { status: 'unavailable', engine: 'typescript',
         reason: resolved.reason, detail: resolved.detail });
     }
-    const result = runQuery({ resolved, request: analysisRequest(invocation.request),
+    const request = analysisRequest(invocation.request);
+    const result = runQuery({ resolved, request,
       queryId: invocation.query, supplied: supplied.status === 'none' ? null : supplied.entries });
-    return eventFrame(invocation, { status: 'completed', ...result });
+    const payload = { status: 'completed', ...result };
+    // The catalog half of the databaseAccesses projection: the producer reports what each resolved
+    // call site is, and this joint reports which catalog object its parsed statement names. The
+    // selected database is opened read-only for one transaction and closed here.
+    if (Array.isArray(request.select) && request.select.includes('databaseAccesses')) {
+      payload.databaseAccesses = await databaseAccesses(result, {
+        cwd: request.cwd, database: request.options.database,
+      });
+    }
+    return eventFrame(invocation, payload);
   } catch (error) {
     return eventFrame(invocation, { status: 'unavailable', engine: 'typescript',
       reason: error.condition ?? error.code ?? error.name,

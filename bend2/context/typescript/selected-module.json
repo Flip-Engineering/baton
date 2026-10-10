@@ -17,6 +17,9 @@
     { "path": "lib/resolve.mjs" },
     { "path": "lib/service.mjs" },
     { "path": "lib/sql.mjs" },
+    { "path": "lib/sql-join.mjs" },
+    { "path": "lib/sqlite-statement.mjs", "from": "catalogs/sqlite-statement.mjs" },
+    { "path": "lib/sql-scan.mjs", "from": "catalogs/sql-scan.mjs" },
     { "path": "lib/supplied.mjs" }
   ]
 }
