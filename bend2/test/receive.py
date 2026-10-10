@@ -2490,25 +2490,36 @@ class Receive(unittest.TestCase):
         cause = 'The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()'
         self.receive_transient('omp', cause)
 
+    def test_omp_socket_closure_continues_unacknowledged_original_input(self):
+        cause = 'The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()'
+        self.receive_transient('omp', cause, ack_before_failure=False)
+
     def test_muse_transport_timeout_continues_the_accepted_task(self):
         cause = 'transport error [net-timeout]: timed out waiting for response data (meta stream)'
         self.receive_transient('muse', cause)
 
-    def receive_transient(self, harness, cause, status=None):
+    def receive_transient(self, harness, cause, status=None, ack_before_failure=True):
         self.player('parent', harness=harness)
         self.message('input', 'parent')
         failed = self.spawn(*self.receive_args('parent'))
         control, original = self.accept('parent')
         if harness == 'muse':
-            self.action(control, fail=True, fail_reason=cause,
+            self.action(control, fail=True, fail_reason=cause, ack=ack_before_failure,
                         fail_message='Partial report before the transport failure.')
         else:
-            self.action(control, fail_status=status, fail_message=cause)
+            self.action(control, fail_status=status, fail_message=cause, ack=ack_before_failure)
         self.action(control, exit_fixture=True)
-        second, resumed = self.accept('parent')
+        second, resumed = self.accept_or_child_exit(
+            failed, 'recoverable provider failure closed with unfinished input')
+        self.assertEqual(resumed['session'], original['session'])
         self.assertEqual(resumed['native'], original['native'])
-        self.assertIn('transient provider error', resumed['prompt'])
-        self.assertEqual(self.coord('delivery', 'input')['receipt'], 'native-reviewed')
+        if ack_before_failure:
+            self.assertIn('transient provider error', resumed['prompt'])
+            self.assertEqual(self.coord('delivery', 'input')['receipt'], 'native-reviewed')
+        else:
+            self.assertIn('[id: input]', resumed['prompt'])
+            self.assertNotIn(':transient-guidance]', resumed['prompt'])
+            self.assertIsNone(self.coord('delivery', 'input')['receipt'])
         self.assertEqual([message for message in self.coord('inbox', 'root')
                           if 'subscription profile handoff' in message['body']], [])
         self.assertFalse((self.directory / ('state.db.profile-' + 'parent'.encode().hex())).exists())
@@ -2520,6 +2531,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(len(failed_turns), 1)
         if status is not None: self.assertIn('errorStatus=' + str(status), failed_turns[0]['reportBody'])
         if harness == 'muse': self.assertIn('Partial report before the transport failure.', failed_turns[0]['reportBody'])
+        self.assertEqual(self.coord('delivery', 'input')['receipt'], 'native-reviewed')
         self.assertEqual(self.coord('inbox', 'parent'), [])
 
     def test_omp_usage_window_exhaustion_keeps_its_account_failure(self):

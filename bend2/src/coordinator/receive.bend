@@ -430,14 +430,14 @@ def wake_if_kept(db: String, session: String, cursor: String, superseded: Bool, 
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,finished)
     case False{}: completed_wake(db,session,cursor,finished)
 
-# The owed-input cursor keeps using the provider failure: a superseded attempt still
-# leaves its input owed, and the advance's own continuation drains it, so the ordinary
-# wake does not fire for that advance. A failure from the completion keeps its own result
-# in every case.
+# Successful observations and complete recoverable provider errors resume all owed
+# input. Other failures retain the attempt cursor. A recorded profile advance runs
+# its own continuation, and completion operations preserve their results.
 def completed(+db: String, +session: String, +id: String, +log: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     failed : Bool <- outcome_failed(db,outcome)
-    +pending_cursor : String <- IO.pure(String,Bool.pick(String,failed,cursor,"0"))
+    transient : Bool <- transient_provider_error(db,outcome)
+    +pending_cursor : String <- IO.pure(String,Bool.pick(String,Bool.and(failed,Bool.not(Bool.and(transient,observation_clear(outcome)))),cursor,"0"))
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- release_observer(lock)
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
