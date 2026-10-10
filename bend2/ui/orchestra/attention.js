@@ -263,10 +263,13 @@
     };
   }
 
-  // Everything the seat owes: queued inputs it has not acknowledged and reports
-  // sent and never acknowledged. The shell states the total as owedTotal, so
-  // pendingCount alone is never the read; it misses reports.
-  function statedOwed(player) {
+  // Everything the seat owes, and the one read behind the unit marks: queued input it has
+  // not acknowledged, and reports it sent that were never acknowledged. The shell states
+  // the total as owedTotal, so pendingCount alone is never the read; it misses reports. No
+  // payload carries a read fact for a delivery: a message node's deliveryRead is a pointer
+  // naming where the delivery lives, and the delivery's own read is in no payload, so the
+  // units count what the seat's own record states here and nothing else.
+  function owedCount(player) {
     function count(value) {
       var n = Number(value);
       return isFinite(n) && n > 0 ? n : 0;
@@ -275,40 +278,6 @@
     var total = count(player.owedTotal);
     if (total > 0) return total;
     return Math.max(count(player.pendingCount), count(player.unacknowledgedCount));
-  }
-
-  // The typed payload's own read of the seat's inbox, when it states one: a message
-  // endpoint with deliveryRead false is a delivery the seat has not read, and an unread
-  // delivery is work the seat owes. The projection carries a pointer here -
-  // ['delivery', id], naming where the read lives - and a pointer is not a read, so only
-  // a boolean states one. Null means no read is stated, and the stated counts stand.
-  function unreadDeliveries(player) {
-    var nodes = player && Array.isArray(player.nodes) ? player.nodes : null;
-    if (!nodes) return null;
-    var unread = 0;
-    var stated = false;
-    for (var i = 0; i < nodes.length; i += 1) {
-      var node = nodes[i];
-      if (!node) continue;
-      if (String(node.kind || "") !== "message") continue;
-      if (typeof node.deliveryRead !== "boolean") continue;
-      stated = true;
-      if (node.deliveryRead === false) unread += 1;
-    }
-    return stated ? unread : null;
-  }
-
-  // What the units count and what the state reads. The units take the delivered field
-  // when the payload carries it, because that is the fact they point at; the state
-  // keeps the stated total, which also counts reports sent and never acknowledged.
-  function owedRead(player) {
-    var unread = unreadDeliveries(player);
-    if (unread === null) return { count: statedOwed(player), ground: "owed", stated: statedOwed(player) };
-    return { count: unread, ground: "deliveries", stated: statedOwed(player) };
-  }
-
-  function owedCount(player) {
-    return owedRead(player).stated;
   }
 
   // The recorded terminal of the current attempt: null when the attempt ended
@@ -383,16 +352,6 @@
     return row.stale ? row.activity + " (recorded earlier)" : row.activity;
   }
 
-  // What the unit marks count, said in the seat's own title when the typed payload
-  // grounds them in deliveryRead and that count differs from the state's stated total.
-  // Two recorded facts stay apart: the marks count deliveries the seat has not read,
-  // the state's word counts everything the seat owes.
-  function unitsNote(row) {
-    if (!row || row.owedGround !== "deliveries" || row.owed <= 0) return "";
-    if (row.owed === row.owedStated) return "";
-    return row.owed + (row.owed === 1 ? " unread delivery" : " unread deliveries");
-  }
-
   // What the read says about a stop, in the read's own words. Where the read carries
   // no stop flag and no stop word, the pit says the stop is not recorded instead of
   // drawing its absence as the record's own statement. The marks are unaffected: a
@@ -465,25 +424,20 @@
       if (!player || !player.id) continue;
       var id = String(player.id);
       var reading = readingOf(player);
-      var owed = owedRead(player);
+      var owed = owedCount(player);
       var isQuiet = quiet ? quiet.has(id) : reading === "quiet";
       readings[id] = reading;
       rows.push({
         id: id,
         reading: reading,
-        word: readingWord(reading, owed.stated),
+        word: readingWord(reading, owed),
         rank: readingRank(reading),
-        // The unit marks count what the typed payload grounds them in; the seat's state,
-        // its order and the strip keep the stated total, which also counts reports sent
-        // and never acknowledged.
-        owed: owed.count,
-        owedStated: owed.stated,
-        owedGround: owed.ground,
-        queued: owed.stated > 0,
+        owed: owed,
+        queued: owed > 0,
         // Two reads: the flag the shell names when it names one, else the record's own
         // stop or a failure of the current attempt. The stop note carries the wording.
         notProgressing: namedFlag(player, "notProgressing", notProgressingReading(reading)),
-        owesWork: namedFlag(player, "owesWork", owed.stated > 0),
+        owesWork: namedFlag(player, "owesWork", owed > 0),
         stopNote: stopNote(player),
         live: reading === "running",
         role: String(player.role || ""),
@@ -498,7 +452,7 @@
     }
     rows.sort(function (a, b) {
       if (a.rank !== b.rank) return a.rank - b.rank;
-      if (b.owedStated !== a.owedStated) return b.owedStated - a.owedStated;
+      if (b.owed !== a.owed) return b.owed - a.owed;
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     });
 
@@ -835,13 +789,13 @@
       group.appendChild(trail);
     }
 
-    // What the seat owes, as units: one mark per delivery the payload records unread,
-    // or one per owed item when the payload carries no node list. The band is the one
-    // the queue bar took (top radius + 3, bottom radius + 5.5, a tick 2px wide and
-    // 2.5px tall with its round caps), so the room the next row's mark and an
-    // under-label need is unchanged. Counting marks in a row answers how much is
-    // waiting without measuring a length; the bar's six-item cap stays, and the
-    // exact figure travels in the seat's title.
+    // What the seat owes, as units: one mark per item its own record states - queued input
+    // it has not acknowledged, and reports it sent that were never acknowledged. The band
+    // is the one the queue bar took (top radius + 3, bottom radius + 5.5, a tick 2px wide
+    // and 2.5px tall with its round caps), so the room the next row's mark and an
+    // under-label need is unchanged. Counting marks in a row answers how much is waiting
+    // without measuring a length; the bar's six-item cap stays, and the exact figure
+    // travels in the seat's title.
     if (seat.owed > 0) {
       var units = Math.min(seat.owed, 6);
       var pitch = 3.6;
@@ -877,7 +831,6 @@
     setText(title, seat.id + " \u2014 " + seat.word
       + " \u2014 " + (seat.activity ? activityText(seat) : "no work recorded")
       + (marks.recent && marks.recent.age ? " \u2014 acted " + marks.recent.age + " ago" : "")
-      + (unitsNote(seat) ? " \u2014 " + unitsNote(seat) : "")
       + (seat.stopNote ? " \u2014 " + seat.stopNote : ""));
     group.appendChild(title);
 
@@ -1036,19 +989,31 @@
   }
 
   // The seam's own words: what the edge is, which provenance the payload recorded, and
-  // the two ends by name. No word here is inferred from prose.
+  // the two ends by name. An anchored cited seam names the finding it stands for, its
+  // author, and that the seam is drawn at that author's seat; a merged one - several
+  // findings of one author citing the same material - states the author and the count,
+  // and the findings themselves stay in the record. No word here is inferred from prose.
   function appendSeamTitle(node, seam) {
     var title = svgEl("title");
     var count = seam.count;
-    var fromName = seamEndName(seam.from);
-    var toName = seamEndName(seam.to);
     if (seam.provenance === "authored") {
       setText(title, count + (count === 1 ? " authored claim" : " authored claims")
-        + " from " + fromName + " to " + toName);
-    } else {
-      setText(title, count + (count === 1 ? " cited edge" : " cited edges")
-        + " recorded as evidence between " + fromName + " and " + toName);
+        + " from " + seamEndName(seam.from) + " to " + seamEndName(seam.to));
+      node.appendChild(title);
+      return;
     }
+    var source;
+    if (!seam.from.anchor) {
+      source = "source " + seamEndName(seam.from);
+    } else if (count === 1) {
+      source = "source " + seam.from.anchor.reference
+        + ", authored by " + seam.from.anchor.author + ", drawn at that author's seat";
+    } else {
+      source = "authored by " + seam.from.anchor.author + ", drawn at that author's seat";
+    }
+    setText(title, count + (count === 1 ? " cited edge" : " cited edges")
+      + " recorded as evidence \u2014 " + source
+      + " \u2014 cited material " + seamEndName(seam.to));
     node.appendChild(title);
   }
 
@@ -1164,6 +1129,29 @@
     stage.appendChild(seam.provenance === "authored" ? seamChevron(point) : seamBars(point));
   }
 
+  // A cited edge's source is the finding that recorded the evidence, and the canonical
+  // edge keeps that finding as its endpoint. The hall draws seats, so a cited source is
+  // anchored at the seat of the finding's author - the actor the record names, carried on
+  // the edge - and the seam's title states the finding, its author and the anchoring, so
+  // the drawing shows the recorded attribution instead of implying that the seat is the
+  // edge's endpoint. A source that is no held node, or whose author is no drawn seat, is
+  // left to edgeEnd; a finding end on an authored edge is never anchored, because a claim
+  // between two records is not a claim between two seats.
+  function citedSource(edge, positions, heldRefs) {
+    var seat = positions[String(edge.source || "")];
+    if (seat) return { seat: seat, kind: String(edge.sourceKind || "") };
+    var reference = String(edge.source || "");
+    if (!reference || !heldRefs.has(reference)) return null;
+    var author = String(edge.author || "");
+    var at = author ? positions[author] : null;
+    if (!at) return null;
+    return {
+      seat: at,
+      kind: String(edge.sourceKind || ""),
+      anchor: { reference: reference, author: author },
+    };
+  }
+
   // The typed graph's edges, when the payload carries them. An authored edge is a claim
   // someone recorded between two actors; a recorded-evidence edge is structured evidence
   // the store holds. They read on the two channels the hall has left: value, where the
@@ -1175,11 +1163,13 @@
     var edges = knowledge && Array.isArray(knowledge.edges) ? knowledge.edges : [];
     if (!edges.length) return;
     var unheld = new Set();
+    var heldRefs = new Set();
     var nodes = knowledge && Array.isArray(knowledge.nodes) ? knowledge.nodes : [];
     for (var n = 0; n < nodes.length; n += 1) {
       var node = nodes[n];
-      if (!node || node.referenceOnly !== true) continue;
-      if (node.reference) unheld.add(String(node.reference));
+      if (!node || !node.reference) continue;
+      if (node.referenceOnly === true) unheld.add(String(node.reference));
+      else heldRefs.add(String(node.reference));
     }
     var seams = new Map();
     for (var i = 0; i < edges.length; i += 1) {
@@ -1187,17 +1177,24 @@
       if (!edge) continue;
       var provenance = String(edge.provenance || "");
       if (provenance !== "authored" && provenance !== "recorded-evidence") continue;
-      var from = edgeEnd(edge.source, positions, unheld);
+      var from = provenance === "recorded-evidence"
+        ? citedSource(edge, positions, heldRefs)
+        : edgeEnd(edge.source, positions, unheld);
       var to = edgeEnd(edge.target, positions, unheld);
       if (!from || !to) continue;
       if (!from.kind) from.kind = String(edge.sourceKind || "");
       if (!to.kind) to.kind = String(edge.targetKind || "");
       if (from.seat && to.seat && from.seat === to.seat) continue;
       if (!from.seat && !to.seat) continue;
-      var key = provenance + "\u0000" + seamEndName(from) + "\u0000" + seamEndName(to);
+      var key = provenance + "\u0000"
+        + (from.seat ? from.seat.seat.id : "ref:" + from.reference) + "\u0000"
+        + (to.seat ? to.seat.seat.id : "ref:" + to.reference);
       var held = seams.get(key);
-      if (held) held.count += 1;
-      else seams.set(key, { count: 1, from: from, to: to, provenance: provenance });
+      if (held) {
+        held.count += 1;
+      } else {
+        seams.set(key, { count: 1, from: from, to: to, provenance: provenance });
+      }
     }
     seams.forEach(function (seam) {
       drawSeam(stage, seam, laid);
