@@ -557,24 +557,85 @@ class Receive(unittest.TestCase):
 
     def accept_or_child_exit(self, child, description, failure_stream=None):
         stream = failure_stream if failure_stream is not None else child.stdout
-        output = bytearray()
+        streams = [stream, child.stderr] if child.stderr is not stream else [stream]
         while True:
-            ready, _, _ = select.select([self.server, stream], [], [])
+            if select.select([self.server], [], [], 0)[0]:
+                return self.accept_any()
+            if child.poll() is not None:
+                stdout, stderr = self.child_communication(child)
+                self.fail(f'{description}; receive exited {child.returncode}: {stdout}{stderr}')
+            if not streams:
+                time.sleep(.01)
+                continue
+            ready, _, _ = select.select([self.server, *streams], [], [])
             if self.server in ready:
                 return self.accept_any()
-            chunk = os.read(stream.fileno(), 65536)
-            if chunk:
-                output.extend(chunk)
-                continue
-            stdout, stderr = child.communicate()
-            self.fail(f'{description}; receive exited {child.returncode}: '
-                      f'{bytes(output).decode(errors="replace")}{stdout}{stderr}')
+            for output in ready:
+                if not self.capture_child_output(child, output):
+                    streams.remove(output)
+            if child.poll() is not None:
+                stdout, stderr = self.child_communication(child)
+                self.fail(f'{description}; receive exited {child.returncode}: {stdout}{stderr}')
+
+    def capture_child_output(self, child, stream):
+        captured = getattr(child, 'fixture_output', None)
+        if captured is None:
+            captured = child.fixture_output = [bytearray(), bytearray()]
+        chunk = os.read(stream.fileno(), 65536)
+        captured[1 if stream is child.stderr else 0].extend(chunk)
+        return bool(chunk)
+
+    def child_communication(self, child):
+        captured = getattr(child, 'fixture_output', None)
+        if captured is None:
+            return child.communicate()
+        streams = [child.stdout, child.stderr]
+        while streams:
+            ready, _, _ = select.select(streams, [], [])
+            for stream in ready:
+                if not self.capture_child_output(child, stream):
+                    streams.remove(stream)
+        child.wait()
+        return tuple(bytes(output).decode(errors='replace') for output in captured)
+
+    def finish_observer_during_recovery(self, observer, recovery):
+        streams = {child.stdout: child for child in (observer, recovery)}
+        streams.update({child.stderr: child for child in (observer, recovery)})
+        exited, notification = socket.socketpair()
+
+        def notify_exit(child):
+            child.wait()
+            try:
+                notification.sendall(b'x')
+            except OSError:
+                pass
+
+        for child in (observer, recovery):
+            threading.Thread(target=notify_exit, args=(child,), daemon=True).start()
+        try:
+            while observer.poll() is None:
+                if recovery.poll() is not None:
+                    stdout, stderr = self.child_communication(recovery)
+                    observed = getattr(observer, 'fixture_output', [bytearray(), bytearray()])
+                    observer_output = b''.join(observed).decode(errors='replace')
+                    self.fail(f'Recovery exited {recovery.returncode} before the selected observer '
+                              f'exited: {stdout}{stderr}\nObserver output: {observer_output}')
+                ready, _, _ = select.select([exited, *streams], [], [])
+                for stream in ready:
+                    if stream is exited:
+                        exited.recv(2)
+                    elif not self.capture_child_output(streams[stream], stream):
+                        del streams[stream]
+            return self.finish(observer, ok=False)
+        finally:
+            exited.close()
+            notification.close()
 
     def action(self, stream, **value):
         stream.write((json.dumps(value) + '\n').encode())
 
     def finish(self, child, ok=True):
-        stdout, stderr = child.communicate()
+        stdout, stderr = self.child_communication(child)
         if ok:
             self.assertEqual(child.returncode, 0, stderr)
         else:
@@ -1373,6 +1434,7 @@ class Receive(unittest.TestCase):
                     fixture.doCleanups()
 
     def exercise_completed_observer(self, stopped, keeper_loss=True):
+        print(f'Completed observer recovery: stopped={stopped}, keeper_loss={keeper_loss}', flush=True)
         self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
         self.player(harness='omp')
         config_path = self.directory / 'fixture.json'
@@ -1380,8 +1442,9 @@ class Receive(unittest.TestCase):
         config['record_launches'] = True
         config_path.write_text(json.dumps(config))
         self.prepare_input('first', 'parent', 'Complete the original input.', kind='task')
+        print('WAIT: original native connection', flush=True)
         observer = self.spawn(*self.receive_args('parent'))
-        original, started = self.accept('parent')
+        original, started = self.accept_child(observer, 'parent')
         native_id = self.eventually(lambda: self.coord('player', 'parent')['native'],
                                     'The original native identity was not recorded.')
         with sqlite3.connect(self.db) as database:
@@ -1400,6 +1463,7 @@ class Receive(unittest.TestCase):
         self.signal_selected(selected_observer, signal.SIGSTOP)
         body = 'Original result after native exit.'
         self.action(original, body=body, exit_after_terminal=True)
+        print('WAIT: original native exit and retained status', flush=True)
         self.assertEqual(original.readline(), b'')
         self.eventually(lambda: (attempt / 'status').exists(),
                         'The keeper did not record actual native exit.')
@@ -1414,9 +1478,11 @@ class Receive(unittest.TestCase):
         self.assertFalse(self.session_guard_available('parent'))
         if not stopped:
             self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
+        print('WAIT: recovering the completed attempt and retiring the selected observer', flush=True)
         recovery = self.spawn('recover-observer', 'parent', observer.pid)
-        self.finish(observer, ok=False)
+        self.finish_observer_during_recovery(observer, recovery)
         self.assertEqual(observer.returncode, -signal.SIGTERM)
+        print('Selected observer exited; awaiting recovery completion', flush=True)
         if stopped:
             self.finish(recovery)
             self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['second'])
@@ -1427,7 +1493,8 @@ class Receive(unittest.TestCase):
                 ).fetchone(), ('operator-stop', 'Preserve the operator stop.'))
             self.assert_no_start()
         else:
-            continuation, resumed = self.accept('parent')
+            print('WAIT: pending input in the original native conversation', flush=True)
+            continuation, resumed = self.accept_child(recovery, 'parent')
             if not keeper_loss:
                 current_owner = self.selected_process(selected_owner['pid'])
                 self.assertIsNotNone(current_owner, 'The original keeper exited during observer handoff.')
@@ -1439,6 +1506,7 @@ class Receive(unittest.TestCase):
             self.assertNotIn('[id: first]', resumed['prompt'])
             self.action(continuation, body='Pending input completed in the original conversation.')
             self.assertEqual(continuation.readline(), b'')
+            print('WAIT: recovery reports and acknowledgment after native continuation', flush=True)
             self.finish(recovery)
             self.assertEqual(self.coord('inbox', 'parent'), [])
         turns = self.coord('turns', 'parent')
