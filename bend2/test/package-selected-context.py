@@ -595,6 +595,7 @@ void handler(const char *dynamic) {
         request = self.root / 'request.json'
         request.write_text(json.dumps({
             'version': 1,
+            'engine': 'bend2',
             'subject': {'kind': 'symbol',
                         'path': 'bend2/context/bend2/fixtures/valid.bend',
                         'name': 'id'},

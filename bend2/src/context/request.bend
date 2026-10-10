@@ -376,10 +376,6 @@ def word_member(xs: Words, +w: String) -> Bool:
     case Wnone{}: False{}
     case Wcons{+head, +tail}: Bool.pick(Bool, String.eq(head, w), True{}, word_member(tail, w))
 
-def engine_words() -> Words:
-  words_from(["auto", "typescript", "clangd", "clang-analyzer", "cdp", "sqlite-schema",
-              "postgres-schema", "data-model", "environment", "json-dataset"])
-
 def projection_words() -> Words:
   words_from(["definition", "type", "references", "calls", "callers", "dependencies",
               "diagnostics", "flow", "exceptions", "databaseAccesses", "authorization",
@@ -712,16 +708,16 @@ def version_of(m: Maybe<&2, J.Json>) -> Bool:
 def version_ok(members: J.Json) -> Bool:
   version_of(member_lookup("version", members))
 
-def engine_of(m: Maybe<&2, J.Json>) -> Bool:
-  match m:
-    case None{}: True{}
-    case Some{+value}: word_member(engine_words(), text_of(value))
+def engine_ok(members: J.Json) -> Bool:
+  optional_text("engine", members)
 
-def engine_ok(+members: J.Json) -> Bool:
-  Bool.pick(Bool, optional_text("engine", members), engine_of(member_lookup("engine", members)), False{})
+def database_option_ok(found: Maybe<&2, J.Json>) -> Bool:
+  match found:
+    case None{}: True{}
+    case Some{+value}: Bool.or(is_jstr(value),is_jobj(value))
 
 def options_values(+members: J.Json) -> Bool:
-  Bool.pick(Bool, optional_text("database", members),
+  Bool.pick(Bool, database_option_ok(member_lookup("database", members)),
     Bool.pick(Bool, optional_text("client", members),
       Bool.pick(Bool, optional_text("analysis", members), True{}, False{}), False{}), False{})
 
