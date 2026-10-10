@@ -212,10 +212,12 @@ const TOOLS = [
   },
   {
     name: 'baton2_knowledge_promote',
-    description: 'Promote a reviewed finding from its recorded source into a destination scope as the attached session.',
+    description: 'Promote a finding from its recorded source into a session or Ensemble as the attached destination owner.',
     inputSchema: { type: 'object', properties: {
       id: { type: 'string', description: 'Promotion ID' }, source: { type: 'string' },
       destination: { type: 'string' }, finding: { type: 'string', description: 'Finding ID' },
+      sourceKind: { type: 'string', enum: ['session', 'group'], description: 'Source endpoint kind (default: session)' },
+      destinationKind: { type: 'string', enum: ['session', 'group'], description: 'Destination endpoint kind (default: session)' },
     }, required: ['id', 'source', 'destination', 'finding'], additionalProperties: false },
   },
   {
@@ -680,7 +682,10 @@ function handleToolCall(msg) {
         result = coord('relate', args.id, sessionId, args.source, args.relation, args.target);
         break;
       case 'baton2_knowledge_promote':
-        result = coord('promote', args.id, sessionId, args.source, args.destination, args.finding);
+        result = args.sourceKind === undefined && args.destinationKind === undefined
+          ? coord('promote', args.id, sessionId, args.source, args.destination, args.finding)
+          : coord('promote-scoped', args.id, sessionId, args.sourceKind ?? 'session', args.source,
+            args.destinationKind ?? 'session', args.destination, args.finding);
         break;
       case 'baton2_player':
         result = coord('player', player);

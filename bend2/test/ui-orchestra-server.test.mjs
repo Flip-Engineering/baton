@@ -344,6 +344,7 @@ test('an out-of-scope knowledge change still invalidates the shared overview', a
   promotionWriter.exec(`
     BEGIN;
     INSERT INTO knowledge_promotions VALUES ('promotion-outside','finding-outside','sibling','sibling','external','root');
+    INSERT INTO ensembles VALUES ('legacy-group','external','loose');
     INSERT INTO native_changes(recorded_at,entity,entity_id,session_id,operation,kind,summary)
       VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),'promotion','promotion-outside','external','insert','promotion','finding shared');
     COMMIT;
@@ -354,6 +355,11 @@ test('an out-of-scope knowledge change still invalidates the shared overview', a
   const promoted = await (await fetch(`${base}/orchestra/knowledge/overview?scope=all`)).json();
   assert.equal(promoted.promotions[0].destination, 'external');
   assert.equal(promoted.actors.external.received, 1);
+  assert.equal(promoted.promotions[0].sourceKind, 'session');
+  assert.equal(promoted.promotions[0].destinationKind, 'session');
+  const legacyGroup = await (await fetch(`${base}/orchestra/knowledge/overview?group=legacy-group`)).json();
+  assert.deepEqual(legacyGroup.findings, []);
+  assert.equal(legacyGroup.groups['legacy-group'].owner, 'external');
   await reader.cancel();
 });
 
@@ -364,10 +370,11 @@ test('knowledge graphs expose authored types, cited messages and scoped shared h
     CREATE TABLE knowledge (id TEXT PRIMARY KEY, author TEXT, claim TEXT, evidence TEXT,
       limits TEXT, kind TEXT DEFAULT 'finding');
     CREATE TABLE knowledge_promotions (id TEXT PRIMARY KEY, finding TEXT, author TEXT,
-      source TEXT, destination TEXT, promoted_by TEXT);
+      source TEXT, destination TEXT, promoted_by TEXT,
+      source_kind TEXT DEFAULT 'session', destination_kind TEXT DEFAULT 'session');
     CREATE TABLE knowledge_relations (id TEXT PRIMARY KEY, author TEXT, source TEXT,
       relation TEXT, target TEXT);
-    INSERT INTO ensembles VALUES ('review-group','child','tight');
+    INSERT INTO ensembles VALUES ('review-group','child','tight'),('other-group','child','loose'),('child','root','loose');
     INSERT INTO ensemble_members VALUES ('review-group','child'),('review-group','grandchild');
     INSERT INTO messages(id,sender,recipient,kind,body)
       VALUES ('quota-report','grandchild','child','report','Retained provider quota error.');
@@ -377,8 +384,11 @@ test('knowledge graphs expose authored types, cited messages and scoped shared h
       ('root-decision','root','Use another available account','message:quota-report','The observed account','decision'),
       ('outside-local','external','Unshared local finding','run:outside','One run','finding');
     INSERT INTO knowledge_promotions VALUES
-      ('to-group','quota-observation','grandchild','grandchild','child','child'),
-      ('to-root','quota-observation','grandchild','child','root','root');
+      ('to-worker','quota-observation','grandchild','grandchild','child','child','session','session'),
+      ('to-group','quota-observation','grandchild','grandchild','review-group','child','session','group'),
+      ('to-other','quota-correction','grandchild','grandchild','other-group','child','session','group'),
+      ('to-collision','outside-local','external','external','child','root','session','group'),
+      ('to-root','quota-observation','grandchild','review-group','root','root','group','session');
     INSERT INTO knowledge_relations VALUES
       ('quota-source','grandchild','message:quota-report','Supports','finding:quota-observation'),
       ('quota-revision','grandchild','finding:quota-correction','Supersedes','finding:quota-observation'),
@@ -400,10 +410,25 @@ test('knowledge graphs expose authored types, cited messages and scoped shared h
   const group = await read('?group=review-group');
   assert.deepEqual(group.scope, { kind: 'group', id: 'review-group', holders: ['child'] });
   assert.deepEqual(group.findings.map((item) => item.id), ['quota-observation']);
+  assert.deepEqual(group.groups['review-group'], { owner: 'child', coupling: 'tight', received: 1 });
+  assert.equal(group.promotions.find((item) => item.id === 'to-group').destinationKind, 'group');
+  assert.equal(group.promotions.find((item) => item.id === 'to-root').sourceKind, 'group');
+  assert.equal(group.actors['review-group'], undefined);
+  const other = await read('?group=other-group');
+  assert.deepEqual(other.findings.map((item) => item.id), ['quota-correction']);
+  const collision = await read('?group=child');
+  assert.deepEqual(collision.findings.map((item) => item.id), ['outside-local']);
+  assert.equal(collision.groups.child.owner, 'root');
+  const child = await read('?actor=child');
+  assert.deepEqual(child.findings.map((item) => item.id), ['quota-observation']);
+  assert.equal(child.actors.child.received, 1);
   const worker = await read('?actor=grandchild');
   assert.deepEqual(worker.findings.map((item) => item.kind), ['correction', 'observation']);
   assert.equal(worker.relations.find((relation) => relation.id === 'quota-revision').relation, 'Supersedes');
   const actor = await (await fetch(`${base}/orchestra/knowledge?actor=child`)).json();
+  assert.equal(actor.received.length, 1);
+  assert.equal(actor.received[0].id, 'to-worker');
+  assert.equal(actor.received[0].destinationKind, 'session');
   assert.equal(actor.received[0].kind, 'observation');
   assert.equal(actor.received[0].evidenceMessage.id, 'quota-report');
   const all = await read('?scope=all');

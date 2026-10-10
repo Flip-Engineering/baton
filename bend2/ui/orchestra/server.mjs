@@ -848,6 +848,39 @@ function knowledgeRelations(db) {
   return present ? rows(db, 'SELECT id, author, source, relation, target FROM knowledge_relations ORDER BY id') : [];
 }
 
+function knowledgePromotionColumns(db) {
+  const columns = rows(db, "PRAGMA table_info('knowledge_promotions')");
+  return columns.some((column) => column.name === 'source_kind')
+    && columns.some((column) => column.name === 'destination_kind');
+}
+
+function knowledgePromotions(db, where = '', ...args) {
+  const kinds = knowledgePromotionColumns(db);
+  return rows(db, `SELECT id, finding, author, source, destination, promoted_by AS promotedBy,
+    ${kinds ? 'source_kind' : "'session'"} AS sourceKind,
+    ${kinds ? 'destination_kind' : "'session'"} AS destinationKind
+    FROM knowledge_promotions ${where} ORDER BY id`, ...args);
+}
+
+function knowledgeGroups(db, promotions, selected = '') {
+  const ids = new Set(selected ? [selected] : []);
+  for (const promotion of promotions) {
+    if (promotion.sourceKind === 'group') ids.add(promotion.source);
+    if (promotion.destinationKind === 'group') ids.add(promotion.destination);
+  }
+  if (!ids.size) return {};
+  const groups = Object.fromEntries([...ids].map((id) => [id, { owner: '', coupling: '', received: 0 }]));
+  for (const group of rows(db,
+    `SELECT id, owner, coupling FROM ensembles WHERE id IN (${[...ids].map(() => '?').join(',')})`, ...ids)) {
+    groups[group.id].owner = group.owner;
+    groups[group.id].coupling = group.coupling;
+  }
+  for (const promotion of promotions) {
+    if (promotion.destinationKind === 'group') groups[promotion.destination].received += 1;
+  }
+  return groups;
+}
+
 function knowledgeScope(db, kind, id) {
   if (kind === 'all') return { kind, id: null, holders: null };
   let holders;
@@ -861,10 +894,16 @@ function knowledgeScope(db, kind, id) {
 
 function findingsForScope(db, scope) {
   if (scope.holders === null) return knowledgeFindings(db);
+  const kinds = knowledgePromotionColumns(db);
+  if (scope.kind === 'group') {
+    return kinds ? knowledgeFindings(db, `WHERE EXISTS(SELECT 1 FROM knowledge_promotions p
+      WHERE p.finding = k.id AND p.destination_kind = 'group' AND p.destination = ?)`, scope.id) : [];
+  }
   if (!scope.holders.length) return [];
   const placeholders = scope.holders.map(() => '?').join(',');
   return knowledgeFindings(db, `WHERE k.author IN (${placeholders}) OR EXISTS(
-    SELECT 1 FROM knowledge_promotions p WHERE p.finding = k.id AND p.destination IN (${placeholders}))`,
+    SELECT 1 FROM knowledge_promotions p WHERE p.finding = k.id
+      ${kinds ? "AND p.destination_kind = 'session'" : ''} AND p.destination IN (${placeholders}))`,
   ...scope.holders, ...scope.holders);
 }
 
@@ -873,7 +912,7 @@ function relationsForScope(db, scope, findings) {
   if (scope.holders === null) return relations;
   const holders = new Set(scope.holders);
   const references = new Set(findings.flatMap((finding) => [finding.id, 'finding:' + finding.id]));
-  return relations.filter((relation) => holders.has(relation.author)
+  return relations.filter((relation) => (scope.kind !== 'group' && holders.has(relation.author))
     || references.has(relation.source) || references.has(relation.target));
 }
 
@@ -882,14 +921,13 @@ function relationsForScope(db, scope, findings) {
 function knowledgeOverview(db, kind = 'universal', id = '') {
   const scope = knowledgeScope(db, kind, id);
   if (!knowledgeTablesReady(db)) {
-    return { contractVersion: 1, scope, findings: [], promotions: [], relations: [], actors: {}, empty: true };
+    return { contractVersion: 1, scope, findings: [], promotions: [], relations: [], actors: {}, groups: knowledgeGroups(db, [], kind === 'group' ? id : ''), empty: true };
   }
   const findings = findingsForScope(db, scope);
   const relations = relationsForScope(db, scope, findings);
   const findingIds = new Set(findings.map((finding) => finding.id));
-  const promotions = rows(db,
-    'SELECT id, finding, author, source, destination, promoted_by AS promotedBy FROM knowledge_promotions ORDER BY id')
-    .filter((promotion) => findingIds.has(promotion.finding));
+  const promotions = knowledgePromotions(db).filter((promotion) => findingIds.has(promotion.finding));
+  const groups = knowledgeGroups(db, promotions, kind === 'group' ? id : '');
   const actors = {};
   const touch = (id) => {
     if (id === null || id === undefined || id === '') return null;
@@ -901,11 +939,12 @@ function knowledgeOverview(db, kind = 'universal', id = '') {
     if (actor) actor.authored += 1;
   }
   for (const p of promotions) {
-    const destination = touch(p.destination);
+    const destination = p.destinationKind === 'session' ? touch(p.destination) : null;
     if (destination) destination.received += 1;
-    touch(p.source);
+    if (p.sourceKind === 'session') touch(p.source);
     touch(p.promotedBy);
   }
+  for (const group of Object.values(groups)) touch(group.owner);
   for (const relation of relations) touch(relation.author);
   // Include ancestors so graph rows follow complete recorded parent chains.
   // UNION ends cycles when the query reaches an identical session row.
@@ -939,21 +978,21 @@ function knowledgeOverview(db, kind = 'universal', id = '') {
       actor.parent = row.parent == null ? '' : row.parent;
     }
   }
-  return { contractVersion: 1, scope, findings, promotions, relations, actors,
+  return { contractVersion: 1, scope, findings, promotions, relations, actors, groups,
     empty: findings.length === 0 && promotions.length === 0 && relations.length === 0 };
 }
 
 function knowledgeForActor(db, session) {
   const scope = knowledgeScope(db, 'worker', session);
   if (!knowledgeTablesReady(db)) {
-    return { contractVersion: 1, scope, actor: session, authored: [], received: [], relations: [], counts: { authored: 0, received: 0, unshared: 0 }, empty: true };
+    return { contractVersion: 1, scope, actor: session, authored: [], received: [], relations: [], groups: {}, counts: { authored: 0, received: 0, unshared: 0 }, empty: true };
   }
-  const held = knowledgeFindings(db, `WHERE k.author = ? OR EXISTS(
-    SELECT 1 FROM knowledge_promotions p WHERE p.finding = k.id AND p.destination = ?)`, session, session);
+  const held = findingsForScope(db, scope);
   const authored = held.filter((finding) => finding.author === session);
   const byId = new Map(held.map((finding) => [finding.id, finding]));
-  const received = rows(db, `SELECT id, finding, author, source, destination, promoted_by AS promotedBy
-    FROM knowledge_promotions WHERE destination = ? ORDER BY id`, session).map((promotion) => {
+  const kinds = knowledgePromotionColumns(db);
+  const received = knowledgePromotions(db,
+    `WHERE destination = ? ${kinds ? "AND destination_kind = 'session'" : ''}`, session).map((promotion) => {
     const finding = byId.get(promotion.finding) || {};
     return { ...promotion, kind: finding.kind || 'finding', claim: finding.claim,
       evidence: finding.evidence, evidenceMessage: finding.evidenceMessage ?? null, limits: finding.limits };
@@ -961,7 +1000,7 @@ function knowledgeForActor(db, session) {
   const relations = relationsForScope(db, scope, held);
   const promoted = new Set(rows(db, 'SELECT DISTINCT finding AS f FROM knowledge_promotions').map((r) => r.f));
   const unshared = authored.filter((f) => !promoted.has(f.id)).length;
-  return { contractVersion: 1, scope, actor: session, authored, received, relations,
+  return { contractVersion: 1, scope, actor: session, authored, received, relations, groups: knowledgeGroups(db, received),
     counts: { authored: authored.length, received: received.length, unshared }, empty: authored.length === 0 && received.length === 0 && relations.length === 0 };
 }
   const handleRequest = async (request, response) => {

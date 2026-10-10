@@ -1,20 +1,7 @@
-# The shared knowledge workflow: an agent records an evidence-backed finding,
-# reads findings from the shared database, and promotes one explicitly from a
-# recorded source into the acting session's own scope. The store is the
-# existing SQLite database, parentage is the sessions table, and the notice a
-# record sends its author's immediate parent is an ordinary message of the
-# existing question kind. Promotion notifies the destination owner through the
-# same message and delivery path. The actor checks below are declared-actor checks
-# inside that database: they claim no authentication boundary and no
-# confidentiality against a party that can write it.
-#
-# Every registered session can read every finding and its promotion provenance
-# in this shared database. A promotion is admitted only for a registered
-# destination owner, and only from the finding's author or a recorded
-# destination that carries that exact finding.
-#
-# Evidence is the author's reference text. A message: reference includes the
-# retained message's identity, sender, recipient and body in the read result.
+# Findings, directed relationships and explicit session or Ensemble promotions
+# share the existing SQLite database. Recording a finding notifies the author's
+# parent. Promoting it notifies the destination session or Ensemble owner.
+# Evidence retains the author's reference text and any cited message body.
 import Base
 import ../coordinator/commands.bend as C
 import ./delivery.bend as Delivery
@@ -28,7 +15,7 @@ def notice_id(finding: String) -> String:
 # Knowledge writes install these tables before their transaction runs.
 def knowledge_schema() -> String:
   "CREATE TABLE IF NOT EXISTS knowledge (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, claim TEXT NOT NULL, evidence TEXT NOT NULL, limits TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'finding');"
-  ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions (id TEXT UNIQUE NOT NULL, finding TEXT NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, destination TEXT NOT NULL, promoted_by TEXT NOT NULL);"
+  ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions (id TEXT UNIQUE NOT NULL, finding TEXT NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, destination TEXT NOT NULL, promoted_by TEXT NOT NULL, source_kind TEXT NOT NULL DEFAULT 'session', destination_kind TEXT NOT NULL DEFAULT 'session');"
   ++ "CREATE TABLE IF NOT EXISTS knowledge_relations (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, relation TEXT NOT NULL, target TEXT NOT NULL);"
 
 def commit_sql(statements: String) -> String:
@@ -48,11 +35,18 @@ def write_answer(+text: String) -> IO(Unit):
 def knowledge_destinations() -> String:
   "(SELECT coalesce(json_group_array(p.destination),json('[]')) FROM knowledge_promotions p WHERE p.finding=k.id)"
 
-# The full provenance of each of those promotions: the exact finding, its
-# original author, the scope it was drawn from, the scope it went to, and the
-# actor that promoted it.
-def knowledge_promotions() -> String:
-  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by) AS item FROM knowledge_promotions p WHERE p.finding=k.id))"
+# Group endpoints carry their kind alongside their literal IDs. Session-only
+# promotion responses retain their existing fields.
+def endpoint_fields(+row: String, groups: Bool) -> String:
+  Bool.pick(String,groups,
+    "CASE WHEN " ++ row ++ "source_kind<>'session' OR " ++ row ++ "destination_kind<>'session' THEN json_object('sourceKind'," ++ row ++ "source_kind,'destinationKind'," ++ row ++ "destination_kind) ELSE json('{}') END",
+    "json('{}')")
+
+def destination_kind(groups: Bool) -> String:
+  Bool.pick(String,groups,"p.destination_kind","'session'")
+
+def knowledge_promotions(groups: Bool) -> String:
+  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by)," ++ endpoint_fields("p.",groups) ++ ") AS item FROM knowledge_promotions p WHERE p.finding=k.id))"
 
 # The cited message, exposed whole so the evidence travels with the finding. The
 # argument is the SQL expression holding the reference, quoted by its caller.
@@ -62,11 +56,11 @@ def evidence_message(+evidence: String) -> String:
 def knowledge_relations() -> String:
   "(SELECT coalesce(json_group_array(json_object('id',r.id,'author',r.author,'source',r.source,'relation',r.relation,'target',r.target)),json('[]')) FROM knowledge_relations r WHERE r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))"
 
-def knowledge_item_with_types(+typed: Bool) -> String:
-  "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'claim',k.claim,'evidence',k.evidence,'evidenceMessage'," ++ evidence_message("k.evidence") ++ ",'limits',k.limits,'destinations'," ++ knowledge_destinations() ++ ",'promotions'," ++ knowledge_promotions() ++ ",'relations'," ++ Bool.pick(String,typed,knowledge_relations(),"json('[]')") ++ ")"
+def knowledge_item_with_types(+typed: Bool, groups: Bool) -> String:
+  "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'claim',k.claim,'evidence',k.evidence,'evidenceMessage'," ++ evidence_message("k.evidence") ++ ",'limits',k.limits,'destinations'," ++ knowledge_destinations() ++ ",'promotions'," ++ knowledge_promotions(groups) ++ ",'relations'," ++ Bool.pick(String,typed,knowledge_relations(),"json('[]')") ++ ")"
 
 def knowledge_item() -> String:
-  knowledge_item_with_types(True{})
+  knowledge_item_with_types(True{},True{})
 
 def scope_holders_sql(scope: String, +subject: String) -> String:
   match scope:
@@ -75,38 +69,50 @@ def scope_holders_sql(scope: String, +subject: String) -> String:
     case "universal": "SELECT s.id FROM sessions s JOIN session_roles r ON r.session=s.id WHERE s.parent IS NULL AND r.role IN('principal-conductor','conductor') AND (" ++ C.q(subject) ++ "='' OR s.id=" ++ C.q(subject) ++ ")"
     case _: "SELECT id FROM sessions"
 
-def scope_findings_sql(+scope: String, subject: String) -> String:
+def scope_findings_sql(+scope: String, +subject: String, +groups: Bool) -> String:
   match scope:
     case "all": "1"
+    case "group":
+      Bool.pick(String,groups,"EXISTS(SELECT 1 FROM knowledge_promotions p WHERE p.finding=k.id AND p.destination_kind='group' AND p.destination=" ++ C.q(subject) ++ ")","0")
     case _:
       +holders = scope_holders_sql(scope,subject)
-      "(k.author IN(" ++ holders ++ ") OR EXISTS(SELECT 1 FROM knowledge_promotions p WHERE p.finding=k.id AND p.destination IN(" ++ holders ++ ")))"
+      "(k.author IN(" ++ holders ++ ") OR EXISTS(SELECT 1 FROM knowledge_promotions p WHERE p.finding=k.id AND " ++ destination_kind(groups) ++ "='session' AND p.destination IN(" ++ holders ++ ")))"
 
-def scope_relations_sql(+scope: String, +subject: String) -> String:
+def scope_relations_sql(+scope: String, +subject: String, +groups: Bool) -> String:
   match scope:
     case "all": "1"
+    case "group":
+      "EXISTS(SELECT 1 FROM knowledge k WHERE " ++ scope_findings_sql(scope,subject,groups) ++ " AND (r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id)))"
     case _:
-      "(r.author IN(" ++ scope_holders_sql(scope,subject) ++ ") OR EXISTS(SELECT 1 FROM knowledge k WHERE " ++ scope_findings_sql(scope,subject) ++ " AND (r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))))"
+      "(r.author IN(" ++ scope_holders_sql(scope,subject) ++ ") OR EXISTS(SELECT 1 FROM knowledge k WHERE " ++ scope_findings_sql(scope,subject,groups) ++ " AND (r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))))"
 
-def relations_read_sql(+reader: String, scope: String, subject: String) -> String:
-  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',r.id,'author',r.author,'source',r.source,'relation',r.relation,'target',r.target) AS item FROM knowledge_relations r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_relations_sql(scope,subject) ++ " ORDER BY r.id);"
+def promotion_groups_value(db: String) -> IO(Bool):
+  do IO<Bool>:
+    present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge_promotions') WHERE name IN('source_kind','destination_kind');"))
+    IO.pure(Bool,String.eq(present,"2\n"))
 
-def relations_when_present(db: String, reader: String, scope: String, subject: String,
+def relations_read_sql(+reader: String, scope: String, subject: String, groups: Bool) -> String:
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',r.id,'author',r.author,'source',r.source,'relation',r.relation,'target',r.target) AS item FROM knowledge_relations r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_relations_sql(scope,subject,groups) ++ " ORDER BY r.id);"
+
+def relations_when_present(+db: String, reader: String, scope: String, subject: String,
                            present: Bool) -> IO(String):
   match present:
     case False{}: IO.pure(String,"[]\n")
-    case True{}: IO.try(String,DB.Sql.read(db,relations_read_sql(reader,scope,subject)))
+    case True{}:
+      do IO<String>:
+        groups : Bool <- promotion_groups_value(db)
+        IO.try(String,DB.Sql.read(db,relations_read_sql(reader,scope,subject,groups)))
 
 def relations_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
   do IO<String>:
     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
     relations_when_present(db,reader,scope,subject,String.eq(present,"1\n"))
 
-def scoped_read_sql(+reader: String, scope: String, subject: String, typed: Bool) -> String:
-  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_item_with_types(typed) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject) ++ " ORDER BY k.rowid);"
+def scoped_read_sql(+reader: String, scope: String, subject: String, typed: Bool, +groups: Bool) -> String:
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_item_with_types(typed,groups) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups) ++ " ORDER BY k.rowid);"
 
 def read_sql_with_types(reader: String, typed: Bool) -> String:
-  scoped_read_sql(reader,"all","",typed)
+  scoped_read_sql(reader,"all","",typed,True{})
 
 def read_sql(+reader: String) -> String:
   read_sql_with_types(reader,True{})
@@ -125,28 +131,31 @@ def detail_read(+reader: String, +scope: String, +subject: String, +scoped: Bool
 def knowledge_index_item_with_types(+reader: String, +scope: String, +subject: String, +scoped: Bool, +typed: Bool) -> String:
   "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'evidence',k.evidence,'claimBytes',length(CAST(k.claim AS BLOB)),'limitsBytes',length(CAST(k.limits AS BLOB)),'evidenceMessage'," ++ evidence_index() ++ ",'destinations'," ++ knowledge_destinations() ++ ",'promotionCount',(SELECT count(*) FROM knowledge_promotions p WHERE p.finding=k.id),'relationCount'," ++ Bool.pick(String,typed,"(SELECT count(*) FROM knowledge_relations r WHERE r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))","0") ++ ",'detailRead'," ++ detail_read(reader,scope,subject,scoped) ++ ")"
 
-def scoped_index_sql(+reader: String, +scope: String, +subject: String, +scoped: Bool, +typed: Bool) -> String:
-  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_index_item_with_types(reader,scope,subject,scoped,typed) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject) ++ " ORDER BY k.rowid);"
+def scoped_index_sql(+reader: String, +scope: String, +subject: String, +scoped: Bool, +typed: Bool, groups: Bool) -> String:
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_index_item_with_types(reader,scope,subject,scoped,typed) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups) ++ " ORDER BY k.rowid);"
 
-def scoped_detail_sql(+reader: String, +scope: String, +subject: String, +id: String, +typed: Bool) -> String:
-  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_item_with_types(typed) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject) ++ " AND k.id=" ++ C.q(id) ++ " ORDER BY k.rowid);"
+def scoped_detail_sql(+reader: String, +scope: String, +subject: String, +id: String, +typed: Bool, +groups: Bool) -> String:
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_item_with_types(typed,groups) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups) ++ " AND k.id=" ++ C.q(id) ++ " ORDER BY k.rowid);"
 
 def index_value(+db: String, +reader: String, +scope: String, +subject: String, +scoped: Bool) -> IO(String):
   do IO<String>:
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
-    IO.try(String,DB.Sql.read(db,scoped_index_sql(reader,scope,subject,scoped,String.eq(typed,"1\n"))))
+    groups : Bool <- promotion_groups_value(db)
+    IO.try(String,DB.Sql.read(db,scoped_index_sql(reader,scope,subject,scoped,String.eq(typed,"1\n"),groups)))
 
 def detail_value(+db: String, +reader: String, +scope: String, +subject: String, +id: String) -> IO(String):
   do IO<String>:
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
-    IO.try(String,DB.Sql.read(db,scoped_detail_sql(reader,scope,subject,id,String.eq(typed,"1\n"))))
+    groups : Bool <- promotion_groups_value(db)
+    IO.try(String,DB.Sql.read(db,scoped_detail_sql(reader,scope,subject,id,String.eq(typed,"1\n"),groups)))
 
 # A read of an older database retains its existing findings before any writer
 # installs the new columns and relationship table.
 def read_scope_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
   do IO<String>:
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
-    IO.try(String,DB.Sql.read(db,scoped_read_sql(reader,scope,subject,String.eq(typed,"1\n"))))
+    groups : Bool <- promotion_groups_value(db)
+    IO.try(String,DB.Sql.read(db,scoped_read_sql(reader,scope,subject,String.eq(typed,"1\n"),groups)))
 
 def read_value(db: String, reader: String) -> IO(String):
   read_scope_value(db,reader,"all","")
@@ -198,47 +207,51 @@ def relation_statements(+id: String, author: String, source: String, relation: S
   "INSERT INTO knowledge_relations(id,author,source,relation,target) VALUES(" ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(source) ++ "," ++ C.q(relation) ++ "," ++ C.q(target) ++ ") ON CONFLICT(id) DO UPDATE SET author=excluded.author,source=excluded.source,relation=excluded.relation,target=excluded.target;"
   ++ "SELECT json_object('id',id,'author',author,'source',source,'relation',relation,'target',target) FROM knowledge_relations WHERE id=" ++ C.q(id) ++ ";"
 
-# A promotion is admitted only for the registered destination's owner.
-def promotion_admitted(promoter: String, +destination: String) -> String:
-  C.q(promoter) ++ "=" ++ C.q(destination) ++ " AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(destination) ++ ")"
+# Session destinations notify that session; group destinations notify the
+# recorded Ensemble owner.
+def promotion_owner(kind: String, +destination: String) -> String:
+  match kind:
+    case "session": "(SELECT id FROM sessions WHERE id=" ++ C.q(destination) ++ ")"
+    case "group": "(SELECT owner FROM ensembles WHERE id=" ++ C.q(destination) ++ ")"
+    case _: "NULL"
 
-# The source carries the exact finding when it names the original author or a
-# destination recorded for this finding.
-def source_carries(+source: String) -> String:
-  "(" ++ C.q(source) ++ "=k.author OR EXISTS(SELECT 1 FROM knowledge_promotions prev WHERE prev.finding=k.id AND prev.destination=" ++ C.q(source) ++ "))"
+def promotion_admitted(promoter: String, kind: String, destination: String) -> String:
+  C.q(promoter) ++ "=" ++ promotion_owner(kind,destination)
 
-def promotion_statement(+id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> String:
-  "INSERT INTO knowledge_promotions(id,finding,author,source,destination,promoted_by) SELECT " ++ C.q(id) ++ ",k.id,k.author," ++ C.q(source) ++ "," ++ C.q(destination) ++ "," ++ C.q(promoter) ++ " FROM knowledge k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination) ++ " AND " ++ source_carries(source)
+# A source holds the finding through authorship or an explicit promotion to the
+# same endpoint kind and ID.
+def source_carries(+kind: String, +source: String) -> String:
+  "((" ++ C.q(kind) ++ "='session' AND " ++ C.q(source) ++ "=k.author) OR EXISTS(SELECT 1 FROM knowledge_promotions prev WHERE prev.finding=k.id AND prev.destination_kind=" ++ C.q(kind) ++ " AND prev.destination=" ++ C.q(source) ++ "))"
+
+def promotion_coordinates(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  "id=" ++ C.q(id) ++ " AND finding=" ++ C.q(finding) ++ " AND source_kind=" ++ C.q(source_kind) ++ " AND source=" ++ C.q(source) ++ " AND destination_kind=" ++ C.q(destination_kind) ++ " AND destination=" ++ C.q(destination) ++ " AND promoted_by=" ++ C.q(promoter)
+
+def promotion_statement(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  "INSERT INTO knowledge_promotions(id,finding,author,source_kind,source,destination_kind,destination,promoted_by) SELECT " ++ C.q(id) ++ ",k.id,k.author," ++ C.q(source_kind) ++ "," ++ C.q(source) ++ "," ++ C.q(destination_kind) ++ "," ++ C.q(destination) ++ "," ++ C.q(promoter) ++ " FROM knowledge k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ source_carries(source_kind,source)
   ++ " ON CONFLICT(id) DO NOTHING;"
-  ++ knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions",C.q(id),"EXISTS(SELECT 1 FROM knowledge k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination) ++ " AND " ++ source_carries(source) ++ ")","finding=" ++ C.q(finding) ++ " AND source=" ++ C.q(source) ++ " AND destination=" ++ C.q(destination) ++ " AND promoted_by=" ++ C.q(promoter),"'finding',finding,'source',source,'destination',destination")
+  ++ knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions",C.q(id),"EXISTS(SELECT 1 FROM knowledge k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ source_carries(source_kind,source) ++ ")",promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding),"'finding',finding,'source',source,'sourceKind',source_kind,'destination',destination,'destinationKind',destination_kind")
 
-# The stored promotion, read back only when it is this call's own promotion:
-# the id, finding, source, destination and promoting actor must all match.
-def promotion_answer(+id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> String:
-  "SELECT json_object('id',id,'finding',finding,'author',author,'source',source,'destination',destination,'promotedBy',promoted_by) FROM knowledge_promotions WHERE id=" ++ C.q(id) ++ " AND finding=" ++ C.q(finding) ++ " AND source=" ++ C.q(source) ++ " AND destination=" ++ C.q(destination) ++ " AND promoted_by=" ++ C.q(promoter) ++ ";"
+def promotion_answer(id: String, promoter: String, source_kind: String, source: String, destination_kind: String, destination: String, finding: String) -> String:
+  "SELECT json_patch(json_object('id',id,'finding',finding,'author',author,'source',source,'destination',destination,'promotedBy',promoted_by)," ++ endpoint_fields("",True{}) ++ ") FROM knowledge_promotions WHERE " ++ promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding) ++ ";"
 
-# The destination owner receives the promotion reference and decides whether to
-# notify ensembles within its scope. The original finding remains in knowledge.
 def promotion_notice_id(id: String) -> String:
   id ++ ":promotion-notice"
 
 def promotion_notice_body() -> String:
-  "json_object('promotion',p.id,'finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by)"
+  "json_patch(json_object('promotion',p.id,'finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by)," ++ endpoint_fields("p.",True{}) ++ ")"
 
-# The same body read from the stored promotion under its own alias, so the
-# conflict comparison can run in a query whose FROM is the messages table.
-def promotion_notice_stored_body(+id: String) -> String:
+def promotion_notice_stored_body(id: String) -> String:
   "(SELECT " ++ promotion_notice_body() ++ " FROM knowledge_promotions p WHERE p.id=" ++ C.q(id) ++ ")"
 
-# A notice is written only for this invocation's exact stored promotion. Its
-# sender and recipient name the destination owner that admitted the promotion.
-def promotion_notice_statement(+id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> String:
-  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(promotion_notice_id(id)) ++ ",p.promoted_by,p.destination,'question'," ++ promotion_notice_body() ++ " FROM knowledge_promotions p WHERE p.id=" ++ C.q(id) ++ " AND p.finding=" ++ C.q(finding) ++ " AND p.source=" ++ C.q(source) ++ " AND p.destination=" ++ C.q(destination) ++ " AND p.promoted_by=" ++ C.q(promoter)
+def promotion_notice_statement(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  +coordinates = promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding)
+  +owner = promotion_owner(destination_kind,destination)
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(promotion_notice_id(id)) ++ ",p.promoted_by," ++ owner ++ ",'question'," ++ promotion_notice_body() ++ " FROM knowledge_promotions p WHERE " ++ coordinates
   ++ " ON CONFLICT(id) DO NOTHING;"
-  ++ knowledge_conflict_sql("promotion-notice-conflict","messages",C.q(promotion_notice_id(id)),"EXISTS(SELECT 1 FROM knowledge_promotions p WHERE p.id=" ++ C.q(id) ++ " AND p.finding=" ++ C.q(finding) ++ " AND p.source=" ++ C.q(source) ++ " AND p.destination=" ++ C.q(destination) ++ " AND p.promoted_by=" ++ C.q(promoter) ++ ")","sender=" ++ C.q(promoter) ++ " AND recipient=" ++ C.q(destination) ++ " AND kind='question' AND body=" ++ promotion_notice_stored_body(id),"'sender',sender,'recipient',recipient")
+  ++ knowledge_conflict_sql("promotion-notice-conflict","messages",C.q(promotion_notice_id(id)),"EXISTS(SELECT 1 FROM knowledge_promotions WHERE " ++ coordinates ++ ")","sender=" ++ C.q(promoter) ++ " AND recipient=" ++ owner ++ " AND kind='question' AND body=" ++ promotion_notice_stored_body(id),"'sender',sender,'recipient',recipient")
 
-def promote_statements(+id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> String:
-  promotion_statement(id,promoter,source,destination,finding) ++ promotion_notice_statement(id,promoter,source,destination,finding) ++ promotion_answer(id,promoter,source,destination,finding)
+def promote_statements(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ promotion_notice_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ promotion_answer(id,promoter,source_kind,source,destination_kind,destination,finding)
 
 # A committed record whose notice could not be delivered refuses with the retry
 # path; the write itself stands.
@@ -307,9 +320,12 @@ def deliver_promotion(db: String, id: String, saved: String) -> IO(Result<&1,&1,
     case SNil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}})
     case SCon{h,t}: Delivery.deliver(db,promotion_notice_id(id),"1",SCon{h,t})
 
-def promote(+db: String, +id: String, promoter: String, source: String, destination: String, finding: String) -> IO(Unit):
+def promote(db: String, id: String, promoter: String, source: String, destination: String, finding: String) -> IO(Unit):
+  promote_scoped(db,id,promoter,"session",source,"session",destination,finding)
+
+def promote_scoped(+db: String, +id: String, promoter: String, source_kind: String, source: String, destination_kind: String, destination: String, finding: String) -> IO(Unit):
   do IO<Unit>:
-    +saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(promote_statements(id,promoter,source,destination,finding))))
+    +saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(promote_statements(id,promoter,source_kind,source,destination_kind,destination,finding))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
       delivery : Result<&1,&1,U32 & String,String> <- deliver_promotion(db,id,saved)
       answered(delivery))

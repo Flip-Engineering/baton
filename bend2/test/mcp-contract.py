@@ -124,6 +124,29 @@ class McpContract(unittest.TestCase):
         self.assertEqual(json.loads(result['content'][0]['text']), [external, message])
         self.assertEqual(json.loads(self.coord('knowledge', 'root').stdout), [])
 
+    def test_group_promotions_and_onward_sharing_use_attached_destination_owner(self):
+        self.coord('role', 'root', 'principal-conductor')
+        self.coord('ensemble', 'review-group', 'root', 'tight')
+        self.coord('ensemble', 'other-group', 'root', 'loose')
+        self.coord('record', 'shared-finding', 'w1', 'Measured finding', 'run:measured', 'One run')
+        shared = self.tool('baton2_knowledge_promote', {'id': 'group-share', 'source': 'w1',
+            'destinationKind': 'group', 'destination': 'review-group', 'finding': 'shared-finding'})
+        self.assertFalse(shared.get('isError', False))
+        promotion = json.loads(shared['content'][0]['text'])
+        self.assertEqual((promotion['sourceKind'], promotion['destinationKind']), ('session', 'group'))
+        group = self.tool('baton2_knowledge', {'scope': 'group', 'subject': 'review-group'})
+        self.assertEqual([row['id'] for row in json.loads(group['content'][0]['text'])], ['shared-finding'])
+        other = self.tool('baton2_knowledge', {'scope': 'group', 'subject': 'other-group'})
+        self.assertEqual(json.loads(other['content'][0]['text']), [])
+        root = self.tool('baton2_knowledge', {'scope': 'universal'})
+        self.assertEqual(json.loads(root['content'][0]['text']), [])
+        onward = self.tool('baton2_knowledge_promote', {'id': 'root-share', 'sourceKind': 'group',
+            'source': 'review-group', 'destination': 'root', 'finding': 'shared-finding'})
+        self.assertFalse(onward.get('isError', False))
+        self.assertEqual(json.loads(onward['content'][0]['text'])['sourceKind'], 'group')
+        root = self.tool('baton2_knowledge', {'scope': 'universal'})
+        self.assertEqual([row['id'] for row in json.loads(root['content'][0]['text'])], ['shared-finding'])
+
     def test_inbox_delivers_retained_bodies_complete(self):
         native = json.loads(self.coord('inbox', 'root').stdout)
         result = self.tool('baton2_inbox')

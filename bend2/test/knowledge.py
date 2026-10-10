@@ -95,6 +95,9 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(self.scoped('group', 'review-group'), [])
         self.assertEqual(self.scoped('universal'), [])
         self.call('promote', 'quota-to-worker', 'worker', 'grand', 'worker', 'quota-observation')
+        self.assertEqual(self.scoped('group', 'review-group'), [])
+        self.call('promote-scoped', 'quota-to-group', 'worker', 'session', 'grand',
+                  'group', 'review-group', 'quota-observation')
         self.assertEqual(self.ids(self.scoped('group', 'review-group')), ['quota-observation'])
         self.assertEqual(self.ids(self.call('knowledge-relations', 'root', 'group', 'review-group')),
                          ['quota-support', 'quota-supersedes'])
@@ -103,6 +106,72 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(self.ids(self.scoped('universal')), ['quota-observation'])
         self.assertEqual(self.ids(self.scoped('all')), ['quota-correction', 'quota-observation'])
         self.assertEqual(self.ids(self.read('root')), ['quota-correction', 'quota-observation'])
+
+    def test_groups_have_independent_holdings_and_typed_promotion_provenance(self):
+        self.call('ensemble', 'worker', 'root', 'tight')
+        self.call('ensemble', 'second-group', 'root', 'loose')
+        self.call('record', 'owner-local', 'root', 'Owner finding', 'run:owner', 'One run')
+        self.call('record', 'alpha', 'grand', 'First finding', 'run:alpha', 'One run')
+        self.call('record', 'beta', 'grand', 'Second finding', 'run:beta', 'One run')
+        shared = self.call('promote-scoped', 'alpha-group', 'root', 'session', 'grand',
+                           'group', 'worker', 'alpha')
+        self.call('promote-scoped', 'beta-group', 'root', 'session', 'grand',
+                  'group', 'second-group', 'beta')
+        self.assertEqual((shared['sourceKind'], shared['destinationKind']), ('session', 'group'))
+        self.assertEqual(shared['destination'], 'worker')
+        self.assertEqual(self.ids(self.scoped('group', 'worker')), ['alpha'])
+        self.assertEqual(self.ids(self.scoped('group', 'second-group')), ['beta'])
+        self.assertEqual(self.scoped('worker', 'worker'), [])
+        self.assertEqual(self.ids(self.scoped('universal')), ['owner-local'])
+        conflict = self.call('promote-scoped', 'alpha-group', 'root', 'session', 'grand',
+                             'session', 'root', 'alpha', success=False)
+        self.assertIn('promotion-id-conflict', conflict.stderr)
+        self.assertEqual(self.ids(self.scoped('universal')), ['owner-local'])
+        notice = self.call('delivery', 'alpha-group:promotion-notice')
+        self.assertEqual(notice['recipient'], 'root')
+        self.assertEqual(json.loads(notice['body'])['destinationKind'], 'group')
+        self.assertEqual(self.scoped('group', 'worker')[0]['promotions'][0]['destinationKind'], 'group')
+        index = self.call('knowledge-scope', 'root', 'group', 'worker', '--index')
+        self.assertEqual(self.ids(index), ['alpha'])
+        self.assertEqual(self.ids(self.call(*index[0]['detailRead'])), ['alpha'])
+
+        # The session and Ensemble named worker retain separate holdings.
+        self.call('promote', 'beta-session', 'worker', 'grand', 'worker', 'beta')
+        self.assertEqual(self.ids(self.scoped('worker', 'worker')), ['beta'])
+        self.assertEqual(self.ids(self.scoped('group', 'worker')), ['alpha'])
+        promoted = self.call('promote-scoped', 'alpha-root', 'root', 'group', 'worker',
+                             'session', 'root', 'alpha')
+        self.assertEqual((promoted['sourceKind'], promoted['destinationKind']), ('group', 'session'))
+        self.assertEqual(self.ids(self.scoped('universal')), ['alpha', 'owner-local'])
+        self.assertEqual(self.ids(self.scoped('group', 'second-group')), ['beta'])
+        with sqlite3.connect(self.db) as db:
+            affected = {row[0] for row in db.execute(
+                "SELECT session_id FROM native_changes WHERE entity='promotion' AND entity_id='alpha' AND operation='insert'")}
+        self.assertIn('root', affected)
+        self.assertNotIn('worker', affected)
+
+    def test_legacy_promotions_remain_session_holdings_before_and_after_migration(self):
+        self.call('ensemble', 'review-group', 'worker')
+        self.call('record', 'legacy-share', 'grand', 'Legacy finding', 'run:legacy', 'One run')
+        original = self.call('promote', 'legacy-promotion', 'worker', 'grand', 'worker', 'legacy-share')
+        with sqlite3.connect(self.db) as db:
+            db.execute('CREATE TABLE old_promotions (id TEXT UNIQUE NOT NULL,finding TEXT NOT NULL,'
+                       'author TEXT NOT NULL,source TEXT NOT NULL,destination TEXT NOT NULL,promoted_by TEXT NOT NULL)')
+            db.execute('INSERT INTO old_promotions SELECT id,finding,author,source,destination,promoted_by FROM knowledge_promotions')
+            db.execute('DROP TABLE knowledge_promotions')
+            db.execute('ALTER TABLE old_promotions RENAME TO knowledge_promotions')
+        self.assertEqual(self.ids(self.scoped('worker', 'worker')), ['legacy-share'])
+        self.assertEqual(self.scoped('group', 'review-group'), [])
+        with sqlite3.connect(self.db) as db:
+            self.assertNotIn('destination_kind', {row[1] for row in db.execute('PRAGMA table_info(knowledge_promotions)')})
+        self.assertEqual(self.call('promote', 'legacy-promotion', 'worker', 'grand', 'worker', 'legacy-share'), original)
+        self.call('promote-scoped', 'new-group-promotion', 'worker', 'session', 'worker',
+                  'group', 'review-group', 'legacy-share')
+        self.assertEqual(self.ids(self.scoped('group', 'review-group')), ['legacy-share'])
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute(
+                "SELECT source_kind,destination_kind FROM knowledge_promotions WHERE id='legacy-promotion'").fetchone(),
+                ('session', 'session'))
 
     def test_relationship_discovery_includes_links_without_a_finding_endpoint(self):
         first = self.evidence("first report ' λ", 'grand')
@@ -122,8 +191,7 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(self.call('knowledge-relations', 'grand', '--pretty'), own)
         self.assertEqual((own[0]['source'], own[0]['relation'], own[0]['target']),
                          (later, 'Supersedes', first))
-        self.assertEqual(self.ids(self.call('knowledge-relations', 'root', 'group', 'review-group')),
-                         ['group-link'])
+        self.assertEqual(self.call('knowledge-relations', 'root', 'group', 'review-group'), [])
         self.assertEqual(self.ids(self.call('knowledge-relations', 'root', 'universal', '')),
                          ['root-link'])
         all_links = self.call('knowledge-relations', 'root', 'all', '')
@@ -343,7 +411,8 @@ class Knowledge(unittest.TestCase):
                      'record-typed FINDING_ID AUTHOR KIND CLAIM EVIDENCE LIMITS',
                      'relate RELATION_ID AUTHOR SOURCE RELATION TARGET',
                      'knowledge-scope READER universal|worker|group|all SUBJECT',
-                     'promote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING'):
+                     'promote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING',
+                     'promote-scoped PROMOTION_ID PROMOTER SOURCE_KIND SOURCE DESTINATION_KIND DESTINATION FINDING'):
             self.assertIn(verb, p.stderr)
 
     def test_a_refused_record_retry_leaves_parent_endpoint_delivery_unchanged(self):

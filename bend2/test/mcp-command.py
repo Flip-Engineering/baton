@@ -249,7 +249,8 @@ class McpCommand(unittest.TestCase):
                 optional = {'baton2_resume': {'liftStop'},
                             'baton2_knowledge': {'scope', 'subject', 'index', 'id', 'pretty'},
                             'baton2_knowledge_relations': {'scope', 'subject', 'pretty'},
-                            'baton2_knowledge_record': {'kind'}}.get(tool, set())
+                            'baton2_knowledge_record': {'kind'},
+                            'baton2_knowledge_promote': {'sourceKind', 'destinationKind'}}.get(tool, set())
                 expected_properties = set(arguments) | optional
                 self.assertEqual(set(schema['properties']), expected_properties)
                 self.assertFalse(schema['additionalProperties'])
@@ -278,6 +279,16 @@ class McpCommand(unittest.TestCase):
                                 'id': 'shared-finding', 'pretty': True},
                      expected_args=['knowledge-scope', session, 'group', 'review-group',
                                     '--id', 'shared-finding', '--pretty'])
+        self.command(tool='baton2_knowledge_promote', session=session,
+                     arguments={'id': 'group promotion λ', 'source': 'source session',
+                                'destinationKind': 'group', 'destination': "review group's λ", 'finding': 'finding-λ'},
+                     expected_args=['promote-scoped', 'group promotion λ', session, 'session',
+                                    'source session', 'group', "review group's λ", 'finding-λ'])
+        self.command(tool='baton2_knowledge_promote', session=session,
+                     arguments={'id': 'onward promotion λ', 'sourceKind': 'group',
+                                'source': "review group's λ", 'destination': session, 'finding': 'finding-λ'},
+                     expected_args=['promote-scoped', 'onward promotion λ', session, 'group',
+                                    "review group's λ", 'session', session, 'finding-λ'])
         self.command(tool='baton2_knowledge_relations', session=session,
                      arguments={'scope': 'group', 'subject': "review group's λ", 'pretty': True},
                      expected_args=['knowledge-relations', session, 'group', "review group's λ", '--pretty'])

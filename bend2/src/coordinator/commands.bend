@@ -78,6 +78,7 @@ type Command is Data:
   KnowledgeScopeIndex{reader: String, scope: String, subject: String}
   KnowledgeScopeDetail{reader: String, scope: String, subject: String, id: String}
   KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
+  KnowledgePromoteScoped{id: String, promoter: String, source_kind: String, source: String, destination_kind: String, destination: String, finding: String}
   View{subject: String, reader: String, port: String}
   UiSubscribe{after_cursor: String, generation: String}
   ContextEngines{session: String}
@@ -555,6 +556,7 @@ def sql(command: Command) -> String:
     case KnowledgeScopeIndex{reader,scope,subject}: ""
     case KnowledgeScopeDetail{reader,scope,subject,id}: ""
     case KnowledgePromote{id,promoter,source,destination,finding}: ""
+    case KnowledgePromoteScoped{id,promoter,source_kind,source,destination_kind,destination,finding}: ""
     case View{subject,reader,port}: ""
     case UiSubscribe{after_cursor,generation}: ""
     case ContextEngines{session}: ""
@@ -724,6 +726,7 @@ def parse_verb_five_args(+verb: String, +id: String, +one: String, +two: String,
 def parse_receive(+verb: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> Command:
   match verb:
     case "receive": Receive{session,cmd,model,effort,cwd,log,message}
+    case "promote-scoped": KnowledgePromoteScoped{session,cmd,model,effort,cwd,log,message}
     case _: Invalid{}
 
 def parse_verb_nine_args(+verb: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> Command:
