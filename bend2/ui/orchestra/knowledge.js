@@ -3860,7 +3860,8 @@
     const mode = (opts && opts.mode) || "whole";
     // An empty group scope still seats its group, so the holder and its
     // metadata draw instead of an empty notice.
-    if (!(overview.findings || []).length && !(overview.relations || []).length
+    if (mode === "band"
+      && !(overview.findings || []).length && !(overview.relations || []).length
       && !(overview.edges || []).length && !(overview.nodes || []).length
       && !kwScopeGroup(overview)) {
       const p = kwEl(container, "p", { class: "muted" });

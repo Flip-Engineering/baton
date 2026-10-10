@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 from receive import install_public_queue_codex
@@ -37,13 +38,36 @@ class CodexRootAdapter(unittest.TestCase):
         self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
                                    check=True, capture_output=True, text=True).stdout.strip()
         self.db = pathlib.Path(self.temp.name) / 'state.db'
+        self.addCleanup(self.cleanup_fixture)
 
     def register(self, name, parent, harness, model, effort, workspace=None, branch=None, base=None):
         """Recruit the session into this suite's fixture repository."""
         return self.coord('recruit', name, parent, harness, model, effort, str(self.repo),
                           branch or (name + '-branch'), str(self.checkouts / name), self.base)
 
-    def tearDown(self):
+    def instance_owner_pids(self):
+        expected = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        processes = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                   check=True, capture_output=True, text=True)
+        owners = set()
+        for line in processes.stdout.splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) == 4 and fields[3] == expected and not fields[2].startswith('Z'):
+                owners.add(int(fields[0]))
+        return owners
+
+    def cleanup_fixture(self):
+        try:
+            if self.db.exists():
+                owners = self.instance_owner_pids()
+                stopped = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                                         capture_output=True, text=True)
+                self.assertEqual(stopped.returncode, 0, stopped.stdout + stopped.stderr)
+                while owners & self.instance_owner_pids():
+                    time.sleep(.01)
+        except Exception:
+            self.temp._finalizer.detach()
+            raise
         self.temp.cleanup()
 
     def coord(self, *args, ok=True):
@@ -56,29 +80,122 @@ class CodexRootAdapter(unittest.TestCase):
         return p.stdout.strip()
 
     def test_player_terminal_starts_attached_root_without_a_listener(self):
+        import time
+
+        def observe(observation):
+            while True:
+                value = observation()
+                if value is not None:
+                    return value
+                time.sleep(0.05)
+
         temp = pathlib.Path(self.temp.name)
         received = temp / 'received.txt'
+        reviewed = temp / 'completion-reviewed.json'
+        report_execution = temp / 'report-root-execution.json'
+        request, confirmation = 'finished-completion-request', 'finished-completion-confirmed'
         native = temp / 'root.py'
         native.write_text('#!' + sys.executable + '\n' +
             'import sys,pathlib,subprocess,json\n' +
-            f'pathlib.Path({str(received)!r}).write_text(sys.stdin.read())\n' +
-            f'subprocess.run({[str(EXE), str(self.db), "ack", "finished", "root", "native-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n' +
+            'body=sys.stdin.read()\n' +
+            f'exe,db={str(EXE)!r},{str(self.db)!r}\n' +
+            'def cli(*args):return json.loads(subprocess.check_output([exe,db,*args],text=True))\n' +
+            f'if "[id: {request}]" in body:\n' +
+            f' value=cli("delivery",{request!r})\n' +
+            ' state=cli("session","w1")["taskCompletion"]\n' +
+            f' assert value["sender"]=="w1" and value["recipient"]=="root" and value["kind"]=="completion-request" and value["body"]=="Completed live task.",value\n' +
+            f' assert state=={{"assignmentId":"finished:task-input","coordinator":"root","requestId":{request!r},"confirmed":False,"open":True}},state\n' +
+            ' assert cli("delivery","finished:task-input")["receipt"]=="native-work-accepted"\n' +
+            f' pathlib.Path({str(reviewed)!r}).write_text(json.dumps({{"request":value,"completion":state}}))\n' +
+            f' cli("ack",{request!r},"root","native-completion-reviewed")\n' +
+            f' cli("message",{confirmation!r},"root","w1","completion-confirmed",{request!r})\n' +
+            'else:\n' +
+            f' pathlib.Path({str(received)!r}).write_text(body)\n' +
+            ' execution=next(row for row in cli("players") if row["id"]=="root")["execution"]\n' +
+            ' assert execution["mode"]=="retained" and execution["phase"] in ("starting","running"),execution\n' +
+            f' pathlib.Path({str(report_execution)!r}).write_text(json.dumps(execution))\n' +
+            ' cli("ack","finished","root","native-reviewed")\n' +
             'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":"Reviewed."}}))\n' +
             'print(json.dumps({"type":"turn.completed"}))\n')
         native.chmod(0o700)
         attached = subprocess.run(['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(native), '--attach'], capture_output=True, text=True)
         self.assertEqual(attached.returncode, 0, attached.stderr)
         self.assertFalse(received.exists())
+        root_log = json.loads(self.coord('session', 'root'))['endpointArgv'][-1]
         self.register('w1', 'root', 'claude-code', 'model', 'low', str(temp), 'branch', 'base')
         player = temp / 'worker.py'
-        player.write_text('#!' + sys.executable + '\nimport sys,json\nsys.stdin.read()\nprint(json.dumps({"type":"result","result":"Completed live task."}))\n')
+        player.write_text('#!' + sys.executable + '\n' +
+            'import sys,json,subprocess,time\n' +
+            'sys.stdin.read()\n' +
+            f'exe,db={str(EXE)!r},{str(self.db)!r}\n' +
+            'def cli(*args):return json.loads(subprocess.check_output([exe,db,*args],text=True))\n' +
+            'def delivery(ident,missing=False):\n' +
+            ' while True:\n' +
+            '  value=subprocess.run([exe,db,"delivery",ident],text=True,capture_output=True)\n' +
+            '  if missing and value.returncode==1 and value.stdout=="" and value.stderr=="No matching session or message; inspect status and the requested ID.\\n":\n' +
+            '   time.sleep(0.05)\n' +
+            '   continue\n' +
+            '  assert value.returncode==0,(value.returncode,value.stdout,value.stderr)\n' +
+            '  return json.loads(value.stdout)\n' +
+            'cli("ack","finished:task-input","w1","native-work-accepted")\n' +
+            f'cli("message",{request!r},"w1","root","completion-request","Completed live task.")\n' +
+            'while True:\n' +
+            f' value=delivery({request!r})\n' +
+            ' assert value["sender"]=="w1" and value["recipient"]=="root" and value["kind"]=="completion-request" and value["body"]=="Completed live task.",value\n' +
+            ' if value["receipt"] is not None:\n' +
+            '  assert value["receipt"]=="native-completion-reviewed",value\n' +
+            '  break\n' +
+            ' time.sleep(0.05)\n' +
+            f'value=delivery({confirmation!r},missing=True)\n' +
+            f'assert value["sender"]=="root" and value["recipient"]=="w1" and value["kind"]=="completion-confirmed" and value["body"]=={request!r},value\n' +
+            'assert value["receipt"] is None,value\n' +
+            f'cli("ack",{confirmation!r},"w1","native-completion-confirmed")\n' +
+            'print(json.dumps({"type":"result","result":"Completed live task."}))\n')
         player.chmod(0o700)
         task = temp / 'task.txt'
         task.write_text('Task')
         self.coord('turn', 'w1', 'finished', str(player), 'model', 'low', str(temp), str(task), str(temp / 'worker.jsonl'), '')
+        def report_received():
+            value = json.loads(self.coord('delivery', 'finished'))
+            self.assertEqual((value['sender'], value['recipient'], value['kind'], value['body']),
+                             ('w1', 'root', 'report', 'Completed live task.'))
+            if value['receipt'] is None:
+                return None
+            self.assertEqual(value['receipt'], 'native-reviewed')
+            return value
+        observe(report_received)
+        reported_execution = json.loads(report_execution.read_text())
+        def root_exited():
+            root = next(row for row in json.loads(self.coord('players')) if row['id'] == 'root')
+            execution = root['execution']
+            self.assertEqual(execution['attempt'], reported_execution['attempt'])
+            self.assertEqual(execution['mode'], 'retained')
+            self.assertIn(execution['phase'], ('starting', 'running', 'exited'))
+            if execution['phase'] != 'exited':
+                self.assertEqual(execution['status'], '')
+                return None
+            self.assertEqual(execution['status'], 'exit 0')
+            return execution
+        settled_execution = observe(root_exited)
         self.assertIn('Completed live task.', received.read_text())
         self.assertEqual(json.loads(self.coord('delivery', 'finished'))['receipt'], 'native-reviewed')
-        self.assertIn('Reviewed.', pathlib.Path(str(self.db) + '.conductor-726f6f74.jsonl').read_text())
+        self.assertEqual(json.loads(self.coord('delivery', request))['receipt'], 'native-completion-reviewed')
+        self.assertEqual(json.loads(self.coord('delivery', confirmation))['receipt'], 'native-completion-confirmed')
+        self.assertEqual(json.loads(self.coord('session', 'w1'))['taskCompletion'], {
+            'assignmentId': 'finished:task-input', 'coordinator': 'root',
+            'requestId': request, 'confirmed': True, 'open': False})
+        self.assertEqual(json.loads(reviewed.read_text())['request']['id'], request)
+        self.assertEqual(json.loads(self.coord('inbox', 'w1')), [])
+        logs = json.loads(self.coord('logs-storage'))['logs']
+        attempt_code = ''.join(
+            c if c.isascii() and (c.isalnum() or c in '-_')
+            else ('%%%02x' if ord(c) < 256 else '%%%06x') % ord(c)
+            for c in settled_execution['attempt'])
+        generation = [row for row in logs if row['session'] == 'root'
+                      and row['attempt'] == attempt_code]
+        self.assertEqual(len(generation), 1, logs)
+        self.assertEqual(generation[0]['path'], root_log + '.attempt-' + attempt_code)
+        self.assertIn('Reviewed.', pathlib.Path(generation[0]['path']).read_text())
 
     def test_failed_native_delivery_keeps_the_committed_report_pending(self):
         temp = pathlib.Path(self.temp.name)

@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 import unittest
@@ -17,9 +18,9 @@ EXE = ROOT / '.scratch/bend2/baton2'
 class OrchestraProjection(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
-        self.addCleanup(self.temp.cleanup)
         self.directory = pathlib.Path(self.temp.name)
         self.db = self.directory / 'orchestra.db'
+        self.addCleanup(self.cleanup_fixture)
         self.repo = self.directory / 'repo'
         self.repo.mkdir()
         for args in [('init', '-q'), ('config', 'user.name', 'Orchestra UI fixture'),
@@ -39,6 +40,31 @@ class OrchestraProjection(unittest.TestCase):
         self.call('role', 'lead', 'associate-conductor')
         self.player('worker', 'lead')
         self.player('failed-worker', 'worker')
+
+    def instance_owner_pids(self):
+        expected = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        processes = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                   check=True, capture_output=True, text=True)
+        owners = set()
+        for line in processes.stdout.splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) == 4 and fields[3] == expected and not fields[2].startswith('Z'):
+                owners.add(int(fields[0]))
+        return owners
+
+    def cleanup_fixture(self):
+        try:
+            if self.db.exists():
+                owners = self.instance_owner_pids()
+                stopped = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                                         capture_output=True, text=True)
+                self.assertEqual(stopped.returncode, 0, stopped.stdout + stopped.stderr)
+                while owners & self.instance_owner_pids():
+                    time.sleep(.01)
+        except Exception:
+            self.temp._finalizer.detach()
+            raise
+        self.temp.cleanup()
 
     def call(self, *args, success=True):
         result = subprocess.run([str(EXE), str(self.db), *args], text=True,
@@ -60,6 +86,33 @@ class OrchestraProjection(unittest.TestCase):
         task = self.directory / (player + '-task.txt')
         log = self.directory / (player + '-native.jsonl')
         task.write_text('Task for ' + player)
+        parent_state = None
+        if terminal == 'completed':
+            parent = self.call('session', player)['parent']
+            parent_state = self.call('session', parent)
+            reviewer = self.directory / (player + '-completion-review.py')
+            reviewer.write_text(
+                'import json,subprocess,sys\n'
+                + 'prefix=' + repr([str(EXE), str(self.db)]) + '\n'
+                + 'parent=' + repr(parent) + '\n'
+                + 'worker=' + repr(player) + '\n'
+                + 'body=' + repr(text) + '\n'
+                + '''def coordinator(*arguments):
+    return json.loads(subprocess.check_output([*prefix,*arguments],text=True))
+request=sys.argv[-1]
+message=coordinator('delivery',request)
+assert message['recipient']==parent,message
+if message['kind']=='completion-request':
+    assert (message['sender'],message['body'])==(worker,body),message
+    completion=coordinator('session',worker)['taskCompletion']
+    assert completion['coordinator']==parent and completion['requestId']==request,completion
+    assignment=coordinator('delivery',completion['assignmentId'])
+    assert assignment['recipient']==worker and assignment['receipt'] is not None,assignment
+    coordinator('ack',request,parent,'Fixture coordinator reviewed the requested result.')
+    coordinator('message',request+':confirmed',parent,worker,'completion-confirmed',request)
+''')
+            self.call('connect', parent, parent_state['native'],
+                      json.dumps([sys.executable, str(reviewer)]))
         failed = 'sys.exit(1)' if terminal == 'failed' else ''
         review = '' if terminal == 'failed' else (
             "prompt=pathlib.Path(sys.argv[sys.argv.index('--prompt-file')+1]).read_text()\n"
@@ -71,7 +124,33 @@ class OrchestraProjection(unittest.TestCase):
             "    assert delivery['recipient']==" + repr(player) + ",delivery\n"
             "    subprocess.run([" + repr(str(EXE)) + "," + repr(str(self.db))
             + ",'ack',message," + repr(player)
-            + ",'fixture-native-reviewed'],check=True,stdout=subprocess.DEVNULL)\n")
+            + ",'fixture-native-reviewed'],check=True,stdout=subprocess.DEVNULL)\n"
+            "def coordinator(*arguments):\n"
+            "    return json.loads(subprocess.check_output([" + repr(str(EXE)) + ","
+            + repr(str(self.db)) + ",*arguments],text=True))\n"
+            "worker=" + repr(player) + "\n"
+            "state=coordinator('session',worker)\n"
+            "completion=state['taskCompletion']\n"
+            "assert completion['open'],completion\n"
+            "assignment=coordinator('delivery',completion['assignmentId'])\n"
+            "assert assignment['recipient']==worker and assignment['receipt'] is not None,assignment\n"
+            "parent=completion['coordinator']\n"
+            "assert parent==state['parent'],state\n"
+            "request=" + repr(ident + ':completion-request') + "\n"
+            "result_text=" + repr(text) + "\n"
+            "coordinator('message',request,worker,parent,'completion-request',result_text)\n"
+            "reviewed=coordinator('delivery',request)\n"
+            "assert (reviewed['sender'],reviewed['recipient'],reviewed['kind'],reviewed['body'])=="
+            "(worker,parent,'completion-request',result_text),reviewed\n"
+            "assert reviewed['receipt']=='Fixture coordinator reviewed the requested result.',reviewed\n"
+            "confirmation=request+':confirmed'\n"
+            "reviewed=coordinator('delivery',confirmation)\n"
+            "assert (reviewed['sender'],reviewed['recipient'],reviewed['kind'],reviewed['body'])=="
+            "(parent,worker,'completion-confirmed',request),reviewed\n"
+            "coordinator('ack',confirmation,worker,'Fixture worker handled coordinator confirmation.')\n"
+            "settled=coordinator('session',worker)['taskCompletion']\n"
+            "assert settled['assignmentId']==completion['assignmentId'] and settled['requestId']==request "
+            "and settled['confirmed'] and not settled['open'],settled\n")
         command.write_text('#!' + sys.executable + '\n' + '''import json,pathlib,re,subprocess,sys
 native = 'native-''' + player + ''''
 print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.model.configured',
@@ -87,6 +166,12 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
                                  str(command), 'configured-model', 'low', str(workspace),
                                  str(task), str(log), ''], text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        if terminal == 'completed':
+            state = self.call('session', player)
+            self.assertTrue(state['taskCompletion']['confirmed'], state)
+            self.assertFalse(state['taskCompletion']['open'], state)
+            self.call('connect', player, state['native'], '')
+            self.call('connect', parent_state['id'], parent_state['native'], parent_state['endpoint'])
         return result.stdout
 
     def changes(self):
@@ -125,8 +210,12 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
         finally:
             process.stdin.close()
             process.wait()
-            stderr = process.stderr.read()
-            self.assertEqual(process.returncode, 0, stderr)
+            try:
+                stderr = process.stderr.read()
+                self.assertEqual(process.returncode, 0, stderr)
+            finally:
+                process.stdout.close()
+                process.stderr.close()
 
     def test_public_findings_and_promotions_publish_scoped_native_changes(self):
         subscribers = []
