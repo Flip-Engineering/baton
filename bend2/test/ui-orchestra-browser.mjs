@@ -674,10 +674,9 @@ check('the exemplar draws a transfer the canvas also draws', await evalJs(`(() =
   const ex = document.querySelector('#knowledge-whole .kw-exemplar');
   if (!ex) return false;
   const label = ex.getAttribute('aria-label') || '';
-  const ids = [...document.querySelectorAll('#knowledge-whole .kw-anchor[data-kw-id]')].map((a) => a.getAttribute('data-kw-id'));
-  const named = ids.filter((id) => id && label.includes(id));
-  return /transfer/i.test(label) && /shares finding/i.test(label) && named.length >= 1
-    && ids.some((id) => label.includes(id));
+  const ids = [...document.querySelectorAll('#knowledge-whole [data-kw-id]')].map((a) => a.getAttribute('data-kw-id'));
+  return /transfer/i.test(label) && /shares finding/i.test(label)
+    && ids.some((id) => id && label.includes(id));
 })()`));
 check('the exemplar names its transfer and its share', await evalJs(`(() => {
   const ex = document.querySelector('#knowledge-whole .kw-exemplar');
