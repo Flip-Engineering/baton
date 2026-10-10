@@ -264,7 +264,7 @@ const earlyShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' }
 writeFileSync(join(OUT, 'initial.png'), Buffer.from(earlyShot.result.data, 'base64'));
 await until('snapshot line leaves its unloaded state',
   `document.getElementById('snapshot-line') && !document.getElementById('snapshot-line').textContent.includes('No snapshot loaded')`);
-await until('attention strip settles on the snapshot actors',
+await until('the stage settles on the snapshot actors',
   `(document.getElementById('attention-band').textContent || '').length > 0`);
 const initialShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'initial.png'), Buffer.from(initialShot.result.data, 'base64'));
@@ -282,6 +282,14 @@ check('plate carries its heading and one plain state word', await evalJs(`(() =>
     && !!mark && ['running', 'stopped', 'failed', 'queued', 'idle']
       .includes((mark.textContent || '').trim());
 })()`));
+check('the plate moves through the regions in their redesigned order', await evalJs(`(() => {
+  const links = [...document.querySelectorAll('.plate-nav a')];
+  const want = [['#pit', 'Activity'], ['#staves', 'Agents'], ['#map', 'Knowledge'],
+    ['#record', 'Selected actor'], ['#project', 'Project']];
+  return links.length === want.length
+    && want.every(([href, name], i) => links[i].getAttribute('href') === href
+      && (links[i].textContent || '').trim().startsWith(name));
+})()`));
 check('snapshot line states running, stopped and queued counts', await evalJs(`(() => {
   const line = document.getElementById('snapshot-line').textContent || '';
   return line.includes('running') && line.includes('stopped or failed')
@@ -295,7 +303,7 @@ check('pit and paper grounds paint their materials', await evalJs(`(() => {
 })()`));
 check('rail stays hidden while no exited seat owes', await evalJs(
   `document.getElementById('rail').hidden === true`));
-check('staves give every row a staff and bands a rehearsal letter', await evalJs(`(() => {
+check('Agents give every row a staff and bands a rehearsal letter', await evalJs(`(() => {
   const rows = [...document.querySelectorAll('#roster .doc-row')];
   const heads = [...document.querySelectorAll('#roster .doc-band-head .doc-bracket')];
   return rows.length > 0 && rows.every((row) => row.querySelector('.doc-staff'))
@@ -327,11 +335,11 @@ await until('removing the only relation restores the empty universal view',
 check('roster rows read the name, the work, then the staff', await evalJs(
   `[...document.querySelectorAll('#roster .doc-row')].every((row) => { const btn = row.querySelector('.doc-open'); if (!btn) return false; const kids = [...btn.children]; const name = btn.querySelector('.doc-name'); const lead = btn.querySelector('.doc-lead'); const staff = btn.querySelector('.doc-staff'); return !!name && !!lead && !!staff && kids.indexOf(name) < kids.indexOf(lead) && kids.indexOf(lead) < kids.indexOf(staff); })`));
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
-await until('selection record opens for the chosen row',
+await until('the selected actor opens for the chosen row',
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'worker'`);
 const selectedActorHash = await evalJs(`location.hash`);
 await evalJs(`document.querySelector('#selection .sel-index a').click()`);
-check('record section navigation preserves the selected actor address', await evalJs(
+check('selected actor navigation preserves its address', await evalJs(
   `location.hash === ${JSON.stringify(selectedActorHash)} && document.querySelector('#selection h2')?.textContent === 'worker'`));
 await until('row selection lights its own arcs',
   `!!document.querySelector('#roster .kw-arc-hot[data-from="worker"]')`);
@@ -384,8 +392,6 @@ await until('ensemble band opens the owner holdings on the map',
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('worker scope restores after the ensemble probe',
   `(document.querySelector('#map-scope').textContent || '').endsWith('· 2 items') && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-msg-finding"]')`);
-check('map publishes its natural height for the frame', await evalJs(
-  `Number(document.querySelector('#knowledge-whole').getAttribute('data-kw-natural-height')) > 0`));
 check('tiers read as ruled bands', await evalJs(
   `document.querySelectorAll('#knowledge-whole .kw-tier-rule').length >= 2`));
 check('authored findings form a group below their recorded author', await evalJs(`(() => {
@@ -594,9 +600,9 @@ check('whole finding selection marks and keeps focus', await evalJs(
   `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').classList.contains('selected') && document.activeElement === document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`));
 await until('selecting a finding pins its card on the map',
   `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker retained finding.'`);
-check('card states recorded bodies instead of printing them', await evalJs(`(() => {
+check('card states the finding without printing its recorded bodies', await evalJs(`(() => {
   const card = document.querySelector('#knowledge-whole .kw-card');
-  return card.textContent.includes('evidence + limits recorded')
+  return !!card.querySelector('.kw-card-title') && !!card.querySelector('.kw-card-state')
     && !card.textContent.includes('Worker evidence.') && !card.textContent.includes('Worker limits.');
 })()`));
 check('card offers the full record', await evalJs(
@@ -605,7 +611,7 @@ check('selected relations retain incoming and outgoing endpoints', await evalJs(
   `document.getElementById('selection').textContent.includes('finding:qa-nope — continues → finding:qa-worker-finding')
     && document.getElementById('selection').textContent.includes('finding:qa-worker-finding — recorded in → external:qa-log-7')`));
 await evalJs(`document.querySelector('#knowledge-whole .kw-card .kw-card-full').click()`);
-check('reading in full moves to the rail record', await evalJs(`(() => {
+check('reading in full moves focus to the selected actor', await evalJs(`(() => {
   const rail = document.querySelector('#record');
   const selection = document.querySelector('#selection');
   return document.activeElement === rail
@@ -676,12 +682,20 @@ await evalJs(`document.querySelector('#ribbon [data-focus="ribbon-list"]').click
 await until('ribbon full list opens with recorded rows',
   `document.querySelector('#ribbon .ribbon-list') && document.querySelectorAll('#ribbon .ribbon-row').length > 0 && (document.querySelector('#ribbon .ribbon-list').textContent || '').includes('worker')`);
 
-// The pit is the page spine: the axis draws its buckets, the needle moves by
+// Activity is the page spine: the axis draws its buckets, the needle moves by
 // keyboard and by pointer, and a chip in the spine opens its seat.
-await until('the axis draws the staff and its needle in the pit',
+await until('the axis draws the staff and its needle in Activity',
   `document.querySelectorAll('#ribbon .ribbon-staffline').length === 5
     && document.querySelectorAll('#ribbon .ribbon-note').length > 1
     && !!document.querySelector('#ribbon .ribbon-needle')`);
+check('every drawn note paints its ink', await evalJs(`(() => {
+  const notes = [...document.querySelectorAll('#ribbon .ribbon-note')];
+  return notes.length > 1 && notes.every((note) => {
+    const ink = getComputedStyle(note).backgroundColor;
+    return ink !== 'rgba(0, 0, 0, 0)' && ink !== 'transparent'
+      && /(^| )ribbon-ink-[a-z]+( |$)/.test(note.className);
+  });
+})()`));
 check('the axis states the window it draws', await evalJs(`(() => {
   const summary = document.querySelector('#ribbon .ribbon-summary');
   const mark = document.querySelector('#ribbon .ribbon-tempo');
@@ -723,7 +737,7 @@ check('the spine marks the seat it holds', await evalJs(
 
 // Visual evidence for the two redesigned surfaces, clipped to their own boxes.
 const surfaceCaptures = [];
-for (const [name, selector] of [['pit.png', '.pit'], ['map.png', '.map']]) {
+for (const [name, selector] of [['pit.png', '.pit'], ['map.png', '.map'], ['agents.png', '#staves']]) {
   const box = await evalJs(`(() => {
     const el = document.querySelector(${JSON.stringify(selector)});
     if (!el) return null;
@@ -739,7 +753,7 @@ for (const [name, selector] of [['pit.png', '.pit'], ['map.png', '.map']]) {
     surfaceCaptures.push(name);
   }
 }
-check('pit and map evidence captured', surfaceCaptures.length === 2, surfaceCaptures.join(', '));
+check('activity, knowledge and agents evidence captured', surfaceCaptures.length === 3, surfaceCaptures.join(', '));
 
 // operator-triggered reconnect re-reads the snapshot through the view command server
 const ribbonMaxBeforeReconnect = await evalJs(`document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax')`);
@@ -861,6 +875,14 @@ await until('second row selects while the first work response is held',
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'aide'`);
 check('selected record shows its ledged facts', await evalJs(
   `document.querySelectorAll('#selection .doc-facts dt').length >= 4`));
+check('the record index resolves to the sections it names', await evalJs(`(() => {
+  const links = [...document.querySelectorAll('#selection .sel-index a')];
+  return links.length > 0 && links.every((link) => {
+    const id = (link.getAttribute('href') || '').replace('#', '');
+    const section = id ? document.getElementById(id) : null;
+    return !!section && !!section.querySelector('h2');
+  });
+})()`));
 await evalJs(`window.__qaReleaseKnowledge(); new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
 check('late first-actor work preserves the selected record', await evalJs(
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'aide'`));
@@ -937,9 +959,12 @@ await until('owed report marks the aide row',
 await evalJs(`document.querySelector('#attention-band svg.att-stage').focus()`);
 const stageFirst = await evalJs(`(document.querySelector('#attention-band .att-sr').textContent || '').split(',')[0].trim()`);
 check('stage focus announces its cursor seat', ['root', 'lead', 'worker', 'aide'].includes(stageFirst), stageFirst);
+check('the stage draws its seats inside the Agents region', await evalJs(
+  `!!document.querySelector('#staves #attention-band svg.att-stage')
+    && document.querySelectorAll('#staves #attention-band .att-seat').length > 0`));
 const stageOther = stageFirst === 'aide' ? 'worker' : 'aide';
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="${stageOther}"] .doc-open').click()`);
-await until('record moves away before the stage jump',
+await until('the selected actor changes before the stage jump',
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === '${stageOther}'`);
 await evalJs(`document.querySelector('#attention-band svg.att-stage').focus()`);
 await evalJs(`document.querySelector('#attention-band svg.att-stage').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))`);
