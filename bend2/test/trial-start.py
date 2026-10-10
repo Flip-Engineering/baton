@@ -30,8 +30,7 @@ class TrialStartTests(unittest.TestCase):
         self.source = self.home / 'tools'
         scripts = self.source / 'bend2/scripts'
         scripts.mkdir(parents=True)
-        for name in ('check-unittest.sh', 'check-node-test.sh'):
-            shutil.copy2(ROOT / 'bend2/scripts' / name, scripts / name)
+        shutil.copy2(ROOT / 'bend2/scripts/check-unittest.sh', scripts / 'check-unittest.sh')
         self.check = scripts / 'check-unittest.sh'
         shutil.copytree(ROOT / 'bend2/trial', self.source / 'bend2/trial')
         # The suite already built EXE. Reuse it while exercising the launcher's
@@ -180,9 +179,9 @@ class TrialStartTests(unittest.TestCase):
         self.assertFalse((self.home / 'build.json').exists())
         self.assertEqual(self.git('show-ref'), refs)
 
-    def test_relative_compiler_and_explicit_js_check_are_emitted_as_absolute_paths(self):
+    def test_relative_compiler_and_explicit_check_are_emitted_as_absolute_paths(self):
         self.env['BEND'] = os.path.relpath(self.harness, ROOT)
-        check = self.source / 'bend2/scripts/check-node-test.sh'
+        check = self.source / 'bend2/scripts/check-unittest.sh'
         self.assert_attached(self.launch(check), '')
         settings = self.trial_command(sys.executable, '-c',
             'import json,os; print(json.dumps({k:os.environ[k] for k in ("BEND","TRIAL_CHECK")}))')

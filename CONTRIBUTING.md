@@ -31,7 +31,7 @@ BEND=/absolute/path/to/bend sh bend2/scripts/build-native.sh
 BEND=/absolute/path/to/bend sh bend2/scripts/check-native.sh
 ```
 
-`check-native.sh` runs the native tests and host-effect fixtures. Retain the
+`check-native.sh` runs the native tests, host-effect fixtures and Node context/UI suites. Retain the
 commands, source revision, toolchain identity, complete outputs and actual exit
 statuses. Record unfinished checks with their causes and retained execution.
 

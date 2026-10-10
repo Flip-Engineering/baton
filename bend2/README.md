@@ -825,9 +825,9 @@ and [Associate Conductor instructions](trial/associate-conductor-instructions.md
 describe shared source work, detached task delivery, review, publication and
 retirement of completed task branches.
 
-Use the shipped `check-unittest.sh` for selected Python tests, or
-`check-node-test.sh` for a JS runner that supplies typed `failures` and
-`reportedFiles` verdict fields. Each assignment names its selected test paths,
+Use the shipped `check-unittest.sh` for selected Python tests.
+`check-native.sh` runs native fixtures and the current Node context/UI suites.
+Each assignment names its selected test paths,
 separated by spaces in one argument to `land-checked`. Test dependencies must
 resolve in the Player and both checked trees. Python checks under `bend2/test/`
 need an installed compiler selected through an absolute `BEND` path. An

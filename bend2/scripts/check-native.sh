@@ -20,3 +20,7 @@ for test in bend2/test/*.py; do
 done
 node --test bend2/test/git-series.mjs
 node --test bend2/test/provider-availability.mjs
+node --test bend2/test/context-provider.test.mjs \
+  bend2/test/context-project-policy.test.mjs \
+  bend2/test/ui-orchestra-server.test.mjs \
+  bend2/tests/context-models/*.test.mjs bend2/tests/runtime/*.test.mjs
