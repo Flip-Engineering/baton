@@ -330,6 +330,11 @@ def read_snapshot(db: String, command: C.Command) -> IO(String):
   match command:
     case C.Worktree{id}: Recruit.inspect_result(db,id)
     case C.KnowledgeRead{reader}: Knowledge.read_value(db,reader)
+    case C.KnowledgeReadScope{reader,scope,subject}: Knowledge.read_scope_value(db,reader,scope,subject)
+    case C.KnowledgeIndex{reader}: Knowledge.index_value(db,reader,"all","",False{})
+    case C.KnowledgeDetail{reader,id}: Knowledge.detail_value(db,reader,"all","",id)
+    case C.KnowledgeScopeIndex{reader,scope,subject}: Knowledge.index_value(db,reader,scope,subject,True{})
+    case C.KnowledgeScopeDetail{reader,scope,subject,id}: Knowledge.detail_value(db,reader,scope,subject,id)
     case other: IO.try(String,Store.read(db,other))
 
 def pretty(+db: String, command: C.Command) -> IO(String):

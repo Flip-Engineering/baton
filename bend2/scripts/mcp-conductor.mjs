@@ -157,10 +157,13 @@ const TOOLS = [
   },
   {
     name: 'baton2_knowledge',
-    description: 'Read findings and their evidence visible to the attached session.',
+    description: 'Discover finding metadata or read an exact finding and its complete evidence as the attached session. Index rows carry literal detailRead argv, and retained-message metadata carries literal deliveryRead argv.',
     inputSchema: { type: 'object', properties: {
       scope: { type: 'string', description: 'universal, worker, group, or all (the default discovery view)' },
       subject: { type: 'string', description: 'Worker or Ensemble ID; universal can name its Principal Conductor' },
+      index: { type: 'boolean', description: 'Return compact metadata for visible findings' },
+      id: { type: 'string', description: 'Return the complete visible finding with this exact stored ID' },
+      pretty: { type: 'boolean', description: 'Pretty-print the JSON result' },
     }, additionalProperties: false },
   },
   {
@@ -619,10 +622,18 @@ function handleToolCall(msg) {
       case 'baton2_context_result':
         result = coord('context-result', args.query);
         break;
-      case 'baton2_knowledge':
-        result = args.scope === undefined ? coord('knowledge', sessionId)
-          : coord('knowledge-scope', sessionId, args.scope, args.subject ?? (args.scope === 'worker' ? sessionId : ''));
+      case 'baton2_knowledge': {
+        const options = args;
+        const selection = options.index === true ? ['--index']
+          : options.id === undefined ? [] : ['--id', options.id];
+        const presentation = options.pretty === true ? ['--pretty'] : [];
+        result = options.scope === undefined
+          ? coord('knowledge', sessionId, ...selection, ...presentation)
+          : coord('knowledge-scope', sessionId, options.scope,
+              options.subject ?? (options.scope === 'worker' ? sessionId : ''),
+              ...selection, ...presentation);
         break;
+      }
       case 'baton2_knowledge_record':
         result = args.kind === undefined
           ? coord('record', args.id, sessionId, args.claim, args.evidence, args.limits)

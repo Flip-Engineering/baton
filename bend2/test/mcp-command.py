@@ -245,7 +245,8 @@ class McpCommand(unittest.TestCase):
                 self.assertNotIn('isError', result)
                 schema = self.tools[tool]['inputSchema']
                 self.assertEqual(set(schema.get('required', [])), set(arguments))
-                optional = {'baton2_resume': {'liftStop'}, 'baton2_knowledge': {'scope', 'subject'},
+                optional = {'baton2_resume': {'liftStop'},
+                            'baton2_knowledge': {'scope', 'subject', 'index', 'id', 'pretty'},
                             'baton2_knowledge_record': {'kind'}}.get(tool, set())
                 expected_properties = set(arguments) | optional
                 self.assertEqual(set(schema['properties']), expected_properties)
@@ -264,6 +265,17 @@ class McpCommand(unittest.TestCase):
         self.command(tool='baton2_knowledge', session=session,
                      arguments={'scope': 'group', 'subject': 'review-group'},
                      expected_args=['knowledge-scope', session, 'group', 'review-group'])
+        self.command(tool='baton2_knowledge', session=session,
+                     arguments={'index': True, 'pretty': True},
+                     expected_args=['knowledge', session, '--index', '--pretty'])
+        self.command(tool='baton2_knowledge', session=session,
+                     arguments={'id': "finding's λ"},
+                     expected_args=['knowledge', session, '--id', "finding's λ"])
+        self.command(tool='baton2_knowledge', session=session,
+                     arguments={'scope': 'group', 'subject': 'review-group',
+                                'id': 'shared-finding', 'pretty': True},
+                     expected_args=['knowledge-scope', session, 'group', 'review-group',
+                                    '--id', 'shared-finding', '--pretty'])
 
     def test_context_query_uses_attached_identity_and_consumer_reads_same_query(self):
         query = 'shared-query'

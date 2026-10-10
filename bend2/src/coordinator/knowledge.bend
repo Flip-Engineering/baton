@@ -91,6 +91,36 @@ def read_sql_with_types(reader: String, typed: Bool) -> String:
 def read_sql(+reader: String) -> String:
   read_sql_with_types(reader,True{})
 
+# Metadata discovery omits claim, limits and retained message bodies. Each row
+# carries literal argv for the complete finding and, when the evidence names a
+# retained message, for that message's complete delivery record.
+def evidence_index() -> String:
+  "(SELECT json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'receiptState',CASE WHEN receipt IS NULL THEN 'unacknowledged' ELSE 'acknowledged' END,'bodyBytes',length(CAST(body AS BLOB)),'deliveryRead',json_array('delivery',id)) FROM messages WHERE substr(k.evidence,1,8)='message:' AND id=substr(k.evidence,9))"
+
+def detail_read(+reader: String, +scope: String, +subject: String, +scoped: Bool) -> String:
+  Bool.pick(String,scoped,
+    "json_array('knowledge-scope'," ++ C.q(reader) ++ "," ++ C.q(scope) ++ "," ++ C.q(subject) ++ ",'--id',k.id)",
+    "json_array('knowledge'," ++ C.q(reader) ++ ",'--id',k.id)")
+
+def knowledge_index_item_with_types(+reader: String, +scope: String, +subject: String, +scoped: Bool, +typed: Bool) -> String:
+  "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'evidence',k.evidence,'claimBytes',length(CAST(k.claim AS BLOB)),'limitsBytes',length(CAST(k.limits AS BLOB)),'evidenceMessage'," ++ evidence_index() ++ ",'destinations'," ++ knowledge_destinations() ++ ",'promotionCount',(SELECT count(*) FROM knowledge_promotions p WHERE p.finding=k.id),'relationCount'," ++ Bool.pick(String,typed,"(SELECT count(*) FROM knowledge_relations r WHERE r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))","0") ++ ",'detailRead'," ++ detail_read(reader,scope,subject,scoped) ++ ")"
+
+def scoped_index_sql(+reader: String, +scope: String, +subject: String, +scoped: Bool, +typed: Bool) -> String:
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_index_item_with_types(reader,scope,subject,scoped,typed) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject) ++ " ORDER BY k.rowid);"
+
+def scoped_detail_sql(+reader: String, +scope: String, +subject: String, +id: String, +typed: Bool) -> String:
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_item_with_types(typed) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject) ++ " AND k.id=" ++ C.q(id) ++ " ORDER BY k.rowid);"
+
+def index_value(+db: String, +reader: String, +scope: String, +subject: String, +scoped: Bool) -> IO(String):
+  do IO<String>:
+    typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+    IO.try(String,DB.Sql.read(db,scoped_index_sql(reader,scope,subject,scoped,String.eq(typed,"1\n"))))
+
+def detail_value(+db: String, +reader: String, +scope: String, +subject: String, +id: String) -> IO(String):
+  do IO<String>:
+    typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+    IO.try(String,DB.Sql.read(db,scoped_detail_sql(reader,scope,subject,id,String.eq(typed,"1\n"))))
+
 # A read of an older database retains its existing findings before any writer
 # installs the new columns and relationship table.
 def read_scope_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
@@ -217,6 +247,16 @@ def read(db: String, reader: String) -> IO(Unit):
 def read_scope(db: String, reader: String, scope: String, subject: String) -> IO(Unit):
   do IO<Unit>:
     visible : String <- read_scope_value(db,reader,scope,subject)
+    IO.write(visible)
+
+def read_index(db: String, reader: String, scope: String, subject: String, scoped: Bool) -> IO(Unit):
+  do IO<Unit>:
+    visible : String <- index_value(db,reader,scope,subject,scoped)
+    IO.write(visible)
+
+def read_detail(db: String, reader: String, scope: String, subject: String, id: String) -> IO(Unit):
+  do IO<Unit>:
+    visible : String <- detail_value(db,reader,scope,subject,id)
     IO.write(visible)
 
 # Promote: one transaction writes the promotion and its destination notice,

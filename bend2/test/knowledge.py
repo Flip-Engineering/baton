@@ -102,6 +102,46 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(self.ids(self.scoped('all')), ['quota-correction', 'quota-observation'])
         self.assertEqual(self.ids(self.read('root')), ['quota-correction', 'quota-observation'])
 
+    def test_metadata_navigation_reads_exact_findings_and_evidence_in_the_same_scope(self):
+        finding = "finding ' λ"
+        message = "evidence ' λ"
+        claim = 'Observed claim\n日本語'
+        limits = 'One retained fixture.\nλ'
+        self.call('report', message, 'grand', 'complete evidence\nλ')
+        self.call('record-typed', finding, 'grand', 'observation', claim,
+                  'message:' + message, limits)
+
+        index = self.call('knowledge', 'root', '--index')
+        row = next(item for item in index if item['id'] == finding)
+        self.assertEqual(self.call('knowledge', 'root', '--index', '--pretty'), index)
+        self.assertNotIn('claim', row)
+        self.assertNotIn('limits', row)
+        self.assertNotIn('body', row['evidenceMessage'])
+        self.assertEqual(row['kind'], 'observation')
+        self.assertEqual(row['claimBytes'], len(claim.encode()))
+        self.assertEqual(row['limitsBytes'], len(limits.encode()))
+        self.assertEqual(row['evidenceMessage']['id'], message)
+        self.assertEqual(row['evidenceMessage']['bodyBytes'], len('complete evidence\nλ'.encode()))
+        self.assertEqual(row['evidenceMessage']['deliveryRead'], ['delivery', message])
+        self.assertEqual(row['detailRead'], ['knowledge', 'root', '--id', finding])
+
+        complete = self.call(*row['detailRead'])
+        self.assertEqual(self.call(*row['detailRead'], '--pretty'), complete)
+        self.assertEqual(len(complete), 1)
+        self.assertEqual(complete[0]['claim'], claim)
+        self.assertEqual(complete[0]['limits'], limits)
+        self.assertEqual(complete[0]['evidenceMessage']['body'], 'complete evidence\nλ')
+        self.assertEqual(self.call(*row['evidenceMessage']['deliveryRead'])['body'],
+                         'complete evidence\nλ')
+        self.assertEqual(self.call('knowledge', 'root', '--id', 'absent'), [])
+
+        scoped = self.call('knowledge-scope', 'root', 'worker', 'grand', '--index')
+        scoped_row = next(item for item in scoped if item['id'] == finding)
+        self.assertEqual(scoped_row['detailRead'],
+                         ['knowledge-scope', 'root', 'worker', 'grand', '--id', finding])
+        self.assertEqual(self.call(*scoped_row['detailRead']), complete)
+        self.assertEqual(self.call(*scoped_row['detailRead'], '--pretty'), complete)
+
     def test_an_existing_knowledge_table_keeps_its_findings_when_typed_records_are_written(self):
         with sqlite3.connect(self.db) as db:
             db.execute('DROP TABLE knowledge')
