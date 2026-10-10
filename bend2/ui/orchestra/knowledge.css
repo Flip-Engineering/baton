@@ -101,6 +101,137 @@
   border-bottom: 1px solid var(--hairline, #d5c9b4);
 }
 
+/* The macro band: census and flow field above the canvas. The two
+   parts sit side by side where they fit and stack on narrow frames. */
+.kw-macro {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  align-items: flex-start;
+  margin: 0 0 8px;
+}
+
+.kw-census {
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 340px;
+}
+
+/* A tier row reads label, length, counts: the bar encodes findings
+   by length, the numbers state findings then actors. */
+.kw-tier-row {
+  display: grid;
+  grid-template-columns: 92px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 2px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink, #141a26);
+  text-align: left;
+}
+
+.kw-tier-lab {
+  font-size: 11px;
+}
+
+.kw-tier-bar {
+  display: block;
+  height: 8px;
+  min-width: 0;
+  background: var(--muted, #5b6478);
+  border-radius: 2px;
+}
+
+.kw-tier-num {
+  font-size: 11px;
+  color: var(--muted, #5b6478);
+}
+
+.kw-flow {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.kw-flow-cap {
+  margin: 0 0 4px;
+  font-size: 11px;
+}
+
+.kw-flow-grid {
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.kw-flow-h {
+  font-weight: normal;
+  color: var(--muted, #5b6478);
+  padding: 1px 4px;
+}
+
+th.kw-flow-h {
+  text-align: left;
+}
+
+/* Column headers run vertical so thirteen columns fit a narrow frame. */
+.kw-flow-v {
+  writing-mode: vertical-rl;
+  text-align: left;
+  vertical-align: bottom;
+  padding: 4px 1px;
+}
+
+.kw-flow-grid td {
+  border: 1px solid var(--paper, #fbfcfe);
+  min-width: 20px;
+  height: 20px;
+  padding: 1px 4px;
+  text-align: center;
+}
+
+/* Cell density in four steps of the selection ink. The two middle
+   steps keep ink numerals (about 9.8 and 5.7 to 1); the full cell
+   takes paper numerals (about 10.2 to 1). */
+.kw-mx-0 {
+  background: transparent;
+}
+
+.kw-mx-1 {
+  background-color: color-mix(in srgb, var(--selection, #2a3e6b) 30%, var(--paper, #fbfcfe));
+  color: var(--ink, #141a26);
+}
+
+.kw-mx-2 {
+  background-color: color-mix(in srgb, var(--selection, #2a3e6b) 55%, var(--paper, #fbfcfe));
+  color: var(--ink, #141a26);
+}
+
+.kw-mx-3 {
+  background-color: var(--selection, #2a3e6b);
+  color: var(--paper, #fbfcfe);
+}
+
+/* The exemplar teaches one real transfer beside the folded key. */
+.kw-exemplar {
+  margin: 4px 0 8px;
+}
+
+.kw-exemplar-map {
+  display: block;
+}
+
+.kw-exemplar-word {
+  font-size: 11px;
+  fill: var(--ink, #141a26);
+}
+
+.kw-exemplar-word.muted {
+  fill: var(--muted, #5b6478);
+}
+
 .kw-match {
   display: block;
   width: 100%;

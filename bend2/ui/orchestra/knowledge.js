@@ -1908,6 +1908,60 @@
       const kwKeyNote = kwEl(container, "p", { class: "kw-legend-note muted" });
       kwKeyNote.textContent = "Edge names appear on hover or focus.";
     }
+    // The exemplar teaches the transfer nouns on one real chain: the
+    // first promotion whose three ends all draw, with the canvas's own
+    // glyphs and arrowheads. Nothing drawable, nothing shown.
+    let kwExemplar = null;
+    for (const p of promotions || []) {
+      const fid = p ? String(p.finding || "") : "";
+      const src = p ? String(p.source || "") : "";
+      const dst = p ? String(p.destination || "") : "";
+      const held = (id) => actorPos.has(id) || groupPos.has(id);
+      if (fid && src && dst && findingPos.has(fid) && held(src) && held(dst)) {
+        kwExemplar = { fid, src, dst };
+        break;
+      }
+    }
+    if (kwExemplar) {
+      const ex = kwEl(container, "div", { class: "kw-exemplar", role: "img",
+        "aria-label": "How to read a transfer: " + kwExemplar.src
+          + " shares finding " + kwExemplar.fid + " to " + kwExemplar.dst + "." });
+      const em = kwSvg(ex, "svg", { class: "kw-exemplar-map",
+        width: "264", height: "88", "aria-hidden": "true" });
+      const glyph = (x, id) => {
+        if (groupPos.has(id)) {
+          kwSvg(em, "rect", { x: String(x - 6), y: "28",
+            width: "12", height: "12", class: "kw-group-box" });
+        } else if (findingPos.has(id)) {
+          kwSvg(em, "circle", { cx: String(x), cy: "34", r: "5", class: "kw-finding" });
+        } else {
+          kwSvg(em, "rect", { x: String(x - 5), y: "29",
+            width: "10", height: "10", class: "kw-actor" });
+        }
+      };
+      glyph(34, kwExemplar.src);
+      glyph(132, kwExemplar.fid);
+      glyph(230, kwExemplar.dst);
+      kwSvg(em, "path", { d: "M36,32 Q83,6 130,32", fill: "none",
+        stroke: "var(--attention, #a2611f)", "stroke-width": "1.5",
+        "marker-end": "url(#kw-arrow-share)" });
+      kwSvg(em, "path", { d: "M134,32 Q181,6 228,32", fill: "none",
+        stroke: "var(--muted, #5b6478)", "stroke-width": "1.5",
+        "marker-end": "url(#kw-arrow-deliver)" });
+      const word = (x, y, text, muted) => {
+        const t = kwSvg(em, "text", { x: String(x), y: String(y),
+          class: muted ? "kw-exemplar-word muted" : "kw-exemplar-word mono",
+          "text-anchor": "middle" });
+        t.textContent = text;
+      };
+      const short = (id) => id.length > 12 ? id.slice(0, 11) + "…" : id;
+      word(83, 16, "share", true);
+      word(181, 16, "deliver", true);
+      word(34, 58, short(kwExemplar.src), false);
+      word(132, 58, short(kwExemplar.fid), false);
+      word(230, 58, short(kwExemplar.dst), false);
+      word(132, 80, "how to read a transfer", true);
+    }
     const keys = kwEl(container, "ul", { class: "kw-legend-keys muted" });
     if (!kwKeyOpen) keys.setAttribute("hidden", "");
     // Base rows shorten to their relation's name; the swatch carries
@@ -2057,6 +2111,9 @@
       if (edges.length) kwLightRelation(svg, { name: fr, ends });
       kwPinRelCard(container, fr, ends);
     }
+    // The macro band goes first in the document: census, then field,
+    // then the canvas micro reading, tools and key after.
+    kwMacroBand(container, svg, tiers, promotions, layout.width || 0);
   }
 
   function kwApplyView(view) {
@@ -2741,6 +2798,124 @@
     }
   }
 
+  // The macro band: a tier census and a promotion flow field above
+  // the canvas. Counts read by bar length (position beats area for
+  // magnitude judgments) and density reads as a shaded field ordered
+  // by marginal totals; the canvas below keeps the micro reading.
+  // The band draws nothing the store does not hold: tiers with no
+  // companions, scopes with no promotions, and transfers whose ends
+  // fall outside the drawing each omit their own part.
+  var KW_FLOW_MAX = 12;
+  function kwMacroBand(container, svg, tiers, promotions, width) {
+    const band = document.createElement("div");
+    band.setAttribute("class", "kw-macro");
+    let parts = 0;
+    if (tiers.length >= 2) {
+      const counts = tiers.map((t) => ({
+        d: t.d, y: t.y + t.height / 2,
+        actors: t.members.length,
+        findings: t.slots.reduce((n, s) => n
+          + (s.finding ? 1 : (s.items ? s.items.length : 0)), 0),
+      }));
+      const max = Math.max.apply(null, counts.map((c) => c.findings).concat([1]));
+      const census = kwEl(band, "div", { class: "kw-census", role: "group",
+        "aria-label": "Findings by tier" });
+      for (const c of counts) {
+        const word = c.d < 0 ? "depth unknown" : "depth " + c.d;
+        const btn = kwEl(census, "button", { class: "kw-tier-row", type: "button",
+          "data-kw-tier": String(c.d),
+          "aria-label": word + ": " + c.findings + " findings, "
+            + c.actors + " actors. Activate to center this tier." });
+        const lab = kwEl(btn, "span", { class: "kw-tier-lab mono" });
+        lab.textContent = word;
+        const bar = kwEl(btn, "span", { class: "kw-tier-bar", "aria-hidden": "true" });
+        bar.setAttribute("style", "width:" + Math.round(c.findings / max * 100) + "%");
+        const num = kwEl(btn, "span", { class: "kw-tier-num mono" });
+        num.textContent = c.findings + " · " + c.actors;
+        btn.addEventListener("click", () => {
+          const live = container.querySelector("g.kw-view");
+          const canvas = container.querySelector("svg.kw-canvas");
+          if (!live || !canvas) return;
+          const box = kwVisibleBox(container, canvas);
+          kwView.k = Math.min(4, Math.max(kwView.k, 1.25));
+          kwView.x = box.w / 2 - (width / 2) * kwView.k;
+          kwView.y = box.h / 2 - c.y * kwView.k;
+          kwApplyView(live);
+        });
+      }
+      parts += 1;
+    }
+    const pairs = [];
+    for (const p of promotions || []) {
+      const src = p && p.source ? String(p.source) : "";
+      const dst = p && p.destination ? String(p.destination) : "";
+      if (src && dst) pairs.push([src, dst]);
+    }
+    if (pairs.length) {
+      const out = new Map();
+      const inn = new Map();
+      const cell = new Map();
+      for (const pair of pairs) {
+        out.set(pair[0], (out.get(pair[0]) || 0) + 1);
+        inn.set(pair[1], (inn.get(pair[1]) || 0) + 1);
+        const key = pair[0] + "\n" + pair[1];
+        cell.set(key, (cell.get(key) || 0) + 1);
+      }
+      const byMarginal = (a, b, m) => (m.get(b) - m.get(a))
+        || (a < b ? -1 : 1);
+      const rows = Array.from(out.keys()).sort((a, b) => byMarginal(a, b, out));
+      const cols = Array.from(inn.keys()).sort((a, b) => byMarginal(a, b, inn));
+      // The tail aggregates into one row and column: every transfer
+      // stays visible, grouped rather than dropped.
+      const otherR = rows.length > KW_FLOW_MAX;
+      const otherC = cols.length > KW_FLOW_MAX;
+      const rowIds = otherR ? rows.slice(0, KW_FLOW_MAX) : rows.slice();
+      const colIds = otherC ? cols.slice(0, KW_FLOW_MAX) : cols.slice();
+      const val = (r, c) => {
+        let n = 0;
+        const rs = r === null ? rows.slice(KW_FLOW_MAX) : [r];
+        const cs = c === null ? cols.slice(KW_FLOW_MAX) : [c];
+        for (const a of rs) for (const b of cs) n += cell.get(a + "\n" + b) || 0;
+        return n;
+      };
+      const wrap = kwEl(band, "div", { class: "kw-flow" });
+      const cap = kwEl(wrap, "p", { class: "kw-flow-cap muted" });
+      cap.textContent = pairs.length + " promotion" + (pairs.length === 1 ? "" : "s")
+        + " · " + rows.length + " source" + (rows.length === 1 ? "" : "s")
+        + " · " + cols.length + " destination" + (cols.length === 1 ? "" : "s")
+        + ((otherR || otherC) ? " · tail grouped" : "");
+      const table = kwEl(wrap, "table", { class: "kw-flow-grid" });
+      const head = kwEl(table, "tr", null);
+      kwEl(head, "th", { scope: "col" });
+      const shortId = (id, n) => id.length > n ? id.slice(0, n - 1) + "…" : id;
+      for (const c of colIds.concat(otherC ? [null] : [])) {
+        const th = kwEl(head, "th", { scope: "col", class: "kw-flow-h kw-flow-v mono" });
+        th.textContent = c === null ? "other holders" : shortId(c, 8);
+        if (c !== null && c !== shortId(c, 8)) th.setAttribute("title", c);
+      }
+      for (const r of rowIds.concat(otherR ? [null] : [])) {
+        const tr = kwEl(table, "tr", null);
+        const rh = kwEl(tr, "th", { scope: "row", class: "kw-flow-h mono" });
+        rh.textContent = r === null ? "other holders" : shortId(r, 12);
+        if (r !== null && r !== shortId(r, 12)) rh.setAttribute("title", r);
+        for (const c of colIds.concat(otherC ? [null] : [])) {
+          const n = val(r, c);
+          const td = kwEl(tr, "td", {
+            class: "kw-mx-" + (n === 0 ? "0" : n === 1 ? "1" : n < 5 ? "2" : "3"),
+            title: n + " promotion" + (n === 1 ? "" : "s") + " from "
+              + (r === null ? "other holders" : r) + " to "
+              + (c === null ? "other holders" : c),
+          });
+          td.textContent = n === 0 ? "" : String(n);
+        }
+      }
+      parts += 1;
+    }
+    if (!parts) return null;
+    container.insertBefore(band, svg);
+    return band;
+  }
+
   function kwRestoreFocus(container, focused, caret) {
     if (!focused) return;
     const node = container.querySelector(focused);
@@ -2783,6 +2958,9 @@
           CSS.escape(active.getAttribute("data-kw-match-kind") || "") +
           '"][data-kw-match-id="' +
           CSS.escape(active.getAttribute("data-kw-match-id") || "") + '"]';
+      }
+      if (active.hasAttribute("data-kw-tier")) {
+        focused = '[data-kw-tier="' + CSS.escape(active.getAttribute("data-kw-tier") || "") + '"]';
       }
     }
     container.textContent = "";
