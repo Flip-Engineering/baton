@@ -123,6 +123,12 @@ while True:
         acknowledge()
         reply({'acknowledged':True})
         continue
+    if action.get('ack_message'):
+        ident=action['ack_message']
+        accepted=command('ack',ident,session,'fixture-native-reviewed')
+        assert accepted['code']==0,accepted
+        reply({'acknowledged':ident})
+        continue
     if action.get('public_report'):
         ident,body=action['public_report']
         reply(command('message',ident,session,'operator','report',body))
@@ -812,7 +818,14 @@ class Control(unittest.TestCase):
         self.dispatch('dispatch-file', 'leaf-guidance', 'root', 'leaf', 'guidance', guidance)
         accepted = self.action(stream, read_steer=True)['steer']
         self.assertIn(guidance.read_text(), accepted['message'])
-        self.eventually(lambda: self.call('delivery', 'leaf-guidance')['receipt'])
+        self.assertIsNone(self.call('delivery', 'leaf-guidance')['receipt'])
+        self.assertEqual(
+            self.action(stream, ack_message='leaf-guidance'),
+            {'acknowledged': 'leaf-guidance'},
+        )
+        self.eventually(
+            lambda: self.call('delivery', 'leaf-guidance')['receipt'] == 'fixture-native-reviewed'
+        )
         self.assertEqual(self.call('player', 'leaf')['native'], native['native'])
         self.finish(stream, 'Live guidance applied.')
         self.exited('leaf')
