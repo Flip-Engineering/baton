@@ -24,7 +24,11 @@ function stateMark(p) {
     tone = "idle";
   } else if (owed || status === "pending") {
     tone = "queued";
-  } else if (status === "completed" || status === "stopped" || status === "ended") {
+  } else if (status === "stopped") {
+    // A stopped actor owing nothing keeps its seat: at rest, not ended, so the
+    // quiet tests do not drop it from the default hall.
+    tone = "stopped";
+  } else if (status === "completed" || status === "ended") {
     tone = "ended";
   }
   return { word: tone === "queued" ? "queued" : String(status), tone };

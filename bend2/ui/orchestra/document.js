@@ -473,6 +473,10 @@
         // The recorded ensembles with their members: the map groups the tiers
         // its members occupy without reading the roster rows.
         ensembles: data.ensembles || [],
+        // The recorded sections in the snapshot route's shape, so the map can
+        // hull section membership the way it hulls ensembles once the server
+        // projects the field; nothing draws while it is absent.
+        sections: (data.knowledge && data.knowledge.sections) || [],
         // The per-actor reads, so the map's card states how a seat is doing and
         // not only what it holds.
         actorReads: actorReads(data.players),
@@ -526,6 +530,9 @@
         // The page's event list, so the stage draws the recorded message traffic
         // between seats through the same threads the promotions use.
         events: data.events || [],
+        // The recorded ensembles with their members and sections, so the
+        // stage names its tiers from the payload instead of the id alone.
+        ensembles: data.ensembles || [],
         // Quiet actors, by id, and whether the reader asked for them.
         quietIds: quietIds,
         showEnded: options.scope === "all",
@@ -574,7 +581,6 @@
           // Complete stored bodies already read, and the way to ask for one.
           messages: data.messages || {},
         }, {
-          onSelectEvent: options.onSelectEvent,
           onReadMessage: options.onReadMessage,
           // The record's way back out of an outside-tree subject.
           onClearSelection: options.onClearSelection,

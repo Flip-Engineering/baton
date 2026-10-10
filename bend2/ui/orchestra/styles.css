@@ -821,6 +821,11 @@ button:active { background: var(--wash); }
   overflow-wrap: anywhere;
 }
 
+/* The claim is the record's most-read sentence: its row spans the grid so it
+   wraps at the facts' full width instead of the value cell's short lines. */
+.doc-facts dt:has(+ dd.sel-claim),
+.doc-facts dd.sel-claim { grid-column: 1 / -1; }
+
 .doc-selection { min-width: 0; }
 
 

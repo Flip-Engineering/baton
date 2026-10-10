@@ -1874,6 +1874,7 @@ function documentData() {
     ensembles.push({
       id: e.id, owner: e.owner || "",
       coupling: e.coupling || "", members: e.members || [],
+      sections: e.sections || [],
     });
   }
   return {
