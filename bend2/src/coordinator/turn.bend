@@ -1398,10 +1398,13 @@ def acquired(+db: String, +player: String, +id: String, cmd: String, model: Stri
       harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
       player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,handle,missing)
 
-def direct_field(encoded: String) -> IO(String):
-  match Req.decode_scalar_utf8(Tx.hex_decode(encoded)):
+def direct_decoded(decoded: Req.Scalar) -> IO(String):
+  match decoded:
     case Req.ScalarText{value}: IO.pure(String,value)
     case other: IO.die(String,22,"Retained direct request text could not be decoded: " ++ Req.scalar_reason(other))
+
+def direct_field(encoded: String) -> IO(String):
+  direct_decoded(Req.decode_scalar_utf8(Tx.hex_decode(encoded)))
 
 def direct_request_fields(fields: List<String>) -> IO(DirectRequest):
   match fields:
@@ -1471,20 +1474,21 @@ def direct_resume_acquired(+db: String, +player: String, lock: Maybe<U32>) -> IO
 
 # Public resume dispatches the saved request; native custody still owns any
 # launched attempt. The recovery child acquires the session guard before setup.
+def resume_pending_request(db: String, player: String, request: Maybe<DirectRequest>) -> IO(Maybe<String>):
+  match request:
+    case None{}: IO.pure(Maybe<String>,None{})
+    case Some{saved}: Lock.SessionLock.acquire_session(Maybe<String>,db,player,+database => lock => direct_resume_acquired(database,player,lock))
+
 def resume_pending(+db: String, +player: String) -> IO(Maybe<String>):
   do IO<Maybe<String>>:
     request : Maybe<DirectRequest> <- direct_pending(db,player,"")
-    match request:
-      case None{}: IO.pure(Maybe<String>,None{})
-      case Some{saved}: Lock.SessionLock.acquire_session(Maybe<String>,db,player,+database => lock => direct_resume_acquired(database,player,lock))
+    resume_pending_request(db,player,request)
 
 def direct_saved_prompt(+directory: String, original_directory: String, +cwd: String, +saved: String, read: Result<&1,&1,U32 & String,String>) -> IO(String):
   match read:
     case Done{prompt}: IO.pure(String,prompt)
     case Fail{(+code,cause)}:
-      match U32.is_eq(code,2):
-        case False{}: IO.die(String,code,cause)
-        case True{}: Bool.pick(IO(String),String.eq(directory,original_directory ++ ".fresh"),refused_note(cwd,saved),IO.pure(String,saved))
+      Bool.pick(IO(String),U32.is_eq(code,2),Bool.pick(IO(String),String.eq(directory,original_directory ++ ".fresh"),refused_note(cwd,saved),IO.pure(String,saved)),IO.die(String,code,cause))
 
 def direct_prelaunch_request(+db: String, +player: String, +lock: U32, request: Maybe<DirectRequest>) -> IO(Unit):
   match request:
@@ -1519,9 +1523,7 @@ def recover_launch(+db: String, +player: String, +id: String, cmd: String, model
   match launch:
     case Done{marker}: recover_retained(db,player,id,cmd,model,effort,cwd,log,harness,directory,session)
     case Fail{(+code,cause)}:
-      match U32.is_eq(code,2):
-        case True{}: direct_prelaunch(db,player,id)
-        case False{}: IO.die(Unit,code,cause)
+      Bool.pick(IO(Unit),U32.is_eq(code,2),direct_prelaunch(db,player,id),IO.die(Unit,code,cause))
 
 def recover(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, log: String, +harness: String, +directory: String, session: String) -> IO(Unit):
   do IO<Unit>:
