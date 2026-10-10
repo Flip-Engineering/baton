@@ -1810,25 +1810,23 @@ await until('citations only dims the non-citation edges',
 check('citations only holds its dim while the direction pass composes', await evalJs(`(() => {
   const prov = document.querySelector('#knowledge-whole [data-kw-prov="cited"]');
   if (!prov || prov.getAttribute('aria-pressed') !== 'true') return false;
-  // Retain identities, not counts: a total can conceal one element revealed
-  // while another stays dimmed. Each dimmed element keys by its own ends.
-  const keyOf = (g) => (g.getAttribute('data-from') || '') + '|'
-    + (g.getAttribute('data-to') || '');
-  const keysAt = () => new Set([...document.querySelectorAll('#knowledge-whole .kw-dim')]
-    .map(keyOf));
-  const held = keysAt();
-  if (!held.size) return false;
+  // Retain the elements themselves, not keys: an end-key collapses actor
+  // anchors (no data-from or data-to) into one key and merges edges that
+  // share both ends, so a keymate could stand in for a revealed element.
+  // The direction pass toggles classes on the live elements in this same
+  // synchronous turn, so element identity holds through both presses.
+  const held = [...document.querySelectorAll('#knowledge-whole .kw-dim')];
+  if (!held.length) return false;
   const outgoing = [...document.querySelectorAll('#knowledge-whole .kw-direction button')]
     .find((b) => (b.textContent || '').trim() === 'outgoing');
   if (outgoing) outgoing.click();
-  const afterDirection = keysAt();
+  const afterDirection = held.every((g) => g.classList.contains('kw-dim'));
   const all = [...document.querySelectorAll('#knowledge-whole .kw-direction button')]
     .find((b) => (b.textContent || '').trim() === 'all');
   if (all) all.click();
-  const afterAll = keysAt();
+  const afterAll = held.every((g) => g.classList.contains('kw-dim'));
   const provStillHeld = document.querySelector('#knowledge-whole [data-kw-prov="cited"]');
-  const retains = (later) => [...held].every((k) => later.has(k));
-  return retains(afterDirection) && retains(afterAll)
+  return afterDirection && afterAll
     && provStillHeld && provStillHeld.getAttribute('aria-pressed') === 'true';
 })()`));
 await evalJs(`(() => {
