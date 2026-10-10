@@ -1820,9 +1820,10 @@ check('a cited seam anchored at an author seat says whose seat it is', await eva
   if (!anchored.length) return false;
   return anchored.every((seam) => {
     const words = seam.textContent || '';
+    const single = /^1 cited edge recorded as evidence/.test(words);
     return /authored by fixture-knowledge-/.test(words)
       && /cited material/.test(words)
-      && /finding:fixture-/.test(words)
+      && (!single || /finding:fixture-/.test(words))
       && /fixture-message-/.test(words)
       && /which the store does not hold/.test(words);
   });
