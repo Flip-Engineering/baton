@@ -412,6 +412,7 @@
   // names another one; the canvas never re-adopts a dismissed name.
   var kwDismissedRelation = "";
   var kwSeenFocusRelation = "";
+  var kwSeenFocusSeq = 0;
   var kwLastSelected = null;
   // A drag that pans the map must not also activate the node it
   // started on. Clicks consume the gesture; keydowns never pan.
@@ -470,6 +471,16 @@
   // the neighbours of neighbours, which is the selection read.
   // Isolation compares kind-and-id pairs from the attributes' own
   // slots: a session sharing a group's literal id lights only itself.
+  // The kept set is a rule the code guarantees: a node keeps every
+  // drawn edge that names it, share and deliver edges carry their
+  // recorded end kinds so a group end keeps its relations, and a tag
+  // hung at a kept node stays lit with it even when its edge touches
+  // no node. Promote and authorship ends are sessions by the
+  // actor-position gate that draws them, and a collapsed badge carries
+  // its author's own key, so it stays lit with its author. Tiers,
+  // hulls and the staff are landmarks and never dim. One subtlety, not
+  // an approximation: a tag several relations share hangs at its first
+  // citer, so hovering a later citer keeps it by the edge instead.
   function kwIsolateSvg(svg, key, depth) {
     const layer = svg.querySelector("g.kw-edges");
     if (!layer) return;
@@ -1120,6 +1131,22 @@
       }
       const labelShown = new Set();
       const placedRows = new Map();
+      // The selected caption places first, so the rank order thins
+      // around it instead of over it: selection is identity, it stays.
+      const kwThinSel = kwEffectiveSelected(opts);
+      if (kwThinSel && kwSelKind(overview, kwThinSel) === "finding") {
+        const s = slotByFinding.get(kwThinSel);
+        if (s) {
+          const at = kwSlotXY(t, s);
+          const rec = layout.findings.get(kwThinSel);
+          const words = rec ? kwCaptionWords(rec) : kwThinSel;
+          const w = Math.min(26, words.length) * 8 + 10;
+          const boxes = placedRows.get(at.row) || [];
+          boxes.push([at.x - w / 2, at.x + w / 2]);
+          placedRows.set(at.row, boxes);
+          labelShown.add(kwThinSel);
+        }
+      }
       for (const fid of labeled) {
         const s = slotByFinding.get(fid);
         if (!s) continue;
@@ -1127,8 +1154,11 @@
         const row = at.row;
         const x = at.x;
         const rec = layout.findings.get(fid);
-        const words = String((rec && (rec.claim || rec.id)) || fid);
-        const w = Math.min(27, words.length) * 7.5 + 10;
+        // The thinning box measures the drawn caption, suffixes and
+        // cap included: a claim-length box lets neighbours' suffixes
+        // overlap each other.
+        const words = rec ? kwCaptionWords(rec) : fid;
+        const w = Math.min(26, words.length) * 8 + 10;
         const box = [x - w / 2, x + w / 2];
         const boxes = placedRows.get(row) || [];
         if (boxes.some((b) => box[0] < b[1] && b[0] < box[1])) continue;
@@ -1196,15 +1226,10 @@
           + (f.limits ? " — " + String(f.limits) : "");
         if (selected || labelShown.has(f.id)) {
           kwNodeLabel(g, f, x, y);
-          // The obstacle matches the drawn caption: the claim plus the
-          // kind and evidence suffixes, capped where the label caps.
-          // A claim-length box lets tags settle onto the suffixes.
-          const kwCapKind = String(f.kind || "");
-          const kwCapEvidence = kwEvidenceRef(f);
-          const kwCapLen = Math.min(26, (String(f.claim || f.id)
-            + (kwCapKind && kwCapKind !== "finding" ? " · " + kwCapKind : "")
-            + (kwCapEvidence ? " · " + kwCapEvidence : "")).length);
-          const lw = kwCapLen * 8 + 10;
+          // The obstacle measures the drawn caption, suffixes capped
+          // where the label caps. A claim-length box lets tags settle
+          // onto the suffixes.
+          const lw = Math.min(26, kwCaptionWords(f).length) * 8 + 10;
           kwTrackBox(x - lw / 2, y + 10, x + lw / 2, y + 30);
           kwLabelBoxes.push({ x0: x - lw / 2, y0: y + 10, x1: x + lw / 2, y1: y + 30 });
         }
@@ -1428,7 +1453,13 @@
       relateSpecs.push({ a, b, name, shown });
     }
     // Tags settle top-down past nodes, text and the tags above; a tag
-    // keeps stepping until it clears, so settling never places overlap.
+    // keeps stepping until it clears, so settling never places overlap
+    // within the boxes it is given. The boxes are exact for mono words
+    // and drawn rects, and estimated at 8 pixels a character for the
+    // 14-pixel captions: caps-heavy text past that mean can overflow,
+    // and a tag then clears the box while nicking the overflow. The
+    // pinned card is chrome above the canvas, not a settled label; it
+    // clears on background click or Escape.
     const settled = [];
     for (const pos of actorPos.values()) {
       settled.push({ x0: pos.x - 18, y0: pos.y - 18, x1: pos.x + 18, y1: pos.y + 18 });
@@ -1917,11 +1948,19 @@
     const shown = kwEffectiveSelected(opts);
     if (shown && kwDismissed !== shown) kwIsolate(kwKey(kwSelKind(overview, shown), shown), 2);
     // A shell-focused relation lights its drawn edges and keeps its card
-    // naming it. A node pick dismisses it until the shell names another;
-    // Escape and background clicks clear the visible card and light at
-    // once through the dismiss path below, untouched.
+    // naming it. The name plus the shell's activation count is the
+    // identity, and an absent count reads as zero: an activation reopens
+    // the card even for the relation already named, a dismissal survives
+    // a render naming the same relation with the same count, and a new
+    // name or a new count clears the dismissal. Node picks, Escape and
+    // background clicks dismiss through the paths below, untouched.
     const fr = (opts && opts.focusRelation) || "";
-    if (fr !== kwSeenFocusRelation) { kwSeenFocusRelation = fr; kwDismissedRelation = ""; }
+    const frSeq = (opts && opts.focusRelationSeq) || 0;
+    if (fr !== kwSeenFocusRelation || frSeq !== kwSeenFocusSeq) {
+      kwSeenFocusRelation = fr;
+      kwSeenFocusSeq = frSeq;
+      kwDismissedRelation = "";
+    }
     if (fr && fr !== kwDismissedRelation) {
       const edges = Array.from(svg.querySelectorAll("g.kw-edge-relate"))
         .filter((e) => e.getAttribute("data-rel-name") === fr);
@@ -2586,12 +2625,21 @@
       : null);
   }
 
-  function kwNodeLabel(g, f, x, y) {
+  // The caption a finding draws: claim plus kind and evidence
+  // suffixes, before the 26-character cap. The label, its obstacle
+  // and the thinning pass all measure this string, so the three
+  // cannot drift apart.
+  function kwCaptionWords(f) {
+    if (!f) return "";
     const kind = String(f.kind || "");
     const evidenceMessage = kwEvidenceRef(f);
-    const words = String(f.claim || f.id)
+    return String(f.claim || f.id)
       + (kind && kind !== "finding" ? " · " + kind : "")
       + (evidenceMessage ? " · " + evidenceMessage : "");
+  }
+
+  function kwNodeLabel(g, f, x, y) {
+    const words = kwCaptionWords(f);
     const label = words.length > 26 ? words.slice(0, 25) + "…" : words;
     const text = kwSvg(g, "text", {
       x: String(x), y: String(y + 21), class: "kw-word",

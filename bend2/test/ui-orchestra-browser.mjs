@@ -723,10 +723,30 @@ await until('Escape clears the relation card and its light', `(() => {
   return !rel && unlit;
 })()`);
 await evalJs(`(() => { const b = document.querySelector('#selection .sel-focus'); b.click(); return true; })()`);
-await until('a relation statement lights its edges again', `(() => {
-  const edges = [...document.querySelectorAll('#knowledge-whole g.kw-edge-relate')];
-  return edges.some((e) => !e.classList.contains('kw-hover-dim'));
+await evalJs(`(() => { const b = document.querySelector('#selection .sel-focus'); b.click(); return true; })()`);
+await until('activating the same relation again pins its card after a dismissal', `(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  const title = card && card.querySelector('.kw-card-title');
+  const state = card && card.querySelector('.kw-card-state');
+  const lit = document.querySelector('#selection .sel-lit .sel-focus');
+  const name = lit ? ((lit.dataset.selkey || '').split('|')[1] || '') : '';
+  return !!title && !!state && state.textContent === 'relation'
+    && !!name && title.textContent === name;
 })()`);
+const shareEdgesBefore = await evalJs(`document.querySelectorAll('#knowledge-whole .kw-edge-share').length`);
+baton('promote', 'qa-relation-live-frame', 'root', 'root', 'worker', 'qa-worker-finding');
+committed();
+await until('a live frame renders while the relation is still named',
+  `document.querySelectorAll('#knowledge-whole .kw-edge-share').length > ${JSON.stringify(shareEdgesBefore)}`);
+check('a live frame keeps the card of a still-named relation', await evalJs(`(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  const title = card && card.querySelector('.kw-card-title');
+  const state = card && card.querySelector('.kw-card-state');
+  const lit = document.querySelector('#selection .sel-lit .sel-focus');
+  const name = lit ? ((lit.dataset.selkey || '').split('|')[1] || '') : '';
+  return !!title && !!state && state.textContent === 'relation'
+    && !!name && title.textContent === name;
+})()`));
 await evalJs(`(() => { const row = document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open');
   row.focus(); row.click(); return true; })()`);
 await until('a new selection clears the named relation and unlights the map', `(() => {

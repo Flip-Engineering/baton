@@ -51,9 +51,6 @@
   opacity: 0.55;
 }
 
-/* Every mark sits on a cast shadow: the depth of the hall, not a second colour. */
-.lane-strip .att-floor { fill: rgba(0, 0, 0, 0.4); }
-
 /* The trail behind a seat: its length grades how recently the seat acted, on a
    channel the state does not own, so shape and ink keep reading the state alone.
    These are the floor values, the ones a grade of 0 draws; the module sets the

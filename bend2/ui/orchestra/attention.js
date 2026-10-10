@@ -745,14 +745,6 @@
       group.appendChild(held);
     }
 
-    // The floor: every mark sits on a soft cast shadow, which is what gives the
-    // hall depth without a second colour.
-    var floor = svgEl("ellipse", {
-      "class": "att-floor", cx: 0, cy: radius * 0.72,
-      rx: radius * 1.05, ry: radius * 0.36,
-    });
-    group.appendChild(floor);
-
     group.appendChild(shapeNode(seat.reading, radius));
 
     // The trail: the pit's reading of activity, on its own band above the mark where

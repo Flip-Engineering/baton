@@ -464,8 +464,17 @@ g.kw-ref.unheld .kw-ref-tag {
   stroke-dasharray: 5 3;
 }
 
-.kw-dim { opacity: 0.15; }
-.kw-hover-dim { opacity: 0.15; }
+/* The hover read rests on these contrasts against the paper
+   (#fbfcfe). Lit ink reads about 17 to 1, muted about 5.8 to 1 and
+   the ochre about 4.8 to 1, so every kept mark is legible. The dimmed
+   layer sits at 0.3, which leaves the weakest dimmed ink (muted) at
+   about 1.5 to 1 and the strongest (ink) at about 1.9 to 1: visible
+   context that never competes with the read. At 0.15 the weakest marks
+   fell to about 1.2 to 1, below reliable perception for thin strokes
+   and small words, so the value was raised. Nothing dimmed carries
+   meaning on its own; leaving the node restores full ink. */
+.kw-dim { opacity: 0.3; }
+.kw-hover-dim { opacity: 0.3; }
 
 .kw-arcs {
   position: absolute;
