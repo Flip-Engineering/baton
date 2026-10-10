@@ -178,7 +178,7 @@ class NativeObservation(RECEIVE.Receive):
             self.assertIn(json.dumps(frame), raw)
         self.assertEqual(int((pathlib.Path(directory) / 'status').read_text()), 0)
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
-        self.assertEqual(self.coord('player', 'parent')['blockedCause'], '')
+        self.assertEqual(self.coord('player', 'parent')['blockedCause'], 'endpoint-absent')
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
     def test_new_assistant_start_leaves_empty_terminal_without_the_previous_answer(self):
@@ -579,7 +579,7 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual(int((pathlib.Path(directory) / 'status').read_text()), 0)
         player = self.coord('player', 'parent')
         self.assertEqual(player['native'], started['native'])
-        self.assertEqual(player['blockedCause'], '')
+        self.assertEqual(player['blockedCause'], 'endpoint-absent')
         self.assertEqual(self.coord('delivery', 'observed-later-success')['receipt'],
                          'native-reviewed')
         self.shutdown_idle_database_owner('fixture database owner did not exit')
@@ -630,10 +630,19 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
         self.action(stream, exit_fixture=True, complete_task=True)
         self.finish(resumed)
+
+        def later_failure_reports():
+            reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
+            return reports if any('fixture late refusal' in row['body']
+                                  for row in reports) else None
+
+        reports = self.eventually(
+            later_failure_reports,
+            'the resumed observer did not report the actual later refusal')
         turns = self.eventually(lambda: self.coord('turns', 'parent'),
                                 'sealed success report was not retained')
         self.assertEqual(turns[0]['reportBody'], 'Stale success text.')
-        reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
+        self.assertEqual([row['reportBody'] for row in turns].count('Stale success text.'), 1)
         self.assertEqual([row['reportBody'] for row in turns].count(report_text), 1)
         self.assertEqual([row['reportBody'] for row in turns].count(next_text), 1)
         self.assertEqual(len({row['id'] for row in turns}), len(turns))
@@ -742,8 +751,9 @@ class NativeObservation(RECEIVE.Receive):
         self.assertIn('Native receive failed;', stderr)
         observation = next((row for row in reports if row['id'] == turn_id + ':observation'), None)
         self.assertIsNotNone(observation)
-        self.assertIn('Native output observation failed:', observation['body'])
-        self.assertIn('Not a directory', observation['body'])
+        self.assertIn('Native output observation failed: 20:', observation['body'])
+        self.assertIn(str(self.output_log('parent')), observation['body'])
+        self.assertIn('Could not write file at output position.', observation['body'])
         self.assertEqual(self.coord('turns', 'parent'), [])
         self.assertFalse(any(row['id'] == turn_id + ':checkpoint' for row in reports))
         self.assertFalse(pathlib.Path(args[-2]).exists())

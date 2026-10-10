@@ -1015,6 +1015,8 @@ execFileSync(command[0], [...command.slice(1), 'ack', message, 'child', 'project
   native('connect', 'child', 'saved-project-native', JSON.stringify([process.execPath, receiver]));
   native('attach', 'previous-root', 'muse', 'saved-previous-project-native', '');
   native('role', 'previous-root', 'principal-conductor');
+  native('configure', 'previous-root', 'muse', 'configured-model', 'low', process.execPath,
+    join(directory, 'previous-native.jsonl'), 'muse', '', '');
   native('receiver', 'previous-root', process.execPath, join(directory, 'previous-native.jsonl'), repository);
   const unfinished = join(workspace, 'unfinished.txt');
   writeFileSync(unfinished, 'Retained project source. λ\n');
