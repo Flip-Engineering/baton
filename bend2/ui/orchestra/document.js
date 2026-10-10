@@ -163,7 +163,7 @@
   // ended and waits on input. A held seat, the work a seat owes and the quiet record
   // are recorded state, and the control adds them with their count.
   function scopeLive(state_) {
-    return state_ === "working";
+    return state_ === "working" || state_ === "queued";
   }
 
   // The control names the scope it would add, with the number of rows it adds, and
