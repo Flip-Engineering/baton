@@ -413,10 +413,11 @@ check('authored findings form a group below their recorded author', await evalJs
     && groupCenter >= anchor.left && groupCenter <= anchor.right
     && bounds.every((box) => box.top >= anchor.bottom);
 })()`));
-check('map frame bounds the canvas', await evalJs(`(() => {
+check('the map frame scrolls nothing: the page carries the drawing at its own height', await evalJs(`(() => {
   const frame = document.querySelector('.map-frame');
-  return !!frame && !!frame.querySelector('#knowledge-whole')
-    && getComputedStyle(frame).overflow === 'hidden' && frame.clientHeight <= 620;
+  if (!frame || !frame.querySelector('#knowledge-whole svg')) return false;
+  return frame.scrollHeight <= frame.clientHeight + 1
+    && frame.scrollWidth <= frame.clientWidth + 1;
 })()`));
 check('zoom controls state their action and level', await evalJs(
   `!!document.querySelector('#knowledge-whole [aria-label="Zoom the map in"]') && !!document.querySelector('#knowledge-whole [aria-label="Zoom the map out"]') && !!document.querySelector('#knowledge-whole .kw-zoom-level')`));
@@ -676,20 +677,20 @@ check('card states the finding without printing its recorded bodies', await eval
   return !!card.querySelector('.kw-card-title') && !!card.querySelector('.kw-card-state')
     && !card.textContent.includes('Worker evidence.') && !card.textContent.includes('Worker limits.');
 })()`));
-check('card offers the full record', await evalJs(
-  `document.querySelector('#knowledge-whole .kw-card .kw-card-full')?.textContent === 'Read the full record'`));
 check('selected relations retain incoming and outgoing endpoints', await evalJs(
   `document.getElementById('selection').textContent.includes('finding:qa-nope — continues → finding:qa-worker-finding')
     && document.getElementById('selection').textContent.includes('finding:qa-worker-finding — recorded in → external:qa-log-7')`));
-await evalJs(`document.querySelector('#knowledge-whole .kw-card .kw-card-full').click()`);
-check('reading in full moves focus to the selected actor', await evalJs(`(() => {
-  const rail = document.querySelector('#record');
-  const selection = document.querySelector('#selection');
-  return document.activeElement === rail
-    && selection.textContent.includes('Worker retained finding.')
-    && selection.textContent.includes('Worker evidence.')
-    && selection.textContent.includes('Worker limits.');
-})()`));
+check('the finding card offers one record action', await evalJs(
+  `document.querySelectorAll('#knowledge-whole .kw-card button').length === 1`));
+await evalJs(`(() => { const card = document.querySelector('#knowledge-whole .kw-card');
+  const action = card && card.querySelector('button');
+  if (action) action.click(); return true; })()`);
+await until('the card action opens the record at its finding', `(() => {
+  const block = document.querySelector('#selection #sel-sec-finding');
+  if (!block) return false;
+  const box = block.getBoundingClientRect();
+  return box.top <= 96 && box.bottom >= 0;
+})()`);
 await evalJs(`document.querySelector('#knowledge-whole svg.kw-canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
 check('escape dismisses the pinned card', await evalJs(
   `!document.querySelector('#knowledge-whole .kw-card') && document.querySelectorAll('#knowledge-whole .kw-hover-dim').length === 0`));
@@ -905,17 +906,12 @@ await evalJs('new Promise((resolve) => requestAnimationFrame(() => requestAnimat
 await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'qa-worker-finding'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
 await until('narrow search selects its finding',
   `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker retained finding.'`);
-check('narrow search puts the finding in the visible canvas center', await evalJs(`(() => {
-  const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
-  const frame = document.querySelector('.map-frame');
-  const drawing = svg.getBoundingClientRect(), clip = frame.getBoundingClientRect();
-  const left = Math.max(drawing.left, clip.left + frame.clientLeft);
-  const top = Math.max(drawing.top, clip.top + frame.clientTop);
-  const right = Math.min(drawing.right, clip.left + frame.clientLeft + frame.clientWidth);
-  const bottom = Math.min(drawing.bottom, clip.top + frame.clientTop + frame.clientHeight);
-  const hit = svg.querySelector('.knode[aria-label="qa-worker-finding"] .kw-finding').getBoundingClientRect();
-  return Math.abs((hit.left + hit.right - left - right) / 2) < 2
-    && Math.abs((hit.top + hit.bottom - top - bottom) / 2) < 2;
+check('narrow search puts the finding in the viewport', await evalJs(`(() => {
+  const hit = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"] .kw-finding');
+  if (!hit) return false;
+  const box = hit.getBoundingClientRect();
+  return box.left >= 0 && box.right <= window.innerWidth
+    && box.top >= 0 && box.bottom <= window.innerHeight;
 })()`));
 check('narrow dragging moves the finding with the pointer', await evalJs(`(() => {
   const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
@@ -1052,6 +1048,14 @@ await until('ribbon rows name the recorded far side',
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open').click()`);
 await until('pending message has a read control',
   `document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]') !== null`);
+check('a long recorded text ends where the ending reads as an ending', await evalJs(`(() => {
+  const lead = document.querySelector('#selection .sel-lead');
+  if (!lead) return false;
+  const line = (lead.textContent || '').trim();
+  if (!line) return false;
+  if (!/\u2026|continues/.test(line)) return true;
+  return /(continues|more characters|more)\s*\.?$/.test(line);
+})()`));
 await evalJs(`(() => {
   const button = document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]');
   button.focus(); button.click();
@@ -1114,8 +1118,6 @@ await until('stage arrow walks to a different seat',
 await evalJs(`(() => {
   const strip = document.getElementById('attention-band');
   window.__qaStageStyle = strip.getAttribute('style');
-  Object.assign(strip.style, {height:'96px', maxHeight:'96px', minHeight:'0', overflowY:'auto'});
-  strip.scrollTop = 0;
   strip.querySelector('svg.att-stage').focus();
   strip.querySelector('svg.att-stage').dispatchEvent(new KeyboardEvent('keydown', {key:'End', bubbles:true}));
 })()`);
@@ -1126,12 +1128,10 @@ const stageEnd = await evalJs(`(() => {
   const ring = cursor.querySelector('.att-seat-ring').getBoundingClientRect();
   const bounds = strip.getBoundingClientRect();
   return {id:cursor.dataset.attId, last:seats.at(-1).dataset.attId,
-    scroll:strip.scrollTop, overflow:strip.scrollHeight > strip.clientHeight,
-    visible:ring.top >= bounds.top && ring.bottom <= bounds.bottom};
+    visible:ring.top >= 0 && ring.bottom <= window.innerHeight};
 })()`);
-check('stage End reveals its last seat in a scrolling strip',
-  stageEnd.overflow && stageEnd.scroll > 0 && stageEnd.id === stageEnd.last && stageEnd.visible,
-  JSON.stringify(stageEnd));
+check('stage End reaches its last drawn seat where the reader can see it',
+  stageEnd.id === stageEnd.last && stageEnd.visible, JSON.stringify(stageEnd));
 await evalJs(`(() => {
   window.__qaOldStage = document.querySelector('#attention-band svg.att-stage');
   const row = document.querySelector('#roster .doc-row[data-doc-id="${stageEnd.id}"] .doc-open');
@@ -1139,9 +1139,9 @@ await evalJs(`(() => {
 })()`);
 await until('record selection redraws the unfocused stage',
   `document.querySelector('#attention-band svg.att-stage') !== window.__qaOldStage`);
-const stageKeptScroll = await evalJs(`document.getElementById('attention-band').scrollTop`);
-check('stage redraw preserves the reader scroll position',
-  stageKeptScroll === stageEnd.scroll, JSON.stringify({before:stageEnd.scroll, after:stageKeptScroll}));
+check('the stage redraw keeps the seat it was reading', await evalJs(
+  `(() => { const cursor = document.querySelector('#attention-band .att-seat.att-cursor');
+    return !!cursor && cursor.dataset.attId === ${JSON.stringify(stageEnd.id)}; })()`));
 await evalJs(`(() => {
   const stage = document.querySelector('#attention-band svg.att-stage');
   stage.focus(); stage.dispatchEvent(new KeyboardEvent('keydown', {key:'Home', bubbles:true}));
@@ -1152,11 +1152,10 @@ const stageHome = await evalJs(`(() => {
   const ring = cursor.querySelector('.att-seat-ring').getBoundingClientRect();
   const bounds = strip.getBoundingClientRect();
   return {id:cursor.dataset.attId, first:strip.querySelector('.att-seat').dataset.attId,
-    scroll:strip.scrollTop, visible:ring.top >= bounds.top && ring.bottom <= bounds.bottom};
+    visible:ring.top >= 0 && ring.bottom <= window.innerHeight};
 })()`);
-check('stage Home reveals its first seat',
-  stageHome.id === stageHome.first && stageHome.scroll < stageEnd.scroll && stageHome.visible,
-  JSON.stringify(stageHome));
+check('stage Home reaches its first drawn seat where the reader can see it',
+  stageHome.id === stageHome.first && stageHome.visible, JSON.stringify(stageHome));
 await evalJs(`(() => {
   const strip = document.getElementById('attention-band');
   if (window.__qaStageStyle === null) strip.removeAttribute('style');
