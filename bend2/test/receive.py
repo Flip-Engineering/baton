@@ -1486,12 +1486,16 @@ class Receive(unittest.TestCase):
                             'The selected keeper did not exit.')
         retained = {name: (attempt / name).read_bytes() for name in ('manifest', 'native.birth', 'status')}
         self.assertFalse(self.session_guard_available('parent'))
-        if not stopped:
-            self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
-        print('WAIT: recovering the completed attempt and retiring the selected observer', flush=True)
-        recovery = self.spawn('recover-observer', 'parent', observer.pid)
-        self.finish_observer_during_recovery(observer, recovery)
-        self.assertEqual(observer.returncode, -signal.SIGTERM)
+        # Recovery must retire the suspended observer while a database writer
+        # remains open. Replaying its retained output can write after retirement.
+        with sqlite3.connect(self.db) as writer:
+            writer.execute('BEGIN IMMEDIATE')
+            if not stopped:
+                self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
+            print('WAIT: recovering the completed attempt and retiring the selected observer', flush=True)
+            recovery = self.spawn('recover-observer', 'parent', observer.pid)
+            self.finish_observer_during_recovery(observer, recovery)
+            self.assertEqual(observer.returncode, -signal.SIGTERM)
         print('Selected observer exited; awaiting recovery completion', flush=True)
         if stopped:
             self.finish(recovery)

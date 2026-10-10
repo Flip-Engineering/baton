@@ -679,10 +679,12 @@ def acquired_recorded(+db: String, +session: String, cmd: String, model: String,
     recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(attempt))
     acquired_attempt(db,session,cmd,model,effort,cwd,log,lock,attempt,recovery,again)
 
-def acquired(db: String, session: String, cmd: String, model: String, effort: String, cwd: String, log: String, result: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def acquired(+db: String, session: String, cmd: String, model: String, effort: String, cwd: String, log: String, result: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
     case None{}: receive_status(db,session,"queued")
-    case Some{lock}: acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,again)
+    case Some{lock}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      ensured : Unit <- Store.ensure_before_begin(db)
+      acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,again)
 
 def registered(exists: Bool) -> IO(Unit):
   match exists:
@@ -699,7 +701,7 @@ def available(+db: String, +session: String, cmd: String, model: String, effort:
 @unsafe
 def run(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, message: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    recorded : String <- IO.try(String,Store.commit(db,C.Session{session}))
+    recorded : String <- IO.try(String,DB.Sql.read(db,"SELECT id FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     exists : Unit <- registered(Bool.not(String.is_empty(recorded)))
     closed : Bool <- Stop.stopped(db,session)
     result : Result<&1,&1,U32 & String,Unit> <- available(db,session,cmd,model,effort,cwd,log,u => run(db,session,cmd,model,effort,cwd,log,""),closed)
@@ -748,7 +750,7 @@ def recover_observer_pid(+db: String, +session: String, observer: Maybe<&2,U32>)
   match observer:
     case None{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Observer PID must be a positive process ID.")})
     case Some{pid}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      found : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained'),'');"))
+      found : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained'),'');"))
       +directory : String <- IO.pure(String,Tx.trim_nl(found))
       recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(directory))
       result : Result<&1,&1,U32 & String,Unit> <- recover_observer_recorded(db,session,directory,pid,recovery)
@@ -759,7 +761,7 @@ def recover_observer_pid(+db: String, +session: String, observer: Maybe<&2,U32>)
 # Adoption reads its recorded recovery arguments and restores its checkpoint.
 def recover_observer(+db: String, +session: String, observer: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    recorded : String <- IO.try(String,Store.commit(db,C.Session{session}))
+    recorded : String <- IO.try(String,Store.read(db,C.Session{session}))
     exists : Unit <- registered(Bool.not(String.is_empty(recorded)))
     canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     recover_observer_pid(canonical,session,U32.read(observer))
