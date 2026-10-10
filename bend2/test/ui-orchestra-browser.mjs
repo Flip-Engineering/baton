@@ -1759,14 +1759,22 @@ check('a typed edge carries its provenance marker and a stroke that tells them a
 // reports not running and not pending dim, and nothing else does. The
 // fixture carries conductor-b (completed), player-e (failed) and the
 // ghost (no player row, so no read at all) as its non-live actors.
-check('the first render dims exactly the non-live actors and nothing else', await evalJs(`(() => {
+check('the first render dims exactly the non-live actors and nothing else', await evalJs(`(async () => {
+  // Derived from the fixture's own document: an anchor dims when its player
+  // is absent from the players list, or its recorded execution has exited.
+  // Running and pending actors keep full strength; findings, holdings and
+  // relations never take the live dim.
+  const document_ = await (await fetch('fixtures/fixture-knowledge.json')).json();
+  const players = new Map((document_.players || [])
+    .map((pl) => [pl.id, ((pl.execution || {}).phase) || '']));
+  const anchors = [...document.querySelectorAll('#knowledge-whole .kw-anchor[data-kw-id]')];
+  const expected = anchors.map((g) => g.getAttribute('data-kw-id') || '')
+    .filter((id) => !players.has(id) || players.get(id) === 'exited').sort();
   const dims = [...document.querySelectorAll('#knowledge-whole .kw-dim')];
-  if (!dims.length) return false;
+  if (!expected.length) return false;
   const ids = dims.map((g) => g.getAttribute('data-kw-id') || '').sort();
-  const expected = ['fixture-knowledge-conductor-b', 'fixture-knowledge-ghost',
-    'fixture-knowledge-player-e'];
   return dims.every((g) => g.classList.contains('kw-anchor'))
-    && ids.join(',') === expected.sort().join(',');
+    && ids.join(',') === expected.join(',');
 })()`));
 await evalJs(`(() => {
   const edge = document.querySelector('#knowledge-whole .kw-edge-typed');
@@ -1802,17 +1810,25 @@ await until('citations only dims the non-citation edges',
 check('citations only holds its dim while the direction pass composes', await evalJs(`(() => {
   const prov = document.querySelector('#knowledge-whole [data-kw-prov="cited"]');
   if (!prov || prov.getAttribute('aria-pressed') !== 'true') return false;
-  const held = document.querySelectorAll('#knowledge-whole .kw-dim').length;
+  // Retain identities, not counts: a total can conceal one element revealed
+  // while another stays dimmed. Each dimmed element keys by its own ends.
+  const keyOf = (g) => (g.getAttribute('data-from') || '') + '|'
+    + (g.getAttribute('data-to') || '');
+  const keysAt = () => new Set([...document.querySelectorAll('#knowledge-whole .kw-dim')]
+    .map(keyOf));
+  const held = keysAt();
+  if (!held.size) return false;
   const outgoing = [...document.querySelectorAll('#knowledge-whole .kw-direction button')]
     .find((b) => (b.textContent || '').trim() === 'outgoing');
   if (outgoing) outgoing.click();
-  const afterDirection = document.querySelectorAll('#knowledge-whole .kw-dim').length;
+  const afterDirection = keysAt();
   const all = [...document.querySelectorAll('#knowledge-whole .kw-direction button')]
     .find((b) => (b.textContent || '').trim() === 'all');
   if (all) all.click();
-  const afterAll = document.querySelectorAll('#knowledge-whole .kw-dim').length;
+  const afterAll = keysAt();
   const provStillHeld = document.querySelector('#knowledge-whole [data-kw-prov="cited"]');
-  return held > 0 && afterDirection >= held && afterAll >= held
+  const retains = (later) => [...held].every((k) => later.has(k));
+  return retains(afterDirection) && retains(afterAll)
     && provStillHeld && provStillHeld.getAttribute('aria-pressed') === 'true';
 })()`));
 await evalJs(`(() => {
@@ -1850,11 +1866,20 @@ check('a walk step re-lights the edge it names and pins its card', await evalJs(
   if (steps.length < 2) return false;
   const label = steps[0].getAttribute('aria-label') || '';
   const ends = label.replace(/^Re-light /, '').split(/ from | to /);
+  if (ends.length < 3) return false;
   steps[0].click();
   const card = document.querySelector('#knowledge-whole .kw-card');
   if (!card) return false;
   const words = card.textContent || '';
-  return ends.length >= 3 && words.includes(ends[1]) && words.includes(ends[2]);
+  // The activation focuses the edge it lights, so the lit edge is the
+  // focused element: its own ends must be the ends the step named.
+  const lit = document.activeElement;
+  const litFrom = lit && lit.getAttribute ? (lit.getAttribute('data-from') || '') : '';
+  const litTo = lit && lit.getAttribute ? (lit.getAttribute('data-to') || '') : '';
+  return words.includes(ends[1]) && words.includes(ends[2])
+    && (litFrom === ends[1] || litFrom === ends[2])
+    && (litTo === ends[1] || litTo === ends[2])
+    && litFrom !== litTo;
 })()`));
 check('the key rows follow the drawn provenance', await evalJs(`(() => {
   const words = (document.querySelector('#knowledge-whole') || { textContent: '' }).textContent || '';
@@ -2068,16 +2093,33 @@ await until('a cited seam opens the citing finding record',
   `(() => { const block = document.querySelector('#selection #sel-sec-finding');
     return !!block && /^Finding fixture-finding-/.test((block.querySelector('h2') || { textContent: '' }).textContent || ''); })()`);
 const relationAddress = await evalJs(`location.hash || ''`);
+// The writer encodes each field on its own and keeps the separators
+// literal, so the boot reader's own shape - three components split on
+// the first two literal colons - is the only reader that round-trips.
+const relationFields = ((match) => match ? {
+  provenance: decodeURIComponent(match[1]),
+  source: decodeURIComponent(match[2]),
+  target: decodeURIComponent(match[3]),
+} : null)(/^#relation=([^:]*):([^:]*):(.*)$/.exec(relationAddress));
 check('a cited seam click opens the citing finding and writes the relation address',
-  relationAddress.startsWith('#relation=recorded-evidence:finding%3A')
-    && relationAddress.includes('%3Amessage%3A'));
+  Boolean(relationFields)
+    && relationFields.provenance === 'recorded-evidence'
+    && relationFields.source.startsWith('finding:fixture-')
+    && relationFields.target.startsWith('message:fixture-'));
 await openPage(fixtureUrl + relationAddress);
 await until('reloading the relation address recovers the same record',
   `(() => { const block = document.querySelector('#selection #sel-sec-finding');
     return !!block && /^Finding fixture-finding-/.test((block.querySelector('h2') || { textContent: '' }).textContent || ''); })()`);
-check('the relation address round-trips through a reload', await evalJs(
-  `(location.hash || '') === ${JSON.stringify(relationAddress)}`
-    + ` && !!document.querySelector('#selection #sel-sec-finding')`));
+check('the relation address round-trips through a reload', await evalJs(`(() => {
+  if ((location.hash || '') !== ${JSON.stringify(relationAddress)}) return false;
+  const block = document.querySelector('#selection #sel-sec-finding');
+  if (!block) return false;
+  // The exact citing finding from the address, not any finding-shaped
+  // record: the heading opens with that finding's own id.
+  const heading = (block.querySelector('h2') || { textContent: '' }).textContent || '';
+  const findingId = ${JSON.stringify(relationFields ? relationFields.source.slice('finding:'.length) : '')};
+  return heading.startsWith('Finding ' + findingId + ' ');
+})()`));
 
 // ============ the fixture document: the absent typed fields ============
 await openPage(urlA + 'index.html?fixture=fixture-knowledge-empty');
