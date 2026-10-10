@@ -524,6 +524,9 @@
           seat: options.selectedSeat || null,
           finding: options.selectedFinding || null,
           events: data.events || [],
+          // The project surface's reads, at the level the record expects them.
+          retained: (options.selectedSeat && options.selectedSeat.retained) || null,
+          resume: (options.selectedSeat && options.selectedSeat.resume) || null,
           // Complete stored bodies already read, and the way to ask for one.
           messages: data.messages || {},
         }, {
@@ -549,7 +552,9 @@
 
     if (mounts.ribbon) {
       if (typeof renderRibbon === "function") {
-        renderRibbon(mounts.ribbon, { events: data.events || [] }, {
+        renderRibbon(mounts.ribbon, { events: data.events || [],
+          // What the window is: the page's subject, and the open conversation when there is one.
+          subject: data.subject || "", conversationId: options.projectConversation || "" }, {
           position: options.position || 0,
           onScrub: options.onScrub,
           onSelectEvent: options.onSelectEvent,

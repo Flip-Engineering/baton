@@ -3,7 +3,8 @@
    The state head sticks while the record scrolls. Dot: failed red,
    stopped attention, running green, else muted; queued messages take
    no ink. An index under the head jumps to the blocks present.
-   All labels arrive through textContent. */
+   Retained session reports and resume outcomes render as their own
+   blocks. All labels arrive through textContent. */
 
 var SEL_EVENT_LIMIT = 8;
 var selEventsOpen = false;
@@ -121,6 +122,82 @@ function selMsgRaw(ref) {
   return "";
 }
 
+// Whether the record carries a retained session report or a resume outcome.
+function selHasRetained(retained) {
+  return Boolean(retained && typeof retained === "object");
+}
+
+// An object's scalar fields as fact rows. Nested values are skipped.
+function selScalars(obj) {
+  var rows = [];
+  if (!obj || typeof obj !== "object") return rows;
+  Object.keys(obj).forEach(function (key) {
+    var value = obj[key];
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      rows.push([key, String(value)]);
+    }
+  });
+  return rows;
+}
+
+// A receipt as fact rows: the string itself, or the object's scalars.
+function selReceiptRows(receipt) {
+  if (typeof receipt === "string") return receipt ? [["receipt", receipt]] : [];
+  if (receipt && typeof receipt === "object") return selScalars(receipt);
+  return [];
+}
+
+function selHasResume(resume) {
+  if (!resume || typeof resume !== "object") return false;
+  if (resume.ok === false) return true;
+  if (resume.refused != null || resume.error != null) return true;
+  if (resume.latestReport != null || resume.latestReportId != null) return true;
+  return selReceiptRows(resume.receipt).length > 0;
+}
+
+// A retained report's body: the string itself, or the body it carries.
+function selReportBody(report) {
+  if (typeof report === "string") return { held: true, body: report };
+  if (report && typeof report === "object" && typeof report.body === "string") {
+    return { held: true, body: report.body };
+  }
+  return { held: false, body: "" };
+}
+
+// The index entries for the blocks this render draws, in document order.
+function selSecEntries(seat, finding, events, retained, resume) {
+  var entries = [];
+  if (finding) entries.push(["sel-sec-finding", "Finding"]);
+  if (seat && (selOwed(seat) > 0 || (Array.isArray(seat.pending) && seat.pending.length))) {
+    entries.push(["sel-sec-awaiting", "Awaiting"]);
+  }
+  if (seat && seat.work) entries.push(["sel-sec-work", "Work"]);
+  if (selHasResume(resume)) entries.push(["sel-sec-resume", "Resume"]);
+  if (selHasRetained(retained)) entries.push(["sel-sec-retained", "Retained"]);
+  if (seat && events.some(function (ev) { return ev && ev.session === seat.id; })) {
+    entries.push(["sel-sec-changes", "Changes"]);
+  }
+  return entries;
+}
+
+function selSecNav(entries) {
+  var nav = selEl("nav", "sel-index");
+  nav.setAttribute("aria-label", "Record sections");
+  entries.forEach(function (entry) {
+    var link = selEl("a", null, entry[1]);
+    link.setAttribute("href", "#" + entry[0]);
+    // The jump scrolls without writing the address, so the shell's
+    // #seat=<id> hash survives the click and the reload after it.
+    link.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      var target = document.getElementById(entry[0]);
+      if (target && typeof target.scrollIntoView === "function") target.scrollIntoView();
+    });
+    nav.appendChild(link);
+  });
+  return nav;
+}
+
 // The sharing path as a node chain. Full identities stay in titles
 // and in the accessible label; the author's stop carries a ring.
 function selPathChain(steps, author) {
@@ -211,6 +288,7 @@ function renderSelection(mount, data, options) {
   var seat = input.seat || null;
   var finding = input.finding || null;
   var events = Array.isArray(input.events) ? input.events : [];
+  var secEntries = selSecEntries(seat, finding, events, input.retained, input.resume);
   if (!seat && !finding) {
     mount.appendChild(selEl("p", "muted", "Select a row."));
     return;
@@ -230,34 +308,8 @@ function renderSelection(mount, data, options) {
     }
     head.appendChild(state);
     mount.appendChild(head);
-    // Jumps to the blocks present, in document order. One block needs no index.
-    var secEntries = [];
-    if (finding) secEntries.push(["sel-sec-finding", "Finding"]);
-    if (selOwed(seat) > 0 || (seat.pending && seat.pending.length)) {
-      secEntries.push(["sel-sec-awaiting", "Awaiting"]);
-    }
-    if (seat.work) secEntries.push(["sel-sec-work", "Work"]);
-    var secHasChanges = events.some(function (ev) { return ev && ev.session === seat.id; });
-    if (secHasChanges) secEntries.push(["sel-sec-changes", "Changes"]);
-    if (secEntries.length > 1) {
-      var secNav = selEl("nav", "sel-index");
-      secNav.setAttribute("aria-label", "Record sections");
-      secEntries.forEach(function (entry) {
-        var secLink = selEl("a", null, entry[1]);
-        secLink.setAttribute("href", "#" + entry[0]);
-        // The jump scrolls without writing the address, so the shell's
-        // #seat=<id> hash survives the click and the reload after it.
-        secLink.addEventListener("click", function (ev) {
-          ev.preventDefault();
-          var secTarget = document.getElementById(entry[0]);
-          if (secTarget && typeof secTarget.scrollIntoView === "function") {
-            secTarget.scrollIntoView();
-          }
-        });
-        secNav.appendChild(secLink);
-      });
-      mount.appendChild(secNav);
-    }
+    // One block needs no index.
+    if (secEntries.length > 1) mount.appendChild(selSecNav(secEntries));
     var seatBlock = selEl("div", "sel-block");
     var failure = seat.failure || null;
     if (failure) {
@@ -278,6 +330,7 @@ function renderSelection(mount, data, options) {
     ], "sel-ref");
     mount.appendChild(seatBlock);
   }
+  if (!seat && secEntries.length > 1) mount.appendChild(selSecNav(secEntries));
   if (finding) {
     var findingBlock = selEl("div", "sel-block");
     findingBlock.id = "sel-sec-finding";
@@ -484,6 +537,105 @@ function renderSelection(mount, data, options) {
       }
     }
     mount.appendChild(work);
+  }
+  if (selHasResume(input.resume)) {
+    var resume = input.resume;
+    var resumeBlock = selEl("div", "sel-block");
+    resumeBlock.id = "sel-sec-resume";
+    resumeBlock.appendChild(selEl("h2", "doc-section", "Resume outcome"));
+    var receiptRows = selReceiptRows(resume.receipt);
+    if (receiptRows.length) selFacts(resumeBlock, receiptRows);
+    if (resume.latestReport != null || resume.latestReportId != null) {
+      resumeBlock.appendChild(selEl("p", "sel-group", "Retained report"));
+      var lrObj = resume.latestReport && typeof resume.latestReport === "object"
+        ? resume.latestReport : null;
+      var lrId = resume.latestReportId != null ? String(resume.latestReportId) : "";
+      var lrParts = [];
+      if (lrObj && lrObj.sender) lrParts.push("from " + lrObj.sender);
+      if (lrId) lrParts.push("report " + selTail(lrId));
+      if (lrObj && lrObj.at) lrParts.push("kept from " + (selEventAge(lrObj.at) || lrObj.at));
+      if (lrParts.length) {
+        var lrMeta = selEl("p", "muted", lrParts.join(" · "));
+        if (lrId) lrMeta.setAttribute("title", "report " + lrId);
+        resumeBlock.appendChild(lrMeta);
+      }
+      var lrBody = selReportBody(resume.latestReport);
+      if (lrBody.held) {
+        resumeBlock.appendChild(selEl("p", "sel-body", lrBody.body));
+        if (lrBody.body === "") {
+          resumeBlock.appendChild(selEl("p", "muted", "Stored body is empty."));
+        }
+      } else {
+        resumeBlock.appendChild(selEl("p", "muted", "The cited report is not held."));
+      }
+    }
+    var refused = resume.refused != null ? resume.refused : resume.error;
+    if (refused != null) {
+      resumeBlock.appendChild(selEl("p", "sel-group",
+        resume.refused != null ? "Refused" : "Error"));
+      if (typeof refused === "string") {
+        resumeBlock.appendChild(selEl("p", "sel-body", refused));
+      } else if (refused && typeof refused === "object") {
+        var refRows = selScalars(refused).filter(function (row) {
+          return row[0] !== "stdout" && row[0] !== "stderr";
+        });
+        if (refRows.length) selFacts(resumeBlock, refRows);
+        var refStreams = ["stdout", "stderr"].filter(function (stream) {
+          return typeof refused[stream] === "string" && refused[stream] !== "";
+        });
+        refStreams.forEach(function (stream) {
+          resumeBlock.appendChild(selEl("p", "muted", stream));
+          resumeBlock.appendChild(selEl("p", "sel-body", refused[stream]));
+        });
+        if (!refRows.length && !refStreams.length) {
+          resumeBlock.appendChild(selEl("p", "muted", "No cause was recorded."));
+        }
+      } else {
+        resumeBlock.appendChild(selEl("p", "muted", "No cause was recorded."));
+      }
+    } else if (resume.ok === false) {
+      resumeBlock.appendChild(selEl("p", "muted", "The resume was refused."));
+    }
+    mount.appendChild(resumeBlock);
+  }
+  if (selHasRetained(input.retained)) {
+    var retained = input.retained;
+    var retainedBlock = selEl("div", "sel-block");
+    retainedBlock.id = "sel-sec-retained";
+    retainedBlock.appendChild(selEl("h2", "doc-section", "Retained report"));
+    var retAt = retained.at || "";
+    var retWhen = selEl("p", "muted",
+      "kept from " + (selEventAge(retAt) || retAt || "an earlier turn"));
+    if (retAt) retWhen.setAttribute("title", String(retAt));
+    retainedBlock.appendChild(retWhen);
+    var retSession = retained.session;
+    var retSessId = typeof retSession === "string" ? retSession
+      : (retSession && retSession.id != null ? String(retSession.id) : "");
+    var retPrincipal = retSession && typeof retSession === "object" && retSession.principal
+      ? String(retSession.principal) : "";
+    var retRepId = retained.reportId != null ? String(retained.reportId) : "";
+    var retWho = [];
+    if (retPrincipal) retWho.push(retPrincipal);
+    if (retSessId) retWho.push("session " + selTail(retSessId));
+    if (retRepId) retWho.push("report " + selTail(retRepId));
+    if (retWho.length) {
+      var retWhoLine = selEl("p", "muted", retWho.join(" · "));
+      var retTitles = [];
+      if (retSessId) retTitles.push("session " + retSessId);
+      if (retRepId) retTitles.push("report " + retRepId);
+      if (retTitles.length) retWhoLine.setAttribute("title", retTitles.join(" · "));
+      retainedBlock.appendChild(retWhoLine);
+    }
+    var retBody = selReportBody(retained.report);
+    if (retBody.held) {
+      retainedBlock.appendChild(selEl("p", "sel-body", retBody.body));
+      if (retBody.body === "") {
+        retainedBlock.appendChild(selEl("p", "muted", "Stored body is empty."));
+      }
+    } else {
+      retainedBlock.appendChild(selEl("p", "muted", "The cited report is not held."));
+    }
+    mount.appendChild(retainedBlock);
   }
   if (seat) {
     var mine = events.filter(function (ev) {

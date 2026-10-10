@@ -960,3 +960,72 @@ button:active { background: var(--wash); }
 
 .doc-band-open:hover,
 .doc-band-open:focus-visible { border-bottom-color: var(--selection); }
+
+/* ── the project surface ─────────────────────────────────────────────────── */
+/* A reader returning to a project: its conversations as one compact row of chips, the
+   selected conversation's retained report read whole, and continuing it beside the report. */
+
+.project-body { margin: 6px 0 0; }
+
+.project-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.project-session {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.project-session.is-selected { outline: 2px solid var(--selection); outline-offset: 1px; }
+
+.project-read-head { margin: 0 0 4px; color: var(--muted); font-size: var(--step0); }
+
+.project-report {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  max-height: 240px;
+  overflow: auto;
+  background: var(--wash);
+  border-left: 2px solid var(--hairline);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: var(--step0);
+  color: var(--ink);
+}
+
+.project-resume { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; }
+
+.project-outcome { margin: 0; font-size: var(--step1); }
+
+/* The open conversation: its state and the one action, with the reports behind a disclosure. */
+.project-pending { margin-left: 6px; color: var(--attention); }
+
+.project-detail { margin: 6px 0 0; }
+
+.project-detail > summary { color: var(--muted); font-size: var(--step0); cursor: pointer; }
+
+/* Show the stopped marker beside recorded stopped sessions. */
+.project-session.is-stopped { color: var(--attention); border-color: var(--attention); }
+
+.project-session.is-stopped::before {
+  content: "";
+  width: 7px;
+  height: 3px;
+  margin-right: 6px;
+  border-radius: 1px;
+  background: var(--attention);
+}

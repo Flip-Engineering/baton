@@ -23,6 +23,7 @@
     <a href="#map">The map</a>
     <a href="#staves">The staves</a>
     <a href="#record">The record</a>
+    <a href="#project">The project</a>
   </nav>
   <p class="plate-state">
     <span class="plate-mark" id="plate-mark"></span>
@@ -51,6 +52,17 @@
   <!-- The written surfaces and the record. The record is a rail beside them, so a
        selection from the map or the staves never moves the reader away from where
        they made it. -->
+
+  <!-- Read prior sessions from the selected actor's recorded workspace. -->
+  <section class="project" id="project" tabindex="-1" aria-labelledby="project-title">
+    <div class="movement-row">
+      <h2 id="project-title" class="movement">The project</h2>
+      <p class="doc-scope" id="project-state" role="status"></p>
+      <button type="button" id="project-load" class="doc-scope-btn">Read the project</button>
+    </div>
+    <div id="project-body" class="project-body"></div>
+  </section>
+
   <div class="work">
   <div class="work-main">
 

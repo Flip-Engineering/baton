@@ -316,6 +316,13 @@
     return "quiet";
   }
 
+  // An activity taken from an earlier recorded event says so. A retained
+  // conversation must not read as one that is working now.
+  function activityText(row) {
+    if (!row || !row.activity) return "";
+    return row.stale ? row.activity + " (recorded earlier)" : row.activity;
+  }
+
   function playerList(data) {
     if (Array.isArray(data)) return data;
     if (data && Array.isArray(data.players)) return data.players;
@@ -743,8 +750,7 @@
 
     var title = svgEl("title");
     setText(title, seat.id + " \u2014 " + seat.word
-      + (seat.activity ? " \u2014 " + seat.activity : "")
-      + (seat.stale ? " (stale)" : ""));
+      + (seat.activity ? " \u2014 " + activityText(seat) : ""));
     group.appendChild(title);
 
     group.addEventListener("click", function () {
@@ -1016,7 +1022,7 @@
     chip.className = "lane-chip" + (row.notProgressing ? " att-need" : "")
       + (options.selectedId === row.id ? " selected" : "");
     chip.dataset.attKey = "chip:" + row.id;
-    var spoken = row.id + ", " + row.word + (row.activity ? ", " + row.activity : "");
+    var spoken = row.id + ", " + row.word + (row.activity ? ", " + activityText(row) : "");
     chip.setAttribute("title", spoken);
     chip.setAttribute("aria-label", spoken + ". Select to open the actor.");
     var mark = svgEl("svg", {
@@ -1026,7 +1032,7 @@
     mark.appendChild(shapeNode(row.reading, 4.4));
     chip.appendChild(mark);
     chip.appendChild(span("lane-id mono", row.short));
-    if (row.activity) chip.appendChild(span("att-activity", row.activity));
+    if (row.activity) chip.appendChild(span("att-activity", activityText(row)));
     chip.addEventListener("click", function () {
       if (typeof options.onSelect === "function") options.onSelect(row.id);
     });
@@ -1152,7 +1158,7 @@
       stage.svg.addEventListener("focus", function () {
         if (cursorRow) {
           setText(live, cursorRow.id + ", " + cursorRow.word
-            + (cursorRow.activity ? ", " + cursorRow.activity : ""));
+            + (cursorRow.activity ? ", " + activityText(cursorRow) : ""));
         } else {
           setText(live, "The stage. No seat is drawn.");
         }
@@ -1180,10 +1186,13 @@
       });
     }
 
-    container.appendChild(legendNode());
-
     var listed = result.listed;
     var shown = expanded ? listed : listed.slice(0, STRIP_LIMIT);
+
+    // The legend decodes the marks the pit draws. With no seat seated and nothing
+    // listed there is nothing to decode, so the pit keeps one line.
+    if (laid.order.length || listed.length) container.appendChild(legendNode());
+
     var folded = listed.length - shown.length;
     result.strip = {
       shown: shown.length,

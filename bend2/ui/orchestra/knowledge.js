@@ -451,7 +451,10 @@
       height: String(height),
       class: "kw-canvas",
       role: "img",
-      "aria-label": "Whole-orchestra knowledge",
+      // The scope is the shell's statement beside the map; the image
+      // label names the surface without restating it, so it holds for
+      // a retained actor's holdings as well as the whole orchestra.
+      "aria-label": "Knowledge map",
     });
     const defs = kwSvg(svg, "defs", null);
     const markers = [
@@ -1840,9 +1843,9 @@
     container.textContent = "";
     const overview = (data && data.overview) || {};
     const promotions = overview.promotions || [];
-    if (!overview || (opts && opts.notice)) {
+    if (opts && opts.notice) {
       const p = kwEl(container, "p", { class: "muted" });
-      p.textContent = (opts && opts.notice) || "No knowledge read yet.";
+      p.textContent = opts.notice;
       return { findings: 0, promotions: 0 };
     }
     const mode = (opts && opts.mode) || "whole";

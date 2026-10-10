@@ -59,23 +59,6 @@
   color: var(--muted);
 }
 
-/* A kind named in the figures line carries the ink its bars carry. */
-.ribbon-kind-word { color: var(--rib-ink); }
-.ribbon-kind-word[class*="ribbon-kind-message-"] { color: var(--rib-ink); }
-.ribbon-kind-word.ribbon-kind-message-task,
-.ribbon-kind-word.ribbon-kind-message-guidance,
-.ribbon-kind-word.ribbon-kind-message-recovery { color: var(--rib-waiting); }
-.ribbon-kind-word.ribbon-kind-message-report,
-.ribbon-kind-word.ribbon-kind-message-receipt,
-.ribbon-kind-word.ribbon-kind-report { color: var(--rib-report); }
-.ribbon-kind-word.ribbon-kind-execution,
-.ribbon-kind-word.ribbon-kind-native-request { color: var(--running); }
-.ribbon-kind-word.ribbon-kind-stop { color: var(--failed); }
-.ribbon-kind-word[class*="ribbon-kind-ensemble"],
-.ribbon-kind-word[class*="ribbon-kind-membership"],
-.ribbon-kind-word[class*="ribbon-kind-section"],
-.ribbon-kind-word.ribbon-kind-role { color: var(--rib-structure); }
-
 .ribbon-pulse {
   width: 8px;
   height: 8px;

@@ -39,6 +39,13 @@ const state = {
   // The knowledge the map is showing: universal by default, the selected worker's or
   // group's holdings once one is chosen, all held records only when asked for.
   knowledgeScope: { kind: "universal", id: "" },
+  // The project surface: the selected actor's recorded workspace, its prior conversations and
+  // the outcome of continuing one. Read on demand; the actor it belongs to travels with it.
+  project: null,
+  projectNotice: "",
+  projectActor: "",
+  projectRequest: null,
+  resume: null,
   work: null,
   workRequest: null,
   workActorId: "",
@@ -72,6 +79,9 @@ const el = {
   ribbon: document.getElementById("ribbon"),
   knowledgeWhole: document.getElementById("knowledge-whole"),
   mapScope: document.getElementById("map-scope"),
+  projectState: document.getElementById("project-state"),
+  projectBody: document.getElementById("project-body"),
+  projectLoad: document.getElementById("project-load"),
   mapScopeAll: document.getElementById("map-scope-all"),
   counts: document.getElementById("doc-counts"),
   find: document.getElementById("doc-find"),
@@ -372,6 +382,9 @@ function select(id) {
   if (state.knowledgeScope.kind !== "actor" || state.knowledgeScope.id !== id) {
     setKnowledgeScope({ kind: "actor", id: id });
   }
+  // The project read follows the selection: an open project reloads for the new seat, and an
+  // outstanding read for another one is superseded here rather than settling as that seat's.
+  if (state.projectActor !== id && (state.project || state.projectPending)) void loadProject(id);
   // Every selection intent renders, even the same seat again: the map or the
   // record may have dismissed a card since, and that dismissal is not in the
   // shell's signature.
@@ -617,6 +630,296 @@ function clearSelection() {
     history.replaceState(null, "", location.pathname + location.search);
   }
   renderTree();
+}
+
+// ── the project surface ────────────────────────────────────────────────────
+// Read and continue recorded project sessions on demand.
+
+function projectName(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  return value.project || value.path || value.database || "";
+}
+
+// Read the stop from the recorded session metadata.
+function projectStopped(session) {
+  const stop = session && session.stop;
+  return Boolean(stop && stop.status === "stopped");
+}
+
+async function loadProject(actor) {
+  // Track each project read from request start to response handling.
+  const request = {};
+  state.projectRequest = request;
+  state.projectPending = request;
+  state.projectActor = actor || "";
+  state.resume = null;
+  if (!actor) {
+    state.project = null;
+    state.projectPending = null;
+    state.projectNotice = "Select a seat to read its project.";
+    markDrawnStale();
+    renderProject();
+    renderDocumentSoon();
+    return;
+  }
+  if (state.fixtureName || !state.apiBase) {
+    state.project = null;
+    state.projectPending = null;
+    state.projectNotice = "This page has no recorded workspace to read.";
+    markDrawnStale();
+    renderProject();
+    renderDocumentSoon();
+    return;
+  }
+  try {
+    const res = await fetch(state.apiBase + "/orchestra/project-sessions?actor=" + encodeURIComponent(actor));
+    const body = await res.json().catch(() => ({}));
+    if (state.projectRequest !== request) return;
+    state.projectPending = null;
+    if (res.status === 400 && body.error === "project-workspace-required") {
+      state.project = null;
+      state.projectNotice = shortSeatId(actor) + " has no recorded workspace.";
+    } else if (!res.ok) {
+      state.project = null;
+      state.projectNotice = "The project could not be read (" + res.status + ").";
+    } else {
+      state.project = {
+        actor,
+        name: projectName(body.project),
+        sessions: body.sessions || [],
+        selected: body.selected || null,
+      };
+      state.projectNotice = "";
+    }
+  } catch (e) {
+    if (state.projectRequest !== request) return;
+    state.projectPending = null;
+    state.project = null;
+    state.projectNotice = "The project could not be read.";
+  }
+  markDrawnStale();
+  renderProject();
+  renderDocumentSoon();
+}
+
+// Continuing the selected conversation. One request at a time, and its outcome belongs to the
+// session that asked: a newer selection or request is never overwritten by a late answer.
+async function resumeSession(session, liftStop) {
+  if (!session || !state.apiBase || state.fixtureName) return;
+  if (state.resume && state.resume.pending) return;
+  const actor = state.projectActor;
+  const operation = {};
+  state.resume = { actor, session, operation, pending: true };
+  markDrawnStale();
+  renderProject();
+  renderDocumentSoon();
+  let outcome = { actor, session, operation, pending: false };
+  try {
+    const res = await fetch(state.apiBase + "/orchestra/resume", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(liftStop ? { session, liftStop: true } : { session }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!state.resume || state.resume.operation !== operation) return;
+    if (res.ok) {
+      const delivery = body.delivery || null;
+      outcome = Object.assign(outcome, {
+        ok: true,
+        messageId: body.message || "",
+        receipt: (delivery && delivery.receipt) || "",
+        latestReportId: body.latestReportId || "",
+        latestReport: body.latestReport || "",
+      });
+    } else {
+      const execution = body.execution || null;
+      const words = [body.error, execution && execution.stderr, execution && execution.stdout]
+        .filter(Boolean).join(" ");
+      outcome = Object.assign(outcome, {
+        ok: false,
+        status: res.status,
+        // Retain stop metadata and the returned refusal.
+        stopped: projectStopped(state.project && state.project.selected) || /terminally stopped/i.test(words),
+        refused: {
+          error: body.error || "the route answered " + res.status,
+          status: res.status,
+          code: execution && execution.code,
+          stdout: execution && execution.stdout,
+          stderr: execution && execution.stderr,
+        },
+      });
+    }
+  } catch (e) {
+    if (!state.resume || state.resume.operation !== operation) return;
+    // A request that never reached the coordinator keeps its own cause.
+    outcome = Object.assign(outcome, {
+      ok: false,
+      refused: { error: "the request did not reach the coordinator: " + (e && e.message ? e.message : e) },
+    });
+  }
+  state.resume = outcome;
+  markDrawnStale();
+  renderProject();
+  renderDocumentSoon();
+}
+
+// Compare rendered session and resume fields before updating the DOM.
+function projectSignature() {
+  const project = state.project;
+  const resume = state.resume;
+  const parts = [state.projectNotice];
+  if (project) {
+    parts.push(project.actor, project.name, String(project.sessions.length));
+    project.sessions.forEach((session) => {
+      parts.push([session.id, session.latestReportId || "", session.pendingCount || 0,
+        projectStopped(session) ? "stopped" : ""].join(":"));
+    });
+    const chosen = project.selected;
+    // The rendered values themselves, not a length or a digest: equal-length changes to a
+    // report, a notice or a refusal must redraw, and an unrelated frame must not.
+    parts.push(chosen ? [chosen.id, chosen.latestReportId || "",
+      String(chosen.latestReport || "")].join(":") : "-");
+  } else {
+    parts.push("-");
+  }
+  if (resume) {
+    const refusal = resume.refused || {};
+    parts.push([resume.session, resume.pending ? "pending" : resume.ok ? "ok" : "refused",
+      resume.receipt || "", resume.messageId || "", resume.latestReportId || "",
+      String(resume.latestReport || ""), resume.stopped ? "stopped" : "",
+      refusal.error || "", refusal.status === undefined ? "" : String(refusal.status),
+      refusal.code === undefined || refusal.code === null ? "" : String(refusal.code),
+      refusal.stdout || "", refusal.stderr || ""].join(":"));
+  } else {
+    parts.push("none");
+  }
+  return parts.join("|");
+}
+
+let projectDrawn = "";
+
+function renderProject() {
+  if (!el.projectBody) return;
+  const signature = projectSignature();
+  if (signature === projectDrawn) return;
+  const active = document.activeElement;
+  const key = active && active.dataset ? active.dataset.projectKey || "" : "";
+  const report = el.projectBody.querySelector(".project-report");
+  const scroll = report ? report.scrollTop : 0;
+  projectDrawn = signature;
+  const project = state.project;
+  if (el.projectState) {
+    el.projectState.textContent = project
+      ? (project.name || "project") + " \u00b7 " + project.sessions.length
+        + (project.sessions.length === 1 ? " conversation" : " conversations")
+      : (state.projectNotice || "Nothing read yet.");
+  }
+  el.projectBody.textContent = "";
+  if (project && project.sessions.length) {
+    const list = document.createElement("ul");
+    list.className = "project-list";
+    project.sessions.forEach((session) => {
+      const item = document.createElement("li");
+      const open = document.createElement("button");
+      const chosen = project.selected && project.selected.id === session.id;
+      open.type = "button";
+      open.className = "project-session" + (chosen ? " is-selected" : "")
+        + (projectStopped(session) ? " is-stopped" : "");
+      open.dataset.projectKey = "session:" + session.id;
+      open.title = session.id + (projectStopped(session) ? " \u00b7 stopped" : "")
+        + (session.latestReportId ? " \u00b7 report kept" : "");
+      text(open, shortSeatId(session.id || ""));
+      if (session.pendingCount) {
+        const mark = document.createElement("span");
+        mark.className = "project-pending mono";
+        text(mark, String(session.pendingCount));
+        open.appendChild(mark);
+      }
+      open.addEventListener("click", () => {
+        void loadProject(session.id);
+        // The knowledge overview answers for any recorded actor, so the map follows the
+        // conversation the reader picked - prior ones included.
+        setKnowledgeScope({ kind: "actor", id: session.id });
+      });
+      item.appendChild(open);
+      list.appendChild(item);
+    });
+    el.projectBody.appendChild(list);
+  }
+  const chosenSession = project && project.selected ? project.selected : null;
+  if (chosenSession) {
+    const row = document.createElement("div");
+    row.className = "project-resume";
+    const resume = state.resume && state.resume.session === chosenSession.id ? state.resume : null;
+    const stopped = projectStopped(chosenSession);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "doc-scope-btn";
+    button.dataset.projectKey = "continue";
+    if (resume && resume.pending) {
+      button.disabled = true;
+      text(button, "Continuing\u2026");
+    } else if (stopped) {
+      text(button, "Lift the stop and continue");
+      button.title = "The session is recorded as stopped; the stop stands until it is lifted here.";
+    } else {
+      text(button, "Continue");
+      button.title = "Continue " + chosenSession.id + " through its recorded receiver.";
+    }
+    button.addEventListener("click", () => { void resumeSession(chosenSession.id, stopped); });
+    row.appendChild(button);
+    const said = document.createElement("p");
+    said.className = "project-outcome";
+    if (resume && resume.pending) text(said, "asking the coordinator\u2026");
+    else if (resume && resume.ok) text(said, "accepted");
+    else if (resume && resume.ok === false) text(said, "not continued");
+    else if (stopped) text(said, "stopped");
+    else if (chosenSession.latestReportId) text(said, "a report is kept");
+    else text(said, "ready to continue");
+    if (chosenSession.pendingCount) {
+      text(said, " \u00b7 " + chosenSession.pendingCount + " waiting");
+    }
+    row.appendChild(said);
+    el.projectBody.appendChild(row);
+    // Expand the report and resume response on request.
+    const detail = document.createElement("details");
+    detail.className = "project-detail";
+    const summary = document.createElement("summary");
+    text(summary, "The report and the coordinator's answer");
+    detail.appendChild(summary);
+    const reportBody = document.createElement("pre");
+    reportBody.className = "project-report";
+    text(reportBody, chosenSession.latestReport
+      ? String(chosenSession.latestReport)
+      : "No report is kept for this conversation.");
+    detail.appendChild(reportBody);
+    if (resume) {
+      const facts = document.createElement("p");
+      facts.className = "muted";
+      const bits = [];
+      if (resume.ok) {
+        bits.push(resume.receipt ? "delivery receipt " + resume.receipt : "the coordinator accepted the resume");
+        if (resume.messageId) bits.push("message " + resume.messageId);
+        if (resume.latestReportId) bits.push("report kept " + resume.latestReportId);
+        bits.push("an admission is not completed work, and that report predates this request");
+      } else if (resume.refused) {
+        bits.push(resume.refused.error || "no cause was recorded");
+        if (resume.refused.status) bits.push("status " + resume.refused.status);
+        if (resume.refused.code !== undefined && resume.refused.code !== null) bits.push("code " + resume.refused.code);
+        if (resume.refused.stdout) bits.push("stdout: " + resume.refused.stdout);
+        if (resume.refused.stderr) bits.push("stderr: " + resume.refused.stderr);
+      }
+      text(facts, bits.join(" \u00b7 "));
+      detail.appendChild(facts);
+    }
+    el.projectBody.appendChild(detail);
+  }
+  const back = key
+    ? el.projectBody.querySelector('[data-project-key="' + CSS.escape(key) + '"]') : null;
+  if (back && typeof back.focus === "function") back.focus();
+  const next = el.projectBody.querySelector(".project-report");
+  if (next && scroll) next.scrollTop = scroll;
 }
 
 async function loadKnowledgeOverview() {
@@ -1235,6 +1538,10 @@ function init() {
       if (match) match.scrollIntoView({ block: "nearest" });
     });
   }
+  if (el.projectLoad) {
+    // Installed once: the surface reads on demand for whatever is selected.
+    el.projectLoad.addEventListener("click", () => { void loadProject(state.selectionId); });
+  }
   if (el.showEnded) {
     el.showEnded.addEventListener("click", () => {
       // Switch between current work and all recorded actors.
@@ -1474,6 +1781,16 @@ function selectedSeat() {
     // null, or the provider failure the attempt ended on. The record states the
     // cause and the stop reason in one line.
     failure: (p.execution && p.execution.failure) || null,
+    // The project surface's reads, when this seat is the conversation it has open: its
+    // retained report as the project route returned it, and the outcome of continuing it.
+    retained: state.project && state.project.selected && state.project.selected.id === p.id
+      ? {
+        session: p.id,
+        reportId: state.project.selected.latestReportId || "",
+        report: state.project.selected.latestReport || null,
+      }
+      : null,
+    resume: state.resume && state.resume.actor === p.id ? state.resume : null,
     pendingCount: p.pendingCount || 0,
     unacknowledgedCount: p.unacknowledgedCount || 0,
     // The report count the record states for this seat, read from the sample.
@@ -1598,6 +1915,7 @@ function renderDocument() {
   }
   drawnSignature = drawn;
   renderMapScope();
+  renderProject();
   const active = document.activeElement;
   const rowFocus = active && active.dataset ? active.dataset.docKey : null;
   let knowledgeFocus = null;
@@ -1649,6 +1967,8 @@ function renderDocument() {
     selectedId: state.selectionId,
     selectedFindingId: state.findingId || "",
     selectedSeat: selectedSeat(),
+    // The open conversation, so the axis can name the window it draws.
+    projectConversation: state.project && state.project.selected ? state.project.selected.id : "",
     selectedFinding,
     query: state.docQuery || "",
     position: historyPosition(),

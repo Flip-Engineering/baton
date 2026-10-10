@@ -14,7 +14,8 @@
 
    options: {position, onScrub, onSelectEvent, onSelectActor, selectedId,
              onListOpen}
-   data: {events} newest first, as the page holds them. */
+   data: {events} newest first, as the page holds them; {subject} the subject the
+   events were recorded under; {conversationId} the project's open conversation. */
 
 const RIBBON_BARS_MAX = 180;
 const RIBBON_LIST_ROWS = 400;
@@ -231,6 +232,13 @@ function renderRibbon(container, data, options) {
   if (!container) return { events: 0, position: 0 };
   const events = Array.isArray((data || {}).events) ? data.events : [];
   const total = events.length;
+  const subject = String((data || {}).subject || "");
+  const conversation = String((data || {}).conversationId || "");
+  // What the events are, in one clause: the recorded history of the subject
+  // they were recorded under. No filter is applied by this region.
+  const scopeWords = subject
+    ? "recorded history of subject " + subject
+    : "the subject's recorded history";
 
   // Captured before the mount is cleared, because the page redraws this ribbon
   // on every scrub and on every frame it renders. Reading it after the rebuild
@@ -255,7 +263,7 @@ function renderRibbon(container, data, options) {
     head.className = "ribbon-head";
     const quiet = document.createElement("span");
     quiet.className = "ribbon-summary";
-    quiet.textContent = "no arrivals in this window";
+    quiet.textContent = "no arrivals in this window \u00b7 " + scopeWords;
     head.appendChild(quiet);
     const quietPulse = document.createElement("span");
     quietPulse.className = "ribbon-pulse";
@@ -380,7 +388,6 @@ function renderRibbon(container, data, options) {
   const spanWord = ribbonSpan(firstAt, lastAt);
   const rateWord = ribbonRate(total, spanMs);
   const allKinds = ribbonKindTally(events, 8);
-  const topKinds = allKinds.slice(0, 2);
   head.appendChild(summary);
 
   // The window stated in one line: the figure, the span, and the two kinds that
@@ -391,14 +398,20 @@ function renderRibbon(container, data, options) {
     + (rateWord ? " \u00b7 " + rateWord : "")
     + (allKinds.length
       ? " \u00b7 " + allKinds.map((entry) => entry[0] + " " + ribbonCount(entry[1])).join(", ")
-      : "");
+      : "")
+    + (conversation ? " \u00b7 conversation " + conversation + " open" : "");
 
   function lineText() {
     if (position !== 0) {
       return ribbonEventText(current, position, total)
         + (current && current.at ? " \u00b7 " + ribbonAge(current.at) : "");
     }
-    return ribbonCount(total) + " entries" + (spanWord ? " over " + spanWord : "");
+    // What the window holds, when it last moved, and whose history it is: the
+    // events handed here are the page's recorded history for its subject.
+    const newest = ribbonAge((events[0] || {}).at);
+    return ribbonCount(total) + " entries" + (spanWord ? " over " + spanWord : "")
+      + (newest ? " \u00b7 newest " + newest : "")
+      + " \u00b7 " + scopeWords;
   }
 
   // One line for the figures, the scrub position or a hovered stretch: the line
@@ -406,15 +419,6 @@ function renderRibbon(container, data, options) {
   function renderLine(extra) {
     summary.textContent = "";
     summary.appendChild(document.createTextNode((extra || lineText()) + " "));
-    if (extra || position !== 0 || !topKinds.length) return;
-    summary.appendChild(document.createTextNode("\u00b7 mostly "));
-    topKinds.forEach((entry, index) => {
-      const word = document.createElement("span");
-      word.className = "ribbon-kind-word " + ribbonKindClass(entry[0]);
-      word.textContent = entry[0];
-      summary.appendChild(word);
-      if (index < topKinds.length - 1) summary.appendChild(document.createTextNode(", "));
-    });
   }
   renderLine();
 
