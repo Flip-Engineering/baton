@@ -21,9 +21,8 @@
 (function () {
   "use strict";
 
-  // Ended, unknown and stopped-at-rest rows are quiet: the default hall
-  // seats the active — running, waiting, queued or owing input — while a
-  // stopped seat stays reachable through the all-rows toggle.
+  // The active view excludes ended, unknown and explicitly stopped actors.
+  // All recorded actors remain reachable through the scope control.
   function isQuiet(mark) {
     if (!mark) return true;
     return mark.tone === "ended" || mark.tone === "unknown" || mark.tone === "stopped";

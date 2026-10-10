@@ -1465,7 +1465,7 @@ function applySnapshot(data, label) {
   // A relation address opens what its seam stands for, once, on the same first
   // snapshot: the finding end for a cited relation, the claiming seat otherwise.
   if (state.pendingRelation) {
-    resolveRelationAddress(state.pendingRelation);
+    openRelationAt(state.pendingRelation);
     state.pendingRelation = null;
   }
   renderTree();

@@ -1648,6 +1648,30 @@ await evalJs(`document.querySelector('#knowledge-whole .kw-cluster[data-kw-clust
 await until('activating the badge expands the author fan',
   `!document.querySelector('#knowledge-whole .kw-cluster[data-kw-cluster="worker"]') && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-cluster-0"]')`);
 
+await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open').click()`);
+await until('the aide record retains its owed report',
+  `document.querySelector('#selection [data-selkey="sel:msg:qa-report-owed"]') !== null`);
+baton('stop', 'aide', 'qa-aide-stop', 'Recorded explicit stop with retained report.');
+committed();
+await until('the recorded view shows the explicit stop',
+  `document.querySelector('#roster .doc-row[data-doc-id="aide"][data-doc-state="stopped"]') !== null`);
+await evalJs(`document.getElementById('doc-ended').click()`);
+await until('the active view excludes the stopped actor with owed input',
+  `document.getElementById('doc-ended').getAttribute('aria-pressed') === 'false'
+    && !document.querySelector('#attention-band .att-seat[data-att-id="aide"]')
+    && !document.querySelector('#roster .doc-row[data-doc-id="aide"]')`);
+check('the stopped actor record and owed report remain selected', await evalJs(
+  `document.querySelector('#selection h2')?.textContent === 'aide'
+    && !!document.querySelector('#selection [data-selkey="sel:msg:qa-report-owed"]')`));
+await evalJs(`document.getElementById('doc-ended').click()`);
+await until('the recorded view restores the stopped actor and owed count',
+  `(() => {
+    const row = document.querySelector('#roster .doc-row[data-doc-id="aide"][data-doc-state="stopped"]');
+    return document.getElementById('doc-ended').getAttribute('aria-pressed') === 'true'
+      && !!document.querySelector('#attention-band .att-seat[data-att-id="aide"]')
+      && row?.querySelector('.doc-owed')?.textContent === '1';
+  })()`);
+
 // ============ the fixture document: the typed knowledge payload ============
 // The page is fed from the fixture file rather than the live server, so the typed
 // drawing can be exercised on data the fixture states. The fixture file carries the
@@ -2110,14 +2134,9 @@ check('the stage seats the fixture by its reporting hierarchy', await evalJs(`(a
     return level;
   };
   for (const pl of players) resolve(pl.id, []);
-  // Seated membership, derived from the recorded state through the stage's
-  // own reading rule: a player is seated when its reading is any word other
-  // than quiet. The recorded fields decide: a failed exit (status other than
-  // exit 0), a stop, a running or starting phase, or owed input seat the
-  // player; an exit 0 with no owed input and no stop reads quiet and the
-  // active-only page hides it; a player with no execution and no stop reads
-  // owed input when it holds pending or unacknowledged counts, quiet
-  // otherwise.
+  // Active membership follows explicit stops, execution and owed input.
+  // Failed executions, running or starting phases, and queued input remain
+  // visible. Explicitly stopped actors are retained in the recorded view.
   const owed = (pl) => {
     const total = Math.max(0, Number(pl.owedTotal) || 0);
     if (total > 0) return total;
@@ -2128,8 +2147,8 @@ check('the stage seats the fixture by its reporting hierarchy', await evalJs(`(a
     const execution = pl.execution || null;
     const stop = pl.stop || null;
     const count = owed(pl);
+    if (stop && stop.status === 'stopped') return false;
     if (execution && execution.phase === 'exited' && execution.status !== 'exit 0') return true;
-    if (stop && stop.status === 'stopped') return true;
     if (execution && (execution.phase === 'running' || execution.phase === 'starting')) return true;
     if (execution || stop) return count > 0;
     return count > 0;

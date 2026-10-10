@@ -11,12 +11,14 @@ function needRank(p) {
   return 5;
 }
 
-// Queued input stays visible when the last successful execution has ended.
+// Explicit stops retain their state and owed-input counts in recorded views.
 function stateMark(p) {
   const status = (p && p.status) || "unknown";
   const owed = p && Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0) > 0;
   let tone = "unknown";
-  if (status === "failed" || (status === "stopped" && owed)) {
+  if (status === "stopped") {
+    tone = "stopped";
+  } else if (status === "failed") {
     tone = "need";
   } else if (status === "running") {
     tone = "run";
@@ -24,11 +26,6 @@ function stateMark(p) {
     tone = "idle";
   } else if (owed || status === "pending") {
     tone = "queued";
-  } else if (status === "stopped") {
-    // A stopped actor owing nothing is at rest with its own tone: the
-    // default hall seats active work, and the quiet tests rest this seat
-    // while the all-rows toggle keeps it reachable.
-    tone = "stopped";
   } else if (status === "completed" || status === "ended") {
     tone = "ended";
   }
