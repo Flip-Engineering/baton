@@ -857,6 +857,17 @@
     });
   }
 
+  // The record names a kind with its namespace (message:task). A class name is a
+  // selector token, so a recorded value passes one normaliser before it becomes one:
+  // the namespace goes, and anything else outside letters, digits, dash and underscore
+  // becomes a dash. The class is never the raw record value - a colon in it would match
+  // no rule and fail silently - and the title keeps the record's own word.
+  function kindClass(kind) {
+    var text = String(kind || "").replace(/^[a-z]+:/i, "").toLowerCase();
+    text = text.replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+    return text || "recorded";
+  }
+
   // The page holds its events newest first. A thread joins the seat that recorded
   // the change to the seat on the far side; its ink is the recorded kind, and its
   // strength is how recent the newest of that pair is.
@@ -883,7 +894,7 @@
       if (!from || !to || from === to) return;
       var lift = arcLift(from.y, to.y, Math.min(90, Math.max(20, Math.abs(to.y - from.y) * 0.4)));
       var path = svgEl("path", {
-        "class": "att-thread att-thread-" + (held.kind || "recorded"),
+        "class": "att-thread att-thread-" + kindClass(held.kind),
         d: "M " + from.x + " " + from.y
           + " C " + from.x + " " + (from.y - lift)
           + " " + to.x + " " + (to.y - lift)
