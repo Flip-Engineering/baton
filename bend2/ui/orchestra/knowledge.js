@@ -343,6 +343,7 @@
   // eating the canvas; the rest of the key is bounded by construction.
   var KW_KEY_RELATIONS = 6;
   var kwRelationsExpanded = false;
+  var kwKeyOpen = false;
   function kwRelBaseIndex(name) {
     const s = String(name || "");
     let h = 0;
@@ -495,6 +496,12 @@
         }
       }
     }
+    // Tags hung at a kept node stay lit with it. Ref-to-ref tags
+    // anchor at their author while their edge touches no node, so
+    // without this a hovered or selected node reads beside faint tags.
+    for (const mark of kwRefMarks.values()) {
+      if (mark.anchor && keep.has(mark.anchor)) keep.add(kwKey("ref", mark.ref));
+    }
     for (const g of svg.querySelectorAll("g.kw-anchor, g.knode, g.kw-cluster, g.kw-ref, g.kw-group")) {
       g.classList.toggle("kw-hover-dim", !keep.has(kwNodeKey(g)));
     }
@@ -636,8 +643,9 @@
       height += t.height;
     }
     height += KW_PAD;
-    // An empty scope keeps room for its staff instead of collapsing.
-    if (!tiers.length) height = 200;
+    // An empty scope draws one rule and its notice, so the region
+    // collapses to them instead of holding an empty frame open.
+    if (!tiers.length) height = 120;
 
     const svg = kwSvg(container, "svg", {
       viewBox: "0 0 " + width + " " + height,
@@ -922,22 +930,20 @@
     const groupPos = new Map();
     const groupsDrawn = [];
     const query = opts && opts.query;
-    // An empty scope draws one ruled staff with its state, so the
+    // An empty scope draws one ruled line with its state, so the
     // frame reads deliberate rather than broken.
     if (!tiers.length) {
-      for (let line = 0; line < 5; line += 1) {
-        kwSvg(svg, "line", {
-          x1: String(KW_PAD), y1: String(82 + line * 9),
-          x2: String(layout.width - KW_PAD), y2: String(82 + line * 9),
-          class: "kw-staff",
-        });
-      }
+      kwSvg(svg, "line", {
+        x1: String(KW_PAD), y1: "82",
+        x2: String(layout.width - KW_PAD), y2: "82",
+        class: "kw-staff",
+      });
       const rest = kwSvg(svg, "text", {
-        x: String(layout.width / 2), y: "150",
+        x: String(layout.width / 2), y: "104",
         class: "kw-empty", "text-anchor": "middle",
       });
       rest.textContent = "No records in this scope.";
-      kwTrackBox(KW_PAD, 82, layout.width - KW_PAD, 150);
+      kwTrackBox(KW_PAD, 82, layout.width - KW_PAD, 104);
     }
     for (const t of tiers) {
       // A group scope holds no depth tiers: its one tier reads held.
@@ -1190,7 +1196,15 @@
           + (f.limits ? " — " + String(f.limits) : "");
         if (selected || labelShown.has(f.id)) {
           kwNodeLabel(g, f, x, y);
-          const lw = Math.min(27, String(f.claim || f.id).length) * 7.5 + 10;
+          // The obstacle matches the drawn caption: the claim plus the
+          // kind and evidence suffixes, capped where the label caps.
+          // A claim-length box lets tags settle onto the suffixes.
+          const kwCapKind = String(f.kind || "");
+          const kwCapEvidence = kwEvidenceRef(f);
+          const kwCapLen = Math.min(26, (String(f.claim || f.id)
+            + (kwCapKind && kwCapKind !== "finding" ? " · " + kwCapKind : "")
+            + (kwCapEvidence ? " · " + kwCapEvidence : "")).length);
+          const lw = kwCapLen * 8 + 10;
           kwTrackBox(x - lw / 2, y + 10, x + lw / 2, y + 30);
           kwLabelBoxes.push({ x0: x - lw / 2, y0: y + 10, x1: x + lw / 2, y1: y + 30 });
         }
@@ -1321,8 +1335,10 @@
       : (findingPos.get(end.id) || actorPos.get(end.id) || null);
     // A drawn node's entity kind by recorded placement, for the relate
     // ends the resolver leaves as plain nodes.
+    // A drawn end anchors by kind, group nodes included, so edges
+    // and tag anchors touching a group isolate with it.
     const kwDrawnKind = (id) => findingPos.has(id) ? "finding"
-      : actorPos.has(id) ? "session" : "";
+      : actorPos.has(id) ? "session" : groupPos.has(id) ? "group" : "";
     // Marks hug their node on a short stub, fanning round it so several
     // references on one record do not stack on one spot. Each node starts
     // the fan at its own angle so neighbouring fans do not pile one way.
@@ -1361,7 +1377,7 @@
         mark = {
           x, y, w, shown, ref: end.ref, family: end.family, held, unheld,
           relations: [], follow: refFollow.get(end.ref) || "",
-          anchorX: at.x, anchorY: at.y,
+          anchorX: at.x, anchorY: at.y, anchor: nodeId,
         };
         kwRefMarks.set(end.ref, mark);
       }
@@ -1432,6 +1448,9 @@
         mark.y += 10;
       }
       settled.push({ x0: mark.x - hw, y0: mark.y - hh, x1: mark.x + hw, y1: mark.y + hh });
+      // Settled tags join the stub gaps, so a stub carves around tags
+      // it crosses; its own tag holds it by the endpoint rule.
+      kwLabelBoxes.push({ x0: mark.x - hw, y0: mark.y - hh, x1: mark.x + hw, y1: mark.y + hh });
     }
     for (const mark of kwRefMarks.values()) {
       const g = kwSvg(svg, "g", {
@@ -1576,7 +1595,7 @@
       const activate = () => {
         kwDismissed = null;
         kwLightRelation(svg, { name, ends: [{ kind: aKind, id: aRef }, { kind: bKind, id: bRef }] });
-        kwPinRelCard(container, overview, name,
+        kwPinRelCard(container, name,
           [{ kind: aKind, id: aRef }, { kind: bKind, id: bRef }]);
       };
       g.addEventListener("click", () => {
@@ -1672,6 +1691,9 @@
     const kwDismiss = () => {
       const current = kwEffectiveSelected(opts);
       if (current) kwDismissed = current;
+      // A shell-named relation is dismissed like a selection: the next render
+      // keeps it hidden until the shell names another one.
+      kwDismissedRelation = (opts && opts.focusRelation) || "";
       const card = container.querySelector(".kw-card");
       if (card) card.remove();
       kwClearIsolation();
@@ -1689,14 +1711,14 @@
         ev.stopPropagation();
       }
     });
-    // The edge key is one row of edge samples from the same marker
-    // table that draws the arrowheads, so it cannot drift from the
-    // drawing. Each sample mirrors its edge's shape, ink, dash and head,
-    // and the relation names stand beside it: a legend is a decoder, and
-    // the words are the vocabulary a reader has no other way to learn.
+    // The edge key is one disclosure of edge samples from the same
+    // marker table that draws the arrowheads, so it cannot drift from
+    // the drawing. Each sample mirrors its edge's shape, ink, dash and
+    // head, and the relation's name stands beside it: a legend is a
+    // decoder, and the name is the vocabulary a reader has no other way
+    // to learn. The swatch carries the stroke, so rows carry names only.
     // Relation rows key only what the canvas draws, one row per drawn
     // name; kind rows key drawn families with their counts.
-    const keys = kwEl(container, "ul", { class: "kw-legend-keys muted" });
     const keyEntries = (layout.markers || []).slice();
     const kwRelNames = Array.from(kwRelStyleDrawn.keys());
     const kwRelShown = kwRelationsExpanded ? kwRelNames : kwRelNames.slice(0, KW_KEY_RELATIONS);
@@ -1706,12 +1728,6 @@
     }
     if (kwRelNames.length > KW_KEY_RELATIONS) {
       keyEntries.push({ toggle: true });
-    }
-    // The names hide until hover or focus; the key says so once, right
-    // after the relation rows, only when a midpoint carries a name.
-    if (kwMidpointsDrawn > 0) {
-      keyEntries.push(["", "edge names appear on hover or focus",
-        "var(--ink, #141a26)", "note", ""]);
     }
     // One row per drawn kind family, with its count; the drawn kinds
     // stand named in the row's title, and the card names the kind of the
@@ -1744,6 +1760,53 @@
       keyEntries.push(["", "diamond message, square external, ring finding, dot other",
         "var(--ink, #141a26)", "glyphs", ""]);
     }
+    // The key folds behind one disclosure: the button names which
+    // vocabularies wait inside, and the rows stay in the document
+    // whether open or shut, so counts read the same either way. The
+    // edge-name note sits beside the button, visible at rest, since a
+    // folded key cannot carry the affordance.
+    const kwKeyParts = [];
+    {
+      let edges = false, families = false, groups = false, marks = false;
+      for (const entry of keyEntries) {
+        if (!entry || entry.toggle) continue;
+        const shape = String(entry[3] || "");
+        if (shape === "line" || shape === "arc" || shape === "relate") edges = true;
+        else if (shape.indexOf("family:") === 0) families = true;
+        else if (shape === "groupnode") groups = true;
+        else if (shape === "tag" || shape === "glyphs") marks = true;
+      }
+      if (edges) kwKeyParts.push("edges");
+      if (families) kwKeyParts.push("families");
+      if (groups) kwKeyParts.push("groups");
+      if (marks) kwKeyParts.push("marks");
+    }
+    const kwKeyBtn = kwEl(container, "button", {
+      class: "kw-key-toggle kw-key-fold mono", type: "button",
+      "data-kw-key-toggle": "key",
+      "aria-expanded": kwKeyOpen ? "true" : "false",
+    });
+    kwKeyBtn.textContent = "Key · " + kwKeyParts.join(", ");
+    kwKeyBtn.addEventListener("click", () => {
+      kwKeyOpen = !kwKeyOpen;
+      if (kwLastRender) {
+        renderKnowledge(kwLastRender.container, kwLastRender.data, kwLastRender.opts);
+        const next = kwLastRender.container.querySelector('[data-kw-key-toggle="key"]');
+        if (next && typeof next.focus === "function") next.focus();
+      }
+    });
+    if (kwMidpointsDrawn > 0) {
+      const kwKeyNote = kwEl(container, "p", { class: "kw-legend-note muted" });
+      kwKeyNote.textContent = "Edge names appear on hover or focus.";
+    }
+    const keys = kwEl(container, "ul", { class: "kw-legend-keys muted" });
+    if (!kwKeyOpen) keys.setAttribute("hidden", "");
+    // Base rows shorten to their relation's name; the swatch carries
+    // the stroke. The marker table itself stays verbose for its titles.
+    const kwMarkerShort = {
+      "kw-arrow-author": "authorship", "kw-arrow-share": "sharing",
+      "kw-arrow-deliver": "delivery", "kw-arrow-promote": "promotion",
+    };
     for (const entry of keyEntries) {
       // The relation disclosure sits among the relation rows: it states
       // how many wait behind it, re-renders like a cluster badge, and
@@ -1760,7 +1823,7 @@
           kwRelationsExpanded = !kwRelationsExpanded;
           if (kwLastRender) {
             renderKnowledge(kwLastRender.container, kwLastRender.data, kwLastRender.opts);
-            const next = kwLastRender.container.querySelector("[data-kw-key-toggle]");
+            const next = kwLastRender.container.querySelector('[data-kw-key-toggle="relations"]');
             if (next && typeof next.focus === "function") next.focus();
           }
         });
@@ -1814,10 +1877,6 @@
           cx: "16", cy: "6", r: "2.5", fill: "none", stroke: paint, "stroke-width": "1",
         });
         kwSvg(sw, "circle", { cx: "22", cy: "6", r: "1.8", fill: paint });
-      } else if (shape === "note") {
-        // A note keys no mark, so it carries no swatch: the bare row
-        // reads as a sentence about the key, not as another entry.
-        sw.remove();
       } else if (shape === "arc") {
         const arc = kwSvg(sw, "path", {
           d: "M3,10 Q13,-1 23,8", fill: "none", stroke: paint, "stroke-width": "1.5",
@@ -1834,7 +1893,8 @@
       // reader who asks learns exactly which kinds the count covers.
       if (typeof entry[6] === "string" && entry[6]) item.setAttribute("title", entry[6]);
       const words = kwEl(item, "span", { class: "kw-legend-words" });
-      words.textContent = String(entry[1]) + ". ";
+      const short = (shape === "line" || shape === "arc") ? kwMarkerShort[String(entry[0])] : "";
+      words.textContent = (short || String(entry[1])) + ". ";
     }
     // Pan and zoom wrap the whole drawing: every child but the marker
     // defs moves into one transform group, so placement code above draws

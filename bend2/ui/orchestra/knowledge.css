@@ -531,6 +531,18 @@ g.kw-ref.unheld .kw-ref-tag {
   cursor: pointer;
 }
 
+/* The folded key's button and its edge-name note: two short lines
+   where the open key stood. */
+.kw-key-fold {
+  margin: 0 0 4px;
+}
+
+.kw-legend-note {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: var(--muted, #5b6478);
+}
+
 .kw-rel-swatch {
   width: 26px;
   height: 12px;
