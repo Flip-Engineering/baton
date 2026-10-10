@@ -718,32 +718,6 @@ function renderSelection(mount, data, options) {
     var resumeBlock = selEl("div", "sel-block");
     resumeBlock.id = "sel-sec-resume";
     resumeBlock.appendChild(selEl("h2", "doc-section", "Resume outcome"));
-    var receiptRows = selReceiptRows(resume.receipt);
-    if (receiptRows.length) selFacts(resumeBlock, receiptRows);
-    if (resume.latestReport != null || resume.latestReportId != null) {
-      resumeBlock.appendChild(selEl("p", "sel-group", "Retained report"));
-      var lrObj = resume.latestReport && typeof resume.latestReport === "object"
-        ? resume.latestReport : null;
-      var lrId = resume.latestReportId != null ? String(resume.latestReportId) : "";
-      var lrParts = [];
-      if (lrObj && lrObj.sender) lrParts.push("from " + lrObj.sender);
-      if (lrId) lrParts.push("report " + selTail(lrId));
-      if (lrObj && lrObj.at) lrParts.push("kept from " + (selEventAge(lrObj.at) || lrObj.at));
-      if (lrParts.length) {
-        var lrMeta = selEl("p", "muted", lrParts.join(" · "));
-        if (lrId) lrMeta.setAttribute("title", "report " + lrId);
-        resumeBlock.appendChild(lrMeta);
-      }
-      var lrBody = selReportBody(resume.latestReport);
-      if (lrBody.held) {
-        resumeBlock.appendChild(selEl("p", "sel-body", lrBody.body));
-        if (lrBody.body === "") {
-          resumeBlock.appendChild(selEl("p", "muted", "Stored body is empty."));
-        }
-      } else {
-        resumeBlock.appendChild(selEl("p", "muted", "The cited report is not held."));
-      }
-    }
     var refused = resume.refused != null ? resume.refused : resume.error;
     if (refused != null) {
       resumeBlock.appendChild(selEl("p", "sel-group sel-refused",
@@ -770,6 +744,32 @@ function renderSelection(mount, data, options) {
       }
     } else if (resume.ok === false) {
       resumeBlock.appendChild(selEl("p", "muted", "The resume was refused."));
+    }
+    var receiptRows = selReceiptRows(resume.receipt);
+    if (receiptRows.length) selFacts(resumeBlock, receiptRows);
+    if (resume.latestReport != null || resume.latestReportId != null) {
+      resumeBlock.appendChild(selEl("p", "sel-group", "Retained report"));
+      var lrObj = resume.latestReport && typeof resume.latestReport === "object"
+        ? resume.latestReport : null;
+      var lrId = resume.latestReportId != null ? String(resume.latestReportId) : "";
+      var lrParts = [];
+      if (lrObj && lrObj.sender) lrParts.push("from " + lrObj.sender);
+      if (lrId) lrParts.push("report " + selTail(lrId));
+      if (lrObj && lrObj.at) lrParts.push("kept from " + (selEventAge(lrObj.at) || lrObj.at));
+      if (lrParts.length) {
+        var lrMeta = selEl("p", "muted", lrParts.join(" · "));
+        if (lrId) lrMeta.setAttribute("title", "report " + lrId);
+        resumeBlock.appendChild(lrMeta);
+      }
+      var lrBody = selReportBody(resume.latestReport);
+      if (lrBody.held) {
+        resumeBlock.appendChild(selEl("p", "sel-body", lrBody.body));
+        if (lrBody.body === "") {
+          resumeBlock.appendChild(selEl("p", "muted", "Stored body is empty."));
+        }
+      } else {
+        resumeBlock.appendChild(selEl("p", "muted", "The cited report is not held."));
+      }
     }
     mount.appendChild(resumeBlock);
   }

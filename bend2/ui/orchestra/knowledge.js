@@ -269,6 +269,7 @@
   // Drawn relation names to tuple indexes this render, claimed in drawn
   // order. The edges claim; the key and the cards read.
   var kwRelStyleDrawn = new Map();
+  var kwMidpointsDrawn = 0;
   function kwRelBaseIndex(name) {
     const s = String(name || "");
     let h = 0;
@@ -776,6 +777,7 @@
     kwRefsDrawn = 0;
     kwKindsDrawn = new Map();
     kwRelStyleDrawn = new Map();
+    kwMidpointsDrawn = 0;
     kwLabelBoxes = [];
     kwNodeXY = new Map();
     kwHullBoxes = [];
@@ -1353,6 +1355,7 @@
       // a tag is too short for a name, so the name lives in the edge
       // title and in the tag's card instead.
       if (shown) {
+        kwMidpointsDrawn += 1;
         const mx = (from.x + to.x) / 2;
         const my = (from.y + to.y) / 2;
         const tag = kwSvg(g, "text", {
@@ -1433,6 +1436,12 @@
       const t = KW_REL_TUPLES[relIdx];
       keyEntries.push(["kw-arrow-relate", relName, t.ink, "relate", t.dash, t.width]);
     }
+    // The names hide until hover or focus; the key says so once, right
+    // after the relation rows, only when a midpoint carries a name.
+    if (kwMidpointsDrawn > 0) {
+      keyEntries.push(["", "edge names appear on hover or focus",
+        "var(--ink, #141a26)", "note", ""]);
+    }
     for (const [kindName, kindShape] of kwKindsDrawn) {
       keyEntries.push(["", kindShape + " " + kindName,
         "var(--ink, #141a26)", "shape:" + kindShape, ""]);
@@ -1479,6 +1488,10 @@
           cx: "16", cy: "6", r: "2.5", fill: "none", stroke: paint, "stroke-width": "1",
         });
         kwSvg(sw, "circle", { cx: "22", cy: "6", r: "1.8", fill: paint });
+      } else if (shape === "note") {
+        // A note keys no mark, so it carries no swatch: the bare row
+        // reads as a sentence about the key, not as another entry.
+        sw.remove();
       } else if (shape === "arc") {
         const arc = kwSvg(sw, "path", {
           d: "M3,10 Q13,-1 23,8", fill: "none", stroke: paint, "stroke-width": "1.5",
@@ -1530,15 +1543,20 @@
     const top = Math.max(drawing.top, clip.top + frame.clientTop);
     const right = Math.min(drawing.right, clip.left + frame.clientLeft + frame.clientWidth);
     const bottom = Math.min(drawing.bottom, clip.top + frame.clientTop + frame.clientHeight);
+    // A frame smaller than its own chrome leaves no visible drawing;
+    // the box bottoms out at zero rather than going negative.
     return {
-      w: (right - left) / s.x,
-      h: (bottom - top) / s.y,
+      w: Math.max(0, (right - left) / s.x),
+      h: Math.max(0, (bottom - top) / s.y),
     };
   }
 
   // Centre the drawn content and scale it to fit the visible frame.
   function kwFitView(container, svg, view) {
     const box = kwVisibleBox(container, svg);
+    // Fitting into nothing would collapse the view, so when the chrome
+    // leaves no visible drawing Fit holds the current view unchanged.
+    if (box.w <= 0 || box.h <= 0) return;
     const w = Number(svg.getAttribute("width")) || box.w;
     const h = Number(svg.getAttribute("height")) || box.h;
     const bb = kwContentBBox;
@@ -2090,19 +2108,43 @@
     }
   }
 
-  function kwRestoreFocus(container, focused) {
+  function kwRestoreFocus(container, focused, caret) {
     if (!focused) return;
     const node = container.querySelector(focused);
-    if (node && typeof node.focus === "function") node.focus();
+    if (node && typeof node.focus === "function") {
+      node.focus();
+      // The rebuilt search box carries the layer's query text; the caret
+      // comes back with it, clamped to the text in hand.
+      if (caret && typeof node.setSelectionRange === "function") {
+        const len = typeof node.value === "string" ? node.value.length : 0;
+        node.setSelectionRange(Math.min(caret[0], len), Math.min(caret[1], len));
+      }
+    }
   }
 
   function renderKnowledge(container, data, opts) {
     if (!container) return null;
     const active = document.activeElement;
     let focused = null;
+    let caret = null;
     if (active && container.contains(active)) {
       for (const name of ["data-kw-id", "data-kw-node"]) {
         if (active.hasAttribute(name)) focused = '[' + name + '="' + CSS.escape(active.getAttribute(name)) + '"]';
+      }
+      // The chrome is rebuilt too, so a live frame must not eat typing or
+      // drop the reader off the match list: the search box keeps its caret
+      // and a match row is found again by kind and id.
+      if (active.classList && active.classList.contains("kw-search")) {
+        focused = ".kw-search";
+        const s = active.selectionStart;
+        const e = active.selectionEnd;
+        if (typeof s === "number" && typeof e === "number") caret = [s, e];
+      }
+      if (active.hasAttribute("data-kw-match-kind")) {
+        focused = '.kw-match[data-kw-match-kind="' +
+          CSS.escape(active.getAttribute("data-kw-match-kind") || "") +
+          '"][data-kw-match-id="' +
+          CSS.escape(active.getAttribute("data-kw-match-id") || "") + '"]';
       }
     }
     container.textContent = "";
@@ -2122,7 +2164,7 @@
     }
     if (mode === "band") {
       kwRenderBand(container, overview, promotions, opts);
-      kwRestoreFocus(container, focused);
+      kwRestoreFocus(container, focused, caret);
       return {
         findings: (overview.findings || []).length,
         promotions: promotions.length,
@@ -2144,11 +2186,19 @@
     }
     const layout = kwRenderWhole(container, overview, promotions, opts, collapsed);
     kwPlaceWhole(layout, container, overview, promotions, opts, ensembles);
-    // The drawing's natural height, so the shell can size the frame to
-    // the content instead of holding a tall empty box.
-    container.setAttribute("data-kw-natural-height",
-      String((layout.svg && layout.svg.getAttribute("height")) || ""));
-    kwRestoreFocus(container, focused);
+    // The drawing's natural height, plus the chrome stacked above it, so
+    // the shell sizes the frame to the whole content: the tools and the
+    // key consume frame height before the canvas sees any, and publishing
+    // the drawing alone would clip the canvas by exactly their share. Each
+    // 8 is the margin-bottom its own stylesheet rule puts beneath it.
+    const kwSvgH = Number(layout.svg && layout.svg.getAttribute("height")) || 0;
+    const kwToolsEl = container.querySelector(".kw-maptools");
+    const kwKeysEl = container.querySelector(".kw-legend-keys");
+    const kwNatural = kwSvgH
+      + (kwToolsEl ? kwToolsEl.offsetHeight + 8 : 0)
+      + (kwKeysEl ? kwKeysEl.offsetHeight + 8 : 0);
+    container.setAttribute("data-kw-natural-height", kwNatural > 0 ? String(kwNatural) : "");
+    kwRestoreFocus(container, focused, caret);
     return {
       findings: (overview.findings || []).length,
       promotions: promotions.length,

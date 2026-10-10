@@ -268,6 +268,8 @@
         query: opts.knowledgeQuery || "",
         onSelectFinding: opts.onSelectFinding,
         onSelectActor: opts.onSelect,
+        // The card's one move into the record, so a row's card offers it too.
+        onOpenRecord: opts.onOpenRecord,
       });
       li.appendChild(kw);
     }
@@ -450,6 +452,8 @@
         notice: opts.knowledgeNotice || "",
         onSelectFinding: opts.onSelectFinding,
         onSelectActor: opts.onSelect,
+        // The card's one move into the record, forwarded so the card renders it.
+        onOpenRecord: opts.onOpenRecord,
       });
       // The map publishes the height its own drawing needs; the frame takes that
       // height within bounds, so a small recorded ensemble does not sit in a tall
@@ -488,6 +492,9 @@
         // The recorded knowledge overview, so the stage can draw each recorded
         // promotion as an arc between the seats it connects.
         knowledge: data.knowledge || null,
+        // The page's event list, so the stage draws the recorded message traffic
+        // between seats through the same threads the promotions use.
+        events: data.events || [],
         // Quiet actors, by id, and whether the reader asked for them.
         quietIds: quietIds,
         showEnded: options.scope === "all",

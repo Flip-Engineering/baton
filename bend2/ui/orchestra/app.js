@@ -1370,6 +1370,9 @@ function applySnapshot(data, label) {
     const addressed = state.pendingSeat;
     state.pendingSeat = "";
     state.selectionId = addressed;
+    // The address restores the whole selection, not only the id: the map opens on
+    // that actor's holdings, the scope a row click sets.
+    setKnowledgeScope({ kind: "actor", id: addressed });
   }
   renderTree();
   // Knowledge reads are on demand: refresh them with every authoritative snapshot.
@@ -1618,6 +1621,20 @@ function init() {
   if (seatAddress) state.pendingSeat = decodeURIComponent(seatAddress[1]);
   const findingAddress = String(location.hash || "").match(/^#finding=(.+)$/);
   if (findingAddress) state.findingId = decodeURIComponent(findingAddress[1]);
+
+  // The plate's section links move the reader without taking the record's address
+  // with them: the seat or finding address stays in the bar, so a reload restores
+  // the record a reader was reading.
+  for (const link of document.querySelectorAll(".plate-nav a")) {
+    link.addEventListener("click", (ev) => {
+      const id = String(link.getAttribute("href") || "").replace(/^#/, "");
+      const target = id ? document.getElementById(id) : null;
+      if (!target) return;
+      ev.preventDefault();
+      if (typeof target.scrollIntoView === "function") target.scrollIntoView({ block: "start" });
+      if (typeof target.focus === "function") target.focus({ preventScroll: true });
+    });
+  }
 
   // Query changes move to the first visible match while retaining typing focus.
   if (el.find) {
