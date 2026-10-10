@@ -1,4 +1,5 @@
 import { createReadStream, existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,6 +39,39 @@ function respondToFailure(response, error) {
     return;
   }
   json(response, isBusy(error) ? 503 : 500, { error: isBusy(error) ? 'database-busy' : 'server-error' });
+}
+
+// Project discovery and resume use the public coordinator command. A waiting
+// receiver leaves the HTTP event loop available for snapshots and knowledge.
+function coordinatorCommand(executable, databasePath, args) {
+  return new Promise((resolve) => {
+    const child = spawn(executable, [databasePath, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let error = null;
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (text) => { stdout += text; });
+    child.stderr.on('data', (text) => { stderr += text; });
+    child.once('error', (cause) => {
+      error = { message: cause.message, code: cause.code, errno: cause.errno, syscall: cause.syscall };
+    });
+    child.once('close', (code, signal) => resolve({ code, signal, stdout, stderr, error }));
+  });
+}
+
+function coordinatorAnswer(response, operation, result) {
+  if (result.error || result.code !== 0 || result.signal) {
+    json(response, result.error ? 503 : result.code === 2 ? 409 : 502,
+      { error: `${operation}-failed`, execution: result });
+    return null;
+  }
+  try {
+    return JSON.parse(result.stdout);
+  } catch (error) {
+    json(response, 502, { error: `${operation}-output-invalid`, cause: error.message, execution: result });
+    return null;
+  }
 }
 
 function parseCursor(value) {
@@ -773,7 +807,7 @@ export function createOrchestraServer({ databasePath, reader, subject = reader,
   assetRoot = fileURLToPath(new URL('.', import.meta.url)),
   host = '127.0.0.1', port = 0 }) {
   if (host !== '127.0.0.1' && host !== '::1' && host !== 'localhost') {
-    throw new Error('The read-only Orchestra UI binds to loopback only.');
+    throw new Error('The Orchestra UI binds to loopback only.');
   }
   const committedChanges = typeof subscribeCommittedChanges === 'function'
     ? subscribeCommittedChanges
@@ -924,9 +958,46 @@ function knowledgeForActor(db, session) {
   return { contractVersion: 1, scope, actor: session, authored, received, relations,
     counts: { authored: authored.length, received: received.length, unshared }, empty: authored.length === 0 && received.length === 0 && relations.length === 0 };
 }
-  const handleRequest = (request, response) => {
+  const handleRequest = async (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
+    if (url.pathname === '/orchestra/resume' && request.method === 'POST') {
+      if (!baton2Executable) return json(response, 503, { error: 'coordinator-unavailable' });
+      if (request.headers['content-type']?.split(';', 1)[0].trim() !== 'application/json') {
+        return json(response, 415, { error: 'json-required' });
+      }
+      let input;
+      try {
+        request.setEncoding('utf8');
+        let body = '';
+        for await (const chunk of request) body += chunk;
+        input = JSON.parse(body);
+      } catch (error) {
+        return json(response, 400, { error: 'invalid-resume-input', cause: error.message });
+      }
+      if (typeof input?.session !== 'string' || !input.session
+          || (input.liftStop !== undefined && typeof input.liftStop !== 'boolean')) {
+        return json(response, 400, { error: 'invalid-resume-input' });
+      }
+      const result = await coordinatorCommand(baton2Executable, databasePath,
+        ['resume', input.session, ...(input.liftStop ? ['--lift-stop'] : [])]);
+      const answer = coordinatorAnswer(response, 'resume', result);
+      if (answer !== null) return json(response, 200, { contractVersion: CONTRACT_VERSION, ...answer });
+      return;
+    }
     if (request.method !== 'GET') return json(response, 405, { error: 'method-not-allowed' });
+    if (url.pathname === '/orchestra/project-sessions') {
+      if (!baton2Executable) return json(response, 503, { error: 'coordinator-unavailable' });
+      const actor = url.searchParams.get('actor') || subject;
+      const selected = one(db, 'SELECT workspace FROM sessions WHERE id = ?', actor);
+      if (!selected?.workspace) return json(response, 400, { error: 'project-workspace-required', actor });
+      const result = await coordinatorCommand(baton2Executable, databasePath,
+        ['project-sessions', selected.workspace]);
+      const answer = coordinatorAnswer(response, 'project-sessions', result);
+      if (answer === null) return;
+      const sessions = answer.sessions.map(({ latestReport, ...metadata }) => metadata);
+      return json(response, 200, { contractVersion: CONTRACT_VERSION, project: answer.project, sessions,
+        selected: answer.sessions.find((session) => session.id === actor) || null });
+    }
     if (url.pathname === '/orchestra/snapshot') {
       const selected = url.searchParams.get('subject') || subject;
       const since = parseCursor(url.searchParams.get('since'));
@@ -1027,11 +1098,7 @@ function knowledgeForActor(db, session) {
     return serveAsset(response, resolve(assetRoot), url.pathname);
   };
   const server = createServer((request, response) => {
-    try {
-      handleRequest(request, response);
-    } catch (error) {
-      respondToFailure(response, error);
-    }
+    void handleRequest(request, response).catch((error) => respondToFailure(response, error));
   });
   server.on('close', () => db.close());
   server.listen(port, host);
@@ -1059,10 +1126,11 @@ function cli(args) {
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
   try {
-    const server = createOrchestraServer(cli(process.argv.slice(2)));
+    const options = cli(process.argv.slice(2));
+    const server = createOrchestraServer(options);
     server.on('listening', () => {
       const address = server.address();
-      process.stdout.write(JSON.stringify({ host: address.address, port: address.port, readOnly: true }) + '\n');
+      process.stdout.write(JSON.stringify({ host: address.address, port: address.port, readOnly: !options.baton2Executable }) + '\n');
       process.stdout.write(`http://${addressHost(address)}:${address.port}/\n`);
     });
     let closing = false;

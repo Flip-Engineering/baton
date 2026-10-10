@@ -229,6 +229,33 @@ test('event endpoint stays unavailable when the canonical owner has no subscript
   assert.deepEqual(await response.json(), { error: 'native-owner-subscription-unavailable' });
 });
 
+test('project resume retains a spawn failure and leaves the recorded input available', async (t) => {
+  const space = fixture();
+  const server = createOrchestraServer({ databasePath: space.databasePath, reader: 'root',
+    baton2Executable: join(space.directory, 'missing-coordinator') });
+  t.after(async () => { await close(server); rmSync(space.directory, { recursive: true, force: true }); });
+  const base = await listen(server);
+  const form = await fetch(`${base}/orchestra/resume`, {
+    method: 'POST', headers: { 'content-type': 'text/plain' },
+    body: JSON.stringify({ session: 'child' }),
+  });
+  assert.equal(form.status, 415);
+  const response = await fetch(`${base}/orchestra/resume`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ session: 'child' }),
+  });
+  assert.equal(response.status, 503);
+  const failed = await response.json();
+  assert.equal(failed.execution.error.code, 'ENOENT');
+  assert.equal(failed.execution.signal, null);
+  const snapshot = await fetch(`${base}/orchestra/snapshot?subject=child`);
+  assert.equal(snapshot.status, 200);
+  assert.equal((await snapshot.json()).players[0].pendingCount, 1);
+  const input = new DatabaseSync(space.databasePath, { readOnly: true });
+  assert.equal(input.prepare('SELECT receipt FROM messages WHERE id=?').get('pending-1').receipt, null);
+  input.close();
+});
+
 test('event endpoint requires a ready owner subscription with a durable cursor', async (t) => {
   const f = fixture();
   const server = createOrchestraServer({ databasePath: f.databasePath, reader: 'root',
@@ -793,7 +820,7 @@ test('native coordinator commit is replayed through an injected owner notificati
   await reader.cancel();
 });
 
-test('view CLI streams a committed native message through the owner subscription', {
+test('view CLI streams native commits and returns to the original project session', {
   skip: process.env.BATON2_REQUIRE_NATIVE_VIEW !== '1'
     && !existsSync(process.env.BATON2_NATIVE_BINARY
       || join(process.cwd(), '.scratch/bend2/baton2')),
@@ -933,6 +960,80 @@ test('view CLI streams a committed native message through the owner subscription
   assert.match(frames, /"pendingCount":1/);
   assert.match(frames, /guidance from root/);
   assert.doesNotMatch(frames, /private message body/);
+
+  const project = JSON.parse(native('project', repository));
+  const receiver = join(directory, 'project-receiver.mjs');
+  writeFileSync(receiver, `import { execFileSync } from 'node:child_process';
+const command = ${JSON.stringify([binary, databasePath])};
+const message = process.argv.at(-1);
+execFileSync(command[0], [...command.slice(1), 'ack', message, 'child', 'project-resume-handled']);
+`);
+  native('connect', 'child', 'saved-project-native', JSON.stringify([process.execPath, receiver]));
+  native('attach', 'previous-root', 'muse', 'saved-previous-project-native', '');
+  native('role', 'previous-root', 'principal-conductor');
+  native('receiver', 'previous-root', process.execPath, join(directory, 'previous-native.jsonl'), repository);
+  const unfinished = join(workspace, 'unfinished.txt');
+  writeFileSync(unfinished, 'Retained project source. λ\n');
+  const seeded = new DatabaseSync(databasePath);
+  seeded.prepare('INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(?,?,?,?,?,?)')
+    .run('project-prior-report', 'child', 'root', 'report', 'Original project report.', 'reviewed');
+  seeded.prepare('INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(?,?,?,?,?,?)')
+    .run('previous-root-report', 'previous-root', 'root', 'report', 'Previous project conversation report.', 'reviewed');
+  seeded.close();
+
+  const priorResponse = await fetch(`${base}orchestra/project-sessions?actor=child`);
+  assert.equal(priorResponse.status, 200);
+  const prior = await priorResponse.json();
+  assert.equal(prior.project.project, project.project);
+  assert.equal(prior.project.database, resolve(databasePath));
+  assert.deepEqual(prior.sessions.map((session) => session.id), ['child', 'previous-root']);
+  assert.equal(prior.sessions[1].native, 'saved-previous-project-native');
+  assert.equal(prior.sessions[0].native, 'saved-project-native');
+  assert.equal(prior.sessions[0].pendingCount, 1);
+  assert.equal(prior.sessions[0].latestReportId, 'project-prior-report');
+  assert.equal(Object.hasOwn(prior.sessions[0], 'latestReport'), false);
+  assert.equal(prior.selected.latestReport, 'Original project report.');
+  const earlierRoot = await fetch(`${base}orchestra/project-sessions?actor=previous-root`);
+  assert.equal(earlierRoot.status, 200);
+  assert.equal((await earlierRoot.json()).selected.latestReport, 'Previous project conversation report.');
+  const previous = await fetch(`${base}orchestra/message?id=project-prior-report`);
+  assert.equal((await previous.json()).message.body, 'Original project report.');
+
+  const resumeResponse = await fetch(`${base}orchestra/resume`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ session: 'child' }),
+  });
+  assert.equal(resumeResponse.status, 200);
+  const resumed = await resumeResponse.json();
+  assert.equal(resumed.message, messageId);
+  assert.equal(resumed.delivery.receipt, 'project-resume-handled');
+  assert.equal(resumed.latestReportId, 'project-prior-report');
+  assert.equal(resumed.latestReport, 'Original project report.');
+  const retained = JSON.parse(native('session', 'child'));
+  assert.equal(retained.native, 'saved-project-native');
+  assert.equal(retained.workspace, workspace);
+  assert.equal(existsSync(unfinished), true);
+
+  native('connect', 'child', retained.native, '');
+  native('message', 'stopped-project-input', 'root', 'child', 'task', 'Continue after an explicit stop.');
+  native('connect', 'child', retained.native, JSON.stringify([process.execPath, receiver]));
+  native('stop', 'child', 'project-stop', 'User stopped this project session.');
+  const stoppedResponse = await fetch(`${base}orchestra/resume`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ session: 'child' }),
+  });
+  assert.equal(stoppedResponse.status, 409);
+  const stopped = await stoppedResponse.json();
+  assert.equal(stopped.execution.code, 2);
+  assert.match(stopped.execution.stderr, /terminally stopped/);
+  assert.equal(JSON.parse(native('delivery', 'stopped-project-input')).receipt, null);
+  const liftedResponse = await fetch(`${base}orchestra/resume`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ session: 'child', liftStop: true }),
+  });
+  assert.equal(liftedResponse.status, 200);
+  assert.equal((await liftedResponse.json()).delivery.receipt, 'project-resume-handled');
+  assert.equal(JSON.parse(native('session', 'child')).native, retained.native);
   execFileSync(binary, ['--instance-shutdown', databasePath]);
   let shutdownEvents = '';
   let streamClosed = false;

@@ -101,12 +101,12 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
         server = ROOT / 'bend2' / 'ui' / 'orchestra' / 'server.mjs'
         process = subprocess.Popen(
             [node, str(server), '--database', str(self.db), '--reader', reader,
-             '--subject', subject, '--port', '0'],
+             '--subject', subject, '--baton2', str(EXE), '--port', '0'],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True)
         try:
             binding = json.loads(process.stdout.readline())
-            self.assertEqual(binding['readOnly'], True)
+            self.assertEqual(binding['readOnly'], False)
             self.assertEqual(binding['host'], '127.0.0.1')
             url = process.stdout.readline().strip()
             self.assertTrue(url.startswith('http://127.0.0.1:'), url)

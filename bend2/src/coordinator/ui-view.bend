@@ -1,8 +1,8 @@
-# The optional read-only Orchestra live view (#682). `view SUBJECT [READER [PORT]]`
-# starts the packaged Node server bound to loopback under one immutable reader
-# identity, prints the URL, tries to open a browser, and serves until this command
+# The optional Orchestra live view (#682). `view SUBJECT [READER [PORT]]`
+# starts the packaged Node server bound to loopback with one reader,
+# prints the URL, tries to open a browser, and serves until this command
 # exits. The server reads only committed coordinator state through the native_changes
-# projection; it never writes to the database.
+# projection. Explicit session resume actions use the public coordinator CLI.
 import Base
 import ../host/process.bend as P
 import ../host/control.bend as Host
@@ -100,7 +100,7 @@ def finish(status: Result<&1,&1,U32 & String,String>) -> IO(Unit):
 def serving(db: String, reader: String, +url: String, handle: U32, line: String) -> IO(Unit):
   do IO<Unit>:
     IO.write("Orchestra live view: " ++ url ++ "\n")
-    IO.write("Reader " ++ reader ++ "; read-only recorded coordinator state; the reader's admitted scope applies. Serving until this command exits (Ctrl-C stops it).\n")
+    IO.write("Reader " ++ reader ++ "; recorded state uses the reader's scope. Explicit session resumption uses the public coordinator. Serving until this command exits (Ctrl-C stops it).\n")
     IO.write("Server: " ++ line)
     opened : Unit <- open_browser(db,url)
     status : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
