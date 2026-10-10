@@ -360,6 +360,16 @@ check('row knowledge reads as one compact line', await evalJs(`(() => {
   const line = document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact');
   return !!line && (line.textContent || '').includes('Worker retained finding');
 })()`));
+check('a roster row keeps its own line to one row', await evalJs(`(() => {
+  const rows = [...document.querySelectorAll('#roster .doc-row')].filter((row) => row.offsetHeight > 0);
+  if (rows.length < 2) return false;
+  const own = rows.map((row) => {
+    const band = row.querySelector('.doc-row-knowledge');
+    return row.getBoundingClientRect().height - (band ? band.getBoundingClientRect().height : 0);
+  });
+  const plain = Math.min(...own);
+  return own.every((height) => height <= plain + 6);
+})()`));
 // Capture the compact row knowledge for review.
 const knowledgeShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'knowledge.png'), Buffer.from(knowledgeShot.result.data, 'base64'));
@@ -1105,6 +1115,11 @@ check('stage focus announces its cursor seat', ['root', 'lead', 'worker', 'aide'
 check('the stage draws its seats inside the Agents region', await evalJs(
   `!!document.querySelector('#staves #attention-band svg.att-stage')
     && document.querySelectorAll('#staves #attention-band .att-seat').length > 0`));
+check('the band does not scroll: the page carries its drawing at its own height', await evalJs(`(() => {
+  const band = document.getElementById('attention-band');
+  if (!band) return false;
+  return band.scrollHeight <= band.clientHeight + 1;
+})()`));
 const stageOther = stageFirst === 'aide' ? 'worker' : 'aide';
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="${stageOther}"] .doc-open').click()`);
 await until('the selected actor changes before the stage jump',
