@@ -18,7 +18,9 @@ def route_accepted(+saved: String, denied: Bool) -> IO(Result<&1,&1,U32 & String
 def naming_refused(+saved: String) -> Bool:
   Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-role\""),
     Bool.or(Tx.starts_with(saved,"{\"error\":\"section-refused\""),
-      Tx.starts_with(saved,"{\"error\":\"ensemble-owner-conflict\"")))
+      Bool.or(Tx.starts_with(saved,"{\"error\":\"ensemble-owner-conflict\""),
+        Bool.or(Tx.starts_with(saved,"{\"error\":\"ensemble-member-refused\""),
+          Tx.starts_with(saved,"{\"error\":\"report-recipient-missing\"")))))
 
 def refused(+saved: String) -> Bool:
   Bool.or(naming_refused(saved),

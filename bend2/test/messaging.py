@@ -168,10 +168,66 @@ class Messaging(unittest.TestCase):
         before = self.call('ensemble', 'owned')
         self.call('ensemble', 'owned', 'other-root', success=False)
         self.call('ensemble', 'owned', 'other-root', 'loose', success=False)
-        self.call('ensemble-member', 'owned', 'other-root', 'leaf-b', 'remove', success=False)
-        self.call('ensemble-member', 'owned', 'root', 'missing', 'add', success=False)
-        self.call('ensemble-member', 'owned', 'root', 'leaf-b', 'unknown', success=False)
+        state, delivered = self.state(), self.endpoint_output()
+        for ensemble, owner, member, action in [
+                ('owned', 'other-root', 'leaf-b', 'remove'),
+                ('owned', 'root', 'missing', 'add'),
+                ('owned', 'root', 'operator', 'add'),
+                ('owned', 'root', 'leaf-b', 'unknown'),
+                ('missing', 'root', 'leaf-b', 'add')]:
+            with self.subTest(ensemble=ensemble, member=member, action=action):
+                refused = self.call('ensemble-member', ensemble, owner, member, action,
+                                    success=False)
+                self.assertEqual(refused.returncode, 2)
+                error = json.loads(refused.stderr)
+                self.assertEqual((error['error'], error['ensemble'], error['owner'],
+                                  error['session'], error['action']),
+                                 ('ensemble-member-refused', ensemble, owner, member, action))
+                self.assertEqual(error['existingOwner'], 'root' if ensemble == 'owned' else None)
+                self.assertTrue(error['condition'])
+                self.assertTrue(error['next'])
+                self.assertEqual(self.call('ensemble', 'owned'), before)
+                self.assertEqual(self.state(), state)
+                self.assertEqual(self.endpoint_output(), delivered)
         self.assertEqual(self.call('ensemble', 'owned'), before)
+        first = self.call('ensemble-member', 'owned', 'root', 'leaf-b', 'remove')
+        self.assertEqual(self.call('ensemble-member', 'owned', 'root', 'leaf-b', 'remove'), first)
+        self.call('ensemble-member', 'owned', 'root', 'missing', 'remove')
+        added = self.call('ensemble-member', 'owned', 'root', 'leaf-b', 'add')
+        self.assertEqual(self.call('ensemble-member', 'owned', 'root', 'leaf-b', 'add'), added)
+        self.assertEqual(self.call('ensemble', 'owned'), before)
+
+    def test_reports_and_questions_explain_missing_parent_or_operator_without_delivery(self):
+        body = "Unfinished upstream input λ🙂.\n"
+        self.call('attach', 'unassigned', 'fixture', '', self.endpoint)
+        self.call('role', 'operator', 'player')
+        before, delivered = self.state(), self.endpoint_output()
+        for sender in ['unassigned', 'missing', 'root']:
+            for verb, kind in [('report', 'report'), ('ask', 'question')]:
+                with self.subTest(sender=sender, command=verb):
+                    ident = sender + '-' + verb
+                    refused = self.call(verb, ident, sender, body, success=False)
+                    self.assertEqual(refused.returncode, 2)
+                    error = json.loads(refused.stderr)
+                    self.assertEqual((error['error'], error['sender'], error['kind']),
+                                     ('report-recipient-missing', sender, kind))
+                    self.assertTrue(error['condition'])
+                    self.assertTrue(error['next'])
+                    self.assertEqual(self.state(), before)
+                    self.assertEqual(self.endpoint_output(), delivered)
+        upstream = self.directory / 'upstream.txt'
+        upstream.write_text(body, encoding='utf-8')
+        for verb in ['report-file', 'ask-file']:
+            refused = self.call(verb, 'file-' + verb, 'unassigned', str(upstream), success=False)
+            self.assertEqual(json.loads(refused.stderr)['error'], 'report-recipient-missing')
+            self.assertEqual(self.state(), before)
+            self.assertEqual(self.endpoint_output(), delivered)
+        self.call('role', 'operator', 'operator')
+        for verb, kind in [('report', 'report'), ('ask', 'question')]:
+            row = self.call(verb, 'root-' + verb, 'root', body)
+            self.assertEqual((row['recipient'], row['kind'], row['body']),
+                             ('operator', kind, body))
+            self.assertIsNone(row['receipt'])
 
     def test_all_message_kinds_and_file_or_stdin_share_admission(self):
         for kind in ['task', 'guidance', 'recovery', 'report', 'question', 'custom']:

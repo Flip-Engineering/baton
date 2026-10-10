@@ -387,6 +387,13 @@ def message_sql(+id: String, +sender: String, +recipient: String, +kind: String,
   ++ "SELECT json_object('error','message-route-denied','sender'," ++ q(sender) ++ ",'recipient'," ++ q(recipient) ++ ",'condition','Use an immediate parent, a conductor descendant route, an explicitly tight Ensemble peer, or the operator and top-level conductor route.','next','Inspect session roles and Ensemble membership; send through your immediate conductor when a direct route is unavailable.') WHERE NOT " ++ message_route(q(sender),q(recipient)) ++ " AND NOT " ++ exact_message(id,sender,recipient,kind,body) ++ ";"
   ++ "SELECT json_object('error','session-stopped','session'," ++ q(recipient) ++ ") WHERE NOT " ++ exact_message(id,sender,recipient,kind,body) ++ " AND " ++ message_route(q(sender),q(recipient)) ++ " AND " ++ stopped_session_sql(q(recipient)) ++ " AND " ++ execution_input_sql(q(kind)) ++ ";" ++ matching_message_result(id,sender,recipient,kind,body)
 
+def parent_message_sql(+id: String, +sender: String, +kind: String, +body: String) -> String:
+  +recipient = report_recipient(q(sender))
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ "," ++ q(sender) ++ "," ++ recipient ++ "," ++ q(kind) ++ "," ++ q(body) ++ " WHERE " ++ recipient ++ " IS NOT NULL" ++ message_upsert()
+  ++ message_conflict_sql(q(id),q(sender),recipient,q(kind),q(body),recipient ++ " IS NOT NULL")
+  ++ "SELECT json_object('error','report-recipient-missing','sender'," ++ q(sender) ++ ",'kind'," ++ q(kind) ++ ",'condition','The session has no recorded parent or registered operator report recipient.','next','Read session SENDER. Use its recorded parent; a parentless Conductor reports to the registered operator session with the operator role.') WHERE " ++ recipient ++ " IS NULL;"
+  ++ matching_message_result_expr(q(id),q(sender),recipient,q(kind),q(body))
+
 def role_sql(+session: String, +role: String) -> String:
   "INSERT INTO session_roles(session,role) SELECT " ++ q(session) ++ "," ++ q(role_family(role)) ++ " WHERE " ++ role_admitted(session,role) ++ " ON CONFLICT(session) DO UPDATE SET role=excluded.role;"
   ++ "SELECT json_object('error','invalid-role','session'," ++ q(session) ++ ",'requested'," ++ q(role) ++ ",'condition','Principal Conductors and operators require no parent; Associate Conductors require a parent.','next','Read session ID. Assign player, principal-conductor, associate-conductor or operator to match its recorded parentage; conductor remains a compatible family declaration.') WHERE NOT " ++ role_admitted(session,role) ++ ";"
@@ -414,10 +421,15 @@ def ensemble_ensure_sql(+id: String, +owner: String) -> String:
   ++ ensemble_owner_refusal(id,owner)
   ++ "SELECT " ++ ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ";"
 
+def ensemble_member_result_sql(+id: String, +owner: String, +session: String, +action: String) -> String:
+  +accepted = "EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND ((" ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ ")) OR (" ++ q(action) ++ "='remove' AND NOT EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ ")))"
+  "SELECT json_object('error','ensemble-member-refused','ensemble'," ++ q(id) ++ ",'owner'," ++ q(owner) ++ ",'existingOwner',(SELECT owner FROM ensembles WHERE id=" ++ q(id) ++ "),'session'," ++ q(session) ++ ",'action'," ++ q(action) ++ ",'condition','Membership requires the recorded Ensemble owner, add or remove, and an existing non-operator Player when adding.','next','Read ensemble ENSEMBLE and session PLAYER; use the recorded owner and add or remove.') WHERE NOT (" ++ accepted ++ ");"
+  ++ "SELECT json_object('ensemble'," ++ q(id) ++ ",'owner'," ++ q(owner) ++ ",'session'," ++ q(session) ++ ",'membership'," ++ q(action) ++ ") WHERE " ++ accepted ++ ";"
+
 def ensemble_member_sql(+id: String, +owner: String, +session: String, +action: String) -> String:
   "DELETE FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ " AND " ++ q(action) ++ "='remove' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ");"
   ++ "INSERT OR IGNORE INTO ensemble_members(ensemble,session) SELECT " ++ q(id) ++ "," ++ q(session) ++ " WHERE " ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND " ++ assigned_role(q(session)) ++ "<>'operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ ");"
-  ++ "SELECT json_object('ensemble'," ++ q(id) ++ ",'owner'," ++ q(owner) ++ ",'session'," ++ q(session) ++ ",'membership'," ++ q(action) ++ ") WHERE EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND ((" ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ ")) OR (" ++ q(action) ++ "='remove' AND NOT EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ ")));"
+  ++ ensemble_member_result_sql(id,owner,session,action)
 
 def section_owner(+ensemble: String, +owner: String) -> String:
   "EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(ensemble) ++ " AND owner=" ++ q(owner) ++ ")"
@@ -484,9 +496,9 @@ def sql(command: Command) -> String:
     case Message{+id, sender, +recipient, +kind, body}:
       message_sql(id,sender,recipient,kind,body)
     case Report{+id, +sender, +body}:
-      "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(sender) ++ "," ++ report_recipient(q(sender)) ++ ",'report'," ++ q(body) ++ ")" ++ message_upsert() ++ message_conflict_sql(q(id),q(sender),report_recipient(q(sender)),"'report'",q(body),report_recipient(q(sender)) ++ " IS NOT NULL") ++ matching_message_result_expr(q(id),q(sender),report_recipient(q(sender)),"'report'",q(body))
+      parent_message_sql(id,sender,"report",body)
     case Ask{+id, +player, +body}:
-      "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(player) ++ "," ++ report_recipient(q(player)) ++ ",'question'," ++ q(body) ++ ")" ++ message_upsert() ++ message_conflict_sql(q(id),q(player),report_recipient(q(player)),"'question'",q(body),report_recipient(q(player)) ++ " IS NOT NULL") ++ matching_message_result_expr(q(id),q(player),report_recipient(q(player)),"'question'",q(body))
+      parent_message_sql(id,player,"question",body)
     case Ack{+id, +recipient, receipt}:
       "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";DELETE FROM wake_claims WHERE session=" ++ q(recipient) ++ " AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=" ++ q(recipient) ++ " AND receipt IS NULL);SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";"
     case Session{id}: session_result(id)
