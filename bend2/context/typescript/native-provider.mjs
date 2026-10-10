@@ -61,9 +61,16 @@ export async function executeInvocation(invocation, options = {}) {
     // call site is, and this joint reports which catalog object its parsed statement names. The
     // selected database is opened read-only for one transaction and closed here.
     if (Array.isArray(request.select) && request.select.includes('databaseAccesses')) {
-      payload.databaseAccesses = await databaseAccesses(result, {
-        cwd: request.cwd, database: request.options.database,
-      });
+      // The catalog half is reported beside the source result: a failure here names its reason and
+      // never replaces the analysis the query already produced.
+      try {
+        payload.databaseAccesses = await databaseAccesses(result, {
+          cwd: request.cwd, database: request.options.database,
+        });
+      } catch (error) {
+        payload.databaseAccesses = { status: 'unavailable', reason: error.code ?? error.name,
+          detail: error.message ?? null, relations: [], refs: [], unresolved: [] };
+      }
     }
     return eventFrame(invocation, payload);
   } catch (error) {

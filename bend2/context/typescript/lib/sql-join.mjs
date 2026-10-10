@@ -108,7 +108,6 @@ export function joinDatabaseAccesses({ facts, db, database, catalog }) {
           statementText: record.sql.text,
           statementKind: plan.kind,
           literalKind: record.sql.literalKind ?? null,
-          catalogSnapshotId: statement.snapshotId,
           statement,
           callee: record.callee,
           receiver: record.receiver ?? null,
@@ -121,32 +120,56 @@ export function joinDatabaseAccesses({ facts, db, database, catalog }) {
   return { status: 'complete', database, relations, refs: [...refs.values()], unresolved };
 }
 
-// The joint opens the selected database read-only for the length of one transaction and closes
-// it, so the analysis never depends on a handle the caller kept. A request that selected no
-// database, or a database this process cannot open, is reported with the calls it could not join
-// rather than refused as a whole.
-export async function databaseAccesses(result, { cwd, database: path }) {
-  const facts = (result?.facts ?? []).filter((fact) => fact?.kind === 'sqlCall');
-  if (!path) {
-    return {
-      status: 'unavailable', reason: 'databaseNotSelected',
-      relations: [], refs: [],
-      unresolved: facts.map((fact) => ({ code: 'databaseNotSelected', statement: statementIdentity(fact) })),
-    };
+// The source query publishes the database selector as {engine:"sqlite-schema",path}; the postgres
+// form {engine:"postgres-schema",connectionFile} is a different catalog this join does not read, and
+// a bare path remains a useful shorthand. Only the sqlite-schema catalog is read here, and a
+// selector naming anything else, or one without a path, is reported as an unsupported selection so
+// the caller learns the real reason the catalog half is absent. This never throws: a malformed
+// selector is a value, not an exception.
+function selectedDatabase({ cwd, selector }) {
+  const base = typeof cwd === 'string' && cwd.length > 0 ? cwd : '.';
+  if (typeof selector === 'string' && selector.length > 0) {
+    return { status: 'selected', database: { engine: 'sqlite-schema', path: resolve(base, selector) } };
   }
-  const database = { engine: 'sqlite-schema', path: resolve(cwd, path) };
+  if (selector === null || selector === undefined) {
+    return { status: 'unsupported', reason: 'databaseNotSelected' };
+  }
+  if (typeof selector !== 'object') {
+    return { status: 'unsupported', reason: 'databaseSelectorUnsupported', detail: `the selector is ${typeof selector}` };
+  }
+  const { engine, path } = selector;
+  if (engine !== 'sqlite-schema') {
+    return { status: 'unsupported', reason: 'unsupportedDatabaseEngine', detail: `this join reads a sqlite-schema catalog; the selector names ${JSON.stringify(engine ?? null)}` };
+  }
+  if (typeof path !== 'string' || path.length === 0) {
+    return { status: 'unsupported', reason: 'databaseSelectorUnsupported', detail: 'the selector carries no path' };
+  }
+  return { status: 'selected', database: { engine, path: resolve(base, path) } };
+}
+
+// The joint opens the selected database read-only for the length of one transaction and closes it,
+// so the analysis never depends on a handle the caller kept. A request that selected no database, an
+// unsupported selector and a database this process cannot open are reported with the calls they
+// could not join: the caller's own source result is never lost to a failure of the catalog half.
+export async function databaseAccesses(result, { cwd, database: selector } = {}) {
+  const facts = (result?.facts ?? []).filter((fact) => fact?.kind === 'sqlCall');
+  const unavailable = (reason, detail = null) => ({
+    status: 'unavailable', reason, detail,
+    relations: [], refs: [],
+    unresolved: facts.map((fact) => ({ code: reason, detail, statement: statementIdentity(fact) })),
+  });
+
+  const selected = selectedDatabase({ cwd, selector });
+  if (selected.status !== 'selected') return unavailable(selected.reason, selected.detail ?? null);
+
   let db;
   try {
     const { DatabaseSync } = await import('node:sqlite');
-    db = new DatabaseSync(database.path, { readOnly: true });
+    db = new DatabaseSync(selected.database.path, { readOnly: true });
     db.exec('BEGIN');
-    return joinDatabaseAccesses({ facts, db, database, catalog: catalogFromDatabase(db) });
+    return joinDatabaseAccesses({ facts, db, database: selected.database, catalog: catalogFromDatabase(db) });
   } catch (error) {
-    return {
-      status: 'unavailable', database, reason: error.code ?? error.name, detail: error.message,
-      relations: [], refs: [],
-      unresolved: facts.map((fact) => ({ code: 'catalogUnavailable', detail: error.message, statement: statementIdentity(fact) })),
-    };
+    return unavailable(error.code ?? error.name ?? 'catalogUnavailable', error.message);
   } finally {
     if (db) db.close();
   }
