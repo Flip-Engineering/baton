@@ -182,12 +182,14 @@ class NativeObservation(RECEIVE.Receive):
         log = self.output_log('parent')
 
         turns = self.coord('turns', 'parent')
-        self.assertEqual([row['reportBody'] for row in turns], ['Primary completion.'])
+        self.assertEqual([row['reportBody'] for row in turns],
+                         ['Primary completion.', 'Changed primary output.',
+                          'Later lifecycle completion.'])
+        self.assertNotEqual(turns[0]['id'], turns[1]['id'])
         reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
-        deferred = [row for row in reports if row['id'].endswith(':deferred')]
-        self.assertEqual(len(deferred), 1)
-        self.assertIn('later native terminal was observed', deferred[0]['body'])
-        self.assertTrue(any('original report is preserved' in row['body'] for row in reports))
+        later = [row for row in reports if row['body'] == 'Later lifecycle completion.']
+        self.assertEqual([row['id'] for row in later], [turns[2]['id']])
+        self.assertEqual(self.coord('delivery', turns[0]['id'])['body'], 'Primary completion.')
         self.assertFalse(any('Nested task completion' in row['body'] for row in reports))
         self.assertFalse(any('Terminal without command identity.' in row['body'] for row in reports))
         self.assertFalse(any('Native output observation failed' in row['body'] for row in reports))
@@ -487,6 +489,29 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
         self.eventually(lambda: self.coord('turns', 'parent'),
                         'first terminal did not seal its report')
+        report_text = 'The record retained and resume inputs now reach their own blocks.'
+        later = {'type': 'agent_end', 'isTerminal': True, 'yielded': True,
+                 'messages': [{'role': 'assistant', 'responseId': 'later-record-response',
+                               'stopReason': 'stop', 'content': [
+                                   {'type': 'thinking', 'thinking': 'The source integration is complete.'},
+                                   {'type': 'text', 'text': report_text}]}]}
+        self.action(stream, native_frame=later)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.eventually(lambda: any(row['reportBody'] == report_text
+                                   for row in self.coord('turns', 'parent')),
+                        'the later native response did not publish its complete report')
+        next_text = 'The refusal includes its command code, stdout and stderr.'
+        identifierless = {'type': 'agent_end', 'isTerminal': True,
+                          'messages': [{'role': 'assistant', 'content': [
+                              {'type': 'text', 'text': next_text}]}]}
+        self.action(stream, native_frame=identifierless)
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        self.eventually(lambda: any(row['reportBody'] == next_text
+                                   for row in self.coord('turns', 'parent')),
+                        'the identifierless continuation did not publish its complete report')
+        observer.kill()
+        observer.wait()
+        resumed = self.spawn(*self.receive_args('parent'))
         refusal = {'type': 'agent_end', 'isTerminal': True, 'is_error': False,
                    'messages': [{'role': 'assistant', 'stopReason': 'error', 'errorStatus': 403,
                                  'errorMessage': '403 {"error":{"message":"fixture late refusal"}}',
@@ -494,17 +519,20 @@ class NativeObservation(RECEIVE.Receive):
         self.action(stream, native_frame=refusal)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
         self.action(stream, exit_fixture=True)
-        self.finish(observer)
+        self.finish(resumed)
         turns = self.eventually(lambda: self.coord('turns', 'parent'),
                                 'sealed success report was not retained')
         self.assertEqual(turns[0]['reportBody'], 'Stale success text.')
         reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
-        deferred = next((row for row in reports if row['id'].endswith(':deferred')), None)
-        self.assertIsNotNone(deferred)
-        self.assertIn('failed after the report', deferred['body'])
-        self.assertIn('OMP provider failure', deferred['body'])
-        self.assertIn('fixture late refusal', deferred['body'])
-        self.assertNotIn('Stale success text.', deferred['body'])
+        self.assertEqual([row['reportBody'] for row in turns].count(report_text), 1)
+        self.assertEqual([row['reportBody'] for row in turns].count(next_text), 1)
+        self.assertEqual(len({row['id'] for row in turns}), len(turns))
+        later_reports = [row for row in reports if row['body'] in (report_text, next_text)]
+        self.assertEqual({row['body'] for row in later_reports}, {report_text, next_text})
+        failed = next((row for row in reports if 'fixture late refusal' in row['body']), None)
+        self.assertIsNotNone(failed)
+        self.assertIn('OMP provider failure', failed['body'])
+        self.assertNotIn('Stale success text.', failed['body'])
         log = self.output_log('parent').read_text()
         self.assertIn('Stale success text.', log)
         self.assertIn('stopReason', log)
@@ -513,6 +541,8 @@ class NativeObservation(RECEIVE.Receive):
             sealed = json.loads(database.execute(
                 'SELECT event FROM turns WHERE id=?', (turns[0]['id'],)).fetchone()[0])
         self.assertEqual(sealed, success)
+        self.assertEqual(self.coord('delivery', turns[0]['id'])['body'], 'Stale success text.')
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
     def test_observe_file_reads_mixed_omp_terminals_and_nested_failure(self):

@@ -382,17 +382,13 @@ def observe_event(db: String, player: String, id: String, line: String, relevant
     case True{}: Store.commit(db,C.Observe{id,player,line,sealed})
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
 
-# A terminal that completes after the managed completion was sealed cannot be
-# recorded as a report under the sealed identity: the first terminal stays the
-# report of this receive attempt, and a later episode is named once in the
-# separate diagnostic with the guidance it leaves for the next receive.
+# Later native episodes keep the first report and publish their own reports.
 def deferred_terminal_sql(+event: String, +terminal: String) -> String:
   "WITH frame(value,terminal) AS (VALUES(" ++ C.q(event) ++ "," ++ C.q(terminal) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN value='' THEN 0 WHEN terminal='' THEN 0 WHEN value=terminal THEN 0 WHEN " ++ C.terminal_expr("frame.value") ++ " THEN 1 ELSE 0 END ELSE 0 END FROM frame;"
 
 def muse_deferred_terminal_sql(+event: String, +terminal: String, +primary: String, +current: String) -> String:
   +candidate = primary_terminal_expr("frame.value",current)
-  +later = C.q(current) ++ "<>'' AND " ++ C.q(current) ++ "<>" ++ C.q(primary)
-  "WITH frame(value,terminal) AS (VALUES(" ++ C.q(event) ++ "," ++ C.q(terminal) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN value='' THEN 0 WHEN terminal='' THEN 0 WHEN value=terminal THEN 0 WHEN " ++ candidate ++ " AND " ++ later ++ " THEN 1 ELSE 0 END ELSE 0 END FROM frame;"
+  "WITH frame(value,terminal) AS (VALUES(" ++ C.q(event) ++ "," ++ C.q(terminal) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN value='' THEN 0 WHEN terminal='' THEN 0 WHEN value=terminal THEN 0 WHEN " ++ candidate ++ " THEN 1 ELSE 0 END ELSE 0 END FROM frame;"
 
 # The note is written once: a later terminal frame must not try a second body
 # under the same identity, which the same-identity store guard would refuse.
@@ -421,15 +417,35 @@ def write_deferred(+db: String, +player: String, +id: String, +failure: String, 
       noted : Unit <- report(db,player,id ++ ":deferred",Bool.pick(String,String.is_empty(failure),deferred_text(id,pending),deferred_failure_text(id,failure,pending)))
       IO.pure(Unit,Unit{})
 
-def record_deferred(+db: String, +player: String, +id: String, +event: String, later: Bool) -> IO(Unit):
-  match later:
-    case False{}: IO.pure(Unit,Unit{})
-    case True{}: do IO<Unit>:
+# The episode sequence names later terminal positions across raw-spool replay.
+def deferred_report_id_sql(+id: String, +event: String, +episode: String) -> String:
+  +text = "CASE WHEN json_type(frame.value,'$.result')='text' THEN json_extract(frame.value,'$.result') WHEN json_extract(frame.value,'$.payload.kind')='run_terminal' AND json_type(frame.value,'$.payload.text')='text' THEN json_extract(frame.value,'$.payload.text') ELSE " ++ C.assistant_text_sql_expr("frame.value") ++ " END"
+  +failed = "coalesce(json_extract(frame.value,'$.is_error'),0)=1 OR (json_extract(frame.value,'$.payload.kind')='run_terminal' AND json_extract(frame.value,'$.payload.terminal')<>'completed') OR " ++ C.omp_terminal_error_sql_expr("frame.value")
+  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT CASE WHEN coalesce(" ++ text ++ ",'')<>'' OR " ++ failed ++ " THEN " ++ C.q(id ++ ":episode:" ++ episode) ++ " ELSE '' END FROM frame;"
+
+def publish_deferred(+db: String, +player: String, +id: String, +event: String, +report_id: String, substantive: Bool) -> IO(Unit):
+  match substantive:
+    case False{}: do IO<Unit>:
       presence : String <- IO.try(String,DB.Sql.query(db,deferred_recorded_sql(id)))
       pending : String <- IO.try(String,DB.Sql.query(db,deferred_pending_sql(player)))
       failure : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(" ++ C.omp_terminal_error_text_sql(event) ++ ",'');"))
-      written : Unit <- write_deferred(db,player,id,Tx.trim_nl(failure),Tx.trim_nl(pending),String.eq(presence,"1\n"))
+      write_deferred(db,player,id,Tx.trim_nl(failure),Tx.trim_nl(pending),String.eq(presence,"1\n"))
+    case True{}: do IO<Unit>:
+      saved : String <- IO.try(String,Store.commit(db,C.Observe{report_id,player,event,False{}}))
+      delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,report_id,"1",saved)
+      written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
       IO.pure(Unit,Unit{})
+
+def record_deferred(+db: String, +player: String, +id: String, +event: String, +episode: String, later: Bool) -> IO(String):
+  match later:
+    case False{}: IO.pure(String,episode)
+    case True{}: do IO<String>:
+      incremented : String <- IO.try(String,DB.Sql.query(db,"SELECT CAST(CAST(" ++ C.q(episode) ++ " AS INTEGER)+1 AS TEXT);"))
+      +next_episode : String <- IO.pure(String,Tx.trim_nl(incremented))
+      found : String <- IO.try(String,DB.Sql.query(db,deferred_report_id_sql(id,event,next_episode)))
+      +report_id : String <- IO.pure(String,Tx.trim_nl(found))
+      published : Unit <- publish_deferred(db,player,id,event,report_id,Bool.not(String.is_empty(report_id)))
+      IO.pure(String,next_episode)
 
 def deferred_query(event: String, terminal: String, primary: String, current: String, muse: Bool) -> String:
   match muse:
@@ -438,14 +454,13 @@ def deferred_query(event: String, terminal: String, primary: String, current: St
 
 # Only a later terminal can produce this note. Progress frames keep draining
 # without constructing a query that embeds the saved terminal.
-def deferred_note(+db: String, player: String, id: String, +event: String, terminal: String, primary: String, current: String, enabled: Bool, muse: Bool) -> IO(Unit):
+def deferred_note(+db: String, player: String, id: String, +event: String, terminal: String, primary: String, current: String, episode: String, enabled: Bool, muse: Bool) -> IO(String):
   match enabled:
-    case False{}: IO.pure(Unit,Unit{})
-    case True{}: do IO<Unit>:
+    case False{}: IO.pure(String,episode)
+    case True{}: do IO<String>:
       query : String <- IO.pure(String,deferred_query(event,terminal,primary,current,muse))
       later : String <- IO.try(String,DB.Sql.query(db,query))
-      noted : Unit <- record_deferred(db,player,id,event,String.eq(later,"1\n"))
-      IO.pure(Unit,Unit{})
+      record_deferred(db,player,id,event,episode,String.eq(later,"1\n"))
 
 # Read the OMP frame type once for level filtering and event observation.
 def omp_frame_kind(db: String, line: String, omp: Bool) -> IO(String):
@@ -668,10 +683,10 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +next_current : String <- current_command(db,event,current,String.eq(harness,"muse\n"))
         +terminal_frame : Bool <- primary_terminal(db,event,"",False{})
         +admitted : Bool <- terminal_admitted(db,event,next_primary,terminal_frame,String.eq(harness,"muse\n"))
-        +state : String <- completion_state_event(db,id,player,event,admitted)
+        +state : String <- completion_state_event(db,id,player,event,Bool.and(admitted,Bool.not(sealed)))
         +observation_sealed : Bool <- IO.pure(Bool,terminal_observation_sealed(sealed,terminal_frame,admitted,state))
         conflict_note : Unit <- completion_conflict_note(db,player,id,event,String.eq(state,"conflict"))
-        deferred : Unit <- deferred_note(db,player,id,event,terminal,next_primary,next_current,Bool.and(sealed,terminal_frame),String.eq(harness,"muse\n"))
+        +episode : String <- deferred_note(db,player,id,event,terminal,next_primary,next_current,Observer.episode(checkpoint_state),Bool.and(sealed,terminal_frame),String.eq(harness,"muse\n"))
         +observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant,Bool.or(observation_sealed,failed))
         +terminal_selected : Bool <- IO.pure(Bool,Bool.and(relevant,Bool.and(admitted,Bool.not(sealed))))
         +ended : String <- terminal_event(event,terminal,terminal_selected)
@@ -681,7 +696,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool <- NativeRequests.observe(db,player,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
         +mode : String <- filter_mode(db,line,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"response")),requested)
         +next_filter : String <- IO.pure(String,Omp.filter_next(filter,Tx.trim_nl(mode)))
-        +next_checkpoint : Observer.State <- IO.pure(Observer.State,Observer.with_output(Observer.with_omp_activity(Observer.make(next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_held),activity),Logs.position(Observer.output(checkpoint_state),positioned)))
+        +next_checkpoint : Observer.State <- IO.pure(Observer.State,Observer.with_episode(Observer.with_output(Observer.with_omp_activity(Observer.make(next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_held),activity),Logs.position(Observer.output(checkpoint_state),positioned)),episode))
         NativeRequests.with_observation(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,questions,wakes => question_error => question_incomplete => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
           +question_text : String <- IO.pure(String,question_error)
           +request_incomplete : Bool <- IO.pure(Bool,question_incomplete)
