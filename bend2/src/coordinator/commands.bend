@@ -44,6 +44,7 @@ type Command is Data:
   PendingIndex{}
   Inbox{id: String}
   InboxIndex{id: String}
+  MessageIndex{inbox: Bool, condition: String, state: String}
   Land{player: String, repo: String, target: String}
   LandAt{player: String, repo: String, target: String, commit: String}
   LandCheckedAt{player: String, repo: String, target: String, check: String, files: String, commit: String}
@@ -280,8 +281,8 @@ def message_conflict_sql(+id: String, +sender: String, +recipient: String, +kind
 def delivery_row() -> String:
   "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'body',m.body,'receipt',m.receipt,'harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ endpoint_argv("s.endpoint") ++ ")," ++ input_state_sql("m") ++ ")"
 
-def message_index_sql(source: String, condition: String) -> String:
-  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('seq',m.seq,'id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'receipt',m.receipt)," ++ input_state_sql("m") ++ ") AS item FROM " ++ source ++ " WHERE m.receipt IS NULL AND " ++ condition ++ " ORDER BY m.seq);"
+def message_index_sql(source: String, condition: String, state: String) -> String:
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('seq',m.seq,'id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'receipt',m.receipt)," ++ input_state_sql("m") ++ ") AS item FROM " ++ source ++ " WHERE " ++ state ++ " AND " ++ condition ++ " ORDER BY m.seq);"
 
 def terminal_expr(+event: String) -> String:
   "(json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.type')='result' OR (json_extract(" ++ event ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ event ++ ",'$.isTerminal'),1)=1))"
@@ -506,10 +507,12 @@ def sql(command: Command) -> String:
       "SELECT " ++ delivery_row() ++ " FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ q(id) ++ ";"
     case Pending{}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ delivery_row() ++ " AS item FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL ORDER BY m.seq);"
-    case PendingIndex{}: message_index_sql("messages m JOIN sessions s ON s.id=m.recipient","1")
+    case PendingIndex{}: message_index_sql("messages m JOIN sessions s ON s.id=m.recipient","1","m.receipt IS NULL")
     case Inbox{id}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body)," ++ input_state_sql("messages") ++ ") AS item FROM messages WHERE recipient=" ++ q(id) ++ " AND receipt IS NULL ORDER BY seq);"
-    case InboxIndex{id}: message_index_sql("messages m","m.recipient=" ++ q(id))
+    case InboxIndex{id}: message_index_sql("messages m","m.recipient=" ++ q(id),"m.receipt IS NULL")
+    case MessageIndex{inbox,condition,state}:
+      message_index_sql(Bool.pick(String,inbox,"messages m","messages m JOIN sessions s ON s.id=m.recipient"),condition,state)
     case Status{}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ session_kind("sessions.id") ++ ",'role'," ++ public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND receipt IS NULL AND NOT (" ++ stopped_session_sql("sessions.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")))," ++ session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);"
     case Players{}: "SELECT " ++ players_json(assigned_role("s.id") ++ "<>'operator'") ++ ";"
@@ -749,7 +752,7 @@ def parse_verb_nine_args(+verb: String, +player: String, +id: String, +cmd: Stri
     case "recruit": Recruit{player,id,cmd,model,effort,cwd,task,log,session}
     case _: Invalid{}
 
-def parse(args: List<String>) -> Command:
+def parse_basic(args: List<String>) -> Command:
   match args:
     case +verb <> Nil{}:
       parse_verb_only(verb)
@@ -776,6 +779,56 @@ def parse(args: List<String>) -> Command:
     case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
       parse_verb_nine_args(verb,player,id,cmd,model,effort,cwd,task,log,session)
     case _: Invalid{}
+
+def index_digits(value: String) -> Bool:
+  match value:
+    case SNil{}: True{}
+    case SCon{head,tail}:
+      +code = Char.to_u32(head)
+      Bool.and(Bool.and(U32.is_lt(47,code),U32.is_lt(code,58)),index_digits(tail))
+
+def index_integer(value: String) -> Bool:
+  match value:
+    case SNil{}: False{}
+    case SCon{+head,+tail}:
+      Bool.pick(Bool,Bool.or(Char.is_eq(head,Char.from_u32(43)),Char.is_eq(head,Char.from_u32(45))),
+        Bool.and(Bool.not(String.is_empty(tail)),index_digits(tail)),index_digits(SCon{head,tail}))
+
+def index_finish(base: Command, inbox: Bool, condition: String, state: String, +index: Bool, pretty: Bool, filtered: Bool) -> Command:
+  +selected = Bool.pick(Command,index,MessageIndex{inbox,condition,state},base)
+  Bool.pick(Command,Bool.and(Bool.not(index),filtered),Invalid{},Bool.pick(Command,pretty,Pretty{selected},selected))
+
+# Option values are consumed literally, including values that name another option.
+def index_options(args: List<String>, +base: Command, +inbox: Bool, +condition: String, +state: String, +index: Bool, +pretty: Bool, +filtered: Bool) -> Command:
+  match args:
+    case Nil{}: index_finish(base,inbox,condition,state,index,pretty,filtered)
+    case "--index" <> rest: index_options(rest,base,inbox,condition,state,True{},pretty,filtered)
+    case "--pretty" <> rest: index_options(rest,base,inbox,condition,state,index,True{},filtered)
+    case "--sender" <> value <> rest:
+      index_options(rest,base,inbox,condition ++ " AND m.sender=" ++ q(value),state,index,pretty,True{})
+    case "--recipient" <> value <> rest:
+      index_options(rest,base,inbox,condition ++ " AND m.recipient=" ++ q(value),state,index,pretty,True{})
+    case "--kind" <> value <> rest:
+      index_options(rest,base,inbox,condition ++ " AND m.kind=" ++ q(value),state,index,pretty,True{})
+    case "--state" <> value <> +rest:
+      match value:
+        case "pending": index_options(rest,base,inbox,condition,"m.receipt IS NULL",index,pretty,True{})
+        case "acknowledged": index_options(rest,base,inbox,condition,"m.receipt IS NOT NULL",index,pretty,True{})
+        case "all": index_options(rest,base,inbox,condition,"1",index,pretty,True{})
+        case _: Invalid{}
+    case "--after-seq" <> +value <> +rest:
+      Bool.pick(Command,index_integer(value),index_options(rest,base,inbox,condition ++ " AND m.seq>CAST(" ++ q(value) ++ " AS INTEGER)",state,index,pretty,True{}),Invalid{})
+    case "--through-seq" <> +value <> +rest:
+      Bool.pick(Command,index_integer(value),index_options(rest,base,inbox,condition ++ " AND m.seq<=CAST(" ++ q(value) ++ " AS INTEGER)",state,index,pretty,True{}),Invalid{})
+    case _: Invalid{}
+
+def parse(+args: List<String>) -> Command:
+  match args:
+    case "pending" <> rest:
+      index_options(rest,Pending{},False{},"1","m.receipt IS NULL",False{},False{},False{})
+    case "inbox" <> +id <> rest:
+      index_options(rest,Inbox{id},True{},"m.recipient=" ++ q(id),"m.receipt IS NULL",False{},False{},False{})
+    case _: parse_basic(args)
 
 law help_word_selects_the_help_command:
   {parse(["help"]) == Help{} : Command}

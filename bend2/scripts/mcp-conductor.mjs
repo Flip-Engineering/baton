@@ -121,6 +121,16 @@ function coord(...args) {
   }
 }
 
+const messageIndexProperties = {
+  index: { type: 'boolean', description: 'Return ordered message metadata; filters select this output automatically' },
+  sender: { type: 'string', description: 'Match a literal sender ID' },
+  kind: { type: 'string', description: 'Match a literal message kind' },
+  state: { type: 'string', enum: ['pending', 'acknowledged', 'all'], description: 'Receipt state (default: pending)' },
+  afterSeq: { type: 'string', description: 'Exclusive integer sequence bound, kept as text for exact integer comparisons' },
+  throughSeq: { type: 'string', description: 'Inclusive integer sequence bound, kept as text for exact integer comparisons' },
+  pretty: { type: 'boolean', description: 'Pretty-print the JSON result' },
+};
+
 // Tool definitions exposed to the attached Conductor.
 const TOOLS = [
   {
@@ -354,12 +364,12 @@ const TOOLS = [
   },
   {
     name: 'baton2_inbox',
-    description: 'Show unacknowledged messages for a session. Set index to true for message metadata; baton2_delivery reads a complete stored message.',
+    description: 'Show a session inbox. The default returns unacknowledged complete messages; index or optional metadata filters return ordered metadata. baton2_delivery reads a complete stored message.',
     inputSchema: {
       type: 'object',
       properties: {
         recipient: { type: 'string', description: 'Session ID (default: attached Conductor)' },
-        index: { type: 'boolean', description: 'Return sequence, identity, route, kind and receipt without bodies' },
+        ...messageIndexProperties,
       },
       additionalProperties: false,
     },
@@ -456,8 +466,11 @@ const TOOLS = [
   },
   {
     name: 'baton2_pending',
-    description: 'List all unacknowledged messages. Set index to true for message metadata; baton2_delivery reads a complete stored message.',
-    inputSchema: { type: 'object', properties: { index: { type: 'boolean' } }, additionalProperties: false },
+    description: 'List pending messages. The default includes complete bodies; index or optional metadata filters return ordered metadata. baton2_delivery reads a complete stored message.',
+    inputSchema: { type: 'object', properties: {
+      recipient: { type: 'string', description: 'Match a literal recipient ID' },
+      ...messageIndexProperties,
+    }, additionalProperties: false },
   },
   {
     name: 'baton2_push',
@@ -627,6 +640,22 @@ function landCommit(args) {
   return ['--commit', args.commit];
 }
 
+function messageReadOptions(args, pending = false) {
+  const flags = [];
+  for (const [field, flag] of [
+    ...(pending ? [['recipient', '--recipient']] : []),
+    ['sender', '--sender'], ['kind', '--kind'], ['state', '--state'],
+    ['afterSeq', '--after-seq'], ['throughSeq', '--through-seq'],
+  ]) {
+    if (args?.[field] !== undefined) flags.push(flag, args[field]);
+  }
+  return [
+    ...(args?.index === true || flags.length ? ['--index'] : []),
+    ...flags,
+    ...(args?.pretty === true ? ['--pretty'] : []),
+  ];
+}
+
 function handleToolCall(msg) {
   const { name, arguments: args } = msg.params;
   const player = args?.player ?? args?.worker;
@@ -742,7 +771,7 @@ function handleToolCall(msg) {
         result = coord('owner-status');
         break;
       case 'baton2_inbox':
-        result = coord('inbox', args?.recipient ?? sessionId, ...(args?.index === true ? ['--index'] : []));
+        result = coord('inbox', args?.recipient ?? sessionId, ...messageReadOptions(args));
         break;
       case 'baton2_delivery':
         result = coord('delivery', args.id);
@@ -773,7 +802,7 @@ function handleToolCall(msg) {
         result = coord('turns', player);
         break;
       case 'baton2_pending':
-        result = coord('pending', ...(args?.index === true ? ['--index'] : []));
+        result = coord('pending', ...messageReadOptions(args, true));
         break;
       case 'baton2_push':
         result = coord('push', args.repo, args.branch, args.remote);

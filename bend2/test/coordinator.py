@@ -176,6 +176,61 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(self.call('delivery', 'handled-report')['receipt'], '')
         self.assertEqual(self.call('inbox', 'root'), full)
 
+    def test_message_index_filters_receipts_routes_and_exact_sequence_ranges(self):
+        wide = 9007199254740993
+        rows = [
+            ('first-report', 'worker', 'root', 'report', 'First retained body.', None),
+            ('handled-report', 'worker', 'root', 'report', 'Handled body.', ''),
+            ('worker-guidance', 'root', 'worker', 'guidance', 'Worker guidance.', None),
+            ('literal-options', '--index', 'root', '--pretty', 'Literal option names.', None),
+            ('empty-fields', '', 'root', '', 'Literal empty fields.', None),
+            ('quoted-sender', "sender's λ", 'root', 'report', 'Quoted sender.', None),
+            ('orphan-report', 'worker', 'retired-recipient', 'report', 'Historical body.', None),
+        ]
+        with sqlite3.connect(self.db) as db:
+            db.executemany('INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(?,?,?,?,?,?)', rows)
+            for offset in range(3):
+                db.execute('INSERT INTO messages(seq,id,sender,recipient,kind,body) VALUES(?,?,?,?,?,?)',
+                           (wide + offset, 'wide-' + str(offset), 'worker', 'root', 'report',
+                            'Wide sequence body ' + str(offset)))
+            before = db.execute('SELECT * FROM messages ORDER BY seq').fetchall()
+
+        index = self.call('inbox', 'root', '--index', '--state', 'all')
+        self.assertEqual([row['seq'] for row in index], sorted(row['seq'] for row in index))
+        self.assertTrue(all('body' not in row for row in index))
+        handled = self.call('inbox', 'root', '--index', '--state', 'acknowledged')
+        self.assertEqual([row['id'] for row in handled], ['handled-report'])
+        self.assertEqual(handled[0]['receipt'], '')
+        reports = self.call('pending', '--pretty', '--recipient', 'root', '--index',
+                            '--sender', 'worker', '--kind', 'report', '--state', 'all')
+        self.assertEqual([row['id'] for row in reports],
+                         ['first-report', 'handled-report', 'wide-0', 'wide-1', 'wide-2'])
+        self.assertEqual(self.call('pending', '--index', '--recipient', 'retired-recipient'), [])
+        self.assertEqual([row['id'] for row in self.call('inbox', 'retired-recipient', '--index')],
+                         ['orphan-report'])
+
+        bounded = self.call('inbox', 'root', '--index', '--after-seq', str(wide),
+                            '--through-seq', str(wide + 1))
+        self.assertEqual([(row['id'], row['seq']) for row in bounded], [('wide-1', wide + 1)])
+        self.assertEqual(self.call('inbox', 'root', '--index', '--after-seq', str(wide + 1),
+                                   '--through-seq', str(wide)), [])
+        self.assertEqual(self.call('inbox', 'root', '--index', '--after-seq', '+000' + str(wide),
+                                   '--through-seq', str(wide + 1), '--after-seq', str(wide)), bounded)
+        for sender, kind, expected in (
+                ('--index', '--pretty', 'literal-options'),
+                ('', '', 'empty-fields'),
+                ("sender's λ", 'report', 'quoted-sender')):
+            with self.subTest(sender=sender, kind=kind):
+                selected = self.call('inbox', 'root', '--sender', sender, '--kind', kind, '--index')
+                self.assertEqual([row['id'] for row in selected], [expected])
+        self.assertEqual(self.call('inbox', 'root', '--pretty'), self.call('inbox', 'root'))
+        self.assertEqual(self.call('delivery', 'wide-1')['body'], 'Wide sequence body 1')
+        for flags in (('--after-seq', 'not-an-integer'), ('--through-seq',), ('--state', 'unknown')):
+            with self.subTest(flags=flags):
+                self.call('pending', '--index', *flags, success=False)
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute('SELECT * FROM messages ORDER BY seq').fetchall(), before)
+
     def test_codex_thread_event_records_resume_identity_before_report(self):
         self.player('codex', 'root', 'codex', 'gpt-6-astra', 'low',
                   '/retained/codex', 'codex-branch', 'base')

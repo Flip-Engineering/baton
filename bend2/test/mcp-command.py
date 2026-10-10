@@ -304,6 +304,33 @@ class McpCommand(unittest.TestCase):
                               expected_args=['context-result', query])
         self.assertEqual(result['content'][0]['text'], envelope)
 
+    def test_message_metadata_filters_forward_literal_values_and_wide_sequences(self):
+        wide = '9007199254740993'
+        response = '[{"seq":9007199254740994,"id":"retained","receipt":""}]'
+        cases = [
+            ('baton2_inbox', {}, ['inbox', 'attached']),
+            ('baton2_pending', {}, ['pending']),
+            ('baton2_inbox', {'index': True, 'pretty': True},
+             ['inbox', 'attached', '--index', '--pretty']),
+            ('baton2_inbox', {'recipient': '', 'sender': '--index', 'kind': '--pretty',
+                              'state': 'all', 'afterSeq': wide, 'throughSeq': '9007199254740994',
+                              'pretty': True},
+             ['inbox', '', '--index', '--sender', '--index', '--kind', '--pretty',
+              '--state', 'all', '--after-seq', wide, '--through-seq', '9007199254740994', '--pretty']),
+            ('baton2_pending', {'recipient': 'root', 'sender': '', 'kind': "report's λ",
+                                'state': 'acknowledged', 'afterSeq': wide},
+             ['pending', '--index', '--recipient', 'root', '--sender', '', '--kind', "report's λ",
+              '--state', 'acknowledged', '--after-seq', wide]),
+        ]
+        for tool, arguments, argv in cases:
+            with self.subTest(tool=tool, arguments=arguments):
+                result = self.command(stdout=response + '\n', tool=tool, arguments=arguments,
+                                      session='attached', expected_args=argv)
+                self.assertEqual(result['content'][0]['text'], response)
+                schema = self.tools[tool]['inputSchema']['properties']
+                self.assertEqual(schema['afterSeq']['type'], 'string')
+                self.assertEqual(schema['throughSeq']['type'], 'string')
+
     def test_context_and_resume_refusals_preserve_native_exit_and_diagnostics(self):
         for tool, arguments, argv, reason in (
                 ('baton2_context_result', {'query': 'absent'}, ['context-result', 'absent'],
