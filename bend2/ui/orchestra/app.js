@@ -1136,6 +1136,33 @@ function openRecordAt(id) {
   if (!land() && typeof requestAnimationFrame === "function") requestAnimationFrame(land);
 }
 
+// The way back: a reader who has read a record returns to the mark that holds it, with
+// the surface it lives on in view. A seat selects through the same path the staves use,
+// so the map, the stage and the roster agree on what is selected; a finding keeps the
+// address, so the return move is one a reader can pass on.
+function locateEntity(ref) {
+  const id = String(ref || "");
+  if (!id) return;
+  if (state.players.has(id)) {
+    select(id);
+    reveal(el.attentionBand);
+    return;
+  }
+  state.findingId = id;
+  writeFindingAddress(id);
+  markDrawnStale();
+  renderDocument();
+  reveal(el.knowledgeWhole);
+}
+
+// Bring a mount's region into view. The surfaces sit as sections in one page scroll, so
+// the landing a reader wants is the section that holds the mount, not its first pixel.
+function reveal(mount) {
+  const region = mount && typeof mount.closest === "function" ? mount.closest("section") : null;
+  const target = region || mount;
+  if (target && typeof target.scrollIntoView === "function") target.scrollIntoView({ block: "start" });
+}
+
 // Open the complete claim, evidence and limits beside the graph.
 function toggleFinding(id) {
   if (!id) return;
@@ -2137,6 +2164,8 @@ function renderDocument() {
     },
     // The map's pinned card opens the record at its finding, on that finding's block.
     onOpenRecord: (id) => { openRecordAt(id); },
+    // The way back from a record: the mark that holds it, on whichever surface it lives.
+    onLocate: (ref) => { locateEntity(ref); },
     // The record's relation statements light that relation's edges on the map; the
     // map receives the name it should light and clears it with the next selection.
     onFocusRelation: (name) => {

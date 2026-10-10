@@ -15,7 +15,7 @@
      opts.scope      "live" for work in flight and seats the record holds, "all"
                      for everything recorded (the staves' control names the rest)
      opts.onSelect(id), opts.onSelectFinding(id), opts.onScrub(index),
-     opts.onSelectEvent(index), opts.onListOpen(open)
+     opts.onSelectEvent(index), opts.onListOpen(open), opts.onOpenRecord(id), opts.onLocate(ref)
 
    attention.js reads activity for the summary; order.js orders the rows. */
 (function () {
@@ -270,6 +270,8 @@
         onSelectActor: opts.onSelect,
         // The card's one move into the record, so a row's card offers it too.
         onOpenRecord: opts.onOpenRecord,
+        // The way back, so a row's card can return a reader to the mark it names.
+        onLocate: opts.onLocate,
       });
       li.appendChild(kw);
     }
@@ -483,6 +485,8 @@
         onSelectActor: opts.onSelect,
         // The card's one move into the record, forwarded so the card renders it.
         onOpenRecord: opts.onOpenRecord,
+        // The way back: the shell selects the mark and shows its surface.
+        onLocate: opts.onLocate,
         // The relation the record asked the map to light, by its recorded name.
         focusRelation: opts.focusRelation || "",
         // Its activation count, so a repeated activation is a fresh request.
@@ -553,6 +557,9 @@
         window.renderSelection(mounts.selection, {
           seat: options.selectedSeat || null,
           finding: options.selectedFinding || null,
+          // The way back to the graph and the hall, so the record can offer a return
+          // move rather than making a reader hunt for the mark it holds.
+          onLocate: options.onLocate,
           // The selected id the snapshot does not carry, with the reads that answer for it.
           subject: options.selectedSubject || null,
           events: data.events || [],
